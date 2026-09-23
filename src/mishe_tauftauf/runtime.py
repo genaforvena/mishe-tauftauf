@@ -111,7 +111,10 @@ class Coordinator:
                 except OSError:
                     unchanged = False
                 if unchanged:
-                    write_control_cache(cache_path, fingerprint, self.control_failures)
+                    try:
+                        write_control_cache(cache_path, fingerprint, self.control_failures)
+                    except OSError:
+                        self.control_failures = {name: "startup controls UNKNOWN: cache write failed" for name in controls()}
                 else:
                     self.control_failures = {name: "startup controls UNKNOWN: judge executable changed during refresh" for name in controls()}
             else:

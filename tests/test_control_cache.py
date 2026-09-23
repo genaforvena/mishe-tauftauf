@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import stat
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from mishe_tauftauf.cli import initialize, main
 from mishe_tauftauf.judges import controls
@@ -103,6 +105,23 @@ class ControlCacheTests(unittest.TestCase):
             config.refresh_controls = False
             self.assertEqual(Coordinator(config).control_failures, {})
             self.assertEqual(int(count.read_text()), len(controls()) * 2)
+
+    def test_refresh_write_failure_is_unknown_and_replacement_is_private(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            judge, count = home / "judge", home / "calls"
+            adapter(judge, count)
+            config = RuntimeConfig(home, judge=judge, control_cache_ttl=3600, refresh_controls=True)
+            with patch("mishe_tauftauf.runtime.write_control_cache", side_effect=OSError("disk full")):
+                failures = Coordinator(config).control_failures
+            self.assertEqual(set(failures), set(controls()))
+            self.assertTrue(all("cache write" in reason for reason in failures.values()))
+            self.assertFalse((home / "control-cache.json").exists())
+            cache = home / "control-cache.json"
+            cache.write_text("old", encoding="utf-8")
+            cache.chmod(0o644)
+            self.assertEqual(Coordinator(config).control_failures, {})
+            self.assertEqual(stat.S_IMODE(cache.stat().st_mode), 0o600)
 
     def test_default_still_calls_controls_and_invalid_options_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
