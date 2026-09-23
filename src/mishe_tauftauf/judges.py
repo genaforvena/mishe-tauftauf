@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import re
 import subprocess
@@ -80,6 +81,67 @@ def run_external(path: Path, question: str, slug: str, top_pain: str, evidence: 
     if not math.isfinite(probability) or not 0.0 <= probability <= 1.0:
         return Judgment(question, None, "unknown", "judge probability must be finite and in [0,1]", request)
     return Judgment(question, probability, classify(question, probability), "external judgment", request)
+
+
+def run_external_batch(
+    path: Path,
+    questions: tuple[str, ...],
+    slug: str,
+    top_pain: str,
+    evidence: str,
+    prediction: str | None = None,
+    timeout: float = 30.0,
+    *,
+    question_texts: dict[str, str] | None = None,
+) -> dict[str, Judgment]:
+    """Ask independent questions over one identical transient state in one process.
+
+    This optional JSON-lines executable protocol leaves the one-line adapter intact.
+    Each malformed or missing result is UNKNOWN; an unusable envelope fails all.
+    """
+    if not questions or len(set(questions)) != len(questions) or any(q not in QUESTIONS for q in questions):
+        raise ValueError("batch questions must be unique known questions")
+    texts = {q: (question_texts or {}).get(q) or QUESTIONS[q] for q in questions}
+    documents = {q: document(q, slug, top_pain, evidence, prediction, question_text=texts[q]) for q in questions}
+
+    def unknown(reason: str) -> dict[str, Judgment]:
+        return {q: Judgment(q, None, "unknown", reason, documents[q]) for q in questions}
+
+    request = {"version": 1, "state": {"slug": slug, "top_pain": top_pain, "evidence": evidence, "prediction": prediction}, "questions": texts}
+    try:
+        result = subprocess.run([str(path)], input=(json.dumps(request, ensure_ascii=False) + "\n").encode("utf-8"), capture_output=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return unknown(f"batch judge unavailable: {exc}")
+    if result.returncode != 0:
+        return unknown(f"batch judge exit {result.returncode}")
+    try:
+        line = result.stdout.decode("utf-8")
+        if not line.endswith("\n") or "\n" in line[:-1]:
+            return unknown("batch judge must return one JSON line")
+        payload = json.loads(line)
+    except (UnicodeDecodeError, ValueError):
+        return unknown("batch judge returned invalid JSON or UTF-8")
+    if not isinstance(payload, dict) or set(payload) != {"results"} or not isinstance(payload["results"], dict):
+        return unknown("batch judge returned invalid envelope")
+    answers = payload["results"]
+    if set(answers) - set(questions):
+        return unknown("batch judge returned unrequested answers")
+    judgments = {}
+    for q in questions:
+        answer = answers.get(q)
+        if isinstance(answer, dict) and set(answer) == {"probability"}:
+            value = answer["probability"]
+            if isinstance(value, (float, int)) and not isinstance(value, bool):
+                probability = float(value)
+                if math.isfinite(probability) and 0.0 <= probability <= 1.0:
+                    judgments[q] = Judgment(q, probability, classify(q, probability), "external batch judgment", documents[q])
+                    continue
+        if isinstance(answer, dict) and set(answer) == {"unknown"} and isinstance(answer["unknown"], str) and answer["unknown"].strip():
+            reason = answer["unknown"].strip()
+        else:
+            reason = "batch judge missing or malformed answer"
+        judgments[q] = Judgment(q, None, "unknown", reason, documents[q])
+    return judgments
 
 
 def conservative_unknown(question: str, slug: str, top_pain: str, evidence: str, prediction: str | None = None, reason: str = "no System One adapter selected", *, question_text: str | None = None) -> Judgment:

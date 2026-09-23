@@ -84,6 +84,8 @@ Predictions are ordinary feed prose. A deterministic clock checks them even when
 
 `run --judge PATH` selects an executable text adapter. It receives a document containing `QUESTION`, `INSTRUCTIONS`, `TOP PAIN`, `EVIDENCE`, and optionally `PREDICTION`; it returns one line: `probability P` or `unknown reason`. Output is data and is never executed.
 
+`run --batch-judge PATH` selects an optional executable batch adapter instead. It receives one UTF-8 JSON line with `version: 1`, a `state` object (`slug`, `top_pain`, `evidence`, `prediction`), and a `questions` object mapping question names to their current instructions. It returns one UTF-8 JSON line such as `{"results":{"prediction-met":{"probability":0.9},"desired-state-met":{"unknown":"insufficient evidence"}}}`. Each answer must contain exactly one finite probability in `[0,1]` or a nonempty `unknown` reason. Missing or malformed answers become UNKNOWN; an invalid envelope makes the whole batch UNKNOWN. The runtime batches `prediction-met` and `desired-state-met` for the same due prediction and uses one-question requests elsewhere, including startup controls. The one-line `--judge` contract remains available unchanged. Batch state is transient and may include private pane content; review the selected adapter's transport before using it on a real channel.
+
 The optional Laya adapter uses `laya==0.3.5` and `convaiinnovations/laya`'s `typed-decisions` subfolder through its native `noul` API. Its probabilities are **not deployment calibration**. The low 0.20 publish/relevance threshold is a loss-avoidance policy, not a quality claim. Production startup controls can disable a failing question only by making it explicit UNKNOWN, which escalates rather than manufacturing certainty.
 
 `examples/jev-judge.py` is a stdlib-only reference adapter for the hosted TypeSafe Jev System One model, selected the same way: `run --judge examples/jev-judge.py`. It is **not a dependency**. It reads `TYPESAFE_API_KEY` from the environment or a file named by `TYPESAFE_KEY_FILE`, and it is the only adapter that reaches a network. The endpoint rejects the default urllib client signature, so the adapter sends a browser `User-Agent`. Its probabilities are a model's answer, not calibration: `doctor --live-jev --verbose` runs the same paired smoke controls, and an unseparated question fails visibly instead of being weakened.
@@ -94,6 +96,7 @@ The optional Laya adapter uses `laya==0.3.5` and `convaiinnovations/laya`'s `typ
 - `filters/<slug>`: executable, previous and current temporary text paths; exit 0 passes, 1 holds, anything else passes with visible UNKNOWN.
 - `minds/<slug>` or `minds/default`: executable, complete invocation context on stdin; stdout/stderr are history, not commands.
 - external judge: executable, judgment document on stdin; exactly one result line on stdout.
+- batch judge: executable, one JSON request line on stdin; one JSON `results` line on stdout.
 - tmux: default visual and launch adapter, but not an ontology or a dependency for headless operation.
 
 ## License

@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .feed import Feed, FeedEntry
-from .judges import Judgment, conservative_unknown, controls, document, run_external
+from .judges import Judgment, conservative_unknown, controls, document, run_external, run_external_batch
 from .observations import compose_frame, discover, run_filter, run_projector, strip_owned_chrome
 from .policy import load_policy
 from .predictions import pending_predictions, replay_predictions
@@ -66,10 +66,13 @@ class RuntimeConfig:
     interval: float = 5.0
     dispatch: bool = True
     policy: Path | None = None
+    batch_judge: Path | None = None
 
 
 class Coordinator:
     def __init__(self, config: RuntimeConfig):
+        if config.judge is not None and config.batch_judge is not None:
+            raise ValueError("select either a one-line judge or a batch judge")
         self.config = config
         self.home = config.home
         self.feed = Feed(self.home)
@@ -80,6 +83,8 @@ class Coordinator:
         self._lock_handle = None
         self.control_failures = self._run_controls()
     def _raw_judge(self, question: str, slug: str, pane: str, evidence: str, prediction: str | None = None) -> Judgment:
+        if self.config.batch_judge is not None:
+            return run_external_batch(self.config.batch_judge, (question,), slug, pane, evidence, prediction, timeout=self.policy.judge_timeout, question_texts={question: self.policy.question_text(question)})[question]
         if self.config.judge is not None:
             return run_external(self.config.judge, question, slug, pane, evidence, prediction, timeout=self.policy.judge_timeout, question_text=self.policy.question_text(question))
         if importlib.util.find_spec("laya") is None:
@@ -145,6 +150,20 @@ class Coordinator:
         except Exception:
             return conservative_unknown(question, slug, pane, evidence, prediction, "judge failed", question_text=self.policy.question_text(question))
         return Judgment(judgment.question, judgment.probability, self.policy.classify(question, judgment.probability), judgment.reason, judgment.document)
+
+    def _judge_batch(self, questions: tuple[str, ...], slug: str, pane: str, evidence: str, prediction: str | None = None) -> dict[str, Judgment]:
+        if self.config.batch_judge is None:
+            return {q: self._judge(q, slug, pane, evidence, prediction) for q in questions}
+        active = tuple(q for q in questions if q not in self.control_failures)
+        try:
+            raw = run_external_batch(self.config.batch_judge, active, slug, pane, evidence, prediction, timeout=self.policy.judge_timeout, question_texts={q: self.policy.question_text(q) for q in active}) if active else {}
+        except Exception:
+            raw = {q: conservative_unknown(q, slug, pane, evidence, prediction, "batch judge failed", question_text=self.policy.question_text(q)) for q in active}
+        return {
+            q: Judgment(raw[q].question, raw[q].probability, self.policy.classify(q, raw[q].probability), raw[q].reason, raw[q].document)
+            if q in raw else conservative_unknown(q, slug, pane, evidence, prediction, self.control_failures[q], question_text=self.policy.question_text(q))
+            for q in questions
+        }
 
     def _receipt(self, judgment: Judgment, slug: str, sequence: int) -> FeedEntry:
         return judgment_receipt(self.feed, judgment, slug, sequence, policy_version=self.policy.version, question_version=self.policy.question_version(judgment.question))
@@ -219,8 +238,9 @@ class Coordinator:
                 continue
             pane = self._pane(prediction.slug)
             evidence = f"FRESH AT {stamp()}\n{pane}"
-            met = self._judge("prediction-met", prediction.slug, pane, evidence, prediction.body)
-            desired = self._judge("desired-state-met", prediction.slug, pane, evidence, prediction.body)
+            decisions = self._judge_batch(("prediction-met", "desired-state-met"), prediction.slug, pane, evidence, prediction.body)
+            met = decisions["prediction-met"]
+            desired = decisions["desired-state-met"]
             self._receipt(met, prediction.slug, prediction.sequence)
             self._receipt(desired, prediction.slug, prediction.sequence)
             outcome = "met" if met.outcome == "yes" else ("missed" if met.outcome == "no" else "insufficient-evidence")
