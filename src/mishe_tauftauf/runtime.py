@@ -368,7 +368,11 @@ class Coordinator:
         for entry in entries:
             if is_bookkeeping(entry):
                 continue
-            for slug in slugs:
+            targets = slugs
+            if entry.source.startswith("observation/") and entry.source != "observation/observability":
+                target = entry.source.removeprefix("observation/")
+                targets = [target] if target in slugs else []
+            for slug in targets:
                 if (entry.sequence, slug) in dispositions:
                     continue
                 pane = self._pane(slug)

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from mishe_tauftauf.cli import initialize, main
 from mishe_tauftauf.feed import Feed
+from mishe_tauftauf.judges import Judgment
 from mishe_tauftauf.runtime import Coordinator, RuntimeConfig
 
 
@@ -187,6 +188,29 @@ class MigrationCoreTests(unittest.TestCase):
             self.assertFalse(any("requires reasoning" in e.body for e in feed.entries()))
             Coordinator(RuntimeConfig(home, launcher="headless", dispatch=False, slug="beta")).due_predictions()
             self.assertTrue(any(e.source == "observation/beta" and "requires reasoning" in e.body for e in feed.entries()))
+
+    def test_channel_observations_route_once_while_shared_events_fan_out(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            slugs = [f"sensor-{n}" for n in range(17)]
+            for slug in slugs:
+                executable(home / "top-pains" / slug, "printf 'red\\n'\n")
+            feed = Feed(home)
+            observations = [feed.append_runtime(f"observation/{slug}", f"{slug} changed") for slug in slugs]
+            shared = [feed.append("human", "broadcast to every channel"), feed.append("task", "task event")]
+            coordinator = Coordinator(RuntimeConfig(home, launcher="headless", dispatch=False))
+            coordinator._pane = lambda slug: "red"
+            coordinator._judge = lambda question, slug, pane, evidence, prediction=None: Judgment(
+                question, 0.9 if question == "relevance" else 0.1,
+                "yes" if question == "relevance" else "no", "fixture", "fixture")
+            coordinator.route()
+            requests = [e.body for e in feed.entries() if e.body.startswith("wake requested ")]
+            for event, slug in zip(observations, slugs):
+                self.assertEqual([r for r in requests if r.endswith(f"for entry {event.sequence}")],
+                                 [f"wake requested top-pain {slug} for entry {event.sequence}"])
+            for event in shared:
+                self.assertEqual(sum(r.endswith(f"for entry {event.sequence}") for r in requests), 17)
+            self.assertEqual(len(requests), 51)
 
 
 if __name__ == "__main__":
