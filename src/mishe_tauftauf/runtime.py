@@ -13,8 +13,9 @@ from pathlib import Path
 
 from .feed import Feed, FeedEntry
 from .control_cache import identity as control_identity, read as read_control_cache, write as write_control_cache
+from .external_view import projected_publish_controls, safe_publish_view
 from .judges import Judgment, conservative_unknown, controls, document, run_external, run_external_batch
-from .observations import compose_frame, discover, run_filter, run_projector, strip_owned_chrome
+from .observations import compose_frame, discover, run_filter, run_projector, strip_owned_chrome, validate_slug
 from .policy import load_policy
 from .predictions import pending_predictions, replay_predictions
 
@@ -71,12 +72,17 @@ class RuntimeConfig:
     batch_judge: Path | None = None
     control_cache_ttl: float | None = None
     refresh_controls: bool = False
+    external_view_slugs: tuple[str, ...] = ()
 
 
 class Coordinator:
     def __init__(self, config: RuntimeConfig):
         if config.judge is not None and config.batch_judge is not None:
             raise ValueError("select either a one-line judge or a batch judge")
+        if len(set(config.external_view_slugs)) != len(config.external_view_slugs):
+            raise ValueError("external view slugs must be unique")
+        for slug in config.external_view_slugs:
+            validate_slug(slug)
         if config.refresh_controls and config.control_cache_ttl is None:
             raise ValueError("--refresh-controls requires --control-cache-ttl")
         if config.control_cache_ttl is not None:
@@ -99,26 +105,29 @@ class Coordinator:
             adapter = config.judge or config.batch_judge
             cache_path = self.home / "control-cache.json"
             try:
-                fingerprint = control_identity(adapter, "batch" if config.batch_judge else "single", self.policy)
+                fingerprint = control_identity(adapter, "batch" if config.batch_judge else "single", self.policy, projected=bool(config.external_view_slugs))
             except OSError:
                 fingerprint = None
             if fingerprint is None:
-                self.control_failures = {name: "startup controls UNKNOWN: judge executable unavailable" for name in controls()}
+                names = set(controls()) | ({"projected-publish"} if config.external_view_slugs else set())
+                self.control_failures = {name: "startup controls UNKNOWN: judge executable unavailable" for name in names}
             elif config.refresh_controls:
                 self.control_failures = self._run_controls()
                 try:
-                    unchanged = control_identity(adapter, "batch" if config.batch_judge else "single", self.policy) == fingerprint
+                    unchanged = control_identity(adapter, "batch" if config.batch_judge else "single", self.policy, projected=bool(config.external_view_slugs)) == fingerprint
                 except OSError:
                     unchanged = False
                 if unchanged:
                     try:
-                        write_control_cache(cache_path, fingerprint, self.control_failures)
+                        write_control_cache(cache_path, fingerprint, self.control_failures, projected=bool(config.external_view_slugs))
                     except OSError:
-                        self.control_failures = {name: "startup controls UNKNOWN: cache write failed" for name in controls()}
+                        names = set(controls()) | ({"projected-publish"} if config.external_view_slugs else set())
+                        self.control_failures = {name: "startup controls UNKNOWN: cache write failed" for name in names}
                 else:
-                    self.control_failures = {name: "startup controls UNKNOWN: judge executable changed during refresh" for name in controls()}
+                    names = set(controls()) | ({"projected-publish"} if config.external_view_slugs else set())
+                    self.control_failures = {name: "startup controls UNKNOWN: judge executable changed during refresh" for name in names}
             else:
-                self.control_failures = read_control_cache(cache_path, fingerprint, config.control_cache_ttl)
+                self.control_failures = read_control_cache(cache_path, fingerprint, config.control_cache_ttl, projected=bool(config.external_view_slugs))
     def _raw_judge(self, question: str, slug: str, pane: str, evidence: str, prediction: str | None = None) -> Judgment:
         if self.config.batch_judge is not None:
             return run_external_batch(self.config.batch_judge, (question,), slug, pane, evidence, prediction, timeout=self.policy.judge_timeout, question_texts={question: self.policy.question_text(question)})[question]
@@ -146,6 +155,15 @@ class Coordinator:
                 failures[question] = (
                     f"production controls failed: positive={yes.outcome}"
                     f"/{yes.probability}, negative={no.outcome}/{no.probability}"
+                )
+        if self.config.external_view_slugs:
+            positive, negative = projected_publish_controls()
+            yes = self._raw_judge("publish", "control", positive, positive)
+            no = self._raw_judge("publish", "control", negative, negative)
+            if self.policy.classify("publish", yes.probability) != "yes" or self.policy.classify("publish", no.probability) != "no":
+                failures["projected-publish"] = (
+                    f"projected controls failed: positive={yes.outcome}/{yes.probability}, "
+                    f"negative={no.outcome}/{no.probability}"
                 )
         return failures
 
@@ -179,6 +197,16 @@ class Coordinator:
             self._lock_handle = None
 
     def _judge(self, question: str, slug: str, pane: str, evidence: str, prediction: str | None = None) -> Judgment:
+        if slug in self.config.external_view_slugs:
+            if question != "publish":
+                return conservative_unknown(question, slug, "[withheld]", "[withheld]", reason="external view unavailable for this question", question_text=self.policy.question_text(question))
+            safe = safe_publish_view(evidence)
+            if safe is None:
+                return conservative_unknown(question, slug, "[withheld]", "[withheld]", reason="external view invalid", question_text=self.policy.question_text(question))
+            pane, evidence, prediction = safe, safe, None
+            projected_failure = self.control_failures.get("projected-publish")
+            if projected_failure:
+                return conservative_unknown(question, slug, pane, evidence, reason=projected_failure, question_text=self.policy.question_text(question))
         failure = self.control_failures.get(question)
         if failure:
             return conservative_unknown(question, slug, pane, evidence, prediction, failure, question_text=self.policy.question_text(question))
@@ -189,6 +217,8 @@ class Coordinator:
         return Judgment(judgment.question, judgment.probability, self.policy.classify(question, judgment.probability), judgment.reason, judgment.document)
 
     def _judge_batch(self, questions: tuple[str, ...], slug: str, pane: str, evidence: str, prediction: str | None = None) -> dict[str, Judgment]:
+        if slug in self.config.external_view_slugs:
+            return {q: self._judge(q, slug, pane, evidence, prediction) for q in questions}
         if self.config.batch_judge is None:
             return {q: self._judge(q, slug, pane, evidence, prediction) for q in questions}
         active = tuple(q for q in questions if q not in self.control_failures)

@@ -11,13 +11,14 @@ import time
 from pathlib import Path
 
 from .judges import controls
+from .external_view import VERSION as EXTERNAL_VIEW_VERSION, projected_publish_controls
 from .policy import JudgmentPolicy
 
 VERSION = 1
 MAX_BYTES = 64 * 1024
 
 
-def identity(adapter: Path, mode: str, policy: JudgmentPolicy) -> str:
+def identity(adapter: Path, mode: str, policy: JudgmentPolicy, *, projected: bool = False) -> str:
     """Bind a verdict to executable bytes, control cases, and all policy inputs."""
     if not adapter.is_file() or not os.access(adapter, os.X_OK):
         raise OSError("judge is not executable")
@@ -32,13 +33,17 @@ def identity(adapter: Path, mode: str, policy: JudgmentPolicy) -> str:
         "high_threshold": policy.high_threshold,
         "judge_timeout": policy.judge_timeout,
     }
+    if projected:
+        descriptor["projected_publish_controls"] = projected_publish_controls()
+        descriptor["external_view_version"] = EXTERNAL_VIEW_VERSION
     encoded = json.dumps(descriptor, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
-def read(path: Path, expected_identity: str, ttl: float) -> dict[str, str]:
+def read(path: Path, expected_identity: str, ttl: float, *, projected: bool = False) -> dict[str, str]:
     """Return explicit failures for every question unless the whole file validates."""
-    unknown = {name: "startup controls UNKNOWN: cache absent, stale, or invalid; refresh explicitly" for name in controls()}
+    names = set(controls()) | ({"projected-publish"} if projected else set())
+    unknown = {name: "startup controls UNKNOWN: cache absent, stale, or invalid; refresh explicitly" for name in names}
     try:
         if path.stat().st_size > MAX_BYTES:
             return unknown
@@ -57,19 +62,20 @@ def read(path: Path, expected_identity: str, ttl: float) -> dict[str, str]:
         or not math.isfinite(checked)
         or not 0 <= time.time() - checked <= ttl
         or not isinstance(record["passed"], dict)
-        or set(record["passed"]) != set(controls())
+        or set(record["passed"]) != names
         or any(type(value) is not bool for value in record["passed"].values())
     ):
         return unknown
     return {name: "production controls failed at explicit refresh" for name, passed in record["passed"].items() if not passed}
 
 
-def write(path: Path, expected_identity: str, failures: dict[str, str]) -> None:
+def write(path: Path, expected_identity: str, failures: dict[str, str], *, projected: bool = False) -> None:
+    names = set(controls()) | ({"projected-publish"} if projected else set())
     record = {
         "version": VERSION,
         "identity": expected_identity,
         "checked_at": time.time(),
-        "passed": {name: name not in failures for name in controls()},
+        "passed": {name: name not in failures for name in names},
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
