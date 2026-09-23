@@ -60,6 +60,12 @@ Each tmux window keeps a live Top Pain above a disposable Mind pane. The top lea
 
 Observation and event selection are separate branches. An optional executable `filters/<slug>` receives temporary previous/current observation files. It may reduce event traffic, but never changes or hides the Top Pain. Errors render UNKNOWN and fail toward publishing.
 
+Before connecting panes that may contain private data, provide an executable `projectors/<slug>`. It receives the same previous/current temporary UTF-8 file paths and writes one human-readable event projection to stdout. Exit 0 with nonempty UTF-8 output of at most 4096 bytes publishes the projection; missing, non-executable, failed, timed-out, empty, invalid, or oversized output becomes a generic UNKNOWN event. Projector stdout and stderr are discarded on failure. The full pane remains transient, and judgment receipts contain the question, raw probability, outcome, and policy/question versions, without the judgment document. Treat projector output as public feed content and redact it at the source.
+
+`run --once --launcher headless --observe-only` records `wake requested top-pain <slug> for entry <sequence>` and never launches a Mind. An external single-authority consumer records `dispatch-receipt <slug> <sequence> delivered|refused` after an attempted dispatch. The command requires a request and atomically reuses an identical receipt on replay. Refusal stays retryable; delivery is terminal for that request. `doctor` reports feed byte size and rejects corrupt framing.
+
+`run --policy FILE` loads a JSON object with `version`, `question_versions`, `questions`, `low_threshold`, `high_threshold`, and `judge_timeout` (seconds). Each changed question text needs its own revision in `question_versions`. The policy is validated before execution. Omitted fields retain version 1 defaults; receipts identify both versions. The routed Mind context selects complete recent receipts under 24 KiB, includes current active predictions, and bounds triggering event, handoff, and prediction text separately.
+
 Every corrective intervention is red-first:
 
 1. Exercise a real System Zero check for the desired observable behavior.

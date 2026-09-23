@@ -11,8 +11,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .feed import Feed, FeedEntry
-from .judges import Judgment, classify, conservative_unknown, controls, document, run_external
-from .observations import compose_frame, discover, run_filter, strip_owned_chrome
+from .judges import Judgment, conservative_unknown, controls, document, run_external
+from .observations import compose_frame, discover, run_filter, run_projector, strip_owned_chrome
+from .policy import load_policy
 from .predictions import pending_predictions, replay_predictions
 
 JUDGED_RE = re.compile(r"^judged ([a-z-]+) for top-pain ([a-z0-9-]+) on entry (\d+):", re.MULTILINE)
@@ -23,7 +24,8 @@ EXIT_RE = re.compile(r"^mind exited top-pain ([a-z0-9-]+) for entry (\d+) attemp
 HANDOFF_RE = re.compile(r"^handoff top-pain ([a-z0-9-]+) invocation ([^\s]+)$", re.MULTILINE)
 BOOKKEEPING_PREFIXES = (
     "judged ", "entry ", "mind starting ", "mind exited ", "mind stdout ", "mind stderr ",
-    "mind blocked ", "top-pain ", "prediction ", "desired state for prediction ", "handoff top-pain ",
+    "mind blocked ", "mind output ", "top-pain ", "prediction ", "desired state for prediction ", "handoff top-pain ",
+    "wake requested ", "wake delivered ", "wake refused ",
 )
 
 
@@ -46,12 +48,11 @@ def is_bookkeeping(entry: FeedEntry) -> bool:
     return entry.source == "mishe-tauftauf" and entry.body.startswith(BOOKKEEPING_PREFIXES)
 
 
-def judgment_receipt(feed: Feed, judgment: Judgment, slug: str, sequence: int) -> FeedEntry:
+def judgment_receipt(feed: Feed, judgment: Judgment, slug: str, sequence: int, *, policy_version: str = "1", question_version: str = "1") -> FeedEntry:
     probability = "unknown" if judgment.probability is None else f"{judgment.probability:.17g}"
     body = (
-        f"judged {judgment.question} for top-pain {slug} on entry {sequence}: {judgment.outcome} probability={probability}\n"
-        f"reason: {judgment.reason}\n"
-        f"evidence:\n{judgment.document}"
+        f"judged {judgment.question} for top-pain {slug} on entry {sequence}: {judgment.outcome} "
+        f"probability={probability} question-version={question_version} policy-version={policy_version}"
     )
     return feed.append_runtime("mishe-tauftauf", body)
 
@@ -63,6 +64,8 @@ class RuntimeConfig:
     launcher: str = "tmux"
     session: str = "mishe-tauftauf"
     interval: float = 5.0
+    dispatch: bool = True
+    policy: Path | None = None
 
 
 class Coordinator:
@@ -70,6 +73,7 @@ class Coordinator:
         self.config = config
         self.home = config.home
         self.feed = Feed(self.home)
+        self.policy = load_policy(config.policy)
         self.previous: dict[str, str] = {}
         self.filter_identity: dict[str, tuple[int, int] | None] = {}
         self.known_slugs = self._replay_known_slugs()
@@ -77,16 +81,16 @@ class Coordinator:
         self.control_failures = self._run_controls()
     def _raw_judge(self, question: str, slug: str, pane: str, evidence: str, prediction: str | None = None) -> Judgment:
         if self.config.judge is not None:
-            return run_external(self.config.judge, question, slug, pane, evidence, prediction)
+            return run_external(self.config.judge, question, slug, pane, evidence, prediction, timeout=self.policy.judge_timeout, question_text=self.policy.question_text(question))
         if importlib.util.find_spec("laya") is None:
-            return conservative_unknown(question, slug, pane, evidence, prediction)
+            return conservative_unknown(question, slug, pane, evidence, prediction, question_text=self.policy.question_text(question))
         from .laya_judge import judge as laya_judge
-        request = document(question, slug, pane, evidence, prediction)
+        request = document(question, slug, pane, evidence, prediction, question_text=self.policy.question_text(question))
         probability, reason = laya_judge(request)
         return Judgment(
             question,
             probability,
-            classify(question, probability),
+            self.policy.classify(question, probability),
             reason or "Laya typed-decisions judgment",
             request,
         )
@@ -96,7 +100,7 @@ class Coordinator:
         for question, (positive, negative) in controls().items():
             yes = self._raw_judge(question, "control", "CONTROL TOP PAIN", positive)
             no = self._raw_judge(question, "control", "CONTROL TOP PAIN", negative)
-            if yes.outcome != "yes" or no.outcome != "no":
+            if self.policy.classify(question, yes.probability) != "yes" or self.policy.classify(question, no.probability) != "no":
                 failures[question] = (
                     f"production controls failed: positive={yes.outcome}"
                     f"/{yes.probability}, negative={no.outcome}/{no.probability}"
@@ -135,8 +139,15 @@ class Coordinator:
     def _judge(self, question: str, slug: str, pane: str, evidence: str, prediction: str | None = None) -> Judgment:
         failure = self.control_failures.get(question)
         if failure:
-            return conservative_unknown(question, slug, pane, evidence, prediction, failure)
-        return self._raw_judge(question, slug, pane, evidence, prediction)
+            return conservative_unknown(question, slug, pane, evidence, prediction, failure, question_text=self.policy.question_text(question))
+        try:
+            judgment = self._raw_judge(question, slug, pane, evidence, prediction)
+        except Exception:
+            return conservative_unknown(question, slug, pane, evidence, prediction, "judge failed", question_text=self.policy.question_text(question))
+        return Judgment(judgment.question, judgment.probability, self.policy.classify(question, judgment.probability), judgment.reason, judgment.document)
+
+    def _receipt(self, judgment: Judgment, slug: str, sequence: int) -> FeedEntry:
+        return judgment_receipt(self.feed, judgment, slug, sequence, policy_version=self.policy.version, question_version=self.policy.question_version(judgment.question))
 
     def _pane(self, slug: str) -> str:
         if self.config.launcher == "tmux":
@@ -176,9 +187,12 @@ class Coordinator:
                 emitted.append(self.feed.append_runtime("observation/observability", result.diagnostic))
             if not result.passed:
                 continue
-            evidence = f"PREVIOUS\n{previous}\nCURRENT\n{raw}\nFILTER {result.status}\n{result.diagnostic}"
+            evidence = run_projector(self.home, slug, previous, raw)
+            latest = next((entry.body for entry in reversed(self.feed.entries()) if entry.source == f"observation/{slug}"), None)
+            if evidence == latest:
+                continue
             judgment = self._judge("publish", slug, pane, evidence)
-            judgment_receipt(self.feed, judgment, slug, 0)
+            self._receipt(judgment, slug, 0)
             if judgment.outcome != "no":
                 emitted.append(self.feed.append_runtime(f"observation/{slug}", evidence))
         return emitted
@@ -194,9 +208,9 @@ class Coordinator:
             linked = prediction.plan.read_text(encoding="utf-8") if prediction.plan else "(none)"
             evidence = f"LIVE PANE\n{pane}\nLINKED PLAN\n{linked}\nPREDICTION NOTE\n{prediction.body}"
             judgment = self._judge("valid-attempt", prediction.slug, pane, evidence, prediction.body)
-            judgment_receipt(self.feed, judgment, prediction.slug, prediction.sequence)
+            self._receipt(judgment, prediction.slug, prediction.sequence)
             state = "accepted" if judgment.outcome == "yes" else "needs-reasoning"
-            self.feed.append_runtime("mishe-tauftauf", f"prediction {prediction.sequence}: {state}\n{judgment.reason}")
+            self.feed.append_runtime("mishe-tauftauf", f"prediction {prediction.sequence}: {state}")
 
     def due_predictions(self) -> None:
         entries = self.feed.entries()
@@ -207,14 +221,14 @@ class Coordinator:
             evidence = f"FRESH AT {stamp()}\n{pane}"
             met = self._judge("prediction-met", prediction.slug, pane, evidence, prediction.body)
             desired = self._judge("desired-state-met", prediction.slug, pane, evidence, prediction.body)
-            judgment_receipt(self.feed, met, prediction.slug, prediction.sequence)
-            judgment_receipt(self.feed, desired, prediction.slug, prediction.sequence)
+            self._receipt(met, prediction.slug, prediction.sequence)
+            self._receipt(desired, prediction.slug, prediction.sequence)
             outcome = "met" if met.outcome == "yes" else ("missed" if met.outcome == "no" else "insufficient-evidence")
             desired_outcome = "observed" if desired.outcome == "yes" else "not-established"
-            self.feed.append_runtime("mishe-tauftauf", f"prediction {prediction.sequence}: {outcome}\nevidence acquired: {stamp()}\n{evidence}")
-            self.feed.append_runtime("mishe-tauftauf", f"desired state for prediction {prediction.sequence}: {desired_outcome}\n{desired.reason}")
+            self.feed.append_runtime("mishe-tauftauf", f"prediction {prediction.sequence}: {outcome}\nevidence acquired: {stamp()}")
+            self.feed.append_runtime("mishe-tauftauf", f"desired state for prediction {prediction.sequence}: {desired_outcome}")
             if outcome != "met" or desired_outcome != "observed":
-                self.feed.append_runtime("observation/" + prediction.slug, f"prediction {prediction.sequence} requires reasoning\nPROMISED\n{prediction.body}\nACTUAL\n{evidence}")
+                self.feed.append_runtime("observation/" + prediction.slug, f"prediction {prediction.sequence} requires reasoning: {outcome}; desired state {desired_outcome}")
 
     def route(self) -> None:
         entries = self.feed.entries()
@@ -228,7 +242,7 @@ class Coordinator:
                     continue
                 pane = self._pane(slug)
                 relevance = self._judge("relevance", slug, pane, entry.body)
-                judgment_receipt(self.feed, relevance, slug, entry.sequence)
+                self._receipt(relevance, slug, entry.sequence)
                 if relevance.outcome == "no":
                     self.feed.append_runtime("mishe-tauftauf", f"entry {entry.sequence} for top-pain {slug}: irrelevant")
                     continue
@@ -236,15 +250,21 @@ class Coordinator:
                 if pending:
                     prediction_text = "\n\n".join(item.body for item in pending)
                     gate = self._judge("continue-observing", slug, pane, entry.body, prediction_text)
-                    judgment_receipt(self.feed, gate, slug, entry.sequence)
+                    self._receipt(gate, slug, entry.sequence)
                     disposition = "observe" if gate.outcome == "yes" else "wake"
                 else:
                     gate = self._judge("desired-state-met", slug, pane, entry.body)
-                    judgment_receipt(self.feed, gate, slug, entry.sequence)
+                    self._receipt(gate, slug, entry.sequence)
                     disposition = "observe" if gate.outcome == "yes" else "wake"
                 self.feed.append_runtime("mishe-tauftauf", f"entry {entry.sequence} for top-pain {slug}: {disposition}")
                 if disposition == "wake":
-                    self.invoke(slug, entry)
+                    self._request_wake(slug, entry)
+
+    def _request_wake(self, slug: str, stimulus: FeedEntry) -> None:
+        marker = f"wake requested top-pain {slug} for entry {stimulus.sequence}"
+        self.feed.append_runtime_once("mishe-tauftauf", marker)
+        if self.config.dispatch:
+            self.invoke(slug, stimulus)
 
     def _attempt(self, slug: str, sequence: int) -> int:
         entries = self.feed.entries()
@@ -254,34 +274,41 @@ class Coordinator:
         pane_command = f"mishe-tauftauf --home {self.home} pain read {slug}"
         handoff = self.home / "handoffs" / f"{slug}.md"
         handoff_text = handoff.read_text(encoding="utf-8") if handoff.exists() else "(none)"
+        handoff_text = self._bounded_text(handoff_text, 8 * 1024)
+        trigger = self._bounded_text(stimulus.body, 8 * 1024)
+        predictions = pending_predictions(self.home, self.feed.entries(), slug)
+        prediction_text = self._bounded_text("\n\n".join(p.body for p in predictions) or "(none)", 4 * 1024)
         history = self._routed_history()
         instructions = (Path(__file__).resolve().parents[2] / "instructions" / "mind.txt").read_text(encoding="utf-8")
         return (
-            f"TRIGGERING EVENT {stimulus.sequence}\n{stimulus.body}\n\n"
+            f"TRIGGERING EVENT {stimulus.sequence}\n{trigger}\n\n"
             "Read your current live Top Pain before deciding or acting.\n"
             f"Exact read command: {pane_command}\n"
             f"Invocation: {invocation}\nHandoff path: {handoff}\nCURRENT HANDOFF\n{handoff_text}\n\n"
+            f"ACTIVE PREDICTIONS\n{prediction_text}\n\n"
             f"ROUTED HISTORY\n{history}\n\nINSTRUCTIONS\n{instructions}\n"
         )
 
-    def _routed_history(self) -> str:
-        """Recent tail of the feed, most recent last.
-
-        The feed is append-only and stays complete on disk; this is a bounded
-        view for Mind context only. It must stay under the judge document limit
-        (100k chars, hard refusal above it, no truncation) or every judgment
-        degrades to UNKNOWN as soon as the feed grows.
-        """
-        limit = 32 * 1024
-        try:
-            raw = self.feed.path.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            return ""
+    @staticmethod
+    def _bounded_text(value: str, limit: int) -> str:
+        raw = value.encode("utf-8")
         if len(raw) <= limit:
-            return raw
-        tail = raw[-limit:]
-        newline = tail.find("\n")
-        return tail[newline + 1:] if newline != -1 else tail
+            return value
+        return raw[:limit - 32].decode("utf-8", "ignore") + "\n[context truncated]"
+
+    def _routed_history(self) -> str:
+        """Select complete recent receipts within the context budget."""
+        limit = 24 * 1024
+        selected: list[str] = []
+        used = 0
+        for entry in reversed(self.feed.entries()):
+            if entry.source.startswith("observation/") or entry.source == "mishe-tauftauf":
+                text = f"[{entry.sequence} {entry.source}] {entry.body}\n"
+                size = len(text.encode("utf-8"))
+                if size <= limit - used:
+                    selected.append(text)
+                    used += size
+        return "".join(reversed(selected))
 
     def invoke(self, slug: str, stimulus: FeedEntry) -> None:
         executable = self.home / "minds" / slug
@@ -317,10 +344,8 @@ class Coordinator:
                 code, stdout, stderr = result.returncode, result.stdout.decode("utf-8", "replace"), result.stderr.decode("utf-8", "replace")
             except OSError as exc:
                 code, stdout, stderr = 127, "", str(exc)
-            if stdout:
-                self.feed.append_runtime("mishe-tauftauf", f"mind stdout top-pain {slug} invocation {invocation}\n{stdout}")
-            if stderr:
-                self.feed.append_runtime("mishe-tauftauf", f"mind stderr top-pain {slug} invocation {invocation}\n{stderr}")
+            if stdout or stderr:
+                self.feed.append_runtime("mishe-tauftauf", f"mind output top-pain {slug} invocation {invocation} stdout-bytes={len(stdout.encode())} stderr-bytes={len(stderr.encode())}")
             self.feed.append_runtime("mishe-tauftauf", f"mind exited top-pain {slug} for entry {stimulus.sequence} attempt={attempt} code={code}")
             if not any(entry.source == "mishe-tauftauf" and f"handoff top-pain {slug} invocation {invocation}" in entry.body for entry in self.feed.entries()):
                 self.feed.append_runtime("observation/" + slug, f"UNKNOWN — mind invocation {invocation} exited without a tied handoff; prior handoff is stale")
@@ -329,6 +354,8 @@ class Coordinator:
             lock.close()
 
     def retry_unfinished_wakes(self) -> None:
+        if not self.config.dispatch:
+            return
         entries = self.feed.entries()
         by_sequence = {entry.sequence: entry for entry in entries}
         dispositions: dict[tuple[int, str], str] = {}
@@ -362,7 +389,7 @@ class Coordinator:
                     )
                 else:
                     reassessment = self._judge("desired-state-met", slug, pane, stimulus.body)
-                judgment_receipt(self.feed, reassessment, slug, sequence)
+                self._receipt(reassessment, slug, sequence)
                 if reassessment.outcome == "yes":
                     self.feed.append_runtime("mishe-tauftauf", f"entry {sequence} for top-pain {slug}: addressed")
                     continue

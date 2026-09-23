@@ -23,7 +23,7 @@ def default_home() -> Path:
 
 def initialize(home: Path) -> None:
     home.mkdir(parents=True, exist_ok=True)
-    for name in ("top-pains", "minds", "observations", "filters", "handoffs", "plans"):
+    for name in ("top-pains", "minds", "observations", "filters", "projectors", "handoffs", "plans"):
         (home / name).mkdir(exist_ok=True)
     (home / "feed").touch(mode=0o600, exist_ok=True)
 
@@ -45,6 +45,19 @@ def cmd_feed(args) -> int:
     data = Feed(args.home).read_bytes()
     parse_feed(data)
     sys.stdout.buffer.write(data)
+    return 0
+
+
+def cmd_dispatch_receipt(args) -> int:
+    slug = validate_slug(args.slug)
+    if args.entry < 1:
+        raise ValueError("entry must be positive")
+    feed = Feed(args.home)
+    request = f"wake requested top-pain {slug} for entry {args.entry}"
+    if not any(item.source == "mishe-tauftauf" and item.body == request for item in feed.entries()):
+        raise ValueError("dispatch receipt requires an existing wake request")
+    entry = feed.append_runtime_once("mishe-tauftauf", f"wake {args.outcome} top-pain {slug} for entry {args.entry}")
+    print(entry.sequence)
     return 0
 
 
@@ -128,7 +141,7 @@ def cmd_handoff(args) -> int:
 
 
 def cmd_run(args) -> int:
-    config = RuntimeConfig(args.home, Path(args.judge) if args.judge else None, args.launcher, args.session, args.interval)
+    config = RuntimeConfig(args.home, Path(args.judge) if args.judge else None, args.launcher, args.session, args.interval, not args.observe_only, Path(args.policy) if args.policy else None)
     coordinator = Coordinator(config)
     coordinator.acquire()
     try:
@@ -179,12 +192,8 @@ def cmd_tmux_mind_run(args) -> int:
         except OSError as exc:
             code, stdout, stderr = 127, "", str(exc)
         feed = Feed(home)
-        if stdout:
-            feed.append_runtime("mishe-tauftauf", f"mind stdout top-pain {slug} invocation {args.invocation}\n{stdout}")
-            sys.stdout.write(stdout)
-        if stderr:
-            feed.append_runtime("mishe-tauftauf", f"mind stderr top-pain {slug} invocation {args.invocation}\n{stderr}")
-            sys.stderr.write(stderr)
+        if stdout or stderr:
+            feed.append_runtime("mishe-tauftauf", f"mind output top-pain {slug} invocation {args.invocation} stdout-bytes={len(stdout.encode())} stderr-bytes={len(stderr.encode())}")
         feed.append_runtime("mishe-tauftauf", f"mind exited top-pain {slug} for entry {args.sequence} attempt={args.attempt} code={code}")
         if not any(f"handoff top-pain {slug} invocation {args.invocation}" in entry.body for entry in feed.entries() if entry.source == "mishe-tauftauf"):
             feed.append_runtime("observation/" + slug, f"UNKNOWN — mind invocation {args.invocation} exited without a tied handoff; prior handoff is stale")
@@ -216,6 +225,7 @@ def cmd_doctor(args) -> int:
     try:
         entries = feed.entries()
         print(f"PASS feed: {len(entries)} contiguous entries")
+        print(f"INFO feed bytes: {len(feed.read_bytes())}")
     except FeedError as exc:
         print(f"HOLD feed-corrupt: {exc}")
         return 1
@@ -345,6 +355,7 @@ def parser() -> argparse.ArgumentParser:
     p = sub.add_parser("init"); p.set_defaults(func=cmd_init)
     p = sub.add_parser("append"); p.add_argument("--source", required=True); p.add_argument("text", nargs="?"); p.set_defaults(func=cmd_append)
     p = sub.add_parser("feed"); p.set_defaults(func=cmd_feed)
+    p = sub.add_parser("dispatch-receipt"); p.add_argument("slug"); p.add_argument("entry", type=int); p.add_argument("outcome", choices=("delivered", "refused")); p.set_defaults(func=cmd_dispatch_receipt)
     p = sub.add_parser("doctor"); p.add_argument("--panes", action="store_true"); p.add_argument("--session", default="mishe-tauftauf"); p.add_argument("--pane-wait", type=float, default=11.0); p.add_argument("--live-laya", action="store_true"); p.add_argument("--live-jev", action="store_true"); p.add_argument("--verbose", action="store_true"); p.set_defaults(func=cmd_doctor)
     p = sub.add_parser("check"); p.add_argument("slug"); p.add_argument("program", nargs=argparse.REMAINDER); p.set_defaults(func=cmd_check)
     p = sub.add_parser("predict"); p.add_argument("slug"); p.add_argument("file", nargs="?"); p.add_argument("--replaces", type=int); p.set_defaults(func=cmd_predict)
@@ -354,7 +365,7 @@ def parser() -> argparse.ArgumentParser:
     p = pain.add_parser("render"); p.add_argument("slug"); p.add_argument("--timeout", type=float, default=10.0); p.set_defaults(func=cmd_pain_render)
     p = pain.add_parser("read"); p.add_argument("slug"); p.add_argument("--launcher", choices=("headless", "tmux"), default="headless"); p.add_argument("--session", default="mishe-tauftauf"); p.add_argument("--timeout", type=float, default=10.0); p.set_defaults(func=cmd_pain_read)
     p = pain.add_parser("watch"); p.add_argument("slug"); p.add_argument("--interval", type=float, default=5.0); p.add_argument("--timeout", type=float, default=10.0); p.set_defaults(func=cmd_pain_watch)
-    p = sub.add_parser("run"); mode = p.add_mutually_exclusive_group(required=True); mode.add_argument("--once", action="store_true"); mode.add_argument("--follow", action="store_true"); p.add_argument("--judge"); p.add_argument("--launcher", choices=("headless", "tmux"), default="tmux"); p.add_argument("--session", default="mishe-tauftauf"); p.add_argument("--interval", type=float, default=5.0); p.set_defaults(func=cmd_run)
+    p = sub.add_parser("run"); mode = p.add_mutually_exclusive_group(required=True); mode.add_argument("--once", action="store_true"); mode.add_argument("--follow", action="store_true"); p.add_argument("--judge"); p.add_argument("--launcher", choices=("headless", "tmux"), default="tmux"); p.add_argument("--session", default="mishe-tauftauf"); p.add_argument("--interval", type=float, default=5.0); p.add_argument("--observe-only", action="store_true"); p.add_argument("--policy"); p.set_defaults(func=cmd_run)
     tmux = sub.add_parser("tmux").add_subparsers(dest="tmux_command", required=True)
     p = tmux.add_parser("start"); p.add_argument("--session", default="mishe-tauftauf"); p.add_argument("--interval", type=float, default=5.0); p.set_defaults(func=cmd_tmux_start)
     p = tmux.add_parser("stop"); p.add_argument("--session", default="mishe-tauftauf"); p.set_defaults(func=cmd_tmux_stop)

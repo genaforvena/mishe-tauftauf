@@ -112,7 +112,7 @@ class Feed:
     def entries(self) -> list[FeedEntry]:
         return parse_feed(self.read_bytes())
 
-    def append(self, source: str, body: str, *, reserved: bool = False) -> FeedEntry:
+    def append(self, source: str, body: str, *, reserved: bool = False, once: bool = False) -> FeedEntry:
         if not SOURCE_RE.fullmatch(source):
             raise FeedError("source must match [A-Za-z0-9._/-]+")
         if not reserved and (source in RESERVED_EXACT or source.startswith(RESERVED_PREFIXES)):
@@ -135,6 +135,10 @@ class Feed:
                 handle.seek(0)
                 existing = handle.read()
                 entries = parse_feed(existing)
+                if once:
+                    for entry in entries:
+                        if entry.source == source and entry.body == body:
+                            return entry
                 sequence = len(entries) + 1
                 timestamp = utc_now()
                 encoded = _encode_entry(sequence, timestamp, source, body)
@@ -152,3 +156,7 @@ class Feed:
 
     def append_runtime(self, source: str, body: str) -> FeedEntry:
         return self.append(source, body, reserved=True)
+
+    def append_runtime_once(self, source: str, body: str) -> FeedEntry:
+        """Append one exact textual receipt atomically across cooperating writers."""
+        return self.append(source, body, reserved=True, once=True)

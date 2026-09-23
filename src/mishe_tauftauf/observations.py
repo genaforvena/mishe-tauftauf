@@ -111,6 +111,38 @@ class FilterResult:
     diagnostic: str = ""
 
 
+MAX_PROJECTION_BYTES = 4096
+
+
+def run_projector(home: Path, slug: str, previous: str, current: str, timeout: float = 2.0) -> str:
+    """Return only bounded public text; never use a failed projector's output."""
+    path = home / "projectors" / slug
+    if not executable(path):
+        return f"UNKNOWN — event projector {slug} unavailable"
+    with tempfile.TemporaryDirectory(prefix="mishe-tauftauf-project-") as directory:
+        previous_path = Path(directory) / "previous"
+        current_path = Path(directory) / "current"
+        previous_path.write_text(previous, encoding="utf-8")
+        current_path.write_text(current, encoding="utf-8")
+        try:
+            result = subprocess.run([str(path), str(previous_path), str(current_path)], stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return f"UNKNOWN — event projector {slug} timeout"
+        except OSError:
+            return f"UNKNOWN — event projector {slug} launch-failed"
+    if result.returncode != 0:
+        return f"UNKNOWN — event projector {slug} exit-{result.returncode}"
+    if not 0 < len(result.stdout) <= MAX_PROJECTION_BYTES:
+        return f"UNKNOWN — event projector {slug} invalid-size"
+    try:
+        projection = result.stdout.decode("utf-8")
+    except UnicodeDecodeError:
+        return f"UNKNOWN — event projector {slug} invalid-utf8"
+    if not projection.strip():
+        return f"UNKNOWN — event projector {slug} empty"
+    return projection
+
+
 def run_filter(home: Path, slug: str, previous: str, current: str, timeout: float = 2.0) -> FilterResult:
     path = home / "filters" / slug
     if not path.exists():
@@ -128,9 +160,10 @@ def run_filter(home: Path, slug: str, previous: str, current: str, timeout: floa
             return FilterResult(True, "error", f"UNKNOWN event filter {slug}: timeout after {timeout:g}s")
         except OSError as exc:
             return FilterResult(True, "error", f"UNKNOWN event filter {slug}: launch failed: {exc}")
-    diagnostic = result.stderr.decode("utf-8", "replace").strip()
+    # Filter stderr can contain the raw pane. It is transient and never durable.
+    diagnostic = ""
     if result.returncode == 0:
         return FilterResult(True, "pass", diagnostic)
     if result.returncode == 1:
         return FilterResult(False, "hold", diagnostic)
-    return FilterResult(True, "error", f"UNKNOWN event filter {slug}: exit {result.returncode}" + (f": {diagnostic}" if diagnostic else ""))
+    return FilterResult(True, "error", f"UNKNOWN event filter {slug}: exit {result.returncode}")

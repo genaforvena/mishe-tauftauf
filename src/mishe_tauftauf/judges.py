@@ -27,12 +27,12 @@ class Judgment:
     document: str
 
 
-def document(question: str, slug: str, top_pain: str, evidence: str, prediction: str | None = None) -> str:
+def document(question: str, slug: str, top_pain: str, evidence: str, prediction: str | None = None, *, question_text: str | None = None) -> str:
     if question not in QUESTIONS:
         raise ValueError(f"unknown judgment question: {question}")
     sections = [
         f"QUESTION {question}",
-        "INSTRUCTIONS\n" + QUESTIONS[question],
+        "INSTRUCTIONS\n" + (question_text or QUESTIONS[question]),
         f"TOP PAIN {slug}\n{top_pain}",
         "EVIDENCE\n" + evidence,
     ]
@@ -53,8 +53,8 @@ def classify(question: str, probability: float | None) -> str:
     return "uncertain"
 
 
-def run_external(path: Path, question: str, slug: str, top_pain: str, evidence: str, prediction: str | None = None, timeout: float = 30.0) -> Judgment:
-    request = document(question, slug, top_pain, evidence, prediction)
+def run_external(path: Path, question: str, slug: str, top_pain: str, evidence: str, prediction: str | None = None, timeout: float = 30.0, *, question_text: str | None = None) -> Judgment:
+    request = document(question, slug, top_pain, evidence, prediction, question_text=question_text)
     try:
         result = subprocess.run([str(path)], input=request.encode("utf-8"), capture_output=True, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -82,8 +82,8 @@ def run_external(path: Path, question: str, slug: str, top_pain: str, evidence: 
     return Judgment(question, probability, classify(question, probability), "external judgment", request)
 
 
-def conservative_unknown(question: str, slug: str, top_pain: str, evidence: str, prediction: str | None = None, reason: str = "no System One adapter selected") -> Judgment:
-    request = document(question, slug, top_pain, evidence, prediction)
+def conservative_unknown(question: str, slug: str, top_pain: str, evidence: str, prediction: str | None = None, reason: str = "no System One adapter selected", *, question_text: str | None = None) -> Judgment:
+    request = document(question, slug, top_pain, evidence, prediction, question_text=question_text)
     return Judgment(question, None, classify(question, None), reason, request)
 
 
