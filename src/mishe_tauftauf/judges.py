@@ -88,11 +88,36 @@ def conservative_unknown(question: str, slug: str, top_pain: str, evidence: str,
 
 
 def controls() -> dict[str, tuple[str, str]]:
+    """Paired smoke controls used by startup gating and `doctor --live-*`.
+
+    These exercise the shape of evidence the production loop sends - a pane with a
+    desired state and a System Zero result - rather than a bare sentence. A judge
+    that cannot separate these is unsafe to enable for that question: the controls
+    must fail visibly instead of being weakened to pass.
+    """
     return {
-        "publish": ("A new probe reports UNKNOWN and exit 2.", "The stable reading is unchanged and routine."),
-        "relevance": ("The temperature Top Pain's sensor failed.", "An unrelated music fixture changed."),
-        "valid-attempt": ("Visible red check failed; fix the path; expect exit 0. Check at: 2099-01-01T00:00:00Z", "I think it is done."),
-        "continue-observing": ("Expected intermediate value is present and the pane is fresh.", "The pane froze and evidence contradicts the prediction."),
-        "prediction-met": ("Fresh check output equals the promised value.", "Fresh check still shows the old error."),
-        "desired-state-met": ("Fresh live check establishes the desired reading.", "Only an intermediate change or model claim exists."),
+        "publish": (
+            "DESIRED STATE: probe reads the fixture\nUNRESOLVED: probe has no reading\n\nSYSTEM ZERO\ncheck: probe\nexit: 2\nstdout: UNKNOWN\n\nA new probe reports UNKNOWN and exit 2; the previous frame was healthy.",
+            "DESIRED STATE: probe reads the fixture\nUNRESOLVED: none\n\nSYSTEM ZERO\ncheck: probe\nexit: 0\nstdout: reading=42\n\nThe stable reading is unchanged and routine.",
+        ),
+        "relevance": (
+            "TOP PAIN temperature\n\nSYSTEM ZERO\nThe temperature sensor failed with exit 2 and UNKNOWN output.",
+            "TOP PAIN music\n\nSYSTEM ZERO\nAn unrelated music fixture changed; the temperature sensor is unaffected.",
+        ),
+        "valid-attempt": (
+            "Red evidence: the check reports exit 1 and a wrong device path.\nHypothesis: correcting the path exposes the reading.\nAttempt: correct the probe path and rerun the same check.\nExpected: exit 0 and stdout reading=42.\nDesired state: stdout contains reading=42.\nCheck at: 2099-01-01T00:00:00Z",
+            "I think it is done.\nThere is no observable condition and no check time.",
+        ),
+        "continue-observing": (
+            "DESIRED STATE: stdout contains reading=42\nUNRESOLVED: none\n\nSYSTEM ZERO\nexit: 0\nstdout: reading=42\n\nThe expected intermediate value is present and the pane is fresh; nothing contradicts the pending experiment.",
+            "DESIRED STATE: stdout contains reading=42\nUNRESOLVED: probe path is wrong\n\nSYSTEM ZERO\nexit: 1\nstderr: cat: /wrong: No such file\n\nThe pane froze and evidence contradicts the prediction.",
+        ),
+        "prediction-met": (
+            "DESIRED STATE: stdout contains reading=42\n\nSYSTEM ZERO\nexit: 0\nstdout: reading=42\n\nFresh check output equals the promised value at the predicted time.",
+            "DESIRED STATE: stdout contains reading=42\n\nSYSTEM ZERO\nexit: 1\nstderr: cat: /wrong: No such file\n\nFresh check still shows the old error at the predicted time.",
+        ),
+        "desired-state-met": (
+            "DESIRED STATE: stdout contains reading=42\n\nSYSTEM ZERO\nexit: 0\nstdout: reading=42\n\nFresh live check establishes the desired reading.",
+            "DESIRED STATE: stdout contains reading=42\n\nSYSTEM ZERO\nexit: 0\nstdout: reading=41\n\nOnly an intermediate change or model claim exists; the desired value is not present.",
+        ),
     }

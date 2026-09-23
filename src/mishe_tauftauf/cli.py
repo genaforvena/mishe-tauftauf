@@ -253,28 +253,89 @@ def cmd_doctor(args) -> int:
     except ImportError:
         print("UNAVAILABLE optional laya")
     if args.live_laya:
-        from .laya_judge import judge as laya_judge
-        started = time.monotonic()
-        for question, pair in controls().items():
-            for expected, evidence in (("yes", pair[0]), ("no", pair[1])):
-                request = document(question, "control", "CONTROL TOP PAIN", evidence)
-                probability, reason = laya_judge(request)
-                outcome = classify(question, probability)
+        box: list = []
+        _live_check("convaiinnovations/laya typed-decisions", _laya_call, box, args.verbose)
+        failures += len(box)
+    if args.live_jev:
+        box2: list = []
+        _live_check("typesafe/jev", _jev_call, box2, args.verbose)
+        failures += len(box2)
+    return 1 if failures else 0
+
+
+def _live_check(label: str, call, failures_box: list, verbose: bool) -> bool:
+    """Run the paired smoke controls for one System One adapter.
+
+    A control that does not separate is a visible failure, never a weakened
+    threshold: mishe-tauftauf never reports an unexercised judge as healthy.
+    """
+    started = time.monotonic()
+    for question, pair in controls().items():
+        for expected, evidence in (("yes", pair[0]), ("no", pair[1])):
+            request = document(question, "control", "CONTROL TOP PAIN", evidence)
+            try:
+                probability, reason = call(request)
+            except Exception as exc:
+                probability, reason = None, str(exc)
+            outcome = classify(question, probability)
+            if verbose:
+                preview = evidence if len(evidence) <= 120 else evidence[:117] + "..."
                 print(
                     f"CONTROL {question} expected={expected} "
                     f"probability={probability if probability is not None else 'unknown'} "
-                    f"outcome={outcome} input={evidence}"
+                    f"outcome={outcome} input={preview}"
                 )
-                if outcome != expected:
-                    failures += 1
-        huge_request = document("publish", "control", "CONTROL", "x " * 1_000_000)
-        probability, reason = laya_judge(huge_request)
-        outcome = classify("publish", probability)
+            if outcome != expected:
+                failures_box.append((question, expected, outcome))
+    huge_request = document("publish", "control", "CONTROL", "x " * 1_000_000)
+    try:
+        probability, reason = call(huge_request)
+    except Exception as exc:
+        probability, reason = None, str(exc)
+    outcome = classify("publish", probability)
+    if verbose:
         print(f"OVERSIZED outcome={outcome} reason={reason}")
-        if outcome != "unknown":
-            failures += 1
-        print(f"MODEL convaiinnovations/laya typed-decisions elapsed={time.monotonic()-started:.3f}s")
-    return 1 if failures else 0
+    if outcome != "unknown":
+        failures_box.append(("oversized", "unknown", outcome))
+    if verbose:
+        print(f"MODEL {label} elapsed={time.monotonic()-started:.3f}s")
+    return False
+
+
+def _laya_call(request: str) -> tuple[float | None, str]:
+    from .laya_judge import judge as laya_judge
+
+    return laya_judge(request)
+
+
+def _jev_call(request: str) -> tuple[float | None, str]:
+    """Invoke the optional hosted Jev adapter through its own text protocol."""
+    import subprocess as _subprocess
+    import sys as _sys
+
+    path = Path(__file__).resolve().parents[2] / "examples" / "jev-judge.py"
+    if not path.exists():
+        return None, "examples/jev-judge.py is not shipped with this install"
+    result = _subprocess.run(
+        [_sys.executable or "python3", str(path)],
+        input=request.encode("utf-8"),
+        capture_output=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        return None, f"adapter exit {result.returncode}"
+    output = result.stdout.decode("utf-8", "replace").rstrip("\n")
+    if output.startswith("unknown "):
+        return None, output[len("unknown "):]
+    if not output.startswith("probability "):
+        return None, "adapter returned no result line"
+    try:
+        value = float(output[len("probability "):])
+    except ValueError:
+        return None, "adapter returned a non-numeric probability"
+    if value != value or not 0.0 <= value <= 1.0:
+        return None, f"adapter probability outside [0,1]: {value}"
+    return value, ""
 
 
 def parser() -> argparse.ArgumentParser:
@@ -284,7 +345,7 @@ def parser() -> argparse.ArgumentParser:
     p = sub.add_parser("init"); p.set_defaults(func=cmd_init)
     p = sub.add_parser("append"); p.add_argument("--source", required=True); p.add_argument("text", nargs="?"); p.set_defaults(func=cmd_append)
     p = sub.add_parser("feed"); p.set_defaults(func=cmd_feed)
-    p = sub.add_parser("doctor"); p.add_argument("--panes", action="store_true"); p.add_argument("--session", default="mishe-tauftauf"); p.add_argument("--pane-wait", type=float, default=11.0); p.add_argument("--live-laya", action="store_true"); p.set_defaults(func=cmd_doctor)
+    p = sub.add_parser("doctor"); p.add_argument("--panes", action="store_true"); p.add_argument("--session", default="mishe-tauftauf"); p.add_argument("--pane-wait", type=float, default=11.0); p.add_argument("--live-laya", action="store_true"); p.add_argument("--live-jev", action="store_true"); p.add_argument("--verbose", action="store_true"); p.set_defaults(func=cmd_doctor)
     p = sub.add_parser("check"); p.add_argument("slug"); p.add_argument("program", nargs=argparse.REMAINDER); p.set_defaults(func=cmd_check)
     p = sub.add_parser("predict"); p.add_argument("slug"); p.add_argument("file", nargs="?"); p.add_argument("--replaces", type=int); p.set_defaults(func=cmd_predict)
     p = sub.add_parser("handoff"); p.add_argument("slug"); p.add_argument("file", nargs="?"); p.set_defaults(func=cmd_handoff)

@@ -17,4 +17,6 @@ You may plan before implementation. Plans are ordinary Markdown files below `$MI
 
 Use one writer for contended resources. Keep interventions bounded and reversible where possible. Local authorization and provider safety policy still apply; this core is not a sandbox and System One is not a permission system.
 
+A System One judge is a pluggable adapter selected by `run --judge PATH`, not a source of truth. Two exist: an optional local Laya model, and `examples/jev-judge.py`, which calls the hosted TypeSafe Jev model and is the only adapter that reaches a network. Neither is calibration: their probabilities are model answers, and a judge that cannot separate its paired smoke controls stays disabled rather than weakened. `unknown` from any of them is a real verdict that escalates to you, never quiet agreement. Jev reads its key from `TYPESAFE_API_KEY` or `TYPESAFE_KEY_FILE`; never put a credential in a handoff, plan, or feed entry.
+
 Before normal exit, run `mishe-tauftauf handoff "$MISHE_TAUFTAUF_SLUG"` and provide nonempty text containing observed evidence and artifacts, changes made, unresolved obligations, the exact next action/check, and relevant paths. Never include credentials. If follow-through remains, submit a prediction. Process exit or reset is not work and never resolves an observation.

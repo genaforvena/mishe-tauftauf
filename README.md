@@ -78,6 +78,8 @@ Predictions are ordinary feed prose. A deterministic clock checks them even when
 
 The optional Laya adapter uses `laya==0.3.5` and `convaiinnovations/laya`'s `typed-decisions` subfolder through its native `noul` API. Its probabilities are **not deployment calibration**. The low 0.20 publish/relevance threshold is a loss-avoidance policy, not a quality claim. Production startup controls can disable a failing question only by making it explicit UNKNOWN, which escalates rather than manufacturing certainty.
 
+`examples/jev-judge.py` is a stdlib-only reference adapter for the hosted TypeSafe Jev System One model, selected the same way: `run --judge examples/jev-judge.py`. It is **not a dependency**. It reads `TYPESAFE_API_KEY` from the environment or a file named by `TYPESAFE_KEY_FILE`, and it is the only adapter that reaches a network. The endpoint rejects the default urllib client signature, so the adapter sends a browser `User-Agent`. Its probabilities are a model's answer, not calibration: `doctor --live-jev --verbose` runs the same paired smoke controls, and an unseparated question fails visibly instead of being weakened.
+
 ## Adapter contracts
 
 - `top-pains/<slug>`: executable, no arguments, complete UTF-8 frame on stdout.

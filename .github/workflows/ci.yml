@@ -28,3 +28,14 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y tmux
       - run: python -m pip install -e .
       - run: python -m unittest tests.test_tmux -v
+  adapters:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Offline envelope contract only. The Jev adapter needs TYPESAFE_API_KEY,
+      # so the live network call stays out of CI and is exercised by
+      # `doctor --live-jev --verbose` on a machine that holds the secret.
+      - run: python examples/jev-judge.py --self-test
