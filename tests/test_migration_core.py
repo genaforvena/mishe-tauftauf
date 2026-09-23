@@ -141,6 +141,53 @@ class MigrationCoreTests(unittest.TestCase):
             self.assertNotIn(secret.encode(), feed.read_bytes())
             self.assertIn(b"requires reasoning", feed.read_bytes())
 
+    def test_selected_run_touches_only_one_channel_and_shares_feed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            for slug in ("alpha", "beta"):
+                executable(home / "top-pains" / slug, f"printf '{slug} red\\n'\n")
+                executable(home / "projectors" / slug, f"printf '{slug} red\\n'\n")
+            base = ["--home", str(home), "run", "--once", "--launcher", "headless", "--observe-only"]
+            self.assertEqual(main(base + ["--slug", "alpha"]), 0)
+            feed = Feed(home)
+            first = feed.entries()
+            self.assertTrue(any(e.source == "observation/alpha" for e in first))
+            self.assertFalse(any(e.source == "observation/beta" for e in first))
+            self.assertEqual(main(base + ["--slug", "beta"]), 0)
+            all_entries = feed.entries()
+            self.assertTrue(any(e.source == "observation/beta" for e in all_entries))
+            self.assertFalse(any(e.body == "top-pain alpha absent" for e in all_entries))
+            self.assertEqual([e.sequence for e in all_entries], list(range(1, len(all_entries) + 1)))
+
+    def test_selected_run_rejects_missing_slug_and_shared_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            executable(home / "top-pains" / "alpha", "printf 'alpha red\\n'\n")
+            base = ["--home", str(home), "run", "--once", "--launcher", "headless", "--observe-only"]
+            self.assertEqual(main(base + ["--slug", "missing"]), 2)
+            first = Coordinator(RuntimeConfig(home, launcher="headless", dispatch=False, slug="alpha"))
+            second = Coordinator(RuntimeConfig(home, launcher="headless", dispatch=False, slug="alpha"))
+            first.acquire()
+            try:
+                with self.assertRaises(RuntimeError):
+                    second.acquire()
+            finally:
+                first.close()
+
+    def test_selected_run_scopes_due_predictions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            for slug in ("alpha", "beta"):
+                executable(home / "top-pains" / slug, "printf 'red\\n'\n")
+            past = (datetime.now(timezone.utc) - timedelta(seconds=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            feed = Feed(home)
+            prediction = feed.append_runtime("prediction/beta", f"Expected beta green.\nCheck at: {past}\n")
+            feed.append_runtime("mishe-tauftauf", f"prediction {prediction.sequence}: accepted")
+            Coordinator(RuntimeConfig(home, launcher="headless", dispatch=False, slug="alpha")).due_predictions()
+            self.assertFalse(any("requires reasoning" in e.body for e in feed.entries()))
+            Coordinator(RuntimeConfig(home, launcher="headless", dispatch=False, slug="beta")).due_predictions()
+            self.assertTrue(any(e.source == "observation/beta" and "requires reasoning" in e.body for e in feed.entries()))
+
 
 if __name__ == "__main__":
     unittest.main()

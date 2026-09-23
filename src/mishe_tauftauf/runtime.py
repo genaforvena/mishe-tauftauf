@@ -74,6 +74,7 @@ class RuntimeConfig:
     refresh_controls: bool = False
     external_view_slugs: tuple[str, ...] = ()
     external_delta_view_slugs: tuple[str, ...] = ()
+    slug: str | None = None
 
 
 class Coordinator:
@@ -98,6 +99,7 @@ class Coordinator:
                 raise ValueError("control cache requires an explicit executable judge")
         self.config = config
         self.home = config.home
+        self._selected_slugs()
         self.feed = Feed(self.home)
         self.policy = load_policy(config.policy)
         self.previous: dict[str, str] = {}
@@ -200,6 +202,15 @@ class Coordinator:
                 state.discard(match.group(1))
         return state
 
+    def _selected_slugs(self) -> list[str]:
+        slugs = discover(self.home)
+        if self.config.slug is None:
+            return slugs
+        slug = validate_slug(self.config.slug)
+        if slug not in slugs:
+            raise ValueError(f"top-pain {slug} is missing or not executable")
+        return [slug]
+
     def acquire(self) -> None:
         path = self.home / ".runner.lock"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -207,6 +218,8 @@ class Coordinator:
         try:
             fcntl.flock(self._lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
+            self._lock_handle.close()
+            self._lock_handle = None
             raise RuntimeError(f"another coordinator holds {path}") from exc
 
     def close(self) -> None:
@@ -274,14 +287,15 @@ class Coordinator:
             return None
 
     def observe(self) -> list[FeedEntry]:
-        current_slugs = set(discover(self.home))
+        current_slugs = set(self._selected_slugs())
+        known_slugs = self.known_slugs if self.config.slug is None else self.known_slugs & current_slugs
         emitted: list[FeedEntry] = []
         entries = self.feed.entries()
-        for slug in sorted(current_slugs - self.known_slugs):
+        for slug in sorted(current_slugs - known_slugs):
             emitted.append(self.feed.append_runtime("mishe-tauftauf", f"top-pain {slug} live"))
-        for slug in sorted(self.known_slugs - current_slugs):
+        for slug in sorted(known_slugs - current_slugs):
             emitted.append(self.feed.append_runtime("mishe-tauftauf", f"top-pain {slug} absent"))
-        self.known_slugs = current_slugs
+        self.known_slugs = current_slugs if self.config.slug is None else self.known_slugs | current_slugs
         for slug in sorted(current_slugs):
             pane = self._pane(slug)
             raw = strip_owned_chrome(pane, strip_expectations=True)
@@ -314,6 +328,8 @@ class Coordinator:
         predictions = replay_predictions(self.home, entries)
         assessed = {int(seq) for entry in entries if entry.source == "mishe-tauftauf" for seq, _ in ASSESS_RE.findall(entry.body)}
         for prediction in sorted(predictions.values(), key=lambda item: item.sequence):
+            if self.config.slug is not None and prediction.slug != self.config.slug:
+                continue
             if prediction.sequence in assessed:
                 continue
             pane = self._pane(prediction.slug)
@@ -327,6 +343,8 @@ class Coordinator:
     def due_predictions(self) -> None:
         entries = self.feed.entries()
         for prediction in pending_predictions(self.home, entries):
+            if self.config.slug is not None and prediction.slug != self.config.slug:
+                continue
             if prediction.check_at > now():
                 continue
             pane = self._pane(prediction.slug)
@@ -346,7 +364,7 @@ class Coordinator:
     def route(self) -> None:
         entries = self.feed.entries()
         dispositions = {(int(seq), slug) for entry in entries if entry.source == "mishe-tauftauf" for seq, slug, _ in DISPOSITION_RE.findall(entry.body)}
-        slugs = discover(self.home)
+        slugs = self._selected_slugs()
         for entry in entries:
             if is_bookkeeping(entry):
                 continue
@@ -485,6 +503,8 @@ class Coordinator:
                 exits.setdefault((int(sequence), slug), set()).add(int(attempt))
         for key in sorted(key for key, disposition in dispositions.items() if disposition == "wake"):
             sequence, slug = key
+            if self.config.slug is not None and slug != self.config.slug:
+                continue
             attempted = starts.get(key, set())
             finished = exits.get(key, set())
             if attempted and attempted <= finished:
@@ -519,7 +539,7 @@ class Coordinator:
     def follow(self) -> None:
         while True:
             self.pass_once()
-            pending = pending_predictions(self.home, self.feed.entries())
+            pending = pending_predictions(self.home, self.feed.entries(), self.config.slug)
             delay = self.config.interval
             if pending:
                 delay = min(delay, max(0.0, (pending[0].check_at - now()).total_seconds()))
