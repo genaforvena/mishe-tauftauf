@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from mishe_tauftauf.cli import initialize, main
@@ -96,6 +97,19 @@ class MigrationCoreTests(unittest.TestCase):
             policy.write_text('{"low_threshold":0.95,"high_threshold":0.8}', encoding="utf-8")
             with self.assertRaises(ValueError):
                 Coordinator(RuntimeConfig(home, launcher="headless", policy=policy))
+
+    def test_due_prediction_receipts_do_not_store_fresh_raw_pane(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            secret = "SECRET-DUE-PANE-117"
+            executable(home / "top-pains" / "sensor", f"printf '{secret}'\n")
+            past = (datetime.now(timezone.utc) - timedelta(seconds=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            feed = Feed(home)
+            prediction = feed.append_runtime("prediction/sensor", f"Expected sensor green.\nCheck at: {past}\n")
+            feed.append_runtime("mishe-tauftauf", f"prediction {prediction.sequence}: accepted")
+            Coordinator(RuntimeConfig(home, launcher="headless", dispatch=False)).due_predictions()
+            self.assertNotIn(secret.encode(), feed.read_bytes())
+            self.assertIn(b"requires reasoning", feed.read_bytes())
 
 
 if __name__ == "__main__":
