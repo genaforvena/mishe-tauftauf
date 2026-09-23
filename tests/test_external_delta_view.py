@@ -1,9 +1,11 @@
 import tempfile
 import unittest
+import json
 from pathlib import Path
 from unittest import mock
 
 from mishe_tauftauf.cli import initialize
+from mishe_tauftauf.external_view import projected_delta_publish_controls
 from mishe_tauftauf.runtime import Coordinator, RuntimeConfig
 
 
@@ -13,6 +15,13 @@ def executable(path, body):
 
 
 class ExternalDeltaViewTests(unittest.TestCase):
+    def test_projected_negative_control_is_nonidentical_routine_change(self):
+        _, negative = projected_delta_publish_controls()
+        pair = json.loads(negative)
+        self.assertNotEqual(pair["previous"], pair["current"])
+        self.assertEqual(pair["previous"].replace("held=1", "held=2"), pair["current"])
+        self.assertIn("actionable=0 delete=0 unknowns=0", pair["current"])
+
     def coordinator(self, home, capture):
         judge = home / "judge"
         executable(judge, "import sys\nfrom pathlib import Path\nPath(" + repr(str(capture)) + ").open('a').write(sys.stdin.read() + '\\n---\\n')\nprint('probability 0.9')\n")
