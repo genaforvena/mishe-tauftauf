@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import fcntl
 import importlib.util
+import math
 import os
 import re
 import subprocess
@@ -11,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .feed import Feed, FeedEntry
+from .control_cache import identity as control_identity, read as read_control_cache, write as write_control_cache
 from .judges import Judgment, conservative_unknown, controls, document, run_external, run_external_batch
 from .observations import compose_frame, discover, run_filter, run_projector, strip_owned_chrome
 from .policy import load_policy
@@ -67,12 +69,22 @@ class RuntimeConfig:
     dispatch: bool = True
     policy: Path | None = None
     batch_judge: Path | None = None
+    control_cache_ttl: float | None = None
+    refresh_controls: bool = False
 
 
 class Coordinator:
     def __init__(self, config: RuntimeConfig):
         if config.judge is not None and config.batch_judge is not None:
             raise ValueError("select either a one-line judge or a batch judge")
+        if config.refresh_controls and config.control_cache_ttl is None:
+            raise ValueError("--refresh-controls requires --control-cache-ttl")
+        if config.control_cache_ttl is not None:
+            ttl = config.control_cache_ttl
+            if isinstance(ttl, bool) or not isinstance(ttl, (int, float)) or not math.isfinite(ttl) or not 0 < ttl <= 86400:
+                raise ValueError("control cache TTL must be in (0, 86400] seconds")
+            if config.judge is None and config.batch_judge is None:
+                raise ValueError("control cache requires an explicit executable judge")
         self.config = config
         self.home = config.home
         self.feed = Feed(self.home)
@@ -81,7 +93,29 @@ class Coordinator:
         self.filter_identity: dict[str, tuple[int, int] | None] = {}
         self.known_slugs = self._replay_known_slugs()
         self._lock_handle = None
-        self.control_failures = self._run_controls()
+        if config.control_cache_ttl is None:
+            self.control_failures = self._run_controls()
+        else:
+            adapter = config.judge or config.batch_judge
+            cache_path = self.home / "control-cache.json"
+            try:
+                fingerprint = control_identity(adapter, "batch" if config.batch_judge else "single", self.policy)
+            except OSError:
+                fingerprint = None
+            if fingerprint is None:
+                self.control_failures = {name: "startup controls UNKNOWN: judge executable unavailable" for name in controls()}
+            elif config.refresh_controls:
+                self.control_failures = self._run_controls()
+                try:
+                    unchanged = control_identity(adapter, "batch" if config.batch_judge else "single", self.policy) == fingerprint
+                except OSError:
+                    unchanged = False
+                if unchanged:
+                    write_control_cache(cache_path, fingerprint, self.control_failures)
+                else:
+                    self.control_failures = {name: "startup controls UNKNOWN: judge executable changed during refresh" for name in controls()}
+            else:
+                self.control_failures = read_control_cache(cache_path, fingerprint, config.control_cache_ttl)
     def _raw_judge(self, question: str, slug: str, pane: str, evidence: str, prediction: str | None = None) -> Judgment:
         if self.config.batch_judge is not None:
             return run_external_batch(self.config.batch_judge, (question,), slug, pane, evidence, prediction, timeout=self.policy.judge_timeout, question_texts={question: self.policy.question_text(question)})[question]
