@@ -21,6 +21,12 @@ from .predictions import pending_predictions, replay_predictions
 
 JUDGED_RE = re.compile(r"^judged ([a-z-]+) for top-pain ([a-z0-9-]+) on entry (\d+):", re.MULTILINE)
 DISPOSITION_RE = re.compile(r"^entry (\d+) for top-pain ([a-z0-9-]+): (wake|observe|irrelevant|addressed)$", re.MULTILINE)
+AUTOMATIC_WAKE_RE = re.compile(
+    r"automatic channel=([a-z][a-z0-9-]{0,63}) event=[0-9]{20}-[a-f0-9]{32} "
+    r"source=[a-z][a-z0-9-]{0,63} source-seq=[1-9][0-9]* "
+    r"observed-at=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,6})?Z "
+    r"prompt-sha256=[a-f0-9]{64} status=(?:delivered|refused|unknown)\Z"
+)
 ASSESS_RE = re.compile(r"^prediction (\d+): (accepted|needs-reasoning)$", re.MULTILINE)
 START_RE = re.compile(r"^mind starting top-pain ([a-z0-9-]+) for entry (\d+) attempt=(\d+)$", re.MULTILINE)
 EXIT_RE = re.compile(r"^mind exited top-pain ([a-z0-9-]+) for entry (\d+) attempt=(\d+) code=(-?\d+)$", re.MULTILINE)
@@ -28,7 +34,7 @@ HANDOFF_RE = re.compile(r"^handoff top-pain ([a-z0-9-]+) invocation ([^\s]+)$", 
 BOOKKEEPING_PREFIXES = (
     "judged ", "entry ", "mind starting ", "mind exited ", "mind stdout ", "mind stderr ",
     "mind blocked ", "mind output ", "top-pain ", "prediction ", "desired state for prediction ", "handoff top-pain ",
-    "wake requested ", "wake delivered ", "wake refused ",
+    "wake requested ", "wake delivered ", "wake refused ", "UNKNOWN automatic-wake ",
 )
 
 
@@ -375,6 +381,13 @@ class Coordinator:
             if entry.source.startswith("observation/") and entry.source != "observation/observability":
                 target = entry.source.removeprefix("observation/")
                 targets = [target] if target in slugs else []
+            elif entry.source == "automatic-wake":
+                match = AUTOMATIC_WAKE_RE.fullmatch(entry.body)
+                if match is None or match.group(1) not in slugs:
+                    self.feed.append_runtime_once(
+                        "mishe-tauftauf", f"UNKNOWN automatic-wake entry {entry.sequence}: target unavailable")
+                    continue
+                targets = [match.group(1)]
             for slug in targets:
                 if (entry.sequence, slug) in dispositions:
                     continue

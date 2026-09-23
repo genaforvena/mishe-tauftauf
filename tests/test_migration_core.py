@@ -212,6 +212,38 @@ class MigrationCoreTests(unittest.TestCase):
                 self.assertEqual(sum(r.endswith(f"for entry {event.sequence}") for r in requests), 17)
             self.assertEqual(len(requests), 51)
 
+    def test_automatic_wakes_target_only_their_explicit_channel(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            slugs = [f"sensor-{n}" for n in range(17)]
+            for slug in slugs:
+                executable(home / "top-pains" / slug, "printf 'red\\n'\n")
+            feed = Feed(home)
+            automatic = []
+            for n, slug in enumerate(slugs, 1):
+                body = (f"automatic channel={slug} event={n:020d}-{'a' * 32} "
+                        f"source=consume source-seq={n} observed-at=2026-09-23T00:00:00Z "
+                        f"prompt-sha256={'b' * 64} status=delivered")
+                automatic.append(feed.append_runtime("automatic-wake", body))
+            malformed = feed.append_runtime("automatic-wake", "automatic channel=sensor-0 private fixture")
+            shared = feed.append("human", "broadcast to every channel")
+            coordinator = Coordinator(RuntimeConfig(home, launcher="headless", dispatch=False))
+            coordinator._pane = lambda slug: "red"
+            coordinator._judge = lambda question, slug, pane, evidence, prediction=None: Judgment(
+                question, 0.9 if question == "relevance" else 0.1,
+                "yes" if question == "relevance" else "no", "fixture", "fixture")
+            coordinator.route()
+            entries = feed.entries()
+            requests = [e.body for e in entries if e.body.startswith("wake requested ")]
+            for event, slug in zip(automatic, slugs):
+                self.assertEqual([r for r in requests if r.endswith(f"for entry {event.sequence}")],
+                                 [f"wake requested top-pain {slug} for entry {event.sequence}"])
+            self.assertFalse(any(r.endswith(f"for entry {malformed.sequence}") for r in requests))
+            self.assertEqual(sum(r.endswith(f"for entry {shared.sequence}") for r in requests), 17)
+            self.assertEqual(len(requests), 34)
+            self.assertTrue(any(e.body == f"UNKNOWN automatic-wake entry {malformed.sequence}: target unavailable"
+                                for e in entries))
+
 
 if __name__ == "__main__":
     unittest.main()
