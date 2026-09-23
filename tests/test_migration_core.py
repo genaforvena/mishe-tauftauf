@@ -84,6 +84,36 @@ class MigrationCoreTests(unittest.TestCase):
             self.assertEqual(main(["--home", str(home), "dispatch-receipt", "sensor", "1", "delivered"]), 0)
             self.assertEqual(sum(e.body == "wake delivered top-pain sensor for entry 1" for e in feed.entries()), 1)
 
+    def test_dispatch_receipt_rejects_conflicting_terminal_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            feed = Feed(home)
+            feed.append_runtime("mishe-tauftauf", "wake requested top-pain sensor for entry 1")
+            self.assertEqual(main(["--home", str(home), "dispatch-receipt", "sensor", "1", "refused"]), 0)
+            self.assertEqual(main(["--home", str(home), "dispatch-receipt", "sensor", "1", "delivered"]), 2)
+            self.assertEqual(main(["--home", str(home), "dispatch-receipt", "sensor", "1", "refused"]), 0)
+            self.assertEqual(len([e for e in feed.entries() if e.body.startswith("wake refused")]), 1)
+
+    def test_refused_attempt_can_retry_with_new_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            feed = Feed(home)
+            feed.append_runtime("mishe-tauftauf", "wake requested top-pain sensor for entry 1")
+            base = ["--home", str(home), "dispatch-receipt", "sensor", "1"]
+            self.assertEqual(main(base + ["refused", "--generation", "3", "--request-id", "attempt-1"]), 0)
+            self.assertEqual(main(base + ["delivered", "--generation", "3", "--request-id", "attempt-2"]), 0)
+            self.assertEqual(main(base + ["delivered", "--generation", "3", "--request-id", "attempt-1"]), 2)
+            self.assertEqual(len([e for e in feed.entries() if e.body.startswith("wake delivered")]), 1)
+
+    def test_malformed_receipt_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            feed = Feed(home)
+            feed.append_runtime("mishe-tauftauf", "wake requested top-pain sensor for entry 1")
+            feed.append_runtime("mishe-tauftauf", "wake delivered top-pain sensor for entry 1 extra")
+            self.assertEqual(main(["--home", str(home), "dispatch-receipt", "sensor", "1", "delivered"]), 2)
+            self.assertEqual(len([e for e in feed.entries() if e.body == "wake delivered top-pain sensor for entry 1"]), 0)
+
     def test_policy_validation_and_versioned_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory); initialize(home)

@@ -53,10 +53,7 @@ def cmd_dispatch_receipt(args) -> int:
     if args.entry < 1:
         raise ValueError("entry must be positive")
     feed = Feed(args.home)
-    request = f"wake requested top-pain {slug} for entry {args.entry}"
-    if not any(item.source == "mishe-tauftauf" and item.body == request for item in feed.entries()):
-        raise ValueError("dispatch receipt requires an existing wake request")
-    entry = feed.append_runtime_once("mishe-tauftauf", f"wake {args.outcome} top-pain {slug} for entry {args.entry}")
+    entry = feed.record_dispatch_receipt(slug, args.entry, args.outcome, request_id=args.request_id, generation=args.generation)
     print(entry.sequence)
     return 0
 
@@ -355,7 +352,7 @@ def parser() -> argparse.ArgumentParser:
     p = sub.add_parser("init"); p.set_defaults(func=cmd_init)
     p = sub.add_parser("append"); p.add_argument("--source", required=True); p.add_argument("text", nargs="?"); p.set_defaults(func=cmd_append)
     p = sub.add_parser("feed"); p.set_defaults(func=cmd_feed)
-    p = sub.add_parser("dispatch-receipt"); p.add_argument("slug"); p.add_argument("entry", type=int); p.add_argument("outcome", choices=("delivered", "refused")); p.set_defaults(func=cmd_dispatch_receipt)
+    p = sub.add_parser("dispatch-receipt"); p.add_argument("slug"); p.add_argument("entry", type=int); p.add_argument("outcome", choices=("delivered", "refused")); p.add_argument("--request-id"); p.add_argument("--generation", type=int); p.set_defaults(func=cmd_dispatch_receipt)
     p = sub.add_parser("doctor"); p.add_argument("--panes", action="store_true"); p.add_argument("--session", default="mishe-tauftauf"); p.add_argument("--pane-wait", type=float, default=11.0); p.add_argument("--live-laya", action="store_true"); p.add_argument("--live-jev", action="store_true"); p.add_argument("--verbose", action="store_true"); p.set_defaults(func=cmd_doctor)
     p = sub.add_parser("check"); p.add_argument("slug"); p.add_argument("program", nargs=argparse.REMAINDER); p.set_defaults(func=cmd_check)
     p = sub.add_parser("predict"); p.add_argument("slug"); p.add_argument("file", nargs="?"); p.add_argument("--replaces", type=int); p.set_defaults(func=cmd_predict)

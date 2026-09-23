@@ -3,9 +3,10 @@ from __future__ import annotations
 import multiprocessing
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
-from mishe_tauftauf.feed import Feed, FeedError
+from mishe_tauftauf.feed import Feed, FeedError, parse_feed
 
 
 def append_worker(home: str, number: int) -> None:
@@ -51,6 +52,92 @@ class FeedTests(unittest.TestCase):
                     feed.append(source, "text")
             feed.append_runtime("observation/x", "text")
             self.assertEqual(feed.entries()[0].source, "observation/x")
+
+    def test_torn_tail_fails_closed_without_repair(self):
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            feed.append("human", "intact")
+            with feed.path.open("ab") as handle:
+                handle.write(b"v1 00000000000000000002 2026-09-23T00:00:00Z human ::\n    | torn")
+            before = feed.read_bytes()
+            with self.assertRaises(FeedError):
+                feed.append("human", "later")
+            self.assertEqual(feed.read_bytes(), before)
+
+    def test_restart_stale_index_and_bounded_seek(self):
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            for number in range(350):
+                feed.append("human", f"event {number}")
+            self.assertEqual([e.sequence for e in Feed(directory).entries(start=300, limit=3)], [300, 301, 302])
+            index = Path(directory) / "feed.index.json"
+            old = index.read_bytes()
+            feed.append("human", "new tail")
+            index.write_bytes(old)
+            self.assertEqual(Feed(directory).append("human", "after stale index").sequence, 352)
+            self.assertEqual([e.sequence for e in Feed(directory).entries(start=350)], [350, 351, 352])
+
+    def test_corrupt_index_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            feed.append("human", "intact")
+            index = Path(directory) / "feed.index.json"
+            index.write_text('{"version":99}', encoding="utf-8")
+            with self.assertRaises(FeedError):
+                feed.append("human", "later")
+            self.assertEqual(len(parse_feed(feed.read_bytes())), 1)
+
+    def test_append_parses_only_tail_with_current_index(self):
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            for number in range(400):
+                feed.append("human", f"{number} " + "x" * 1000)
+            parsed_sizes = []
+            real_parse = parse_feed
+
+            def measured(data, **kwargs):
+                parsed_sizes.append(len(data))
+                return real_parse(data, **kwargs)
+
+            with patch("mishe_tauftauf.feed.parse_feed", side_effect=measured):
+                feed.append("human", "last")
+            self.assertTrue(parsed_sizes)
+            self.assertLess(max(parsed_sizes), 2000)
+
+    def test_versioned_frames_and_legacy_replay(self):
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            first = feed.append("human", "first")
+            self.assertTrue(feed.read_bytes().startswith(b"v1 "))
+            old = feed.read_bytes().replace(b"v1 ", b"", 1)
+            feed.path.write_bytes(old)
+            self.assertEqual(feed.append("human", "second").sequence, 2)
+            self.assertEqual([e.body for e in feed.entries()], ["first", "second"])
+
+    def test_crash_after_feed_fsync_before_index_replays_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            feed.append("human", "first")
+            with patch.object(feed, "_save_index", side_effect=OSError("injected index write failure")):
+                with self.assertRaises(OSError):
+                    feed.append("human", "durable second")
+            restarted = Feed(directory)
+            self.assertEqual(restarted.append("human", "third").sequence, 3)
+            self.assertEqual([e.body for e in restarted.entries()], ["first", "durable second", "third"])
+
+    def test_tail_sequence_rebuilds_stale_checkpoint_and_rejects_corruption(self):
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            self.assertEqual(feed.tail_sequence(), 0)
+            feed.append("human", "first")
+            stale = feed.index_path.read_bytes()
+            feed.append("human", "second")
+            feed.index_path.write_bytes(stale)
+            self.assertEqual(Feed(directory).tail_sequence(), 2)
+            with feed.path.open("ab") as handle:
+                handle.write(b"v1 00000000000000000003 2026-09-23T00:00:00Z human ::\n")
+            with self.assertRaises(FeedError):
+                feed.tail_sequence()
 
 
 if __name__ == "__main__":
