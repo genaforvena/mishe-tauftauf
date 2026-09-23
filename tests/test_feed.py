@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import multiprocessing
+import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -11,6 +12,10 @@ from mishe_tauftauf.feed import Feed, FeedError, parse_feed
 
 def append_worker(home: str, number: int) -> None:
     Feed(home).append(f"worker/{number}", f"line {number}\nsecond\n" if number % 2 else f"line {number}\nsecond")
+
+
+def once_worker(home: str) -> None:
+    Feed(home).append_runtime_once("mishe-tauftauf", "wake requested top-pain sensor for entry 1")
 
 
 class FeedTests(unittest.TestCase):
@@ -138,6 +143,78 @@ class FeedTests(unittest.TestCase):
                 handle.write(b"v1 00000000000000000003 2026-09-23T00:00:00Z human ::\n")
             with self.assertRaises(FeedError):
                 feed.tail_sequence()
+
+    def test_once_replay_uses_bounded_identity_lookup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            for number in range(400):
+                feed.append("human", f"event {number} " + "x" * 1000)
+            first = feed.append_runtime_once("mishe-tauftauf", "wake requested top-pain sensor for entry 1")
+            parsed_sizes = []
+            real_parse = parse_feed
+
+            def measured(data, **kwargs):
+                parsed_sizes.append(len(data))
+                return real_parse(data, **kwargs)
+
+            with patch("mishe_tauftauf.feed.parse_feed", side_effect=measured):
+                again = Feed(directory).append_runtime_once("mishe-tauftauf", first.body)
+            self.assertEqual(again.sequence, first.sequence)
+            self.assertTrue(parsed_sizes)
+            self.assertLess(max(parsed_sizes), 150_000)
+
+    def test_identity_index_rebuilds_after_crash_and_fails_closed_if_corrupt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            first = feed.append_runtime_once("mishe-tauftauf", "wake requested top-pain sensor for entry 1")
+            identity = Path(directory) / "feed.identities.sqlite3"
+            self.assertTrue(identity.exists())
+            identity.unlink()
+            self.assertEqual(Feed(directory).append_runtime_once("mishe-tauftauf", first.body).sequence, first.sequence)
+            identity.write_bytes(b"not sqlite")
+            with self.assertRaises(FeedError):
+                feed.append_runtime_once("mishe-tauftauf", first.body)
+            self.assertEqual(len(parse_feed(feed.read_bytes())), 1)
+
+    def test_concurrent_once_identity_has_one_frame(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workers = [multiprocessing.Process(target=once_worker, args=(directory,)) for _ in range(8)]
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join(10)
+                self.assertEqual(worker.exitcode, 0)
+            self.assertEqual(Feed(directory).tail_sequence(), 1)
+
+    def test_stale_identity_index_rebuilds_from_feed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            request = "wake requested top-pain sensor for entry 1"
+            feed.append_runtime_once("mishe-tauftauf", request)
+            old_index = Path(directory) / "old.sqlite3"
+            shutil.copyfile(feed.identity_path, old_index)
+            feed.append("human", "later")
+            shutil.copyfile(old_index, feed.identity_path)
+            self.assertEqual(Feed(directory).append_runtime_once("mishe-tauftauf", request).sequence, 1)
+            self.assertEqual(feed.tail_sequence(), 2)
+
+    def test_receipt_lookup_does_not_scan_feed_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            feed.append_runtime("mishe-tauftauf", "wake requested top-pain sensor for entry 1")
+            for number in range(400):
+                feed.append("human", f"event {number} " + "x" * 1000)
+            parsed_sizes = []
+            real_parse = parse_feed
+
+            def measured(data, **kwargs):
+                parsed_sizes.append(len(data))
+                return real_parse(data, **kwargs)
+
+            with patch("mishe_tauftauf.feed.parse_feed", side_effect=measured):
+                feed.record_dispatch_receipt("sensor", 1, "delivered", request_id="attempt", generation=1)
+            self.assertTrue(parsed_sizes)
+            self.assertLess(max(parsed_sizes), 150_000)
 
 
 if __name__ == "__main__":

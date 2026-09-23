@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -109,6 +110,90 @@ class Feed:
         self.home = Path(home)
         self.path = self.home / "feed"
         self.index_path = self.home / "feed.index.json"
+        self.identity_path = self.home / "feed.identities.sqlite3"
+
+    @staticmethod
+    def _digest(source: str, body: str) -> bytes:
+        return hashlib.sha256(source.encode("utf-8") + b"\0" + body.encode("utf-8")).digest()
+
+    @staticmethod
+    def _malformed_receipt(source: str, body: str) -> bool:
+        return (source == "mishe-tauftauf" and body.startswith(("wake delivered ", "wake refused "))
+                and RECEIPT_RE.fullmatch(body) is None)
+
+    def _rebuild_identities(self, handle, index: dict) -> None:
+        handle.seek(0)
+        entries = parse_feed(handle.read())
+        if len(entries) != index["sequence"]:
+            raise FeedError("identity rebuild disagrees with feed checkpoint")
+        fd, temporary = tempfile.mkstemp(prefix=".feed.identities.", suffix=".sqlite3", dir=self.home)
+        os.close(fd)
+        try:
+            connection = sqlite3.connect(temporary)
+            try:
+                with connection:
+                    connection.execute("PRAGMA synchronous=FULL")
+                    connection.execute("CREATE TABLE identities (digest BLOB PRIMARY KEY, sequence INTEGER NOT NULL)")
+                    connection.execute("CREATE TABLE meta (sequence INTEGER NOT NULL, metadata TEXT NOT NULL, malformed INTEGER NOT NULL)")
+                    for entry in entries:
+                        connection.execute("INSERT OR IGNORE INTO identities VALUES (?, ?)",
+                                           (self._digest(entry.source, entry.body), entry.sequence))
+                    malformed = sum(self._malformed_receipt(e.source, e.body) for e in entries)
+                    connection.execute("INSERT INTO meta VALUES (?, ?, ?)",
+                                       (index["sequence"], json.dumps(index["metadata"]), malformed))
+            finally:
+                connection.close()
+            os.chmod(temporary, 0o600)
+            os.replace(temporary, self.identity_path)
+            directory = os.open(self.home, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+    def _identity_connection(self, handle, index: dict) -> sqlite3.Connection:
+        connection = None
+        try:
+            if not self.identity_path.exists():
+                self._rebuild_identities(handle, index)
+            connection = sqlite3.connect(self.identity_path)
+            row = connection.execute("SELECT sequence, metadata, malformed FROM meta").fetchone()
+            if row is None or not isinstance(row[2], int) or row[2] < 0:
+                raise sqlite3.DatabaseError("identity metadata missing")
+            if row[0] != index["sequence"] or row[1] != json.dumps(index["metadata"]):
+                connection.close()
+                self._rebuild_identities(handle, index)
+                connection = sqlite3.connect(self.identity_path)
+            return connection
+        except sqlite3.DatabaseError as exc:
+            if connection is not None:
+                connection.close()
+            raise FeedError(f"corrupt feed identity index: {exc}") from exc
+
+    @staticmethod
+    def _indexed_entry(handle, index: dict, sequence: int) -> FeedEntry:
+        if not isinstance(sequence, int) or not 1 <= sequence <= index["sequence"]:
+            raise FeedError("identity index sequence outside canonical feed")
+        first_seq, first_offset = max((seq, offset) for seq, offset in index["checkpoints"] if seq <= sequence)
+        end_offset = next((offset for seq, offset in index["checkpoints"] if seq > sequence), index["metadata"][1])
+        handle.seek(first_offset)
+        entries = parse_feed(handle.read(end_offset - first_offset), start_sequence=first_seq)
+        found = next((entry for entry in entries if entry.sequence == sequence), None)
+        if found is None:
+            raise FeedError("identity index points outside canonical feed")
+        return found
+
+    def _lookup_identity(self, connection, handle, index: dict, source: str, body: str) -> FeedEntry | None:
+        row = connection.execute("SELECT sequence FROM identities WHERE digest=?", (self._digest(source, body),)).fetchone()
+        if row is None:
+            return None
+        entry = self._indexed_entry(handle, index, row[0])
+        if entry.source != source or entry.body != body:
+            raise FeedError("identity index disagrees with canonical feed")
+        return entry
 
     def read_bytes(self) -> bytes:
         try:
@@ -243,38 +328,49 @@ class Feed:
             with os.fdopen(fd, "r+b", buffering=0) as handle:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
                 index = self._index(handle)
-                if once or request is not None:
-                    handle.seek(0)
-                    existing_entries = parse_feed(handle.read())
-                    if request is not None and any(
-                        e.source == source and e.body.startswith(("wake delivered ", "wake refused "))
-                        and not RECEIPT_RE.fullmatch(e.body) for e in existing_entries
-                    ):
-                        raise FeedError("malformed dispatch receipt in feed")
-                    if request is not None and not any(e.source == source and e.body == request for e in existing_entries):
-                        raise FeedError("dispatch receipt requires an existing wake request")
-                    if conflicting is not None and any(e.source == source and e.body == conflicting for e in existing_entries):
-                        raise FeedError("conflicting dispatch receipt for request")
-                    for entry in existing_entries:
-                        if entry.source == source and entry.body == body:
-                            return entry
-                if index["sequence"]:
-                    handle.seek(index["tail_offset"])
-                    parse_feed(handle.read(), start_sequence=index["sequence"])
-                sequence = index["sequence"] + 1
-                timestamp = utc_now()
-                encoded = _encode_entry(sequence, timestamp, source, body)
-                handle.seek(0, os.SEEK_END)
-                end_offset = handle.tell()
-                handle.write(encoded)
-                handle.flush()
-                os.fsync(handle.fileno())
-                if (sequence - 1) % INDEX_STRIDE == 0:
-                    index["checkpoints"].append([sequence, end_offset])
-                index["tail_offset"] = end_offset
-                index["sequence"] = sequence
-                self._save_index(handle, index)
-                return FeedEntry(sequence, timestamp, source, body)
+                connection = self._identity_connection(handle, index)
+                try:
+                    if request is not None:
+                        malformed = connection.execute("SELECT malformed FROM meta").fetchone()[0]
+                        if malformed:
+                            raise FeedError("malformed dispatch receipt in feed")
+                        if self._lookup_identity(connection, handle, index, source, request) is None:
+                            raise FeedError("dispatch receipt requires an existing wake request")
+                        if conflicting is not None and self._lookup_identity(connection, handle, index, source, conflicting):
+                            raise FeedError("conflicting dispatch receipt for request")
+                    if once:
+                        existing = self._lookup_identity(connection, handle, index, source, body)
+                        if existing is not None:
+                            return existing
+                    if index["sequence"]:
+                        handle.seek(index["tail_offset"])
+                        parse_feed(handle.read(), start_sequence=index["sequence"])
+                    sequence = index["sequence"] + 1
+                    timestamp = utc_now()
+                    encoded = _encode_entry(sequence, timestamp, source, body)
+                    handle.seek(0, os.SEEK_END)
+                    end_offset = handle.tell()
+                    handle.write(encoded)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                    if (sequence - 1) % INDEX_STRIDE == 0:
+                        index["checkpoints"].append([sequence, end_offset])
+                    index["tail_offset"] = end_offset
+                    index["sequence"] = sequence
+                    index["metadata"] = self._metadata(handle)
+                    try:
+                        with connection:
+                            connection.execute("INSERT OR IGNORE INTO identities VALUES (?, ?)",
+                                               (self._digest(source, body), sequence))
+                            connection.execute("UPDATE meta SET sequence=?, metadata=?, malformed=malformed+?",
+                                               (sequence, json.dumps(index["metadata"]),
+                                                int(self._malformed_receipt(source, body))))
+                    except sqlite3.DatabaseError as exc:
+                        raise FeedError(f"feed persisted but identity index update failed: {exc}") from exc
+                    self._save_index(handle, index)
+                    return FeedEntry(sequence, timestamp, source, body)
+                finally:
+                    connection.close()
         except Exception:
             try:
                 os.close(fd)
