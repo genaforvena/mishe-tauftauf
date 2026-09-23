@@ -13,7 +13,7 @@ from pathlib import Path
 
 from .feed import Feed, FeedEntry
 from .control_cache import identity as control_identity, read as read_control_cache, write as write_control_cache
-from .external_view import projected_publish_controls, safe_publish_view
+from .external_view import DELTA_PUBLISH_QUESTION, DELTA_VERSION, projected_delta_publish_controls, projected_publish_controls, safe_publish_delta_view, safe_publish_view
 from .judges import Judgment, conservative_unknown, controls, document, run_external, run_external_batch
 from .observations import compose_frame, discover, run_filter, run_projector, strip_owned_chrome, validate_slug
 from .policy import load_policy
@@ -73,6 +73,7 @@ class RuntimeConfig:
     control_cache_ttl: float | None = None
     refresh_controls: bool = False
     external_view_slugs: tuple[str, ...] = ()
+    external_delta_view_slugs: tuple[str, ...] = ()
 
 
 class Coordinator:
@@ -83,6 +84,10 @@ class Coordinator:
             raise ValueError("external view slugs must be unique")
         for slug in config.external_view_slugs:
             validate_slug(slug)
+        for slug in config.external_delta_view_slugs:
+            validate_slug(slug)
+        if len(set(config.external_delta_view_slugs)) != len(config.external_delta_view_slugs) or set(config.external_view_slugs) & set(config.external_delta_view_slugs):
+            raise ValueError("external view modes must be unique per slug")
         if config.refresh_controls and config.control_cache_ttl is None:
             raise ValueError("--refresh-controls requires --control-cache-ttl")
         if config.control_cache_ttl is not None:
@@ -105,38 +110,43 @@ class Coordinator:
             adapter = config.judge or config.batch_judge
             cache_path = self.home / "control-cache.json"
             try:
-                fingerprint = control_identity(adapter, "batch" if config.batch_judge else "single", self.policy, projected=bool(config.external_view_slugs))
+                fingerprint = control_identity(adapter, "batch" if config.batch_judge else "single", self.policy, projected=bool(config.external_view_slugs), paired=bool(config.external_delta_view_slugs))
             except OSError:
                 fingerprint = None
             if fingerprint is None:
-                names = set(controls()) | ({"projected-publish"} if config.external_view_slugs else set())
+                names = self._control_names()
                 self.control_failures = {name: "startup controls UNKNOWN: judge executable unavailable" for name in names}
             elif config.refresh_controls:
                 self.control_failures = self._run_controls()
                 try:
-                    unchanged = control_identity(adapter, "batch" if config.batch_judge else "single", self.policy, projected=bool(config.external_view_slugs)) == fingerprint
+                    unchanged = control_identity(adapter, "batch" if config.batch_judge else "single", self.policy, projected=bool(config.external_view_slugs), paired=bool(config.external_delta_view_slugs)) == fingerprint
                 except OSError:
                     unchanged = False
                 if unchanged:
                     try:
-                        write_control_cache(cache_path, fingerprint, self.control_failures, projected=bool(config.external_view_slugs))
+                        write_control_cache(cache_path, fingerprint, self.control_failures, projected=bool(config.external_view_slugs), paired=bool(config.external_delta_view_slugs))
                     except OSError:
-                        names = set(controls()) | ({"projected-publish"} if config.external_view_slugs else set())
+                        names = self._control_names()
                         self.control_failures = {name: "startup controls UNKNOWN: cache write failed" for name in names}
                 else:
-                    names = set(controls()) | ({"projected-publish"} if config.external_view_slugs else set())
+                    names = self._control_names()
                     self.control_failures = {name: "startup controls UNKNOWN: judge executable changed during refresh" for name in names}
             else:
-                self.control_failures = read_control_cache(cache_path, fingerprint, config.control_cache_ttl, projected=bool(config.external_view_slugs))
-    def _raw_judge(self, question: str, slug: str, pane: str, evidence: str, prediction: str | None = None) -> Judgment:
+                self.control_failures = read_control_cache(cache_path, fingerprint, config.control_cache_ttl, projected=bool(config.external_view_slugs), paired=bool(config.external_delta_view_slugs))
+
+    def _control_names(self) -> set[str]:
+        return set(controls()) | ({"projected-publish"} if self.config.external_view_slugs else set()) | ({"projected-delta-publish"} if self.config.external_delta_view_slugs else set())
+
+    def _raw_judge(self, question: str, slug: str, pane: str, evidence: str, prediction: str | None = None, *, question_text: str | None = None) -> Judgment:
+        question_text = question_text or self.policy.question_text(question)
         if self.config.batch_judge is not None:
-            return run_external_batch(self.config.batch_judge, (question,), slug, pane, evidence, prediction, timeout=self.policy.judge_timeout, question_texts={question: self.policy.question_text(question)})[question]
+            return run_external_batch(self.config.batch_judge, (question,), slug, pane, evidence, prediction, timeout=self.policy.judge_timeout, question_texts={question: question_text})[question]
         if self.config.judge is not None:
-            return run_external(self.config.judge, question, slug, pane, evidence, prediction, timeout=self.policy.judge_timeout, question_text=self.policy.question_text(question))
+            return run_external(self.config.judge, question, slug, pane, evidence, prediction, timeout=self.policy.judge_timeout, question_text=question_text)
         if importlib.util.find_spec("laya") is None:
-            return conservative_unknown(question, slug, pane, evidence, prediction, question_text=self.policy.question_text(question))
+            return conservative_unknown(question, slug, pane, evidence, prediction, question_text=question_text)
         from .laya_judge import judge as laya_judge
-        request = document(question, slug, pane, evidence, prediction, question_text=self.policy.question_text(question))
+        request = document(question, slug, pane, evidence, prediction, question_text=question_text)
         probability, reason = laya_judge(request)
         return Judgment(
             question,
@@ -163,6 +173,15 @@ class Coordinator:
             if self.policy.classify("publish", yes.probability) != "yes" or self.policy.classify("publish", no.probability) != "no":
                 failures["projected-publish"] = (
                     f"projected controls failed: positive={yes.outcome}/{yes.probability}, "
+                    f"negative={no.outcome}/{no.probability}"
+                )
+        if self.config.external_delta_view_slugs:
+            positive, negative = projected_delta_publish_controls()
+            yes = self._raw_judge("publish", "control", positive, positive, question_text=DELTA_PUBLISH_QUESTION)
+            no = self._raw_judge("publish", "control", negative, negative, question_text=DELTA_PUBLISH_QUESTION)
+            if self.policy.classify("publish", yes.probability) != "yes" or self.policy.classify("publish", no.probability) != "no":
+                failures["projected-delta-publish"] = (
+                    f"projected delta controls failed: positive={yes.outcome}/{yes.probability}, "
                     f"negative={no.outcome}/{no.probability}"
                 )
         return failures
@@ -196,28 +215,30 @@ class Coordinator:
             self._lock_handle.close()
             self._lock_handle = None
 
-    def _judge(self, question: str, slug: str, pane: str, evidence: str, prediction: str | None = None) -> Judgment:
-        if slug in self.config.external_view_slugs:
+    def _judge(self, question: str, slug: str, pane: str, evidence: str, prediction: str | None = None, *, previous_projection: str | None = None) -> Judgment:
+        paired = slug in self.config.external_delta_view_slugs
+        question_text = DELTA_PUBLISH_QUESTION if paired and question == "publish" else self.policy.question_text(question)
+        if slug in self.config.external_view_slugs or paired:
             if question != "publish":
-                return conservative_unknown(question, slug, "[withheld]", "[withheld]", reason="external view unavailable for this question", question_text=self.policy.question_text(question))
-            safe = safe_publish_view(evidence)
+                return conservative_unknown(question, slug, "[withheld]", "[withheld]", reason="external view unavailable for this question", question_text=question_text)
+            safe = safe_publish_delta_view(previous_projection, evidence) if paired else safe_publish_view(evidence)
             if safe is None:
-                return conservative_unknown(question, slug, "[withheld]", "[withheld]", reason="external view invalid", question_text=self.policy.question_text(question))
+                return conservative_unknown(question, slug, "[withheld]", "[withheld]", reason="external view invalid or previous view absent", question_text=question_text)
             pane, evidence, prediction = safe, safe, None
-            projected_failure = self.control_failures.get("projected-publish")
+            projected_failure = self.control_failures.get("projected-delta-publish" if paired else "projected-publish")
             if projected_failure:
-                return conservative_unknown(question, slug, pane, evidence, reason=projected_failure, question_text=self.policy.question_text(question))
+                return conservative_unknown(question, slug, pane, evidence, reason=projected_failure, question_text=question_text)
         failure = self.control_failures.get(question)
         if failure:
-            return conservative_unknown(question, slug, pane, evidence, prediction, failure, question_text=self.policy.question_text(question))
+            return conservative_unknown(question, slug, pane, evidence, prediction, failure, question_text=question_text)
         try:
-            judgment = self._raw_judge(question, slug, pane, evidence, prediction)
+            judgment = self._raw_judge(question, slug, pane, evidence, prediction, question_text=question_text)
         except Exception:
-            return conservative_unknown(question, slug, pane, evidence, prediction, "judge failed", question_text=self.policy.question_text(question))
+            return conservative_unknown(question, slug, pane, evidence, prediction, "judge failed", question_text=question_text)
         return Judgment(judgment.question, judgment.probability, self.policy.classify(question, judgment.probability), judgment.reason, judgment.document)
 
     def _judge_batch(self, questions: tuple[str, ...], slug: str, pane: str, evidence: str, prediction: str | None = None) -> dict[str, Judgment]:
-        if slug in self.config.external_view_slugs:
+        if slug in self.config.external_view_slugs or slug in self.config.external_delta_view_slugs:
             return {q: self._judge(q, slug, pane, evidence, prediction) for q in questions}
         if self.config.batch_judge is None:
             return {q: self._judge(q, slug, pane, evidence, prediction) for q in questions}
@@ -233,7 +254,10 @@ class Coordinator:
         }
 
     def _receipt(self, judgment: Judgment, slug: str, sequence: int) -> FeedEntry:
-        return judgment_receipt(self.feed, judgment, slug, sequence, policy_version=self.policy.version, question_version=self.policy.question_version(judgment.question))
+        version = (f"{DELTA_VERSION}.{self.policy.question_version(judgment.question)}"
+                   if judgment.question == "publish" and slug in self.config.external_delta_view_slugs
+                   else self.policy.question_version(judgment.question))
+        return judgment_receipt(self.feed, judgment, slug, sequence, policy_version=self.policy.version, question_version=version)
 
     def _pane(self, slug: str) -> str:
         if self.config.launcher == "tmux":
@@ -277,10 +301,12 @@ class Coordinator:
             latest = next((entry.body for entry in reversed(self.feed.entries()) if entry.source == f"observation/{slug}"), None)
             if evidence == latest:
                 continue
-            judgment = self._judge("publish", slug, pane, evidence)
+            judgment = self._judge("publish", slug, pane, evidence, previous_projection=latest)
             self._receipt(judgment, slug, 0)
             if judgment.outcome != "no":
-                emitted.append(self.feed.append_runtime(f"observation/{slug}", evidence))
+                safe = safe_publish_view(evidence) if slug in (*self.config.external_view_slugs, *self.config.external_delta_view_slugs) else evidence
+                if safe is not None:
+                    emitted.append(self.feed.append_runtime(f"observation/{slug}", evidence))
         return emitted
 
     def assess_predictions(self) -> None:

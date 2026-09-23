@@ -11,14 +11,14 @@ import time
 from pathlib import Path
 
 from .judges import controls
-from .external_view import VERSION as EXTERNAL_VIEW_VERSION, projected_publish_controls
+from .external_view import DELTA_PUBLISH_QUESTION, DELTA_VERSION, VERSION as EXTERNAL_VIEW_VERSION, projected_delta_publish_controls, projected_publish_controls
 from .policy import JudgmentPolicy
 
 VERSION = 1
 MAX_BYTES = 64 * 1024
 
 
-def identity(adapter: Path, mode: str, policy: JudgmentPolicy, *, projected: bool = False) -> str:
+def identity(adapter: Path, mode: str, policy: JudgmentPolicy, *, projected: bool = False, paired: bool = False) -> str:
     """Bind a verdict to executable bytes, control cases, and all policy inputs."""
     if not adapter.is_file() or not os.access(adapter, os.X_OK):
         raise OSError("judge is not executable")
@@ -36,13 +36,17 @@ def identity(adapter: Path, mode: str, policy: JudgmentPolicy, *, projected: boo
     if projected:
         descriptor["projected_publish_controls"] = projected_publish_controls()
         descriptor["external_view_version"] = EXTERNAL_VIEW_VERSION
+    if paired:
+        descriptor["projected_delta_publish_controls"] = projected_delta_publish_controls()
+        descriptor["external_delta_version"] = DELTA_VERSION
+        descriptor["external_delta_question"] = DELTA_PUBLISH_QUESTION
     encoded = json.dumps(descriptor, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
-def read(path: Path, expected_identity: str, ttl: float, *, projected: bool = False) -> dict[str, str]:
+def read(path: Path, expected_identity: str, ttl: float, *, projected: bool = False, paired: bool = False) -> dict[str, str]:
     """Return explicit failures for every question unless the whole file validates."""
-    names = set(controls()) | ({"projected-publish"} if projected else set())
+    names = set(controls()) | ({"projected-publish"} if projected else set()) | ({"projected-delta-publish"} if paired else set())
     unknown = {name: "startup controls UNKNOWN: cache absent, stale, or invalid; refresh explicitly" for name in names}
     try:
         if path.stat().st_size > MAX_BYTES:
@@ -69,8 +73,8 @@ def read(path: Path, expected_identity: str, ttl: float, *, projected: bool = Fa
     return {name: "production controls failed at explicit refresh" for name, passed in record["passed"].items() if not passed}
 
 
-def write(path: Path, expected_identity: str, failures: dict[str, str], *, projected: bool = False) -> None:
-    names = set(controls()) | ({"projected-publish"} if projected else set())
+def write(path: Path, expected_identity: str, failures: dict[str, str], *, projected: bool = False, paired: bool = False) -> None:
+    names = set(controls()) | ({"projected-publish"} if projected else set()) | ({"projected-delta-publish"} if paired else set())
     record = {
         "version": VERSION,
         "identity": expected_identity,

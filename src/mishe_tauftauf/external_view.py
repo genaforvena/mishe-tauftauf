@@ -3,8 +3,16 @@
 from __future__ import annotations
 
 import re
+import json
 
 VERSION = 1
+DELTA_VERSION = "projected-pair-v1"
+DELTA_PUBLISH_QUESTION = (
+    "Compare the named `previous` and `current` validated projected views. "
+    "Does the current view introduce a new error, unknown, actionable change, task event, "
+    "or recovery that warrants entering the shared feed? Identical views are routine. "
+    "Judge the transition, not whether the current state alone is RED."
+)
 
 _STATE = re.compile(r"STATE: (GREEN|RED|INTERMEDIATE)\n")
 _SUMMARY = re.compile(
@@ -54,3 +62,20 @@ def safe_publish_view(projection: str) -> str | None:
 
 def projected_publish_controls() -> tuple[str, str]:
     return "STATE: RED\n", "STATE: GREEN\n"
+
+
+def safe_publish_delta_view(previous: str | None, current: str) -> str | None:
+    """Return only two separately validated, named safe views."""
+    if previous is None:
+        return None
+    before, after = safe_publish_view(previous), safe_publish_view(current)
+    if before is None or after is None:
+        return None
+    return json.dumps({"version": DELTA_VERSION, "previous": before, "current": after}, ensure_ascii=True)
+
+
+def projected_delta_publish_controls() -> tuple[str, str]:
+    positive = safe_publish_delta_view("STATE: GREEN\n", "STATE: RED\n")
+    negative = safe_publish_delta_view("STATE: GREEN\n", "STATE: GREEN\n")
+    assert positive is not None and negative is not None
+    return positive, negative
