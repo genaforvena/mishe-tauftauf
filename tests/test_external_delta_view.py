@@ -41,8 +41,10 @@ class ExternalDeltaViewTests(unittest.TestCase):
             capture = home / "requests"
             runner = self.coordinator(home, capture)
             judged = runner._judge("publish", "sensor", "RAW", "STATE: RED\n", previous_projection="STATE: RED\n")
-            self.assertEqual(judged.outcome, "yes")
-            self.assertIn('"previous": "STATE: RED\\n"', capture.read_text())
+            self.assertEqual(judged.outcome, "no")
+            self.assertEqual(judged.probability, 0.0)
+            self.assertIn('"previous": "STATE: RED\\n"', judged.document)
+            self.assertEqual(capture.read_text(), "")
 
     def test_missing_or_malformed_side_is_unknown_without_provider_or_secret(self):
         with tempfile.TemporaryDirectory() as directory:

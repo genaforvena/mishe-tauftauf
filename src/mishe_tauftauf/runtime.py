@@ -237,6 +237,9 @@ class Coordinator:
             safe = safe_publish_delta_view(previous_projection, evidence) if paired else safe_publish_view(evidence)
             if safe is None:
                 return conservative_unknown(question, slug, "[withheld]", "[withheld]", reason="external view invalid or previous view absent", question_text=question_text)
+            if paired and safe_publish_view(previous_projection) == safe_publish_view(evidence):
+                request = document(question, slug, safe, safe, question_text=question_text)
+                return Judgment(question, 0.0, "no", "identical validated projected views", request)
             pane, evidence, prediction = safe, safe, None
             projected_failure = self.control_failures.get("projected-delta-publish" if paired else "projected-publish")
             if projected_failure:
