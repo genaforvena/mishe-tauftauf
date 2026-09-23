@@ -94,6 +94,8 @@ The optional Laya adapter uses `laya==0.3.5` and `convaiinnovations/laya`'s `typ
 
 `examples/jev-judge.py` is a stdlib-only reference adapter for the hosted TypeSafe Jev System One model, selected the same way: `run --judge examples/jev-judge.py`. It is **not a dependency**. It reads `TYPESAFE_API_KEY` from the environment or a file named by `TYPESAFE_KEY_FILE`, and it is the only adapter that reaches a network. The endpoint rejects the default urllib client signature, so the adapter sends a browser `User-Agent`. Its probabilities are a model's answer, not calibration: `doctor --live-jev --verbose` runs the same paired smoke controls, and an unseparated question fails visibly instead of being weakened.
 
+For hosted calibration, set `TYPESAFE_DAILY_CALL_LIMIT=20` and optionally `TYPESAFE_BUDGET_FILE=/absolute/private/path/jev-budget.json` before running the adapter or `doctor --live-jev`. When the file path is omitted, the adapter uses `${XDG_STATE_HOME:-~/.local/state}/mishe-tauftauf/jev-budget.json`. The adapter reserves each call in a private UTC-day counter before HTTP, including calls that later fail; concurrent processes share a lock. An exhausted, corrupt, insecure, or unwritable budget returns UNKNOWN without HTTP. The limit must be an integer from 0 to 1000; 0 disables network calls. The budget stores only date and count, never the key or judgment document. Leave the limit unset only when unmetered calls are intentional.
+
 ## Adapter contracts
 
 - `top-pains/<slug>`: executable, no arguments, complete UTF-8 frame on stdout.

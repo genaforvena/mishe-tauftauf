@@ -36,11 +36,16 @@ other judge and never takes one as proof of a real observation.
 from __future__ import annotations
 
 import json
+import fcntl
 import os
 import pathlib
+import re
+import stat
 import sys
+import tempfile
 import urllib.error
 import urllib.request
+from datetime import date, datetime, timezone
 
 DEFAULT_BASE_URL = "https://api.typesafe.ai"
 DEFAULT_MODEL = "jev-latest"
@@ -51,6 +56,99 @@ USER_AGENT = (
 # Sized above the largest judgment document the core builds rather than fitted to a model.
 MAX_STATE_CHARS = 100_000
 TIMEOUT_SECONDS = 60
+MAX_DAILY_CALL_LIMIT = 1000
+
+
+def daily_budget_configuration() -> tuple[int, pathlib.Path] | None:
+    """An unset limit preserves the adapter's original behavior."""
+    raw = os.environ.get("TYPESAFE_DAILY_CALL_LIMIT")
+    if raw is None:
+        return None
+    if not re.fullmatch(r"[0-9]{1,4}", raw) or int(raw) > MAX_DAILY_CALL_LIMIT:
+        raise ValueError("TypeSafe budget limit must be an integer in [0, 1000]")
+    configured = os.environ.get("TYPESAFE_BUDGET_FILE")
+    if configured:
+        path = pathlib.Path(configured)
+    else:
+        state_home = pathlib.Path(os.environ.get("XDG_STATE_HOME") or pathlib.Path.home() / ".local" / "state")
+        path = state_home / "mishe-tauftauf" / "jev-budget.json"
+    if not path.is_absolute():
+        raise ValueError("TypeSafe budget path must be absolute")
+    return int(raw), path
+
+
+def _private_regular(fd: int) -> bool:
+    info = os.fstat(fd)
+    return stat.S_ISREG(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o600 and info.st_uid == os.getuid()
+
+
+def _existing_state(path: pathlib.Path, current_day: str) -> int:
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return 0
+    try:
+        if not _private_regular(fd):
+            raise ValueError("budget state is not a private regular file")
+        raw = os.read(fd, 257)
+        if len(raw) > 256:
+            raise ValueError("budget state is oversized")
+    finally:
+        os.close(fd)
+    try:
+        state = json.loads(raw)
+    except (UnicodeError, ValueError) as exc:
+        raise ValueError("budget state is corrupt") from exc
+    if not isinstance(state, dict) or set(state) != {"date", "count"}:
+        raise ValueError("budget state has invalid fields")
+    stored_day, count = state["date"], state["count"]
+    if not isinstance(stored_day, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", stored_day) or type(count) is not int or count < 0:
+        raise ValueError("budget state has invalid values")
+    try:
+        date.fromisoformat(stored_day)
+    except ValueError as exc:
+        raise ValueError("budget state has invalid date") from exc
+    if stored_day > current_day:
+        raise ValueError("budget state is dated in the future")
+    return count if stored_day == current_day else 0
+
+
+def reserve_daily_call(limit: int, path: pathlib.Path, current_day: str) -> tuple[bool, str]:
+    """Reserve before HTTP; failed HTTP requests still spend one call."""
+    try:
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        lock_path = path.with_name(path.name + ".lock")
+        lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        try:
+            if not _private_regular(lock_fd):
+                raise ValueError("budget lock is not a private regular file")
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            count = _existing_state(path, current_day)
+            if count >= limit:
+                return False, "TypeSafe daily budget exhausted"
+            temporary = None
+            try:
+                with tempfile.NamedTemporaryFile("w", dir=path.parent, prefix=".jev-budget-", encoding="utf-8", delete=False) as stream:
+                    temporary = pathlib.Path(stream.name)
+                    os.fchmod(stream.fileno(), 0o600)
+                    json.dump({"date": current_day, "count": count + 1}, stream, separators=(",", ":"))
+                    stream.write("\n")
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary, path)
+                directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+            return True, ""
+        finally:
+            os.close(lock_fd)
+    except (OSError, ValueError) as exc:
+        return False, f"TypeSafe daily budget unavailable: {exc}"
 
 
 def _key_file_env(path: pathlib.Path) -> str | None:
@@ -162,6 +260,15 @@ def evaluate(document: str) -> tuple[float | None, str]:
         },
         ensure_ascii=False,
     ).encode("utf-8")
+    try:
+        budget = daily_budget_configuration()
+    except ValueError as exc:
+        return None, str(exc)
+    if budget is not None:
+        limit, state_path = budget
+        allowed, reason = reserve_daily_call(limit, state_path, datetime.now(timezone.utc).date().isoformat())
+        if not allowed:
+            return None, reason
     request = urllib.request.Request(
         f"{url}/v1/systemone",
         data=body,
