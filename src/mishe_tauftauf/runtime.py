@@ -254,7 +254,7 @@ class Coordinator:
         pane_command = f"mishe-tauftauf --home {self.home} pain read {slug}"
         handoff = self.home / "handoffs" / f"{slug}.md"
         handoff_text = handoff.read_text(encoding="utf-8") if handoff.exists() else "(none)"
-        history = "".join(self.feed.path.read_text(encoding="utf-8") if self.feed.path.exists() else "")
+        history = self._routed_history()
         instructions = (Path(__file__).resolve().parents[2] / "instructions" / "mind.txt").read_text(encoding="utf-8")
         return (
             f"TRIGGERING EVENT {stimulus.sequence}\n{stimulus.body}\n\n"
@@ -263,6 +263,25 @@ class Coordinator:
             f"Invocation: {invocation}\nHandoff path: {handoff}\nCURRENT HANDOFF\n{handoff_text}\n\n"
             f"ROUTED HISTORY\n{history}\n\nINSTRUCTIONS\n{instructions}\n"
         )
+
+    def _routed_history(self) -> str:
+        """Recent tail of the feed, most recent last.
+
+        The feed is append-only and stays complete on disk; this is a bounded
+        view for Mind context only. It must stay under the judge document limit
+        (100k chars, hard refusal above it, no truncation) or every judgment
+        degrades to UNKNOWN as soon as the feed grows.
+        """
+        limit = 32 * 1024
+        try:
+            raw = self.feed.path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return ""
+        if len(raw) <= limit:
+            return raw
+        tail = raw[-limit:]
+        newline = tail.find("\n")
+        return tail[newline + 1:] if newline != -1 else tail
 
     def invoke(self, slug: str, stimulus: FeedEntry) -> None:
         executable = self.home / "minds" / slug
