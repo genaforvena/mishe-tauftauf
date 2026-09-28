@@ -19,6 +19,14 @@ class TmuxError(RuntimeError):
     pass
 
 
+def _python_command(*args: str) -> list[str]:
+    """Carry this installation into panes owned by an older tmux server."""
+    package_root = str(Path(__file__).resolve().parents[1])
+    inherited = os.environ.get("PYTHONPATH", "")
+    search_path = os.pathsep.join(part for part in (package_root, inherited) if part)
+    return ["env", f"PYTHONPATH={search_path}", sys.executable, "-m", "mishe_tauftauf", *args]
+
+
 def _tmux(*args: str, check: bool = True) -> subprocess.CompletedProcess[bytes]:
     if shutil.which("tmux") is None:
         raise TmuxError("tmux executable is unavailable")
@@ -39,7 +47,7 @@ def start(home: Path, session: str = "mishe-tauftauf", interval: float = 5.0) ->
         _tmux("set-option", "-t", session, OWNED_OPTION, str(home.resolve()))
     elif not owns_session(home, session):
         raise TmuxError(f"session {session!r} exists but is not owned by {home}")
-    command = [sys.executable, "-m", "mishe_tauftauf", "--home", str(home), "pain", "watch"]
+    command = _python_command("--home", str(home), "pain", "watch")
     slugs = discover(home)
     if "observability" not in slugs:
         _install_observability(home, session)
@@ -183,10 +191,7 @@ def repair_top(home: Path, session: str, slug: str) -> tuple[bool, str]:
     if previous is not None and current - previous < 60.0:
         return False, f"HOLD pane-frozen recurrence within {current - previous:.1f}s for {slug}"
     _LAST_REPAIR[key] = current
-    command = [
-        sys.executable, "-m", "mishe_tauftauf", "--home", str(home),
-        "pain", "watch", slug, "--interval", "5",
-    ]
+    command = _python_command("--home", str(home), "pain", "watch", slug, "--interval", "5")
     _tmux("respawn-pane", "-k", "-t", target, *command)
     return True, f"pane {slug} respawned once"
 
@@ -197,8 +202,6 @@ def launch_mind(home: Path, session: str, slug: str, sequence: int, attempt: int
     context_path = home / "minds" / f".{invocation}.context"
     context_path.write_text(context, encoding="utf-8")
     target = f"{session}:{slug}.1"
-    command = [
-        sys.executable, "-m", "mishe_tauftauf", "--home", str(home), "tmux-mind-run", slug,
-        str(sequence), str(attempt), invocation, str(context_path), "--session", session,
-    ]
+    command = _python_command("--home", str(home), "tmux-mind-run", slug,
+                              str(sequence), str(attempt), invocation, str(context_path), "--session", session)
     _tmux("respawn-pane", "-k", "-t", target, *command)
