@@ -63,6 +63,46 @@ class MigrationCoreTests(unittest.TestCase):
             self.assertFalse((home / "launched").exists())
             self.assertEqual(sum("wake requested top-pain sensor for entry 1" in e.body for e in feed.entries()), 1)
 
+    def test_unfinished_mind_rechecks_live_effect_before_any_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            executable(home / "top-pains" / "sensor", "printf 'STATE: GREEN\\n'\n")
+            executable(home / "minds" / "sensor", f"touch '{home / 'duplicate'}'\n")
+            feed = Feed(home)
+            stimulus = feed.append_runtime("observation/sensor", "STATE: RED")
+            feed.append_runtime("mishe-tauftauf", f"entry {stimulus.sequence} for top-pain sensor: wake")
+            feed.append_runtime("mishe-tauftauf", f"mind starting top-pain sensor for entry {stimulus.sequence} attempt=1")
+            coordinator = Coordinator(RuntimeConfig(home, launcher="headless"))
+            coordinator._judge = lambda question, slug, pane, evidence, *args: Judgment(
+                question, 0.99 if "STATE: GREEN" in pane else None,
+                "yes" if "STATE: GREEN" in pane else "unknown", "fixture", "fixture")
+            coordinator.retry_unfinished_wakes()
+            self.assertFalse((home / "duplicate").exists())
+            self.assertTrue(any(f"entry {stimulus.sequence} for top-pain sensor: addressed" == e.body
+                                for e in feed.entries()))
+            another = Coordinator(RuntimeConfig(home, launcher="headless"))
+            another.retry_unfinished_wakes()
+            self.assertFalse((home / "duplicate").exists())
+
+    def test_unfinished_mind_with_unknown_effect_holds_without_duplicate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            executable(home / "top-pains" / "sensor", "printf 'STATE: UNKNOWN\\n'\n")
+            executable(home / "minds" / "sensor", f"touch '{home / 'duplicate'}'\n")
+            feed = Feed(home)
+            stimulus = feed.append_runtime("observation/sensor", "STATE: RED")
+            feed.append_runtime("mishe-tauftauf", f"entry {stimulus.sequence} for top-pain sensor: wake")
+            feed.append_runtime("mishe-tauftauf", f"mind starting top-pain sensor for entry {stimulus.sequence} attempt=1")
+            for _ in range(2):
+                coordinator = Coordinator(RuntimeConfig(home, launcher="headless"))
+                coordinator._judge = lambda question, slug, pane, evidence, *args: Judgment(
+                    question, None, "unknown", "fixture", "fixture")
+                coordinator.retry_unfinished_wakes()
+            self.assertFalse((home / "duplicate").exists())
+            held = [e for e in feed.entries() if e.source == "observation/sensor" and
+                    "unfinished Mind" in e.body]
+            self.assertEqual(len(held), 1)
+
     def test_context_selects_complete_entries_under_bound(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory); initialize(home)
