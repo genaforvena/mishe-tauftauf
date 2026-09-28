@@ -76,6 +76,11 @@ def safe_publish_delta_view(previous: str | None, current: str) -> str | None:
 
 def projected_delta_publish_controls() -> tuple[str, str]:
     positive = safe_publish_delta_view("STATE: GREEN\n", "STATE: RED\n")
-    negative = safe_publish_delta_view("STATE: GREEN\n", "STATE: GREEN\n")
+    # A held-only count change has no new actionable work, error, task, or source head.
+    # Unlike an identical pair, this exercises the model's negative decision.
+    routine = ("STATE: GREEN\nCLEANER: candidates=0 held={held} actionable=0 delete=0 "
+               "unknowns=0 head=000000000000 task=none task-epoch=0 "
+               "task-event-count=0 task-events=NONE\n")
+    negative = safe_publish_delta_view(routine.format(held=1), routine.format(held=2))
     assert positive is not None and negative is not None
     return positive, negative

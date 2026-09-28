@@ -21,6 +21,12 @@ from .predictions import pending_predictions, replay_predictions
 
 JUDGED_RE = re.compile(r"^judged ([a-z-]+) for top-pain ([a-z0-9-]+) on entry (\d+):", re.MULTILINE)
 DISPOSITION_RE = re.compile(r"^entry (\d+) for top-pain ([a-z0-9-]+): (wake|observe|irrelevant|addressed)$", re.MULTILINE)
+AUTOMATIC_WAKE_RE = re.compile(
+    r"automatic channel=([a-z][a-z0-9-]{0,63}) event=[0-9]{20}-[a-f0-9]{32} "
+    r"source=[a-z][a-z0-9-]{0,63} source-seq=[1-9][0-9]* "
+    r"observed-at=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,6})?Z "
+    r"prompt-sha256=[a-f0-9]{64} status=(?:delivered|refused|unknown)\Z"
+)
 ASSESS_RE = re.compile(r"^prediction (\d+): (accepted|needs-reasoning)$", re.MULTILINE)
 START_RE = re.compile(r"^mind starting top-pain ([a-z0-9-]+) for entry (\d+) attempt=(\d+)$", re.MULTILINE)
 EXIT_RE = re.compile(r"^mind exited top-pain ([a-z0-9-]+) for entry (\d+) attempt=(\d+) code=(-?\d+)$", re.MULTILINE)
@@ -28,7 +34,7 @@ HANDOFF_RE = re.compile(r"^handoff top-pain ([a-z0-9-]+) invocation ([^\s]+)$", 
 BOOKKEEPING_PREFIXES = (
     "judged ", "entry ", "mind starting ", "mind exited ", "mind stdout ", "mind stderr ",
     "mind blocked ", "mind output ", "top-pain ", "prediction ", "desired state for prediction ", "handoff top-pain ",
-    "wake requested ", "wake delivered ", "wake refused ",
+    "wake requested ", "wake delivered ", "wake refused ", "UNKNOWN automatic-wake ",
 )
 
 
@@ -74,6 +80,7 @@ class RuntimeConfig:
     refresh_controls: bool = False
     external_view_slugs: tuple[str, ...] = ()
     external_delta_view_slugs: tuple[str, ...] = ()
+    slug: str | None = None
 
 
 class Coordinator:
@@ -98,6 +105,7 @@ class Coordinator:
                 raise ValueError("control cache requires an explicit executable judge")
         self.config = config
         self.home = config.home
+        self._selected_slugs()
         self.feed = Feed(self.home)
         self.policy = load_policy(config.policy)
         self.previous: dict[str, str] = {}
@@ -200,6 +208,15 @@ class Coordinator:
                 state.discard(match.group(1))
         return state
 
+    def _selected_slugs(self) -> list[str]:
+        slugs = discover(self.home)
+        if self.config.slug is None:
+            return slugs
+        slug = validate_slug(self.config.slug)
+        if slug not in slugs:
+            raise ValueError(f"top-pain {slug} is missing or not executable")
+        return [slug]
+
     def acquire(self) -> None:
         path = self.home / ".runner.lock"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -207,6 +224,8 @@ class Coordinator:
         try:
             fcntl.flock(self._lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
+            self._lock_handle.close()
+            self._lock_handle = None
             raise RuntimeError(f"another coordinator holds {path}") from exc
 
     def close(self) -> None:
@@ -224,6 +243,9 @@ class Coordinator:
             safe = safe_publish_delta_view(previous_projection, evidence) if paired else safe_publish_view(evidence)
             if safe is None:
                 return conservative_unknown(question, slug, "[withheld]", "[withheld]", reason="external view invalid or previous view absent", question_text=question_text)
+            if paired and safe_publish_view(previous_projection) == safe_publish_view(evidence):
+                request = document(question, slug, safe, safe, question_text=question_text)
+                return Judgment(question, 0.0, "no", "identical validated projected views", request)
             pane, evidence, prediction = safe, safe, None
             projected_failure = self.control_failures.get("projected-delta-publish" if paired else "projected-publish")
             if projected_failure:
@@ -274,14 +296,15 @@ class Coordinator:
             return None
 
     def observe(self) -> list[FeedEntry]:
-        current_slugs = set(discover(self.home))
+        current_slugs = set(self._selected_slugs())
+        known_slugs = self.known_slugs if self.config.slug is None else self.known_slugs & current_slugs
         emitted: list[FeedEntry] = []
         entries = self.feed.entries()
-        for slug in sorted(current_slugs - self.known_slugs):
+        for slug in sorted(current_slugs - known_slugs):
             emitted.append(self.feed.append_runtime("mishe-tauftauf", f"top-pain {slug} live"))
-        for slug in sorted(self.known_slugs - current_slugs):
+        for slug in sorted(known_slugs - current_slugs):
             emitted.append(self.feed.append_runtime("mishe-tauftauf", f"top-pain {slug} absent"))
-        self.known_slugs = current_slugs
+        self.known_slugs = current_slugs if self.config.slug is None else self.known_slugs | current_slugs
         for slug in sorted(current_slugs):
             pane = self._pane(slug)
             raw = strip_owned_chrome(pane, strip_expectations=True)
@@ -314,6 +337,8 @@ class Coordinator:
         predictions = replay_predictions(self.home, entries)
         assessed = {int(seq) for entry in entries if entry.source == "mishe-tauftauf" for seq, _ in ASSESS_RE.findall(entry.body)}
         for prediction in sorted(predictions.values(), key=lambda item: item.sequence):
+            if self.config.slug is not None and prediction.slug != self.config.slug:
+                continue
             if prediction.sequence in assessed:
                 continue
             pane = self._pane(prediction.slug)
@@ -327,6 +352,8 @@ class Coordinator:
     def due_predictions(self) -> None:
         entries = self.feed.entries()
         for prediction in pending_predictions(self.home, entries):
+            if self.config.slug is not None and prediction.slug != self.config.slug:
+                continue
             if prediction.check_at > now():
                 continue
             pane = self._pane(prediction.slug)
@@ -346,11 +373,22 @@ class Coordinator:
     def route(self) -> None:
         entries = self.feed.entries()
         dispositions = {(int(seq), slug) for entry in entries if entry.source == "mishe-tauftauf" for seq, slug, _ in DISPOSITION_RE.findall(entry.body)}
-        slugs = discover(self.home)
+        slugs = self._selected_slugs()
         for entry in entries:
             if is_bookkeeping(entry):
                 continue
-            for slug in slugs:
+            targets = slugs
+            if entry.source.startswith("observation/") and entry.source != "observation/observability":
+                target = entry.source.removeprefix("observation/")
+                targets = [target] if target in slugs else []
+            elif entry.source == "automatic-wake":
+                match = AUTOMATIC_WAKE_RE.fullmatch(entry.body)
+                if match is None or match.group(1) not in slugs:
+                    self.feed.append_runtime_once(
+                        "mishe-tauftauf", f"UNKNOWN automatic-wake entry {entry.sequence}: target unavailable")
+                    continue
+                targets = [match.group(1)]
+            for slug in targets:
                 if (entry.sequence, slug) in dispositions:
                     continue
                 pane = self._pane(slug)
@@ -485,6 +523,8 @@ class Coordinator:
                 exits.setdefault((int(sequence), slug), set()).add(int(attempt))
         for key in sorted(key for key, disposition in dispositions.items() if disposition == "wake"):
             sequence, slug = key
+            if self.config.slug is not None and slug != self.config.slug:
+                continue
             attempted = starts.get(key, set())
             finished = exits.get(key, set())
             if attempted and attempted <= finished:
@@ -519,7 +559,7 @@ class Coordinator:
     def follow(self) -> None:
         while True:
             self.pass_once()
-            pending = pending_predictions(self.home, self.feed.entries())
+            pending = pending_predictions(self.home, self.feed.entries(), self.config.slug)
             delay = self.config.interval
             if pending:
                 delay = min(delay, max(0.0, (pending[0].check_at - now()).total_seconds()))
