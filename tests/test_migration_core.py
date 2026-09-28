@@ -7,6 +7,7 @@ from pathlib import Path
 
 from mishe_tauftauf.cli import initialize, main
 from mishe_tauftauf.feed import Feed
+from mishe_tauftauf.judges import Judgment
 from mishe_tauftauf.runtime import Coordinator, RuntimeConfig
 
 
@@ -84,6 +85,36 @@ class MigrationCoreTests(unittest.TestCase):
             self.assertEqual(main(["--home", str(home), "dispatch-receipt", "sensor", "1", "delivered"]), 0)
             self.assertEqual(sum(e.body == "wake delivered top-pain sensor for entry 1" for e in feed.entries()), 1)
 
+    def test_dispatch_receipt_rejects_conflicting_terminal_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            feed = Feed(home)
+            feed.append_runtime("mishe-tauftauf", "wake requested top-pain sensor for entry 1")
+            self.assertEqual(main(["--home", str(home), "dispatch-receipt", "sensor", "1", "refused"]), 0)
+            self.assertEqual(main(["--home", str(home), "dispatch-receipt", "sensor", "1", "delivered"]), 2)
+            self.assertEqual(main(["--home", str(home), "dispatch-receipt", "sensor", "1", "refused"]), 0)
+            self.assertEqual(len([e for e in feed.entries() if e.body.startswith("wake refused")]), 1)
+
+    def test_refused_attempt_can_retry_with_new_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            feed = Feed(home)
+            feed.append_runtime("mishe-tauftauf", "wake requested top-pain sensor for entry 1")
+            base = ["--home", str(home), "dispatch-receipt", "sensor", "1"]
+            self.assertEqual(main(base + ["refused", "--generation", "3", "--request-id", "attempt-1"]), 0)
+            self.assertEqual(main(base + ["delivered", "--generation", "3", "--request-id", "attempt-2"]), 0)
+            self.assertEqual(main(base + ["delivered", "--generation", "3", "--request-id", "attempt-1"]), 2)
+            self.assertEqual(len([e for e in feed.entries() if e.body.startswith("wake delivered")]), 1)
+
+    def test_malformed_receipt_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            feed = Feed(home)
+            feed.append_runtime("mishe-tauftauf", "wake requested top-pain sensor for entry 1")
+            feed.append_runtime("mishe-tauftauf", "wake delivered top-pain sensor for entry 1 extra")
+            self.assertEqual(main(["--home", str(home), "dispatch-receipt", "sensor", "1", "delivered"]), 2)
+            self.assertEqual(len([e for e in feed.entries() if e.body == "wake delivered top-pain sensor for entry 1"]), 0)
+
     def test_policy_validation_and_versioned_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory); initialize(home)
@@ -110,6 +141,108 @@ class MigrationCoreTests(unittest.TestCase):
             Coordinator(RuntimeConfig(home, launcher="headless", dispatch=False)).due_predictions()
             self.assertNotIn(secret.encode(), feed.read_bytes())
             self.assertIn(b"requires reasoning", feed.read_bytes())
+
+    def test_selected_run_touches_only_one_channel_and_shares_feed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            for slug in ("alpha", "beta"):
+                executable(home / "top-pains" / slug, f"printf '{slug} red\\n'\n")
+                executable(home / "projectors" / slug, f"printf '{slug} red\\n'\n")
+            base = ["--home", str(home), "run", "--once", "--launcher", "headless", "--observe-only"]
+            self.assertEqual(main(base + ["--slug", "alpha"]), 0)
+            feed = Feed(home)
+            first = feed.entries()
+            self.assertTrue(any(e.source == "observation/alpha" for e in first))
+            self.assertFalse(any(e.source == "observation/beta" for e in first))
+            self.assertEqual(main(base + ["--slug", "beta"]), 0)
+            all_entries = feed.entries()
+            self.assertTrue(any(e.source == "observation/beta" for e in all_entries))
+            self.assertFalse(any(e.body == "top-pain alpha absent" for e in all_entries))
+            self.assertEqual([e.sequence for e in all_entries], list(range(1, len(all_entries) + 1)))
+
+    def test_selected_run_rejects_missing_slug_and_shared_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            executable(home / "top-pains" / "alpha", "printf 'alpha red\\n'\n")
+            base = ["--home", str(home), "run", "--once", "--launcher", "headless", "--observe-only"]
+            self.assertEqual(main(base + ["--slug", "missing"]), 2)
+            first = Coordinator(RuntimeConfig(home, launcher="headless", dispatch=False, slug="alpha"))
+            second = Coordinator(RuntimeConfig(home, launcher="headless", dispatch=False, slug="alpha"))
+            first.acquire()
+            try:
+                with self.assertRaises(RuntimeError):
+                    second.acquire()
+            finally:
+                first.close()
+
+    def test_selected_run_scopes_due_predictions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            for slug in ("alpha", "beta"):
+                executable(home / "top-pains" / slug, "printf 'red\\n'\n")
+            past = (datetime.now(timezone.utc) - timedelta(seconds=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            feed = Feed(home)
+            prediction = feed.append_runtime("prediction/beta", f"Expected beta green.\nCheck at: {past}\n")
+            feed.append_runtime("mishe-tauftauf", f"prediction {prediction.sequence}: accepted")
+            Coordinator(RuntimeConfig(home, launcher="headless", dispatch=False, slug="alpha")).due_predictions()
+            self.assertFalse(any("requires reasoning" in e.body for e in feed.entries()))
+            Coordinator(RuntimeConfig(home, launcher="headless", dispatch=False, slug="beta")).due_predictions()
+            self.assertTrue(any(e.source == "observation/beta" and "requires reasoning" in e.body for e in feed.entries()))
+
+    def test_channel_observations_route_once_while_shared_events_fan_out(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            slugs = [f"sensor-{n}" for n in range(17)]
+            for slug in slugs:
+                executable(home / "top-pains" / slug, "printf 'red\\n'\n")
+            feed = Feed(home)
+            observations = [feed.append_runtime(f"observation/{slug}", f"{slug} changed") for slug in slugs]
+            shared = [feed.append("human", "broadcast to every channel"), feed.append("task", "task event")]
+            coordinator = Coordinator(RuntimeConfig(home, launcher="headless", dispatch=False))
+            coordinator._pane = lambda slug: "red"
+            coordinator._judge = lambda question, slug, pane, evidence, prediction=None: Judgment(
+                question, 0.9 if question == "relevance" else 0.1,
+                "yes" if question == "relevance" else "no", "fixture", "fixture")
+            coordinator.route()
+            requests = [e.body for e in feed.entries() if e.body.startswith("wake requested ")]
+            for event, slug in zip(observations, slugs):
+                self.assertEqual([r for r in requests if r.endswith(f"for entry {event.sequence}")],
+                                 [f"wake requested top-pain {slug} for entry {event.sequence}"])
+            for event in shared:
+                self.assertEqual(sum(r.endswith(f"for entry {event.sequence}") for r in requests), 17)
+            self.assertEqual(len(requests), 51)
+
+    def test_automatic_wakes_target_only_their_explicit_channel(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            slugs = [f"sensor-{n}" for n in range(17)]
+            for slug in slugs:
+                executable(home / "top-pains" / slug, "printf 'red\\n'\n")
+            feed = Feed(home)
+            automatic = []
+            for n, slug in enumerate(slugs, 1):
+                body = (f"automatic channel={slug} event={n:020d}-{'a' * 32} "
+                        f"source=consume source-seq={n} observed-at=2026-09-23T00:00:00Z "
+                        f"prompt-sha256={'b' * 64} status=delivered")
+                automatic.append(feed.append_runtime("automatic-wake", body))
+            malformed = feed.append_runtime("automatic-wake", "automatic channel=sensor-0 private fixture")
+            shared = feed.append("human", "broadcast to every channel")
+            coordinator = Coordinator(RuntimeConfig(home, launcher="headless", dispatch=False))
+            coordinator._pane = lambda slug: "red"
+            coordinator._judge = lambda question, slug, pane, evidence, prediction=None: Judgment(
+                question, 0.9 if question == "relevance" else 0.1,
+                "yes" if question == "relevance" else "no", "fixture", "fixture")
+            coordinator.route()
+            entries = feed.entries()
+            requests = [e.body for e in entries if e.body.startswith("wake requested ")]
+            for event, slug in zip(automatic, slugs):
+                self.assertEqual([r for r in requests if r.endswith(f"for entry {event.sequence}")],
+                                 [f"wake requested top-pain {slug} for entry {event.sequence}"])
+            self.assertFalse(any(r.endswith(f"for entry {malformed.sequence}") for r in requests))
+            self.assertEqual(sum(r.endswith(f"for entry {shared.sequence}") for r in requests), 17)
+            self.assertEqual(len(requests), 34)
+            self.assertTrue(any(e.body == f"UNKNOWN automatic-wake entry {malformed.sequence}: target unavailable"
+                                for e in entries))
 
 
 if __name__ == "__main__":
