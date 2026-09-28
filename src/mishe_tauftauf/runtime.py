@@ -532,6 +532,19 @@ class Coordinator:
             stimulus = by_sequence.get(sequence)
             if stimulus is None:
                 continue
+            if attempted:
+                pane = self._pane(slug)
+                reassessment = self._judge("desired-state-met", slug, pane, stimulus.body)
+                if reassessment.outcome == "yes":
+                    self._receipt(reassessment, slug, sequence)
+                    self.feed.append_runtime("mishe-tauftauf", f"entry {sequence} for top-pain {slug}: addressed")
+                else:
+                    marker = f"UNKNOWN — unfinished Mind for entry {sequence} top-pain {slug}; effect requires reconciliation before retry"
+                    if not any(entry.source == f"observation/{slug}" and entry.body == marker
+                               for entry in self.feed.entries()):
+                        self._receipt(reassessment, slug, sequence)
+                        self.feed.append_runtime(f"observation/{slug}", marker)
+                continue
             if not attempted:
                 pane = self._pane(slug)
                 active_predictions = pending_predictions(self.home, self.feed.entries(), slug)
