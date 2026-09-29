@@ -345,7 +345,9 @@ def start(home: Path, session: str, slug: str, interval: float) -> str:
     if created or new_window or mind_dead:
         mind_path = os.pathsep.join((str(home / "bin"), os.environ.get("PATH", "/usr/bin:/bin")))
         _tmux("respawn-pane", "-k", "-t", f"{target}.1", "-c", workspace,
-              "env", f"PATH={mind_path}", f"PYTHONPATH={python_path}", str(home / "minds" / slug))
+              "env", f"PATH={mind_path}", f"PYTHONPATH={python_path}",
+              f"XDG_RUNTIME_DIR={os.environ.get('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}')}",
+              str(home / "minds" / slug))
         time.sleep(2.0)
         _send(f"{target}.1", _restore_text(home, slug, session))
     return f"seed {slug} ready in {session}"
