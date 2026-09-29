@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -126,6 +127,7 @@ def test_seed_resident_channel_observes_repairs_and_restores(tmp_path: Path) -> 
         "import os, subprocess, sys\n"
         f"log={str(mind_log)!r}\n"
         "with open(log, 'a') as out: out.write('CWD '+os.getcwd()+'\\n')\n"
+        "with open(log, 'a') as out: out.write('RUNTIME '+str(os.environ.get('XDG_RUNTIME_DIR'))+'\\n')\n"
         f"check=subprocess.run(['mishe-tauftauf','--home',{str(home)!r},'seed','status'],capture_output=True)\n"
         "with open(log, 'a') as out: out.write('CLI '+str(check.returncode)+'\\n')\n"
         "sys.stdout.write('\\x1b[?2004h'); sys.stdout.flush()\n"
@@ -144,6 +146,7 @@ def test_seed_resident_channel_observes_repairs_and_restores(tmp_path: Path) -> 
         assert "Wait for an explicit WAKE" in mind_log.read_text()
         assert f"pain read genome --launcher tmux --session {session}" in mind_log.read_text()
         assert f"CWD {tmp_path}" in mind_log.read_text()
+        assert f"RUNTIME {os.environ.get('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}')}" in mind_log.read_text()
         assert "Live evidence" in mind_log.read_text()
         assert "Read repository AGENTS.md" in mind_log.read_text()
         first = cli(home, "tick", "--session", session, "--slug", "genome")
