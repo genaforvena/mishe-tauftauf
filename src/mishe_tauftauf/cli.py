@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 from .checks import run_check
+from . import access, discovery
 from .feed import Feed, FeedError, parse_feed, utc_now
 from .judges import QUESTIONS, classify, controls, document, run_external
 from .observations import compose_frame, discover, executable, validate_slug
@@ -39,6 +40,41 @@ def cmd_append(args) -> int:
     text = args.text if args.text is not None else sys.stdin.read()
     entry = Feed(args.home).append(args.source, text)
     print(entry.sequence)
+    return 0
+
+
+def cmd_access(args) -> int:
+    if args.access_command == "request":
+        item = access.request(args.home, args.id, args.owner, args.task, args.capability,
+                              args.unblocks, args.reason)
+        print(f"request {item.identity} pending; unblocks={','.join(item.unblocks)}")
+        return 0
+    if args.access_command in {"grant", "revoke"}:
+        decision = access.decide(args.home, args.id,
+                                 "granted" if args.access_command == "grant" else "revoked")
+        print(f"{args.id} {decision}")
+        return 0
+    if args.access_command == "check":
+        decision = access.state(args.home, args.id)
+        print(f"{args.id} {decision}")
+        return 0 if decision == "granted" else 1
+    for item, decision in access.list_requests(args.home):
+        print(f"{item.identity} {decision} owner={item.owner} task={item.task} "
+              f"capability={item.capability} unblocks={','.join(item.unblocks)}")
+    return 0
+
+
+def cmd_discover(args) -> int:
+    if args.discover_command == "scan":
+        print(discovery.scan(args.home))
+        return 0
+    snapshot = discovery.latest(args.home)
+    if snapshot is None:
+        print("UNKNOWN discovery has no scan")
+        return 1
+    print(f"scan {snapshot['created']} node={snapshot['node']}")
+    for item in snapshot["observations"]:
+        print(f"{item['id']} {item['state']} sample={item['sample']}")
     return 0
 
 
@@ -406,6 +442,14 @@ def parser() -> argparse.ArgumentParser:
     sub = root.add_subparsers(dest="command", required=True)
     p = sub.add_parser("init"); p.set_defaults(func=cmd_init)
     p = sub.add_parser("append"); p.add_argument("--source", required=True); p.add_argument("text", nargs="?"); p.set_defaults(func=cmd_append)
+    access_cmd = sub.add_parser("access").add_subparsers(dest="access_command", required=True)
+    p = access_cmd.add_parser("request"); p.add_argument("id"); p.add_argument("--owner", required=True); p.add_argument("--task", required=True); p.add_argument("--capability", required=True); p.add_argument("--unblocks", action="append", required=True); p.add_argument("--reason", required=True); p.set_defaults(func=cmd_access)
+    for verb in ("grant", "revoke", "check"):
+        p = access_cmd.add_parser(verb); p.add_argument("id"); p.set_defaults(func=cmd_access)
+    p = access_cmd.add_parser("list"); p.set_defaults(func=cmd_access)
+    discover_cmd = sub.add_parser("discover").add_subparsers(dest="discover_command", required=True)
+    p = discover_cmd.add_parser("scan"); p.set_defaults(func=cmd_discover)
+    p = discover_cmd.add_parser("show"); p.set_defaults(func=cmd_discover)
     p = sub.add_parser("feed"); p.set_defaults(func=cmd_feed)
     p = sub.add_parser("dispatch-receipt"); p.add_argument("slug"); p.add_argument("entry", type=int); p.add_argument("outcome", choices=("delivered", "refused")); p.add_argument("--request-id"); p.add_argument("--generation", type=int); p.set_defaults(func=cmd_dispatch_receipt)
     p = sub.add_parser("doctor"); p.add_argument("--panes", action="store_true"); p.add_argument("--session", default="mishe-tauftauf"); p.add_argument("--pane-wait", type=float, default=11.0); p.add_argument("--live-laya", action="store_true"); p.add_argument("--live-jev", action="store_true"); p.add_argument("--verbose", action="store_true"); p.set_defaults(func=cmd_doctor)

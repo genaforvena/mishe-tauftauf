@@ -68,16 +68,26 @@ def _external_event(home: Path, slug: str):
     latest = None
     last_woken = None
     for entry in Feed(home).entries():
-        if entry.source not in {slug, f"mind/{slug}"}:
-            task = re.match(r"\[task\]\s+\S+\s+owner=([a-z0-9-]+)(?:\s|$)", entry.body)
-            if (task is not None and task.group(1) == slug) or (slug == "witness" and
-                    (entry.body.startswith("[wish]") or
-                     (entry.source == "operator" and not entry.body.startswith("[task]")))):
-                latest = entry
-        elif entry.source == "seed" and (match := WAKE_RE.fullmatch(entry.body)) and match.group(1) == slug:
+        if entry.source == "seed" and (match := WAKE_RE.fullmatch(entry.body)) and match.group(1) == slug:
             if match.group(3):
                 last_woken = int(match.group(3))
+        elif entry.source not in {slug, f"mind/{slug}"}:
+            task = re.match(r"\[task\]\s+\S+\s+owner=([a-z0-9-]+)(?:\s|$)", entry.body)
+            decision = re.match(r"\[permission\]\s+id=\S+\s+decision=(?:granted|revoked)\s+owner=([a-z0-9-]+)(?:\s|$)", entry.body)
+            if (task is not None and task.group(1) == slug) or (slug == "witness" and
+                    (entry.body.startswith("[wish]") or
+                     (entry.source in {"operator", "operator/permissions"} and not entry.body.startswith("[task]")))) or (
+                         decision is not None and decision.group(1) == slug):
+                latest = entry
     return latest if latest is not None and latest.sequence > (last_woken or 0) else None
+
+
+def _observation_text(slug: str, frame: str) -> str:
+    if slug not in {"discover", "senses"}:
+        return frame
+    prefixes = ("STATE:", "UNKNOWN ", "UNAVAILABLE command.", "AVAILABLE command.",
+                "PERMISSION REQUESTS:", "REQUEST ") if slug == "discover" else ("STATE:", "UNKNOWN ")
+    return "\n".join(line for line in frame.splitlines() if line.startswith(prefixes))
 
 
 def _send(target: str, message: str) -> None:
@@ -230,6 +240,7 @@ def init(home: Path, slug: str, engine_command: str = "codex") -> str:
             f"if [ -x {shlex.quote(str(home.parent.resolve() / '.venv' / 'bin' / 'pytest'))} ]; then "
             "printf '%s\\n' 'TEST RUNNER: .venv/bin/pytest available'; "
             "else printf '%s\\n' 'TEST RUNNER: inspect project environment'; fi\n"
+            f"{shlex.quote(sys.executable)} -c 'from pathlib import Path; from mishe_tauftauf.ci_watch import line; print(line(Path({str(home.resolve())!r})))'\n"
             "printf '%s\\n' 'NEXT: fix RED/UNKNOWN first; when GREEN, verify and land one owned improvement, then record its push'\n",
             encoding="utf-8",
             )
@@ -271,16 +282,16 @@ def start(home: Path, session: str, slug: str, interval: float) -> str:
     _tmux("set-option", "-p", "-t", f"{target}.0", "remain-on-exit", "on")
     _tmux("set-option", "-p", "-t", f"{target}.1", "remain-on-exit", "on")
     _tmux("select-layout", "-t", target, "even-vertical")
-    top_cmd = ("env", f"MISHE_SEED_SESSION={session}",
+    package_root = str(Path(__file__).resolve().parents[1])
+    python_path = os.pathsep.join(part for part in (package_root, os.environ.get("PYTHONPATH", "")) if part)
+    top_cmd = ("env", f"MISHE_SEED_SESSION={session}", f"PYTHONPATH={python_path}",
                *_python_command("--home", str(home), "pain", "watch", slug, "--interval", str(interval)))
     top_dead = _tmux("display-message", "-p", "-t", f"{target}.0", "#{pane_dead}").stdout.decode().strip() == "1"
     if created or new_window or top_dead:
         _tmux("respawn-pane", "-k", "-t", f"{target}.0", *top_cmd)
     mind_dead = _tmux("display-message", "-p", "-t", f"{target}.1", "#{pane_dead}").stdout.decode().strip() == "1"
     if created or new_window or mind_dead:
-        package_root = str(Path(__file__).resolve().parents[1])
         mind_path = os.pathsep.join((str(home / "bin"), os.environ.get("PATH", "/usr/bin:/bin")))
-        python_path = os.pathsep.join(part for part in (package_root, os.environ.get("PYTHONPATH", "")) if part)
         _tmux("respawn-pane", "-k", "-t", f"{target}.1", "-c", workspace,
               "env", f"PATH={mind_path}", f"PYTHONPATH={python_path}", str(home / "minds" / slug))
         time.sleep(2.0)
@@ -325,7 +336,7 @@ def tick(home: Path, session: str, slug: str, self_pick_seconds: float = 0) -> s
         frame = strip_owned_chrome(full).strip()
         if not frame:
             return f"UNKNOWN seed {slug} top pane empty"
-        digest = hashlib.sha256(frame.encode("utf-8")).hexdigest()
+        digest = hashlib.sha256(_observation_text(slug, frame).encode("utf-8")).hexdigest()
         previous, pending, last_yield, last_clear, last_observation, last_woken_observation, last_wake_at, continue_yield = _state(home, slug)
         changed = digest != previous
         if changed:

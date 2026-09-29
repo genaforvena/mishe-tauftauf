@@ -1,14 +1,16 @@
 ---
 name: plant-mishe
-description: Set up or repair this repository's local self-tending tmux plant with resident genome and witness channels, shared chat.log, and persistent user services. Use for a full local plant; not for the smaller culture-only mishe skill.
+description: Plant or repair the resident mishe development culture in this checkout or another owned Git worktree, with text panes, shared chat.log, scoped requests, and persistent services.
 ---
 
-# Plant mishe locally
+# Plant a development culture
 
-Work from this repository root. Read `AGENTS.md` and the current session and service state before changing an existing plant. The setup command is `scripts/plant_local.py`; it creates the site, two resident channels, an operator shell window, and two enabled user services. It preserves existing site charters, launchers, top renderers, handoffs, and unrelated tmux windows. Pass the installed agent command with `--engine-command`; an existing launcher is not replaced by setup.
+Read this repository's `AGENTS.md`, `README.md`, and `src/mishe_tauftauf/seed_doctrine.md`. Inspect any existing target session, site, and user services before changing them. A target must be a Git worktree that the operator wants this plant to tend.
 
-The site is node-local and gitignored. Keep its chat, charters customized for the node, plans, checks, artifacts, handoffs, and service units there. Put reusable fixes in tracked source, tests, setup scripts, and general instructions. Before committing, confirm `git ls-files .mishe-tauftauf` is empty.
+From this repository, run `python3 scripts/plant_local.py --workspace TARGET --engine-command 'codex'`. Omit `--workspace` to tend this checkout. The script creates an ignored site inside the target, the `genome`, `witness`, `discover`, `senses`, `health`, `permissions`, and operator windows, an initial discovery and CI reading, and persistent user services. `--no-services` is for a supervised trial. Existing charters, mind launchers, handoffs, and top programs are preserved.
 
-For a fresh plant, run `python3 scripts/plant_local.py --engine-command '<agent command>'`. Use `--home` and `--session` to select another owned plant. Use `--no-services` only for a temporary trial. If the user asked to remove obsolete windows, inspect their pane commands and ownership first, then remove only the named superseded windows after the new channels are live.
+Keep target-specific chat, requests, charters, plans, checks, handoffs, artifacts, drafts, and service units in the ignored site. Put reusable fixes and tests in the target's tracked source. Before a commit, inspect the exact diff and confirm `git ls-files SITE` is empty. Set target-specific top checks for the actual build, CI, deployment, and data surfaces; make missing or stale evidence `UNKNOWN`.
 
-Verify the actual user services, advancing top-pane leases, `SYSTEM ZERO` check reports, resident lower panes, and a wake → artifact → exact yield → idle clear in `chat.log`. A service enabled flag or passing unit test alone does not prove the plant is running. Record the site path, session name, three window names, service state, and any pending wake when handing back.
+Inspect every live top and lower pane after planting. Verify required windows, active services, a fresh CI reading or an honest `UNKNOWN`, a real discovery sample, and an advancing top-pane lease. Follow one wake through artifact, exact yield, idle clear, and restored handoff. If an existing plant has obsolete windows, remove only identified superseded windows after replacements are live. If the current target has a failing CI run, record the run URL in `chat.log`, route a genome task, and verify the replacement run after landing a repair.
+
+When handing back, record the target and site paths, session, window names, service states, open task IDs, and any unknown or failing check.

@@ -15,8 +15,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: python -m pip install -e .
-      - run: python -m unittest discover -s tests -v
+      - run: python -m pip install -e . pytest
+      - run: python -m pytest -q
 
   tmux:
     runs-on: ubuntu-latest
@@ -26,8 +26,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: sudo apt-get update && sudo apt-get install -y tmux
-      - run: python -m pip install -e .
-      - run: python -m unittest tests.test_tmux -v
+      - run: python -m pip install -e . pytest
+      - run: python -m pytest tests/test_tmux.py -q
   adapters:
     runs-on: ubuntu-latest
     steps:
