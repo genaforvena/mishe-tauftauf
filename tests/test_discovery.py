@@ -161,3 +161,31 @@ def test_io_pressure_requires_a_valid_some_row(tmp_path: Path) -> None:
             assert "full avg10=0.01" in reading["sample"]
         else:
             assert reading["sample"] == "pressure data unavailable"
+
+
+def test_inode_availability_uses_unprivileged_statvfs_count_and_fails_unknown(
+        tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from mishe_tauftauf import discovery
+
+    with patch("mishe_tauftauf.discovery.os.statvfs",
+               return_value=SimpleNamespace(f_bavail=12, f_frsize=4096, f_favail=7)):
+        observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+    assert observed["sense.disk.free"]["sample"] == 12 * 4096
+    assert observed["sense.disk.inodes-available"] == {
+        "id": "sense.disk.inodes-available",
+        "state": "verified",
+        "sample": 7,
+        "kind": "read",
+    }
+
+    with patch("mishe_tauftauf.discovery.os.statvfs", side_effect=OSError):
+        observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+    assert observed["sense.disk.inodes-available"] == {
+        "id": "sense.disk.inodes-available",
+        "state": "unknown",
+        "sample": "statvfs unavailable",
+        "kind": "read",
+    }
+    assert observed["sense.disk.free"]["state"] == "unknown"
