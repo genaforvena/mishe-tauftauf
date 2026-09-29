@@ -236,14 +236,14 @@ def init(home: Path, slug: str, engine_command: str = "codex") -> str:
             "count=$(printf '%s\\n' \"$status\" | sed '/^$/d' | wc -l); "
             "printf 'WORKTREE: %s changed paths (full: git status --short)\\n' \"$count\"; "
             "printf '%s\\n' \"$status\" | head -n 5; "
-            "else printf '%s\\n' 'WORKTREE: UNKNOWN — git status unavailable'; fi\n"
+            "else count=unknown; printf '%s\\n' 'WORKTREE: UNKNOWN — git status unavailable'; fi\n"
             f"if [ -x {shlex.quote(str(home.parent.resolve() / '.venv' / 'bin' / 'pytest'))} ]; then "
             "printf '%s\\n' 'TEST RUNNER: .venv/bin/pytest available'; "
             "else printf '%s\\n' 'TEST RUNNER: inspect project environment'; fi\n"
             f"{shlex.quote(sys.executable)} -c 'from pathlib import Path; from mishe_tauftauf.ci_watch import line; print(line(Path({str(home.resolve())!r})))'\n"
-            "printf '%s\\n' 'NEXT: fix RED/UNKNOWN first; when GREEN, verify and land one owned improvement, then record its push'\n"
-            "if [ \"$rc\" -eq 0 ]; then printf '%s\\n' 'STATE: GREEN · plant doctor passed'; "
-            "else printf '%s\\n' 'STATE: RED — plant doctor failed'; fi\n",
+            "printf 'GOAL: tend this repo · WORKTREE: %s changed\\n' \"$count\"\n"
+            "if [ \"$rc\" -eq 0 ]; then printf '%s\\n' 'STATE: GREEN · NEXT: verify and land one change'; "
+            "else printf '%s\\n' 'STATE: RED · NEXT: repair the failed check'; fi\n",
             encoding="utf-8",
             )
         top.chmod(0o755)

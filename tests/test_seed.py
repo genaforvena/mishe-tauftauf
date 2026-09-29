@@ -267,6 +267,7 @@ def test_seed_adds_live_channel_to_existing_owned_session(tmp_path: Path) -> Non
     mind.chmod(0o755)
     assert tmux("new-session", "-d", "-s", session, "-n", "operator", "sh").returncode == 0
     assert tmux("set-option", "-t", session, "@mishe-tauftauf-home", str(home.resolve())).returncode == 0
+    assert tmux("resize-window", "-t", session, "-x", "80", "-y", "24").returncode == 0
     try:
         started = cli(home, "start", "--session", session, "--slug", "genome", "--interval", "0.2")
         assert started.returncode == 0, started.stderr
