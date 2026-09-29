@@ -37,6 +37,10 @@ def unit_name(session: str, slug: str) -> str:
     return f"{session}-{slug}.service"
 
 
+def unit_fragment_matches(fragment: str, expected: Path) -> bool:
+    return Path(fragment).resolve() == expected.resolve()
+
+
 def unit_text(home: Path, session: str, slug: str, python: str) -> str:
     command = (f"{python} -m mishe_tauftauf.ci_watch --home {home} --follow" if slug == "ci" else
                f"{python} -m mishe_tauftauf.seed_permission_panel --home {home} --session {session} --follow"
@@ -137,7 +141,7 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
             unit.write_text(unit_text(home, session, slug, sys.executable), encoding="utf-8")
             linked = subprocess.run(["systemctl", "--user", "show", unit.name, "-p", "FragmentPath", "--value"],
                                     capture_output=True, text=True, check=True, env=env).stdout.strip()
-            if linked and linked != str(unit):
+            if linked and not unit_fragment_matches(linked, unit):
                 raise RuntimeError(f"service {unit.name} already belongs to {linked}")
             if not linked:
                 subprocess.run(["systemctl", "--user", "link", str(unit)], check=True, env=env)
