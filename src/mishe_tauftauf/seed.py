@@ -105,8 +105,13 @@ def _mind_ready(session: str, slug: str) -> bool:
     pane = _tmux("capture-pane", "-p", "-t", target, check=False)
     if pane.returncode:
         return False
-    recent = [line for line in pane.stdout.decode("utf-8", "replace").splitlines() if line.strip()][-10:]
-    return any(line.startswith(" π > INSERT >") for line in recent)
+    ready = False
+    for line in pane.stdout.decode("utf-8", "replace").splitlines():
+        if line.startswith("⠋ Working..."):
+            return False
+        if line.startswith(" π > INSERT >"):
+            ready = True
+    return ready
 
 
 def _redeliver_pending(home: Path, session: str, slug: str, pending: int) -> str:
@@ -222,6 +227,9 @@ def init(home: Path, slug: str, engine_command: str = "codex") -> str:
             "printf 'WORKTREE: %s changed paths (full: git status --short)\\n' \"$count\"; "
             "printf '%s\\n' \"$status\" | head -n 5; "
             "else printf '%s\\n' 'WORKTREE: UNKNOWN — git status unavailable'; fi\n"
+            f"if [ -x {shlex.quote(str(home.parent.resolve() / '.venv' / 'bin' / 'pytest'))} ]; then "
+            "printf '%s\\n' 'TEST RUNNER: .venv/bin/pytest available'; "
+            "else printf '%s\\n' 'TEST RUNNER: inspect project environment'; fi\n"
             "printf '%s\\n' 'NEXT: fix RED/UNKNOWN first; when GREEN, verify and land one owned improvement, then record its push'\n",
             encoding="utf-8",
             )
