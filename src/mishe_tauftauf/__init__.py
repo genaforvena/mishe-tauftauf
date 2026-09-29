@@ -1,3 +1,3 @@
-"""mishe-tauftauf coordination core."""
+"""Plantable mishe-tauftauf runtime core."""
 
 __version__ = "0.1.0"

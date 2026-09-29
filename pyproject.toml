@@ -22,4 +22,4 @@ mishe-tauftauf = "mishe_tauftauf.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-mishe_tauftauf = ["seed_doctrine.md", "seed_witness_charter.md"]
+mishe_tauftauf = ["seed_*.md"]
