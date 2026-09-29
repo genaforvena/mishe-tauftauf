@@ -66,13 +66,73 @@ def test_omp_idle_prompt_survives_trailing_attachments_and_rejects_spinner(monke
     )
     assert seed._mind_ready("session", "genome")
 
-    for output in ("⠋ Working...\n", f"{prompt}\n⠋ Working...\n"):
+    for output in ("⠋ Working...\n", f"{prompt}\n⠋ Working...\n",
+                   f"{prompt}\n ⠇ 6m > INSERT > ⬢ Atria Dawn Preview\n"):
         monkeypatch.setattr(
             seed, "_tmux",
             lambda *args, output=output, **kwargs: CompletedProcess(args, 0, b"omp\n")
             if args[0] == "display-message" else CompletedProcess(args, 0, output.encode()),
         )
         assert not seed._mind_ready("session", "genome")
+
+
+def test_custom_mind_requires_a_site_readiness_probe(tmp_path: Path, monkeypatch) -> None:
+    from subprocess import CompletedProcess
+
+    from mishe_tauftauf import seed
+
+    home = tmp_path / "site"
+    monkeypatch.setattr(
+        seed, "_tmux",
+        lambda *args, **kwargs: CompletedProcess(args, 0, ("custom-agent\n" if args[0] == "display-message"
+                                                     else str(home) + "\n").encode()),
+    )
+    assert not seed._mind_ready("session", "genome")
+    probe = home / "checks" / "mind-ready" / "genome"
+    probe.parent.mkdir(parents=True)
+    probe.write_text("#!/bin/sh\nexit 0\n")
+    probe.chmod(0o755)
+    assert seed._mind_ready("session", "genome")
+
+
+def test_codex_mind_requires_its_idle_prompt(monkeypatch) -> None:
+    from subprocess import CompletedProcess
+
+    from mishe_tauftauf import seed
+
+    pane = "› Ask Codex to do anything\n"
+    monkeypatch.setattr(seed, "_tmux", lambda *args, **kwargs: CompletedProcess(
+        args, 0, ("codex\n" if args[0] == "display-message" else pane).encode()))
+    assert seed._mind_ready("session", "genome")
+    pane = "› Ask Codex to do anything\n• Working on a task\n"
+    assert not seed._mind_ready("session", "genome")
+
+
+def test_redelivered_wake_includes_restored_charter_and_handoff(tmp_path: Path, monkeypatch) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    from mishe_tauftauf import seed
+
+    home = tmp_path / "site"
+    handoff = home / "handoffs" / "witness.md"
+    handoff.parent.mkdir(parents=True)
+    handoff.write_text("Prior checked step and exact next action.\n")
+    wake = Feed(home).append("seed", "seed wake witness observation=1\nChecked source changed.", reserved=True)
+    sent = []
+    monkeypatch.setattr(seed, "_mind_ready", lambda *args: True)
+    monkeypatch.setattr(seed, "_send", lambda target, message: sent.append((target, message)))
+
+    class Later(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.now(timezone.utc) + timedelta(seconds=61)
+
+    monkeypatch.setattr(seed, "datetime", Later)
+    assert "redelivered" in seed._redeliver_pending(home, "session", "witness", wake.sequence)
+    assert sent[0][0] == "session:witness.1"
+    assert "CHARTER witness" in sent[0][1]
+    assert "Prior checked step and exact next action." in sent[0][1]
+    assert f"REDELIVERY of unsettled WAKE {wake.sequence}" in sent[0][1]
 
 
 def cli(home: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -176,25 +236,30 @@ def test_seed_resident_channel_observes_repairs_and_restores(tmp_path: Path) -> 
         " with open(log, 'a') as out: out.write(line)\n"
     )
     mind.chmod(0o755)
+    probe = home / "checks" / "mind-ready" / "genome"
+    probe.parent.mkdir(parents=True)
+    probe.write_text("#!/bin/sh\nexit 0\n")
+    probe.chmod(0o755)
     try:
         started = cli(home, "start", "--session", session, "--slug", "genome", "--interval", "0.2")
         assert started.returncode == 0, started.stderr
         panes = tmux("list-panes", "-t", f"{session}:genome", "-F", "#{pane_index}")
         assert panes.stdout.splitlines() == ["0", "1"]
-        wait_for(mind_log, "CHARTER genome")
+        wait_for(mind_log, "CWD ")
         assert "CLI 0" in mind_log.read_text()
-        assert "\x1b[200~" in mind_log.read_text()
-        assert "Wait for an explicit WAKE" in mind_log.read_text()
-        assert f"pain read genome --launcher tmux --session {session}" in mind_log.read_text()
+        assert "CHARTER genome" not in mind_log.read_text()
         assert f"CWD {tmp_path}" in mind_log.read_text()
         assert f"RUNTIME {os.environ.get('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}')}" in mind_log.read_text()
-        assert "Live evidence" in mind_log.read_text()
-        assert "Read repository AGENTS.md" in mind_log.read_text()
         first = cli(home, "tick", "--session", session, "--slug", "genome")
         assert first.returncode == 0, first.stderr
         assert "wake" in first.stdout
         wake = first.stdout.strip().split()[-1]
         wait_for(mind_log, f"WAKE {wake}")
+        assert "CHARTER genome" in mind_log.read_text()
+        assert "\x1b[200~" in mind_log.read_text()
+        assert f"pain read genome --launcher tmux --session {session}" in mind_log.read_text()
+        assert "Live evidence" in mind_log.read_text()
+        assert "Read repository AGENTS.md" in mind_log.read_text()
         assert "RED" in mind_log.read_text()
 
         quiet = cli(home, "tick", "--session", session, "--slug", "genome")
@@ -233,17 +298,30 @@ def test_seed_resident_channel_observes_repairs_and_restores(tmp_path: Path) -> 
         assert any("[work] channel=genome" in e.body and "result=changed" in e.body and
                    "Checked RED. Repaired fixture" in e.body for e in Feed(home).entries())
         assert "awaiting clear" in cli(home, "tick", "--session", session, "--slug", "genome").stdout
+        before_clear = mind_log.read_text()
+        context_count = before_clear.count("CHARTER genome")
+        starts = before_clear.count(f"CWD {tmp_path}")
+        old_pid = tmux("display-message", "-pt", f"{session}:genome.1", "#{pane_pid}").stdout.strip()
         assert cli(home, "clear", "--session", session, "--slug", "genome").returncode == 0
+        new_pid = tmux("display-message", "-pt", f"{session}:genome.1", "#{pane_pid}").stdout.strip()
+        assert new_pid != old_pid
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and mind_log.read_text().count(f"CWD {tmp_path}") < starts + 1:
+            time.sleep(0.05)
+        assert mind_log.read_text().count(f"CWD {tmp_path}") == starts + 1
+        assert mind_log.read_text().count("CHARTER genome") == context_count
         second = cli(home, "tick", "--session", session, "--slug", "genome")
         assert second.returncode == 0
         assert "wake" in second.stdout
         assert "GREEN" in wait_for(mind_log, "GREEN")
+        assert mind_log.read_text().count("CHARTER genome") == context_count + 1
+        assert "Checked RED. Repaired fixture" in mind_log.read_text()
 
         wake2 = second.stdout.strip().split()[-1]
         assert cli(home, "yield", "--slug", "genome", "--wake", wake2, "--file", str(handoff), "--continue").returncode == 0
         cleared = cli(home, "clear", "--session", session, "--slug", "genome")
         assert cleared.returncode == 0, cleared.stderr
-        wait_for(mind_log, "Context was cleared")
+        assert mind_log.read_text().count("CHARTER genome") == context_count + 1
         continuation = cli(home, "tick", "--session", session, "--slug", "genome")
         assert "wake" in continuation.stdout
         wake3 = continuation.stdout.strip().split()[-1]
@@ -251,8 +329,9 @@ def test_seed_resident_channel_observes_repairs_and_restores(tmp_path: Path) -> 
         assert cli(home, "yield", "--slug", "genome", "--wake", wake3, "--file", str(handoff)).returncode == 0
         assert cli(home, "clear", "--session", session, "--slug", "genome").returncode == 0
         assert cli(home, "stop", "--session", session).returncode == 0
+        context_count = mind_log.read_text().count("CHARTER genome")
         assert cli(home, "start", "--session", session, "--slug", "genome", "--interval", "0.2").returncode == 0
-        wait_for(mind_log, "Checked RED. Repaired fixture")
+        assert mind_log.read_text().count("CHARTER genome") == context_count
         last = cli(home, "tick", "--session", session, "--slug", "genome")
         assert last.returncode == 0
         assert "quiet" in last.stdout
@@ -301,9 +380,8 @@ def test_seed_follow_drives_a_checked_repair_without_a_judge(tmp_path: Path) -> 
         f"home=pathlib.Path({str(home)!r})\n"
         f"fixture=pathlib.Path({str(fixture)!r})\n"
         f"trace=pathlib.Path({str(trace)!r})\n"
+        "with trace.open('a') as out: out.write('started\\n')\n"
         "for line in sys.stdin:\n"
-        " if line.strip() == '/clear':\n"
-        "  with trace.open('a') as out: out.write('saw clear\\n')\n"
         " if match := re.search(r'WAKE (\\d+)', line):\n"
         "  with trace.open('a') as out: out.write('saw '+fixture.read_text().strip()+'\\n')\n"
         "  if fixture.read_text().strip() == 'RED':\n"
@@ -314,6 +392,10 @@ def test_seed_follow_drives_a_checked_repair_without_a_judge(tmp_path: Path) -> 
         "  subprocess.run([sys.executable,'-m','mishe_tauftauf','--home',str(home),'seed','yield','--slug','genome','--wake',match.group(1),'--file',str(note)],check=True)\n"
     )
     mind.chmod(0o755)
+    probe = home / "checks" / "mind-ready" / "genome"
+    probe.parent.mkdir(parents=True)
+    probe.write_text("#!/bin/sh\nexit 0\n")
+    probe.chmod(0o755)
     runner = None
     try:
         runner = subprocess.Popen(
@@ -323,7 +405,10 @@ def test_seed_follow_drives_a_checked_repair_without_a_judge(tmp_path: Path) -> 
         )
         wait_for(trace, "saw RED", seconds=8)
         wait_for(trace, "saw GREEN", seconds=8)
-        wait_for(trace, "saw clear", seconds=8)
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline and trace.read_text().count("started") < 2:
+            time.sleep(0.05)
+        assert trace.read_text().count("started") >= 2
         assert fixture.read_text() == "GREEN\n"
         assert (home / "handoffs" / "genome.md").read_text() == "Checked fixture: GREEN\n"
     finally:
