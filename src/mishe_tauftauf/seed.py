@@ -10,6 +10,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -145,10 +146,48 @@ def _send(target: str, message: str) -> None:
         _tmux("send-keys", "-t", target, "-l", message)
     else:
         buffer = f"mishe-seed-{os.getpid()}-{time.time_ns()}"
-        _tmux("set-buffer", "-b", buffer, message)
-        _tmux("paste-buffer", "-p", "-d", "-b", buffer, "-t", target)
+        session = target.split(":", 1)[0]
+        owned = _tmux("show-option", "-qv", "-t", session, OWNED_OPTION)
+        directory = Path(owned.stdout.decode().strip()) / "tmp"
+        directory.mkdir(parents=True, exist_ok=True)
+        path = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=directory,
+                                             prefix="wake-", delete=False) as handle:
+                path = Path(handle.name)
+                handle.write(message)
+            # tmux set-buffer accepts the whole message as one command argument
+            # and rejects a live wake once charter and handoff grow large.
+            _tmux("load-buffer", "-b", buffer, str(path))
+            _tmux("paste-buffer", "-p", "-d", "-b", buffer, "-t", target)
+        finally:
+            try:
+                _tmux("delete-buffer", "-b", buffer, check=False)
+            finally:
+                if path is not None:
+                    path.unlink(missing_ok=True)
         time.sleep(0.5)
     _tmux("send-keys", "-t", target, "C-m")
+    if message != "/clear":
+        engine = _tmux("display-message", "-p", "-t", target, "#{pane_current_command}", check=False)
+        if engine.returncode == 0 and engine.stdout.decode().strip() == "omp":
+            # OMP first turns a long bracketed paste into an attachment card.
+            # The first Enter can finish that conversion without submitting it.
+            # Only send another Enter while the card still sits at an idle prompt.
+            time.sleep(1.0)
+            pane = _tmux("capture-pane", "-p", "-t", target, check=False)
+            if pane.returncode == 0:
+                lines = pane.stdout.decode("utf-8", "replace").splitlines()
+                prompt = next((index for index in range(len(lines) - 1, -1, -1)
+                               if lines[index].startswith(" π > INSERT >")), None)
+                before_prompt = ([line for line in lines[max(0, prompt - 12):prompt] if line.strip()]
+                                 if prompt is not None else [])
+                card_open = any(line.startswith("╭── 📄 #") for line in before_prompt)
+                card_ends_at_prompt = bool(before_prompt and before_prompt[-1].startswith("╰") and
+                                           before_prompt[-1].endswith("╯"))
+                if card_open and card_ends_at_prompt and _mind_ready(target.split(":", 1)[0],
+                                                                     target.split(":", 1)[1].split(".", 1)[0]):
+                    _tmux("send-keys", "-t", target, "C-m")
 
 
 def _mind_ready(session: str, slug: str) -> bool:
