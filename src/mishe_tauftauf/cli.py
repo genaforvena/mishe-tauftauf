@@ -123,13 +123,19 @@ def cmd_pain_watch(args) -> int:
     feed = Feed(args.home)
     try:
         while True:
-            rendered = compose_frame(args.home, args.slug, args.timeout)
-            entries = feed.entries()
-            status = runtime_status(entries, args.slug)
-            frame = rendered.body
-            if not frame.endswith("\n"):
-                frame += "\n"
-            frame += f"-- runtime: {status} --\n"
+            try:
+                rendered = compose_frame(args.home, args.slug, args.timeout)
+                entries = feed.entries()
+                status = runtime_status(entries, args.slug)
+                frame = rendered.body
+                if not frame.endswith("\n"):
+                    frame += "\n"
+                frame += f"-- runtime: {status} --\n"
+            except FeedError as exc:
+                frame = (
+                    "STATE: RED — chat feed is malformed; repair the framed feed before retrying\n"
+                    f"FEED ERROR: {exc}\n"
+                )
             frame += f"-- pane live {utc_now()} · refresh {args.interval:g}s · ticks every frame --\n"
             sys.stdout.write("\x1b[H\x1b[2J" + frame)
             sys.stdout.flush()
