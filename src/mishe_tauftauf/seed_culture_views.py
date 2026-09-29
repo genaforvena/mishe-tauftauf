@@ -102,15 +102,27 @@ def health(home: Path) -> str:
     except (OSError, ValueError):
         expected = set()
     try:
-        result = subprocess.run(["tmux", "list-windows", "-t", session, "-F", "#{window_name}"],
-                                capture_output=True, text=True, timeout=2)
-        actual = set(result.stdout.splitlines()) if result.returncode == 0 else set()
+        result = subprocess.run(
+            ["tmux", "list-panes", "-s", "-t", session,
+             "-F", "#{window_name} #{pane_index} #{pane_dead}"],
+            capture_output=True, text=True, timeout=2)
+        pane_states = {}
+        if result.returncode == 0:
+            for row in result.stdout.splitlines():
+                fields = row.split()
+                if len(fields) == 3:
+                    pane_states[(fields[0], fields[1])] = fields[2]
+        actual = {name for name, _ in pane_states}
     except (OSError, subprocess.TimeoutExpired):
         actual = set()
+        pane_states = {}
     missing = sorted(expected - actual)
     extra = sorted(actual - expected)
-    lines.append("WINDOWS: " + ("PASS " if expected and not missing and not extra else "RED ") +
+    dead = sorted(f"{name}.0" for name in expected & actual
+                  if pane_states.get((name, "0")) != "0")
+    lines.append("WINDOWS: " + ("PASS " if expected and not missing and not extra and not dead else "RED ") +
                  ",".join(sorted(actual)) + (" missing=" + ",".join(missing) if missing else "") +
+                 (" dead=" + ",".join(dead) if dead else "") +
                  (" extra=" + ",".join(extra) if extra else ""))
     services_path = home / "health" / "services.json"
     try:
@@ -131,7 +143,7 @@ def health(home: Path) -> str:
         if status != "active":
             failed_services.append(unit)
     lines.append(ci_line(home))
-    if doctor.returncode or missing or extra or failed_services:
+    if doctor.returncode or missing or extra or dead or failed_services:
         verdict = "FAIL health internal check"
         lines.append("STATE: RED — internal check needs repair")
     elif not expected:
