@@ -27,7 +27,7 @@ def read(home: Path) -> dict[str, str]:
         branch = repository["defaultBranchRef"]["name"]
         sha = _command("git", "-C", str(workspace), "rev-parse", f"origin/{branch}")
         rows = json.loads(_command("gh", "run", "list", "--repo", repository["nameWithOwner"],
-            "--branch", branch, "--limit", "50", "--json",
+            "--commit", sha, "--limit", "50", "--json",
             "databaseId,headSha,status,conclusion,url,workflowName", cwd=workspace))
         matches = [row for row in rows if row.get("headSha") == sha]
         if not matches:
