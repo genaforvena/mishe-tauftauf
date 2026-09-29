@@ -205,6 +205,115 @@ def test_pre_baseline_doctrine_is_refreshed_as_a_default(tmp_path: Path, monkeyp
     assert (home / "doctrine.md").read_text() == seed._core_doctrine()
 
 
+def test_large_wake_reaches_tmux_mind_without_command_limit(tmp_path: Path) -> None:
+    from mishe_tauftauf import seed
+    from mishe_tauftauf.tmux import OWNED_OPTION
+
+    home = tmp_path / "site"
+    home.mkdir()
+    received = tmp_path / "received.txt"
+    session = f"mishe-large-wake-{uuid.uuid4().hex[:10]}"
+    started = tmux("new-session", "-d", "-s", session, "-n", "genome",
+                   f"sh -c 'stty raw -echo; cat > {received}'")
+    assert started.returncode == 0, started.stderr
+    try:
+        owned = tmux("set-option", "-t", session, OWNED_OPTION, str(home))
+        assert owned.returncode == 0, owned.stderr
+        message = "WAKE " + "x" * 20000 + " END"
+        seed._send(f"{session}:genome.0", message)
+        assert message in wait_for(received, " END")
+        assert list((home / "tmp").iterdir()) == []
+    finally:
+        tmux("kill-session", "-t", session)
+
+
+def test_omp_attachment_gets_a_submission_enter_only_while_idle(tmp_path: Path, monkeypatch) -> None:
+    from subprocess import CompletedProcess
+
+    from mishe_tauftauf import seed
+
+    for pane_text, expected_enters in (
+        ("╭── 📄 #1 ───╮\n│WAKE text│\n╰ +100 lines ╯\n π > INSERT >", 2),
+        ("╭── 📄 #1 ───╮\n⠋ Working...\n π > INSERT >", 1),
+        ("╭── 📄 #1 ───╮\n│WAKE text│\n╰ +100 lines ╯\n"
+         "The prior answer completed.\n π > INSERT >", 1),
+    ):
+        calls: list[tuple[str, ...]] = []
+
+        def fake_tmux(*args: str, **_kwargs):
+            calls.append(args)
+            output = (str(tmp_path) + "\n" if args[0] == "show-option" else
+                      "omp\n" if args[0] == "display-message" else
+                      pane_text if args[0] == "capture-pane" else "")
+            return CompletedProcess(args, 0, output.encode())
+
+        monkeypatch.setattr(seed, "_tmux", fake_tmux)
+        monkeypatch.setattr(seed.time, "sleep", lambda _: None)
+        seed._send("session:witness.1", "WAKE text")
+        assert sum(args[:4] == ("send-keys", "-t", "session:witness.1", "C-m")
+                   for args in calls) == expected_enters
+
+
+def test_failed_paste_cleans_site_file_and_tmux_buffer(tmp_path: Path, monkeypatch) -> None:
+    from subprocess import CompletedProcess
+
+    import pytest
+
+    from mishe_tauftauf import seed
+    from mishe_tauftauf.tmux import TmuxError
+
+    calls: list[tuple[str, ...]] = []
+
+    def fake_tmux(*args: str, **_kwargs):
+        calls.append(args)
+        if args[0] == "paste-buffer":
+            raise TmuxError("pane disappeared")
+        output = str(tmp_path) + "\n" if args[0] == "show-option" else ""
+        return CompletedProcess(args, 0, output.encode())
+
+    monkeypatch.setattr(seed, "_tmux", fake_tmux)
+    with pytest.raises(TmuxError, match="pane disappeared"):
+        seed._send("session:witness.1", "WAKE secret context")
+    assert any(args[0] == "delete-buffer" for args in calls)
+    assert list((tmp_path / "tmp").iterdir()) == []
+
+
+def test_failed_temp_write_removes_partial_wake(tmp_path: Path, monkeypatch) -> None:
+    from subprocess import CompletedProcess
+
+    import pytest
+
+    from mishe_tauftauf import seed
+
+    def fake_tmux(*args: str, **_kwargs):
+        output = str(tmp_path) + "\n" if args[0] == "show-option" else ""
+        return CompletedProcess(args, 0, output.encode())
+
+    def failed_file(**kwargs):
+        path = Path(kwargs["dir"]) / "wake-partial"
+        path.write_text("partial")
+
+        class File:
+            name = str(path)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def write(self, _message):
+                raise OSError("disk full")
+
+        return File()
+
+    monkeypatch.setattr(seed, "_tmux", fake_tmux)
+    monkeypatch.setattr(seed.tempfile, "NamedTemporaryFile", failed_file)
+    with pytest.raises(OSError, match="disk full"):
+        seed._send("session:witness.1", "WAKE long context")
+    assert list((tmp_path / "tmp").iterdir()) == []
+
+
 def test_seed_resident_channel_observes_repairs_and_restores(tmp_path: Path) -> None:
     home = tmp_path / "site"
     session = f"mishe-seed-test-{uuid.uuid4().hex[:10]}"
