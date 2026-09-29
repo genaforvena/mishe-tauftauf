@@ -92,10 +92,19 @@ def sample(home: Path) -> dict[str, object]:
                     numbers.append(int(token))
                 if numbers:
                     keyboard.append(sum(numbers))
-    observed.append({"id": "sense.input.keyboard-interrupt-count",
-                     "state": "verified" if keyboard else "unknown",
-                     "sample": sum(keyboard) if keyboard else "counter unavailable; no key content read",
-                     "kind": "counter"})
+    if keyboard:
+        observed.append({"id": "sense.input.keyboard-interrupt-count",
+                         "state": "verified", "sample": sum(keyboard), "kind": "counter"})
+    elif interrupts is None:
+        observed.append({"id": "sense.input.keyboard-interrupt-count", "state": "unknown",
+                         "sample": "counter unreadable; /proc/interrupts unavailable",
+                         "kind": "counter"})
+    else:
+        # The interrupt source is readable but names no keyboard device, so no
+        # counter exists on this host. That is a structural absence, not a
+        # transient read failure: retrying the same read cannot produce one.
+        observed.append({"id": "sense.input.keyboard-interrupt-count", "state": "unavailable",
+                         "sample": "no keyboard interrupt source on this host", "kind": "counter"})
     wakeup_root = Path("/sys/class/wakeup")
     wakeup_counts = []
     if wakeup_root.is_dir():

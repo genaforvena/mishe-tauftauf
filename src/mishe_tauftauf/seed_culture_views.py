@@ -71,9 +71,11 @@ def senses(home: Path) -> str:
         stale = age is None or age > 900
         senses_rows = [item for item in snapshot.get("observations", []) if str(item.get("id", "")).startswith("sense.")]
         unknown = 0
+        unavailable = 0
         for item in senses_rows:
             state = "unknown" if stale else item["state"]
-            unknown += state != "verified"
+            unknown += state not in {"verified", "unavailable"}
+            unavailable += state == "unavailable"
             lines.append(f"{state.upper()} {item['id']}: {str(item['sample'])[:120]}")
         lines.append(f"SCAN: {snapshot.get('created', 'unknown')} freshness={'stale' if stale else 'recent'}")
         if unknown:
@@ -82,6 +84,8 @@ def senses(home: Path) -> str:
         else:
             verdict = f"PASS senses {len(senses_rows)} verified samples"
             lines.append("STATE: GREEN — all wired sample reads verified")
+        if unavailable:
+            lines.append(f"UNAVAILABLE senses {unavailable} named an absent source, not a failed read")
     _report(home, "senses", verdict)
     return "\n".join(lines) + "\n"
 

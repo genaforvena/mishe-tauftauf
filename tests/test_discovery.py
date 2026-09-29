@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -189,3 +190,56 @@ def test_inode_availability_uses_unprivileged_statvfs_count_and_fails_unknown(
         "kind": "read",
     }
     assert observed["sense.disk.free"]["state"] == "unknown"
+
+
+def test_keyboard_counter_distinguishes_absent_source_from_unreadable_counter(tmp_path: Path) -> None:
+    from mishe_tauftauf import discovery
+
+    original_read = discovery._read
+    real_interrupts = original_read(Path("/proc/interrupts"), 65536)
+    has_keyboard_line = any(re.search(r"i8042|atkbd|keyboard", line, re.IGNORECASE)
+                            for line in (real_interrupts or "").splitlines())
+    keyboard_line = "  12:        3        4   IR-IO-APIC    2-edge      atkbd\n"
+    if has_keyboard_line:
+        # This host really names a keyboard interrupt line, so only the
+        # verified and unreadable branches are reachable here.
+        cases = {"verified": real_interrupts, "unknown": None}
+    else:
+        # The source is readable but names no keyboard, which must read as a
+        # structural absence rather than a transient read failure.
+        cases = {"unavailable": real_interrupts, "unknown": None}
+    for expected_state, interrupts in cases.items():
+        def with_interrupts(path: Path, limit: int = 65536) -> str | None:
+            if path == Path("/proc/interrupts"):
+                return interrupts
+            return original_read(path, limit)
+
+        with patch("mishe_tauftauf.discovery._read", side_effect=with_interrupts):
+            observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+        reading = observed["sense.input.keyboard-interrupt-count"]
+        if expected_state == "verified":
+            assert reading["state"] == "verified"
+            assert reading["sample"] == 7
+        else:
+            assert reading["state"] == expected_state
+            assert isinstance(reading["sample"], str)
+            assert reading["sample"] != ""
+    # A named keyboard line must always be counted, on any host.
+    if not has_keyboard_line:
+        def with_keyboard_line(path: Path, limit: int = 65536) -> str | None:
+            if path == Path("/proc/interrupts"):
+                return keyboard_line
+            return original_read(path, limit)
+
+        with patch("mishe_tauftauf.discovery._read", side_effect=with_keyboard_line):
+            observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+        assert observed["sense.input.keyboard-interrupt-count"] == {
+            "id": "sense.input.keyboard-interrupt-count",
+            "state": "verified",
+            "sample": 7,
+            "kind": "counter",
+        }
+    # The sample must never expose device paths or key content.
+    with patch("mishe_tauftauf.discovery._read", side_effect=with_interrupts):
+        observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+    assert "/dev/input" not in str(observed["sense.input.keyboard-interrupt-count"]["sample"])
