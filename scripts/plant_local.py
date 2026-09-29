@@ -54,6 +54,22 @@ def preferred_operator_window(home: Path, requested: str | None) -> str:
     return requested or "operator"
 
 
+def site_and_session(workspace: Path, default_site_name: str, home: Path | None,
+                     session: str | None) -> tuple[Path, str]:
+    if home is None:
+        candidates = [workspace / name for name in (".mishe-seed", ".mishe-tauftauf")
+                      if (workspace / name / ".seed-raised").is_file()]
+        if len(candidates) > 1:
+            raise ValueError("multiple resident sites exist; pass --home and --session")
+        home = candidates[0] if candidates else workspace / default_site_name
+    raised = home / ".seed-raised"
+    if session is None and raised.is_file():
+        session = raised.read_text(encoding="utf-8").split()[0]
+    if session is None:
+        session = "mishe-seed" if default_site_name == ".mishe-seed" else "mishe-" + workspace.name.replace("_", "-")
+    return home, session
+
+
 def unit_text(home: Path, session: str, slug: str, python: str) -> str:
     command = (f"{python} -m mishe_tauftauf.ci_watch --home {home} --follow" if slug == "ci" else
                f"{python} -m mishe_tauftauf.seed_permission_panel --home {home} --session {session} --follow"
@@ -186,8 +202,8 @@ def main() -> None:
     parser.add_argument("--no-services", action="store_true", help="start panes without installing user services")
     args = parser.parse_args()
     workspace = args.workspace.resolve()
-    home = args.home or workspace / (".mishe-seed" if workspace == ROOT else ".mishe-tauftauf")
-    session = args.session or ("mishe-seed" if workspace == ROOT else "mishe-" + workspace.name.replace("_", "-"))
+    home, session = site_and_session(workspace, ".mishe-seed" if workspace == ROOT else ".mishe-tauftauf",
+                                     args.home, args.session)
     plant(home, session, args.engine_command, preferred_operator_window(home, args.operator_window), not args.no_services)
 
 

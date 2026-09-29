@@ -44,3 +44,18 @@ def test_replant_keeps_existing_operator_window_name(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="site already uses operator window"):
         choose(site, "different")
     assert choose(tmp_path / "fresh", None) == "operator"
+
+
+def test_default_plant_reuses_only_existing_resident_site(tmp_path: Path) -> None:
+    module = runpy.run_path(str(Path(__file__).parents[1] / "scripts" / "plant_local.py"))
+    choose = module["site_and_session"]
+    assert choose(tmp_path, ".mishe-seed", None, None) == (tmp_path / ".mishe-seed", "mishe-seed")
+    existing = tmp_path / ".mishe-tauftauf"
+    existing.mkdir()
+    (existing / ".seed-raised").write_text("mishe-self-development-current $391\n")
+    assert choose(tmp_path, ".mishe-seed", None, None) == (existing, "mishe-self-development-current")
+    other = tmp_path / ".mishe-seed"
+    other.mkdir()
+    (other / ".seed-raised").write_text("mishe-seed $392\n")
+    with pytest.raises(ValueError, match="multiple resident sites"):
+        choose(tmp_path, ".mishe-seed", None, None)

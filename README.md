@@ -6,7 +6,7 @@ This repository supplies the loop, roles, and boundaries. A planted instance add
 
 ## Hello world: one observed wake
 
-From this Git checkout, with `tmux`, a working `codex` command, and a user systemd manager available:
+From a fresh Git checkout, with `tmux`, a working `codex` command, and a user systemd manager available:
 
 ```bash
 python3 scripts/plant_local.py --engine-command codex
@@ -16,6 +16,8 @@ tmux attach -t mishe-seed
 ```
 
 Watch `discover`: its upper pane should show the fresh reading, and its lower pane should take the task. In another shell, `tail -f .mishe-seed/chat.log` shows `[taking]`, a checked `[work]` receipt with its handoff, and `[done]`. The site directory is ignored by Git. Replace `codex` with your installed agent command if needed; the [planting section](#plant-a-local-instance) covers another worktree and manual trials.
+
+On an already planted checkout, the same script reuses its resident site and session; use the paths and session name printed by the planting command.
 
 ## How it lives
 
