@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import runpy
 from pathlib import Path
 
 import pytest
+from mishe_tauftauf import plant
 
 
 def test_refresh_contract_preserves_other_agent_instructions() -> None:
-    module = runpy.run_path(str(Path(__file__).parents[1] / "scripts" / "plant_local.py"))
+    module = vars(plant)
     refresh = module["refresh_contract"]
     old = "User instruction.\n\n<!-- mishe-tauftauf plant contract -->\nOld rule.\n<!-- end mishe-tauftauf plant contract -->\n\nFinal instruction.\n"
     new = "<!-- mishe-tauftauf plant contract -->\nNew rule.\n"
@@ -20,7 +20,7 @@ def test_refresh_contract_preserves_other_agent_instructions() -> None:
 
 
 def test_linked_systemd_fragment_matches_site_unit(tmp_path: Path) -> None:
-    module = runpy.run_path(str(Path(__file__).parents[1] / "scripts" / "plant_local.py"))
+    module = vars(plant)
     unit = tmp_path / "site" / "mishe-example-genome.service"
     unit.parent.mkdir()
     unit.write_text("[Unit]\n")
@@ -32,7 +32,7 @@ def test_linked_systemd_fragment_matches_site_unit(tmp_path: Path) -> None:
 
 
 def test_replant_keeps_existing_operator_window_name(tmp_path: Path) -> None:
-    module = runpy.run_path(str(Path(__file__).parents[1] / "scripts" / "plant_local.py"))
+    module = vars(plant)
     site = tmp_path / "site"
     (site / "health").mkdir(parents=True)
     (site / "health" / "windows.json").write_text(
@@ -47,7 +47,7 @@ def test_replant_keeps_existing_operator_window_name(tmp_path: Path) -> None:
 
 
 def test_default_plant_reuses_only_existing_resident_site(tmp_path: Path) -> None:
-    module = runpy.run_path(str(Path(__file__).parents[1] / "scripts" / "plant_local.py"))
+    module = vars(plant)
     choose = module["site_and_session"]
     assert choose(tmp_path, ".mishe-seed", None, None) == (tmp_path / ".mishe-seed", "mishe-seed")
     existing = tmp_path / ".mishe-tauftauf"
@@ -59,3 +59,14 @@ def test_default_plant_reuses_only_existing_resident_site(tmp_path: Path) -> Non
     (other / ".seed-raised").write_text("mishe-seed $392\n")
     with pytest.raises(ValueError, match="multiple resident sites"):
         choose(tmp_path, ".mishe-seed", None, None)
+
+
+def test_replant_preserves_existing_custom_engine_without_default_binary(tmp_path: Path) -> None:
+    home = tmp_path / ".mishe-tauftauf"
+    minds = home / "minds"
+    minds.mkdir(parents=True)
+    with pytest.raises(ValueError, match="agent command unavailable"):
+        plant.ensure_engine_for_new_minds(home, "missing-engine-for-test")
+    for slug in plant.ROLES:
+        (minds / slug).write_text("#!/bin/sh\nexec custom-engine\n", encoding="utf-8")
+    plant.ensure_engine_for_new_minds(home, "missing-engine-for-test")
