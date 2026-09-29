@@ -26,6 +26,29 @@ def test_failure_transition_opens_one_task_and_records_recovery():
         assert ci_watch.line(home).startswith("CI: PASS")
 
 
+def test_queries_runs_for_exact_origin_commit_and_preserves_unavailable_state(tmp_path):
+    sha = "a" * 40
+    rows = [{"headSha": sha, "workflowName": "CI", "databaseId": 11, "status": "completed",
+             "conclusion": "success", "url": "https://example.test/11"}]
+    answers = [json.dumps({"nameWithOwner": "o/r", "defaultBranchRef": {"name": "main"}}),
+               sha, json.dumps(rows)]
+    with patch.object(ci_watch, "_command", side_effect=answers) as command:
+        result = ci_watch.read(tmp_path / "site")
+    assert result["state"] == "pass"
+    run_query = command.call_args_list[2].args
+    assert run_query[:4] == ("gh", "run", "list", "--repo")
+    assert run_query[4:6] == ("o/r", "--commit")
+    assert run_query[6] == sha
+    assert "--branch" not in run_query
+
+    with patch.object(ci_watch, "_command", side_effect=[
+            json.dumps({"nameWithOwner": "o/r", "defaultBranchRef": {"name": "main"}}),
+            sha, RuntimeError("GitHub unavailable")]):
+        unavailable = ci_watch.read(tmp_path / "site")
+    assert unavailable["state"] == "unknown"
+    assert unavailable["detail"] == "GitHub unavailable"
+
+
 def test_latest_run_per_workflow_supersedes_failed_attempt(tmp_path):
     sha = "a" * 40
     rows = [
