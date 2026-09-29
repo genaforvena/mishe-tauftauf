@@ -228,9 +228,9 @@ def init(home: Path, slug: str, engine_command: str = "codex") -> str:
             f"doctor=$({shlex.quote(sys.executable)} -m mishe_tauftauf --home {shlex.quote(str(home.resolve()))} doctor 2>&1)\n"
             "rc=$?\n"
             f"mkdir -p {shlex.quote(str(home.resolve() / 'observations'))}\n"
-            "if [ \"$rc\" -eq 0 ]; then printf '%s\\n' 'STATE: GREEN · plant doctor passed'; "
+            "if [ \"$rc\" -eq 0 ]; then "
             f"printf '%s\\n' 'PASS plant doctor' > {shlex.quote(str(home.resolve() / 'observations' / slug))}; "
-            "else printf '%s\\n' 'STATE: RED — plant doctor failed' \"$doctor\"; "
+            "else printf '%s\\n' \"$doctor\"; "
             f"printf '%s\\n' 'FAIL plant doctor' > {shlex.quote(str(home.resolve() / 'observations' / slug))}; fi\n"
             f"if status=$(git -C {shlex.quote(str(home.parent.resolve()))} status --short 2>/dev/null); then "
             "count=$(printf '%s\\n' \"$status\" | sed '/^$/d' | wc -l); "
@@ -241,7 +241,9 @@ def init(home: Path, slug: str, engine_command: str = "codex") -> str:
             "printf '%s\\n' 'TEST RUNNER: .venv/bin/pytest available'; "
             "else printf '%s\\n' 'TEST RUNNER: inspect project environment'; fi\n"
             f"{shlex.quote(sys.executable)} -c 'from pathlib import Path; from mishe_tauftauf.ci_watch import line; print(line(Path({str(home.resolve())!r})))'\n"
-            "printf '%s\\n' 'NEXT: fix RED/UNKNOWN first; when GREEN, verify and land one owned improvement, then record its push'\n",
+            "printf '%s\\n' 'NEXT: fix RED/UNKNOWN first; when GREEN, verify and land one owned improvement, then record its push'\n"
+            "if [ \"$rc\" -eq 0 ]; then printf '%s\\n' 'STATE: GREEN · plant doctor passed'; "
+            "else printf '%s\\n' 'STATE: RED — plant doctor failed'; fi\n",
             encoding="utf-8",
             )
         top.chmod(0o755)
