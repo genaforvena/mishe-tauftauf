@@ -27,3 +27,16 @@ def test_linked_systemd_fragment_matches_site_unit(tmp_path: Path) -> None:
     linked.symlink_to(unit)
     assert module["unit_fragment_matches"](str(linked), unit)
     assert not module["unit_fragment_matches"](str(tmp_path / "other.service"), unit)
+
+
+def test_replant_keeps_existing_operator_window_name(tmp_path: Path) -> None:
+    module = runpy.run_path(str(Path(__file__).parents[1] / "scripts" / "plant_local.py"))
+    site = tmp_path / "site"
+    (site / "health").mkdir(parents=True)
+    (site / "health" / "windows.json").write_text(
+        '["codex", "discover", "genome", "health", "permissions", "senses", "witness"]\n'
+    )
+    choose = module["preferred_operator_window"]
+    assert choose(site, None) == "codex"
+    assert choose(site, "different") == "different"
+    assert choose(tmp_path / "fresh", None) == "operator"

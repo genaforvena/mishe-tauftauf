@@ -41,6 +41,18 @@ def unit_fragment_matches(fragment: str, expected: Path) -> bool:
     return Path(fragment).resolve() == expected.resolve()
 
 
+def preferred_operator_window(home: Path, requested: str | None) -> str:
+    if requested:
+        return requested
+    manifest = home / "health" / "windows.json"
+    if manifest.exists():
+        names = json.loads(manifest.read_text(encoding="utf-8"))
+        candidates = set(names) - {*ROLES, "permissions"}
+        if len(candidates) == 1:
+            return candidates.pop()
+    return "operator"
+
+
 def unit_text(home: Path, session: str, slug: str, python: str) -> str:
     command = (f"{python} -m mishe_tauftauf.ci_watch --home {home} --follow" if slug == "ci" else
                f"{python} -m mishe_tauftauf.seed_permission_panel --home {home} --session {session} --follow"
@@ -116,6 +128,8 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
     if operator_window not in names:
         _tmux("new-window", "-d", "-t", session, "-n", operator_window, "-c", str(workspace), "sh")
     print(seed_permission_panel.ensure(home, session), flush=True)
+    for name in (operator_window, *ROLES, "permissions"):
+        _tmux("set-window-option", "-t", f"{session}:{name}", "automatic-rename", "off")
     (home / "health").mkdir(exist_ok=True)
     (home / "health" / "windows.json").write_text(
         json.dumps(sorted({operator_window, *ROLES, "permissions"})) + "\n", encoding="utf-8")
@@ -167,13 +181,13 @@ def main() -> None:
     parser.add_argument("--home", type=Path)
     parser.add_argument("--session")
     parser.add_argument("--engine-command", default="codex")
-    parser.add_argument("--operator-window", default="operator")
+    parser.add_argument("--operator-window")
     parser.add_argument("--no-services", action="store_true", help="start panes without installing user services")
     args = parser.parse_args()
     workspace = args.workspace.resolve()
     home = args.home or workspace / (".mishe-seed" if workspace == ROOT else ".mishe-tauftauf")
     session = args.session or ("mishe-seed" if workspace == ROOT else "mishe-" + workspace.name.replace("_", "-"))
-    plant(home, session, args.engine_command, args.operator_window, not args.no_services)
+    plant(home, session, args.engine_command, preferred_operator_window(home, args.operator_window), not args.no_services)
 
 
 if __name__ == "__main__":
