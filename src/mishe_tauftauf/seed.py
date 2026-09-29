@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 import time
 from contextlib import contextmanager
@@ -151,19 +152,38 @@ def _send(target: str, message: str) -> None:
 
 
 def _mind_ready(session: str, slug: str) -> bool:
-    """Do not paste into OMP while it is handling the preceding turn."""
+    """Deliver only at a known idle prompt or a site's explicit readiness gate."""
     target = f"{session}:{slug}.1"
     command = _tmux("display-message", "-p", "-t", target, "#{pane_current_command}", check=False)
     if command.returncode:
         return False
-    if command.stdout.decode().strip() != "omp":
-        return True
+    engine = command.stdout.decode().strip()
+    if engine not in {"omp", "codex"}:
+        owned = _tmux("show-option", "-qv", "-t", session, OWNED_OPTION, check=False)
+        if owned.returncode:
+            return False
+        probe = Path(owned.stdout.decode().strip()) / "checks" / "mind-ready" / slug
+        if not executable(probe):
+            return False
+        env = os.environ.copy()
+        env.update(MISHE_SEED_SESSION=session, MISHE_SEED_ROLE=slug, MISHE_SEED_PANE=target)
+        try:
+            return subprocess.run([str(probe)], env=env, capture_output=True, timeout=2).returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            return False
     pane = _tmux("capture-pane", "-p", "-t", target, check=False)
     if pane.returncode:
         return False
+    lines = pane.stdout.decode("utf-8", "replace").splitlines()
+    if engine == "codex":
+        if any(line.lstrip().startswith(("• Working", "• Waiting for background terminal", "• Running",
+                                        "• Thinking", "• Executing")) for line in lines):
+            return False
+        return any(line.lstrip().startswith("› ") for line in lines)
     ready = False
-    for line in pane.stdout.decode("utf-8", "replace").splitlines():
-        if line.startswith("⠋ Working..."):
+    for line in lines:
+        status = line.lstrip()
+        if status.startswith(tuple("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")) and ("Working..." in status or "> INSERT >" in status):
             return False
         if line.startswith(" π > INSERT >"):
             ready = True
@@ -184,7 +204,7 @@ def _redeliver_pending(home: Path, session: str, slug: str, pending: int) -> str
         return f"held seed {slug} wake {pending} unsettled"
     if not _mind_ready(session, slug):
         return f"held seed {slug} wake {pending} mind busy"
-    _send(f"{session}:{slug}.1", (
+    _send(f"{session}:{slug}.1", _restore_text(home, slug, session, wake_delivery=True) + "\n" + (
         f"REDELIVERY of unsettled WAKE {pending} for {slug}. A prior delivery may have been lost during clear. "
         "First inspect the live top pane, chat.log, and artifacts for this exact wake. "
         "Reconcile any prior effect before making another change. Then complete one bounded step, "
@@ -196,13 +216,15 @@ def _redeliver_pending(home: Path, session: str, slug: str, pending: int) -> str
     return f"redelivered seed {slug} wake {pending}"
 
 
-def _restore_text(home: Path, slug: str, session: str) -> str:
+def _restore_text(home: Path, slug: str, session: str, *, wake_delivery: bool = False) -> str:
     doctrine = _instruction_text(home, "doctrine.md", _core_doctrine())
     charter = _instruction_text(home, f"charters/{slug}.md", _core_charter(slug))
     handoff_path = home / "handoffs" / f"{slug}.md"
     handoff = handoff_path.read_text(encoding="utf-8") if handoff_path.exists() else "(none yet)"
     pending = _state(home, slug)[1]
     next_action = (
+        "The WAKE following this context is the current obligation. Reconcile the handoff and live pane before another effect."
+        if wake_delivery else
         f"Wake {pending} is unsettled after restart. Inspect its artifact and current top pane before settling it; do not repeat an uncertain effect."
         if pending is not None else
         "Wait for an explicit WAKE before changing source. A restore alone is not a new obligation."
@@ -343,6 +365,16 @@ def init(home: Path, slug: str, engine_command: str = "codex") -> str:
     return str(home)
 
 
+def _mind_launch_argv(home: Path, slug: str) -> tuple[str, ...]:
+    package_root = str(Path(__file__).resolve().parents[1])
+    python_path = os.pathsep.join(part for part in (package_root, os.environ.get("PYTHONPATH", "")) if part)
+    mind_path = os.pathsep.join((str(home / "bin"), os.environ.get("PATH", "/usr/bin:/bin")))
+    return ("-c", str(home.parent.resolve()), "env", f"PATH={mind_path}",
+            f"PYTHONPATH={python_path}",
+            f"XDG_RUNTIME_DIR={os.environ.get('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}')}",
+            str(home / "minds" / slug))
+
+
 def start(home: Path, session: str, slug: str, interval: float) -> str:
     slug = validate_slug(slug)
     workspace = str(home.parent.resolve())
@@ -376,13 +408,10 @@ def start(home: Path, session: str, slug: str, interval: float) -> str:
         _tmux("respawn-pane", "-k", "-t", f"{target}.0", *top_cmd)
     mind_dead = _tmux("display-message", "-p", "-t", f"{target}.1", "#{pane_dead}").stdout.decode().strip() == "1"
     if created or new_window or mind_dead:
-        mind_path = os.pathsep.join((str(home / "bin"), os.environ.get("PATH", "/usr/bin:/bin")))
-        _tmux("respawn-pane", "-k", "-t", f"{target}.1", "-c", workspace,
-              "env", f"PATH={mind_path}", f"PYTHONPATH={python_path}",
-              f"XDG_RUNTIME_DIR={os.environ.get('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}')}",
-              str(home / "minds" / slug))
+        _tmux("respawn-pane", "-k", "-t", f"{target}.1", *_mind_launch_argv(home, slug))
         time.sleep(2.0)
-        _send(f"{target}.1", _restore_text(home, slug, session))
+        if _state(home, slug)[1] is not None:
+            _send(f"{target}.1", _restore_text(home, slug, session))
     return f"seed {slug} ready in {session}"
 
 
@@ -462,7 +491,7 @@ def tick(home: Path, session: str, slug: str, self_pick_seconds: float = 0) -> s
                   f"mishe-tauftauf --home {shlex.quote(str(home))} seed yield --slug {slug} "
                   f"--wake {wake.sequence} --file HANDOFF_FILE --result changed|verified|blocked. "
                   "Add --continue if the task has another checked step.\n")
-        _send(f"{session}:{slug}.1", prompt)
+        _send(f"{session}:{slug}.1", _restore_text(home, slug, session, wake_delivery=True) + "\n" + prompt)
         return f"wake seed {slug} {wake.sequence}"
 
 
@@ -527,14 +556,18 @@ def clear(home: Path, session: str, slug: str) -> str:
         dead = _tmux("display-message", "-p", "-t", target, "#{pane_dead}").stdout.decode().strip()
         if dead == "1":
             raise ValueError("mind pane is dead")
-        _send(target, "/clear")
+        if not _mind_idle(session, slug):
+            raise ValueError("mind has not reached a stable idle boundary")
+        old_pid = _tmux("display-message", "-p", "-t", target, "#{pane_pid}").stdout.decode().strip()
+        _tmux("respawn-pane", "-k", "-t", target, *_mind_launch_argv(home, slug))
         time.sleep(0.5)
-        pane = _tmux("capture-pane", "-p", "-t", target, check=False).stdout.decode("utf-8", "replace")
-        if "'/clear' is disabled while a task is in progress." in pane:
-            raise ValueError("agent refused /clear while its task is in progress")
-        _send(target, "Context was cleared. " + _restore_text(home, slug, session))
+        new_pid = _tmux("display-message", "-p", "-t", target, "#{pane_pid}").stdout.decode().strip()
+        new_dead = _tmux("display-message", "-p", "-t", target, "#{pane_dead}").stdout.decode().strip()
+        if not old_pid or not new_pid or new_pid == old_pid or new_dead != "0":
+            raise ValueError("mind process rotation did not produce a live new pane")
         Feed(home).append("seed", f"seed clear {slug} after={last_yield}\n"
-                          "The supervisor cleared the idle mind's context and restored its charter and latest handoff.")
+                          "The supervisor rotated the idle mind to a fresh process in the same pane. "
+                          "Its charter and latest handoff will be delivered with the next wake.")
         return f"clear seed {slug} after {last_yield}"
 
 
