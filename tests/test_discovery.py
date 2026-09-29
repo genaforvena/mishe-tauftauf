@@ -132,3 +132,32 @@ def test_cpu_pressure_reports_missing_source_as_unknown(tmp_path: Path) -> None:
         "sample": "pressure data unavailable",
         "kind": "read",
     }
+
+
+def test_io_pressure_requires_a_valid_some_row(tmp_path: Path) -> None:
+    from mishe_tauftauf import discovery
+
+    original_read = discovery._read
+    cases = (
+        ("some avg10=0.05 avg60=0.10 avg300=0.20 total=12345\n"
+         "full avg10=0.01 avg60=0.02 avg300=0.03 total=456\n", "verified"),
+        ("some avg10=bad avg60=0.10 avg300=0.20 total=12345\n", "unknown"),
+        ("full avg10=0.01 avg60=0.02 avg300=0.03 total=456\n", "unknown"),
+        (None, "unknown"),
+    )
+    for io_sample, expected_state in cases:
+        def with_io_pressure(path: Path, limit: int = 65536) -> str | None:
+            if path == Path("/proc/pressure/io"):
+                return io_sample
+            return original_read(path, limit)
+
+        with patch("mishe_tauftauf.discovery._read", side_effect=with_io_pressure):
+            observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+        reading = observed["sense.proc.io-pressure"]
+        assert reading["state"] == expected_state
+        assert reading["kind"] == "read"
+        if expected_state == "verified":
+            assert "some avg10=0.05" in reading["sample"]
+            assert "full avg10=0.01" in reading["sample"]
+        else:
+            assert reading["sample"] == "pressure data unavailable"

@@ -58,6 +58,15 @@ def sample(home: Path) -> dict[str, object]:
                      "state": "verified" if cpu_pressure_ok else "unknown",
                      "sample": "; ".join(cpu_pressure_lines) if cpu_pressure_ok else "pressure data unavailable",
                      "kind": "read"})
+    io_pressure = _read(Path("/proc/pressure/io"), 512)
+    io_pressure_lines = [line.strip() for line in (io_pressure or "").splitlines()
+                         if re.match(r"^(some|full) avg10=[0-9]+(?:\.[0-9]+)? avg60=[0-9]+(?:\.[0-9]+)? "
+                                     r"avg300=[0-9]+(?:\.[0-9]+)? total=[0-9]+$", line.strip())]
+    io_pressure_ok = any(line.startswith("some ") for line in io_pressure_lines)
+    observed.append({"id": "sense.proc.io-pressure",
+                     "state": "verified" if io_pressure_ok else "unknown",
+                     "sample": "; ".join(io_pressure_lines) if io_pressure_ok else "pressure data unavailable",
+                     "kind": "read"})
     try:
         disk = os.statvfs(home.parent)
         free_bytes = disk.f_bavail * disk.f_frsize
