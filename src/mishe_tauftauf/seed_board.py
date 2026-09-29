@@ -34,7 +34,9 @@ def open_tasks(entries: list[FeedEntry]) -> list[Task]:
     for entry in entries:
         first = entry.body.splitlines()[0].lstrip(" \t") if entry.body else ""
         if match := TASK_RE.match(first):
-            tasks[match.group(1)] = Task(match.group(1), match.group(2), "open", entry.sequence)
+            identity = match.group(1)
+            if identity not in tasks:
+                tasks[identity] = Task(identity, match.group(2), "open", entry.sequence)
         elif match := STATE_RE.match(first):
             old = tasks.get(match.group(2))
             if old is not None:

@@ -23,6 +23,13 @@ def test_indented_task_tags_remain_visible_and_addressed(tmp_path):
     feed.append("genome", " [done] sample-io — checked source and live pane")
     assert open_tasks(feed.entries()) == []
 
+def test_duplicate_task_announcement_does_not_reopen_terminal_task(tmp_path):
+    feed = Feed(tmp_path)
+    feed.append("genome", "[task] task-board-terminal-state-3296 owner=genome source=chat acceptance=terminal retry=change")
+    feed.append("genome", "[done] task-board-terminal-state-3296 — checked")
+    feed.append("witness", "[task] task-board-terminal-state-3296 owner=genome source=chat acceptance=terminal retry=change")
+    assert open_tasks(feed.entries()) == []
+
 
 def test_explained_supervisor_receipts_still_replay(tmp_path):
     feed = Feed(tmp_path)
