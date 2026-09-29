@@ -61,7 +61,7 @@ def discover(home: Path) -> str:
 def senses(home: Path) -> str:
     lines = ["GOAL: turn readings into honest senses with real samples and visible unknowns",
              "PURSUIT: wire useful reads, reproduce hollow or failed checks, and hand reusable fixes to genome",
-             "NEXT: investigate one UNKNOWN or stale sense; verify a real artifact before calling it working"]
+             "NEXT: pursue a new useful read when an UNKNOWN has a documented retry condition; verify its live sample"]
     snapshot = latest(home)
     if snapshot is None:
         verdict = "UNKNOWN senses no discovery sample"

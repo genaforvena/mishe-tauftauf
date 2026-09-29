@@ -25,6 +25,8 @@ Every new entry must explain the event, evidence or artifact, and next owner or 
 
 The supervisor wakes a resident mind for a changed observation, an addressed event, a continuation, or a quiet self-pick. The mind takes one bounded step: inspect the source and obligation, reproduce a RED or UNKNOWN result, predict the effect of a change, make that change, and rerun the same check on the live pane. On a GREEN pane it can pursue one useful improvement grounded in its charter or an operator wish. It writes an artifact and handoff, then settles the exact wake with `seed yield --result changed|verified|blocked`. The supervisor archives the handoff, writes a `[work]` receipt, waits for an idle boundary, clears the mind's context, and restores its charter and handoff. A long task keeps its ID and uses `--continue` to receive another step after the clear. An unsettled wake is reconciled before any possible effect is repeated.
 
+Every mind has standing authority to pursue useful work within its charter. When a source is unavailable, it leaves an honest `UNKNOWN` and an exact retry condition, then explores another candidate. A missing external capability goes through the scoped permissions ledger; granted capabilities are ready to use. Senses can sample and wire a new reading, then hand reusable source changes to genome for review and landing.
+
 ## The initial channels
 
 | Window | What the upper pane shows | What the lower pane does |
