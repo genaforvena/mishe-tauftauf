@@ -154,6 +154,83 @@ class ExternalDeltaViewTests(unittest.TestCase):
             self.assertNotIn("SECRET", feed)
             self.assertNotIn("mind starting", feed)
 
+    def test_opt_in_laya_receives_safe_structured_state_and_specific_question(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            executable(home / "top-pains" / "sensor", "print('SECRET-RAW-PANE')\n")
+            calls = []
+
+            class FakeModel:
+                cfg = {"max_len": 1024}
+
+                def predict(self, state, questions):
+                    calls.append((state, questions))
+                    routine = (state["previous"] == state["current"] or
+                               state["previous"].replace("held=1", "held=2") == state["current"])
+                    probability = 0.05 if routine else 0.95
+                    return {"answers": {"decision": {"noul": probability}}}
+
+            with mock.patch("mishe_tauftauf.runtime.importlib.util.find_spec", return_value=object()), \
+                 mock.patch("mishe_tauftauf.laya_judge.load_model", return_value=FakeModel()):
+                runner = Coordinator(RuntimeConfig(home, launcher="headless", dispatch=False,
+                                                   external_delta_view_slugs=("sensor",), laya_structured=True))
+                self.assertNotIn("projected-delta-publish", runner.control_failures)
+                judged = runner._judge("publish", "sensor", "SECRET-RAW-PANE", "STATE: RED\n",
+                                       previous_projection="STATE: GREEN\n")
+                self.assertEqual(judged.outcome, "yes")
+                calls_after_positive = len(calls)
+                self.assertEqual(runner._judge("publish", "sensor", "SECRET-RAW-PANE", "STATE: RED\n",
+                                                previous_projection="STATE: RED\n").outcome, "no")
+                self.assertEqual(len(calls), calls_after_positive)
+            state, questions = calls[-1]
+            self.assertEqual(state["previous"], "STATE: GREEN\n")
+            self.assertEqual(state["current"], "STATE: RED\n")
+            self.assertEqual(set(questions), {"decision"})
+            self.assertIn("Compare the named `previous` and `current`", questions["decision"]["instructions"])
+            self.assertNotIn("QUESTION", json.dumps(state))
+            self.assertNotIn("SECRET", json.dumps(calls))
+            runner._receipt(judged, "sensor", 0)
+            self.assertIn("structured-laya-v1", runner.feed.entries()[-1].body)
+
+    def test_structured_laya_requires_projected_pair_without_external_judge(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            with self.assertRaises(ValueError):
+                Coordinator(RuntimeConfig(home, laya_structured=True))
+            with self.assertRaises(ValueError):
+                Coordinator(RuntimeConfig(home, judge=home / "judge", external_delta_view_slugs=("sensor",),
+                                          laya_structured=True))
+
+    def test_structured_laya_invalid_pair_or_probability_stays_unknown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            executable(home / "top-pains" / "sensor", "print('SECRET')\n")
+            calls = []
+
+            class FakeModel:
+                cfg = {"max_len": 1024}
+
+                def predict(self, state, questions):
+                    calls.append(state)
+                    return {"answers": {"decision": {"noul": float("nan")}}}
+
+            with mock.patch("mishe_tauftauf.runtime.importlib.util.find_spec", return_value=object()), \
+                 mock.patch("mishe_tauftauf.laya_judge.load_model", return_value=FakeModel()):
+                runner = Coordinator(RuntimeConfig(home, launcher="headless", dispatch=False,
+                                                   external_delta_view_slugs=("sensor",), laya_structured=True))
+                runner.control_failures = {}
+                prior_calls = len(calls)
+                missing = runner._judge("publish", "sensor", "SECRET", "STATE: RED\n", previous_projection=None)
+                self.assertEqual(missing.outcome, "unknown")
+                self.assertEqual(len(calls), prior_calls)
+                malformed = runner._judge("publish", "sensor", "SECRET", "STATE: RED\nPRIVATE", previous_projection="STATE: GREEN\n")
+                self.assertEqual(malformed.outcome, "unknown")
+                self.assertEqual(len(calls), prior_calls)
+                invalid_probability = runner._judge("publish", "sensor", "SECRET", "STATE: RED\n",
+                                                    previous_projection="STATE: GREEN\n")
+                self.assertEqual(invalid_probability.outcome, "unknown")
+                self.assertNotIn("SECRET", invalid_probability.document)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -25,7 +25,8 @@ def initialize(home: Path) -> None:
     home.mkdir(parents=True, exist_ok=True)
     for name in ("top-pains", "minds", "observations", "filters", "projectors", "handoffs", "plans"):
         (home / name).mkdir(exist_ok=True)
-    (home / "feed").touch(mode=0o600, exist_ok=True)
+    if not (home / "feed").exists():
+        (home / "chat.log").touch(mode=0o600, exist_ok=True)
 
 
 def cmd_init(args) -> int:
@@ -138,7 +139,7 @@ def cmd_handoff(args) -> int:
 
 
 def cmd_run(args) -> int:
-    config = RuntimeConfig(args.home, Path(args.judge) if args.judge else None, args.launcher, args.session, args.interval, not args.observe_only, Path(args.policy) if args.policy else None, Path(args.batch_judge) if args.batch_judge else None, args.control_cache_ttl, args.refresh_controls, tuple(args.external_view_slug), tuple(args.external_delta_view_slug), slug=args.slug)
+    config = RuntimeConfig(args.home, Path(args.judge) if args.judge else None, args.launcher, args.session, args.interval, not args.observe_only, Path(args.policy) if args.policy else None, Path(args.batch_judge) if args.batch_judge else None, args.control_cache_ttl, args.refresh_controls, tuple(args.external_view_slug), tuple(args.external_delta_view_slug), slug=args.slug, laya_structured=args.laya_structured, external_fleet_view_slugs=tuple(args.external_fleet_view_slug))
     coordinator = Coordinator(config)
     coordinator.acquire()
     try:
@@ -165,6 +166,34 @@ def cmd_tmux_stop(args) -> int:
     return 0
 
 
+def cmd_seed(args) -> int:
+    from . import seed
+
+    action = args.seed_command
+    if action == "init":
+        result = seed.init(args.home, args.slug, args.engine_command)
+    elif action == "start":
+        result = seed.start(args.home, args.session, args.slug, args.interval)
+    elif action == "stop":
+        result = seed.stop(args.home, args.session)
+    elif action == "tick":
+        result = seed.tick(args.home, args.session, args.slug, args.self_pick_seconds)
+    elif action == "follow":
+        seed.follow(args.home, args.session, args.slug, args.interval, args.self_pick_seconds)
+        return 0
+    elif action == "run":
+        seed.run(args.home, args.session, args.slug, args.interval, args.self_pick_seconds, args.clear_grace_seconds)
+        return 0
+    elif action == "yield":
+        result = seed.yield_wake(args.home, args.slug, args.wake, args.file, args.continue_task, args.result)
+    elif action == "clear":
+        result = seed.clear(args.home, args.session, args.slug)
+    else:
+        result = seed.status(args.home, args.slug)
+    print(result)
+    return 0
+
+
 def cmd_tmux_mind_run(args) -> int:
     from .feed import Feed
     from .tmux import capture_raw
@@ -183,14 +212,26 @@ def cmd_tmux_mind_run(args) -> int:
         env = os.environ.copy()
         env.update({"MISHE_TAUFTAUF_HOME": str(home), "MISHE_TAUFTAUF_SLUG": slug, "MISHE_TAUFTAUF_INVOCATION": args.invocation, "MISHE_TAUFTAUF_WORKSPACE": str(home.parent)})
         try:
-            result = subprocess.run([str(executable_path)], input=context.encode(), capture_output=True, env=env)
-            code = result.returncode
-            stdout, stderr = result.stdout.decode("utf-8", "replace"), result.stderr.decode("utf-8", "replace")
+            process = subprocess.Popen([str(executable_path)], stdin=subprocess.PIPE,
+                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+            assert process.stdin is not None and process.stdout is not None
+            process.stdin.write(context.encode())
+            process.stdin.close()
+            byte_count = 0
+            while chunk := os.read(process.stdout.fileno(), 4096):
+                byte_count += len(chunk)
+                remaining = memoryview(chunk)
+                while remaining:
+                    remaining = remaining[os.write(1, remaining):]
+            code = process.wait()
+            stdout, stderr = "", ""
         except OSError as exc:
             code, stdout, stderr = 127, "", str(exc)
         feed = Feed(home)
         if stdout or stderr:
-            feed.append_runtime("mishe-tauftauf", f"mind output top-pain {slug} invocation {args.invocation} stdout-bytes={len(stdout.encode())} stderr-bytes={len(stderr.encode())}")
+            print(stdout + stderr, flush=True)
+        if 'byte_count' in locals():
+            feed.append_runtime("mishe-tauftauf", f"mind output top-pain {slug} invocation {args.invocation} stdout-bytes={byte_count} stderr-bytes=0")
         feed.append_runtime("mishe-tauftauf", f"mind exited top-pain {slug} for entry {args.sequence} attempt={args.attempt} code={code}")
         if not any(f"handoff top-pain {slug} invocation {args.invocation}" in entry.body for entry in feed.entries() if entry.source == "mishe-tauftauf"):
             feed.append_runtime("observation/" + slug, f"UNKNOWN — mind invocation {args.invocation} exited without a tied handoff; prior handoff is stale")
@@ -218,6 +259,17 @@ def _repair_handoffs(home: Path, entries) -> list[str]:
 
 def cmd_doctor(args) -> int:
     failures = 0
+    site = args.home.resolve()
+    repository = subprocess.run(["git", "-C", str(site.parent), "rev-parse", "--show-toplevel"],
+                                capture_output=True, text=True)
+    if repository.returncode == 0 and Path(repository.stdout.strip()).resolve() == site.parent:
+        tracked = subprocess.run(["git", "-C", str(site.parent), "ls-files", "--", site.name],
+                                 capture_output=True, text=True)
+        if tracked.returncode or tracked.stdout.strip():
+            print("HOLD local-plant-in-git: remove staged or tracked site files from the index")
+            failures += 1
+        else:
+            print("PASS local plant out of Git")
     feed = Feed(args.home)
     try:
         entries = feed.entries()
@@ -236,7 +288,10 @@ def cmd_doctor(args) -> int:
         if bad:
             print(f"HOLD non-executable {kind}: {', '.join(sorted(bad))}")
             failures += 1
-        else:
+        if kind == "top-pains" and not discover(args.home):
+            print("HOLD missing-top-pain: no executable Top Pain in top-pains")
+            failures += 1
+        elif not bad:
             print(f"PASS executable {kind}")
     repaired = _repair_handoffs(args.home, entries)
     if repaired:
@@ -362,10 +417,20 @@ def parser() -> argparse.ArgumentParser:
     p = pain.add_parser("render"); p.add_argument("slug"); p.add_argument("--timeout", type=float, default=10.0); p.set_defaults(func=cmd_pain_render)
     p = pain.add_parser("read"); p.add_argument("slug"); p.add_argument("--launcher", choices=("headless", "tmux"), default="headless"); p.add_argument("--session", default="mishe-tauftauf"); p.add_argument("--timeout", type=float, default=10.0); p.set_defaults(func=cmd_pain_read)
     p = pain.add_parser("watch"); p.add_argument("slug"); p.add_argument("--interval", type=float, default=5.0); p.add_argument("--timeout", type=float, default=10.0); p.set_defaults(func=cmd_pain_watch)
-    p = sub.add_parser("run"); mode = p.add_mutually_exclusive_group(required=True); mode.add_argument("--once", action="store_true"); mode.add_argument("--follow", action="store_true"); judge = p.add_mutually_exclusive_group(); judge.add_argument("--judge"); judge.add_argument("--batch-judge"); p.add_argument("--launcher", choices=("headless", "tmux"), default="tmux"); p.add_argument("--session", default="mishe-tauftauf"); p.add_argument("--interval", type=float, default=5.0); p.add_argument("--observe-only", action="store_true"); p.add_argument("--slug"); p.add_argument("--policy"); p.add_argument("--control-cache-ttl", type=float); p.add_argument("--refresh-controls", action="store_true"); p.add_argument("--external-view-slug", action="append", default=[]); p.add_argument("--external-delta-view-slug", action="append", default=[]); p.set_defaults(func=cmd_run)
+    p = sub.add_parser("run"); mode = p.add_mutually_exclusive_group(required=True); mode.add_argument("--once", action="store_true"); mode.add_argument("--follow", action="store_true"); judge = p.add_mutually_exclusive_group(); judge.add_argument("--judge"); judge.add_argument("--batch-judge"); p.add_argument("--launcher", choices=("headless", "tmux"), default="tmux"); p.add_argument("--session", default="mishe-tauftauf"); p.add_argument("--interval", type=float, default=5.0); p.add_argument("--observe-only", action="store_true"); p.add_argument("--slug"); p.add_argument("--laya-structured", action="store_true"); p.add_argument("--policy"); p.add_argument("--control-cache-ttl", type=float); p.add_argument("--refresh-controls", action="store_true"); p.add_argument("--external-view-slug", action="append", default=[]); p.add_argument("--external-delta-view-slug", action="append", default=[]); p.add_argument("--external-fleet-view-slug", action="append", default=[]); p.set_defaults(func=cmd_run)
     tmux = sub.add_parser("tmux").add_subparsers(dest="tmux_command", required=True)
     p = tmux.add_parser("start"); p.add_argument("--session", default="mishe-tauftauf"); p.add_argument("--interval", type=float, default=5.0); p.set_defaults(func=cmd_tmux_start)
     p = tmux.add_parser("stop"); p.add_argument("--session", default="mishe-tauftauf"); p.set_defaults(func=cmd_tmux_stop)
+    seed = sub.add_parser("seed").add_subparsers(dest="seed_command", required=True)
+    p = seed.add_parser("init"); p.add_argument("--slug", default="genome"); p.add_argument("--engine-command", default="codex"); p.set_defaults(func=cmd_seed)
+    p = seed.add_parser("start"); p.add_argument("--slug", default="genome"); p.add_argument("--session", default="mishe-seed"); p.add_argument("--interval", type=float, default=5.0); p.set_defaults(func=cmd_seed)
+    p = seed.add_parser("stop"); p.add_argument("--session", default="mishe-seed"); p.set_defaults(func=cmd_seed)
+    p = seed.add_parser("tick"); p.add_argument("--slug", default="genome"); p.add_argument("--session", default="mishe-seed"); p.add_argument("--self-pick-seconds", type=float, default=0); p.set_defaults(func=cmd_seed)
+    p = seed.add_parser("follow"); p.add_argument("--slug", default="genome"); p.add_argument("--session", default="mishe-seed"); p.add_argument("--interval", type=float, default=5.0); p.add_argument("--self-pick-seconds", type=float, default=3600); p.set_defaults(func=cmd_seed)
+    p = seed.add_parser("run"); p.add_argument("--slug", default="genome"); p.add_argument("--session", default="mishe-seed"); p.add_argument("--interval", type=float, default=5.0); p.add_argument("--self-pick-seconds", type=float, default=3600); p.add_argument("--clear-grace-seconds", type=float, default=15); p.set_defaults(func=cmd_seed)
+    p = seed.add_parser("yield"); p.add_argument("--slug", default="genome"); p.add_argument("--wake", type=int, required=True); p.add_argument("--file", type=Path, required=True); p.add_argument("--continue", dest="continue_task", action="store_true"); p.add_argument("--result", choices=("changed", "verified", "blocked"), default="unspecified"); p.set_defaults(func=cmd_seed)
+    p = seed.add_parser("clear"); p.add_argument("--slug", default="genome"); p.add_argument("--session", default="mishe-seed"); p.set_defaults(func=cmd_seed)
+    p = seed.add_parser("status"); p.add_argument("--slug", default="genome"); p.set_defaults(func=cmd_seed)
     p = sub.add_parser("tmux-mind-run", help=argparse.SUPPRESS); p.add_argument("slug"); p.add_argument("sequence", type=int); p.add_argument("attempt", type=int); p.add_argument("invocation"); p.add_argument("context_path"); p.add_argument("--session", default="mishe-tauftauf"); p.set_defaults(func=cmd_tmux_mind_run)
     return root
 

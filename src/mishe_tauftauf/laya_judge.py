@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sys
+import json
+import math
 
 _MODEL = None
 _LOAD_ERROR = None
@@ -56,6 +58,29 @@ def judge(text: str) -> tuple[float | None, str]:
         if hasattr(value, "item"):
             value = value.item()
         return float(value), ""
+    except Exception as exc:
+        return None, f"laya inference failed: {exc}"
+
+
+def judge_structured(state: dict, instruction: str) -> tuple[float | None, str]:
+    """Ask one explicit noul question over a validated projected state."""
+    model = load_model()
+    if model is None:
+        return None, f"laya unavailable: {_LOAD_ERROR}"
+    if not isinstance(state, dict) or not isinstance(instruction, str) or not instruction.strip():
+        return None, "invalid structured Laya request"
+    try:
+        count, limit = _token_count(model, json.dumps(state, ensure_ascii=False) + "\n" + instruction)
+        if limit is not None and count > limit:
+            return None, f"input has {count} tokens, checkpoint budget is {limit}; no truncation"
+        result = model.predict(state, {"decision": {"type": "noul", "instructions": instruction}})
+        value = result["answers"]["decision"]["noul"]
+        if hasattr(value, "item"):
+            value = value.item()
+        probability = float(value)
+        if not math.isfinite(probability) or not 0.0 <= probability <= 1.0:
+            return None, "laya returned invalid probability"
+        return probability, ""
     except Exception as exc:
         return None, f"laya inference failed: {exc}"
 

@@ -108,7 +108,10 @@ def parse_feed(data: bytes, *, start_sequence: int = 1) -> list[FeedEntry]:
 class Feed:
     def __init__(self, home: Path | str):
         self.home = Path(home)
-        self.path = self.home / "feed"
+        # Existing sites retain the old tape until their active writers exit.
+        # New and migrated sites use their own local chat.log.
+        self.path = self.home / ("chat.log" if (self.home / "chat.log").exists()
+                                 or not (self.home / "feed").exists() else "feed")
         self.index_path = self.home / "feed.index.json"
         self.identity_path = self.home / "feed.identities.sqlite3"
 

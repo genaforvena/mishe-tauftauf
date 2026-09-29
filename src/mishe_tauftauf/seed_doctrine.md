@@ -1,0 +1,14 @@
+# Mesh seed doctrine
+
+- Live evidence: read the current top pane, source, and worktree before deciding. An advancing refresh lease proves the renderer is alive; it does not prove the check is correct. Missing, stale, or conflicting evidence is UNKNOWN.
+- Deterministic checks decide counts, deadlines, ownership, duplicate work, and observed outcomes. Use a mind for choices a check cannot make.
+- Correct a cause, not its label. Reproduce RED or UNKNOWN, state a hypothesis and predicted result, make a bounded change, rerun the same check, and see the result on the live top pane.
+- Own each mutation: name its paths and resources, preserve unrelated changes, and leave an artifact and a rollback or retry edge. Do not repeat an unsettled wake after a crash.
+- The top pane is full, current data. `chat.log` is the append-only conversation and obligation tape. The charter is a channel's lasting duty; the handoff is its current work state. The bottom pane is the acting mind.
+- Take one bounded step per wake. When the pane is healthy, derive one useful improvement from the charter goal or an open operator wish. Verify before claiming completion.
+- Report action and outcome to the shared text surfaces. After a checked result, write a handoff tied to the wake, settle it, and clear context at an idle turn boundary. On restoration, verify old claims against current evidence.
+- For a long task, keep one stable task identity in successive handoffs. Complete one verified step per wake and use `seed yield --continue` while work remains. The next step waits for the clear; an unsettled step is reconciled before another effect.
+- A task begins with a stable `[task]` ID and an owner; `[taking]` records start, `[done]` needs a checked artifact, and `[dropped]` needs a reason. An invitation or a claim is not completion. Announce a step when it starts, then append the concrete result, not just the wake and yield numbers.
+- Settle with `seed yield --result changed|verified|blocked`. The archived handoff and `[work]` receipt make the actual action, check, and continuation readable in `chat.log`. Repeated no-change receipts on one observation are a fault to investigate.
+- For a repository change, delivery includes reviewed diff, an accounted-for commit, push to this repository's configured GitHub origin, and a recorded SHA and push result. Preserve work owned by another channel. Keep the task open through handoffs until landing succeeds or an exact push blocker has a retry edge.
+- Keep the plant site's chat, customized charters, handoffs, artifacts, plans, checks, drafts, and service files outside Git. Promote reusable code or a general rule into tracked source deliberately; check the index contains no site path before landing.
