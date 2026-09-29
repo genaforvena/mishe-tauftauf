@@ -32,6 +32,11 @@ def _lock(home: Path):
         yield
 
 
+def _receipt_line(body: str) -> str:
+    """Keep replay compatible with old one-line and new explained receipts."""
+    return body.splitlines()[0]
+
+
 def _state(home: Path, slug: str) -> tuple[str | None, int | None, int | None, int | None, int | None, int | None, datetime | None, int | None]:
     digest = None
     last_observation = None
@@ -44,21 +49,22 @@ def _state(home: Path, slug: str) -> tuple[str | None, int | None, int | None, i
     for entry in Feed(home).entries():
         if entry.source != "seed":
             continue
-        if match := OBS_RE.fullmatch(entry.body):
+        line = _receipt_line(entry.body)
+        if match := OBS_RE.fullmatch(line):
             if match.group(1) == slug:
                 digest = match.group(2)
                 last_observation = entry.sequence
-        elif match := WAKE_RE.fullmatch(entry.body):
+        elif match := WAKE_RE.fullmatch(line):
             if match.group(1) == slug:
                 pending = entry.sequence
                 last_woken_observation = int(match.group(2))
                 last_wake_at = datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))
-        elif match := YIELD_RE.fullmatch(entry.body):
+        elif match := YIELD_RE.fullmatch(line):
             if match.group(1) == slug and pending == int(match.group(2)):
                 last_yield = pending
                 continue_yield = pending if match.group(3) else None
                 pending = None
-        elif match := CLEAR_RE.fullmatch(entry.body):
+        elif match := CLEAR_RE.fullmatch(line):
             if match.group(1) == slug:
                 last_clear = int(match.group(2))
     return digest, pending, last_yield, last_clear, last_observation, last_woken_observation, last_wake_at, continue_yield
@@ -68,7 +74,7 @@ def _external_event(home: Path, slug: str):
     latest = None
     last_woken = None
     for entry in Feed(home).entries():
-        if entry.source == "seed" and (match := WAKE_RE.fullmatch(entry.body)) and match.group(1) == slug:
+        if entry.source == "seed" and (match := WAKE_RE.fullmatch(_receipt_line(entry.body))) and match.group(1) == slug:
             if match.group(3):
                 last_woken = int(match.group(3))
         elif entry.source not in {slug, f"mind/{slug}"}:
@@ -130,7 +136,7 @@ def _redeliver_pending(home: Path, session: str, slug: str, pending: int) -> str
     for entry in Feed(home).entries():
         if entry.body.startswith(f"seed wake {slug} ") and entry.sequence == pending:
             last_delivery = datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))
-        elif entry.body == f"seed redeliver {slug} wake={pending}":
+        elif _receipt_line(entry.body) == f"seed redeliver {slug} wake={pending}":
             last_delivery = datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))
     if last_delivery is None:
         return f"UNKNOWN seed {slug} wake {pending} has no delivery record"
@@ -144,7 +150,9 @@ def _redeliver_pending(home: Path, session: str, slug: str, pending: int) -> str
         "Reconcile any prior effect before making another change. Then complete one bounded step, "
         f"write a handoff, and settle with seed yield --slug {slug} --wake {pending} --file HANDOFF_FILE "
         "--result changed|verified|blocked.\n"))
-    Feed(home).append("seed", f"seed redeliver {slug} wake={pending}")
+    Feed(home).append("seed", f"seed redeliver {slug} wake={pending}\n"
+                      "The prior wake remains unsettled. The mind was idle, so the supervisor sent it again; "
+                      "check earlier effects before making another change.")
     return f"redelivered seed {slug} wake {pending}"
 
 
@@ -342,7 +350,10 @@ def tick(home: Path, session: str, slug: str, self_pick_seconds: float = 0) -> s
         previous, pending, last_yield, last_clear, last_observation, last_woken_observation, last_wake_at, continue_yield = _state(home, slug)
         changed = digest != previous
         if changed:
-            observation = Feed(home).append("seed", f"seed observation {slug} sha256={digest}")
+            state_line = next((line for line in frame.splitlines() if line.startswith("STATE:")), "state not stated")
+            observation = Feed(home).append("seed", f"seed observation {slug} sha256={digest}\n"
+                                       f"The {slug} top pane's meaningful state changed: {state_line}. "
+                                       "Read the live pane for the full evidence and next action.")
             last_observation = observation.sequence
         if pending is not None:
             return _redeliver_pending(home, session, slug, pending)
@@ -360,7 +371,12 @@ def tick(home: Path, session: str, slug: str, self_pick_seconds: float = 0) -> s
         if not _mind_ready(session, slug):
             return f"HOLD seed {slug} resident mind busy"
         event_suffix = f" event={external.sequence}" if external is not None else ""
-        wake = Feed(home).append("seed", f"seed wake {slug} observation={last_observation}{event_suffix}")
+        reason = (f"addressed chat event {external.sequence}" if external is not None else
+                  "continued task" if continue_due else "quiet self-pick" if self_pick_due and not changed else
+                  "changed top-pane observation")
+        wake = Feed(home).append("seed", f"seed wake {slug} observation={last_observation}{event_suffix}\n"
+                                 f"The supervisor asked {slug} to take one bounded, checked step because of {reason}. "
+                                 "The mind must leave a handoff and settle this exact wake.")
         prompt = (f"WAKE {wake.sequence} for {slug}. Read your live top pane now. Current observation:\n{frame}\n"
                   + (f"NEW CHAT EVENT {external.sequence} from {external.source}: {external.body[:4096]}\n" if external is not None else "") +
                   ("SELF-PICK: the pane is stable. Derive one bounded improvement from your charter goal or an open wish.\n" if self_pick_due and not changed else "") +
@@ -412,7 +428,9 @@ def yield_wake(home: Path, slug: str, wake: int, handoff_file: Path, continue_ta
                 raise ValueError(f"work receipt for wake {wake} differs; reconcile before yielding")
         else:
             Feed(home).append("seed", f"{header}\nHANDOFF:\n{excerpt}")
-        Feed(home).append("seed", f"seed yield {slug} wake={wake}" + (" continue=1" if continue_task else ""))
+        Feed(home).append("seed", f"seed yield {slug} wake={wake}" + (" continue=1" if continue_task else "") +
+                          "\nThe mind settled this wake with an archived handoff and work receipt. " +
+                          ("Its task continues after context clear." if continue_task else "No continuation was requested."))
         return f"yield seed {slug} {wake}"
 
 
@@ -438,7 +456,8 @@ def clear(home: Path, session: str, slug: str) -> str:
         if "'/clear' is disabled while a task is in progress." in pane:
             raise ValueError("agent refused /clear while its task is in progress")
         _send(target, "Context was cleared. " + _restore_text(home, slug, session))
-        Feed(home).append("seed", f"seed clear {slug} after={last_yield}")
+        Feed(home).append("seed", f"seed clear {slug} after={last_yield}\n"
+                          "The supervisor cleared the idle mind's context and restored its charter and latest handoff.")
         return f"clear seed {slug} after {last_yield}"
 
 
@@ -462,7 +481,7 @@ def _clear_due(home: Path, slug: str, grace_seconds: float) -> bool:
     if pending is not None or last_yield is None or last_yield == last_clear:
         return False
     for entry in reversed(Feed(home).entries()):
-        if entry.source == "seed" and YIELD_RE.fullmatch(entry.body) and entry.body.startswith(f"seed yield {slug} wake={last_yield}"):
+        if entry.source == "seed" and YIELD_RE.fullmatch(_receipt_line(entry.body)) and entry.body.startswith(f"seed yield {slug} wake={last_yield}"):
             age = (datetime.now(timezone.utc) - datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))).total_seconds()
             return age >= grace_seconds
     return False

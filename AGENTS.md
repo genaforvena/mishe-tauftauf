@@ -27,6 +27,8 @@ Track reusable code, tests, setup scripts, skills, and general instructions in t
 
 `SITE/chat.log` is the append-only conversation and obligation tape. The top pane is current data for the window; the bottom pane is its resident mind. The operator can attach to the same tmux session. Durable rules belong in this file, doctrine, or a charter; a chat line alone does not create a permanent rule.
 
+Write every new chat entry as readable text: say what happened, why it matters, the evidence or referenced artifact, and the next owner or action. Stable tags and IDs may lead an entry for replay, but they need an explanatory sentence. Do not append repeated unchanged samples; keep those in the local artifact and log meaningful state changes.
+
 Start an accepted idea visibly: append `[task] <stable-id> owner=<genome|witness> source=<path-or-sequence> acceptance=<live-check> retry=<edge>`, then `[taking] <stable-id>` before acting. An idea declined or superseded gets `[dropped] <stable-id> — reason`. Only a checked result with an artifact gets `[done] <stable-id> — concrete outcome`. A dispatch is routing evidence, not proof that the owner started. A pending task remains open across context clears; the exact ID ties its steps together.
 
 For each wake, write what changed and what was checked in the handoff and settle with `seed yield --result changed|verified|blocked` (plus `--continue` when another step remains). The supervisor archives that handoff and appends a `[work]` receipt to `chat.log`. Repeated `verified`, `blocked`, or unspecified receipts against the same observation are a coordination signal to investigate, not a success streak. Report work started, rejected, completed, and left unresolved in the tape while it is current.

@@ -1,5 +1,5 @@
 from mishe_tauftauf.feed import Feed
-from mishe_tauftauf.seed import _external_event, _observation_text
+from mishe_tauftauf.seed import _external_event, _observation_text, _state
 
 
 def test_scoped_decision_wakes_owner_once(tmp_path):
@@ -7,8 +7,23 @@ def test_scoped_decision_wakes_owner_once(tmp_path):
     decision = feed.append("operator/permissions", "[permission] id=sample decision=granted owner=senses task=sense-sample capability=read.sample unblocks=sense/sample")
     assert _external_event(tmp_path, "senses") == decision
     assert _external_event(tmp_path, "genome") is None
-    feed.append("seed", f"seed wake senses observation=1 event={decision.sequence}")
+    feed.append("seed", f"seed wake senses observation=1 event={decision.sequence}\n"
+                "The supervisor delivered the operator decision to senses for one checked step.")
     assert _external_event(tmp_path, "senses") is None
+
+
+def test_explained_supervisor_receipts_still_replay(tmp_path):
+    feed = Feed(tmp_path)
+    digest = "a" * 64
+    observation = feed.append("seed", f"seed observation senses sha256={digest}\n"
+                              "The senses pane changed to UNKNOWN and needs a checked read.")
+    wake = feed.append("seed", f"seed wake senses observation={observation.sequence}\n"
+                       "The supervisor asked for one bounded step.")
+    state = _state(tmp_path, "senses")
+    assert state[0] == digest
+    assert state[1] == wake.sequence
+    feed.append("seed", f"seed yield senses wake={wake.sequence}\nThe mind left its handoff.")
+    assert _state(tmp_path, "senses")[1] is None
 
 
 def test_scan_values_do_not_create_new_exploration_obligation():
