@@ -71,8 +71,13 @@ def sample(home: Path) -> dict[str, object]:
         disk = os.statvfs(home.parent)
         free_bytes = disk.f_bavail * disk.f_frsize
         observed.append({"id": "sense.disk.free", "state": "verified", "sample": free_bytes, "kind": "read"})
+        observed.append({"id": "sense.disk.inodes-available", "state": "verified",
+                         "sample": disk.f_favail, "kind": "read"})
     except OSError:
-        observed.append({"id": "sense.disk.free", "state": "unknown", "sample": "statvfs unavailable", "kind": "read"})
+        observed.append({"id": "sense.disk.free", "state": "unknown",
+                         "sample": "statvfs unavailable", "kind": "read"})
+        observed.append({"id": "sense.disk.inodes-available", "state": "unknown",
+                         "sample": "statvfs unavailable", "kind": "read"})
 
     interrupts = _read(Path("/proc/interrupts"), 65536)
     keyboard = []
