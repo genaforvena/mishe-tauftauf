@@ -42,15 +42,16 @@ def unit_fragment_matches(fragment: str, expected: Path) -> bool:
 
 
 def preferred_operator_window(home: Path, requested: str | None) -> str:
-    if requested:
-        return requested
     manifest = home / "health" / "windows.json"
     if manifest.exists():
         names = json.loads(manifest.read_text(encoding="utf-8"))
         candidates = set(names) - {*ROLES, "permissions"}
         if len(candidates) == 1:
-            return candidates.pop()
-    return "operator"
+            existing = candidates.pop()
+            if requested and requested != existing:
+                raise ValueError(f"site already uses operator window {existing!r}; requested {requested!r}")
+            return existing
+    return requested or "operator"
 
 
 def unit_text(home: Path, session: str, slug: str, python: str) -> str:
