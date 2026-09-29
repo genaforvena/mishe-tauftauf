@@ -1,118 +1,60 @@
 # mishe-tauftauf
 
-A runnable, provider-neutral reference core for coordinating disposable LLM agents through ordinary UTF-8 text.
+A small, plantable seed of mesh that tends its own development. Its shared body is a tmux session and an append-only `chat.log`: current data appears above each resident mind, work is recorded as readable text, and a checked handoff survives every context clear. The code and instructions live together so another checkout can grow the same loop.
 
-## Three systems, one observable loop
+## Goal
 
-```mermaid
-flowchart TB
-  W[World] --> Z[System Zero: executable probes]
-  Z --> P[Live Top Pain: full current observation]
-  Z --> F[Optional deterministic event filter]
-  F --> O[System One: publish and semantic routing]
-  O --> L[(append-only textual feed)]
-  L --> P
-  P --> M[one-shot System Two Mind]
-  M -->|bounded intervention| W
-  M -->|prediction + handoff text| L
-  C[deterministic clock] -->|due prediction| O
-  P -->|advancing visible lease| P
-```
+Keep a living codebase able to observe its own condition, repair its own faults, pursue useful improvements, and reproduce that practice on another owned machine. The direction comes from mesh's self-organization: self-maintain, self-develop one checked step, generate ideas from real gaps, and turn wishes into owned work. A green check is a current observation, never a reason to stop learning.
 
-**System Zero** measures the world. **System One** makes narrow probabilistic judgments about publishing, relevance, attempts, waiting, predictions, and desired state. A **System Two Mind** is a one-shot process that reads its current surface, reasons, acts through its configured harness, writes a textual handoff, and exits.
+This repository is the single-node kernel of that practice. It owns its local files, tmux session, `chat.log`, and user services. It carries no authority over `~/lte-workstation`, remote nodes, accounts, devices, or private data. The lightweight mishe culture demo is a separate skill; this repository plants a persistent development loop.
 
-A **Top Pain** is the current output of a live executable renderer. It is simultaneously context, attention, and a semantic routing address. It is not a stored file. Its persistent window survives while Minds are ephemeral. Every frame retains the complete renderer output and adds an advancing lease; filtering operates only on a separate copy.
+## The living layout
 
-Durable truth is limited to the world, source code, executable renderers and Mind harnesses, the append-only `feed`, current human-readable observations, plans, handoffs, and optional textual projections. There are no tasks, workflow states, vector stores, hidden cursors, prediction databases, or serialized model requests. If something can remain text, it remains text.
+| Window | Upper pane: current text | Lower pane: acting channel |
+| --- | --- | --- |
+| `genome` | Repo health, worktree, goal, next improvement, and a fresh check report | Resident development mind |
+| `witness` | `chat.log` view, open tasks, recent work receipts, channel health, and coordination goal | Resident coordination mind |
+| `operator` on a fresh plant | One-pane shared shell | A human or agent joins here |
 
-“Text-only” governs durable truth and interfaces. It does not claim Python source, transient parsed values, probabilities, file descriptors, or in-memory model tensors are text stores.
+Each upper pane refreshes and carries a visible lease. The lease proves the renderer ran; `SYSTEM ZERO` and the source check determine whether the claim is true. RED, UNKNOWN, stale, and absent are distinct. A consequential gate belongs on a pane, so the minds and anyone attached can see the same result. The lower pane owns its shell and its work; another channel does not clear it or type into it.
 
-## Quickstart
+`chat.log` is the conversation, task, and work tape. `[task] <id> owner=<role>` opens work, `[taking]` records start, and `[done]` or `[dropped]` records a checked result or reason. The witness keeps open IDs visible and routes code tasks to genome. Each settled wake writes a `[work]` receipt with its result type, observation, handoff hash, archived handoff path, and a bounded account of the action and check. Three no-change receipts on the same observation render a loop warning on the witness pane.
 
-```bash
-python -m venv .venv
-.venv/bin/pip install -e .
-export MISHE_TAUFTAUF_HOME="$PWD/.mishe-tauftauf"
-mishe-tauftauf init
+The doctrine is [seed_doctrine.md](src/mishe_tauftauf/seed_doctrine.md). [AGENTS.md](AGENTS.md) is the local agent contract. [Mesh culture mapping](instructions/mesh-culture.md) identifies the current mesh rules carried into this narrower plant. A charter gives each window its lasting responsibility; a handoff gives its current task state. A chat line alone does not become a durable rule.
 
-cat > "$MISHE_TAUFTAUF_HOME/top-pains/example" <<'SH'
-#!/bin/sh
-printf '%s\n' 'DESIRED STATE: probe reads the fixture' 'UNRESOLVED: no reading yet'
-SH
-chmod +x "$MISHE_TAUFTAUF_HOME/top-pains/example"
+## One turn and a long task
 
-mishe-tauftauf check example -- sh -c 'printf "reading=42\n"'
-mishe-tauftauf pain render example
-mishe-tauftauf run --once --launcher headless
-mishe-tauftauf feed
-```
+The supervisor observes the full live upper pane and new addressed tasks, appends an observation and exact wake to `chat.log`, and delivers one wake to an idle resident mind. The mind reads the current pane and source, reports the task start, makes one bounded change or check, verifies the same live surface, and writes a source-bound artifact and handoff. It settles that wake with `seed yield --result changed|verified|blocked`. The supervisor archives the handoff, logs the work, waits for the mind to be idle, clears its context, and restores doctrine, charter, and handoff. A clear alone is not new work.
 
-For persistent visual surfaces:
+Long work keeps one stable task ID through successive handoffs. `seed yield --continue` requests the next bounded step after the clear, even when the pane has not changed. A pending wake after a crash is held until its prior effect is reconciled; if the mind is visibly idle, the supervisor redelivers the exact unsettled wake with a reconciliation instruction. When no task is pending, a quiet pane gets a periodic self-pick so genome and witness can pursue their goals proactively.
+
+Genome owns delivery as well as development. After checking and reviewing its change, it inspects the exact diff, commits only accounted-for paths, pushes to this repository's configured GitHub origin, and records the commit and push result in the shared tape. The task stays open across handoffs until that landing succeeds. Existing work from another channel is preserved.
+
+## Plant this repository
+
+On Linux, have Python 3, tmux, an agent CLI, and a user systemd manager available. From this checkout:
 
 ```bash
-mishe-tauftauf tmux start
-mishe-tauftauf run --follow --launcher tmux
+python3 scripts/plant_local.py --engine-command 'codex'
+tmux attach -t mishe-seed
 ```
 
-Each tmux window keeps a live Top Pain above a disposable Mind pane. The top lease advances even if the value is stable. `doctor --panes` verifies advancement; a static footer is not evidence of a fresh sensor reading.
+The script creates `.mishe-seed`, initializes `genome` and `witness`, starts their two-pane windows, adds an `operator` shell, and enables separate user services for the two resident channels. It preserves existing charters, launchers, panes, and handoffs on a repeat run. Use an installed OMP command with `--engine-command 'omp --model ...'` when that is the resident mind. `--no-services` makes a temporary, manually supervised trial. The repo-local [plant-mishe skill](.agents/skills/plant-mishe/SKILL.md) guides setup and verification.
 
-## Observation and intervention
+The generated genome pane checks the plant's own `doctor`. Add the repository's real build, test, or service checks to `SITE/top-pains/genome` as the plant grows. A new check needs a real failure state and a live pane observation; a self-test alone is insufficient. The witness pane follows the site's `chat.log` and open tasks. Its source view omits its own supervisor bookkeeping so recording a wake cannot wake itself forever; the full tape remains in `SITE/chat.log`.
 
-Observation and event selection are separate branches. An optional executable `filters/<slug>` receives temporary previous/current observation files. It may reduce event traffic, but never changes or hides the Top Pain. Errors render UNKNOWN and fail toward publishing.
+Inspect a fresh plant with:
 
-Before connecting panes that may contain private data, provide an executable `projectors/<slug>`. It receives the same previous/current temporary UTF-8 file paths and writes one human-readable event projection to stdout. Exit 0 with nonempty UTF-8 output of at most 4096 bytes publishes the projection; missing, non-executable, failed, timed-out, empty, invalid, or oversized output becomes a generic UNKNOWN event. Projector stdout and stderr are discarded on failure. The full pane remains transient, and judgment receipts contain the question, raw probability, outcome, and policy/question versions, without the judgment document. Treat projector output as public feed content and redact it at the source.
+```bash
+tmux list-windows -t mishe-seed
+tmux capture-pane -p -t mishe-seed:genome.0
+tmux capture-pane -p -t mishe-seed:witness.0
+.mishe-seed/bin/mishe-tauftauf --home .mishe-seed seed status --slug genome
+systemctl --user status mishe-seed-genome.service mishe-seed-witness.service
+```
 
-The judge still receives the full live Top Pain in its transient request, including when the selected adapter calls a hosted service. Projection protects the durable feed, not judge transport. Review the pane's data policy and the selected adapter before attaching a real or private channel; use a local adapter when the pane must stay on the node.
+The current development checkout uses the owned session `mishe-self-development-current` with windows `codex`, `genome`, and `witness`; its enabled services are `mishe-self-development-current.service` and `mishe-witness-current.service`. Its plans, checks, drafts, chat, handoffs, artifacts, and service files stay in the gitignored `.mishe-tauftauf/` site. Reusable behavior goes into tracked `src/`, `scripts/`, and instructions. A fresh clone starts with no local plant state.
 
-`run --once --launcher headless --observe-only` records `wake requested top-pain <slug> for entry <sequence>` and never launches a Mind. An external single-authority consumer records `dispatch-receipt <slug> <sequence> delivered|refused --generation <n> --request-id <id>` after an attempted dispatch. The command requires a request and atomically reuses an identical receipt on replay. A conflicting terminal outcome for the same generation and request ID fails; retry after refusal uses a fresh request ID. This is a receipt ledger, not a sink idempotency guarantee. `doctor` reports feed byte size and rejects corrupt framing.
+## What proves it works
 
-`run --once --slug <channel>` (or `--follow --slug <channel>`) selects one executable top-pain for observation, routing, predictions, and wake retries. Omit `--slug` to process all channels. Selected runs share the same home, feed, and coordinator lock, so two runs cannot write through separate coordinator authorities at once.
-
-Feed appends use version 1 frames and a rebuildable `feed.index.json` seek checkpoint. `Feed.entries(start=<sequence>, limit=<count>)` reads from a bounded checkpoint; `Feed.tail_sequence()` verifies and returns the current canonical tail. A stale checkpoint is rebuilt from verified canonical frames; a corrupt checkpoint or torn feed frame fails closed. Recovery must retain the original feed bytes as evidence before quarantining an invalid tail, then rebuild the index from verified frames. A checkpoint never repairs the feed.
-
-`append_runtime_once` and `dispatch-receipt` use a rebuildable `feed.identities.sqlite3` index. Every append persists its feed frame, updates the identity index, then publishes the checkpoint; an interrupted sequence is recovered by checking the feed metadata and rebuilding from verified canonical frames. Identity hits are checked against bounded canonical frames before reuse. A damaged identity index fails closed; a missing or stale one is rebuilt. The identity index adds a SQLite commit to every append, so write throughput should be measured against the deployed feed volume.
-
-`run --policy FILE` loads a JSON object with `version`, `question_versions`, `questions`, `low_threshold`, `high_threshold`, and `judge_timeout` (seconds). Each changed question text needs its own revision in `question_versions`. The policy is validated before execution. Omitted fields retain version 1 defaults; receipts identify both versions. The routed Mind context selects complete recent receipts under 24 KiB, includes current active predictions, and bounds triggering event, handoff, and prediction text separately.
-
-For a frequently restarted hosted adapter, opt into a local startup-control cache with `run --judge PATH --control-cache-ttl 3600`. First run `run --judge PATH --control-cache-ttl 3600 --refresh-controls --once --launcher headless --observe-only` to exercise the paired controls and write `control-cache.json` in the coordinator home. Subsequent runs reuse only the bounded, versioned control verdict. The cache binds to the adapter's executable bytes, adapter protocol, control examples, policy version, question revisions and text, thresholds, and timeout. A missing, stale, corrupt, future-dated, or mismatched cache makes every startup control UNKNOWN; ordinary cached runs do not call the adapter to repair it. Refresh is explicit. The cache is also supported with `--batch-judge`; it requires an explicit executable judge and a TTL no greater than one day. The file stores only control pass/fail verdicts and a timestamp, never pane or model input. If an adapter imports separately changeable code, revise the policy or refresh controls after that code changes. Without `--control-cache-ttl`, startup controls run on every start as before.
-
-Every corrective intervention is red-first:
-
-1. Exercise a real System Zero check for the desired observable behavior.
-2. Wire its verdict into a live Top Pain and observe red or UNKNOWN.
-3. State a hypothesis, intervention, predicted consequence, and exactly one `Check at: YYYY-MM-DDTHH:MM:SSZ` line.
-4. Apply the bounded intervention and rerun the same check.
-5. Observe the actual result on the same surface.
-
-A model approval, patch, exit code, feed receipt, checked box, or advancing pane lease cannot substitute for observed behavior. Missing, stale, frozen, malformed, or unsupported evidence is UNKNOWN.
-
-Predictions are ordinary feed prose. A deterministic clock checks them even when the pane has not changed. Matching an intermediate prediction is progress, not completion; only fresh evidence of the desired state resolves follow-through. Several independent predictions may coexist and survive restart by replaying text.
-
-## Provider-neutral judgments
-
-`run --judge PATH` selects an executable text adapter. It receives a document containing `QUESTION`, `INSTRUCTIONS`, `TOP PAIN`, `EVIDENCE`, and optionally `PREDICTION`; it returns one line: `probability P` or `unknown reason`. Output is data and is never executed.
-
-`run --batch-judge PATH` selects an optional executable batch adapter instead. It receives one UTF-8 JSON line with `version: 1`, a `state` object (`slug`, `top_pain`, `evidence`, `prediction`), and a `questions` object mapping question names to their current instructions. It returns one UTF-8 JSON line such as `{"results":{"prediction-met":{"probability":0.9},"desired-state-met":{"unknown":"insufficient evidence"}}}`. Each answer must contain exactly one finite probability in `[0,1]` or a nonempty `unknown` reason. Missing or malformed answers become UNKNOWN; an invalid envelope makes the whole batch UNKNOWN. The runtime batches `prediction-met` and `desired-state-met` for the same due prediction and uses one-question requests elsewhere, including startup controls. The one-line `--judge` contract remains available unchanged. Batch state is transient and may include private pane content; review the selected adapter's transport before using it on a real channel.
-
-`run --external-view-slug SLUG` opts one channel into an external-judge privacy boundary. For its `publish` question, the coordinator discards the raw pane and sends only a validated projector-derived view: `STATE: GREEN|RED|INTERMEDIATE`, optionally followed by a fixed numeric/enum summary. The channel label is discarded from judge input. Free-form, malformed, oversized, or UNKNOWN projections produce an UNKNOWN judgment without calling the external executable and are withheld from the feed. A valid original projection retains its channel label when published to the feed. All other questions for that channel remain UNKNOWN without an external call, since their feed, plan, or prediction text has no safe view yet. The default judge protocol is unchanged for channels without this flag. Opted-in startup checks include a separate projected-shape positive/negative publish pair; its verdict is required and binds the optional control cache.
-
-`run --external-delta-view-slug SLUG` opts a channel into a versioned transition judgment. It compares the last published observation with the current projection as named `previous` and `current` fields, each validated by the same safe-view parser. Missing or malformed sides produce UNKNOWN without a provider call. The paired publish question, controls, cache identity, and receipt version are `projected-pair-v1`; this mode cannot share a slug with `--external-view-slug`. It keeps the same privacy boundary and does not change `--observe-only` dispatch behavior. The first observation has no previous view and remains UNKNOWN.
-
-The optional Laya adapter uses `laya==0.3.5` and `convaiinnovations/laya`'s `typed-decisions` subfolder through its native `noul` API. Its probabilities are **not deployment calibration**. The low 0.20 publish/relevance threshold is a loss-avoidance policy, not a quality claim. Production startup controls can disable a failing question only by making it explicit UNKNOWN, which escalates rather than manufacturing certainty.
-
-`examples/jev-judge.py` is a stdlib-only reference adapter for the hosted TypeSafe Jev System One model, selected the same way: `run --judge examples/jev-judge.py`. It is **not a dependency**. It reads `TYPESAFE_API_KEY` from the environment or a file named by `TYPESAFE_KEY_FILE`, and it is the only adapter that reaches a network. The endpoint rejects the default urllib client signature, so the adapter sends a browser `User-Agent`. Its probabilities are a model's answer, not calibration: `doctor --live-jev --verbose` runs the same paired smoke controls, and an unseparated question fails visibly instead of being weakened.
-
-For hosted calibration, set `TYPESAFE_DAILY_CALL_LIMIT=20` and optionally `TYPESAFE_BUDGET_FILE=/absolute/private/path/jev-budget.json` before running the adapter or `doctor --live-jev`. When the file path is omitted, the adapter uses `${XDG_STATE_HOME:-~/.local/state}/mishe-tauftauf/jev-budget.json`. The adapter reserves each call in a private UTC-day counter before HTTP, including calls that later fail; concurrent processes share a lock. An exhausted, corrupt, insecure, or unwritable budget returns UNKNOWN without HTTP. The limit must be an integer from 0 to 1000; 0 disables network calls. The budget stores only date and count, never the key or judgment document. Leave the limit unset only when unmetered calls are intentional.
-
-## Adapter contracts
-
-- `top-pains/<slug>`: executable, no arguments, complete UTF-8 frame on stdout.
-- `filters/<slug>`: executable, previous and current temporary text paths; exit 0 passes, 1 holds, anything else passes with visible UNKNOWN.
-- `minds/<slug>` or `minds/default`: executable, complete invocation context on stdin; stdout/stderr are history, not commands.
-- external judge: executable, judgment document on stdin; exactly one result line on stdout.
-- batch judge: executable, one JSON request line on stdin; one JSON `results` line on stdout.
-- tmux: default visual and launch adapter, but not an ontology or a dependency for headless operation.
-
-## License
-
-CC0 1.0 Universal. See `LICENSE`.
+A plant is working when both services stay active, the panes advance with truthful check reports, an addressed task or observed fault wakes the right mind, the mind leaves an actual artifact and `[work]` receipt, and an idle clear restores its handoff without losing the next step. The test suite exercises the protocol with a fake resident terminal; the current checkout also runs OMP in the live lower panes. `python3 -m pytest -q` checks the repository code. The live panes and `chat.log` prove the running wiring.

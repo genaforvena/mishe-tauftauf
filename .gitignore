@@ -9,4 +9,9 @@ venv/
 htmlcov/
 .env
 .env.*
+.mishe-seed/
+
+# Node-local plant: chat, handoffs, plans, checks, drafts, evidence, and services.
+# Promote reusable behavior deliberately into tracked source and instructions.
 .mishe-tauftauf/
+.mishe-plant-smoke-*/

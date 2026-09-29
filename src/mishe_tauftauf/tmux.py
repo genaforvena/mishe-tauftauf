@@ -74,7 +74,7 @@ def _install_observability(home: Path, session: str) -> None:
     if path.exists():
         return
     quoted_session = shlex.quote(session)
-    quoted_feed = shlex.quote(str(home / "feed"))
+    quoted_feed = shlex.quote(str(home / "chat.log" if (home / "chat.log").exists() else home / "feed"))
     script = f'''#!/bin/sh
 printf '%s\\n' 'DESIRED STATE: every Top Pain lease advances and failures remain visible' 'UNRESOLVED: pane liveness is checked independently'
 if command -v tmux >/dev/null 2>&1 && tmux has-session -t {quoted_session} 2>/dev/null; then

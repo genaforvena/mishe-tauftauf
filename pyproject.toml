@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mishe-tauftauf"
 version = "0.1.0"
-description = "An observability-driven text-only core for coordinating ephemeral LLM agents"
+description = "A plantable text-and-tmux core for a self-observing, self-correcting mesh"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "CC0-1.0" }
@@ -20,3 +20,6 @@ mishe-tauftauf = "mishe_tauftauf.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+mishe_tauftauf = ["seed_doctrine.md", "seed_witness_charter.md"]

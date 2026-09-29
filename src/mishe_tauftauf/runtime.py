@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import fcntl
 import importlib.util
+import json
 import math
 import os
 import re
@@ -13,14 +14,14 @@ from pathlib import Path
 
 from .feed import Feed, FeedEntry
 from .control_cache import identity as control_identity, read as read_control_cache, write as write_control_cache
-from .external_view import DELTA_PUBLISH_QUESTION, DELTA_VERSION, projected_delta_publish_controls, projected_publish_controls, safe_publish_delta_view, safe_publish_view
+from .external_view import DELTA_PUBLISH_QUESTION, DELTA_VERSION, FLEET_VERSION, projected_delta_publish_controls, projected_publish_controls, safe_fleet_view, safe_publish_delta_view, safe_publish_view
 from .judges import Judgment, conservative_unknown, controls, document, run_external, run_external_batch
 from .observations import compose_frame, discover, run_filter, run_projector, strip_owned_chrome, validate_slug
 from .policy import load_policy
 from .predictions import pending_predictions, replay_predictions
 
 JUDGED_RE = re.compile(r"^judged ([a-z-]+) for top-pain ([a-z0-9-]+) on entry (\d+):", re.MULTILINE)
-DISPOSITION_RE = re.compile(r"^entry (\d+) for top-pain ([a-z0-9-]+): (wake|observe|irrelevant|addressed)$", re.MULTILINE)
+DISPOSITION_RE = re.compile(r"^entry (\d+) for top-pain ([a-z0-9-]+): (wake|observe|held|irrelevant|addressed)$", re.MULTILINE)
 AUTOMATIC_WAKE_RE = re.compile(
     r"automatic channel=([a-z][a-z0-9-]{0,63}) event=[0-9]{20}-[a-f0-9]{32} "
     r"source=[a-z][a-z0-9-]{0,63} source-seq=[1-9][0-9]* "
@@ -81,12 +82,16 @@ class RuntimeConfig:
     external_view_slugs: tuple[str, ...] = ()
     external_delta_view_slugs: tuple[str, ...] = ()
     slug: str | None = None
+    laya_structured: bool = False
+    external_fleet_view_slugs: tuple[str, ...] = ()
 
 
 class Coordinator:
     def __init__(self, config: RuntimeConfig):
         if config.judge is not None and config.batch_judge is not None:
             raise ValueError("select either a one-line judge or a batch judge")
+        if config.laya_structured and (not config.external_delta_view_slugs or config.judge is not None or config.batch_judge is not None):
+            raise ValueError("structured Laya requires projected delta view and no external judge")
         if len(set(config.external_view_slugs)) != len(config.external_view_slugs):
             raise ValueError("external view slugs must be unique")
         for slug in config.external_view_slugs:
@@ -95,6 +100,12 @@ class Coordinator:
             validate_slug(slug)
         if len(set(config.external_delta_view_slugs)) != len(config.external_delta_view_slugs) or set(config.external_view_slugs) & set(config.external_delta_view_slugs):
             raise ValueError("external view modes must be unique per slug")
+        if len(set(config.external_fleet_view_slugs)) != len(config.external_fleet_view_slugs):
+            raise ValueError("external fleet view slugs must be unique")
+        if set(config.external_fleet_view_slugs) & (set(config.external_view_slugs) | set(config.external_delta_view_slugs)):
+            raise ValueError("external view modes must be unique per slug")
+        for slug in config.external_fleet_view_slugs:
+            validate_slug(slug)
         if config.refresh_controls and config.control_cache_ttl is None:
             raise ValueError("--refresh-controls requires --control-cache-ttl")
         if config.control_cache_ttl is not None:
@@ -112,13 +123,14 @@ class Coordinator:
         self.filter_identity: dict[str, tuple[int, int] | None] = {}
         self.known_slugs = self._replay_known_slugs()
         self._lock_handle = None
+        self._launched_slugs: set[str] = set()
         if config.control_cache_ttl is None:
             self.control_failures = self._run_controls()
         else:
             adapter = config.judge or config.batch_judge
             cache_path = self.home / "control-cache.json"
             try:
-                fingerprint = control_identity(adapter, "batch" if config.batch_judge else "single", self.policy, projected=bool(config.external_view_slugs), paired=bool(config.external_delta_view_slugs))
+                fingerprint = control_identity(adapter, "batch" if config.batch_judge else "single", self.policy, projected=bool(config.external_view_slugs), paired=bool(config.external_delta_view_slugs), fleet=bool(config.external_fleet_view_slugs))
             except OSError:
                 fingerprint = None
             if fingerprint is None:
@@ -127,7 +139,7 @@ class Coordinator:
             elif config.refresh_controls:
                 self.control_failures = self._run_controls()
                 try:
-                    unchanged = control_identity(adapter, "batch" if config.batch_judge else "single", self.policy, projected=bool(config.external_view_slugs), paired=bool(config.external_delta_view_slugs)) == fingerprint
+                    unchanged = control_identity(adapter, "batch" if config.batch_judge else "single", self.policy, projected=bool(config.external_view_slugs), paired=bool(config.external_delta_view_slugs), fleet=bool(config.external_fleet_view_slugs)) == fingerprint
                 except OSError:
                     unchanged = False
                 if unchanged:
@@ -145,7 +157,7 @@ class Coordinator:
     def _control_names(self) -> set[str]:
         return set(controls()) | ({"projected-publish"} if self.config.external_view_slugs else set()) | ({"projected-delta-publish"} if self.config.external_delta_view_slugs else set())
 
-    def _raw_judge(self, question: str, slug: str, pane: str, evidence: str, prediction: str | None = None, *, question_text: str | None = None) -> Judgment:
+    def _raw_judge(self, question: str, slug: str, pane: str, evidence: str, prediction: str | None = None, *, question_text: str | None = None, structured: bool = False) -> Judgment:
         question_text = question_text or self.policy.question_text(question)
         if self.config.batch_judge is not None:
             return run_external_batch(self.config.batch_judge, (question,), slug, pane, evidence, prediction, timeout=self.policy.judge_timeout, question_texts={question: question_text})[question]
@@ -153,9 +165,19 @@ class Coordinator:
             return run_external(self.config.judge, question, slug, pane, evidence, prediction, timeout=self.policy.judge_timeout, question_text=question_text)
         if importlib.util.find_spec("laya") is None:
             return conservative_unknown(question, slug, pane, evidence, prediction, question_text=question_text)
-        from .laya_judge import judge as laya_judge
+        from .laya_judge import judge as laya_judge, judge_structured
         request = document(question, slug, pane, evidence, prediction, question_text=question_text)
-        probability, reason = laya_judge(request)
+        if structured:
+            try:
+                state = json.loads(evidence)
+                if (not isinstance(state, dict) or set(state) != {"version", "previous", "current"}
+                    or safe_publish_delta_view(state["previous"], state["current"]) != evidence):
+                    raise ValueError("invalid projected pair")
+            except (ValueError, KeyError, TypeError):
+                return conservative_unknown(question, slug, "[withheld]", "[withheld]", reason="invalid structured projected pair", question_text=question_text)
+            probability, reason = judge_structured(state, question_text)
+        else:
+            probability, reason = laya_judge(request)
         return Judgment(
             question,
             probability,
@@ -185,8 +207,8 @@ class Coordinator:
                 )
         if self.config.external_delta_view_slugs:
             positive, negative = projected_delta_publish_controls()
-            yes = self._raw_judge("publish", "control", positive, positive, question_text=DELTA_PUBLISH_QUESTION)
-            no = self._raw_judge("publish", "control", negative, negative, question_text=DELTA_PUBLISH_QUESTION)
+            yes = self._raw_judge("publish", "control", positive, positive, question_text=DELTA_PUBLISH_QUESTION, structured=self.config.laya_structured)
+            no = self._raw_judge("publish", "control", negative, negative, question_text=DELTA_PUBLISH_QUESTION, structured=self.config.laya_structured)
             if self.policy.classify("publish", yes.probability) != "yes" or self.policy.classify("publish", no.probability) != "no":
                 failures["projected-delta-publish"] = (
                     f"projected delta controls failed: positive={yes.outcome}/{yes.probability}, "
@@ -234,10 +256,36 @@ class Coordinator:
             self._lock_handle.close()
             self._lock_handle = None
 
-    def _judge(self, question: str, slug: str, pane: str, evidence: str, prediction: str | None = None, *, previous_projection: str | None = None) -> Judgment:
+    def _judge(self, question: str, slug: str, pane: str, evidence: str, prediction: str | None = None, *, previous_projection: str | None = None, event_source: str | None = None) -> Judgment:
         paired = slug in self.config.external_delta_view_slugs
         question_text = DELTA_PUBLISH_QUESTION if paired and question == "publish" else self.policy.question_text(question)
-        if slug in self.config.external_view_slugs or paired:
+        if slug in self.config.external_fleet_view_slugs:
+            # A routed entry must be an observation owned by this exact slug.
+            # Due predictions, feed prose, pane content and prediction notes have
+            # no independently authenticated fleet projection.
+            if question != "publish" and (event_source != f"observation/{slug}" or question not in
+                                          ("relevance", "desired-state-met", "continue-observing")):
+                return conservative_unknown(question, slug, "[withheld]", "[withheld]",
+                                            reason="fleet observation unavailable for this question", question_text=question_text)
+            safe = safe_fleet_view(evidence, slug)
+            if safe is None:
+                return conservative_unknown(question, slug, "[withheld]", "[withheld]",
+                                            reason="invalid fleet projection", question_text=question_text)
+            state = safe.split("\n", 1)[0].removeprefix("STATE: ")
+            fresh = "source=top-pane/" in safe and " freshness=fresh " in safe
+            value_fresh = any(f" {name}=fresh " in safe for name in ("goal", "comments", "cleaner", "journal"))
+            if question == "relevance":
+                request = document(question, slug, safe, safe, question_text=question_text)
+                return Judgment(question, 1.0, "yes", "validated exact-owner observation", request)
+            if question in ("desired-state-met", "continue-observing"):
+                if state in ("UNKNOWN", "INTERMEDIATE") or "source=top-pane/" not in safe:
+                    return conservative_unknown(question, slug, safe, safe,
+                                                reason="fleet state does not establish an owner verdict", question_text=question_text)
+                if state == "GREEN" and not (fresh and value_fresh):
+                    return conservative_unknown(question, slug, safe, safe,
+                                                reason="fresh desired-state evidence not established", question_text=question_text)
+            pane, evidence, prediction = safe, safe, None
+        elif slug in self.config.external_view_slugs or paired:
             if question != "publish":
                 return conservative_unknown(question, slug, "[withheld]", "[withheld]", reason="external view unavailable for this question", question_text=question_text)
             safe = safe_publish_delta_view(previous_projection, evidence) if paired else safe_publish_view(evidence)
@@ -250,17 +298,18 @@ class Coordinator:
             projected_failure = self.control_failures.get("projected-delta-publish" if paired else "projected-publish")
             if projected_failure:
                 return conservative_unknown(question, slug, pane, evidence, reason=projected_failure, question_text=question_text)
-        failure = self.control_failures.get(question)
+        failure = None if paired and self.config.laya_structured and question == "publish" else self.control_failures.get(question)
         if failure:
             return conservative_unknown(question, slug, pane, evidence, prediction, failure, question_text=question_text)
         try:
-            judgment = self._raw_judge(question, slug, pane, evidence, prediction, question_text=question_text)
+            judgment = self._raw_judge(question, slug, pane, evidence, prediction, question_text=question_text,
+                                       structured=paired and self.config.laya_structured and question == "publish")
         except Exception:
             return conservative_unknown(question, slug, pane, evidence, prediction, "judge failed", question_text=question_text)
         return Judgment(judgment.question, judgment.probability, self.policy.classify(question, judgment.probability), judgment.reason, judgment.document)
 
     def _judge_batch(self, questions: tuple[str, ...], slug: str, pane: str, evidence: str, prediction: str | None = None) -> dict[str, Judgment]:
-        if slug in self.config.external_view_slugs or slug in self.config.external_delta_view_slugs:
+        if slug in self.config.external_view_slugs or slug in self.config.external_delta_view_slugs or slug in self.config.external_fleet_view_slugs:
             return {q: self._judge(q, slug, pane, evidence, prediction) for q in questions}
         if self.config.batch_judge is None:
             return {q: self._judge(q, slug, pane, evidence, prediction) for q in questions}
@@ -276,8 +325,10 @@ class Coordinator:
         }
 
     def _receipt(self, judgment: Judgment, slug: str, sequence: int) -> FeedEntry:
-        version = (f"{DELTA_VERSION}.{self.policy.question_version(judgment.question)}"
+        version = (f"{DELTA_VERSION}{'.structured-laya-v1' if self.config.laya_structured else ''}.{self.policy.question_version(judgment.question)}"
                    if judgment.question == "publish" and slug in self.config.external_delta_view_slugs
+                   else f"{FLEET_VERSION}.{self.policy.question_version(judgment.question)}"
+                   if slug in self.config.external_fleet_view_slugs
                    else self.policy.question_version(judgment.question))
         return judgment_receipt(self.feed, judgment, slug, sequence, policy_version=self.policy.version, question_version=version)
 
@@ -327,7 +378,9 @@ class Coordinator:
             judgment = self._judge("publish", slug, pane, evidence, previous_projection=latest)
             self._receipt(judgment, slug, 0)
             if judgment.outcome != "no":
-                safe = safe_publish_view(evidence) if slug in (*self.config.external_view_slugs, *self.config.external_delta_view_slugs) else evidence
+                safe = (safe_fleet_view(evidence, slug) if slug in self.config.external_fleet_view_slugs
+                        else safe_publish_view(evidence) if slug in (*self.config.external_view_slugs, *self.config.external_delta_view_slugs)
+                        else evidence)
                 if safe is not None:
                     emitted.append(self.feed.append_runtime(f"observation/{slug}", evidence))
         return emitted
@@ -372,10 +425,17 @@ class Coordinator:
 
     def route(self) -> None:
         entries = self.feed.entries()
-        dispositions = {(int(seq), slug) for entry in entries if entry.source == "mishe-tauftauf" for seq, slug, _ in DISPOSITION_RE.findall(entry.body)}
+        dispositions = {}
+        latest_observation = {}
+        for recorded in entries:
+            if recorded.source.startswith("observation/"):
+                latest_observation[recorded.source.removeprefix("observation/")] = recorded.sequence
+            if recorded.source == "mishe-tauftauf":
+                for seq, slug, outcome in DISPOSITION_RE.findall(recorded.body):
+                    dispositions[(int(seq), slug)] = (outcome, recorded.timestamp)
         slugs = self._selected_slugs()
         for entry in entries:
-            if is_bookkeeping(entry):
+            if is_bookkeeping(entry) or entry.source.startswith(("prediction/", "mind/")):
                 continue
             targets = slugs
             if entry.source.startswith("observation/") and entry.source != "observation/observability":
@@ -389,10 +449,27 @@ class Coordinator:
                     continue
                 targets = [match.group(1)]
             for slug in targets:
-                if (entry.sequence, slug) in dispositions:
+                fleet = slug in self.config.external_fleet_view_slugs
+                prior = dispositions.get((entry.sequence, slug))
+                if prior is not None:
+                    outcome, recorded_at = prior
+                    if outcome != "held" or not fleet or latest_observation.get(slug) != entry.sequence:
+                        continue
+                    try:
+                        age = (now() - datetime.fromisoformat(recorded_at.replace("Z", "+00:00"))).total_seconds()
+                    except (TypeError, ValueError):
+                        continue
+                    if age < 600:
+                        continue
+                if fleet and entry.source != f"observation/{slug}":
+                    relevance = self._judge("relevance", slug, "[withheld]", entry.body, event_source=entry.source)
+                    self._receipt(relevance, slug, entry.sequence)
+                    # This feed event cannot testify about this fleet channel.
+                    self.feed.append_runtime("mishe-tauftauf", f"entry {entry.sequence} for top-pain {slug}: observe")
                     continue
                 pane = self._pane(slug)
-                relevance = self._judge("relevance", slug, pane, entry.body)
+                source = {"event_source": entry.source} if fleet else {}
+                relevance = self._judge("relevance", slug, pane, entry.body, **source)
                 self._receipt(relevance, slug, entry.sequence)
                 if relevance.outcome == "no":
                     self.feed.append_runtime("mishe-tauftauf", f"entry {entry.sequence} for top-pain {slug}: irrelevant")
@@ -400,13 +477,13 @@ class Coordinator:
                 pending = pending_predictions(self.home, self.feed.entries(), slug)
                 if pending:
                     prediction_text = "\n\n".join(item.body for item in pending)
-                    gate = self._judge("continue-observing", slug, pane, entry.body, prediction_text)
+                    gate = self._judge("continue-observing", slug, pane, entry.body, prediction_text, **source)
                     self._receipt(gate, slug, entry.sequence)
-                    disposition = "observe" if gate.outcome == "yes" else "wake"
                 else:
-                    gate = self._judge("desired-state-met", slug, pane, entry.body)
+                    gate = self._judge("desired-state-met", slug, pane, entry.body, **source)
                     self._receipt(gate, slug, entry.sequence)
-                    disposition = "observe" if gate.outcome == "yes" else "wake"
+                disposition = ("observe" if gate.outcome == "yes" else
+                               "held" if fleet and gate.outcome != "no" else "wake")
                 self.feed.append_runtime("mishe-tauftauf", f"entry {entry.sequence} for top-pain {slug}: {disposition}")
                 if disposition == "wake":
                     self._request_wake(slug, entry)
@@ -462,6 +539,11 @@ class Coordinator:
         return "".join(reversed(selected))
 
     def invoke(self, slug: str, stimulus: FeedEntry) -> None:
+        # One coordinator pass can replay several wake entries for the same
+        # channel. Only one tmux respawn may be issued before its pane has
+        # acquired the per-Mind lease.
+        if self.config.launcher == "tmux" and slug in self._launched_slugs:
+            return
         executable = self.home / "minds" / slug
         if not (executable.is_file() and os.access(executable, os.X_OK)):
             executable = self.home / "minds" / "default"
@@ -477,6 +559,8 @@ class Coordinator:
                 fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 return
+            if self.config.launcher == "tmux":
+                self._launched_slugs.add(slug)
             attempt = self._attempt(slug, stimulus.sequence)
             invocation = f"{slug}-{stimulus.sequence}-{attempt}-{int(time.time())}"
             self.feed.append_runtime("mishe-tauftauf", f"mind starting top-pain {slug} for entry {stimulus.sequence} attempt={attempt}")
@@ -491,7 +575,11 @@ class Coordinator:
                 "MISHE_TAUFTAUF_INVOCATION": invocation, "MISHE_TAUFTAUF_WORKSPACE": str(self.home.parent),
             })
             try:
-                result = subprocess.run([str(executable)], input=context.encode("utf-8"), capture_output=True, env=env)
+                # Retain the lease and leave the coordinator pane's process group;
+                # closing that pane must not SIGHUP an in-flight headless Mind.
+                result = subprocess.run([str(executable)], input=context.encode("utf-8"),
+                                        capture_output=True, env=env, pass_fds=(lock.fileno(),),
+                                        start_new_session=True)
                 code, stdout, stderr = result.returncode, result.stdout.decode("utf-8", "replace"), result.stderr.decode("utf-8", "replace")
             except OSError as exc:
                 code, stdout, stderr = 127, "", str(exc)
@@ -527,14 +615,27 @@ class Coordinator:
                 continue
             attempted = starts.get(key, set())
             finished = exits.get(key, set())
-            if attempted and attempted <= finished:
+            if attempted and max(attempted) in finished:
                 continue
             stimulus = by_sequence.get(sequence)
             if stimulus is None:
                 continue
+            fleet = slug in self.config.external_fleet_view_slugs
+            if fleet and stimulus.source != f"observation/{slug}":
+                continue
             if attempted:
+                # A tmux Mind holds this lease for its whole run; a headless
+                # Mind inherits it. Never respawn over a live invocation.
+                with (self.home / "minds" / f".{slug}.lock").open("a+") as lease:
+                    try:
+                        fcntl.flock(lease.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        continue
+                    else:
+                        fcntl.flock(lease.fileno(), fcntl.LOCK_UN)
                 pane = self._pane(slug)
-                reassessment = self._judge("desired-state-met", slug, pane, stimulus.body)
+                source = {"event_source": stimulus.source} if fleet else {}
+                reassessment = self._judge("desired-state-met", slug, pane, stimulus.body, **source)
                 if reassessment.outcome == "yes":
                     self._receipt(reassessment, slug, sequence)
                     self.feed.append_runtime("mishe-tauftauf", f"entry {sequence} for top-pain {slug}: addressed")
@@ -547,14 +648,15 @@ class Coordinator:
                 continue
             if not attempted:
                 pane = self._pane(slug)
+                source = {"event_source": stimulus.source} if fleet else {}
                 active_predictions = pending_predictions(self.home, self.feed.entries(), slug)
                 if active_predictions:
                     prediction_text = "\n\n".join(item.body for item in active_predictions)
                     reassessment = self._judge(
-                        "continue-observing", slug, pane, stimulus.body, prediction_text,
+                        "continue-observing", slug, pane, stimulus.body, prediction_text, **source,
                     )
                 else:
-                    reassessment = self._judge("desired-state-met", slug, pane, stimulus.body)
+                    reassessment = self._judge("desired-state-met", slug, pane, stimulus.body, **source)
                 self._receipt(reassessment, slug, sequence)
                 if reassessment.outcome == "yes":
                     self.feed.append_runtime("mishe-tauftauf", f"entry {sequence} for top-pain {slug}: addressed")

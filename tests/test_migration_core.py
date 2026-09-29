@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import redirect_stdout
+from io import StringIO
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -17,6 +19,32 @@ def executable(path: Path, body: str) -> None:
 
 
 class MigrationCoreTests(unittest.TestCase):
+    def test_doctor_requires_an_executable_top_pain(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            empty_output = StringIO()
+            with redirect_stdout(empty_output):
+                empty_status = main(["--home", str(home), "doctor"])
+            self.assertEqual(empty_status, 1)
+            self.assertIn("HOLD missing-top-pain", empty_output.getvalue())
+            self.assertNotIn("PASS executable top-pains", empty_output.getvalue())
+
+            sensor = home / "top-pains" / "sensor"
+            sensor.write_text("#!/bin/sh\nprintf 'DESIRED STATE: healthy\\n'\n", encoding="utf-8")
+            non_executable_output = StringIO()
+            with redirect_stdout(non_executable_output):
+                non_executable_status = main(["--home", str(home), "doctor"])
+            self.assertEqual(non_executable_status, 1)
+            self.assertIn("HOLD missing-top-pain", non_executable_output.getvalue())
+            self.assertIn("HOLD non-executable top-pains: sensor", non_executable_output.getvalue())
+
+            executable(sensor, "printf 'DESIRED STATE: healthy\\n'\n")
+            populated_output = StringIO()
+            with redirect_stdout(populated_output):
+                populated_status = main(["--home", str(home), "doctor"])
+            self.assertEqual(populated_status, 0)
+            self.assertIn("PASS executable top-pains", populated_output.getvalue())
+
     def test_projected_observation_and_judgment_never_persist_raw_pane(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory); initialize(home)
@@ -228,6 +256,47 @@ class MigrationCoreTests(unittest.TestCase):
             self.assertFalse(any("requires reasoning" in e.body for e in feed.entries()))
             Coordinator(RuntimeConfig(home, launcher="headless", dispatch=False, slug="beta")).due_predictions()
             self.assertTrue(any(e.source == "observation/beta" and "requires reasoning" in e.body for e in feed.entries()))
+
+    def test_prediction_handoff_does_not_wake_again_after_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            executable(home / "top-pains" / "sensor", "printf 'red\\n'\n")
+            feed = Feed(home)
+            first = feed.append_runtime("observation/sensor", "actual changed input")
+            prediction = feed.append_runtime(
+                "prediction/sensor", "Parent review remains pending.\nCheck at: 2099-01-01T00:00:00Z\n")
+            feed.append_runtime("mishe-tauftauf", "handoff top-pain sensor invocation sensor-1-1")
+            coordinator = Coordinator(RuntimeConfig(home, launcher="headless", dispatch=False))
+            coordinator._judge = lambda question, slug, pane, evidence, prediction=None: Judgment(
+                question, 0.9 if question == "relevance" else 0.1,
+                "yes" if question == "relevance" else "no", "fixture", "fixture")
+            coordinator.route()
+            Coordinator(RuntimeConfig(home, launcher="headless", dispatch=False)).route()
+            requests = [e.body for e in feed.entries() if e.body.startswith("wake requested ")]
+            self.assertEqual(requests, [f"wake requested top-pain sensor for entry {first.sequence}"])
+            self.assertFalse(any(str(prediction.sequence) in request for request in requests))
+
+    def test_unmet_due_prediction_observation_still_wakes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            executable(home / "top-pains" / "sensor", "printf 'red\\n'\n")
+            past = (datetime.now(timezone.utc) - timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            feed = Feed(home)
+            prediction = feed.append_runtime("prediction/sensor", f"Expected green.\nCheck at: {past}\n")
+            feed.append_runtime("mishe-tauftauf", f"prediction {prediction.sequence}: accepted")
+            coordinator = Coordinator(RuntimeConfig(home, launcher="headless", dispatch=False))
+            coordinator._pane = lambda slug: "red"
+            coordinator._judge = lambda question, slug, pane, evidence, prediction=None: Judgment(
+                question, 0.9 if question == "relevance" else 0.1,
+                "yes" if question == "relevance" else "no", "fixture", "fixture")
+            coordinator.due_predictions()
+            unresolved = [e for e in feed.entries() if e.source == "observation/sensor"
+                          and "requires reasoning" in e.body]
+            self.assertEqual(len(unresolved), 1)
+            coordinator.route()
+            requests = [e.body for e in feed.entries() if e.body.startswith("wake requested ")]
+            self.assertEqual(requests, [
+                f"wake requested top-pain sensor for entry {unresolved[0].sequence}"])
 
     def test_channel_observations_route_once_while_shared_events_fan_out(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -11,14 +11,14 @@ import time
 from pathlib import Path
 
 from .judges import controls
-from .external_view import DELTA_PUBLISH_QUESTION, DELTA_VERSION, VERSION as EXTERNAL_VIEW_VERSION, projected_delta_publish_controls, projected_publish_controls
+from .external_view import DELTA_PUBLISH_QUESTION, DELTA_VERSION, FLEET_VERSION, VERSION as EXTERNAL_VIEW_VERSION, projected_delta_publish_controls, projected_publish_controls
 from .policy import JudgmentPolicy
 
 VERSION = 1
 MAX_BYTES = 64 * 1024
 
 
-def identity(adapter: Path, mode: str, policy: JudgmentPolicy, *, projected: bool = False, paired: bool = False) -> str:
+def identity(adapter: Path, mode: str, policy: JudgmentPolicy, *, projected: bool = False, paired: bool = False, fleet: bool = False) -> str:
     """Bind a verdict to executable bytes, control cases, and all policy inputs."""
     if not adapter.is_file() or not os.access(adapter, os.X_OK):
         raise OSError("judge is not executable")
@@ -40,6 +40,8 @@ def identity(adapter: Path, mode: str, policy: JudgmentPolicy, *, projected: boo
         descriptor["projected_delta_publish_controls"] = projected_delta_publish_controls()
         descriptor["external_delta_version"] = DELTA_VERSION
         descriptor["external_delta_question"] = DELTA_PUBLISH_QUESTION
+    if fleet:
+        descriptor["fleet_view_version"] = FLEET_VERSION
     encoded = json.dumps(descriptor, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
