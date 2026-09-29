@@ -12,4 +12,6 @@ Every mind may act proactively within its charter. A checked UNKNOWN with an exa
 
 Use `[task]`, `[taking]`, `[done]`, and `[dropped]` in `chat.log` so witness can see progress and unresolved work. Request scoped missing capabilities with `permit request`; only an operator decision in the permissions window can grant plant authority. Genome obtains independent review, stages only owned paths, commits, pushes to the configured origin, and records the SHA and outcome. CI failure remains open until a replacement run for the pushed SHA succeeds.
 
+When the shared plant kernel changes, rerun the planting command for every active site using it and verify refreshed panes and resident services. The tracked kernel instructions are authoritative; local site instructions add target-specific detail and stay outside Git.
+
 Every new chat entry must explain what happened, the evidence or referenced artifact, and the next owner or action in plain text. Keep unchanged repeat samples in site artifacts; do not flood the shared log. Stable tags and IDs can lead an entry but are not an explanation by themselves.

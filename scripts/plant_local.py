@@ -20,6 +20,17 @@ from mishe_tauftauf.tmux import _tmux, owns_session  # noqa: E402
 
 ROLES = ("genome", "witness", "discover", "senses", "health")
 EXPLORATION = ("discover", "senses", "health")
+CONTRACT_START = "<!-- mishe-tauftauf plant contract -->"
+CONTRACT_END = "<!-- end mishe-tauftauf plant contract -->"
+
+
+def refresh_contract(current: str, contract: str) -> str:
+    block = contract.rstrip() + "\n" + CONTRACT_END
+    if CONTRACT_START not in current:
+        return current.rstrip() + ("\n\n" if current.strip() else "") + block + "\n"
+    before, after = current.split(CONTRACT_START, 1)
+    suffix = after.split(CONTRACT_END, 1)[1] if CONTRACT_END in after else ""
+    return before.rstrip() + ("\n\n" if before.strip() else "") + block + suffix.rstrip() + "\n"
 
 
 def unit_name(session: str, slug: str) -> str:
@@ -66,9 +77,9 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
         contract = (ROOT / "src" / "mishe_tauftauf" / "seed_agent_contract.md").read_text(encoding="utf-8")
         agents = workspace / "AGENTS.md"
         current = agents.read_text(encoding="utf-8") if agents.exists() else ""
-        if "<!-- mishe-tauftauf plant contract -->" not in current:
-            agents.write_text(current.rstrip() + ("\n\n" if current.strip() else "") + contract,
-                              encoding="utf-8")
+        updated = refresh_contract(current, contract)
+        if updated != current:
+            agents.write_text(updated, encoding="utf-8")
     if any(char.isspace() for char in str(home)):
         raise ValueError("site path with whitespace is not supported by generated systemd units")
     argv = shlex.split(engine_command)
@@ -120,6 +131,7 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
     if persist:
         env = os.environ.copy()
         env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+        active_before = {}
         for slug in (*ROLES, "permissions", "ci"):
             unit = home / unit_name(session, slug)
             unit.write_text(unit_text(home, session, slug, sys.executable), encoding="utf-8")
@@ -129,10 +141,15 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
                 raise RuntimeError(f"service {unit.name} already belongs to {linked}")
             if not linked:
                 subprocess.run(["systemctl", "--user", "link", str(unit)], check=True, env=env)
+            active_before[slug] = subprocess.run(
+                ["systemctl", "--user", "is-active", "--quiet", unit.name], env=env
+            ).returncode == 0
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, env=env)
         for slug in (*ROLES, "permissions", "ci"):
             unit = home / unit_name(session, slug)
             subprocess.run(["systemctl", "--user", "enable", "--now", unit.name], check=True, env=env)
+            if active_before[slug]:
+                subprocess.run(["systemctl", "--user", "restart", unit.name], check=True, env=env)
     actual = set(_tmux("list-windows", "-t", session, "-F", "#{window_name}").stdout.decode().splitlines())
     required = {operator_window, *ROLES, "permissions"}
     if not required <= actual:

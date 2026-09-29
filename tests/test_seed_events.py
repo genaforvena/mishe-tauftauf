@@ -1,5 +1,6 @@
 from mishe_tauftauf.feed import Feed
 from mishe_tauftauf.seed import _external_event, _observation_text, _state
+from mishe_tauftauf.seed_board import open_tasks
 
 
 def test_scoped_decision_wakes_owner_once(tmp_path):
@@ -10,6 +11,17 @@ def test_scoped_decision_wakes_owner_once(tmp_path):
     feed.append("seed", f"seed wake senses observation=1 event={decision.sequence}\n"
                 "The supervisor delivered the operator decision to senses for one checked step.")
     assert _external_event(tmp_path, "senses") is None
+
+
+def test_indented_task_tags_remain_visible_and_addressed(tmp_path):
+    feed = Feed(tmp_path)
+    task = feed.append("senses", " [task] sample-io owner=genome source=/proc/pressure/io acceptance=checked-sense retry=source-change")
+    assert _external_event(tmp_path, "genome") == task
+    assert [(item.identity, item.status) for item in open_tasks(feed.entries())] == [("sample-io", "open")]
+    feed.append("genome", " [taking] sample-io — reviewing the reading")
+    assert [(item.identity, item.status) for item in open_tasks(feed.entries())] == [("sample-io", "taking")]
+    feed.append("genome", " [done] sample-io — checked source and live pane")
+    assert open_tasks(feed.entries()) == []
 
 
 def test_explained_supervisor_receipts_still_replay(tmp_path):

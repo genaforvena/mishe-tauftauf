@@ -71,6 +71,38 @@ def test_doctor_rejects_tracked_local_plant(tmp_path: Path) -> None:
     assert "HOLD local-plant-in-git" in dirty.stdout
 
 
+def test_core_instruction_updates_reach_existing_site_without_losing_local_additions(tmp_path: Path, monkeypatch) -> None:
+    from mishe_tauftauf import seed
+
+    home = tmp_path / "site"
+    seed.init(home, "witness")
+    original = seed._core_doctrine()
+    monkeypatch.setattr(seed, "_core_doctrine", lambda: original + "\nNew core rule.\n")
+    seed.init(home, "witness")
+    assert "New core rule." in (home / "doctrine.md").read_text()
+    assert "New core rule." in seed._restore_text(home, "witness", "test")
+
+    (home / "doctrine.md").write_text("Local site addition.\n")
+    seed.init(home, "witness")
+    restored = seed._restore_text(home, "witness", "test")
+    assert "New core rule." in restored
+    assert "Local site addition." in restored
+    assert (home / "doctrine.md").read_text() == "Local site addition.\n"
+
+
+def test_pre_baseline_doctrine_is_refreshed_as_a_default(tmp_path: Path, monkeypatch) -> None:
+    from mishe_tauftauf import seed
+
+    home = tmp_path / "site"
+    (home / "doctrine.md").parent.mkdir()
+    (home / "doctrine.md").write_text("legacy copy\n")
+    digest = seed._digest
+    old_hash = next(iter(seed.LEGACY_INSTRUCTION_HASHES["doctrine.md"]))
+    monkeypatch.setattr(seed, "_digest", lambda value: old_hash if value == "legacy copy\n" else digest(value))
+    seed.init(home, "witness")
+    assert (home / "doctrine.md").read_text() == seed._core_doctrine()
+
+
 def test_seed_resident_channel_observes_repairs_and_restores(tmp_path: Path) -> None:
     home = tmp_path / "site"
     session = f"mishe-seed-test-{uuid.uuid4().hex[:10]}"
