@@ -46,3 +46,39 @@ def test_health_detects_dead_top_even_when_bottom_is_alive(tmp_path: Path, monke
     assert "WINDOWS: RED health dead=health.0" in rendered
     assert "STATE: RED" in rendered
     assert (home / "observations" / "health").read_text(encoding="utf-8") == "FAIL health internal check\n"
+
+
+def test_senses_reports_absent_source_as_unavailable_not_unchecked(tmp_path: Path) -> None:
+    home = tmp_path / "site"
+    snapshot = {"created": _now_iso(), "node": "node", "observations": [
+        {"id": "sense.proc.loadavg", "state": "verified", "sample": "1.23", "kind": "read"},
+        {"id": "sense.input.keyboard-interrupt-count", "state": "unavailable",
+         "sample": "no keyboard interrupt source on this host", "kind": "counter"},
+    ]}
+    (home / "discovery").mkdir(parents=True)
+    (home / "discovery" / "latest.json").write_text(json.dumps(snapshot), encoding="utf-8")
+    rendered = senses(home)
+    assert "UNAVAILABLE sense.input.keyboard-interrupt-count" in rendered
+    assert "STATE: GREEN — all wired sample reads verified" in rendered
+    assert "UNAVAILABLE senses 1 named an absent source, not a failed read" in rendered
+    assert (home / "observations" / "senses").read_text(encoding="utf-8") == "PASS senses 2 verified samples\n"
+
+
+def test_senses_still_counts_an_unreadable_counter_as_unknown(tmp_path: Path) -> None:
+    home = tmp_path / "site"
+    snapshot = {"created": _now_iso(), "node": "node", "observations": [
+        {"id": "sense.input.keyboard-interrupt-count", "state": "unknown",
+         "sample": "counter unreadable; /proc/interrupts unavailable", "kind": "counter"},
+    ]}
+    (home / "discovery").mkdir(parents=True)
+    (home / "discovery" / "latest.json").write_text(json.dumps(snapshot), encoding="utf-8")
+    rendered = senses(home)
+    assert "UNKNOWN sense.input.keyboard-interrupt-count" in rendered
+    assert "STATE: UNKNOWN — 1 senses need a checked read or honest unavailable claim" in rendered
+    assert "UNAVAILABLE senses" not in rendered
+    assert (home / "observations" / "senses").read_text(encoding="utf-8") == "UNKNOWN senses 1 unverified or stale\n"
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
