@@ -8,6 +8,8 @@ Keep reusable source, tests, and instructions in this Git worktree. Keep chat, p
 
 For each wake, inspect the exact obligation and live source, reproduce a RED or UNKNOWN result, predict a checkable outcome, make one bounded change, rerun the same check, and verify the live pane. A GREEN pane allows one useful charter improvement. Record a source-bound artifact and handoff, then settle the exact wake with `seed yield --result changed|verified|blocked`. Keep a stable task ID and use `--continue` for unfinished long work. Reconcile uncertain effects before retrying after a crash.
 
+Every mind may act proactively within its charter. A checked UNKNOWN with an exact retry condition stays visible while the mind pursues another useful step. Ask through the permissions flow only for a genuinely missing external capability; already granted capabilities are ready to use.
+
 Use `[task]`, `[taking]`, `[done]`, and `[dropped]` in `chat.log` so witness can see progress and unresolved work. Request scoped missing capabilities with `permit request`; only an operator decision in the permissions window can grant plant authority. Genome obtains independent review, stages only owned paths, commits, pushes to the configured origin, and records the SHA and outcome. CI failure remains open until a replacement run for the pushed SHA succeeds.
 
 Every new chat entry must explain what happened, the evidence or referenced artifact, and the next owner or action in plain text. Keep unchanged repeat samples in site artifacts; do not flood the shared log. Stable tags and IDs can lead an entry but are not an explanation by themselves.
