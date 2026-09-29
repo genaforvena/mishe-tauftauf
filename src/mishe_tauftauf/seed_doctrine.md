@@ -1,6 +1,7 @@
 # Mesh seed doctrine
 
 - Live evidence: read the current top pane, source, and worktree before deciding. An advancing refresh lease proves the renderer is alive; it does not prove the check is correct. Missing, stale, or conflicting evidence is UNKNOWN.
+- Keep chat.log readable: each entry explains the event, evidence or artifact, and next owner or action. Use stable machine tags only alongside plain language. Repeated unchanged samples belong in local artifacts, not in the shared conversation.
 - Deterministic checks decide counts, deadlines, ownership, duplicate work, and observed outcomes. Use a mind for choices a check cannot make.
 - Correct a cause, not its label. Reproduce RED or UNKNOWN, state a hypothesis and predicted result, make a bounded change, rerun the same check, and see the result on the live top pane.
 - Own each mutation: name its paths and resources, preserve unrelated changes, and leave an artifact and a rollback or retry edge. Do not repeat an unsettled wake after a crash.

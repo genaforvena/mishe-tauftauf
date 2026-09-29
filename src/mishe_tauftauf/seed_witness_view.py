@@ -6,6 +6,8 @@ import argparse
 import json
 import os
 import subprocess
+from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .feed import Feed
@@ -65,6 +67,20 @@ def render(home: Path) -> str:
     if repeated:
         lines.append("LOOP: RED — three genome turns without a change on the same observation")
         verdict = "FAIL witness repeated genome no-change turns"
+    now = datetime.now(timezone.utc)
+    recent_entries = [entry for entry in entries if
+                      0 <= (now - datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))).total_seconds() <= 120]
+    by_source = Counter(entry.source for entry in recent_entries if entry.source not in {"seed", "witness"})
+    by_observation = Counter(entry.body.splitlines()[0].split(" sha256=")[0] for entry in recent_entries
+                             if entry.source == "seed" and entry.body.startswith("seed observation "))
+    floods = [f"{source}: {count} entries" for source, count in by_source.items() if count >= 8]
+    floods.extend(f"{source}: {count} observations" for source, count in by_observation.items() if count >= 12)
+    if floods:
+        lines.append("CHAT RATE: RED — " + "; ".join(sorted(floods)) +
+                     ". Trace the wake or sampling feedback loop and fix its cause.")
+        verdict = "FAIL witness chat event flood"
+    else:
+        lines.append("CHAT RATE: GREEN — no repeated high-rate source in the last two minutes")
     for entry in entries:
         if entry.source in {"witness", "seed"}:
             continue
