@@ -24,6 +24,7 @@ def _read(path: Path, limit: int = 65536) -> str | None:
         return None
 
 
+
 def sample(home: Path) -> dict[str, object]:
     """Take bounded reads; never open input event streams or record key content."""
     observed: list[dict[str, object]] = []
@@ -39,6 +40,24 @@ def sample(home: Path) -> dict[str, object]:
     available = re.search(r"^MemAvailable:\s+(\d+ kB)$", memory or "", re.MULTILINE)
     observed.append({"id": "sense.proc.memory-available", "state": "verified" if available else "unknown",
                      "sample": available.group(1) if available else "read unavailable", "kind": "read"})
+    pressure = _read(Path("/proc/pressure/memory"), 512)
+    pressure_lines = [line.strip() for line in (pressure or "").splitlines()
+                      if re.match(r"^(some|full) avg10=[0-9]+(?:\.[0-9]+)? avg60=[0-9]+(?:\.[0-9]+)? "
+                                  r"avg300=[0-9]+(?:\.[0-9]+)? total=[0-9]+$", line.strip())]
+    pressure_ok = any(line.startswith("some ") for line in pressure_lines)
+    observed.append({"id": "sense.proc.memory-pressure",
+                     "state": "verified" if pressure_ok else "unknown",
+                     "sample": "; ".join(pressure_lines) if pressure_ok else "pressure data unavailable",
+                     "kind": "read"})
+    cpu_pressure = _read(Path("/proc/pressure/cpu"), 512)
+    cpu_pressure_lines = [line.strip() for line in (cpu_pressure or "").splitlines()
+                          if re.match(r"^some avg10=[0-9]+(?:\.[0-9]+)? avg60=[0-9]+(?:\.[0-9]+)? "
+                                      r"avg300=[0-9]+(?:\.[0-9]+)? total=[0-9]+$", line.strip())]
+    cpu_pressure_ok = bool(cpu_pressure_lines)
+    observed.append({"id": "sense.proc.cpu-pressure",
+                     "state": "verified" if cpu_pressure_ok else "unknown",
+                     "sample": "; ".join(cpu_pressure_lines) if cpu_pressure_ok else "pressure data unavailable",
+                     "kind": "read"})
     try:
         disk = os.statvfs(home.parent)
         free_bytes = disk.f_bavail * disk.f_frsize

@@ -19,6 +19,12 @@ def test_scan_writes_real_bounded_local_evidence(tmp_path: Path) -> None:
     assert observed["sense.proc.loadavg"]["state"] in {"verified", "unknown"}
     assert observed["sense.input.keyboard-interrupt-count"]["kind"] == "counter"
     assert observed["command.git"]["state"] == "available"
+    assert observed["sense.proc.memory-pressure"]["state"] in {"verified", "unknown"}
+    if observed["sense.proc.memory-pressure"]["state"] == "verified":
+        assert "some avg10=" in observed["sense.proc.memory-pressure"]["sample"]
+        assert "total=" in observed["sense.proc.memory-pressure"]["sample"]
+
+
     assert all("/dev/input" not in str(row["sample"]) for row in observed.values())
     report = Feed(home).entries()[-1].body
     assert report.startswith("[discovery] Read-only scan at ")
@@ -30,6 +36,26 @@ def test_scan_writes_real_bounded_local_evidence(tmp_path: Path) -> None:
                             "discover", "show"], capture_output=True, text=True)
     assert shown.returncode == 0
     assert "sense.proc.loadavg" in shown.stdout
+
+def test_memory_pressure_reports_unavailable_source_as_unknown(tmp_path: Path) -> None:
+    from mishe_tauftauf import discovery
+
+    original_read = discovery._read
+
+    def without_pressure(path: Path, limit: int = 65536) -> str | None:
+        if path == Path("/proc/pressure/memory"):
+            return None
+        return original_read(path, limit)
+
+    with patch("mishe_tauftauf.discovery._read", side_effect=without_pressure):
+        observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+
+    assert observed["sense.proc.memory-pressure"] == {
+        "id": "sense.proc.memory-pressure",
+        "state": "unknown",
+        "sample": "pressure data unavailable",
+        "kind": "read",
+    }
 
 
 def test_unchanged_scan_updates_artifact_without_log_spam(tmp_path: Path) -> None:
@@ -47,3 +73,62 @@ def test_unchanged_scan_updates_artifact_without_log_spam(tmp_path: Path) -> Non
         scan(home)
     assert len(Feed(home).entries()) == 1
     assert latest(home) == second
+def test_cpu_pressure_reports_valid_sample_and_unavailable_source(tmp_path: Path) -> None:
+    from mishe_tauftauf import discovery
+
+    original_read = discovery._read
+
+    def with_cpu_pressure(path: Path, limit: int = 65536) -> str | None:
+        if path == Path("/proc/pressure/cpu"):
+            return "some avg10=0.05 avg60=0.10 avg300=0.20 total=12345\n"
+        if path == Path("/proc/pressure/memory"):
+            return None
+        return original_read(path, limit)
+
+    with patch("mishe_tauftauf.discovery._read", side_effect=with_cpu_pressure):
+        observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+
+    assert observed["sense.proc.cpu-pressure"] == {
+        "id": "sense.proc.cpu-pressure",
+        "state": "verified",
+        "sample": "some avg10=0.05 avg60=0.10 avg300=0.20 total=12345",
+        "kind": "read",
+    }
+
+    def malformed_cpu_pressure(path: Path, limit: int = 65536) -> str | None:
+        if path == Path("/proc/pressure/cpu"):
+            return "some avg10=bad avg60=0.10 avg300=0.20 total=12345\n"
+        if path == Path("/proc/pressure/memory"):
+            return None
+        return original_read(path, limit)
+
+    with patch("mishe_tauftauf.discovery._read", side_effect=malformed_cpu_pressure):
+        observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+
+    assert observed["sense.proc.cpu-pressure"] == {
+        "id": "sense.proc.cpu-pressure",
+        "state": "unknown",
+        "sample": "pressure data unavailable",
+        "kind": "read",
+    }
+def test_cpu_pressure_reports_missing_source_as_unknown(tmp_path: Path) -> None:
+    from mishe_tauftauf import discovery
+
+    original_read = discovery._read
+
+    def without_cpu_pressure(path: Path, limit: int = 65536) -> str | None:
+        if path == Path("/proc/pressure/cpu"):
+            return None
+        if path == Path("/proc/pressure/memory"):
+            return None
+        return original_read(path, limit)
+
+    with patch("mishe_tauftauf.discovery._read", side_effect=without_cpu_pressure):
+        observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+
+    assert observed["sense.proc.cpu-pressure"] == {
+        "id": "sense.proc.cpu-pressure",
+        "state": "unknown",
+        "sample": "pressure data unavailable",
+        "kind": "read",
+    }
