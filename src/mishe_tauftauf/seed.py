@@ -96,6 +96,39 @@ def _external_event(home: Path, slug: str):
 
 
 def _observation_text(slug: str, frame: str) -> str:
+    if slug == "witness":
+        # Its pane includes the latest chat text and rate counts. Hashing that
+        # text makes witness observe its own observation receipt forever.
+        prefixes = ("WINDOWS:", "CI:", "OPEN TASKS:", "LOOP:", "STATE:")
+        lines = []
+        in_recent_chat = False
+        final_state = None
+        for line in frame.splitlines():
+            if line.startswith("LATEST CHAT.LOG TEXT"):
+                in_recent_chat = True
+                continue
+            if in_recent_chat:
+                if line.startswith("STATE:"):
+                    final_state = line
+                continue
+            if line.startswith("CHAT RATE:"):
+                lines.append(line.split(" —", 1)[0])
+            elif line.startswith(prefixes):
+                lines.append(line)
+            else:
+                task = re.fullmatch(r"(\S+ owner=[a-z0-9-]+ state=(?:open|taking)) at=\d+", line)
+                if task is not None:
+                    lines.append(task.group(1))
+        if final_state is not None:
+            lines.append(final_state)
+        return "\n".join(lines)
+    if slug == "health":
+        # Sample values stay readable on the pane. Only check states should
+        # wake health; byte and inode counts change on nearly every refresh.
+        prefixes = ("STATE:", "PLANT STATE:", "HOST HEALTH:", "COVERAGE:",
+                    "DOCTOR:", "WINDOWS:", "SERVICE ", "CI:",
+                    "PASS ", "FAIL ", "UNKNOWN ")
+        return "\n".join(line for line in frame.splitlines() if line.startswith(prefixes))
     if slug not in {"discover", "senses"}:
         return frame
     prefixes = ("STATE:", "UNKNOWN ", "UNAVAILABLE command.", "AVAILABLE command.",
