@@ -3,6 +3,8 @@ from __future__ import annotations
 import runpy
 from pathlib import Path
 
+import pytest
+
 
 def test_refresh_contract_preserves_other_agent_instructions() -> None:
     module = runpy.run_path(str(Path(__file__).parents[1] / "scripts" / "plant_local.py"))
@@ -38,5 +40,7 @@ def test_replant_keeps_existing_operator_window_name(tmp_path: Path) -> None:
     )
     choose = module["preferred_operator_window"]
     assert choose(site, None) == "codex"
-    assert choose(site, "different") == "different"
+    assert choose(site, "codex") == "codex"
+    with pytest.raises(ValueError, match="site already uses operator window"):
+        choose(site, "different")
     assert choose(tmp_path / "fresh", None) == "operator"
