@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import json
 import os
 import re
 import shlex
@@ -22,6 +23,11 @@ OBS_RE = re.compile(r"seed observation ([a-z0-9-]+) sha256=([0-9a-f]{64})\Z")
 WAKE_RE = re.compile(r"seed wake ([a-z0-9-]+) observation=([1-9][0-9]*)(?: event=([1-9][0-9]*))?\Z")
 YIELD_RE = re.compile(r"seed yield ([a-z0-9-]+) wake=([1-9][0-9]*)( continue=1)?\Z")
 CLEAR_RE = re.compile(r"seed clear ([a-z0-9-]+) after=([1-9][0-9]*)\Z")
+# The pre-baseline plant copied this exact doctrine into each site. Recognize it
+# during the first upgrade so an untouched copy is not replayed as local policy.
+LEGACY_INSTRUCTION_HASHES = {
+    "doctrine.md": {"f95fd1012c9056047c55d4cec5ab2c1c7b2d2f3833f573f4bce22d689652a0be"},
+}
 
 
 @contextmanager
@@ -78,11 +84,12 @@ def _external_event(home: Path, slug: str):
             if match.group(3):
                 last_woken = int(match.group(3))
         elif entry.source not in {slug, f"mind/{slug}"}:
-            task = re.match(r"\[task\]\s+\S+\s+owner=([a-z0-9-]+)(?:\s|$)", entry.body)
-            decision = re.match(r"\[permission\]\s+id=\S+\s+decision=(?:granted|revoked)\s+owner=([a-z0-9-]+)(?:\s|$)", entry.body)
+            body = entry.body.lstrip(" \t")
+            task = re.match(r"\[task\]\s+\S+\s+owner=([a-z0-9-]+)(?:\s|$)", body)
+            decision = re.match(r"\[permission\]\s+id=\S+\s+decision=(?:granted|revoked)\s+owner=([a-z0-9-]+)(?:\s|$)", body)
             if (task is not None and task.group(1) == slug) or (slug == "witness" and
-                    (entry.body.startswith("[wish]") or
-                     (entry.source in {"operator", "operator/permissions"} and not entry.body.startswith("[task]")))) or (
+                    (body.startswith("[wish]") or
+                     (entry.source in {"operator", "operator/permissions"} and not body.startswith("[task]")))) or (
                          decision is not None and decision.group(1) == slug):
                 latest = entry
     return latest if latest is not None and latest.sequence > (last_woken or 0) else None
@@ -157,8 +164,8 @@ def _redeliver_pending(home: Path, session: str, slug: str, pending: int) -> str
 
 
 def _restore_text(home: Path, slug: str, session: str) -> str:
-    doctrine = (home / "doctrine.md").read_text(encoding="utf-8")
-    charter = (home / "charters" / f"{slug}.md").read_text(encoding="utf-8")
+    doctrine = _instruction_text(home, "doctrine.md", _core_doctrine())
+    charter = _instruction_text(home, f"charters/{slug}.md", _core_charter(slug))
     handoff_path = home / "handoffs" / f"{slug}.md"
     handoff = handoff_path.read_text(encoding="utf-8") if handoff_path.exists() else "(none yet)"
     pending = _state(home, slug)[1]
@@ -172,6 +179,62 @@ def _restore_text(home: Path, slug: str, session: str) -> str:
             f"{next_action}\n"
             f"Read the live top pane with mishe-tauftauf --home {shlex.quote(str(home))} pain read {slug} --launcher tmux --session {shlex.quote(session)}. "
             "For an explicit wake, act on one bounded obligation, verify it on the same surface, and leave an artifact.\n")
+
+
+def _core_doctrine() -> str:
+    return Path(__file__).with_name("seed_doctrine.md").read_text(encoding="utf-8")
+
+
+def _core_charter(slug: str) -> str:
+    source = Path(__file__).with_name(f"seed_{slug}_charter.md")
+    if source.exists():
+        return source.read_text(encoding="utf-8")
+    return (
+        f"# {slug}\n\nGoal: maintain and develop this plant from live evidence.\n"
+        "Read the full top pane and chat.log. Repair a RED or UNKNOWN check before adding work. "
+        "When healthy, choose one bounded improvement, test it, and record the artifact. "
+        "For repository changes, inspect the exact diff, seek independent review, commit only owned paths, "
+        "push to this repository's configured GitHub origin, and record the SHA and push result. "
+        "Never stage this plant site's chat, charters, handoffs, artifacts, plans, checks, or services. "
+        "Keep the task open across handoffs until it lands; preserve other channels' dirty work. "
+        "Use deterministic checks for facts; treat missing evidence as UNKNOWN. "
+        "Write a handoff and settle the exact wake before clearing context. "
+        "For unfinished long work, name the task and exact next step in the handoff, "
+        "then use seed yield --continue so the supervisor wakes the next step after clear.\n"
+    )
+
+
+def _instruction_baselines(home: Path) -> tuple[Path, dict[str, str]]:
+    path = home / "health" / "core-instruction-baselines.json"
+    return path, json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+def _digest(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _sync_instruction(home: Path, relative: str, default: str) -> None:
+    path = home / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    baseline_path, baselines = _instruction_baselines(home)
+    current = path.read_text(encoding="utf-8") if path.exists() else None
+    if (current is None or _digest(current) == baselines.get(relative) or current == default or
+            _digest(current) in LEGACY_INSTRUCTION_HASHES.get(relative, set())):
+        path.write_text(default, encoding="utf-8")
+    baselines[relative] = _digest(default)
+    baseline_path.parent.mkdir(parents=True, exist_ok=True)
+    baseline_path.write_text(json.dumps(baselines, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _instruction_text(home: Path, relative: str, default: str) -> str:
+    path = home / relative
+    _, baselines = _instruction_baselines(home)
+    if not path.exists():
+        return default
+    local = path.read_text(encoding="utf-8")
+    if local == default or _digest(local) == baselines.get(relative):
+        return default
+    return default.rstrip() + "\n\nLOCAL SITE ADDITIONS\n" + local
 
 
 def init(home: Path, slug: str, engine_command: str = "codex") -> str:
@@ -191,29 +254,8 @@ def init(home: Path, slug: str, engine_command: str = "codex") -> str:
             encoding="utf-8",
         )
         cli.chmod(0o755)
-    doctrine = home / "doctrine.md"
-    if not doctrine.exists():
-        doctrine.write_text(Path(__file__).with_name("seed_doctrine.md").read_text(encoding="utf-8"), encoding="utf-8")
-    (home / "charters").mkdir(exist_ok=True)
-    charter = home / "charters" / f"{slug}.md"
-    if not charter.exists():
-        if slug == "witness":
-            charter.write_text(Path(__file__).with_name("seed_witness_charter.md").read_text(encoding="utf-8"), encoding="utf-8")
-        else:
-            charter.write_text(
-                f"# {slug}\n\nGoal: maintain and develop this plant from live evidence.\n"
-                "Read the full top pane and chat.log. Repair a RED or UNKNOWN check before adding work. "
-                "When healthy, choose one bounded improvement, test it, and record the artifact. "
-                "For repository changes, inspect the exact diff, seek independent review, commit only owned paths, "
-                "push to this repository's configured GitHub origin, and record the SHA and push result. "
-                "Never stage this plant site's chat, charters, handoffs, artifacts, plans, checks, or services. "
-                "Keep the task open across handoffs until it lands; preserve other channels' dirty work. "
-                "Use deterministic checks for facts; treat missing evidence as UNKNOWN. "
-                "Write a handoff and settle the exact wake before clearing context. "
-                "For unfinished long work, name the task and exact next step in the handoff, "
-                "then use seed yield --continue so the supervisor wakes the next step after clear.\n",
-                encoding="utf-8",
-            )
+    _sync_instruction(home, "doctrine.md", _core_doctrine())
+    _sync_instruction(home, f"charters/{slug}.md", _core_charter(slug))
     mind = home / "minds" / slug
     if not mind.exists():
         argv = shlex.split(engine_command)

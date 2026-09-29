@@ -32,7 +32,7 @@ class Work:
 def open_tasks(entries: list[FeedEntry]) -> list[Task]:
     tasks: dict[str, Task] = {}
     for entry in entries:
-        first = entry.body.splitlines()[0] if entry.body else ""
+        first = entry.body.splitlines()[0].lstrip(" \t") if entry.body else ""
         if match := TASK_RE.match(first):
             tasks[match.group(1)] = Task(match.group(1), match.group(2), "open", entry.sequence)
         elif match := STATE_RE.match(first):
