@@ -16,6 +16,8 @@ from .feed import Feed
 COMMANDS = ("rg", "git", "tmux", "python3", "systemctl", "journalctl", "ps", "df",
             "lsusb", "lspci", "sensors", "upower", "evtest")
 
+KERNEL_FAULT = "Failed to resubmit video URB"
+
 def _thermal_slots(root: Path) -> list[Path]:
     try:
         entries = sorted(root.iterdir())
@@ -72,6 +74,39 @@ def _cpu_busy(path: Path = Path("/proc/stat"), samples: int = 2, interval: float
     return {"busy": busy, "idle": 100.0 - busy}
 
 
+def _journal_error_window(past_minutes: int = 10, limit: int = 400) -> dict:
+    """Read the journal's own error class over a bounded window.
+
+    Returns a neutral count of one well-known kernel-driver message, never a
+    degradation verdict: on this host the uvcvideo resubmit rate is idle-camera
+    status noise and is inversely related to camera use (discover wake 116), so
+    the sample names every contributing endpoint instead of implying health.
+    A full-boot scan is unbounded and is never attempted.
+    """
+    try:
+        primary = subprocess.run(
+            ["journalctl", "-b", "-p", "err", "--since", f"-{past_minutes}min",
+             "-o", "cat", "--no-pager"],
+            capture_output=True, text=True, timeout=10)
+        if primary.returncode != 0:
+            primary = subprocess.run(
+                ["journalctl", "-b", "-p", "err", "-n", str(limit),
+                 "-o", "cat", "--no-pager"],
+                capture_output=True, text=True, timeout=10)
+        window = primary.stdout.splitlines()
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    faults = [line for line in window if KERNEL_FAULT in line]
+    if not faults:
+        return {"state": "verified" if window else "unknown",
+                "sample": (f"last-{past_minutes}min kernel-error-count=0"
+                           if window else "journal error window unavailable")}
+    endpoints = sorted({line.split(": Failed", 1)[0].strip() for line in faults})
+    return {"state": "verified",
+            "sample": (f"last-{past_minutes}min kernel-error-count={len(faults)} "
+                       f"endpoints={",".join(endpoints)}")}
+
+
 def sample(home: Path) -> dict[str, object]:
     """Take bounded reads; never open input event streams or record key content."""
     observed: list[dict[str, object]] = []
@@ -79,6 +114,12 @@ def sample(home: Path) -> dict[str, object]:
         found = shutil.which(command)
         observed.append({"id": f"command.{command}", "state": "available" if found else "unavailable",
                          "sample": found or "not on PATH", "kind": "declaration"})
+    journal = _journal_error_window()
+    if journal:
+        observed.append({"id": "sense.journal.kernel-error-rate", "kind": "read", **journal})
+    else:
+        observed.append({"id": "sense.journal.kernel-error-rate", "kind": "read",
+                         "state": "unknown", "sample": "journal error window unavailable"})
 
     loadavg = _read(Path("/proc/loadavg"), 256)
     observed.append({"id": "sense.proc.loadavg", "state": "verified" if loadavg else "unknown",
