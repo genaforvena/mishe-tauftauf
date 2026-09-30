@@ -29,6 +29,20 @@ CLEAR_RE = re.compile(r"seed clear ([a-z0-9-]+) after=([1-9][0-9]*)\Z")
 # OMP's idle status can include a token after INSERT, e.g. "INSERT y >".
 # Recognize that status without treating a spinner-bearing line as idle.
 _OMP_INSERT_PROMPT_RE = re.compile(r"\s*π > INSERT(?: +[A-Za-z0-9!?-]+)* >")
+_OMP_NORMAL_PROMPT_RE = re.compile(r"\s*π > NORMAL >")
+
+
+def _omp_idle_mode(pane: str) -> str | None:
+    mode = None
+    for line in pane.splitlines():
+        status = line.lstrip()
+        if status.startswith(tuple("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")) and ("Working..." in status or "> INSERT " in status or "> NORMAL " in status):
+            return None
+        if _OMP_INSERT_PROMPT_RE.match(line):
+            mode = "insert"
+        elif _OMP_NORMAL_PROMPT_RE.match(line):
+            mode = "normal"
+    return mode
 # The pre-baseline plant copied this exact doctrine into each site. Recognize it
 # during the first upgrade so an untouched copy is not replayed as local policy.
 LEGACY_INSTRUCTION_HASHES = {
@@ -169,6 +183,23 @@ def _observation_text(slug: str, frame: str) -> str:
 def _send(target: str, message: str) -> None:
     # Agent TUIs detect paste bursts. Submit a complete bracketed paste after
     # its terminator, as the mesh's live pane delivery does.
+    engine = _tmux("display-message", "-p", "-t", target, "#{pane_current_command}", check=False)
+    if engine.returncode == 0 and engine.stdout.decode().strip() == "omp":
+        pane = _tmux("capture-pane", "-p", "-t", target, check=False)
+        mode = _omp_idle_mode(pane.stdout.decode("utf-8", "replace")) if pane.returncode == 0 else None
+        if mode is None:
+            raise ValueError("OMP idle input mode unavailable; delivery held")
+        if mode == "normal":
+            # OMP's normal editor mode is idle but interprets letters as Vim
+            # commands. Enter insertion before /clear or a wake's paste.
+            _tmux("send-keys", "-t", target, "i")
+            for _ in range(10):
+                time.sleep(0.1)
+                inserted = _tmux("capture-pane", "-p", "-t", target, check=False)
+                if inserted.returncode == 0 and _omp_idle_mode(inserted.stdout.decode("utf-8", "replace")) == "insert":
+                    break
+            else:
+                raise ValueError("OMP did not enter insertion mode; delivery held")
     _tmux("send-keys", "-t", target, "C-u")
     if message == "/clear":
         _tmux("send-keys", "-t", target, "-l", message)
@@ -247,14 +278,7 @@ def _mind_ready(session: str, slug: str) -> bool:
                                         "• Thinking", "• Executing")) for line in lines):
             return False
         return any(line.lstrip().startswith("› ") for line in lines)
-    ready = False
-    for line in lines:
-        status = line.lstrip()
-        if status.startswith(tuple("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")) and ("Working..." in status or "> INSERT " in status):
-            return False
-        if _OMP_INSERT_PROMPT_RE.match(line):
-            ready = True
-    return ready
+    return _omp_idle_mode("\n".join(lines)) is not None
 
 
 def _redeliver_pending(home: Path, session: str, slug: str, pending: int) -> str:
@@ -430,6 +454,7 @@ def init(home: Path, slug: str, engine_command: str = "codex") -> str:
             "printf '%s\\n' 'TEST RUNNER: .venv/bin/pytest available'; "
             "else printf '%s\\n' 'TEST RUNNER: inspect project environment'; fi\n"
             f"{shlex.quote(sys.executable)} -c {shlex.quote(f'from pathlib import Path; from mishe_tauftauf.ci_watch import line; print(line(Path({str(home.resolve())!r})))')}\n"
+            f"{shlex.quote(sys.executable)} -m mishe_tauftauf --home {shlex.quote(str(home.resolve()))} task landing-status\n"
             "printf 'GOAL: tend this repo · WORKTREE: %s changed\\n' \"$count\"\n"
             "if [ \"$rc\" -eq 0 ]; then printf '%s\\n' 'STATE: GREEN · NEXT: verify and land one change'; "
             "else printf '%s\\n' 'STATE: RED · NEXT: repair the failed check'; fi\n",

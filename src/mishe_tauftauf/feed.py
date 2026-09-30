@@ -18,7 +18,7 @@ RECEIPT_RE = re.compile(r"wake (?:delivered|refused) top-pain [a-z0-9-]+ for ent
 INDEX_STRIDE = 128
 RESERVED_EXACT = {"mishe-tauftauf"}
 RESERVED_PREFIXES = ("prediction/", "observation/")
-TASK_CONTROL_TAGS = ("task-state", "task-event", "task-claim", "task-add", "task-close", "task-reopen")
+TASK_CONTROL_TAGS = ("task-state", "task-event", "task-claim", "task-add", "task-close", "task-reopen", "landing")
 
 
 class FeedError(ValueError):

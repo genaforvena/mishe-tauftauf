@@ -266,6 +266,15 @@ def cmd_seed(args) -> int:
 def cmd_task(args) -> int:
     from . import task_state
 
+    if args.task_command in {"landing-status", "production-check"}:
+        from .landing import line, queue
+        entries = Feed(args.home).entries()
+        print(line(entries))
+        return int(args.task_command == "production-check" and bool(queue(entries)))
+    if args.task_command == "landing":
+        from .landing import register
+        print(register(args.home, args.id, args.source, args.producer, args.reason, args.evidence).sequence)
+        return 0
     if args.task_command == "step":
         entry = task_state.set_step(args.home, args.id, args.owner, args.next_step, args.progress, args.evidence)
     elif args.task_command == "wait":
@@ -504,6 +513,11 @@ def parser() -> argparse.ArgumentParser:
     p = sub.add_parser("init"); p.set_defaults(func=cmd_init)
     p = sub.add_parser("append"); p.add_argument("--source", required=True); p.add_argument("text", nargs="?"); p.set_defaults(func=cmd_append)
     task = sub.add_parser("task").add_subparsers(dest="task_command", required=True)
+    p = task.add_parser("landing"); p.add_argument("id"); p.add_argument("--source", choices=("genome", "operator"), required=True)
+    p.add_argument("--producer", required=True); p.add_argument("--reason", required=True)
+    p.add_argument("--evidence", type=Path, required=True); p.set_defaults(func=cmd_task)
+    for action in ("landing-status", "production-check"):
+        p = task.add_parser(action); p.set_defaults(func=cmd_task)
     for action in ("step", "wait"):
         p = task.add_parser(action); p.add_argument("id"); p.add_argument("--owner", required=True)
         p.add_argument("--next-step", required=True); p.add_argument("--evidence", type=Path, required=True)

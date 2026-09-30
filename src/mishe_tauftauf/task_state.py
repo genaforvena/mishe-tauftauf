@@ -72,6 +72,10 @@ def _evidence(path: Path) -> tuple[str, str]:
 
 def validate_control(source: str, body: str) -> None:
     """Reject malformed typed control before its bytes enter the shared tape."""
+    if body.startswith("[landing] "):
+        from .landing import validate
+        validate(source, body)
+        return
     try:
         first, rest = body.split("\n", 1)
         if first.startswith("[task-claim] "):
@@ -233,6 +237,12 @@ def select_task(entries: list[FeedEntry], owner: str, now: datetime | None = Non
                    key=lambda state: state.sequence)
     own = [state for state in plans if state.owner == owner and eligible(state, entries, now)]
     offered = [state for state in plans if owner in state.helpers and eligible(state, entries, now)]
+    if owner == "genome":
+        from .landing import registrations
+        positions = registrations(entries)
+        deliveries = [state for state in own if state.identity in positions]
+        if deliveries:
+            return min(deliveries, key=lambda state: positions[state.identity])
     return next(iter(own or offered), None)
 
 
