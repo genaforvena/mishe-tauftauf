@@ -15,7 +15,6 @@ from .feed import Feed
 
 COMMANDS = ("rg", "git", "tmux", "python3", "systemctl", "journalctl", "ps", "df",
             "lsusb", "lspci", "sensors", "upower", "evtest")
-KERNEL_FAULT = "Failed to resubmit video URB"
 
 def _thermal_slots(root: Path) -> list[Path]:
     try:
@@ -73,85 +72,9 @@ def _cpu_busy(path: Path = Path("/proc/stat"), samples: int = 2, interval: float
     return {"busy": busy, "idle": 100.0 - busy}
 
 
-def _overlay_egress_rate(root: Path = Path("/sys/class/net"), interval: float = 0.1) -> dict:
-    """Measure tailscale0 transmit and receive rates over a bounded counter window."""
-    interface = root / "tailscale0"
-    stats = interface / "statistics"
-    counters = {"tx_bytes": "egress", "rx_bytes": "ingress"}
-    before: dict[str, int] = {}
-    for name in counters:
-        value = _read(stats / name, 64)
-        if value is None or not value.strip().isdigit():
-            state = "unavailable" if not interface.exists() else "unknown"
-            return {"state": state, "sample": f"tailscale0 {name} unavailable"}
-        before[name] = int(value.strip())
-    time.sleep(interval)
-    rates: list[str] = []
-    for name, direction in counters.items():
-        value = _read(stats / name, 64)
-        if value is None or not value.strip().isdigit():
-            return {"state": "unknown", "sample": f"tailscale0 {name} unavailable"}
-        delta = int(value.strip()) - before[name]
-        if delta < 0:
-            return {"state": "unknown", "sample": f"tailscale0 {name} counter decreased"}
-        rates.append(f"{direction}={delta / interval:.0f} B/s")
-    return {"state": "verified",
-            "sample": f"short-window={interval:.1f}s " + " ".join(rates)}
-def _kernel_error_window(past_minutes: int = 10, limit: int = 400) -> dict:
-    """Sample the live kernel error rate over a bounded journal window.
-
-    A line is an error only when the journal itself classified it as one and
-    it names the failing kernel device, so a busy userspace stream cannot read
-    as a kernel fault. A full-boot scan is unbounded and is never attempted.
-    """
-    try:
-        result = subprocess.run(
-            ["journalctl", "-b", "-p", "err", "--since", f"-{past_minutes}min", "-o", "cat", "--no-pager"],
-            capture_output=True, text=True, timeout=10,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return {}
-    if result.returncode != 0:
-        # Bounded fallback from the tail of the current boot.
-        try:
-            fallback = subprocess.run(
-                ["journalctl", "-b", "-p", "err", "-n", str(limit), "-o", "cat", "--no-pager"],
-                capture_output=True, text=True, timeout=10,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            return {}
-        if fallback.returncode != 0:
-            return {}
-        lines = fallback.stdout.splitlines()
-        window = f"tail-{limit}"
-    else:
-        lines = result.stdout.splitlines()
-        window = f"last-{past_minutes}min"
-    faults = [line for line in lines if KERNEL_FAULT in line]
-    if not faults and lines:
-        return {"state": "verified", "sample": f"{window} kernel-error-count=0", "kind": "read"}
-    if not faults:
-        return {}
-    # "uvcvideo 1-6:1.1: Failed to ..." -> device=uvcvideo
-    device = faults[0].split(":", 1)[0].split()[0] or "unknown-device"
-    return {"state": "verified",
-            "sample": (f"{window} kernel-error-count={len(faults)} "
-                       f"device={device} tail={str(faults[-1])[:48]}"),
-            "kind": "read"}
-
-
-
 def sample(home: Path) -> dict[str, object]:
     """Take bounded reads; never open input event streams or record key content."""
     observed: list[dict[str, object]] = []
-    journal = _kernel_error_window()
-    if journal:
-        observed.append({"id": "sense.journal.kernel-error-rate", **journal})
-    else:
-        observed.append({"id": "sense.journal.kernel-error-rate", "state": "unknown",
-                         "sample": "journal error window unavailable", "kind": "read"})
-
-
     for command in COMMANDS:
         found = shutil.which(command)
         observed.append({"id": f"command.{command}", "state": "available" if found else "unavailable",
