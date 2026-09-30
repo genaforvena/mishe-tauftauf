@@ -216,3 +216,27 @@ def test_senses_still_counts_an_unreadable_counter_as_unknown(tmp_path: Path) ->
 def _now_iso() -> str:
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+@pytest.mark.parametrize("manifest", [None, "{", '{"unit":"health.service"}', '["bad"]'])
+def test_health_reports_invalid_local_services_manifest_as_unknown(
+        tmp_path: Path, monkeypatch, manifest: str | None) -> None:
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health" / "windows.json").write_text('["health"]', encoding="utf-8")
+    if manifest is not None:
+        (home / "health" / "services.json").write_text(manifest, encoding="utf-8")
+    monkeypatch.setenv("MISHE_SEED_SESSION", "test-session")
+
+    def run(argv, **_kwargs):
+        if argv[0] == "tmux":
+            return subprocess.CompletedProcess(argv, 0, "health 0 0\n", "")
+        return subprocess.CompletedProcess(argv, 0, "PASS doctor\n", "")
+
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.subprocess.run", run)
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.ci_line", lambda _home: "CI: PASS")
+    rendered = health(home)
+    assert "SERVICES: UNKNOWN — local manifest unavailable or malformed" in rendered
+    assert "STATE: UNKNOWN — local service data unavailable" in rendered
+    assert (home / "observations" / "health").read_text(encoding="utf-8") == (
+        "UNKNOWN health local service data unavailable\n")
