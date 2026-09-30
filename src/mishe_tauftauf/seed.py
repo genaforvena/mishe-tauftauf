@@ -144,11 +144,36 @@ def _external_event(home: Path, slug: str):
     return latest if latest is not None and latest.sequence > (last_woken or 0) else None
 
 
+def clear_stalls(entries, *, now: datetime | None = None, timeout: float = 120):
+    """Find settled wakes whose idle clear has not happened within its budget."""
+    now = now or datetime.now(timezone.utc)
+    pending = {}
+    settled = {}
+    for entry in entries:
+        if entry.source != "seed":
+            continue
+        line = _receipt_line(entry.body)
+        if match := WAKE_RE.fullmatch(line):
+            pending[match[1]] = entry.sequence
+            settled.pop(match[1], None)
+        elif match := YIELD_RE.fullmatch(line):
+            if pending.get(match[1]) == int(match[2]):
+                pending.pop(match[1])
+                settled[match[1]] = entry
+        elif match := CLEAR_RE.fullmatch(line):
+            receipt = settled.get(match[1])
+            if receipt and int(YIELD_RE.fullmatch(_receipt_line(receipt.body))[2]) == int(match[2]):
+                settled.pop(match[1])
+    return {slug: entry for slug, entry in settled.items()
+            if (now - datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))).total_seconds() >= timeout}
+
+
+
 def _observation_text(slug: str, frame: str) -> str:
     if slug == "witness":
         # Its pane includes the latest chat text and rate counts. Hashing that
         # text makes witness observe its own observation receipt forever.
-        prefixes = ("WINDOWS:", "CI:", "OPEN TASKS:", "LOOP:", "STATE:",
+        prefixes = ("WINDOWS:", "CI:", "OPEN TASKS:", "LOOP:", "CLEAR STALL:", "STATE:",
                     "COORDINATION:", "ANOMALY:", "PUBLICATION GATE:", "PUBLICATION RESULT:")
         lines = []
         in_recent_chat = False
