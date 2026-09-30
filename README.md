@@ -124,12 +124,12 @@ Five resident roles share the work:
 | `discover` | Explore capabilities and related literature; assess applicability and propose new frontier experiments. |
 | `senses` | Build reliable, temporally valid readings, including new senses crossed from existing ones, with honest failure states. |
 | `health` | Keep the local feed, panes, and services working. |
-| `genome` | Improve reusable source and land verified, independently reviewed changes. |
+| `genome` | Improve reusable source and integrate reviewed, CI-passing author commits. |
 | `witness` | Follow open work and compare completion claims with evidence. |
 
 There is also a permissions panel and an operator shell. Roles identify
 responsibilities, not walls around files: any mind can pursue an owned repair,
-while genome handles shared-source landing. The [concept guide](docs/how-it-works.md)
+while authors own delivery and genome integrates ready commits. The [concept guide](docs/how-it-works.md)
 explains the task protocol and what happens between wakes.
 
 ## Scope, not a force field

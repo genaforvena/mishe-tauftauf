@@ -281,10 +281,12 @@ def cmd_task(args) -> int:
     from . import task_state
 
     if args.task_command in {"landing-status", "production-check"}:
-        from .landing import line, queue
+        from .landing import line
+        from .delivery import line as deliveries
         entries = Feed(args.home).entries()
+        print(deliveries(args.home))
         print(line(entries))
-        return int(args.task_command == "production-check" and bool(queue(entries)))
+        return 0
     if args.task_command == "landing":
         from .landing import register
         print(register(args.home, args.id, args.source, args.producer, args.reason, args.evidence).sequence)
@@ -310,6 +312,26 @@ def cmd_task(args) -> int:
         print("\n".join(task_state.lines(Feed(args.home).entries(), args.owner)) or "No open tasks.")
         return 0
     print(entry.sequence)
+    return 0
+
+
+def cmd_delivery(args) -> int:
+    import json
+    from . import delivery
+
+    action = args.delivery_command
+    if action == "submit":
+        result = delivery.submit(args.home, args.id, args.owner, args.repo, args.base, args.branch, args.review)
+    elif action == "check":
+        result = delivery.check(args.home, args.id)
+    elif action == "integrate":
+        result = delivery.integrate(args.home, args.id, args.source)
+    elif action == "finish":
+        result = delivery.finish(args.home, args.id, args.owner, args.evidence)
+    else:
+        print(delivery.line(args.home))
+        return 0
+    print(json.dumps(result, sort_keys=True))
     return 0
 
 
@@ -523,6 +545,17 @@ def parser() -> argparse.ArgumentParser:
     sub = root.add_subparsers(dest="command", required=True)
     p = sub.add_parser("init"); p.set_defaults(func=cmd_init)
     p = sub.add_parser("append"); p.add_argument("--source", required=True); p.add_argument("text", nargs="?"); p.set_defaults(func=cmd_append)
+    delivery = sub.add_parser("delivery").add_subparsers(dest="delivery_command", required=True)
+    p = delivery.add_parser("submit"); p.add_argument("id"); p.add_argument("--owner", required=True)
+    p.add_argument("--repo", type=Path, required=True); p.add_argument("--base", required=True)
+    p.add_argument("--branch", required=True); p.add_argument("--review", type=Path, required=True)
+    p.set_defaults(func=cmd_delivery)
+    p = delivery.add_parser("check"); p.add_argument("id"); p.set_defaults(func=cmd_delivery)
+    p = delivery.add_parser("show"); p.set_defaults(func=cmd_delivery)
+    p = delivery.add_parser("integrate"); p.add_argument("id")
+    p.add_argument("--source", choices=("genome", "operator"), required=True); p.set_defaults(func=cmd_delivery)
+    p = delivery.add_parser("finish"); p.add_argument("id"); p.add_argument("--owner", required=True)
+    p.add_argument("--evidence", type=Path, required=True); p.set_defaults(func=cmd_delivery)
     task = sub.add_parser("task").add_subparsers(dest="task_command", required=True)
     p = task.add_parser("landing"); p.add_argument("id"); p.add_argument("--source", choices=("genome", "operator"), required=True)
     p.add_argument("--producer", required=True); p.add_argument("--reason", required=True)

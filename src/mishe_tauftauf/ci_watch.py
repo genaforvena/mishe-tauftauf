@@ -19,26 +19,35 @@ def _command(*argv: str, cwd: Path | None = None) -> str:
     return result.stdout.strip()
 
 
-def read(home: Path) -> dict[str, str]:
-    workspace = home.parent
+def read(home: Path, *, workspace: Path | None = None, sha: str | None = None,
+         branch: str | None = None, repository: str | None = None,
+         required_workflows: tuple[str, ...] = ()) -> dict[str, str]:
+    workspace = workspace or home.parent
     try:
-        repository = json.loads(_command("gh", "repo", "view", "--json", "nameWithOwner,defaultBranchRef",
+        repository = json.loads(_command("gh", "repo", "view", *([repository] if repository else []),
+                                         "--json", "nameWithOwner,defaultBranchRef",
                                          cwd=workspace))
-        branch = repository["defaultBranchRef"]["name"]
-        sha = _command("git", "-C", str(workspace), "rev-parse", f"origin/{branch}")
+        default_branch = repository["defaultBranchRef"]["name"]
+        sha = sha or _command("git", "-C", str(workspace), "rev-parse", f"origin/{default_branch}")
         rows = json.loads(_command("gh", "run", "list", "--repo", repository["nameWithOwner"],
             "--commit", sha, "--limit", "50", "--json",
-            "databaseId,headSha,status,conclusion,url,workflowName", cwd=workspace))
-        matches = [row for row in rows if row.get("headSha") == sha]
+            "databaseId,headSha,status,conclusion,url,workflowName,event,headBranch",
+            *(["--branch", branch, "--event", "push"] if branch else []), cwd=workspace))
+        matches = [row for row in rows if row.get("headSha") == sha and
+                   (not branch or (row.get("event") == "push" and row.get("headBranch") == branch))]
         if not matches:
             return {"state": "unknown", "sha": sha, "run": "none", "url": "none",
-                    "detail": f"no Actions run for origin/{branch}"}
+                    "detail": f"no Actions run for exact commit {sha}"}
         current: dict[str, dict] = {}
         for row in matches:
             workflow = str(row.get("workflowName") or row["databaseId"])
             old = current.get(workflow)
             if old is None or int(row["databaseId"]) > int(old["databaseId"]):
                 current[workflow] = row
+        missing = set(required_workflows) - current.keys()
+        if missing:
+            return {"state": "unknown", "sha": sha, "run": "none", "url": "none",
+                    "detail": f"required push workflows missing: {','.join(sorted(missing))}"}
         matches = list(current.values())
         failed = [row for row in matches if row.get("status") == "completed" and
                   row.get("conclusion") in {"failure", "timed_out", "cancelled", "action_required"}]
@@ -66,17 +75,21 @@ def tick(home: Path) -> dict[str, str]:
     identity = ("state", "sha", "run", "url", "detail")
     if previous is None or any(previous.get(key) != result[key] for key in identity):
         meaning = {"pass": "All observed Actions runs for this remote commit succeeded.",
-                   "fail": "At least one Actions run failed; genome owns the repair through a green replacement run.",
+                   "fail": "At least one Actions run failed; the source author owns repair, with genome as the unassigned-incident fallback.",
                    "pending": "An Actions run is still in progress; its result is not known yet.",
                    "unknown": "The watcher cannot establish a result for the current remote commit."}[result["state"]]
         Feed(home).append("ci", "[ci] state={state} sha={sha} run={run} url={url} detail={detail}\n"
                           "{meaning}".format(**result, meaning=meaning))
         if result["state"] == "fail":
-            Feed(home).append("ci", f"[task] ci-{result['sha'][:12]} owner=genome "
+            from .delivery import main_owner
+            owner = main_owner(home, result["sha"])
+            Feed(home).append("ci", f"[task] ci-{result['sha'][:12]} owner={owner} "
                               f"repair failing CI run={result['run']} url={result['url']}; "
                               "verify the replacement run is green before closing.\n"
                               "GitHub Actions failed for this remote commit. Reproduce the failed job, "
                               "land a scoped repair, and close this task only after CI passes on the new SHA.", once=True)
+    from .delivery import check_all
+    check_all(home)
     return result
 
 

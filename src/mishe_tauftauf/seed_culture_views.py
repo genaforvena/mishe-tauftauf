@@ -61,7 +61,7 @@ def discover(home: Path) -> str:
 
 def senses(home: Path) -> str:
     lines = ["GOAL: turn readings into honest senses with real samples and visible unknowns",
-             "PURSUIT: wire useful reads, reproduce hollow or failed checks, and hand reusable fixes to genome",
+             "PURSUIT: wire useful reads, reproduce hollow or failed checks, and own reusable fixes through review, branch CI and ready integration",
              "NEXT: pursue a new useful read when an UNKNOWN has a documented retry condition; verify its live sample"]
     snapshot = latest(home)
     if snapshot is None:
@@ -93,7 +93,7 @@ def senses(home: Path) -> str:
 
 def health(home: Path) -> str:
     lines = ["GOAL: keep this plant's panes, feed, and resident services working",
-             "PURSUIT: repair internal failures from the live check; route reusable code changes to genome",
+             "PURSUIT: repair internal failures from the live check; own reusable code delivery through ready integration",
              "NEXT: investigate the first RED or UNKNOWN internal check and verify its live recovery"]
     doctor = subprocess.run([sys.executable, "-m", "mishe_tauftauf", "--home", str(home), "doctor"],
                             capture_output=True, text=True, timeout=15)

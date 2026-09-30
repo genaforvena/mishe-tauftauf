@@ -148,7 +148,7 @@ def lines(report):
 def intake(home: Path, report: dict):
     """Discover outside edits as owned work, without touching their source bytes."""
     from .feed import Feed
-    from . import landing, task_state
+    from . import task_state
     if report["state"] == "UNKNOWN":
         return None
     rows = [r for r in report["paths"] if r["reason"] != "owned draft" or r["published"]]
@@ -169,10 +169,6 @@ def intake(home: Path, report: dict):
         if not artifact.exists():
             artifact.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n")
         if old is not None and old.status not in {"done", "dropped"}:
-            entries = Feed(home).entries()
-            if identity not in landing.registrations(entries):
-                landing.register(home, identity, "genome", "genome",
-                                 "Recover interrupted draft-intake registration.", artifact)
             previous = data.get("intake_fingerprint")
             active = identity in task_state.pending_tasks(Feed(home).entries()).values()
             if previous != fingerprint and not active and old.evidence_sha256 != hashlib.sha256(artifact.read_bytes()).hexdigest():
@@ -187,7 +183,6 @@ def intake(home: Path, report: dict):
         else:
             task_state.reopen(home, identity, "genome", next_step,
                               "Closed intake still has unresolved draft bytes; reconcile before completion.", artifact)
-        landing.register(home, identity, "genome", "genome", reason, artifact)
         data["intake"] = identity
         data["intake_fingerprint"] = fingerprint
         return identity

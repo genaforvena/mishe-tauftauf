@@ -43,6 +43,8 @@ class TaskState:
     producer: str = ""
     alternative: str | None = None
     retry_task: str | None = None
+    delivery: str = ""
+    delivery_token: str = ""
 
 
 def _deadline(value: str) -> datetime:
@@ -108,6 +110,11 @@ def validate_control(source: str, body: str) -> None:
                 _deadline(state.retry_at)
             if state.retry_task:
                 _event(state.retry_task)
+            if state.delivery:
+                _event(state.delivery)
+                _event(state.delivery_token)
+                if state.owner != "genome":
+                    raise ValueError("integration task belongs to genome")
             if state.parent:
                 _event(state.parent)
             if state.producer:
@@ -250,11 +257,9 @@ def select_task(entries: list[FeedEntry], owner: str, now: datetime | None = Non
                    key=lambda state: state.sequence)
     own = [state for state in plans if state.owner == owner and eligible(state, entries, now)]
     offered = [state for state in plans if owner in state.helpers and eligible(state, entries, now)]
-    from .landing import priority_ids
-    positions = priority_ids(entries)
-    deliveries = [state for state in own if state.identity in positions]
-    if deliveries:
-        return min(deliveries, key=lambda state: positions[state.identity])
+    integrations = [state for state in own if state.delivery]
+    if integrations:
+        return integrations[0]
     return next(iter(own or offered), None)
 
 
@@ -300,6 +305,8 @@ def set_step(home: Path, identity: str, owner: str, next_step: str, progress: st
     path, digest = _evidence(evidence)
     with _lock(home):
         old = _owned(Feed(home).entries(), identity, owner)
+        if old.delivery:
+            raise ValueError("integration readiness belongs to delivery check; progress prose cannot rearm it")
         if old.next_step == next_step.strip() and (old.evidence_sha256 == digest or old.progress == progress.strip()):
             raise ValueError("unchanged step and evidence; record a wait predicate instead")
         return _append(home, owner, replace(old, status="ready", next_step=next_step.strip(),
@@ -324,12 +331,9 @@ def wait_for(home: Path, identity: str, owner: str, next_step: str, reason: str,
     with _lock(home):
         entries = Feed(home).entries()
         old = _owned(entries, identity, owner)
+        if old.delivery:
+            raise ValueError("integration readiness belongs to delivery check; use delivery integrate")
         plans = registry(entries)
-        from .landing import check_waits, dependency_ids, priority_ids
-        protected = identity in priority_ids(entries)
-        if protected and not (retry_task or retry_at):
-            raise ValueError("landing wait requires a concrete producer task or an external retry deadline; "
-                             "use task step for an owned production step")
         status = "waiting"
         if retry_task:
             dependency = plans.get(retry_task)
@@ -354,9 +358,6 @@ def wait_for(home: Path, identity: str, owner: str, next_step: str, reason: str,
                                    if s.parent == cursor and s.status not in {"done", "dropped"})
             if dependency.status == "done":
                 status = "ready"
-            elif protected:
-                open_plans = {key: value for key, value in plans.items() if value.status not in {"done", "dropped"}}
-                check_waits(open_plans, dependency_ids(open_plans, retry_task))
         if alternative:
             candidate = plans.get(alternative)
             if not candidate or candidate.parent != identity or candidate.owner != owner or candidate.status != "ready":
@@ -376,6 +377,8 @@ def offer(home: Path, identity: str, owner: str, helpers: list[str], evidence: P
     path, digest = _evidence(evidence)
     with _lock(home):
         old = _owned(Feed(home).entries(), identity, owner)
+        if old.delivery:
+            raise ValueError("delivery integration is serialized by genome; it cannot be offered")
         return _append(home, owner, replace(old, helpers=roles, offer_evidence=path, offer_evidence_sha256=digest))
 
 
@@ -463,6 +466,8 @@ def reopen(home: Path, identity: str, owner: str, next_step: str, reason: str, e
         old = plans.get(identity)
         if not old or old.status not in {"done", "dropped"}:
             raise ValueError("task is not terminal; record task step instead")
+        if old.delivery:
+            raise ValueError("integration readiness belongs to delivery check; use a new author candidate")
         if old.owner != validate_slug(owner):
             raise ValueError("task owner mismatch")
         if old.parent and (old.parent not in plans or plans[old.parent].status in {"done", "dropped"}):
@@ -482,6 +487,8 @@ def finish(home: Path, identity: str, owner: str, result: str, evidence: Path) -
     with _lock(home):
         entries = Feed(home).entries()
         old = _owned(entries, identity, owner)
+        if old.delivery:
+            raise ValueError("use delivery integrate to complete a fact-owned integration")
         if any(state.parent == identity for state in states(entries).values()):
             raise ValueError("unfinished child tasks prevent parent completion")
         return _append(home, owner, replace(old, status="done", managed=True, progress=result.strip(),
