@@ -88,3 +88,16 @@ def test_candidate_ci_requires_named_push_workflow_and_exact_origin(tmp_path):
         result = ci_watch.read(tmp_path / "site", workspace=tmp_path, sha=sha, branch="candidate",
                               required_workflows=("CI",))
     assert result["state"] == "unknown"
+
+
+def test_reading_only_tick_skips_projection_and_watcher_still_owns_it(tmp_path):
+    from mishe_tauftauf import delivery
+    result = dict(state="pass", sha="a" * 40, run="1", url="https://example.test/1", detail="completed/success")
+    with patch.object(ci_watch, "read", return_value=result), patch.object(delivery, "check_all") as maintenance:
+        ci_watch.tick(tmp_path, check_deliveries=False)
+        maintenance.assert_not_called()
+        assert ci_watch.latest(tmp_path)["state"] == "pass"
+        assert len(Feed(tmp_path).entries()) == 1
+        ci_watch.tick(tmp_path)
+        maintenance.assert_called_once_with(tmp_path)
+        assert len(Feed(tmp_path).entries()) == 1

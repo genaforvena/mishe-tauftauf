@@ -166,3 +166,40 @@ def test_runtime_only_cli_preserves_dirty_application_and_contract(tmp_path: Pat
     finally:
         subprocess.run([sys.executable, "-m", "mishe_tauftauf", "--home", str(home),
                         "seed", "stop", "--session", session], capture_output=True, timeout=15)
+
+
+def test_runtime_refresh_does_not_wait_for_delivery_projection(tmp_path):
+    import subprocess
+    import sys
+    import uuid
+    workspace = tmp_path / "application"
+    workspace.mkdir()
+    subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+    home = workspace / ".mishe-tauftauf"
+    session = "mishe-maintenance-test-" + uuid.uuid4().hex[:10]
+    script = """
+from mishe_tauftauf import delivery, ci_watch
+import runpy
+
+def unavailable_maintenance(home):
+    raise RuntimeError('delivery projection may wait indefinitely for configured model admission')
+delivery.check_all = unavailable_maintenance
+ci_watch.read = lambda home: dict(state='unknown', sha='unknown', run='none', url='none', detail='isolated CI fixture')
+runpy.run_module('mishe_tauftauf.plant', run_name='__main__')
+"""
+    try:
+        initial_script = script.replace("delivery.check_all = unavailable_maintenance", "delivery.check_all = lambda home: None")
+        initial = subprocess.run([sys.executable, "-c", initial_script, "--workspace", str(workspace),
+            "--home", str(home), "--session", session, "--engine-command", "cat", "--no-services"],
+            capture_output=True, text=True, timeout=45)
+        assert initial.returncode == 0, initial.stderr
+        result = subprocess.run([sys.executable, "-c", script, "--workspace", str(workspace),
+            "--home", str(home), "--session", session, "--engine-command", "cat", "--no-services",
+            "--runtime-only"], capture_output=True, text=True, timeout=45)
+        assert result.returncode == 0, result.stderr
+        assert "plant ready" in result.stdout
+        from mishe_tauftauf import ci_watch
+        assert ci_watch.latest(home)["state"] == "unknown"
+    finally:
+        subprocess.run([sys.executable, "-m", "mishe_tauftauf", "--home", str(home),
+                        "seed", "stop", "--session", session], capture_output=True, timeout=15)

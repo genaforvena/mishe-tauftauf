@@ -174,7 +174,9 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
     os.environ["MISHE_SEED_SESSION"] = session
     try:
         print(f"discovery scan: {discovery.scan(home)}", flush=True)
-        print(f"ci reading: {ci_watch.tick(home)}", flush=True)
+        # The resident CI service owns potentially slow task/model projections.
+        # Refreshing installed code must not wait for that maintenance lane.
+        print(f"ci reading: {ci_watch.tick(home, check_deliveries=False)}", flush=True)
     finally:
         if previous_session is None:
             os.environ.pop("MISHE_SEED_SESSION", None)

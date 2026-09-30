@@ -63,7 +63,7 @@ def read(home: Path, *, workspace: Path | None = None, sha: str | None = None,
         return {"state": "unknown", "sha": "unknown", "run": "none", "url": "none", "detail": str(exc)[:200]}
 
 
-def tick(home: Path) -> dict[str, str]:
+def tick(home: Path, *, check_deliveries: bool = True) -> dict[str, str]:
     path = home / "ci" / "latest.json"
     previous = latest(home)
     result = read(home)
@@ -88,8 +88,9 @@ def tick(home: Path) -> dict[str, str]:
                               "verify the replacement run is green before closing.\n"
                               "GitHub Actions failed for this remote commit. Reproduce the failed job, "
                               "land a scoped repair, and close this task only after CI passes on the new SHA.", once=True)
-    from .delivery import check_all
-    check_all(home)
+    if check_deliveries:
+        from .delivery import check_all
+        check_all(home)
     return result
 
 

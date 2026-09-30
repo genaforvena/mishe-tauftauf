@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from contextlib import ExitStack
 from dataclasses import asdict, dataclass, fields, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -355,7 +356,7 @@ def claim(home: Path, identity: str, owner: str, wake: int, reason: str, evidenc
     from .coordination_checks import episode
     selection = episode(home, owner, reason, context={"task": identity, "wake": wake, "evidence": path, "evidence_sha256": digest})
     require(home, owner, reason, context=selection, stage="selection")
-    with delivery_lock(home), _lock(home):
+    with _lock(home), ExitStack() as commit_locks:
         entries = Feed(home).entries()
         if active_wakes(entries).get(owner) != wake:
             raise ValueError("claim requires this mind's exact active wake")
@@ -379,12 +380,22 @@ def claim(home: Path, identity: str, owner: str, wake: int, reason: str, evidenc
                         retry_task=None, retry_after=None, progress=reason.strip(),
                         evidence=path, evidence_sha256=digest,
                         reason="The mind claimed this step; reconcile its effects before another attempt.")
+        def claim_commit_guard():
+            commit_locks.enter_context(delivery_lock(home))
+            _claim_evidence_guard(path, digest)
+            _claim_delivery_owner(home, identity, owner)
+            if old.delivery:
+                from .delivery import load
+                current = load(home, old.delivery)
+                token = f"{current['head']}:{current['transition']}"
+                if current["phase"] != "ready" or token != old.delivery_token:
+                    raise ValueError("delivery changed during claim admission; reconcile the current transition")
         data = asdict(state)
         data["previous_owner"] = old.owner
         return Feed(home).append_task_control(owner, f"[task-claim] {identity}\n" + json.dumps(data, sort_keys=True) +
             f"\n{owner} chose {identity} for wake {wake}: {reason.strip()} "
             f"The selected step is {old.next_step} Evidence: {path}. "
-            "Other minds must preserve this active attempt until its handoff settles.", commit_guard=lambda: _claim_evidence_guard(path, digest))
+            "Other minds must preserve this active attempt until its handoff settles.", commit_guard=claim_commit_guard)
 
 
 def _claim_evidence_guard(path, digest):
@@ -429,7 +440,7 @@ def _owned(entries: list[FeedEntry], identity: str, owner: str) -> TaskState:
     return state
 
 
-def _append(home: Path, source: str, state: TaskState, tag: str = "task-state") -> FeedEntry:
+def _append(home: Path, source: str, state: TaskState, tag: str = "task-state", *, commit_guard=None) -> FeedEntry:
     before = registry(Feed(home).entries()).get(state.identity)
     transition = (f"moves from {before.status} to {state.status}" if before and before.status != state.status
                   else f"remains {state.status}" if before else f"registers as {state.status}")
@@ -438,7 +449,7 @@ def _append(home: Path, source: str, state: TaskState, tag: str = "task-state") 
                              f"next step: {state.next_step}. " +
                              (f"Waiting because {state.reason}. " if state.reason else f"Progress: {state.progress}. ") +
                              f"Evidence: {state.evidence or 'pending delivered-attempt handoff'}; "
-                             f"retry: {state.retry_event or state.retry_at or state.retry_task or 'new checked next step'}.")
+                             f"retry: {state.retry_event or state.retry_at or state.retry_task or 'new checked next step'}.", commit_guard=commit_guard)
 
 
 def set_step(home: Path, identity: str, owner: str, next_step: str, progress: str, evidence: Path) -> FeedEntry:
@@ -462,7 +473,7 @@ def set_step(home: Path, identity: str, owner: str, next_step: str, progress: st
 def wait_for(home: Path, identity: str, owner: str, next_step: str, reason: str, evidence: Path,
              *, retry_event: str | None = None, retry_at: str | None = None,
              retry_task: str | None = None, producer: str | None = None,
-             alternative: str | None = None) -> FeedEntry:
+             alternative: str | None = None, commit_guard=None) -> FeedEntry:
     from .seed import _lock
 
     if not next_step.strip() or not reason.strip() or not (retry_event or retry_at or retry_task):
@@ -509,7 +520,7 @@ def wait_for(home: Path, identity: str, owner: str, next_step: str, reason: str,
         return _append(home, owner, replace(old, status=status, next_step=next_step.strip(),
                        reason=reason.strip(), evidence=path, evidence_sha256=digest,
                        retry_event=retry_event, retry_at=retry_at, retry_task=retry_task, retry_after=None,
-                       producer=validate_slug(producer or owner), alternative=alternative))
+                       producer=validate_slug(producer or owner), alternative=alternative), commit_guard=commit_guard)
 
 
 def offer(home: Path, identity: str, owner: str, helpers: list[str], evidence: Path) -> FeedEntry:
@@ -581,7 +592,7 @@ def lines(entries: list[FeedEntry], owner: str | None = None) -> list[str]:
 
 
 def add_task(home: Path, identity: str, owner: str, next_step: str, reason: str, evidence: Path,
-             *, parent: str | None = None) -> FeedEntry:
+             *, parent: str | None = None, commit_guard=None) -> FeedEntry:
     from .seed import _lock
 
     _event(identity)
@@ -597,7 +608,7 @@ def add_task(home: Path, identity: str, owner: str, next_step: str, reason: str,
             raise ValueError("parent task is not open")
         return _append(home, owner, TaskState(identity, owner, 0, managed=True, parent=parent,
                        next_step=next_step.strip(), progress=reason.strip(), evidence=path,
-                       evidence_sha256=digest), "task-add")
+                       evidence_sha256=digest), "task-add", commit_guard=commit_guard)
 
 
 def reopen(home: Path, identity: str, owner: str, next_step: str, reason: str, evidence: Path) -> FeedEntry:
@@ -623,7 +634,7 @@ def reopen(home: Path, identity: str, owner: str, next_step: str, reason: str, e
                        attempt_wake=None, attempt_observation=None, helpers=(), alternative=None, producer=""), "task-reopen")
 
 
-def finish(home: Path, identity: str, owner: str, result: str, evidence: Path) -> FeedEntry:
+def finish(home: Path, identity: str, owner: str, result: str, evidence: Path, *, commit_guard=None) -> FeedEntry:
     from .seed import _lock
 
     if not result.strip():
@@ -638,4 +649,4 @@ def finish(home: Path, identity: str, owner: str, result: str, evidence: Path) -
             raise ValueError("unfinished child tasks prevent parent completion")
         return _append(home, owner, replace(old, status="done", managed=True, progress=result.strip(),
                        evidence=path, evidence_sha256=digest, retry_event=None, retry_at=None,
-                       retry_task=None, reason="", helpers=(), alternative=None), "task-close")
+                       retry_task=None, reason="", helpers=(), alternative=None), "task-close", commit_guard=commit_guard)

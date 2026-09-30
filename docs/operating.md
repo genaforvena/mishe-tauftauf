@@ -349,6 +349,13 @@ Once genome/operator has initiated an exact integration, the watcher may resume 
 same leased push after revalidating refs, review and CI. A persistent rejection stays
 blocked without model retries; a new candidate revision requires a new initiation.
 An active integration attempt prevents candidate replacement until it settles.
+Delivery records and the exact main lease are serialized separately from slow private
+publication checks. A saved fact may precede its admitted feed projection. Final
+commit guards reject a projection if its delivery snapshot or task registration
+changed during review. Reconcile the saved record after a refusal; do not repeat a
+successful remote push or overwrite a newer task wait. The watcher retries pending
+projections from current facts without retaining the global delivery lock during
+model work.
 
 The author wakes after integration, checks the exact main push CI, deploys the clean
 release only to owned consumers, and verifies their live checks. Store a JSON rollout
@@ -373,3 +380,6 @@ landing graph or global HOLD remains.
 After `delivery finish`, the existing CI watcher checks retirement each tick. It verifies completed rollout, ancestry against actual remote main, exact unchanged local and remote candidate refs, a clean worktree, and no live process or installed runtime reference. It saves and verifies a recovery bundle under `SITE/retired-candidates/` before deleting the remote branch with an exact lease, atomically relocating the entire candidate directory and its exact Git administrative registration into private recovery archives, and atomically deleting the exact local ref. It preserves the shared checkout and detached runtime releases.
 
 A busy process, new dirty files, advanced branch, unavailable check, or failed removal stays visible in `delivery show` as retirement pending. The watcher retries the same concrete condition; it does not create repeated model work. Run `delivery retire ID` for a bounded manual reconciliation from outside the candidate directory. Retirement resumes from the saved recovery edge after a crash. Full-directory relocation preserves ignored files even if they arrived after the admission check; no recursive deletion or broad registration pruning occurs. Useful unmerged or dirty work must first be reconciled, adopted into active delivery, or archived with a checked supersession reason. Main is the durable branch; temporary branches have an active task and are retired once their checked outcome is delivered.
+
+
+Runtime refresh samples CI without running candidate task projections. The persistent CI watcher continues to own delivery reconciliation and retirement; its configured publication checks may wait independently while the installer restarts services onto the selected clean release.

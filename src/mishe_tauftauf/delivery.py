@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 import subprocess
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 from dataclasses import replace
 from pathlib import Path
 
@@ -60,7 +60,7 @@ def load(home: Path, identity: str) -> dict:
     return data
 
 
-def _save(home: Path, record: dict) -> Path:
+def _save(home: Path, record: dict, *, recovered_wait: int | None = None) -> Path:
     path = _path(home, record["identity"])
     old = load(home, record["identity"]) if path.exists() else None
     changed = old is None or any(old.get(key) != record.get(key) for key in ("head", "phase", "reason"))
@@ -75,6 +75,14 @@ def _save(home: Path, record: dict) -> Path:
             and author.retry_event == event and not task_state.eligible(author, entries) else None)
     else:
         record["author_retry_wait_sequence"] = old.get("author_retry_wait_sequence")
+    if recovered_wait is not None and record["phase"] in {"blocked", "integrated"}:
+        entries = Feed(home).entries()
+        author = task_state.registry(entries).get(record["identity"])
+        if (not author or author.sequence != recovered_wait or author.owner != record["owner"]
+                or author.status != "waiting" or author.retry_event != f"delivery-{record['identity']}-updated"
+                or task_state.eligible(author, entries)):
+            raise ValueError("recovery-created author wait changed; preserve the newer registration")
+        record["author_retry_wait_sequence"] = recovered_wait
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(record, sort_keys=True, indent=2) + "\n")
     temporary.replace(path)
@@ -146,19 +154,92 @@ def _snapshot(home: Path, record: dict) -> Path:
     return path
 
 
-def _wait_owner(home: Path, record: dict) -> None:
+def _publish(home: Path, record: dict, writer, *, tasks=()):
+    """Admit outside the fact lock, then hold it only through the guarded commit."""
+    before = task_state.registry(Feed(home).entries())
+    expected_tasks = {identity: before.get(identity) for identity in tasks}
+    with ExitStack() as locks:
+        def guard():
+            locks.enter_context(_lock(home))
+            current = load(home, record["identity"])
+            if record.get("superseded"):
+                valid = current["head"] != record["head"] and current["owner"] == record["owner"]
+            else:
+                valid = current == record
+            if not valid:
+                raise ValueError("delivery changed during publication admission; reconcile current facts")
+            latest = task_state.registry(Feed(home).entries())
+            if any(latest.get(identity) != old for identity, old in expected_tasks.items()):
+                raise ValueError("task registration changed during delivery publication admission")
+        return writer(guard)
+
+
+def _wait_owner(home: Path, record: dict):
     identity, owner = record["identity"], record["owner"]
     evidence = _snapshot(home, record)
     current = task_state.registry(Feed(home).entries()).get(identity)
     if current is None:
-        task_state.add_task(home, identity, owner, "Complete candidate delivery through deployed consumers",
-                            "Author retains delivery ownership", evidence)
+        _publish(home, record, lambda guard: task_state.add_task(home, identity, owner,
+            "Complete candidate delivery through deployed consumers", "Author retains delivery ownership",
+            evidence, commit_guard=guard), tasks=(identity,))
     elif current.owner != owner or current.status in {"done", "dropped"}:
         raise ValueError("delivery task must be open and belong to its author")
-    task_state.wait_for(home, identity, owner,
-        "Inspect delivery show after a real transition; repair candidate or verify final main CI and deploy consumers",
-        "Published candidate awaits CI or main integration; do not poll from model turns", evidence,
-        retry_event=f"delivery-{identity}-updated", producer="delivery")
+    next_step = "Inspect delivery show after a real transition; repair candidate or verify final main CI and deploy consumers"
+    reason = "Published candidate awaits CI or main integration; do not poll from model turns"
+    def wait_commit(guard):
+        guard()
+        # Publication admission serializes feed writers, so the next sequence is
+        # reserved through this commit. Preserve intent before the feed flush;
+        # recovery can recognize only the exact successfully written wait.
+        record["author_wait_pending"] = True
+        record["author_wait_projection"] = dict(sequence=Feed(home).tail_sequence() + 1,
+            evidence=str(evidence), evidence_sha256=task_state._evidence(evidence)[1],
+            next_step=next_step, reason=reason, producer="delivery",
+            retry_event=f"delivery-{identity}-updated")
+        _save(home, record)
+    return _publish(home, record, lambda guard: task_state.wait_for(home, identity, owner,
+        next_step, reason, evidence, retry_event=f"delivery-{identity}-updated",
+        producer="delivery", commit_guard=lambda: wait_commit(guard)), tasks=(identity,))
+
+
+def _complete_owner_wait(home: Path, record: dict, sequence: int) -> dict:
+    with _lock(home):
+        if load(home, record["identity"]) != record:
+            raise ValueError("delivery changed during author wait recovery")
+        current = task_state.registry(Feed(home).entries()).get(record["identity"])
+        if not current or current.sequence != sequence:
+            # A deliberate newer wait supersedes this projection. A subsequent
+            # unchanged check must not recreate/release it as crash recovery.
+            record = {**record, "author_wait_pending": False}
+            _save(home, record)
+            raise ValueError("recovery-created author wait changed; preserve the newer registration")
+        record = {**record, "author_wait_pending": False}
+        _save(home, record, recovered_wait=sequence)
+    return record
+
+
+def _register_owner_wait(home: Path, record: dict) -> dict:
+    wait = _wait_owner(home, record)
+    return _complete_owner_wait(home, record, wait.sequence)
+
+
+def _recover_owner_wait(home: Path, record: dict) -> dict:
+    current = task_state.registry(Feed(home).entries()).get(record["identity"])
+    planned = record.get("author_wait_projection")
+    if current and current.status == "waiting":
+        exact = (planned and current.owner == record["owner"]
+                 and all(getattr(current, key) == value for key, value in planned.items()))
+        if exact:
+            return _complete_owner_wait(home, record, current.sequence)
+        # The committed feed does not match our checkpoint: preserve the author's
+        # actual wait. Only a real later delivery transition may release it.
+        with _lock(home):
+            if load(home, record["identity"]) != record:
+                raise ValueError("delivery changed during author wait recovery")
+            record = {**record, "author_wait_pending": False}
+            _save(home, record)
+        return record
+    return _register_owner_wait(home, record)
 
 
 def _sync(home: Path, record: dict, previous: dict | None) -> None:
@@ -178,25 +259,25 @@ def _sync(home: Path, record: dict, previous: dict | None) -> None:
                     delivery=record["identity"], delivery_token=token, evidence=evidence, evidence_sha256=digest,
                     next_step=f"Run delivery integrate {record['identity']} --source genome; author {record['owner']} owns rollout.",
                     progress=f"Independent review and branch CI pass for exact head {record['head']}.")
-                task_state._append(home, "genome", state, "task-add")
+                _publish(home, record, lambda guard: task_state._append(home, "genome", state, "task-add", commit_guard=guard), tasks=(identity,))
             elif (old.status == "waiting" and old.delivery_token != token
                   and identity not in task_state.pending_tasks(entries).values()):
-                task_state._append(home, "genome", replace(old, status="ready", reason="",
+                _publish(home, record, lambda guard: task_state._append(home, "genome", replace(old, status="ready", reason="",
                     delivery_token=token, evidence=evidence, evidence_sha256=digest,
-                    retry_event=None, retry_task=None, retry_at=None))
+                    retry_event=None, retry_task=None, retry_at=None), commit_guard=guard), tasks=(identity,))
         elif old and old.status not in {"done", "dropped"}:
             if record["phase"] in {"integrated", "done"}:
-                task_state._append(home, "genome", replace(old, status="done", progress=f"Integrated {record['head']}; author owns final CI and rollout.",
-                    evidence=evidence, evidence_sha256=digest), "task-close")
+                _publish(home, record, lambda guard: task_state._append(home, "genome", replace(old, status="done", progress=f"Integrated {record['head']}; author owns final CI and rollout.",
+                    evidence=evidence, evidence_sha256=digest), "task-close", commit_guard=guard), tasks=(identity,))
             elif old.status == "ready":
-                task_state._append(home, "genome", replace(old, status="waiting", reason=record["reason"],
-                    evidence=evidence, evidence_sha256=digest, retry_event=None, retry_task=None, retry_at=None))
+                _publish(home, record, lambda guard: task_state._append(home, "genome", replace(old, status="waiting", reason=record["reason"],
+                    evidence=evidence, evidence_sha256=digest, retry_event=None, retry_task=None, retry_at=None), commit_guard=guard), tasks=(identity,))
     if record["phase"] in {"integrated", "done"}:
         token = f"delivery-{record['identity']}-integrated"
         # Reconcile receipt even if a process died after saving the integration record.
         if not any(e.body.startswith(f"[task-event] {token}\n") for e in Feed(home).entries()):
-            task_state.signal(home, token, "delivery", Path(evidence),
-                              f"Main contains {record['head']}; {record['owner']} owns final CI and deployment.")
+            _publish(home, record, lambda guard: task_state.signal(home, token, "delivery", Path(evidence),
+                f"Main contains {record['head']}; {record['owner']} owns final CI and deployment.", commit_guard=guard))
     if record["phase"] in {"blocked", "integrated"} and not record.get("superseded"):
         event = f"delivery-{record['identity']}-updated"
         entries = Feed(home).entries()
@@ -222,8 +303,8 @@ def _sync(home: Path, record: dict, previous: dict | None) -> None:
                             or latest.status != "waiting" or latest.retry_event != event
                             or task_state.eligible(latest, latest_entries)):
                         raise ValueError("bound author wait changed before retry publication; preserve the newer wait")
-                task_state.signal(home, event, "delivery", Path(evidence), reason,
-                                  commit_guard=author_retry_guard)
+                _publish(home, record, lambda guard: task_state.signal(home, event, "delivery", Path(evidence), reason,
+                    commit_guard=lambda: (guard(), author_retry_guard())), tasks=(record["identity"],))
                 author_retry_notified = True
     if record["phase"] == "done":
         rollout, rollout_digest = task_state._evidence(Path(record["rollout"]))
@@ -231,15 +312,15 @@ def _sync(home: Path, record: dict, previous: dict | None) -> None:
             raise ValueError("rollout evidence changed before completion reconciliation")
         current = task_state.registry(Feed(home).entries()).get(record["identity"])
         if current and current.status not in {"done", "dropped"}:
-            task_state.finish(home, record["identity"], record["owner"],
-                              "Verified exact final main CI and deployed consumers", Path(rollout))
+            _publish(home, record, lambda guard: task_state.finish(home, record["identity"], record["owner"],
+                "Verified exact final main CI and deployed consumers", Path(rollout), commit_guard=guard), tasks=(record["identity"],))
     # The integration notice already records this outcome; the author notice
     # separately releases its exact wait. Do not add a third unchanged sample.
     if (record["phase"] != "integrated" and not author_retry_notified and
             (previous is None or (record["phase"], record["reason"]) != (previous["phase"], previous["reason"]))):
-        Feed(home).append_record("delivery", f"Delivery {record['identity']} author={record['owner']} head={record['head']} "
+        _publish(home, record, lambda guard: Feed(home).append_record("delivery", f"Delivery {record['identity']} author={record['owner']} head={record['head']} "
             f"phase={record['phase']}: {record['reason']}. Evidence: {evidence}. "
-            "Unrelated source work remains admissible.", record, kind="delivery")
+            "Unrelated source work remains admissible.", record, kind="delivery", commit_guard=guard))
 
 
 def submit(home: Path, identity: str, owner: str, repo: Path, base: str, branch: str, review: Path) -> dict:
@@ -262,10 +343,13 @@ def submit(home: Path, identity: str, owner: str, repo: Path, base: str, branch:
     record = dict(version=1, identity=identity, owner=owner, repo=str(repo), workspace=str(home.parent.resolve()), base=base,
                   head=_git(repo, "rev-parse", "HEAD"), branch=branch,
                   origin=_git(repo, "remote", "get-url", "origin"), review=path, review_sha256=digest,
-                  phase="branch-ci", reason="Published reviewed candidate awaits exact branch CI", ci={})
+                  phase="branch-ci", reason="Published reviewed candidate awaits exact branch CI", ci={}, author_wait_pending=True)
     main = _candidate(record)
     if main != base:
         raise ValueError("main advanced; author must rebase and obtain exact review before submitting")
+    wait_owner = True
+    recover_owner = False
+    superseded = None
     with _lock(home):
         previous = load(home, identity) if _path(home, identity).exists() else None
         if previous and previous["owner"] != owner:
@@ -276,26 +360,27 @@ def submit(home: Path, identity: str, owner: str, repo: Path, base: str, branch:
             raise ValueError("active integration is reserved; reconcile and settle it before replacing the candidate")
         if previous and previous["head"] == record["head"] and previous["review_sha256"] == digest:
             author = task_state.registry(Feed(home).entries()).get(identity)
-            if author is None or (previous["phase"] in {"branch-ci", "ready"} and
-                                  author.retry_event != f"delivery-{identity}-updated"):
-                _wait_owner(home, previous)
-            _sync(home, previous, previous)
-            return previous
-        author = task_state.registry(Feed(home).entries()).get(identity)
-        if author and (author.owner != owner or author.status in {"done", "dropped"}):
-            raise ValueError("delivery task must be open and belong to its author")
-        for other in (home / "deliveries").glob("*.json"):
-            active = load(home, other.stem)
-            parked = active["phase"] in {"done", "blocked"} or active.get("final_ci", {}).get("state") == "fail"
-            if active["identity"] != identity and active["owner"] == owner and active["origin"] == record["origin"] and not parked:
-                raise ValueError("author already has an active candidate; finish or park it first")
-        if previous:
-            # Superseding a revision withdraws its integration task, without touching an active wake.
-            retired = {**previous, "phase": "blocked", "reason": "Author submitted a newly reviewed revision", "superseded": True}
-            _sync(home, retired, previous)
-        _save(home, record)
-        _wait_owner(home, record)
-        _sync(home, record, previous)
+            wait_owner = author is None or previous.get("author_wait_pending", False) or (previous["phase"] in {"branch-ci", "ready"} and
+                                           author.retry_event != f"delivery-{identity}-updated")
+            record = previous
+            recover_owner = True
+        else:
+            author = task_state.registry(Feed(home).entries()).get(identity)
+            if author and (author.owner != owner or author.status in {"done", "dropped"}):
+                raise ValueError("delivery task must be open and belong to its author")
+            for other in (home / "deliveries").glob("*.json"):
+                active = load(home, other.stem)
+                parked = active["phase"] in {"done", "blocked"} or active.get("final_ci", {}).get("state") == "fail"
+                if active["identity"] != identity and active["owner"] == owner and active["origin"] == record["origin"] and not parked:
+                    raise ValueError("author already has an active candidate; finish or park it first")
+            if previous:
+                superseded = {**previous, "phase": "blocked", "reason": "Author submitted a newly reviewed revision", "superseded": True}
+            _save(home, record)
+    if superseded:
+        _sync(home, superseded, previous)
+    if wait_owner:
+        record = (_recover_owner_wait if recover_owner else _register_owner_wait)(home, record)
+    _sync(home, record, previous)
     return record
 
 
@@ -303,8 +388,8 @@ def check(home: Path, identity: str) -> dict:
     with _lock(home):
         previous = load(home, identity)
         record = dict(previous)
-        if task_state.registry(Feed(home).entries()).get(identity) is None:
-            _wait_owner(home, record)
+        missing_author = (task_state.registry(Feed(home).entries()).get(identity) is None
+                          or record.get("author_wait_pending", False))
         if record["phase"] not in {"integrated", "done"}:
             try:
                 main = _candidate(record)
@@ -338,8 +423,10 @@ def check(home: Path, identity: str) -> dict:
             except (OSError, ValueError, subprocess.SubprocessError) as exc:
                 record.update(final_ci={"state": "unknown"}, reason=str(exc))
         _save(home, record)
-        _sync(home, record, previous)
-        return record
+    if missing_author:
+        record = _recover_owner_wait(home, record)
+    _sync(home, record, previous)
+    return record
 
 
 def check_all(home: Path) -> None:
@@ -368,6 +455,7 @@ def main_owner(home: Path, sha: str) -> str:
 def integrate(home: Path, identity: str, source: str) -> dict:
     if source not in {"genome", "operator"}:
         raise ValueError("only genome or operator serializes main integration")
+    failure = None
     with _lock(home):
         previous = load(home, identity)
         record = dict(previous)
@@ -390,12 +478,14 @@ def integrate(home: Path, identity: str, source: str) -> dict:
             except (OSError, ValueError, subprocess.SubprocessError) as exc:
                 record.update(phase="blocked", reason=str(exc))
                 _save(home, record)
-                _sync(home, record, previous)
-                raise ValueError(str(exc)) from exc
-        record.update(phase="integrated", integrated=record["head"], reason="Exact candidate integrated; author owns final CI and rollout")
-        _save(home, record)
-        _sync(home, record, previous)
-        return record
+                failure = exc
+        if failure is None:
+            record.update(phase="integrated", integrated=record["head"], reason="Exact candidate integrated; author owns final CI and rollout")
+            _save(home, record)
+    _sync(home, record, previous)
+    if failure is not None:
+        raise ValueError(str(failure)) from failure
+    return record
 
 
 def finish(home: Path, identity: str, owner: str, evidence: Path) -> dict:
@@ -423,11 +513,8 @@ def finish(home: Path, identity: str, owner: str, evidence: Path) -> dict:
         if any(s.parent == identity for s in task_state.states(Feed(home).entries()).values()):
             raise ValueError("unfinished author child tasks prevent delivery completion")
         _save(home, record)
-        _sync(home, record, previous)
-        current = task_state.registry(Feed(home).entries()).get(identity)
-        if current and current.status not in {"done", "dropped"}:
-            task_state.finish(home, identity, owner, "Verified exact final main CI and deployed consumers", evidence)
-        return record
+    _sync(home, record, previous)
+    return record
 
 
 def line(home: Path) -> str:
