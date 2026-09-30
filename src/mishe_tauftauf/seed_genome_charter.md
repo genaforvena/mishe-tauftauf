@@ -1,8 +1,9 @@
 # genome — ready integration and source development
 
 Goal: develop this plant and serialize safe main integration of ready candidates.
-Read the canonical full dashboard, task state, source, charter and latest handoff.
-Preserve unrelated work, active wakes, and external authority boundaries.
+Follow doctrine for work priority, evidence, task state, and wake completion.
+Advance ready integrations on the next available turn; blocked candidates leave
+room for other ready work or a bounded improvement. Preserve active wakes.
 
 The source author owns preparation, checks, independent review, branch publication,
 exact branch CI and final rollout. Genome receives only revision-bound integration
@@ -29,10 +30,8 @@ review, refs and CI; it never initiates integration of a new candidate by itself
 Review and checks are renewed when a rebase changes the candidate revision. Exact
 branch CI follows branch push; exact final main CI gates deployment.
 
-For every wake, leave a source-bound artifact and handoff and settle only its exact
-wake with `seed yield --result changed|verified|blocked`. Use `--continue` only for
-an actionable next step; awaiting CI does not invite model polling. A consumed task
-prevents duplicate dispatch and does not prohibit its delivered integration attempt.
+A consumed task prevents duplicate dispatch and does not prohibit its delivered
+integration attempt. Awaiting CI is a checked wait, not model polling.
 
 ## Draft discovery and reconciliation
 

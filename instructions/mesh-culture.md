@@ -28,7 +28,7 @@ The shared tape uses `[task] <id> owner=<role>`, `[taking] <id>`, `[done] <id>`,
 
 Every mind may implement an owned, evidence-backed repair across Mishe's layers, including its rules and architecture. A role is not a file restriction. The operator's standing instruction to encourage these changes is carried in doctrine and both agent contracts. Ownership, acceptance checks, independent review, and external boundaries still apply.
 
-A long task keeps one ID across handoffs and uses `seed yield --continue` until its next checked step is complete.
+Ready owned work, then offered ready work, precedes new improvement selection. Idle is not acceptable when an authorized useful step is available. Issue spotting and evidence-backed repair are standing duties, including on green panes. A checked wait preserves its exact retry while the mind advances independent work; a stable waiting backlog allows one independent-work decision, not repeated polls. A long task keeps one ID and uses `seed yield --continue` only with an actionable next step. Yield and clear end a wake, not its open task.
 
 ## Task prerequisites and helper offers
 
@@ -44,15 +44,11 @@ With `task offer`, an owner names suitable helper charters. The shared seed lock
 
 These are local scheduling and cooperative ownership checks. They grant no authority over arbitrary editor writes or external fleet resources.
 
-## Protected landing capacity
+## Ready integration and delivery
 
-`delivery submit` records an author-owned committed candidate with immutable exact-revision review. The existing CI watcher derives readiness from refs, review and branch push CI; a passing candidate creates one revision-bound genome integration step. Preparation children and other owners' tasks do not inherit priority. Historical landing records remain readable, without a global source hold. Authors retain final CI and deployment ownership; active wakes remain reserved.
+Authors prepare isolated candidates, obtain independent exact-revision review, publish branches, and submit delivery. The CI watcher derives readiness from actual refs, immutable review, and exact branch CI. Passing candidates create revision-bound genome integration steps for the next available turn; active wakes remain reserved. Preparation children do not inherit integration priority. Historical landing records and source debt impose no global production hold.
 
-The guaranteed boundary is selection of the next available idle turn, conditional on actionable task state. Eventual delivery also requires finite verified steps, a responsive mind, review and test capacity, and an available remote. Production admission remains cooperative because this seed has no authority over arbitrary editor writes. Queue priority cannot make an unowned diff safe to commit, turn failed CI green, or justify unrelated changes. Evidence and charter wiring must be verified at the live caller after rollout.
-
-Priority follows open preparation children and concrete producer prerequisites, including independent review in another owner's queue. Registered delivery work cannot create an event-only wait: it needs a scheduled producer task or an external retry deadline. This puts locally missing deliverables back into production while preserving one-shot attempts, dependency-cycle checks and active reservations. Existing historical waits remain readable and require explicit reconciliation.
-
-The source-delivery and deployment gates run in causal order: isolated candidate/manifest, independent byte-bound review, verification, commit/push, exact-SHA CI, clean release deployment, then consumer convergence. The deployment report uses the installed release pin when present and fails closed on a corrupt pin. The linked follower checks detached release integrity before and after refresh, rather than requiring the independent development checkout to be clean. Target ownership and live caller checks remain mandatory; deployment convergence cannot be its own prerequisite.
+The author retains final main CI, clean release deployment, and consumer verification. Deployment reads the installed release pin and fails closed on corruption; independent development dirt is not deployed code. Target ownership and live caller checks remain mandatory. Deployment convergence cannot be its own prerequisite.
 
 ## Tracked rules and local state
 
@@ -83,9 +79,3 @@ Its planting skill installs user services only when used for that full local set
 The task lifecycle now shares one projection for display and scheduling. Managed tasks use evidence-backed `task add`, `task finish`, and `task reopen`; attaching a child protects its legacy parent from prose completion. A child finish keeps the overall goal open. Owner/evidence checks and completion-cycle checks are cooperative local boundaries, not protection against arbitrary direct file writes. Structured control tags are reserved to the CLI and validated before append.
 
 Work admission and result acceptance are separate. A checked waiting goal may name an independently admissible child with `--alternative`; missing locally owned deliverables become production steps. `task wait --producer ROLE --retry-task ID` wakes review after completed producer evidence, including a producer already completed when the wait is recorded. A stable checked waiting backlog receives one independent-work decision, then stays quiet until its inputs change. Progress/outcome comparison rejects repeated steps that merely replace an artifact hash. These mechanisms do not grant a new training budget or external authority.
-
-## Delivery boundary
-
-Authors own scoped source delivery in a separate worktree based on current origin/main: check, commit, obtain independent exact-revision review, push their branch, and submit it with `delivery submit`. Genome integrates only reviewed candidates whose exact branch CI passes; the author retains final main CI and deployed-consumer verification. See doctrine and `docs/operating.md` for the CLI. Preserve shared checkout drafts; never stage them into an isolated candidate.
-
-Main has one integration writer. The candidate author retains ownership through branch CI and rollout. Legacy landing registrations are history; no global source-admission hold or inherited preparation priority remains. Deterministic candidate facts create integration readiness. Progress prose and changing artifact hashes do not.
