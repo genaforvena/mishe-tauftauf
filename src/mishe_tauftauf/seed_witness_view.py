@@ -128,6 +128,24 @@ def render(home: Path) -> str:
         verdict = f"UNKNOWN witness chat.log unreadable: {exc}"
         lines.append(verdict)
         entries = []
+    if feed_error:
+        lines.append("CLEAR STALL: UNKNOWN — canonical receipts unavailable")
+    else:
+        from .seed import clear_stalls, YIELD_RE, _receipt_line
+        try:
+            stalls = clear_stalls(entries)
+            if not stalls:
+                lines.append("CLEAR STALL: GREEN — no overdue settled wake")
+            for role, receipt in sorted(stalls.items()):
+                wake = int(YIELD_RE.fullmatch(_receipt_line(receipt.body))[2])
+                owner = "witness" if role == "health" else "health"
+                lines.append(f"CLEAR STALL: RED {role} wake={wake} yield={receipt.sequence} owner={owner}")
+                lines.append(f"  Evidence: {Feed(home).path} settled={receipt.timestamp}; inspect supervisor and idle prompt before repair")
+            if stalls:
+                verdict = "FAIL witness overdue clear needs checked supervisor repair"
+        except (ValueError, TypeError, OverflowError) as exc:
+            lines.append(f"CLEAR STALL: UNKNOWN — receipt timing unavailable: {exc}")
+            verdict = "UNKNOWN witness clear-stall receipt evidence"
     visible: list[str] = []
     try:
         tasks = open_tasks(entries)
