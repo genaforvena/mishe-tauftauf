@@ -153,6 +153,7 @@ def _sync(home: Path, record: dict, previous: dict | None) -> None:
     from .seed import _lock as task_lock
 
     identity = _integration_id(record)
+    author_retry_notified = False
     evidence, digest = task_state._evidence(_snapshot(home, record))
     token = f"{record['head']}:{record['transition']}"
     with task_lock(home):
@@ -185,10 +186,18 @@ def _sync(home: Path, record: dict, previous: dict | None) -> None:
                               f"Main contains {record['head']}; {record['owner']} owns final CI and deployment.")
     if record["phase"] in {"blocked", "integrated"} and not record.get("superseded"):
         event = f"delivery-{record['identity']}-updated"
-        reason = f"Candidate transition {record['transition']} changed to {record['phase']}; author {record['owner']} has actionable work."
-        if not any(e.body.startswith(f"[task-event] {event}\n") and
-                   record_payload(e).get("reason") == reason for e in Feed(home).entries()):
-            task_state.signal(home, event, "delivery", Path(evidence), reason)
+        entries = Feed(home).entries()
+        author = task_state.registry(entries).get(record["identity"])
+        if (author and author.owner == record["owner"] and author.status == "waiting"
+                and author.retry_event == event and not task_state.eligible(author, entries)):
+            reason = (f"The registered waiting author task {author.identity}, owned by {author.owner}, "
+                      f"requires this exact retry event. Candidate transition {record['transition']} "
+                      f"to {record['phase']} ({record['reason']}) now releases one eligible attempt: {author.next_step}. "
+                      "Inspect the referenced delivery and exact current CI before further effects.")
+            if not any(e.body.startswith(f"[task-event] {event}\n") and
+                       record_payload(e).get("reason") == reason for e in entries):
+                task_state.signal(home, event, "delivery", Path(evidence), reason)
+                author_retry_notified = True
     if record["phase"] == "done":
         rollout, rollout_digest = task_state._evidence(Path(record["rollout"]))
         if rollout_digest != record["rollout_sha256"]:
@@ -197,7 +206,10 @@ def _sync(home: Path, record: dict, previous: dict | None) -> None:
         if current and current.status not in {"done", "dropped"}:
             task_state.finish(home, record["identity"], record["owner"],
                               "Verified exact final main CI and deployed consumers", Path(rollout))
-    if previous is None or (record["phase"], record["reason"]) != (previous["phase"], previous["reason"]):
+    # The integration notice already records this outcome; the author notice
+    # separately releases its exact wait. Do not add a third unchanged sample.
+    if (record["phase"] != "integrated" and not author_retry_notified and
+            (previous is None or (record["phase"], record["reason"]) != (previous["phase"], previous["reason"]))):
         Feed(home).append_record("delivery", f"Delivery {record['identity']} author={record['owner']} head={record['head']} "
             f"phase={record['phase']}: {record['reason']}. Evidence: {evidence}. "
             "Unrelated source work remains admissible.", record, kind="delivery")
