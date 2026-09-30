@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import io
 import json
 import multiprocessing
@@ -13,10 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 
-ADAPTER = Path(__file__).resolve().parents[1] / "examples" / "jev-judge.py"
-SPEC = importlib.util.spec_from_file_location("jev_judge_budget_test", ADAPTER)
-jev = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(jev)
+from mishe_tauftauf import jev_judge as jev
 DOCUMENT = "QUESTION publish\nINSTRUCTIONS\nIs this new?\nTOP PAIN sensor\nred\nEVIDENCE\nprobe failed\n"
 
 

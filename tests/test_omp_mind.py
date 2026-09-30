@@ -13,7 +13,7 @@ from pathlib import Path
 
 class OmpMindTests(unittest.TestCase):
     def test_configured_model_reaches_one_shot_invocation(self):
-        adapter = Path(__file__).resolve().parents[1] / "examples/omp-mind.py"
+        adapter = Path(__file__).resolve().parents[1] / "src/mishe_tauftauf/omp_mind.py"
         with tempfile.TemporaryDirectory() as directory:
             tmp = Path(directory)
             omp = tmp / "omp"
@@ -47,7 +47,7 @@ class OmpMindTests(unittest.TestCase):
             self.assertTrue({"--print", "--no-session", "--no-extensions", "--cwd"}.issubset(args))
 
     def test_hung_omp_child_returns_timeout_status(self):
-        adapter = Path(__file__).resolve().parents[1] / "examples/omp-mind.py"
+        adapter = Path(__file__).resolve().parents[1] / "src/mishe_tauftauf/omp_mind.py"
         with tempfile.TemporaryDirectory() as directory:
             tmp = Path(directory)
             omp = tmp / "omp"
@@ -79,7 +79,7 @@ class OmpMindTests(unittest.TestCase):
             self.assertLess(time.monotonic() - start, 1.5)
 
     def test_invalid_timeout_fails_closed_before_launch(self):
-        adapter = Path(__file__).resolve().parents[1] / "examples/omp-mind.py"
+        adapter = Path(__file__).resolve().parents[1] / "src/mishe_tauftauf/omp_mind.py"
         with tempfile.TemporaryDirectory() as directory:
             tmp = Path(directory)
             marker = tmp / "launched"
@@ -111,7 +111,7 @@ class OmpMindTests(unittest.TestCase):
             self.assertFalse(marker.exists())
 
     def test_timeout_stops_omp_descendants_and_removes_prompt(self):
-        adapter = Path(__file__).resolve().parents[1] / "examples/omp-mind.py"
+        adapter = Path(__file__).resolve().parents[1] / "src/mishe_tauftauf/omp_mind.py"
         with tempfile.TemporaryDirectory() as directory:
             tmp = Path(directory)
             pid_file = tmp / "child.pid"
@@ -131,12 +131,13 @@ class OmpMindTests(unittest.TestCase):
                 "PATH": str(tmp) + os.pathsep + env.get("PATH", ""),
                 "TMPDIR": str(tmp),
                 "MISHE_TAUFTAUF_WORKSPACE": str(tmp),
-                "MISHE_TAUFTAUF_MAX_SECONDS": "0.2",
+                # Allow interpreter startup on a saturated host before killing descendants.
+                "MISHE_TAUFTAUF_MAX_SECONDS": "2",
                 "MISHE_TEST_CHILD_PID": str(pid_file),
             })
             try:
                 result = subprocess.run([sys.executable, str(adapter)], input="bounded task\n",
-                                        text=True, capture_output=True, env=env, timeout=4)
+                                        text=True, capture_output=True, env=env, timeout=8)
                 self.assertEqual(result.returncode, 124, result.stderr)
                 child_pid = int(pid_file.read_text())
                 time.sleep(0.1)

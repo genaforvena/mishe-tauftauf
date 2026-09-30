@@ -164,7 +164,6 @@ An agent saying “fixed” is a claim. The check is the receipt.
 | --- | --- |
 | `src/mishe_tauftauf/` | Installable runtime and CLI; reusable production code. |
 | `coordination/` | Checkout-only planting and linked-site release commands. |
-| `examples/` | Optional mind/judge adapters and a runnable demo. |
 | `tests/` | Automated behavioral checks. |
 | `docs/` | Reader guides: setup, mental model, and operations. |
 | `instructions/`, `skills/`, `.agents/skills/` | Mind instructions and agent/operator workflows. |
@@ -183,6 +182,11 @@ PYTHONPATH=src .venv/bin/pytest -q
 
 Tests check behavior in isolation. The running caller, live pane, and shared log
 check whether it is actually wired. Both matter.
+
+Optional adapters are shipped as package modules: `python -m mishe_tauftauf.jev_judge`
+for the hosted Jev judge and `python -m mishe_tauftauf.omp_mind` for one-shot OMP
+invocations. The latter requires `MISHE_TAUFTAUF_WORKSPACE`; hosted Jev requires
+its TypeSafe credentials. The repository does not include a demo directory.
 
 **[CC0 1.0](LICENSE)** — take it, fork it, grow your own. Keep the checks honest.
 
