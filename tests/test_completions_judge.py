@@ -8,6 +8,7 @@ import os
 import tempfile
 import subprocess
 import threading
+import time
 import unittest
 import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -35,6 +36,9 @@ class CompletionsJudgeTests(unittest.TestCase):
         self.env = patch.dict(os.environ, {"COMPLETIONS_API_KEY": "test-secret"}, clear=True)
         self.env.start()
         self.addCleanup(self.env.stop)
+
+    def test_optional_adapter_exists(self):
+        self.assertTrue(callable(getattr(judge, "evaluate", None)), "optional completion adapter missing")
 
     def test_request_separates_instructions_and_evidence_and_maps_categories(self):
         for verdict, probability in (("yes", 1.0), ("no", 0.0), ("unknown", None)):
@@ -227,6 +231,37 @@ class CompletionsJudgeTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout, "probability 0\n")
             self.assertEqual(captured[0][0], "/v1/chat/completions")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_trickling_response_obeys_total_request_deadline(self):
+        class SlowHandler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                self.send_response(200)
+                self.end_headers()
+                try:
+                    for byte in response().getvalue():
+                        self.wfile.write(bytes([byte]))
+                        self.wfile.flush()
+                        time.sleep(0.02)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), SlowHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            config = judge.Config(f"http://127.0.0.1:{server.server_port}/v1", "fixture", timeout=0.05)
+            started = time.monotonic()
+            result = judge.evaluate(DOC, config)
+            self.assertIsNone(result.probability)
+            self.assertLess(time.monotonic() - started, 0.3)
         finally:
             server.shutdown()
             server.server_close()
