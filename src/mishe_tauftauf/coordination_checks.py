@@ -269,6 +269,28 @@ def episode(home, source, body, context=None, identity=None):
     if admitted_handoff is not None:
         question_episodes['R06']['admitted_handoff_text'] = admitted_handoff
     question_episodes['R08']['previous_same_source'] = [last_source['body']] if last_source else []
+    signal = re.match(r'^\[task-event\]\s+(\S+)', body)
+    if signal and view['context_complete']:
+        from .task_state import eligible
+        by_sequence = {event['sequence']: event for event in view['events']}
+        retry_targets = []
+        for target in registry(entries).values():
+            if target.status != 'waiting' or target.retry_event != signal[1]:
+                continue
+            registration = by_sequence[target.sequence]
+            retry_targets.append(dict(task=_semantic(asdict(target)),
+                registration=dict(sequence=registration['sequence'], source=registration['source'],
+                                  body=registration['body'], payload=_meaningful(registration['payload'])),
+                eligible_before_post=eligible(target, entries)))
+        for key in ('R06', 'R08'):
+            question_episodes[key]['retry_targets'] = retry_targets
+            question_episodes[key]['retry_semantics'] = (
+                'These are current canonical waits for this exact event, including their complete registration '
+                'even when it lies outside recent chat. An event after the wait releases eligibility for an attempt; '
+                'it does not prove work started. Already eligible targets do not gain a new retry from repeated notices.')
+            question_episodes[key]['evidence_references'] = sorted(set(
+                question_episodes[key]['evidence_references'] +
+                [f"chat.log sequence {target['registration']['sequence']}" for target in retry_targets]))
     task_context = dict(context_complete=complete, evidence_references=compact_references,
                         task=_semantic(state or {}), producer=_semantic(dependency or {}),
                         proposed=meaningful_proposal, task_applicable=bool(identity), new_task_declaration=declaring)
