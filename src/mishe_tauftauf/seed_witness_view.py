@@ -58,7 +58,11 @@ def render(home: Path) -> str:
         lines.append(verdict)
         entries = []
     visible: list[str] = []
-    tasks = open_tasks(entries)
+    try:
+        tasks = open_tasks(entries)
+    except ValueError as exc:
+        verdict = f"UNKNOWN witness task state: {exc}"
+        tasks = []
     lines.append(f"OPEN TASKS: {len(tasks)}")
     for task in tasks[-20:]:
         lines.append(f"{task.identity} owner={task.owner} state={task.status} at={task.sequence}")
@@ -77,9 +81,9 @@ def render(home: Path) -> str:
         except ValueError:
             plan = None
         if plan and plan.status == "waiting" and not task_state.eligible(plan, entries):
-            if plan.retry_event or plan.retry_at:
+            if plan.retry_event or plan.retry_at or plan.retry_task:
                 lines.append(f"LOOP: WAITING task={identity} observation={repeated[-1].observation} "
-                             f"retry={plan.retry_event or plan.retry_at} — historical attempts; prerequisite unchanged")
+                             f"retry={plan.retry_event or plan.retry_at or plan.retry_task} — historical attempts; prerequisite unchanged")
             else:
                 lines.append(f"LOOP: UNKNOWN task={identity} observation={repeated[-1].observation} "
                              "— checked next step or retry predicate missing")

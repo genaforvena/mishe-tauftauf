@@ -79,6 +79,8 @@ def site_and_session(workspace: Path, default_site_name: str, home: Path | None,
 
 
 def unit_text(home: Path, session: str, slug: str, python: str) -> str:
+    from .runtime_source import source_for
+    source = source_for(home, ROOT)
     command = (f"{python} -m mishe_tauftauf.ci_watch --home {home} --follow" if slug == "ci" else
                f"{python} -m mishe_tauftauf.seed_permission_panel --home {home} --session {session} --follow"
                if slug == "permissions" else
@@ -89,7 +91,7 @@ def unit_text(home: Path, session: str, slug: str, python: str) -> str:
         f"[Unit]\nDescription=Mishe {slug} resident channel\nAfter=default.target\n\n"
         "[Service]\nType=simple\n"
         f"WorkingDirectory={home.parent}\n"
-        f"Environment=PYTHONPATH={ROOT / 'src'}\n"
+        f"Environment=PYTHONPATH={source / 'src'}\n"
         f"Environment=PATH={home / 'bin'}:{os.environ.get('PATH', '/usr/bin:/bin')}\n"
         f"ExecStart={command}\n"
         "Restart=always\nRestartSec=15\n\n[Install]\nWantedBy=default.target\n"
@@ -116,7 +118,8 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
             handle.write(f"\n/{home.name}/\n")
     contract_changed = False
     if workspace != ROOT and not runtime_only:
-        contract = (ROOT / "src" / "mishe_tauftauf" / "seed_agent_contract.md").read_text(encoding="utf-8")
+        from .runtime_source import source_for
+        contract = (source_for(home, ROOT) / "src" / "mishe_tauftauf" / "seed_agent_contract.md").read_text(encoding="utf-8")
         agents = workspace / "AGENTS.md"
         current = agents.read_text(encoding="utf-8") if agents.exists() else ""
         updated = refresh_contract(current, contract)
@@ -133,8 +136,7 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
     for slug in EXPLORATION:
         charter = home / "charters" / f"{slug}.md"
         if not charter.exists():
-            charter.write_text((ROOT / "src" / "mishe_tauftauf" / f"seed_{slug}_charter.md").read_text(),
-                               encoding="utf-8")
+            charter.write_text(seed._core_charter(slug, home), encoding="utf-8")
         top = home / "top-pains" / slug
         if not top.exists():
             top.write_text("#!/bin/sh\nexec " + shlex.quote(sys.executable) +
@@ -151,6 +153,15 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
     if operator_window not in names:
         _tmux("new-window", "-d", "-t", session, "-n", operator_window, "-c", str(workspace), "sh")
     print(seed_permission_panel.ensure(home, session), flush=True)
+    if (home / "health/runtime-release.json").exists():
+        from .runtime_source import source_for
+        source = source_for(home, ROOT)
+        # Refresh only upper evidence panes. Running lower minds retain their work.
+        for slug in (*ROLES, "permissions"):
+            _tmux("respawn-pane", "-k", "-t", f"{session}:{slug}.0", "env",
+                  f"MISHE_SEED_SESSION={session}", f"PYTHONPATH={source / 'src'}",
+                  sys.executable, "-m", "mishe_tauftauf", "--home", str(home),
+                  "pain", "watch", slug, "--interval", "5")
     for name in (operator_window, *ROLES, "permissions"):
         _tmux("set-window-option", "-t", f"{session}:{name}", "automatic-rename", "off")
     (home / "health").mkdir(exist_ok=True)
@@ -213,10 +224,16 @@ def main(argv: list[str] | None = None) -> tuple[Path, str, Path, bool]:
     parser.add_argument("--operator-window")
     parser.add_argument("--no-services", action="store_true", help="start panes without installing user services")
     parser.add_argument("--runtime-only", action="store_true", help="refresh an owned runtime without changing AGENTS.md")
+    parser.add_argument("--runtime-source", type=Path, help="install a checked clean release source; preserve existing pin otherwise")
     args = parser.parse_args(argv)
     workspace = args.workspace.resolve()
     home, session = site_and_session(workspace, ".mishe-seed" if workspace == ROOT else ".mishe-tauftauf",
                                      args.home, args.session)
+    if args.runtime_source:
+        from .runtime_source import select_source
+        if not owns_session(home, session):
+            raise ValueError("selecting runtime source requires an existing owned session")
+        select_source(home, args.runtime_source, session)
     plant(home, session, args.engine_command, preferred_operator_window(home, args.operator_window), not args.no_services,
           runtime_only=args.runtime_only)
     return home.resolve(), session, workspace, not args.no_services

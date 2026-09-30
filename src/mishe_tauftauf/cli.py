@@ -48,6 +48,16 @@ def cmd_init(args) -> int:
 
 def cmd_append(args) -> int:
     text = args.text if args.text is not None else sys.stdin.read()
+    from .seed_board import STATE_RE
+    from .task_state import states
+    first = text.splitlines()[0].lstrip() if text else ""
+    if match := STATE_RE.match(first):
+        state = states(Feed(args.home).entries()).get(match.group(2))
+        if state and match.group(1) in {"done", "dropped"}:
+            if args.source not in {state.owner, "operator"}:
+                raise ValueError(f"task belongs to {state.owner}; finish only your child step")
+            if state.managed:
+                raise ValueError("managed task completion requires task finish with checked result and evidence")
     entry = Feed(args.home).append(args.source, text)
     print(entry.sequence)
     return 0
@@ -260,7 +270,15 @@ def cmd_task(args) -> int:
         entry = task_state.set_step(args.home, args.id, args.owner, args.next_step, args.progress, args.evidence)
     elif args.task_command == "wait":
         entry = task_state.wait_for(args.home, args.id, args.owner, args.next_step, args.reason, args.evidence,
-                                    retry_event=args.retry_event, retry_at=args.retry_at)
+                                    retry_event=args.retry_event, retry_at=args.retry_at,
+                                    retry_task=args.retry_task, producer=args.producer, alternative=args.alternative)
+    elif args.task_command == "add":
+        entry = task_state.add_task(args.home, args.id, args.owner, args.next_step, args.reason, args.evidence,
+                                    parent=args.parent)
+    elif args.task_command == "reopen":
+        entry = task_state.reopen(args.home, args.id, args.owner, args.next_step, args.reason, args.evidence)
+    elif args.task_command == "finish":
+        entry = task_state.finish(args.home, args.id, args.owner, args.result, args.evidence)
     elif args.task_command == "event":
         entry = task_state.signal(args.home, args.event, args.source, args.evidence, args.reason)
     elif args.task_command == "offer":
@@ -493,6 +511,7 @@ def parser() -> argparse.ArgumentParser:
             p.add_argument("--progress", required=True)
         else:
             p.add_argument("--reason", required=True); p.add_argument("--retry-event"); p.add_argument("--retry-at")
+            p.add_argument("--retry-task"); p.add_argument("--producer"); p.add_argument("--alternative")
         p.set_defaults(func=cmd_task)
     p = task.add_parser("event"); p.add_argument("event"); p.add_argument("--source", required=True)
     p.add_argument("--reason", required=True); p.add_argument("--evidence", type=Path, required=True); p.set_defaults(func=cmd_task)
@@ -500,6 +519,16 @@ def parser() -> argparse.ArgumentParser:
     p = task.add_parser("offer"); p.add_argument("id"); p.add_argument("--owner", required=True)
     p.add_argument("--helper", action="append", default=[]); p.add_argument("--evidence", type=Path, required=True)
     p.set_defaults(func=cmd_task)
+    for action in ("add", "reopen", "finish"):
+        p = task.add_parser(action); p.add_argument("id"); p.add_argument("--owner", required=True)
+        p.add_argument("--evidence", type=Path, required=True)
+        if action == "finish":
+            p.add_argument("--result", required=True)
+        else:
+            p.add_argument("--next-step", required=True); p.add_argument("--reason", required=True)
+            if action == "add":
+                p.add_argument("--parent")
+        p.set_defaults(func=cmd_task)
     access_cmd = sub.add_parser("access").add_subparsers(dest="access_command", required=True)
     p = access_cmd.add_parser("request"); p.add_argument("id"); p.add_argument("--owner", required=True); p.add_argument("--task", required=True); p.add_argument("--capability", required=True); p.add_argument("--unblocks", action="append", required=True); p.add_argument("--reason", required=True); p.set_defaults(func=cmd_access)
     for verb in ("grant", "revoke", "check"):
