@@ -482,6 +482,7 @@ def test_seed_resident_channel_observes_repairs_and_restores(tmp_path: Path) -> 
         wish_wake = wish.stdout.strip().split()[-1]
         assert cli(home, "yield", "--slug", "genome", "--wake", wish_wake, "--file", str(handoff)).returncode == 0
         assert cli(home, "clear", "--session", session, "--slug", "genome").returncode == 0
+        Feed(home).append("genome", "[done] improve-check — checked the addressed task")
         time.sleep(0.12)
         self_pick = cli(home, "tick", "--session", session, "--slug", "genome", "--self-pick-seconds", "0.1")
         assert "wake" in self_pick.stdout
