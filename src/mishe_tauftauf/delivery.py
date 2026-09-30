@@ -210,7 +210,20 @@ def _sync(home: Path, record: dict, previous: dict | None) -> None:
                       "Inspect the referenced delivery and exact current CI before further effects.")
             if not any(e.body.startswith(f"[task-event] {event}\n") and
                        record_payload(e).get("reason") == reason for e in entries):
-                task_state.signal(home, event, "delivery", Path(evidence), reason)
+                expected = (record["head"], record["transition"], record["phase"], author.sequence)
+                def author_retry_guard():
+                    active = load(home, record["identity"])
+                    latest_entries = Feed(home).entries()
+                    latest = task_state.registry(latest_entries).get(record["identity"])
+                    if (active["head"], active["transition"], active["phase"],
+                            active.get("author_retry_wait_sequence")) != expected:
+                        raise ValueError("delivery transition changed before author retry publication")
+                    if (not latest or latest.sequence != expected[3] or latest.owner != record["owner"]
+                            or latest.status != "waiting" or latest.retry_event != event
+                            or task_state.eligible(latest, latest_entries)):
+                        raise ValueError("bound author wait changed before retry publication; preserve the newer wait")
+                task_state.signal(home, event, "delivery", Path(evidence), reason,
+                                  commit_guard=author_retry_guard)
                 author_retry_notified = True
     if record["phase"] == "done":
         rollout, rollout_digest = task_state._evidence(Path(record["rollout"]))

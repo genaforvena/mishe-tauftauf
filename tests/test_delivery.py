@@ -149,6 +149,33 @@ def test_saved_final_ci_transition_recovers_only_its_original_author_wait(candid
     assert task_state.eligible(task_state.registry(entries)["repair"], entries)
 
 
+def test_concurrent_new_author_wait_refuses_the_old_transition_signal(candidate, monkeypatch):
+    from mishe_tauftauf.post_check import CorrectionRequired
+    home, _, _, _, head, review = candidate
+    submit(candidate)
+    monkeypatch.setattr(delivery, "read_ci", lambda *args: ci(head))
+    delivery.integrate(home, "repair", "operator")
+    monkeypatch.setattr(delivery, "read_ci", lambda *args: ci(head, "pending"))
+    delivery.check(home, "repair")
+    task_state.wait_for(home, "repair", "senses", "deploy after final CI", "main CI pending", review,
+                        retry_event="delivery-repair-updated")
+    original_signal = task_state.signal
+    def replace_wait_before_signal(*args, **kwargs):
+        task_state.wait_for(home, "repair", "senses", "preserve newer deployment wait", "new wait", review,
+                            retry_event="delivery-repair-updated")
+        return original_signal(*args, **kwargs)
+    monkeypatch.setattr(delivery, "read_ci", lambda *args: ci(head))
+    with patch.object(task_state, "signal", side_effect=replace_wait_before_signal):
+        with pytest.raises(CorrectionRequired) as refused:
+            delivery.check(home, "repair")
+    assert any(r['id'] == 'D03' for r in refused.value.report['results'])
+    entries = Feed(home).entries()
+    assert not task_state.eligible(task_state.registry(entries)["repair"], entries)
+    delivery.check(home, "repair")
+    entries = Feed(home).entries()
+    assert not task_state.eligible(task_state.registry(entries)["repair"], entries)
+
+
 def test_review_is_independent_exact_and_immutable(candidate, monkeypatch):
     home, _, _, base, head, review = candidate
     review.write_text(json.dumps(dict(base=base, head=head, reviewer="senses", verdict="pass")))

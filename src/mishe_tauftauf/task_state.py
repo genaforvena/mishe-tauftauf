@@ -523,7 +523,7 @@ def offer(home: Path, identity: str, owner: str, helpers: list[str], evidence: P
         return _append(home, owner, replace(old, helpers=roles, offer_evidence=path, offer_evidence_sha256=digest))
 
 
-def signal(home: Path, event: str, source: str, evidence: Path, reason: str) -> FeedEntry:
+def signal(home: Path, event: str, source: str, evidence: Path, reason: str, *, commit_guard=None) -> FeedEntry:
     from .seed import _lock
 
     _event(event)
@@ -532,7 +532,8 @@ def signal(home: Path, event: str, source: str, evidence: Path, reason: str) -> 
     path, digest = _evidence(evidence)
     with _lock(home):
         return Feed(home).append_task_control(source, f"[task-event] {event}\n" + json.dumps(
-            {"reason": reason.strip(), "evidence": path, "evidence_sha256": digest}, sort_keys=True))
+            {"reason": reason.strip(), "evidence": path, "evidence_sha256": digest}, sort_keys=True),
+            commit_guard=commit_guard)
 
 
 def record_attempt(home: Path, state: TaskState, wake: int, observation: int, *, owner: str | None = None) -> FeedEntry:
