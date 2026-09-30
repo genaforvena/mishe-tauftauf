@@ -95,6 +95,25 @@ def test_integration_preserves_primary_draft_and_returns_delivery_to_author(cand
     assert any(e.body.startswith("[task-event] delivery-repair-integrated") for e in Feed(home).entries())
 
 
+def test_author_retry_notice_explains_the_registered_wait_it_releases(candidate, monkeypatch):
+    home, _, _, _, head, _ = candidate
+    submit(candidate)
+    monkeypatch.setattr(delivery, "read_ci", lambda *args: ci(head))
+    before = Feed(home).entries()
+    author = task_state.registry(before)["repair"]
+    assert author.retry_event == "delivery-repair-updated"
+    assert not task_state.eligible(author, before)
+    delivery.integrate(home, "repair", "operator")
+    after = Feed(home).entries()
+    notices = [e for e in after if e.body.startswith("[task-event] delivery-repair-updated\n")]
+    assert len(notices) == 1
+    assert "registered waiting author task repair" in notices[0].body
+    assert author.next_step in notices[0].body
+    assert task_state.eligible(task_state.registry(after)["repair"], after)
+    delivery.check(home, "repair")
+    assert len([e for e in Feed(home).entries() if e.body.startswith("[task-event] delivery-repair-updated\n")]) == 1
+
+
 def test_review_is_independent_exact_and_immutable(candidate, monkeypatch):
     home, _, _, base, head, review = candidate
     review.write_text(json.dumps(dict(base=base, head=head, reviewer="senses", verdict="pass")))
