@@ -150,3 +150,19 @@ def test_redelivery_rechecks_readiness_after_task_attempt_gate(tmp_path, monkeyp
         seed._redeliver_pending(tmp_path,'session','witness',wake.sequence)
     assert not ready[0] and not sent
     assert not list((tmp_path/'checks').glob('redeliver-*.json'))
+
+
+def test_observation_without_prior_snapshot_establishes_baseline_not_claimed_change(tmp_path,monkeypatch):
+    supervisor(tmp_path,monkeypatch)
+    from mishe_tauftauf import dashboard
+    prior=Feed(tmp_path).append_record('seed','seed observation witness\nEarlier state recorded.',{'role':'witness','state':'STATE: UNKNOWN','digest':'old'},kind='observation')
+    monkeypatch.setattr(dashboard,'read',lambda *args:('CI: PASS exact CI\nANOMALY: UNKNOWN missing probe\nSTATE: UNKNOWN',True))
+    seed.tick(tmp_path,'session','witness')
+    observation=next(e for e in reversed(Feed(tmp_path).entries()) if e.body.startswith('seed observation witness'))
+    data=payload(observation)
+    assert data['previous']['sequence']==prior.sequence and not data['previous']['snapshot_available']
+    assert data['change']=='current scoped baseline; prior semantic comparison unavailable'
+    assert 'No semantic change from the earlier observation is verified' in observation.body
+    assert 'changed checks' not in observation.body
+    wake=next(e for e in reversed(Feed(tmp_path).entries()) if e.body.startswith('seed wake witness'))
+    assert 'current scoped observation baseline' in payload(wake)['reason']

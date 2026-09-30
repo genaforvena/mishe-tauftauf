@@ -660,13 +660,24 @@ def tick(home: Path, session: str, slug: str, self_pick_seconds: float = 0) -> s
             action = (f"{slug} should advance ready owned work; healthy checks do not complete open tasks."
                       if current_state == "GREEN" else
                       f"{slug} should diagnose failing or unavailable checks in this snapshot, reconcile prior effects, and record a bounded repair or an exact producer/retry wait.")
-            change_note = ("The scoped check signature differs from the previous recorded observation. " if previous else
-                           "This is the first recorded scoped check snapshot; no earlier observation was recorded. ")
+            prior_snapshot_available = bool(previous_data.get("snapshot"))
+            if previous and prior_snapshot_available:
+                change = "scoped check signature differs"
+                change_note = "The scoped check signature differs from the previous recorded observation. "
+                comparison_note = "The immutable record preserves the exact scoped view and prior snapshot for comparison. "
+            elif previous:
+                change = "current scoped baseline; prior semantic comparison unavailable"
+                change_note = ("The earlier observation has no recorded semantic snapshot. "
+                               "This records the current scoped baseline. No semantic change from the earlier observation is verified. ")
+                comparison_note = "The immutable record preserves the exact current scoped view and the available earlier receipt facts. "
+            else:
+                change = "first recorded scoped check snapshot"
+                change_note = "This is the first recorded scoped check snapshot; no earlier observation was recorded. "
+                comparison_note = "The immutable record preserves the exact current scoped view. "
             explanation = (f"Seed checked the fresh {slug} pane lease and read its full dashboard data. " + change_note +
                 f"Previous state {old_state}, current state {current_state}. "
                 f"Current check summaries: {details}. "
-                "This matters because changed checks can alter which owned step is admissible. "
-                "The immutable record preserves the exact scoped view and prior recorded version for comparison. "
+                "These current checks determine which owned step is admissible. " + comparison_note +
                 "No task completion or repair progress is claimed by this observation. " + action + finding_text)
             snapshot = dict(meaningful_text=_observation_text(slug, frame), state=state_line,
                             origin="dashboard.read", lease_checked=True, lease_stamp=stamp,
@@ -675,7 +686,7 @@ def tick(home: Path, session: str, slug: str, self_pick_seconds: float = 0) -> s
                 {"digest": digest, "role": slug, "state": state_line, "snapshot": snapshot,
                  "previous": dict(sequence=last_observation, digest=previous, state=previous_state,
                                   snapshot=previous_data.get("snapshot"), snapshot_available=bool(previous_data.get("snapshot"))),
-                 "change": "scoped check signature differs" if previous else "first recorded scoped check snapshot",
+                 "change": change,
                  "next_owner": slug, "next_action": action}, kind="observation")
             last_observation = observation.sequence
         if pending is not None:
@@ -719,7 +730,8 @@ def tick(home: Path, session: str, slug: str, self_pick_seconds: float = 0) -> s
         reason = ("changed shared task board; choose useful work" if choice_due else
                   f"addressed chat event {external.sequence}" if external is not None else
                   "continued task" if continue_due else "quiet self-pick" if self_pick_due and not changed else
-                  "changed top-pane observation")
+                  "current scoped observation baseline; prior semantic comparison unavailable"
+                  if changed and not prior_snapshot_available else "changed top-pane observation")
         wake = Feed(home).append_record("seed", f"seed wake {slug} observation={last_observation}{event_suffix}\n"
                                  f"The supervisor woke {slug} because of {reason}. "
                                  "The mind chooses its own useful step and atomically claims it before acting. "
