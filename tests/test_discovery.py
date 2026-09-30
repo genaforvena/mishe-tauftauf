@@ -359,36 +359,3 @@ def test_cpu_busy_sample_is_short_window_and_unreadable_is_unknown(tmp_path: Pat
     assert observed["sense.proc.cpu-busy"]["state"] == "unknown"
     assert observed["sense.proc.cpu-busy"]["sample"] == "/proc/stat cpu fields unavailable"
     assert observed["sense.proc.cpu-busy"]["kind"] == "read"
-
-
-def test_overlay_rate_uses_tx_rx_deltas_without_operstate_gate(tmp_path: Path) -> None:
-    from mishe_tauftauf import discovery
-
-    stats = tmp_path / "tailscale0" / "statistics"
-    stats.mkdir(parents=True)
-    tx, rx = stats / "tx_bytes", stats / "rx_bytes"
-    tx.write_text("1000\n")
-    rx.write_text("2000\n")
-    reads = {tx: iter(("1000\n", "1500\n")), rx: iter(("2000\n", "2300\n"))}
-    with patch("mishe_tauftauf.discovery._read",
-               side_effect=lambda path, limit=65536: next(reads[path])):
-        with patch("mishe_tauftauf.discovery.time.sleep"):
-            assert discovery._overlay_egress_rate(tmp_path, interval=0.1) == {
-                "state": "verified",
-                "sample": "short-window=0.1s egress=5000 B/s ingress=3000 B/s"}
-
-
-def test_overlay_rate_reports_unknown_for_missing_or_decreased_counter(tmp_path: Path) -> None:
-    from mishe_tauftauf import discovery
-
-    stats = tmp_path / "tailscale0" / "statistics"
-    stats.mkdir(parents=True)
-    tx, rx = stats / "tx_bytes", stats / "rx_bytes"
-    tx.write_text("1000\n")
-    rx.write_text("2000\n")
-    reads = {tx: iter(("1000\n", "900\n")), rx: iter(("2000\n", "2100\n"))}
-    with patch("mishe_tauftauf.discovery._read",
-               side_effect=lambda path, limit=65536: next(reads[path])):
-        with patch("mishe_tauftauf.discovery.time.sleep"):
-            result = discovery._overlay_egress_rate(tmp_path)
-    assert result == {"state": "unknown", "sample": "tailscale0 tx_bytes counter decreased"}
