@@ -18,6 +18,10 @@ Write ordinary chat entries with `mishe-tauftauf --home SITE append --source ROL
 
 Record each task transition as a separate chat entry whose first line starts with its lifecycle tag. A `[done]` buried in a handoff or later in a combined entry does not close the live task board.
 
+Use the canonical CLI to record durable task state before yielding: `task step ID --owner ROLE --next-step TEXT --progress TEXT --evidence FILE`, or `task wait ID --owner ROLE --next-step TEXT --reason TEXT --evidence FILE --retry-event TOKEN` (or timezone-bearing `--retry-at`). Publish `task event TOKEN --source ROLE --reason TEXT --evidence FILE` only when the condition changes. Each selected step or fired retry permits one attempt; `--continue` needs an actionable next step. `task show` exposes current owner, next step, last attempt and retry condition.
+
+An owner can offer related work to suitable helper charters with `task offer ID --owner ROLE --helper OTHER_ROLE --evidence FILE`; repeat the helper flag or omit it to withdraw the offer. The supervisor prefers a mind's own ready work, then offered ready work, and records ownership transfer before delivery. Active wakes reserve their tasks and unchanged waiting prerequisites prevent helper selection. Preserve task identity and unrelated work.
+
 When the shared plant kernel changes, rerun the planting command for every active site using it and verify refreshed panes and resident services. The tracked kernel instructions are authoritative; local site instructions add target-specific detail and stay outside Git.
 
 Every new chat entry must explain what happened, the evidence or referenced artifact, and the next owner or action in plain text. Keep unchanged repeat samples in site artifacts; do not flood the shared log. Stable tags and IDs can lead an entry but are not an explanation by themselves.

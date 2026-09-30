@@ -17,12 +17,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .feed import Feed
+from . import task_state
 from .observations import executable, strip_owned_chrome, validate_home, validate_slug
 from .tmux import OWNED_OPTION, _pane_stopped_or_dead, _python_command, _tmux, capture_raw, lease_value, owns_session
 
 
 OBS_RE = re.compile(r"seed observation ([a-z0-9-]+) sha256=([0-9a-f]{64})\Z")
-WAKE_RE = re.compile(r"seed wake ([a-z0-9-]+) observation=([1-9][0-9]*)(?: event=([1-9][0-9]*))?\Z")
+WAKE_RE = re.compile(r"seed wake ([a-z0-9-]+) observation=([1-9][0-9]*)(?: event=([1-9][0-9]*))?(?: task=(\S+))?\Z")
 YIELD_RE = re.compile(r"seed yield ([a-z0-9-]+) wake=([1-9][0-9]*)( continue=1)?\Z")
 CLEAR_RE = re.compile(r"seed clear ([a-z0-9-]+) after=([1-9][0-9]*)\Z")
 # The pre-baseline plant copied this exact doctrine into each site. Recognize it
@@ -98,7 +99,9 @@ def _state(home: Path, slug: str) -> tuple[str | None, int | None, int | None, i
 def _external_event(home: Path, slug: str):
     latest = None
     last_woken = None
-    for entry in Feed(home).entries():
+    entries = Feed(home).entries()
+    tasks = task_state.states(entries)
+    for entry in entries:
         if entry.source == "seed" and (match := WAKE_RE.fullmatch(_receipt_line(entry.body))) and match.group(1) == slug:
             if match.group(3):
                 last_woken = int(match.group(3))
@@ -106,7 +109,10 @@ def _external_event(home: Path, slug: str):
             body = entry.body.lstrip(" \t")
             task = re.match(r"\[task\]\s+\S+\s+owner=([a-z0-9-]+)(?:\s|$)", body)
             decision = re.match(r"\[permission\]\s+id=\S+\s+decision=(?:granted|revoked)\s+owner=([a-z0-9-]+)(?:\s|$)", body)
-            if (task is not None and task.group(1) == slug) or (slug == "witness" and
+            task_id = body.split()[1] if task is not None else None
+            task_ready = (task_id in tasks and tasks[task_id].owner == slug and
+                          task_state.eligible(tasks[task_id], entries))
+            if (task is not None and task.group(1) == slug and task_ready) or (slug == "witness" and
                     (body.startswith("[wish]") or
                      (entry.source in {"operator", "operator/permissions"} and not body.startswith("[task]")))) or (
                          decision is not None and decision.group(1) == slug):
@@ -260,6 +266,13 @@ def _redeliver_pending(home: Path, session: str, slug: str, pending: int) -> str
         return f"held seed {slug} wake {pending} unsettled"
     if not _mind_ready(session, slug):
         return f"held seed {slug} wake {pending} mind busy"
+    entries = Feed(home).entries()
+    original = next(entry for entry in entries if entry.sequence == pending)
+    wake_match = WAKE_RE.fullmatch(_receipt_line(original.body))
+    if wake_match and wake_match.group(4):
+        plan = task_state.states(entries).get(wake_match.group(4))
+        if plan is not None and plan.attempt_wake != pending:
+            task_state.record_attempt(home, plan, pending, int(wake_match.group(2)), owner=slug)
     _send(f"{session}:{slug}.1", _restore_text(home, slug, session, wake_delivery=True) + "\n" + (
         f"REDELIVERY of unsettled WAKE {pending} for {slug}. A prior delivery may have been lost during clear. "
         "First inspect the live top pane, chat.log, and artifacts for this exact wake. "
@@ -287,6 +300,7 @@ def _restore_text(home: Path, slug: str, session: str, *, wake_delivery: bool = 
     )
     return (f"Read repository AGENTS.md for the agent contract.\nDOCTRINE\n{doctrine}\nCHARTER {slug}\n{charter}\nCURRENT HANDOFF\n{handoff}\n"
             f"WAKE STATE\n{status(home, slug)}\n"
+            "TASK STATE\n" + "\n".join(task_state.lines(Feed(home).entries(), slug)) + "\n"
             f"{next_action}\n"
             f"The canonical site is {home.resolve()}. The CLI resolves it automatically from MISHE_SEED_HOME, "
             "which fresh mind launches set to this path; if this older process lacks it, use this exact path "
@@ -530,7 +544,15 @@ def tick(home: Path, session: str, slug: str, self_pick_seconds: float = 0) -> s
         self_pick_due = (self_pick_seconds > 0 and last_wake_at is not None
                          and (datetime.now(timezone.utc) - last_wake_at).total_seconds() >= self_pick_seconds)
         external = _external_event(home, slug)
-        if last_observation is None or (last_observation == last_woken_observation and not self_pick_due and external is None and not continue_due):
+        entries = Feed(home).entries()
+        plans = [plan for plan in task_state.states(entries).values() if plan.owner == slug]
+        selected = task_state.select_task(entries, slug)
+        if plans and selected is None:
+            self_pick_due = False
+            continue_due = False
+            if last_observation == last_woken_observation and external is None:
+                return f"waiting seed {slug} task prerequisites unchanged"
+        if last_observation is None or (last_observation == last_woken_observation and not self_pick_due and external is None and not continue_due and selected is None):
             return f"quiet seed {slug} unchanged"
         mind_dead = _tmux("display-message", "-p", "-t", f"{session}:{slug}.1", "#{pane_dead}", check=False)
         if mind_dead.returncode or mind_dead.stdout.decode().strip() == "1":
@@ -538,13 +560,23 @@ def tick(home: Path, session: str, slug: str, self_pick_seconds: float = 0) -> s
         if not _mind_ready(session, slug):
             return f"HOLD seed {slug} resident mind busy"
         event_suffix = f" event={external.sequence}" if external is not None else ""
-        reason = (f"addressed chat event {external.sequence}" if external is not None else
+        reason = (f"actionable task {selected.identity}" if selected is not None else
+                  f"addressed chat event {external.sequence}" if external is not None else
                   "continued task" if continue_due else "quiet self-pick" if self_pick_due and not changed else
                   "changed top-pane observation")
-        wake = Feed(home).append("seed", f"seed wake {slug} observation={last_observation}{event_suffix}\n"
+        task_suffix = f" task={selected.identity}" if selected is not None else ""
+        wake = Feed(home).append("seed", f"seed wake {slug} observation={last_observation}{event_suffix}{task_suffix}\n"
                                  f"The supervisor asked {slug} to take one bounded, checked step because of {reason}. "
                                  "The mind must leave a handoff and settle this exact wake.")
+        if selected is not None:
+            task_state.record_attempt(home, selected, wake.sequence, last_observation, owner=slug)
         prompt = (f"WAKE {wake.sequence} for {slug}. Read your live top pane now. Current observation:\n{frame}\n"
+                  + (f"TASK TO ADVANCE: {selected.identity}\nNEXT STEP: {selected.next_step}\n"
+                     "Before yield, use task step with checked progress/evidence for a distinct next step, "
+                     "or task wait with an exact retry event/deadline. The delivered attempt is consumed.\n"
+                     if selected is not None else "")
+                  + "TASK STATE (waiting tasks must not be retaken unless their retry fires):\n"
+                  + "\n".join(task_state.lines(entries, slug)) + "\n"
                   + (f"NEW CHAT EVENT {external.sequence} from {external.source}: {external.body[:4096]}\n" if external is not None else "") +
                   ("SELF-PICK: the pane is stable. Derive one bounded improvement from your charter goal or an open wish.\n" if self_pick_due and not changed else "") +
                   (f"CONTINUE TASK from wake {continue_yield}: read the restored handoff, verify prior effects, then take its next bounded step.\n" if continue_due else "") +
@@ -568,6 +600,13 @@ def yield_wake(home: Path, slug: str, wake: int, handoff_file: Path, continue_ta
         _, pending, _, _, _, observation, _, _ = _state(home, slug)
         if pending != wake:
             raise ValueError(f"wake {wake} is not the pending wake for {slug}")
+        entries = Feed(home).entries()
+        original = next(entry for entry in entries if entry.sequence == wake)
+        wake_match = WAKE_RE.fullmatch(_receipt_line(original.body))
+        selected_task = wake_match.group(4) if wake_match else None
+        if continue_task and selected_task and task_state.select_task(
+                [entry for entry in entries if entry.sequence != wake], slug) is None:
+            raise ValueError("continuation requires a checked next step or fired retry; record task step or task wait")
         archive = home / "artifacts" / f"seed-{slug}-wake-{wake}.md"
         if archive.exists() and archive.read_text(encoding="utf-8") != handoff_text:
             raise ValueError(f"archived handoff for wake {wake} differs; reconcile before yielding")
@@ -588,6 +627,15 @@ def yield_wake(home: Path, slug: str, wake: int, handoff_file: Path, continue_ta
         work_prefix = f"[work] channel={slug} wake={wake} "
         header = (work_prefix + f"observation={observation or 'none'} "
                   f"result={result} continue={int(continue_task)} handoff_sha256={digest} archive={archive}")
+        if selected_task:
+            state_entry = next((entry for entry in reversed(entries)
+                                if entry.body.startswith(f"[task-state] {selected_task}\n")), None)
+            if state_entry:
+                payload = json.loads(state_entry.body.splitlines()[1])
+                step = hashlib.sha256((payload["next_step"] + "\0" + payload["evidence_sha256"]).encode()).hexdigest()
+                header += f" task={selected_task} task_state={state_entry.sequence} task_step={step}"
+            else:
+                header += f" task={selected_task}"
         prior = [entry for entry in Feed(home).entries() if entry.source == "seed" and
                  entry.body.startswith(work_prefix)]
         if prior:

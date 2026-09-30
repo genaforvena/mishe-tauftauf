@@ -253,6 +253,25 @@ def cmd_seed(args) -> int:
     return 0
 
 
+def cmd_task(args) -> int:
+    from . import task_state
+
+    if args.task_command == "step":
+        entry = task_state.set_step(args.home, args.id, args.owner, args.next_step, args.progress, args.evidence)
+    elif args.task_command == "wait":
+        entry = task_state.wait_for(args.home, args.id, args.owner, args.next_step, args.reason, args.evidence,
+                                    retry_event=args.retry_event, retry_at=args.retry_at)
+    elif args.task_command == "event":
+        entry = task_state.signal(args.home, args.event, args.source, args.evidence, args.reason)
+    elif args.task_command == "offer":
+        entry = task_state.offer(args.home, args.id, args.owner, args.helper, args.evidence)
+    else:
+        print("\n".join(task_state.lines(Feed(args.home).entries(), args.owner)) or "No open tasks.")
+        return 0
+    print(entry.sequence)
+    return 0
+
+
 def cmd_tmux_mind_run(args) -> int:
     from .feed import Feed
     from .tmux import capture_raw
@@ -466,6 +485,21 @@ def parser() -> argparse.ArgumentParser:
     sub = root.add_subparsers(dest="command", required=True)
     p = sub.add_parser("init"); p.set_defaults(func=cmd_init)
     p = sub.add_parser("append"); p.add_argument("--source", required=True); p.add_argument("text", nargs="?"); p.set_defaults(func=cmd_append)
+    task = sub.add_parser("task").add_subparsers(dest="task_command", required=True)
+    for action in ("step", "wait"):
+        p = task.add_parser(action); p.add_argument("id"); p.add_argument("--owner", required=True)
+        p.add_argument("--next-step", required=True); p.add_argument("--evidence", type=Path, required=True)
+        if action == "step":
+            p.add_argument("--progress", required=True)
+        else:
+            p.add_argument("--reason", required=True); p.add_argument("--retry-event"); p.add_argument("--retry-at")
+        p.set_defaults(func=cmd_task)
+    p = task.add_parser("event"); p.add_argument("event"); p.add_argument("--source", required=True)
+    p.add_argument("--reason", required=True); p.add_argument("--evidence", type=Path, required=True); p.set_defaults(func=cmd_task)
+    p = task.add_parser("show"); p.add_argument("--owner"); p.set_defaults(func=cmd_task)
+    p = task.add_parser("offer"); p.add_argument("id"); p.add_argument("--owner", required=True)
+    p.add_argument("--helper", action="append", default=[]); p.add_argument("--evidence", type=Path, required=True)
+    p.set_defaults(func=cmd_task)
     access_cmd = sub.add_parser("access").add_subparsers(dest="access_command", required=True)
     p = access_cmd.add_parser("request"); p.add_argument("id"); p.add_argument("--owner", required=True); p.add_argument("--task", required=True); p.add_argument("--capability", required=True); p.add_argument("--unblocks", action="append", required=True); p.add_argument("--reason", required=True); p.set_defaults(func=cmd_access)
     for verb in ("grant", "revoke", "check"):

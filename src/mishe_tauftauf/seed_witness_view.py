@@ -13,6 +13,7 @@ from pathlib import Path
 from .feed import Feed
 from .ci_watch import line as ci_line
 from .seed_board import open_tasks, repeated_no_change, work_receipts
+from . import task_state
 
 
 def render(home: Path) -> str:
@@ -61,12 +62,32 @@ def render(home: Path) -> str:
     lines.append(f"OPEN TASKS: {len(tasks)}")
     for task in tasks[-20:]:
         lines.append(f"{task.identity} owner={task.owner} state={task.status} at={task.sequence}")
+    try:
+        lines.extend(task_state.lines(entries))
+    except ValueError as exc:
+        verdict = f"UNKNOWN witness task state: {exc}"
+        lines.append(verdict)
     recent = work_receipts(entries, "genome")[-3:]
     lines.append("GENOME WORK: " + (", ".join(f"{work.wake}:{work.result}@{work.observation}" for work in recent) or "none"))
     repeated = repeated_no_change(entries, "genome")
     if repeated:
-        lines.append("LOOP: RED — three genome turns without a change on the same observation")
-        verdict = "FAIL witness repeated genome no-change turns"
+        identity = repeated[-1].task
+        try:
+            plan = task_state.states(entries).get(identity)
+        except ValueError:
+            plan = None
+        if plan and plan.status == "waiting" and not task_state.eligible(plan, entries):
+            if plan.retry_event or plan.retry_at:
+                lines.append(f"LOOP: WAITING task={identity} observation={repeated[-1].observation} "
+                             f"retry={plan.retry_event or plan.retry_at} — historical attempts; prerequisite unchanged")
+            else:
+                lines.append(f"LOOP: UNKNOWN task={identity} observation={repeated[-1].observation} "
+                             "— checked next step or retry predicate missing")
+                verdict = "UNKNOWN witness task next step missing"
+        else:
+            lines.append("LOOP: RED — three genome turns without a change on the same observation" +
+                         (f" task={identity}" if identity else ""))
+            verdict = "FAIL witness repeated genome no-change turns"
     now = datetime.now(timezone.utc)
     recent_entries = [entry for entry in entries if
                       0 <= (now - datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))).total_seconds() <= 120]
