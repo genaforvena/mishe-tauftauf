@@ -39,6 +39,27 @@ def test_raw_json_is_refused_through_public_feed_boundary(tmp_path):
     assert Feed(tmp_path).tail_sequence() == 0
 
 
+def test_retry_episode_includes_registered_wait_beyond_recent_chat(tmp_path, monkeypatch):
+    from mishe_tauftauf.coordination_checks import episode
+    _, proof = ready_site(tmp_path, monkeypatch)
+    registered = task_state.wait_for(tmp_path, 'repair', 'genome', 'Deploy after final CI passes.',
+                                     'Exact main CI is pending.', proof, retry_event='delivery-repair-updated')
+    for number in range(12):
+        Feed(tmp_path).append('operator', f'Unrelated checked progress sample {number}: preserve the registered CI wait.')
+    body = '[task-event] delivery-repair-updated\nThe registered author wait now has a checked CI transition.'
+    first = episode(tmp_path, 'delivery', body, context={'reason': 'The registered wait may proceed.'})
+    assert registered.sequence not in first['question_episodes']['R06']['history_scope']['included_sequences']
+    for key in ('R06', 'R08'):
+        target = first['question_episodes'][key]['retry_targets'][0]
+        assert target['registration']['sequence'] == registered.sequence
+        assert target['task']['retry_event'] == 'delivery-repair-updated'
+        assert target['task']['next_step'] == 'Deploy after final CI passes.'
+        assert target['eligible_before_post'] is False
+    task_state.signal(tmp_path, 'delivery-repair-updated', 'delivery', proof, 'Checked final CI releases the author wait.')
+    second = episode(tmp_path, 'delivery', body, context={'reason': 'The registered wait may proceed.'})
+    assert second['question_episodes']['R08']['retry_targets'][0]['eligible_before_post'] is True
+
+
 def test_generated_task_transition_rejection_does_not_close(tmp_path, monkeypatch):
     _, proof = ready_site(tmp_path, monkeypatch)
     checker(tmp_path)
