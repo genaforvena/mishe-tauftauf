@@ -1,6 +1,6 @@
 # How it works
 
-Mishe-tauftauf runs a local observation and development loop around an owned Git worktree. Python programs collect evidence, render text panes, track tasks, and supervise installed coding agents. The agents choose and carry out bounded work; deterministic checks establish what happened. The metaphor is a plant. The machinery is processes, files, and tmux.
+Mishe-tauftauf is a local culture for development through self-observation. Python programs collect evidence, render text panes, track tasks, and supervise installed coding agents. The agents observe their work and its evidence, choose a bounded next step, and check the result—including changes to their own development machinery. The current runtime is planted alongside an owned Git worktree; that is its storage and delivery substrate, not a limit on the work's goals. The metaphor is a plant. The machinery is processes, files, and tmux.
 
 [README](../README.md) · [Getting started](getting-started.md) · [Operating the plant](operating.md)
 
@@ -54,6 +54,18 @@ local system and source
                                   ↓
                          next bounded step
 ```
+
+### Development is not just repository maintenance
+
+The generic runtime provides the observation, task, and handoff loop. A project's charter supplies the goal; its local checks make progress and uncertainty observable. Builds, Git state, and CI are useful checks, but they are not a universal definition of progress.
+
+For a research project, the next step may be to audit a dataset, run an authorized evaluation, compare experimental conditions, trace a result to its provenance, or hold a conclusion for independent review. Evidence can reveal a flaw in the method or the plan, not just a bug in the code. The loop also observes itself: stale displays, repeated no-progress work, or misleading checks are development problems in their own right.
+
+The [tiny-fleet](https://github.com/genaforvena/tiny-fleet) plant illustrates this distinction. In the live instance inspected on 30 September 2026, its project-specific genome pane tracked audit, prioritization, reproduction, reporting, and independent review. Saved evaluation outputs were visible, but unresolved provenance and review obligations kept research acceptance `UNKNOWN`. Its health channel separately reported passing local infrastructure checks. Healthy machinery did not certify the science.
+
+The senses channel also recorded a mismatch between a current research view and an older embedded sample. That was evidence about the observation machinery itself, not a new experimental finding or proof that the mismatch had been repaired. The live panes, status file, and handoffs support this point-in-time example; it is not a claim of research completion. The plant's local evidence is ignored state, not bundled with the public repository.
+
+Project-specific checks and charters make this possible; the stock runtime does not arrive knowing how to judge an experiment. Keep authority bounded to the owned project, and distinguish a recorded output from a justified conclusion.
 
 ## The initial channels
 
@@ -198,9 +210,9 @@ The local agent contract is [AGENTS.md](../AGENTS.md). Durable rules come from [
 | --- | --- | --- |
 | [LangGraph](https://docs.langchain.com/oss/python/langgraph/overview) | A graph of application steps | A runtime for long-running stateful agent workflows, with persistence and human review points |
 | [OpenHands SDK](https://docs.openhands.dev/sdk/getting-started) | A framework for building software agents | Agents that interact with code, files, and system commands through tools and a workspace |
-| mishe-tauftauf | A resident culture planted in a Git worktree | Persistent text panes, role charters, a shared obligation log, checked handoffs, and a path from observed failures to reviewed, pushed repairs |
+| mishe-tauftauf | A resident observation-and-development loop | Shared evidence panes, role charters, durable tasks and handoffs, and checked next steps toward a project's goals—including improvements to the loop itself |
 
-These are different layers, not a league table. Mishe-tauftauf uses an installed coding agent as a mind and can incorporate other runtimes. Its specific contribution is the ongoing local observation and repair loop around an owned codebase.
+These are different layers, not a league table. Mishe-tauftauf uses an installed coding agent as a mind and can incorporate other runtimes. Its specific contribution is ongoing development guided by observation of the work, its evidence, and its own machinery. Git remains the current planting and source-delivery substrate; a reviewed commit is one possible outcome, not the definition of all progress.
 
 ## Case study: a false CI unknown
 

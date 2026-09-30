@@ -1,14 +1,20 @@
 # mishe-tauftauf
 
-**A small culture of coding agents that lives in a terminal and tends a Git worktree.**
+**A small, plantable culture for development through self-observation.**
 
-Give it a Linux host and an installed coding agent. Mishe adds refreshing checks,
-resident tmux windows, a shared work log, and handoffs that survive an agent's
-context being cleared. The agents can inspect faults, make bounded repairs, and
-carry reusable changes through review, commit, push, and CI.
+Mishe gives agents a way to observe the work they are doing, the evidence behind
+their conclusions, and the machinery they depend on—then use those observations
+to choose and check the next step. That work can be software development,
+an experimental study, or improving Mishe itself.
 
-Think sourdough starter for a codebase. Except this one is supposed to tell you
-when it hasn't risen.
+Give it a Linux host and an installed coding agent. Refreshing checks, shared
+text panes, a work log, and durable handoffs keep goals, results, and unknowns
+visible across fresh agent contexts. The current implementation lives alongside
+an owned Git worktree; Git stores reusable code and delivers reviewed changes.
+**The worktree is the substrate, not the purpose.**
+
+Think sourdough starter for a development process. Except this one is supposed
+to tell you when it hasn't risen.
 
 ## What you actually get
 
@@ -22,6 +28,9 @@ Attach to the tmux session and you see the same evidence the agents see:
 - **Work that survives a fresh context.** A supervisor archives a handoff, replaces
   a settled agent process when it is idle, and restores its purpose and unfinished
   work on the next wake.
+- **Progress beyond commits.** A project's checks can expose experiment results,
+  data provenance, resource limits, and unfinished review—not just builds and CI.
+  A successful command need not mean the underlying goal has been achieved.
 - **A loop that can repair itself.** Agents may improve Mishe's own code, checks,
   or instructions within their owned scope. Shared source still needs verification
   and independent review before landing.
@@ -83,6 +92,30 @@ next wake ← fresh context ← handoff + artifact + shared log
 Scripts decide reproducible facts; agents choose what to do about them. Checks
 report healthy (`GREEN`), failed (`RED`), or missing/stale/conflicting evidence
 (`UNKNOWN`). **Unknown is not a reassuring shade of green.**
+
+Self-observation means more than watching the host. It includes asking whether
+the work's evidence supports its claims, whether a task actually advanced, and
+whether Mishe's own checks and coordination are telling the truth. An observed
+gap can change the next experiment, the plan, or the machinery—not only the code.
+
+### In practice: tiny-fleet's research loop
+
+The running plant in [tiny-fleet](https://github.com/genaforvena/tiny-fleet) is
+working toward reproducible research, not merely keeping a repository tidy.
+Its project-specific panes expose experiment progress, provenance gaps, and
+pending independent review. Agents inspect evaluation artifacts, reconcile
+claims with the recorded experiments, and carry the remaining work through
+handoffs.
+
+In the live instance inspected on 30 September 2026, operational health checks
+passed while research acceptance remained `UNKNOWN`: experimental outputs
+existed, but provenance and review obligations were still open. The agents also
+identified a stale sample in their own evidence display. This is the point of
+the loop: **observe the work, question the observation, develop from what it
+reveals.** It is not a claim that the study is complete.
+
+The [concept guide](docs/how-it-works.md#development-is-not-just-repository-maintenance)
+explains how those project-specific checks fit the generic runtime.
 
 Five resident roles share the work:
 
