@@ -38,7 +38,7 @@ def test_waited_task_is_not_retaken_by_self_pick_or_continue(tmp_path, monkeypat
     task_state.wait_for(tmp_path, "repair", "genome", "integrate caller", "caller absent", path,
                         retry_event="caller-ready")
     settle(tmp_path, wake, monkeypatch)
-    assert "waiting" in seed.tick(tmp_path, "session", "genome", self_pick_seconds=0.000001)
+    assert "waiting" in seed.tick(tmp_path, "session", "genome")
     assert len(sent) == 1
     Feed(tmp_path).append("operator", "[task] other owner=genome acceptance=check")
     next_wake = int(seed.tick(tmp_path, "session", "genome").split()[-1])
@@ -70,6 +70,49 @@ def test_duplicate_announcement_does_not_resume_waiting_or_terminal_task(tmp_pat
     task_state.wait_for(tmp_path, "repair", "genome", "integrate", "missing", path, retry_event="ready")
     Feed(tmp_path).append("witness", "[task] repair owner=genome acceptance=fix")
     assert seed._external_event(tmp_path, "genome") is None
+
+
+def test_waiting_backlog_permits_one_independent_production_opportunity(tmp_path, monkeypatch):
+    sent = supervisor(tmp_path, monkeypatch)
+    Feed(tmp_path).append("operator", "[task] research owner=genome acceptance=registered-results")
+    wake = int(seed.tick(tmp_path, "session", "genome").split()[-1])
+    proof = tmp_path / "proof.md"
+    proof.write_text("Historical GPU accounting unavailable; cached weights and CPU available.")
+    task_state.wait_for(tmp_path, "research", "genome", "registered replication", "GPU accounting absent", proof,
+                        retry_event="gpu-accounted", producer="genome")
+    settle(tmp_path, wake, monkeypatch)
+    opportunity = seed.tick(tmp_path, "session", "genome", self_pick_seconds=0.000001)
+    assert opportunity.startswith("wake ")
+    assert "INDEPENDENT WORK OPPORTUNITY" in sent[-1]
+    assert "TASK TO ADVANCE: research" not in sent[-1]
+    assert "cached" in sent[-1] or "measurement" in sent[-1]
+    settle(tmp_path, int(opportunity.split()[-1]), monkeypatch)
+    # Same waiting inputs cannot turn periodic self-picks into repeated audits.
+    assert "waiting" in seed.tick(tmp_path, "session", "genome", self_pick_seconds=0.000001)
+    assert len(sent) == 2
+    assert task_state.states(Feed(tmp_path).entries())["research"].status == "waiting"
+
+
+def test_failed_opportunity_wake_append_does_not_consume_decision(tmp_path, monkeypatch):
+    sent = supervisor(tmp_path, monkeypatch)
+    Feed(tmp_path).append("operator", "[task] research owner=genome acceptance=results")
+    wake = int(seed.tick(tmp_path, "session", "genome").split()[-1])
+    proof = tmp_path / "proof.md"
+    proof.write_text("Training blocked; CPU measurements admissible.")
+    task_state.wait_for(tmp_path, "research", "genome", "train", "GPU accounting missing", proof,
+                        retry_event="gpu-accounted")
+    settle(tmp_path, wake, monkeypatch)
+    append = Feed.append
+    def fail_wake(self, source, body, **kwargs):
+        if body.startswith("seed wake "):
+            raise RuntimeError("crash before durable wake")
+        return append(self, source, body, **kwargs)
+    monkeypatch.setattr(Feed, "append", fail_wake)
+    with pytest.raises(RuntimeError, match="crash"):
+        seed.tick(tmp_path, "session", "genome", self_pick_seconds=0.000001)
+    monkeypatch.setattr(Feed, "append", append)
+    assert seed.tick(tmp_path, "session", "genome", self_pick_seconds=0.000001).startswith("wake ")
+    assert len(sent) == 2
 
 
 def test_pending_wake_reserves_task_even_before_attempt_record(tmp_path):
