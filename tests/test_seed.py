@@ -222,13 +222,16 @@ def test_large_wake_reaches_tmux_mind_without_command_limit(tmp_path: Path) -> N
     home = tmp_path / "site"
     home.mkdir()
     received = tmp_path / "received.txt"
+    ready = tmp_path / "receiver-ready.txt"
     session = f"mishe-large-wake-{uuid.uuid4().hex[:10]}"
     started = tmux("new-session", "-d", "-s", session, "-n", "genome",
-                   f"sh -c 'stty raw -echo; cat > {received}'")
+                   f"sh -c 'stty raw -echo; printf ready > {ready}; cat > {received}'")
     assert started.returncode == 0, started.stderr
     try:
         owned = tmux("set-option", "-t", session, OWNED_OPTION, str(home))
         assert owned.returncode == 0, owned.stderr
+        # tmux creation can return before stty disables canonical input limits.
+        wait_for(ready, "ready")
         message = "WAKE " + "x" * 20000 + " END"
         seed._send(f"{session}:genome.0", message)
         assert message in wait_for(received, " END")

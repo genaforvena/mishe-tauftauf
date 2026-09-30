@@ -28,8 +28,11 @@ class TmuxTests(unittest.TestCase):
             session = f"mishe-tauftauf-test-{os.getpid()}"
             try:
                 start(home, session, interval=0.2)
-                time.sleep(0.5)
-                red = capture_raw(session, "sensor")
+                for _ in range(40):
+                    red = capture_raw(session, "sensor")
+                    if "red" in red and "-- pane live " in red:
+                        break
+                    time.sleep(0.1)
                 self.assertIn("red", red)
                 lease1 = [line for line in red.splitlines() if "-- pane live " in line][-1]
                 time.sleep(0.4)
