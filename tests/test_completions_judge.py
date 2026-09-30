@@ -236,6 +236,34 @@ class CompletionsJudgeTests(unittest.TestCase):
             server.server_close()
             thread.join(timeout=2)
 
+    def test_worker_preserves_valid_unicode_and_quote_heavy_documents(self):
+        captured = []
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                captured.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(response())
+            def log_message(self, *_args):
+                pass
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            config = judge.Config(f"http://127.0.0.1:{server.server_port}/v1", "fixture", timeout=2)
+            for text in (DOC + '"' * 16_000, DOC + 'é' * 25_000):
+                with self.subTest(character=text[-1]):
+                    before = len(captured)
+                    self.assertLess(len(text.encode()), judge.MAX_DOCUMENT_BYTES)
+                    self.assertEqual(judge.evaluate(text, config).verdict, "yes")
+                    self.assertEqual(len(captured), before + 1)
+                    supplied = json.loads(captured[-1]['messages'][1]['content'])
+                    self.assertEqual(text.split('\n\n', 2)[2], supplied['state'])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
     def test_trickling_response_obeys_total_request_deadline(self):
         received = threading.Event()
         class SlowHandler(BaseHTTPRequestHandler):
