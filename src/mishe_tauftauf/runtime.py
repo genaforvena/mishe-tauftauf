@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .feed import Feed, FeedEntry
 from .control_cache import identity as control_identity, read as read_control_cache, write as write_control_cache
-from .external_view import DELTA_PUBLISH_QUESTION, DELTA_VERSION, FLEET_VERSION, projected_delta_publish_controls, projected_publish_controls, safe_fleet_view, safe_publish_delta_view, safe_publish_view
+from .external_view import DELTA_PUBLISH_QUESTION, DELTA_VERSION, FLEET_VERSION, projected_delta_publish_controls, projected_fleet_controls, projected_publish_controls, safe_fleet_view, safe_publish_delta_view, safe_publish_view
 from .judges import Judgment, conservative_unknown, controls, document, run_external, run_external_batch
 from .observations import compose_frame, discover, run_filter, run_projector, strip_owned_chrome, validate_slug
 from .policy import load_policy
@@ -144,7 +144,7 @@ class Coordinator:
                     unchanged = False
                 if unchanged:
                     try:
-                        write_control_cache(cache_path, fingerprint, self.control_failures, projected=bool(config.external_view_slugs), paired=bool(config.external_delta_view_slugs))
+                        write_control_cache(cache_path, fingerprint, self.control_failures, projected=bool(config.external_view_slugs), paired=bool(config.external_delta_view_slugs), fleet=bool(config.external_fleet_view_slugs))
                     except OSError:
                         names = self._control_names()
                         self.control_failures = {name: "startup controls UNKNOWN: cache write failed" for name in names}
@@ -152,10 +152,10 @@ class Coordinator:
                     names = self._control_names()
                     self.control_failures = {name: "startup controls UNKNOWN: judge executable changed during refresh" for name in names}
             else:
-                self.control_failures = read_control_cache(cache_path, fingerprint, config.control_cache_ttl, projected=bool(config.external_view_slugs), paired=bool(config.external_delta_view_slugs))
+                self.control_failures = read_control_cache(cache_path, fingerprint, config.control_cache_ttl, projected=bool(config.external_view_slugs), paired=bool(config.external_delta_view_slugs), fleet=bool(config.external_fleet_view_slugs))
 
     def _control_names(self) -> set[str]:
-        return set(controls()) | ({"projected-publish"} if self.config.external_view_slugs else set()) | ({"projected-delta-publish"} if self.config.external_delta_view_slugs else set())
+        return set(controls()) | ({"projected-publish"} if self.config.external_view_slugs else set()) | ({"projected-delta-publish"} if self.config.external_delta_view_slugs else set()) | ({"fleet-publish", "fleet-desired-state-met"} if self.config.external_fleet_view_slugs else set())
 
     def _raw_judge(self, question: str, slug: str, pane: str, evidence: str, prediction: str | None = None, *, question_text: str | None = None, structured: bool = False) -> Judgment:
         question_text = question_text or self.policy.question_text(question)
@@ -214,6 +214,17 @@ class Coordinator:
                     f"projected delta controls failed: positive={yes.outcome}/{yes.probability}, "
                     f"negative={no.outcome}/{no.probability}"
                 )
+        if self.config.external_fleet_view_slugs:
+            red, green = projected_fleet_controls()
+            for question, positive, negative in (("publish", red, green),
+                                                 ("desired-state-met", green, red)):
+                yes = self._raw_judge(question, "control", positive, positive)
+                no = self._raw_judge(question, "control", negative, negative)
+                if (self.policy.classify(question, yes.probability) != "yes"
+                    or self.policy.classify(question, no.probability) != "no"):
+                    failures["fleet-" + question] = (
+                        f"fleet controls failed: positive={yes.outcome}/{yes.probability}, "
+                        f"negative={no.outcome}/{no.probability}")
         return failures
 
     def _replay_known_slugs(self) -> set[str]:
@@ -273,7 +284,7 @@ class Coordinator:
                                             reason="invalid fleet projection", question_text=question_text)
             state = safe.split("\n", 1)[0].removeprefix("STATE: ")
             fresh = "source=top-pane/" in safe and " freshness=fresh " in safe
-            value_fresh = any(f" {name}=fresh " in safe for name in ("goal", "comments", "cleaner", "journal"))
+            value_fresh = any(f"{name}=fresh" in safe.split() for name in ("goal", "comments", "cleaner", "journal"))
             if question == "relevance":
                 request = document(question, slug, safe, safe, question_text=question_text)
                 return Judgment(question, 1.0, "yes", "validated exact-owner observation", request)
@@ -284,6 +295,10 @@ class Coordinator:
                 if state == "GREEN" and not (fresh and value_fresh):
                     return conservative_unknown(question, slug, safe, safe,
                                                 reason="fresh desired-state evidence not established", question_text=question_text)
+            fleet_failure = self.control_failures.get("fleet-" + question)
+            if fleet_failure:
+                return conservative_unknown(question, slug, safe, safe,
+                                            reason=fleet_failure, question_text=question_text)
             pane, evidence, prediction = safe, safe, None
         elif slug in self.config.external_view_slugs or paired:
             if question != "publish":
@@ -372,8 +387,13 @@ class Coordinator:
             if not result.passed:
                 continue
             evidence = run_projector(self.home, slug, previous, raw)
+            fleet = slug in self.config.external_fleet_view_slugs
+            canonical = safe_fleet_view(evidence, slug) if fleet else evidence
+            if canonical is None:
+                continue
             latest = next((entry.body for entry in reversed(self.feed.entries()) if entry.source == f"observation/{slug}"), None)
-            if evidence == latest:
+            previous_safe = safe_fleet_view(latest, slug) if fleet and latest is not None else latest
+            if canonical == previous_safe:
                 continue
             judgment = self._judge("publish", slug, pane, evidence, previous_projection=latest)
             self._receipt(judgment, slug, 0)
@@ -382,7 +402,7 @@ class Coordinator:
                         else safe_publish_view(evidence) if slug in (*self.config.external_view_slugs, *self.config.external_delta_view_slugs)
                         else evidence)
                 if safe is not None:
-                    emitted.append(self.feed.append_runtime(f"observation/{slug}", evidence))
+                    emitted.append(self.feed.append_runtime(f"observation/{slug}", safe if fleet else evidence))
         return emitted
 
     def assess_predictions(self) -> None:
