@@ -151,3 +151,208 @@ def test_retirement_respects_explicit_worktree_reservation(candidate, monkeypatc
     row = retirement.retire(home, "repair")
     assert row["state"] == "pending" and "locked" in row["reason"]
     assert work.exists() and str(work) in git(primary, "worktree", "list", "--porcelain")
+
+
+@pytest.mark.parametrize("keep_local_ref", [True, False])
+def test_retirement_supports_detached_candidate_and_main_only_refs(candidate, monkeypatch, tmp_path, keep_local_ref):
+    home, primary, work, head = completed(candidate, monkeypatch)
+    git(work, "checkout", "-q", "--detach", head)
+    if not keep_local_ref:
+        git(primary, "update-ref", "-d", "refs/heads/candidate", head)
+    row = retirement.retire(home, "repair")
+    assert row["state"] == "retired", row
+    assert git(primary, "for-each-ref", "--format=%(refname)", "refs/heads") == "refs/heads/main"
+    assert git(primary, "ls-remote", "--heads", "origin").split()[1:] == ["refs/heads/main"]
+    assert not git(primary, "for-each-ref", "--format=%(refname)", "refs/remotes/origin/candidate")
+    recovered = tmp_path / "standalone-recovery.git"
+    git(tmp_path, "init", "--bare", "-q", str(recovered))
+    subprocess.run(["git", "-C", str(recovered), "bundle", "verify", row["bundle"]], check=True, capture_output=True)
+    git(recovered, "fetch", "-q", row["bundle"], head)
+    assert git(recovered, "rev-parse", "FETCH_HEAD") == head
+    assert (Path(row["admin_archive"]) / "index").is_file()
+    assert retirement.retire(home, "repair") == row
+
+
+def test_retirement_removes_exact_stale_tracking_after_independent_remote_delete(candidate, monkeypatch):
+    home, primary, work, head = completed(candidate, monkeypatch)
+    git(primary, "fetch", "-q", "origin", "candidate:refs/remotes/origin/candidate")
+    origin = Path(git(primary, "remote", "get-url", "origin"))
+    git(origin, "update-ref", "-d", "refs/heads/candidate", head)
+    assert git(primary, "rev-parse", "refs/remotes/origin/candidate") == head
+    row = retirement.retire(home, "repair")
+    assert row["state"] == "retired", row
+    assert not git(primary, "for-each-ref", "--format=%(refname)", "refs/remotes/origin/candidate")
+
+
+def test_retirement_preserves_advanced_tracking_ref(candidate, monkeypatch):
+    home, primary, work, head = completed(candidate, monkeypatch)
+    original = git(primary, "rev-parse", "HEAD")
+    git(primary, "update-ref", "refs/remotes/origin/candidate", original)
+    row = retirement.retire(home, "repair")
+    assert row["state"] == "pending", row
+    assert "tracking" in row["reason"]
+    assert work.exists()
+    assert git(primary, "rev-parse", "refs/remotes/origin/candidate") == original
+    assert git(primary, "ls-remote", "--heads", "origin", "candidate").split()[0] == head
+
+
+def test_tracking_advance_during_remote_delete_is_preserved(candidate, monkeypatch):
+    home, primary, work, head = completed(candidate, monkeypatch)
+    git(primary, "fetch", "-q", "origin", "candidate:refs/remotes/origin/candidate")
+    advanced = git(primary, "rev-parse", "HEAD")
+    original = delivery._git
+    changed = []
+    def race(repo, *args):
+        if args and args[0] == "push" and ":refs/heads/candidate" in args:
+            git(primary, "update-ref", "refs/remotes/origin/candidate", advanced)
+            changed.append(True)
+        return original(repo, *args)
+    monkeypatch.setattr(delivery, "_git", race)
+    row = retirement.retire(home, "repair")
+    assert changed
+    assert row["state"] == "pending", row
+    assert "tracking" in row["reason"]
+    assert work.exists()
+    assert git(primary, "rev-parse", "refs/remotes/origin/candidate") == advanced
+    assert Path(row["bundle"]).is_file()
+
+
+@pytest.mark.parametrize("same_head", [False, True])
+def test_local_ref_appearing_during_detached_retirement_is_preserved(candidate, monkeypatch, same_head):
+    home, primary, work, head = completed(candidate, monkeypatch)
+    git(work, "checkout", "-q", "--detach", head)
+    git(primary, "update-ref", "-d", "refs/heads/candidate", head)
+    created = head if same_head else git(primary, "rev-parse", "HEAD")
+    original = delivery._git
+    def race(repo, *args):
+        if args and args[0] == "push" and ":refs/heads/candidate" in args:
+            git(primary, "update-ref", "refs/heads/candidate", created)
+        return original(repo, *args)
+    monkeypatch.setattr(delivery, "_git", race)
+    row = retirement.retire(home, "repair")
+    assert row["state"] == "pending", row
+    assert "local" in row["reason"]
+    assert work.exists()
+    assert git(primary, "rev-parse", "refs/heads/candidate") == created
+    assert Path(row["bundle"]).is_file()
+
+
+def test_remote_ref_recreated_after_deletion_prevents_retired_receipt(candidate, monkeypatch):
+    home, primary, work, head = completed(candidate, monkeypatch)
+    origin = Path(git(primary, "remote", "get-url", "origin"))
+    original = delivery._git
+    def race(repo, *args):
+        result = original(repo, *args)
+        if args and args[0] == "push" and ":refs/heads/candidate" in args:
+            git(origin, "update-ref", "refs/heads/candidate", head)
+        return result
+    monkeypatch.setattr(delivery, "_git", race)
+    row = retirement.retire(home, "repair")
+    assert row["state"] == "pending", row
+    assert "remote" in row["reason"]
+    assert git(primary, "ls-remote", "--heads", "origin", "candidate").split()[0] == head
+    assert Path(row["bundle"]).is_file()
+
+
+@pytest.mark.parametrize("kind", ["local", "remote", "tracking"])
+def test_ref_recreated_after_last_deletion_prevents_retired_receipt(candidate, monkeypatch, kind):
+    home, primary, work, head = completed(candidate, monkeypatch)
+    origin = Path(git(primary, "remote", "get-url", "origin"))
+    original = delivery._git
+    def race(repo, *args):
+        result = original(repo, *args)
+        if args[:3] == ("update-ref", "-d", "refs/heads/candidate"):
+            target = origin if kind == "remote" else primary
+            ref = "refs/remotes/origin/candidate" if kind == "tracking" else "refs/heads/candidate"
+            git(target, "update-ref", ref, head)
+        return result
+    monkeypatch.setattr(delivery, "_git", race)
+    row = retirement.retire(home, "repair")
+    assert row["state"] == "pending", row
+    assert kind in row["reason"]
+    assert Path(row["tree_archive"]).is_dir()
+    assert Path(row["bundle"]).is_file()
+    monkeypatch.setattr(delivery, "_git", original)
+    assert retirement.retire(home, "repair")["state"] == "pending"
+    target = origin if kind == "remote" else primary
+    ref = "refs/remotes/origin/candidate" if kind == "tracking" else "refs/heads/candidate"
+    assert git(target, "rev-parse", ref) == head
+
+
+@pytest.mark.parametrize("kind", ["local", "remote", "tracking"])
+def test_retired_receipt_does_not_hide_or_delete_recreated_ref(candidate, monkeypatch, kind):
+    home, primary, work, head = completed(candidate, monkeypatch)
+    row = retirement.retire(home, "repair")
+    assert row["state"] == "retired"
+    origin = Path(git(primary, "remote", "get-url", "origin"))
+    target = origin if kind == "remote" else primary
+    ref = "refs/remotes/origin/candidate" if kind == "tracking" else "refs/heads/candidate"
+    git(target, "update-ref", ref, head)
+    retry = retirement.retire(home, "repair")
+    assert retry["state"] == "pending", retry
+    assert kind in retry["reason"]
+    assert git(target, "rev-parse", ref) == head
+    assert retirement.retire(home, "repair")["state"] == "pending"
+    assert git(target, "rev-parse", ref) == head
+
+
+@pytest.mark.parametrize("after_effect", [False, True])
+def test_crash_at_remote_deletion_boundary_never_replays_uncertain_refs(candidate, monkeypatch, after_effect):
+    home, primary, work, head = completed(candidate, monkeypatch)
+    origin = Path(git(primary, "remote", "get-url", "origin"))
+    original = delivery._git
+    def crash(repo, *args):
+        if args and args[0] == "push" and ":refs/heads/candidate" in args:
+            if after_effect:
+                original(repo, *args)
+            raise RuntimeError("uncertain remote deletion")
+        return original(repo, *args)
+    monkeypatch.setattr(delivery, "_git", crash)
+    with pytest.raises(RuntimeError, match="uncertain remote"):
+        retirement.retire(home, "repair")
+    monkeypatch.setattr(delivery, "_git", original)
+    row = retirement.retire(home, "repair")
+    assert row["state"] == "pending"
+    assert work.exists()
+    assert git(primary, "rev-parse", "refs/heads/candidate") == head
+    assert bool(git(origin, "for-each-ref", "--format=%(objectname)", "refs/heads/candidate")) != after_effect
+    # After explicit owner reconciliation, recover archive work without another push.
+    git(work, "checkout", "-q", "--detach", head)
+    git(primary, "update-ref", "-d", "refs/heads/candidate", head)
+    git(primary, "update-ref", "-d", "refs/remotes/origin/candidate")
+    git(origin, "update-ref", "-d", "refs/heads/candidate")
+    def no_push(repo, *args):
+        assert args[0] != "push"
+        return original(repo, *args)
+    monkeypatch.setattr(delivery, "_git", no_push)
+    assert retirement.retire(home, "repair")["state"] == "retired"
+
+
+@pytest.mark.parametrize("kind", ["local", "remote", "tracking"])
+def test_ref_recreated_during_archive_recovery_is_never_deleted(candidate, monkeypatch, kind):
+    home, primary, work, head = completed(candidate, monkeypatch)
+    origin = Path(git(primary, "remote", "get-url", "origin"))
+    original = delivery._git
+    def crash(repo, *args):
+        if args and args[0] == "push" and ":refs/heads/candidate" in args:
+            raise RuntimeError("before first ref effect")
+        return original(repo, *args)
+    monkeypatch.setattr(delivery, "_git", crash)
+    with pytest.raises(RuntimeError):
+        retirement.retire(home, "repair")
+    git(work, "checkout", "-q", "--detach", head)
+    git(primary, "update-ref", "-d", "refs/heads/candidate", head)
+    git(primary, "update-ref", "-d", "refs/remotes/origin/candidate")
+    git(origin, "update-ref", "-d", "refs/heads/candidate")
+    target = origin if kind == "remote" else primary
+    ref = "refs/remotes/origin/candidate" if kind == "tracking" else "refs/heads/candidate"
+    def race(repo, *args):
+        result = original(repo, *args)
+        if args and args[0] == "fetch":
+            git(target, "update-ref", ref, head)
+        return result
+    monkeypatch.setattr(delivery, "_git", race)
+    row = retirement.retire(home, "repair")
+    assert row["state"] == "pending", row
+    assert git(target, "rev-parse", ref) == head
+    assert work.exists()

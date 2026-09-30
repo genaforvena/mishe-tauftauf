@@ -383,3 +383,21 @@ A busy process, new dirty files, advanced branch, unavailable check, or failed r
 
 
 Runtime refresh samples CI without running candidate task projections. The persistent CI watcher continues to own delivery reconciliation and retirement; its configured publication checks may wait independently while the installer restarts services onto the selected clean release.
+
+
+Main is the sole durable branch, locally and on GitHub. Keep unfinished source
+in isolated detached candidates; a temporary remote author branch is only a
+publication handle for exact review, CI and integration. After checked delivery,
+retirement must remove the exact local, remote and origin tracking refs and
+verify the resulting inventory. A candidate need not have a local author branch:
+retirement can bind a self-contained recovery bundle to its exact detached HEAD.
+Advanced refs, dirty source and live use remain protected. Reconcile their useful
+work or preserve it in a verified recovery archive before removing their refs.
+A completed rollout with pending retirement is still unfinished reconciliation.
+
+A retirement retry never repeats ref deletion after the durable deletion boundary
+if any owned local, remote, or tracking handle remains. A matching SHA can still
+be a new registration after a crash. Preserve it and the recovery artifacts;
+reconcile the remaining handle with its owner before retrying. An absent scoped
+ref inventory permits archive recovery to continue. A retired receipt also
+rechecks that inventory and cannot conceal a recreated handle.

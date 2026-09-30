@@ -82,8 +82,6 @@ def retire(home: Path, identity: str) -> dict:
         if record["phase"] != "done":
             raise ValueError("retirement requires completed rollout")
         old = record.get("retirement", {})
-        if old.get("state") == "retired":
-            return old
         workspace = Path(record["workspace"])
         repo = Path(record["repo"])
         branch, head = record["branch"], record["head"]
@@ -104,6 +102,25 @@ def retire(home: Path, identity: str) -> dict:
         try:
             if delivery._git(workspace, "remote", "get-url", "origin") != record["origin"]:
                 raise ValueError("canonical origin changed")
+            local_ref = "refs/heads/" + branch
+            tracking_ref = "refs/remotes/origin/" + branch
+            def require_absent_refs():
+                for ref, label in ((local_ref, "local"), (tracking_ref, "tracking")):
+                    if delivery._git(workspace, "for-each-ref", "--format=%(objectname)", ref):
+                        raise ValueError(f"{label} candidate ref remains or reappeared; preserve new work")
+                if delivery._remote(workspace, branch):
+                    raise ValueError("remote candidate ref remains or reappeared; preserve new work")
+            if old.get("state") == "retired" or old.get("refs_retired"):
+                row["refs_retired"] = True
+                # A prior receipt cannot authorize deleting a recreated handle.
+                require_absent_refs()
+                row.update(state="retired", reason=old["reason"])
+                return save()
+            if old.get("ref_effects_started"):
+                # After an uncertain prior deletion, even the same SHA can name
+                # a new registration (ABA). Preserve all remaining handles until
+                # the owner reconciles them; never replay destructive effects.
+                require_absent_refs()
             # A checked remote main, rather than a stale local main, proves inclusion.
             delivery._git(workspace, "fetch", "-q", "origin", "refs/heads/main")
             main = delivery._git(workspace, "rev-parse", "FETCH_HEAD")
@@ -114,9 +131,11 @@ def retire(home: Path, identity: str) -> dict:
             remote = delivery._remote(workspace, branch)
             if remote and remote != head:
                 raise ValueError("remote candidate branch moved; preserve new work")
+            tracking_ref = "refs/remotes/origin/" + branch
+            tracking = delivery._git(workspace, "for-each-ref", "--format=%(objectname)", tracking_ref)
+            if tracking and tracking != head:
+                raise ValueError("candidate tracking ref moved; preserve new work")
             if repo.exists():
-                if not local:
-                    raise ValueError("candidate exists without its expected branch")
                 delivery._repository(record)
                 if delivery._git(repo, "rev-parse", "HEAD") != head or delivery._git(repo, "status", "--porcelain", "--untracked-files=all"):
                     raise ValueError("candidate has new or dirty work")
@@ -131,7 +150,7 @@ def retire(home: Path, identity: str) -> dict:
                 if reason:
                     raise ValueError(reason)
                 # Runtime copies are detached and never delivery-owned branches.
-                if delivery._git(repo, "symbolic-ref", "--short", "HEAD") != branch:
+                if delivery._git(repo, "rev-parse", "--symbolic-full-name", "HEAD") not in {"HEAD", "refs/heads/" + branch}:
                     raise ValueError("candidate checkout branch changed")
             directory = home / "retired-candidates"
             directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -142,10 +161,13 @@ def retire(home: Path, identity: str) -> dict:
                 os.close(descriptor)
             bundle = directory / (identity + "-" + head + ".bundle")
             if not bundle.exists():
-                if not local:
+                if not local and not repo.exists():
                     raise ValueError("candidate branch absent without a durable recovery bundle")
                 temp = bundle.with_suffix(".tmp")
-                delivery._git(workspace, "bundle", "create", str(temp), "refs/heads/" + branch)
+                # Detached authors need no local publication branch. HEAD in a
+                # verified exact candidate still preserves its entire ancestry.
+                delivery._git(workspace if local else repo, "bundle", "create", str(temp),
+                              "refs/heads/" + branch if local else "HEAD")
                 delivery._git(workspace, "bundle", "verify", str(temp))
                 os.chmod(temp, 0o400)
                 with temp.open("rb") as handle:
@@ -158,7 +180,7 @@ def retire(home: Path, identity: str) -> dict:
                     os.close(descriptor)
             delivery._git(workspace, "bundle", "verify", str(bundle))
             listed = delivery._git(workspace, "bundle", "list-heads", str(bundle))
-            if f"{head} refs/heads/{branch}" not in listed.splitlines():
+            if not {f"{head} refs/heads/{branch}", f"{head} HEAD"}.intersection(listed.splitlines()):
                 raise ValueError("recovery bundle does not bind exact candidate")
             archive = directory / (identity + "-" + head + ".tree")
             admin_archive = directory / (identity + "-" + head + ".admin")
@@ -184,10 +206,28 @@ def retire(home: Path, identity: str) -> dict:
                 raise ValueError("candidate registration missing without preserved metadata")
             row.update(bundle=str(bundle), bundle_sha256=hashlib.sha256(bundle.read_bytes()).hexdigest(),
                        tree_archive=str(archive), admin_archive=str(admin_archive), administrative_directory=str(admin))
+            row["ref_effects_started"] = True
             save()  # Durable identity and recovery edge precede every effect.
-            if remote:
-                delivery._git(workspace, "push", "origin", ":refs/heads/" + branch,
-                              "--force-with-lease=refs/heads/" + branch + ":" + head)
+            if old.get("ref_effects_started"):
+                # Recovery only archives. Never enter any ref-deletion path,
+                # including for a handle recreated after the initial check.
+                require_absent_refs()
+            else:
+                if remote:
+                    # Push by URL: Git must not implicitly overwrite an origin
+                    # tracking ref that advances while the remote lease is checked.
+                    delivery._git(workspace, "push", record["origin"], ":refs/heads/" + branch,
+                                  "--force-with-lease=refs/heads/" + branch + ":" + head)
+                latest_tracking = delivery._git(workspace, "for-each-ref", "--format=%(objectname)", tracking_ref)
+                if latest_tracking:
+                    if latest_tracking != head:
+                        raise ValueError("candidate tracking ref moved during retirement; preserve new work")
+                    delivery._git(workspace, "update-ref", "-d", tracking_ref, head)
+                latest_local = delivery._git(workspace, "for-each-ref", "--format=%(objectname)", local_ref)
+                if latest_local and (not local or latest_local != head):
+                    raise ValueError("local candidate ref appeared or moved during retirement; preserve new work")
+                if delivery._remote(workspace, branch):
+                    raise ValueError("remote candidate ref reappeared during retirement; preserve new work")
             if repo.exists():
                 # Preserve the entire directory, including any ignored bytes that
                 # arrived after admission. No recursive deletion can race a writer.
@@ -210,10 +250,11 @@ def retire(home: Path, identity: str) -> dict:
                         os.fsync(descriptor)
                     finally:
                         os.close(descriptor)
-            if local:
+            if local and not old.get("ref_effects_started"):
                 # Atomic expected-old deletion refuses a concurrently advanced ref.
                 delivery._git(workspace, "update-ref", "-d", "refs/heads/" + branch, head)
-            row.update(state="retired", reason="Exact integrated candidate archived; temporary branch retired and exact worktree registration archived")
+            require_absent_refs()
+            row.update(state="retired", refs_retired=True, reason="Exact integrated candidate archived; temporary branch retired and exact worktree registration archived")
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             row["reason"] = str(exc)
         return save()
