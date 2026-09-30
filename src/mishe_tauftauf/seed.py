@@ -49,6 +49,8 @@ def _require_worktree(home: Path) -> None:
     worktree, never as a plant-home-shaped subtree of another directory. Tests plant a
     site by calling init() inside a freshly initialized repository, which this allows.
     """
+    if (home.resolve() / ".git").exists():
+        raise ValueError(f"site cannot be a repository root: {home}")
     workspace = home.parent.resolve()
     if not workspace.is_dir():
         raise ValueError(f"site must be directly inside a Git worktree: {workspace}")

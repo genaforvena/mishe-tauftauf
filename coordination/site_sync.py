@@ -106,7 +106,7 @@ def register_site(target_home: Path, session: str) -> bool:
     return True
 
 
-def _target_state(home: Path, session: str) -> None:
+def _target_state(home: Path, session: str, *, runtime_only: bool = False) -> None:
     workspace = home.parent
     if home.resolve() != home or workspace.resolve() == KERNEL or _git(workspace, "rev-parse", "--show-toplevel") != str(workspace):
         raise RuntimeError(f"linked site is not a separate direct Git worktree: {home}")
@@ -117,7 +117,7 @@ def _target_state(home: Path, session: str) -> None:
     if not owns_session(home, session):
         raise RuntimeError(f"tmux session is not owned by linked site: {session}")
     dirty = _git(workspace, "status", "--porcelain")
-    if dirty:
+    if dirty and not runtime_only:
         raise RuntimeError(f"linked worktree has unlanded changes: {workspace}; {dirty.splitlines()[0]}")
 
 
@@ -169,7 +169,7 @@ def _leases(session: str, expected: set[str]) -> dict[str, datetime]:
     return observed
 
 
-def sync_registered_sites(core_home: Path, ci: dict[str, str]) -> list[str]:
+def sync_registered_sites(core_home: Path, ci: dict[str, str], *, runtime_only: bool = False) -> list[str]:
     """Apply the exact green local commit to clean, owned sites; retry later on a hold."""
     if core_home.parent.resolve() != KERNEL or ci.get("state") != "pass":
         return []
@@ -185,21 +185,22 @@ def sync_registered_sites(core_home: Path, ci: dict[str, str]) -> list[str]:
         sha = ci["sha"]
         outcomes = []
         for row in sites:
-            if row["sha"] == sha:
+            if row["sha"] == sha and not row.get("error"):
                 continue
             target = Path(row["home"])
             task = f"kernel-sync-{sha[:12]}-{target.parent.name}"
             try:
                 if _git(KERNEL, "rev-parse", "HEAD") != sha or _git(KERNEL, "status", "--porcelain"):
                     raise RuntimeError("core checkout is not clean at the green CI commit")
-                _target_state(target, row["session"])
+                _target_state(target, row["session"], runtime_only=runtime_only)
                 env = os.environ.copy()
                 env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
                 env["PYTHONPATH"] = os.pathsep.join(
                     part for part in (str(KERNEL / "src"), env.get("PYTHONPATH", "")) if part)
                 result = subprocess.run(
                     [sys.executable, "-m", "mishe_tauftauf.plant",
-                     "--workspace", str(target.parent), "--home", str(target), "--session", row["session"]],
+                     "--workspace", str(target.parent), "--home", str(target), "--session", row["session"],
+                     *(["--runtime-only"] if runtime_only else [])],
                     capture_output=True, text=True, timeout=240, env=env)
                 if result.returncode:
                     raise RuntimeError(result.stderr.strip()[-400:] or result.stdout.strip()[-400:] or "plant command failed")
@@ -252,13 +253,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Refresh registered plants from a checked core commit")
     parser.add_argument("--home", type=Path, required=True, help="core resident site")
     parser.add_argument("--follow", action="store_true", help="retry after fresh green CI readings")
+    parser.add_argument("--runtime-only", action="store_true",
+                        help="refresh existing owned runtimes without changing target AGENTS.md; allow target dirt")
     args = parser.parse_args()
     home = args.home.resolve()
     while True:
         ci = fresh_ci(home) if args.follow else read(home)
         if ci:
             try:
-                for outcome in sync_registered_sites(home, ci):
+                for outcome in sync_registered_sites(home, ci, runtime_only=args.runtime_only):
                     print(outcome, flush=True)
             except (OSError, RuntimeError, ValueError) as exc:
                 print(f"linked-site sync unavailable: {exc}", flush=True)

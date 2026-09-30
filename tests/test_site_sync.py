@@ -120,6 +120,53 @@ def test_failed_live_verification_keeps_old_sha_for_retry(tmp_path: Path, monkey
     assert site_sync._load(core_home)[0]["sha"] == "old"
 
 
+def test_explicit_runtime_refresh_allows_dirty_target_but_requires_clean_core(tmp_path, monkeypatch):
+    core_home, target = setup_sites(tmp_path, monkeypatch)
+    sha = "e" * 40
+    core_dirty = False
+
+    def git(workspace, *args):
+        if args == ("rev-parse", "HEAD"):
+            return sha
+        if args == ("rev-parse", "--show-toplevel"):
+            return str(workspace)
+        if args == ("status", "--porcelain"):
+            return " M application.py" if workspace == target.parent or core_dirty else ""
+        raise AssertionError(args)
+
+    monkeypatch.setattr(site_sync, "_git", git)
+    site_sync._save(core_home, [{"home": str(target), "session": "example", "sha": "old"}])
+    calls = []
+    monkeypatch.setattr(site_sync.subprocess, "run", lambda argv, **kwargs: (
+        calls.append(argv), subprocess.CompletedProcess(argv, 0, "ready", ""))[1])
+    monkeypatch.setattr(site_sync, "_verify", lambda *_: None)
+    result = site_sync.sync_registered_sites(core_home, {"state": "pass", "sha": sha}, runtime_only=True)
+    assert result == [f"synced {target.parent} {sha[:12]}"]
+    assert "--runtime-only" in calls[0]
+    core_dirty = True
+    site_sync._update_site(core_home, target, sha="old")
+    assert "core checkout is not clean" in site_sync.sync_registered_sites(
+        core_home, {"state": "pass", "sha": sha}, runtime_only=True)[0]
+    assert len(calls) == 1
+
+
+def test_matching_sha_with_error_is_retried(tmp_path, monkeypatch):
+    core_home, target = setup_sites(tmp_path, monkeypatch)
+    sha = "f" * 40
+    site_sync._save(core_home, [{"home": str(target), "session": "example", "sha": sha,
+                                "error": "previous verification failed"}])
+    monkeypatch.setattr(site_sync, "_git", lambda workspace, *args: (
+        sha if args == ("rev-parse", "HEAD") else
+        str(workspace) if args == ("rev-parse", "--show-toplevel") else ""))
+    monkeypatch.setattr(site_sync.subprocess, "run", lambda argv, **kwargs:
+                        subprocess.CompletedProcess(argv, 0, "ready", ""))
+    checked = []
+    monkeypatch.setattr(site_sync, "_verify", lambda *_: checked.append(True))
+    assert site_sync.sync_registered_sites(core_home, {"state": "pass", "sha": sha})
+    assert checked == [True]
+    assert "error" not in site_sync._load(core_home)[0]
+
+
 def test_core_change_during_plant_keeps_old_site_sha(tmp_path: Path, monkeypatch) -> None:
     core_home, target = setup_sites(tmp_path, monkeypatch)
     sha = "d" * 40

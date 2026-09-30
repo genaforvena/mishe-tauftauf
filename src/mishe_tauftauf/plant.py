@@ -96,13 +96,13 @@ def unit_text(home: Path, session: str, slug: str, python: str) -> str:
     )
 
 
-def plant(home: Path, session: str, engine_command: str, operator_window: str, persist: bool) -> None:
+def plant(home: Path, session: str, engine_command: str, operator_window: str, persist: bool,
+          *, runtime_only: bool = False) -> None:
     home = home.resolve()
     workspace = home.parent
-    repository = subprocess.run(["git", "-C", str(workspace), "rev-parse", "--show-toplevel"],
-                                capture_output=True, text=True)
-    if repository.returncode or Path(repository.stdout.strip()).resolve() != workspace:
-        raise ValueError(f"site must be directly inside a Git worktree: {workspace}")
+    seed._require_worktree(home)
+    if runtime_only and not owns_session(home, session):
+        raise ValueError("runtime-only refresh requires an existing owned session")
     ignored = subprocess.run(["git", "-C", str(workspace), "check-ignore", "-q", str(home)],
                              capture_output=True)
     if ignored.returncode:
@@ -115,7 +115,7 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
         with exclude_path.open("a", encoding="utf-8") as handle:
             handle.write(f"\n/{home.name}/\n")
     contract_changed = False
-    if workspace != ROOT:
+    if workspace != ROOT and not runtime_only:
         contract = (ROOT / "src" / "mishe_tauftauf" / "seed_agent_contract.md").read_text(encoding="utf-8")
         agents = workspace / "AGENTS.md"
         current = agents.read_text(encoding="utf-8") if agents.exists() else ""
@@ -212,11 +212,13 @@ def main(argv: list[str] | None = None) -> tuple[Path, str, Path, bool]:
     parser.add_argument("--engine-command", default="codex")
     parser.add_argument("--operator-window")
     parser.add_argument("--no-services", action="store_true", help="start panes without installing user services")
+    parser.add_argument("--runtime-only", action="store_true", help="refresh an owned runtime without changing AGENTS.md")
     args = parser.parse_args(argv)
     workspace = args.workspace.resolve()
     home, session = site_and_session(workspace, ".mishe-seed" if workspace == ROOT else ".mishe-tauftauf",
                                      args.home, args.session)
-    plant(home, session, args.engine_command, preferred_operator_window(home, args.operator_window), not args.no_services)
+    plant(home, session, args.engine_command, preferred_operator_window(home, args.operator_window), not args.no_services,
+          runtime_only=args.runtime_only)
     return home.resolve(), session, workspace, not args.no_services
 
 

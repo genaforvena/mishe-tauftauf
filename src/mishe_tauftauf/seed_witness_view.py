@@ -91,7 +91,7 @@ def render(home: Path) -> str:
     now = datetime.now(timezone.utc)
     recent_entries = [entry for entry in entries if
                       0 <= (now - datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))).total_seconds() <= 120]
-    by_source = Counter(entry.source for entry in recent_entries if entry.source not in {"seed", "witness"})
+    by_source = Counter(entry.source for entry in recent_entries if entry.source != "seed")
     by_observation = Counter(entry.body.splitlines()[0].split(" sha256=")[0] for entry in recent_entries
                              if entry.source == "seed" and entry.body.startswith("seed observation "))
     floods = [f"{source}: {count} entries" for source, count in by_source.items() if count >= 8]
