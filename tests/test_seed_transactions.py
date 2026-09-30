@@ -205,3 +205,34 @@ def test_work_creation_and_yield_settlement_have_distinct_admission_guards(tmp_p
     assert all('one matching canonical work receipt exists' not in t['required_commit_guards'] for t in work)
     assert all(t['event'] == 'yield' and 'one matching canonical work receipt exists' in t['required_commit_guards'] for t in yields)
     assert any(t['phase'] == 'verified' and t['postconditions']['work_receipt_matches'] for t in yields)
+
+
+def test_yield_receipt_preserves_known_task_and_action(tmp_path, monkeypatch):
+    from mishe_tauftauf import task_state
+    attempt, handoff = setup_wake(tmp_path, monkeypatch)
+    evidence = tmp_path/'proof.txt'
+    task_state.claim(tmp_path, 'repair', 'witness', attempt, 'Inspect the source evidence read-only for this task.', evidence)
+    next_step = 'Review the saved report against the exact candidate source before landing.'
+    task_state.set_step(tmp_path, 'repair', 'witness', next_step, 'The read-only source checks passed; the report is saved.', evidence)
+    seed.yield_wake(tmp_path, 'witness', attempt, handoff, result='verified', continue_task=True)
+    receipt = next(e for e in Feed(tmp_path).entries() if e.body.startswith('seed yield '))
+    assert 'Task repair continues after context clear.' in receipt.body
+    assert next_step in receipt.body
+
+
+def test_yield_preflight_plans_effect_and_final_receipt_uses_observations(tmp_path, monkeypatch):
+    attempt, handoff = setup_wake(tmp_path, monkeypatch)
+    original = post_check.require
+    drafts = []
+    def capture(home, source, body, context=None, stage='post'):
+        transaction = (context or {}).get('proposed', {}).get('transaction', {})
+        if body.startswith('seed yield '):drafts.append((transaction.get('phase'), body))
+        return original(home, source, body, context=context, stage=stage)
+    monkeypatch.setattr(post_check, 'require', capture)
+    seed.yield_wake(tmp_path, 'witness', attempt, handoff, result='blocked')
+    prepared = [body for phase, body in drafts if phase == 'prepared']
+    verified = [body for phase, body in drafts if phase == 'verified']
+    assert prepared and verified
+    assert all('plans to settle' in body and 'This receipt settles' not in body for body in prepared)
+    assert all('This receipt settles' in body for body in verified)
+    assert next(e for e in Feed(tmp_path).entries() if e.body.startswith('seed yield ')).body in verified
