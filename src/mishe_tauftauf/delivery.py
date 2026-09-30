@@ -11,6 +11,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from . import task_state
+from .records import payload as record_payload
 from .feed import Feed
 from .observations import validate_slug
 
@@ -186,7 +187,7 @@ def _sync(home: Path, record: dict, previous: dict | None) -> None:
         event = f"delivery-{record['identity']}-updated"
         reason = f"Candidate transition {record['transition']} changed to {record['phase']}; author {record['owner']} has actionable work."
         if not any(e.body.startswith(f"[task-event] {event}\n") and
-                   json.loads(e.body.splitlines()[1]).get("reason") == reason for e in Feed(home).entries()):
+                   record_payload(e).get("reason") == reason for e in Feed(home).entries()):
             task_state.signal(home, event, "delivery", Path(evidence), reason)
     if record["phase"] == "done":
         rollout, rollout_digest = task_state._evidence(Path(record["rollout"]))
@@ -197,9 +198,9 @@ def _sync(home: Path, record: dict, previous: dict | None) -> None:
             task_state.finish(home, record["identity"], record["owner"],
                               "Verified exact final main CI and deployed consumers", Path(rollout))
     if previous is None or (record["phase"], record["reason"]) != (previous["phase"], previous["reason"]):
-        Feed(home).append("delivery", f"Delivery {record['identity']} author={record['owner']} head={record['head']} "
+        Feed(home).append_record("delivery", f"Delivery {record['identity']} author={record['owner']} head={record['head']} "
             f"phase={record['phase']}: {record['reason']}. Evidence: {evidence}. "
-            "Unrelated source work remains admissible.")
+            "Unrelated source work remains admissible.", record, kind="delivery")
 
 
 def submit(home: Path, identity: str, owner: str, repo: Path, base: str, branch: str, review: Path) -> dict:

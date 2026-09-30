@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 
 from .feed import FeedEntry
+from .records import payload
 
 
 TASK_RE = re.compile(r"^\[task\]\s+(\S+)\s+owner=([a-z0-9-]+)(?:\s|$)")
@@ -50,9 +51,10 @@ def work_receipts(entries: list[FeedEntry], channel: str) -> list[Work]:
                 task = re.search(r"(?:^| )task=(\S+)(?: |$)", entry.body.splitlines()[0])
                 step = re.search(r"(?:^| )task_step=(\S+)(?: |$)", entry.body.splitlines()[0])
                 outcome = re.search(r"(?:^| )task_outcome=(\S+)(?: |$)", entry.body.splitlines()[0])
+                data = payload(entry) if any(line.startswith("[record] ") for line in entry.body.splitlines()) else {}
                 work.append(Work(channel, int(match.group(2)), match.group(3), match.group(4),
-                                 task.group(1) if task else None, step.group(1) if step else None,
-                                 outcome.group(1) if outcome else None))
+                                 task.group(1) if task else data.get("task"), step.group(1) if step else data.get("task_step"),
+                                 outcome.group(1) if outcome else data.get("task_outcome")))
     return work
 
 

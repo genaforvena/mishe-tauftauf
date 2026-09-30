@@ -28,7 +28,7 @@ The shared tape uses `[task] <id> owner=<role>`, `[taking] <id>`, `[done] <id>`,
 
 Every mind may implement an owned, evidence-backed repair across Mishe's layers, including its rules and architecture. A role is not a file restriction. The operator's standing instruction to encourage these changes is carried in doctrine and both agent contracts. Ownership, acceptance checks, independent review, and external boundaries still apply.
 
-Ready owned work, then offered ready work, precedes new improvement selection. Idle is not acceptable when an authorized useful step is available. Issue spotting and evidence-backed repair are standing duties, including on green panes. A checked wait preserves its exact retry while the mind advances independent work; a stable waiting backlog allows one independent-work decision, not repeated polls. A long task keeps one ID and uses `seed yield --continue` only with an actionable next step. Yield and clear end a wake, not its open task.
+Minds choose eligible work from the full shared board before selecting a new improvement. Idle is not acceptable when an authorized useful step is available. Issue spotting and evidence-backed repair are standing duties, including on green panes. A checked wait preserves its exact retry while the mind advances independent work; a stable waiting backlog allows one independent-work decision, not repeated polls. A long task keeps one ID and uses `seed yield --continue` only with an actionable next step. Yield and clear end a wake, not its open task.
 
 ## Task prerequisites and helper offers
 
@@ -38,9 +38,9 @@ Task prerequisites have a deterministic boundary:
 - `task wait` names an exact event or deadline.
 - `task event` publishes the changed condition.
 
-The supervisor records a consumed attempt tied to the wake and observation. It refuses an unchanged waiting task on quiet picks or continuation. A new pane observation still invites investigation; it does not make a waiting task actionable.
+The supervisor delivers an advisory board without choosing a task. The mind records one atomic claim tied to its exact wake and observation. It refuses an unchanged waiting task on quiet picks or continuation. A new pane observation still invites investigation; it does not make a waiting task actionable.
 
-With `task offer`, an owner names suitable helper charters. The shared seed lock and durable pending wake reserve an offered ready step before delivery, preventing another helper from taking it.
+With `task offer`, an owner names suitable helper charters as advice. An offer is not required. `task claim` under the shared lock reserves an eligible step for one active wake and transfers ownership, preventing another mind from taking it. Author delivery and fact-owned integration retain their required owners.
 
 These are local scheduling and cooperative ownership checks. They grant no authority over arbitrary editor writes or external fleet resources.
 
@@ -79,3 +79,9 @@ Its planting skill installs user services only when used for that full local set
 The task lifecycle now shares one projection for display and scheduling. Managed tasks use evidence-backed `task add`, `task finish`, and `task reopen`; attaching a child protects its legacy parent from prose completion. A child finish keeps the overall goal open. Owner/evidence checks and completion-cycle checks are cooperative local boundaries, not protection against arbitrary direct file writes. Structured control tags are reserved to the CLI and validated before append.
 
 Work admission and result acceptance are separate. A checked waiting goal may name an independently admissible child with `--alternative`; missing locally owned deliverables become production steps. `task wait --producer ROLE --retry-task ID` wakes review after completed producer evidence, including a producer already completed when the wait is recorded. A stable checked waiting backlog receives one independent-work decision, then stays quiet until its inputs change. Progress/outcome comparison rejects repeated steps that merely replace an artifact hash. These mechanisms do not grant a new training budget or external authority.
+
+## Explainable publication and temporal detection
+
+Every new chat entry explains the event, evidence or artifact, and next owner or action. No inline JSON is allowed, including fenced payloads, task transitions and supervisor receipts. Structured state belongs in immutable referenced audit records; historical entries remain unchanged. R01–R08 check every post; P01–P28 check selections and handoffs. A configured suspicious, UNKNOWN, missing or unavailable check refuses publication privately and saves the draft and correction report. Correct and recheck without repeating prior effects. Unconfigured semantics remain explicitly untested; model detection requires measured validation.
+
+Witness checks task histories across all roles, including itself and seed receipts, completed producers, repeated attempts, conditional readiness and task/action drift. Hash changes alone do not prove progress. Inspect `task coordination-report` and verify findings against sequence and artifact evidence. Pane refresh performs no model inference.

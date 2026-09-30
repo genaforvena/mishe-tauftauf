@@ -8,15 +8,16 @@ from pathlib import Path
 
 from .feed import Feed, FeedEntry
 from .observations import validate_slug
+from .records import payload
 
 
-def validate(source: str, body: str) -> tuple[str, dict]:
+def validate(source: str, body: str, data: dict | None = None) -> tuple[str, dict]:
     from .task_state import _event
 
     try:
         first, rest = body.split("\n", 1)
         identity = _event(first.removeprefix("[landing] "))
-        data = json.loads(rest.splitlines()[0])
+        data = json.loads(rest.splitlines()[0]) if data is None else data
         if not isinstance(data, dict) or data.get("owner") != "genome" or source not in {"genome", "operator"}:
             raise ValueError("landing registration belongs to genome or operator")
         validate_slug(data["producer"])
@@ -34,7 +35,7 @@ def registrations(entries: list[FeedEntry]) -> dict[str, int]:
     positions = {}
     for entry in entries:
         if entry.body.startswith("[landing] "):
-            identity, _ = validate(entry.source, entry.body)
+            identity, _ = validate(entry.source, entry.body, payload(entry))
             positions.setdefault(identity, entry.sequence)
     return positions
 

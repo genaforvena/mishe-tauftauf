@@ -7,7 +7,9 @@ import os
 import re
 import sqlite3
 import tempfile
-from dataclasses import dataclass
+import threading
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -21,6 +23,41 @@ RESERVED_PREFIXES = ("prediction/", "observation/")
 TASK_CONTROL_TAGS = ("task-state", "task-event", "task-claim", "task-add", "task-close", "task-reopen", "landing")
 
 
+_PUBLICATION_GUARDS = {}
+_PUBLICATION_GUARDS_LOCK = threading.Lock()
+_PUBLICATION_DEPTH = threading.local()
+
+
+@contextmanager
+def publication_lock(home):
+    """Serialize context capture, private admission and publication across writers.
+
+    Reentrant within a thread so one handoff transaction checks both receipts
+    before installing its authoritative files. The feed lock remains inference-free.
+    """
+    key = str(Path(home).resolve())
+    with _PUBLICATION_GUARDS_LOCK:
+        guard = _PUBLICATION_GUARDS.setdefault(key, threading.RLock())
+    with guard:
+        depths = getattr(_PUBLICATION_DEPTH, 'depths', None)
+        if depths is None:
+            depths = _PUBLICATION_DEPTH.depths = {}
+        depth = depths.get(key, 0)
+        fd = None
+        if depth == 0:
+            fd = os.open(Path(home) / '.publication.lock', os.O_RDWR | os.O_CREAT, 0o600)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        depths[key] = depth + 1
+        try:
+            yield
+        finally:
+            if depth:
+                depths[key] = depth
+            else:
+                depths.pop(key, None)
+                os.close(fd)
+
+
 class FeedError(ValueError):
     pass
 
@@ -31,6 +68,7 @@ class FeedEntry:
     timestamp: str
     source: str
     body: str
+    home: Path | None = field(default=None, compare=False, repr=False)
 
 
 def utc_now() -> str:
@@ -52,7 +90,7 @@ def _encode_entry(sequence: int, timestamp: str, source: str, body: str) -> byte
     return (header + "".join(framed) + terminator).encode("utf-8")
 
 
-def parse_feed(data: bytes, *, start_sequence: int = 1) -> list[FeedEntry]:
+def parse_feed(data: bytes, *, start_sequence: int = 1, home: Path | str | None = None) -> list[FeedEntry]:
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -101,7 +139,7 @@ def parse_feed(data: bytes, *, start_sequence: int = 1) -> list[FeedEntry]:
             body = body[:-1]
         if not body:
             raise FeedError(f"empty body at sequence {sequence}")
-        entries.append(FeedEntry(sequence, timestamp, source, body))
+        entries.append(FeedEntry(sequence, timestamp, source, body, Path(home) if home is not None else None))
         expected += 1
     return entries
 
@@ -177,14 +215,13 @@ class Feed:
                 connection.close()
             raise FeedError(f"corrupt feed identity index: {exc}") from exc
 
-    @staticmethod
-    def _indexed_entry(handle, index: dict, sequence: int) -> FeedEntry:
+    def _indexed_entry(self, handle, index: dict, sequence: int) -> FeedEntry:
         if not isinstance(sequence, int) or not 1 <= sequence <= index["sequence"]:
             raise FeedError("identity index sequence outside canonical feed")
         first_seq, first_offset = max((seq, offset) for seq, offset in index["checkpoints"] if seq <= sequence)
         end_offset = next((offset for seq, offset in index["checkpoints"] if seq > sequence), index["metadata"][1])
         handle.seek(first_offset)
-        entries = parse_feed(handle.read(end_offset - first_offset), start_sequence=first_seq)
+        entries = parse_feed(handle.read(end_offset - first_offset), start_sequence=first_seq, home=self.home)
         found = next((entry for entry in entries if entry.sequence == sequence), None)
         if found is None:
             raise FeedError("identity index points outside canonical feed")
@@ -291,8 +328,13 @@ class Feed:
             target = index["sequence"] if limit is None else min(index["sequence"], start + limit - 1)
             end_offset = next((offset for seq, offset in checkpoints if seq > target), index["metadata"][1])
             handle.seek(first_offset)
-            selected = parse_feed(handle.read(end_offset - first_offset), start_sequence=first_seq)
-            return [entry for entry in selected if start <= entry.sequence <= target]
+            selected = parse_feed(handle.read(end_offset - first_offset), start_sequence=first_seq, home=self.home)
+            result = [entry for entry in selected if start <= entry.sequence <= target]
+            from .records import payload
+            for entry in result:
+                if any(line.lstrip().startswith("[record]") for line in entry.body.splitlines()):
+                    payload(entry)
+            return result
 
     def tail_sequence(self) -> int:
         """Return the verified canonical tail without replaying a current feed."""
@@ -310,9 +352,15 @@ class Feed:
                     raise FeedError("feed tail disagrees with checkpoint")
             return index["sequence"]
 
-    def append(self, source: str, body: str, *, reserved: bool = False, once: bool = False,
+    def append(self, source: str, body: str, **kwargs) -> FeedEntry:
+        from .observations import validate_home
+        validate_home(self.home)
+        with publication_lock(self.home):
+            return self._append(source, body, **kwargs)
+
+    def _append(self, source: str, body: str, *, reserved: bool = False, once: bool = False,
                request: str | None = None, conflicting: str | None = None,
-               task_control: bool = False) -> FeedEntry:
+               task_control: bool = False, context: dict | None = None) -> FeedEntry:
         if not SOURCE_RE.fullmatch(source):
             raise FeedError("source must match [A-Za-z0-9._/-]+")
         if not reserved and (source in RESERVED_EXACT or source.startswith(RESERVED_PREFIXES)):
@@ -323,7 +371,13 @@ class Feed:
             if not task_control:
                 raise FeedError("reserved task control; use the task CLI for structured operations")
             from .task_state import validate_control
-            validate_control(source, body)
+            from .records import payload
+            if any(line.lstrip().startswith("[record]") for line in body.splitlines()):
+                first = body.splitlines()[0]
+                data = payload(FeedEntry(0, "", source, body, self.home))
+                validate_control(source, first + "\n" + json.dumps(data))
+            else:
+                validate_control(source, body)
         try:
             body.encode("utf-8")
         except UnicodeEncodeError as exc:
@@ -334,6 +388,20 @@ class Feed:
             pass
         from .observations import validate_home
         validate_home(self.home)
+        record_data = None
+        if any(line.lstrip().startswith("[record]") for line in body.splitlines()):
+            from .records import payload
+            record_data = payload(FeedEntry(0, "", source, body, self.home))
+            if context is None:
+                context = record_data
+        # Every writer shares publication admission. A refusal preserves its draft
+        # privately and allocates neither a feed sequence nor a task transition.
+        # Inference runs before the feed file's exclusive lock.
+        from .post_check import require
+        if (self.home / "publication-check.json").exists() and (not context or "question_episodes" not in context):
+            from .coordination_checks import episode
+            context = episode(self.home, source, body, context=context)
+        require(self.home, source, body, context=context)
         fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
         try:
             with os.fdopen(fd, "r+b", buffering=0) as handle:
@@ -356,6 +424,10 @@ class Feed:
                     if index["sequence"]:
                         handle.seek(index["tail_offset"])
                         parse_feed(handle.read(), start_sequence=index["sequence"])
+                    if record_data is not None:
+                        from .records import payload
+                        if payload(FeedEntry(0, "", source, body, self.home)) != record_data:
+                            raise FeedError("record changed during publication checks; reconcile before posting")
                     sequence = index["sequence"] + 1
                     timestamp = utc_now()
                     encoded = _encode_entry(sequence, timestamp, source, body)
@@ -379,7 +451,7 @@ class Feed:
                     except sqlite3.DatabaseError as exc:
                         raise FeedError(f"feed persisted but identity index update failed: {exc}") from exc
                     self._save_index(handle, index)
-                    return FeedEntry(sequence, timestamp, source, body)
+                    return FeedEntry(sequence, timestamp, source, body, self.home)
                 finally:
                     connection.close()
         except Exception:
@@ -394,7 +466,30 @@ class Feed:
 
     def append_task_control(self, source: str, body: str) -> FeedEntry:
         """Structured task operations own these tags; ordinary chat cannot emit them."""
+        from .task_state import validate_control
+        from .records import payload
+        validate_control(source, body)
+        lines = body.splitlines()
+        if len(lines) > 1 and lines[1].lstrip().startswith("{"):
+            data = payload(FeedEntry(0, "", source, body))
+            explanation = "\n".join(lines[2:]).strip()
+            if not explanation:
+                explanation = str(data.get("reason") or data.get("progress") or data.get("next_step") or "Recorded task operation.")
+                if data.get("evidence"):
+                    explanation += f" Evidence: {data['evidence']}."
+            return self.append_record(source, lines[0] + "\n" + explanation, data,
+                                      kind=lines[0].split()[0].strip("[]"), task_control=True)
         return self.append(source, body, task_control=True)
+
+    def append_record(self, source: str, body: str, payload: dict, *, kind: str = "event",
+                      **append_kwargs) -> FeedEntry:
+        """Persist structured evidence before publishing its readable reference."""
+        from .records import prepare
+        if not isinstance(body, str) or not body.strip():
+            raise FeedError("record explanation must be non-empty text")
+        ref = prepare(self.home, payload, kind=kind)
+        append_kwargs.setdefault("context", payload)
+        return self.append(source, body.rstrip("\n") + "\n" + ref, **append_kwargs)
 
     def append_runtime_once(self, source: str, body: str) -> FeedEntry:
         """Append one exact textual receipt atomically across cooperating writers."""

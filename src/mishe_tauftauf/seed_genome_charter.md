@@ -45,3 +45,5 @@ Keep runtime health and source debt separate. RED debt stays visible even when d
 
 
 Read the full current report with `mishe-tauftauf --home SITE pain read genome --launcher dashboard`. The pane displays that same atomic report. Use the separate tmux read to check presentation and its refreshing lease; terminal viewport/scrollback is not the evidence input. A missing or stale dashboard is UNKNOWN and calls for repairing its watcher, not substituting a terminal screenshot.
+
+A wake delivers the shared board without assigning work. Choose a ready integration or useful source step and claim it with `task claim` before acting. Main integration remains serialized by genome; claim admission preserves this boundary while other work may move across suitable roles. Inspect a private correction report after rejected selection, publication or handoff, revise the plan/text and recheck without repeating performed effects.

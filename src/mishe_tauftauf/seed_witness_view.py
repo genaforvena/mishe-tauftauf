@@ -14,6 +14,50 @@ from .feed import Feed
 from .ci_watch import line as ci_line
 from .seed_board import open_tasks, repeated_no_change, work_receipts
 from . import task_state
+from .coordination_checks import anomalies
+
+
+def _publication_lines(home):
+    """Observe saved private verdicts; never invoke inference from a pane."""
+    lines, uncertain = [], False
+    config = home / 'publication-check.json'
+    if not config.exists():
+        lines.append('PUBLICATION GATE: UNTESTED — no semantic worker configured')
+        uncertain = True
+    else:
+        try:
+            data = json.loads(config.read_text(encoding='utf-8'))
+            command = data.get('command')
+            if not isinstance(command, list) or not command or not all(isinstance(value, str) and value for value in command):
+                raise ValueError('command must be a nonempty argv list')
+            lines.append('PUBLICATION GATE: CONFIGURED — availability depends on private worker results')
+        except (OSError, ValueError, TypeError, AttributeError) as exc:
+            lines.append(f'PUBLICATION GATE: UNKNOWN — configuration unavailable: {exc}')
+            uncertain = True
+    try:
+        paths = list((home / 'post-checks').glob('*.json'))
+        if not paths:
+            lines.append('PUBLICATION RESULT: UNTESTED — no saved private review')
+            uncertain = True
+        else:
+            latest = max(paths, key=lambda path: (path.stat().st_mtime_ns, path.name))
+            report = json.loads(latest.read_text(encoding='utf-8'))
+            status = report.get('status')
+            if status not in {'clear', 'suspicious', 'unknown'}:
+                raise ValueError('private review has an invalid status')
+            semantic = report.get('semantic_status', 'untested')
+            refused = status in {'suspicious', 'unknown'}
+            scope = (f" source={report.get('source', 'unknown')} stage={report.get('stage', 'unknown')}" if refused else '')
+            lines.append(f"PUBLICATION RESULT: {'REFUSED' if refused else 'CLEAR'}{scope} semantic={semantic}")
+            lines.append(f'  Evidence: private report={latest}')
+            flagged = [row.get('id', 'unknown') for row in report.get('results', []) if row.get('verdict') in {'suspicious', 'unknown'}]
+            if flagged:
+                lines.append('  Correction questions: ' + ','.join(flagged) + '; inspect the private report before resubmitting.')
+            uncertain = uncertain or refused or semantic in {'unknown', 'untested'}
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
+        lines.append(f'PUBLICATION RESULT: UNKNOWN — private report unavailable: {exc}')
+        uncertain = True
+    return lines, uncertain
 
 
 def render(home: Path) -> str:
@@ -53,7 +97,9 @@ def render(home: Path) -> str:
         verdict = "FAIL witness CI failure needs genome follow-through"
     try:
         entries = Feed(home).entries()
+        feed_error = None
     except (OSError, ValueError) as exc:
+        feed_error = str(exc)
         verdict = f"UNKNOWN witness chat.log unreadable: {exc}"
         lines.append(verdict)
         entries = []
@@ -71,9 +117,37 @@ def render(home: Path) -> str:
     except ValueError as exc:
         verdict = f"UNKNOWN witness task state: {exc}"
         lines.append(verdict)
-    recent = work_receipts(entries, "genome")[-3:]
+    findings = anomalies(entries)
+    if feed_error:
+        findings.append(dict(id='feed-unreadable', task=None, kind='invalid-context', severity='UNKNOWN',
+                             message='Canonical feed unavailable: ' + feed_error, sequences=[], evidence=[str(Feed(home).path)]))
+    severities = Counter(finding['severity'] for finding in findings)
+    coordination = ('UNKNOWN' if severities['UNKNOWN'] else 'RED' if severities['RED'] else
+                    'SUSPICIOUS' if severities['SUSPICIOUS'] else 'GREEN')
+    lines.append(f"COORDINATION: {coordination} — {len(findings)} task findings across all roles")
+    for finding in findings:
+        lines.append(f"ANOMALY: {finding['severity']} task={finding['task'] or 'feed'} "
+                     f"kind={finding['kind']} id={finding['id']} — {finding['message']}")
+        lines.append("  Evidence: sequences=" + ','.join(map(str, finding['sequences'])) +
+                     ("; " + '; '.join(str(value) for value in finding['evidence'] if value) if finding['evidence'] else ''))
+    if severities['UNKNOWN']:
+        verdict = 'UNKNOWN witness coordination evidence invalid'
+    elif severities['RED']:
+        verdict = 'FAIL witness coordination invariants need reconciliation'
+    elif severities['SUSPICIOUS'] and verdict.startswith('PASS'):
+        verdict = 'UNKNOWN witness coordination suspicion needs verification'
+    gate_lines, gate_uncertain = _publication_lines(home)
+    lines.extend(gate_lines)
+    if gate_uncertain and verdict.startswith('PASS'):
+        verdict = 'UNKNOWN witness publication gate needs verified evidence'
+    try:
+        recent = work_receipts(entries, "genome")[-3:]
+        repeated = repeated_no_change(entries, "genome")
+    except (ValueError, TypeError, KeyError) as exc:
+        recent, repeated = [], []
+        verdict = f'UNKNOWN witness receipt evidence: {exc}'
+        lines.append(verdict)
     lines.append("GENOME WORK: " + (", ".join(f"{work.wake}:{work.result}@{work.observation}" for work in recent) or "none"))
-    repeated = repeated_no_change(entries, "genome")
     if repeated:
         identity = repeated[-1].task
         try:
@@ -107,17 +181,17 @@ def render(home: Path) -> str:
     else:
         lines.append("CHAT RATE: GREEN — no repeated high-rate source in the last two minutes")
     for entry in entries:
-        if entry.source in {"witness", "seed"}:
+        if entry.source == 'seed' and entry.body.startswith('seed observation '):
             continue
         paragraphs = entry.body.splitlines()
         if paragraphs:
             visible.append(f"{entry.sequence} {entry.source}: {paragraphs[0]}")
             visible.extend("  " + line for line in paragraphs[1:])
-    lines.append("LATEST CHAT.LOG TEXT (own bookkeeping omitted):")
+    lines.append("LATEST CHAT.LOG TEXT (all roles, including witness and seed work):")
     lines.extend(visible[-20:] or ["(none)"])
     lines.append("GOAL: keep the plant's shared work coherent until each need has an owner, checked result, and next step")
     lines.append("PURSUIT: notice stale panes, forgotten tasks, duplicate claims, and unverified fixes; follow them through the shared text tape")
-    lines.append("NEXT: inspect the newest unresolved issue; repair witness-owned gaps or route one precise task to genome")
+    lines.append("NEXT: verify the strongest unresolved task finding; claim useful work and repair within owned scope")
     lines.append("STATE: " + ("GREEN" if verdict.startswith("PASS") else "RED" if verdict.startswith("FAIL") else "UNKNOWN"))
     report = home / "observations" / "witness"
     report.parent.mkdir(exist_ok=True)
