@@ -385,7 +385,7 @@ def init(home: Path, slug: str, engine_command: str = "codex") -> str:
             f"if [ -x {shlex.quote(str(home.parent.resolve() / '.venv' / 'bin' / 'pytest'))} ]; then "
             "printf '%s\\n' 'TEST RUNNER: .venv/bin/pytest available'; "
             "else printf '%s\\n' 'TEST RUNNER: inspect project environment'; fi\n"
-            f"{shlex.quote(sys.executable)} -c 'from pathlib import Path; from mishe_tauftauf.ci_watch import line; print(line(Path({str(home.resolve())!r})))'\n"
+            f"{shlex.quote(sys.executable)} -c {shlex.quote(f'from pathlib import Path; from mishe_tauftauf.ci_watch import line; print(line(Path({str(home.resolve())!r})))')}\n"
             "printf 'GOAL: tend this repo · WORKTREE: %s changed\\n' \"$count\"\n"
             "if [ \"$rc\" -eq 0 ]; then printf '%s\\n' 'STATE: GREEN · NEXT: verify and land one change'; "
             "else printf '%s\\n' 'STATE: RED · NEXT: repair the failed check'; fi\n",
