@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import re
 import shutil
 import subprocess
@@ -13,7 +14,21 @@ from pathlib import Path
 from .feed import Feed
 
 COMMANDS = ("rg", "git", "tmux", "python3", "systemctl", "journalctl", "ps", "df",
-            "lsusb", "lspci", "sensors", "upower", "evtest")
+KERNEL_FAULT = "Failed to resubmit video URB"
+
+    """List bounded hwmon temperature inputs under root."""
+    try:
+        entries = sorted(root.iterdir())
+    except OSError:
+        return []
+    slots: list[Path] = []
+    for entry in entries:
+        try:
+            slots.extend(sorted(entry.glob("temp*_input"))[:16])
+        except OSError:
+            continue
+    return slots
+
 
 
 def _read(path: Path, limit: int = 65536) -> str | None:
@@ -23,11 +38,119 @@ def _read(path: Path, limit: int = 65536) -> str | None:
     except OSError:
         return None
 
+def _cpu_busy(path: Path = Path("/proc/stat"), samples: int = 2, interval: float = 0.1) -> dict:
+    """Measure short-window host CPU busyness from aggregate /proc/stat deltas."""
+    counters: list[list[int]] = []
+    for index in range(samples):
+        head = _read(path, 512)
+        if head is None:
+            return {}
+        lines = head.splitlines()
+        if not lines:
+            return {}
+        fields = lines[0].split()
+        if not fields or fields[0] != "cpu" or len(fields) < 9:
+            return {}
+        if not all(token.isdigit() for token in fields[1:]):
+            return {}
+        counters.append([int(token) for token in fields[1:]])
+        if index + 1 < samples:
+            time.sleep(interval)
+    deltas: list[list[int]] = []
+    for previous, current in zip(counters, counters[1:]):
+        if len(previous) != len(current) or any(now < before for before, now in zip(previous, current)):
+            return {}
+        deltas.append([now - before for before, now in zip(previous, current)])
+    if not deltas:
+        return {}
+    # user/nice/system/idle/iowait/irq/softirq/steal; guest counters overlap user.
+    total = sum(sum(delta[:8]) for delta in deltas)
+    idle = sum(delta[3] + delta[4] for delta in deltas)
+    if total <= 0 or idle > total:
+        return {}
+    busy = 100.0 * (total - idle) / total
+    return {"busy": busy, "idle": 100.0 - busy}
+
+
+def _overlay_egress_rate(root: Path = Path("/sys/class/net"), interval: float = 0.1) -> dict:
+    """Measure tailscale0 transmit and receive rates over a bounded counter window."""
+    interface = root / "tailscale0"
+    stats = interface / "statistics"
+    counters = {"tx_bytes": "egress", "rx_bytes": "ingress"}
+    before: dict[str, int] = {}
+    for name in counters:
+        value = _read(stats / name, 64)
+        if value is None or not value.strip().isdigit():
+            state = "unavailable" if not interface.exists() else "unknown"
+            return {"state": state, "sample": f"tailscale0 {name} unavailable"}
+        before[name] = int(value.strip())
+    time.sleep(interval)
+    rates: list[str] = []
+    for name, direction in counters.items():
+        value = _read(stats / name, 64)
+        if value is None or not value.strip().isdigit():
+            return {"state": "unknown", "sample": f"tailscale0 {name} unavailable"}
+        delta = int(value.strip()) - before[name]
+        if delta < 0:
+            return {"state": "unknown", "sample": f"tailscale0 {name} counter decreased"}
+        rates.append(f"{direction}={delta / interval:.0f} B/s")
+    return {"state": "verified",
+            "sample": f"short-window={interval:.1f}s " + " ".join(rates)}
+def _kernel_error_window(past_minutes: int = 10, limit: int = 400) -> dict:
+    """Sample the live kernel error rate over a bounded journal window.
+
+    A line is an error only when the journal itself classified it as one and
+    it names the failing kernel device, so a busy userspace stream cannot read
+    as a kernel fault. A full-boot scan is unbounded and is never attempted.
+    """
+    try:
+        result = subprocess.run(
+            ["journalctl", "-b", "-p", "err", "--since", f"-{past_minutes}min", "-o", "cat", "--no-pager"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    if result.returncode != 0:
+        # Bounded fallback from the tail of the current boot.
+        try:
+            fallback = subprocess.run(
+                ["journalctl", "-b", "-p", "err", "-n", str(limit), "-o", "cat", "--no-pager"],
+                capture_output=True, text=True, timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return {}
+        if fallback.returncode != 0:
+            return {}
+        lines = fallback.stdout.splitlines()
+        window = f"tail-{limit}"
+    else:
+        lines = result.stdout.splitlines()
+        window = f"last-{past_minutes}min"
+    faults = [line for line in lines if KERNEL_FAULT in line]
+    if not faults and lines:
+        return {"state": "verified", "sample": f"{window} kernel-error-count=0", "kind": "read"}
+    if not faults:
+        return {}
+    # "uvcvideo 1-6:1.1: Failed to ..." -> device=uvcvideo
+    device = faults[0].split(":", 1)[0].split()[0] or "unknown-device"
+    return {"state": "verified",
+            "sample": (f"{window} kernel-error-count={len(faults)} "
+                       f"device={device} tail={str(faults[-1])[:48]}"),
+            "kind": "read"}
+
 
 
 def sample(home: Path) -> dict[str, object]:
     """Take bounded reads; never open input event streams or record key content."""
     observed: list[dict[str, object]] = []
+    journal = _kernel_error_window()
+    if journal:
+        observed.append({"id": "sense.journal.kernel-error-rate", **journal})
+    else:
+        observed.append({"id": "sense.journal.kernel-error-rate", "state": "unknown",
+                         "sample": "journal error window unavailable", "kind": "read"})
+
+
     for command in COMMANDS:
         found = shutil.which(command)
         observed.append({"id": f"command.{command}", "state": "available" if found else "unavailable",
@@ -78,7 +201,15 @@ def sample(home: Path) -> dict[str, object]:
                          "sample": "statvfs unavailable", "kind": "read"})
         observed.append({"id": "sense.disk.inodes-available", "state": "unknown",
                          "sample": "statvfs unavailable", "kind": "read"})
-
+    busy = _cpu_busy()
+    if busy:
+        observed.append({"id": "sense.proc.cpu-busy", "state": "verified",
+                         "sample": f"short-window={0.1:.1f}s busy={busy['busy']:.1f}% idle={busy['idle']:.1f}%"
+                                   + (" high" if busy["busy"] >= 85.0 else ""),
+                         "kind": "read"})
+    else:
+        observed.append({"id": "sense.proc.cpu-busy", "state": "unknown",
+                         "sample": "/proc/stat cpu fields unavailable", "kind": "read"})
     interrupts = _read(Path("/proc/interrupts"), 65536)
     keyboard = []
     for line in (interrupts or "").splitlines():
@@ -116,6 +247,24 @@ def sample(home: Path) -> dict[str, object]:
                      "state": "verified" if wakeup_counts else "unknown",
                      "sample": sum(wakeup_counts) if wakeup_counts else "counter unavailable",
                      "kind": "counter"})
+    hwmon_root = Path("/sys/class/hwmon")
+    temperatures: list[str] = []
+    for slot in _thermal_slots(hwmon_root):
+        value = _read(slot, 64)
+        if value is None or not value.strip().lstrip("-").isdigit():
+            continue
+        millidegrees = int(value.strip())
+        if millidegrees < -273150 or millidegrees > 200000:
+            # An out-of-range value is a stuck or absent sensor, not a
+            # temperature; skipping keeps the reported sample honest.
+            continue
+        chip = _read(slot.parent / "name", 64)
+        name = chip.strip() if chip else slot.parent.name
+        temperatures.append(f"{name}={millidegrees / 1000.0:.1f}C")
+    observed.append({"id": "sense.thermal.hwmon", "state": "verified" if temperatures else "unknown",
+                     "sample": ", ".join(temperatures)
+                     if temperatures else "no readable hwmon temperature sensor",
+                     "kind": "read"})
     session = os.environ.get("MISHE_SEED_SESSION")
     if not session:
         try:

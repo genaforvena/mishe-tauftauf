@@ -64,6 +64,22 @@ def test_senses_reports_absent_source_as_unavailable_not_unchecked(tmp_path: Pat
     assert (home / "observations" / "senses").read_text(encoding="utf-8") == "PASS senses 2 verified samples\n"
 
 
+def test_senses_labels_cpu_busy_as_short_window_evidence(tmp_path: Path) -> None:
+    home = tmp_path / "site"
+    snapshot = {"created": _now_iso(), "node": "node", "observations": [
+        {"id": "sense.proc.loadavg", "state": "verified", "sample": "37.92 39.70 40.09", "kind": "read"},
+        {"id": "sense.proc.cpu-busy", "state": "verified",
+         "sample": "short-window=0.1s busy=99.9% idle=0.1% high", "kind": "read"},
+    ]}
+    (home / "discovery").mkdir(parents=True)
+    (home / "discovery" / "latest.json").write_text(json.dumps(snapshot), encoding="utf-8")
+    rendered = senses(home)
+    assert "VERIFIED sense.proc.cpu-busy: short-window=0.1s busy=99.9% idle=0.1% high" in rendered
+    assert "STATE: GREEN — all wired sample reads verified" in rendered
+    assert "SUSTAINED" not in rendered
+    assert (home / "observations" / "senses").read_text(encoding="utf-8") == "PASS senses 2 verified samples\n"
+
+
 def test_senses_still_counts_an_unreadable_counter_as_unknown(tmp_path: Path) -> None:
     home = tmp_path / "site"
     snapshot = {"created": _now_iso(), "node": "node", "observations": [
