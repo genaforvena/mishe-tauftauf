@@ -20,6 +20,7 @@ from .coordination_checks import anomalies
 def _publication_lines(home):
     """Observe saved private verdicts; never invoke inference from a pane."""
     lines, uncertain = [], False
+    timeout_seconds = 30
     config = home / 'publication-check.json'
     if not config.exists():
         lines.append('PUBLICATION GATE: UNTESTED — no semantic worker configured')
@@ -30,6 +31,9 @@ def _publication_lines(home):
             command = data.get('command')
             if not isinstance(command, list) or not command or not all(isinstance(value, str) and value for value in command):
                 raise ValueError('command must be a nonempty argv list')
+            timeout_seconds = data.get('timeout_seconds', 30)
+            if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)) or not 0 < timeout_seconds <= 300:
+                raise ValueError('timeout_seconds must be finite and in (0, 300]')
             lines.append('PUBLICATION GATE: CONFIGURED — availability depends on private worker results')
         except (OSError, ValueError, TypeError, AttributeError) as exc:
             lines.append(f'PUBLICATION GATE: UNKNOWN — configuration unavailable: {exc}')
@@ -40,11 +44,32 @@ def _publication_lines(home):
             lines.append('PUBLICATION RESULT: UNTESTED — no saved private review')
             uncertain = True
         else:
-            latest = max(paths, key=lambda path: (path.stat().st_mtime_ns, path.name))
-            report = json.loads(latest.read_text(encoding='utf-8'))
-            status = report.get('status')
-            if status not in {'clear', 'suspicious', 'unknown'}:
-                raise ValueError('private review has an invalid status')
+            ordered = sorted(paths, key=lambda path: (path.stat().st_mtime_ns, path.name), reverse=True)
+            report = None
+            for index, latest in enumerate(ordered):
+                candidate = json.loads(latest.read_text(encoding='utf-8'))
+                status = candidate.get('status')
+                pending = (status is None and candidate.get('semantic_status') == 'untested'
+                           and candidate.get('clear') is False
+                           and isinstance(candidate.get('worker_input_bytes'), int)
+                           and candidate['worker_input_bytes'] > 0)
+                if pending:
+                    if index == 0:
+                        age = datetime.now(timezone.utc).timestamp() - latest.stat().st_mtime
+                        abandoned = age > timeout_seconds + 5 or age < 0
+                        lines.append('PUBLICATION ACTIVE: ' +
+                                     ('UNKNOWN — unfinished review exceeded its deadline; reconcile the private report'
+                                      if abandoned else 'PENDING — private review in progress; last completed result retained'))
+                        lines.append(f'  Active evidence: private report={latest}')
+                        uncertain = uncertain or abandoned
+                    continue
+                if status not in {'clear', 'suspicious', 'unknown'}:
+                    raise ValueError('private review has an invalid status')
+                report = candidate
+                break
+            if report is None:
+                lines.append('PUBLICATION RESULT: UNTESTED — no completed private review')
+                return lines, True
             semantic = report.get('semantic_status', 'untested')
             refused = status in {'suspicious', 'unknown'}
             scope = (f" source={report.get('source', 'unknown')} stage={report.get('stage', 'unknown')}" if refused else '')

@@ -49,7 +49,7 @@ Revise a rejected draft or its inconsistent plan and resubmit. Preserve previous
 performed effects; refusal is no reason to repeat a mutation. Missing checker
 capability remains a private correction obligation with its exact retry edge.
 
-Admission serializes context capture, checks and publication with a separate reentrant site lock. Model inference never runs under the feed file lock. Handoff and both exact final receipt bodies are admitted before authoritative handoff changes. Clear admission precedes process rotation; a private durable effect journal prevents a completed rotation from repeating after a failed receipt commit. An uncertain journal requires reconciliation.
+Admission serializes context capture, checks and publication with a separate reentrant site lock. Model inference never runs under the feed file lock. Handoff and work drafts receive private preflight before authoritative handoff changes. Settlement preflight describes planned effects; the final yield receipt is admitted again against verified handoff files and the matching committed work receipt. Clear admission precedes process rotation; a private durable effect journal prevents a completed rotation from repeating after a failed receipt commit. An uncertain journal requires reconciliation.
 
 The pinned Laya adapter is an optional experimental checker. Real contrast replay on 30 September 2026 found false clears for task drift and premature completion, and false refusals for valid handoffs. No reliability claim follows from its protocol tests. Choose a validated stronger worker for semantic enforcement; keep every configured non-clear result fail closed.
 

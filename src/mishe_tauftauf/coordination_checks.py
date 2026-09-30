@@ -206,6 +206,9 @@ def episode(home, source, body, context=None, identity=None):
     # them. This is semantic scoping, not truncation of any selected evidence.
     transaction = meaningful_proposal.pop("transaction", None)
     admitted_handoff = meaningful_proposal.pop("admitted_handoff_text", None)
+    observation_details = {}
+    if body.startswith('seed observation '):
+        observation_details = {key: meaningful_proposal.pop(key) for key in ('snapshot', 'previous') if key in meaningful_proposal}
     current_values = [value for value in (state, dependency, context, proposed_state) if isinstance(value, dict)]
     raw_transaction = context.get("transaction", {})
     if isinstance(raw_transaction, dict):
@@ -241,6 +244,22 @@ def episode(home, source, body, context=None, identity=None):
     for number in range(1, 9):
         question_episodes[f'R{number:02d}'] = dict(event_context)
     question_episodes['R06']['current_evidence'] = checked_evidence
+    question_episodes['R06']['proposed'] = dict(meaningful_proposal, **observation_details)
+    if observation_details:
+        question_episodes['R08']['observation_comparison'] = observation_details
+    event_receipt = bool(re.match(r'^(?:seed (?:observation|wake|yield|clear|redeliver)\b|\[(?:work|task(?:-[\w-]+)?|taking|done|dropped)\])', body))
+    record_claim = any(line.startswith('[record] ') for line in body.splitlines())
+    question_episodes['R06']['structured_event_applicability'] = dict(
+        applicable=bool(context) or event_receipt or record_claim, supplied=bool(context),
+        reason='Known event receipts/immutable-record claims require supplied event facts. Ordinary prose with no supplied event has no structured event to compare; that is absence of applicability, not proof of its factual claims.',
+        review_scope='For ordinary prose inspect internal consistency and supplied canonical history for contradictions; do not invent a current event or require an unrelated event payload. A known event claim with missing relevant facts must remain unknown.')
+    recent_events = view['events'][-8:]
+    if last_source and last_source not in recent_events:
+        recent_events = [last_source] + recent_events
+    question_episodes['R06']['recent_canonical_events'] = [dict(sequence=e['sequence'], source=e['source'], body=e['body'], payload=_meaningful(e['payload'])) for e in recent_events]
+    question_episodes['R06']['history_scope'] = dict(included_sequences=[e['sequence'] for e in recent_events], total_events=len(entries),
+        meaning='Latest eight canonical events plus latest same-source event, with complete selected text/payload. Historical claims do not independently prove current facts or a different source version.')
+    question_episodes['R06']['evidence_references'] = sorted(set(compact_references + [f"chat.log sequence {e['sequence']}" for e in recent_events]))
     if transaction:
         for key in ('R06', 'P16'):
             # P16 is attached after the pitfall base projection below.

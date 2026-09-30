@@ -290,33 +290,74 @@ def _mind_ready(session: str, slug: str) -> bool:
 def _redeliver_pending(home: Path, session: str, slug: str, pending: int) -> str:
     """Retry an unsettled wake only after a quiet, visibly idle interval."""
     last_delivery = None
+    last_delivery_sequence = None
     for entry in Feed(home).entries():
         if entry.body.startswith(f"seed wake {slug} ") and entry.sequence == pending:
             last_delivery = datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))
+            last_delivery_sequence = entry.sequence
         elif _receipt_line(entry.body) == f"seed redeliver {slug} wake={pending}":
             last_delivery = datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))
+            last_delivery_sequence = entry.sequence
     if last_delivery is None:
         return f"UNKNOWN seed {slug} wake {pending} has no delivery record"
     if (datetime.now(timezone.utc) - last_delivery).total_seconds() < 60:
         return f"held seed {slug} wake {pending} unsettled"
-    if not _mind_ready(session, slug):
+    from .post_check import require, _save
+    from .coordination_checks import episode
+    journal_path = home / "checks" / f"redeliver-{slug}-{pending}-after-{last_delivery_sequence}.json"
+    journal = json.loads(journal_path.read_text()) if journal_path.exists() else None
+    if journal and journal.get("phase") == "intent":
+        raise ValueError(f"redelivery send is uncertain; reconcile {journal_path} before another notification")
+    if journal and journal.get("phase") not in {"completed", "committed"}:
+        raise ValueError(f"redelivery journal phase unavailable; reconcile {journal_path}")
+    if not journal and not _mind_ready(session, slug):
         return f"held seed {slug} wake {pending} mind busy"
     entries = Feed(home).entries()
     original = next(entry for entry in entries if entry.sequence == pending)
     wake_match = WAKE_RE.fullmatch(_receipt_line(original.body))
-    if wake_match and wake_match.group(4):
+    target = f"{session}:{slug}.1"
+    data = journal["data"] if journal else dict(role=slug, wake=pending,
+        before=dict(pending_wake_matches=_state(home, slug)[1] == pending, mind_ready_observed=True,
+                    readiness_probe="configured _mind_ready probe accepted this pane", prior_delivery_sequence=last_delivery_sequence,
+                    prior_delivery_at=last_delivery.isoformat(), quiet_seconds=(datetime.now(timezone.utc)-last_delivery).total_seconds()),
+        notification=dict(phase="planned", target=target, method="supervisor tmux paste/send",
+                          send_commands_returned=False, mind_started_work_verified=False))
+    planned = (f"seed redeliver {slug} wake={pending}\nThe exact prior wake remains unsettled after a quiet retry interval. "
+               f"The configured readiness probe accepted {slug}'s pane; the supervisor plans to resend its original obligation. "
+               f"{slug} must inspect this wake's artifacts and reconcile prior effects before any new bounded step. "
+               "No notification success or work start is claimed by this plan.")
+    if not journal:
+        require(home, "seed", planned, context=episode(home, "seed", planned, context=data))
+        if _state(home, slug)[1] != pending or not _mind_ready(session, slug):
+            raise ValueError("pending wake/readiness changed during redelivery review; no notification sent")
+    if not journal and wake_match and wake_match.group(4):
         plan = task_state.states(entries).get(wake_match.group(4))
         if plan is not None and plan.attempt_wake != pending:
             task_state.record_attempt(home, plan, pending, int(wake_match.group(2)), owner=slug)
-    _send(f"{session}:{slug}.1", _restore_text(home, slug, session, wake_delivery=True) + "\n" + (
+    if not journal:
+        restore_message = _restore_text(home, slug, session, wake_delivery=True) + "\n" + (
         f"REDELIVERY of unsettled WAKE {pending} for {slug}. A prior delivery may have been lost during clear. "
         "First inspect the live top pane, chat.log, and artifacts for this exact wake. "
         "Reconcile any prior effect before making another change. Then complete one bounded step, "
         f"write a handoff, and settle with seed yield --slug {slug} --wake {pending} --file HANDOFF_FILE "
-        "--result changed|verified|blocked.\n") + "ORIGINAL OBLIGATION\n" + original.body + "\n")
-    Feed(home).append("seed", f"seed redeliver {slug} wake={pending}\n"
-                      "The prior wake remains unsettled. The mind was idle, so the supervisor sent it again; "
-                      "check earlier effects before making another change.")
+        "--result changed|verified|blocked.\n") + "ORIGINAL OBLIGATION\n" + original.body + "\n"
+        if _state(home, slug)[1] != pending or not _mind_ready(session, slug):
+            raise ValueError("pending wake/readiness changed during redelivery preparation; no notification sent")
+        journal = dict(phase="intent", data=data)
+        _save(journal_path, journal)
+        _send(target, restore_message)
+        data = dict(data, notification=dict(data["notification"], phase="verified", send_commands_returned=True))
+        journal.update(phase="completed", data=data)
+        _save(journal_path, journal)
+    final = (f"seed redeliver {slug} wake={pending}\nThe supervisor's tmux send commands returned successfully for this exact unsettled wake "
+             "after the recorded quiet interval and accepted readiness probe. This establishes command delivery, not proof that the mind started work. "
+             f"{slug} must inspect the original obligation and prior artifacts, reconcile earlier effects, then complete one bounded step and handoff.")
+    def commit_guard():
+        if _state(home, slug)[1] != pending:
+            raise ValueError("exact pending wake changed before redelivery receipt; reconcile completed notification")
+    receipt = Feed(home).append_record("seed", final, data, kind="redelivery", commit_guard=commit_guard)
+    journal.update(phase="committed", receipt_sequence=receipt.sequence)
+    _save(journal_path, journal)
     return f"redelivered seed {slug} wake {pending}"
 
 
@@ -581,7 +622,7 @@ def tick(home: Path, session: str, slug: str, self_pick_seconds: float = 0) -> s
         # The pane proves display liveness. Its viewport is not semantic evidence.
         from .dashboard import read as read_dashboard
         try:
-            full, _ = read_dashboard(home, slug)
+            full, dashboard_ok = read_dashboard(home, slug)
         except ValueError as exc:
             return f"UNKNOWN seed {slug} {exc}"
         frame = strip_owned_chrome(full).strip()
@@ -592,10 +633,50 @@ def tick(home: Path, session: str, slug: str, self_pick_seconds: float = 0) -> s
         changed = digest != previous
         if changed:
             state_line = next((line for line in frame.splitlines() if line.startswith("STATE:")), "state not stated")
-            observation = Feed(home).append_record("seed", f"seed observation {slug}\n"
-                                       f"The {slug} top pane's meaningful state changed: {state_line}. "
-                                       "Read the live pane for the full evidence and next action.",
-                                       {"digest": digest, "role": slug, "state": state_line}, kind="observation")
+            previous_entry = next((entry for entry in Feed(home).entries() if entry.sequence == last_observation), None)
+            previous_data = record_payload(previous_entry) if previous_entry and previous_entry.body.splitlines()[0] == f"seed observation {slug}" else {}
+            previous_state = previous_data.get("state", "previous state not recorded")
+            # Only fixed vocabulary derived from check labels enters prose.
+            # Arbitrary dashboard/chat text, including JSON, stays in the record.
+            states = lambda text: (re.search(r'\b(GREEN|RED|UNKNOWN)\b', text).group(1)
+                                   if re.search(r'\b(GREEN|RED|UNKNOWN)\b', text) else "UNKNOWN")
+            current_state = states(state_line)
+            old_state = states(previous_state) if re.search(r'\b(GREEN|RED|UNKNOWN)\b', previous_state) else "not recorded"
+            summaries = []
+            for prefix in ("CI:", "COORDINATION:", "ANOMALY:", "PUBLICATION GATE:", "PUBLICATION RESULT:"):
+                statuses = [re.search(r'\b(PASS|FAIL|RED|GREEN|UNKNOWN|SUSPICIOUS|CLEAR|UNTESTED|READY|WAITING)\b', line[len(prefix):], re.I)
+                            for line in frame.splitlines() if line.startswith(prefix)]
+                labels = sorted({match.group(1).upper() for match in statuses if match})
+                if labels:
+                    summaries.append(prefix.rstrip(":").lower() + " " + "/".join(labels))
+            details = "; ".join(summaries) or "the recorded dashboard check states"
+            from .post_check import _deterministic
+            findings = [line for line in _observation_text(slug, frame).splitlines()
+                        if line.startswith(("ANOMALY:", "COORDINATION:", "CI:", "PUBLICATION RESULT:", "STATE:"))
+                        and "```" not in line and not _deterministic(line)]
+            # Select whole findings, never clip a finding or put JSON in chat.
+            findings.sort(key=lambda line: (not bool(re.search(r'\b(RED|UNKNOWN|FAIL|SUSPICIOUS)\b', line, re.I)), line))
+            finding_text = "\nChecked findings:\n" + "\n".join(findings[:3]) if findings else ""
+            action = (f"{slug} should advance ready owned work; healthy checks do not complete open tasks."
+                      if current_state == "GREEN" else
+                      f"{slug} should diagnose failing or unavailable checks in this snapshot, reconcile prior effects, and record a bounded repair or an exact producer/retry wait.")
+            change_note = ("The scoped check signature differs from the previous recorded observation. " if previous else
+                           "This is the first recorded scoped check snapshot; no earlier observation was recorded. ")
+            explanation = (f"Seed checked the fresh {slug} pane lease and read its full dashboard data. " + change_note +
+                f"Previous state {old_state}, current state {current_state}. "
+                f"Current check summaries: {details}. "
+                "This matters because changed checks can alter which owned step is admissible. "
+                "The immutable record preserves the exact scoped view and prior recorded version for comparison. "
+                "No task completion or repair progress is claimed by this observation. " + action + finding_text)
+            snapshot = dict(meaningful_text=_observation_text(slug, frame), state=state_line,
+                            origin="dashboard.read", lease_checked=True, lease_stamp=stamp,
+                            lease_age_seconds=age, dashboard_command_ok=dashboard_ok, viewport_is_semantic_evidence=False)
+            observation = Feed(home).append_record("seed", f"seed observation {slug}\n" + explanation,
+                {"digest": digest, "role": slug, "state": state_line, "snapshot": snapshot,
+                 "previous": dict(sequence=last_observation, digest=previous, state=previous_state,
+                                  snapshot=previous_data.get("snapshot"), snapshot_available=bool(previous_data.get("snapshot"))),
+                 "change": "scoped check signature differs" if previous else "first recorded scoped check snapshot",
+                 "next_owner": slug, "next_action": action}, kind="observation")
             last_observation = observation.sequence
         if pending is not None:
             return _redeliver_pending(home, session, slug, pending)
