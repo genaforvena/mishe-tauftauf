@@ -283,7 +283,7 @@ def _redeliver_pending(home: Path, session: str, slug: str, pending: int) -> str
         "First inspect the live top pane, chat.log, and artifacts for this exact wake. "
         "Reconcile any prior effect before making another change. Then complete one bounded step, "
         f"write a handoff, and settle with seed yield --slug {slug} --wake {pending} --file HANDOFF_FILE "
-        "--result changed|verified|blocked.\n"))
+        "--result changed|verified|blocked.\n") + "ORIGINAL OBLIGATION\n" + original.body + "\n")
     Feed(home).append("seed", f"seed redeliver {slug} wake={pending}\n"
                       "The prior wake remains unsettled. The mind was idle, so the supervisor sent it again; "
                       "check earlier effects before making another change.")
@@ -291,8 +291,8 @@ def _redeliver_pending(home: Path, session: str, slug: str, pending: int) -> str
 
 
 def _restore_text(home: Path, slug: str, session: str, *, wake_delivery: bool = False) -> str:
-    doctrine = _instruction_text(home, "doctrine.md", _core_doctrine())
-    charter = _instruction_text(home, f"charters/{slug}.md", _core_charter(slug))
+    doctrine = _instruction_text(home, "doctrine.md", _core_doctrine(home))
+    charter = _instruction_text(home, f"charters/{slug}.md", _core_charter(slug, home))
     handoff_path = home / "handoffs" / f"{slug}.md"
     handoff = handoff_path.read_text(encoding="utf-8") if handoff_path.exists() else "(none yet)"
     pending = _state(home, slug)[1]
@@ -314,12 +314,14 @@ def _restore_text(home: Path, slug: str, session: str, *, wake_delivery: bool = 
             "For an explicit wake, act on one bounded obligation, verify it on the same surface, and leave an artifact.\n")
 
 
-def _core_doctrine() -> str:
-    return Path(__file__).with_name("seed_doctrine.md").read_text(encoding="utf-8")
+def _core_doctrine(home: Path | None = None) -> str:
+    from .runtime_source import package_for
+    return (package_for(home, Path(__file__).resolve().parents[1]) / "mishe_tauftauf/seed_doctrine.md").read_text(encoding="utf-8")
 
 
-def _core_charter(slug: str) -> str:
-    source = Path(__file__).with_name(f"seed_{slug}_charter.md")
+def _core_charter(slug: str, home: Path | None = None) -> str:
+    from .runtime_source import package_for
+    source = package_for(home, Path(__file__).resolve().parents[1]) / "mishe_tauftauf" / f"seed_{slug}_charter.md"
     if source.exists():
         return source.read_text(encoding="utf-8")
     return (
@@ -388,8 +390,11 @@ def init(home: Path, slug: str, engine_command: str = "codex") -> str:
             encoding="utf-8",
         )
         cli.chmod(0o755)
-    _sync_instruction(home, "doctrine.md", _core_doctrine())
-    _sync_instruction(home, f"charters/{slug}.md", _core_charter(slug))
+    if (home / "health/runtime-release.json").exists():
+        from .runtime_source import refresh_cli, source_for
+        refresh_cli(home, source_for(home, Path(__file__).resolve().parents[2]))
+    _sync_instruction(home, "doctrine.md", _core_doctrine(home))
+    _sync_instruction(home, f"charters/{slug}.md", _core_charter(slug, home))
     mind = home / "minds" / slug
     if not mind.exists():
         argv = shlex.split(engine_command)
@@ -445,7 +450,8 @@ def init(home: Path, slug: str, engine_command: str = "codex") -> str:
 
 
 def _mind_launch_argv(home: Path, slug: str) -> tuple[str, ...]:
-    package_root = str(Path(__file__).resolve().parents[1])
+    from .runtime_source import package_for
+    package_root = str(package_for(home, Path(__file__).resolve().parents[1]))
     python_path = os.pathsep.join(part for part in (package_root, os.environ.get("PYTHONPATH", "")) if part)
     mind_path = os.pathsep.join((str(home / "bin"), os.environ.get("PATH", "/usr/bin:/bin")))
     return ("-c", str(home.parent.resolve()), "env", f"PATH={mind_path}",
@@ -479,7 +485,8 @@ def start(home: Path, session: str, slug: str, interval: float) -> str:
     _tmux("set-option", "-p", "-t", f"{target}.0", "remain-on-exit", "on")
     _tmux("set-option", "-p", "-t", f"{target}.1", "remain-on-exit", "on")
     _tmux("select-layout", "-t", target, "even-vertical")
-    package_root = str(Path(__file__).resolve().parents[1])
+    from .runtime_source import package_for
+    package_root = str(package_for(home, Path(__file__).resolve().parents[1]))
     python_path = os.pathsep.join(part for part in (package_root, os.environ.get("PYTHONPATH", "")) if part)
     top_cmd = ("env", f"MISHE_SEED_SESSION={session}", f"PYTHONPATH={python_path}",
                *_python_command("--home", str(home), "pain", "watch", slug, "--interval", str(interval)))
@@ -552,10 +559,12 @@ def tick(home: Path, session: str, slug: str, self_pick_seconds: float = 0) -> s
         entries = Feed(home).entries()
         plans = [plan for plan in task_state.states(entries).values() if plan.owner == slug]
         selected = task_state.select_task(entries, slug)
+        opportunity = None
         if plans and selected is None:
-            self_pick_due = False
+            opportunity = task_state.independent_opportunity(entries, slug) if self_pick_due else None
+            self_pick_due = bool(opportunity)
             continue_due = False
-            if last_observation == last_woken_observation and external is None:
+            if last_observation == last_woken_observation and external is None and opportunity is None:
                 return f"waiting seed {slug} task prerequisites unchanged"
         if last_observation is None or (last_observation == last_woken_observation and not self_pick_due and external is None and not continue_due and selected is None):
             return f"quiet seed {slug} unchanged"
@@ -572,17 +581,32 @@ def tick(home: Path, session: str, slug: str, self_pick_seconds: float = 0) -> s
         task_suffix = f" task={selected.identity}" if selected is not None else ""
         wake = Feed(home).append("seed", f"seed wake {slug} observation={last_observation}{event_suffix}{task_suffix}\n"
                                  f"The supervisor asked {slug} to take one bounded, checked step because of {reason}. "
-                                 "The mind must leave a handoff and settle this exact wake.")
+                                 "The mind must leave a handoff and settle this exact wake." +
+                                 (f"\n[task-opportunity] owner={slug} waiting={opportunity}\n"
+                                  "INDEPENDENT WORK OPPORTUNITY: leave blocked acceptance waiting; "
+                                  "produce an admissible child measurement, repair, analysis or limitations draft."
+                                  if opportunity else ""))
         if selected is not None:
             task_state.record_attempt(home, selected, wake.sequence, last_observation, owner=slug)
         prompt = (f"WAKE {wake.sequence} for {slug}. Read your live top pane now. Current observation:\n{frame}\n"
                   + (f"TASK TO ADVANCE: {selected.identity}\nNEXT STEP: {selected.next_step}\n"
-                     "Before yield, use task step with checked progress/evidence for a distinct next step, "
-                     "or task wait with an exact retry event/deadline. The delivered attempt is consumed.\n"
+                     "Before yield, use task step with a changed outcome and checked evidence for a distinct next step, "
+                     "or task wait naming the prerequisite producer and exact retry event/deadline/task. "
+                     "The delivered attempt is consumed. Complete a bounded child with task finish; keep its goal open.\n"
                      if selected is not None else "")
                   + "TASK STATE (waiting tasks must not be retaken unless their retry fires):\n"
                   + "\n".join(task_state.lines(entries, slug)) + "\n"
                   + (f"NEW CHAT EVENT {external.sequence} from {external.source}: {external.body[:4096]}\n" if external is not None else "") +
+                  ("INDEPENDENT WORK OPPORTUNITY: all recorded tasks are waiting. Choose one admissible "
+                   "evidence-producing child or repair within your scope; leave the blocked acceptance waiting. "
+                   "This opportunity is consumed once for these waiting inputs; an unchanged audit is not progress.\n"
+                   if opportunity else "") +
+                  "WORK SELECTION: final acceptance being blocked does not prohibit independently admissible work. "
+                  "Choose a step that produces missing evidence, a bounded measurement, a repair or a limitations draft. "
+                  "For a waiting goal, add an owned child with task add --parent and record it as task wait --alternative. "
+                  "Do not repeat an unchanged absence audit or wait for a locally owned deliverable to appear. "
+                  "Keep frozen registrations, resource budgets and external authority boundaries intact. "
+                  "Review readiness should wait on the producer with task wait --retry-task, without --continue polling.\n" +
                   ("SELF-PICK: the pane is stable. Derive one bounded improvement from your charter goal or an open wish.\n" if self_pick_due and not changed else "") +
                   (f"CONTINUE TASK from wake {continue_yield}: read the restored handoff, verify prior effects, then take its next bounded step.\n" if continue_due else "") +
                   "Choose one bounded action, verify the same check, write an artifact, then run "
@@ -639,6 +663,8 @@ def yield_wake(home: Path, slug: str, wake: int, handoff_file: Path, continue_ta
                 payload = json.loads(state_entry.body.splitlines()[1])
                 step = hashlib.sha256((payload["next_step"] + "\0" + payload["evidence_sha256"]).encode()).hexdigest()
                 header += f" task={selected_task} task_state={state_entry.sequence} task_step={step}"
+                outcome = hashlib.sha256((payload.get("progress", "") + "\0" + payload.get("reason", "")).encode()).hexdigest()
+                header += f" task_outcome={outcome}"
             else:
                 header += f" task={selected_task}"
         prior = [entry for entry in Feed(home).entries() if entry.source == "seed" and

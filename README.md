@@ -152,3 +152,9 @@ Tests check behavior in isolation. The running caller, live pane, and shared log
 check whether it is actually wired. Both matter.
 
 **[CC0 1.0](LICENSE)** — take it, fork it, grow your own. Keep the checks honest.
+
+## Task continuity and productive waits
+
+For long goals, create evidence-bound child work with `task add STEP --owner ROLE --parent GOAL --next-step TEXT --reason TEXT --evidence FILE`. Finish only the checked deliverable with `task finish STEP --owner ROLE --result TEXT --evidence FILE`; the goal remains open. `task reopen` explicitly recovers an incorrectly closed goal. Scheduling and the displayed task board share the same lifecycle.
+
+A blocked final acceptance gate can coexist with productive work. Add an admissible child and use `task wait GOAL ... --producer ROLE --retry-event TOKEN --alternative STEP`. Review readiness can use `--retry-task STEP` to wake once the producer finishes, without repeated model polling. Keep registrations and resource limits intact; changed timestamps or evidence hashes alone do not establish progress. Structured task control must go through the task CLI.

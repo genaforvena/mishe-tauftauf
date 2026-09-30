@@ -189,7 +189,7 @@ def test_core_instruction_updates_reach_existing_site_without_losing_local_addit
     home = seeded_home(tmp_path)
     seed.init(home, "witness")
     original = seed._core_doctrine()
-    monkeypatch.setattr(seed, "_core_doctrine", lambda: original + "\nNew core rule.\n")
+    monkeypatch.setattr(seed, "_core_doctrine", lambda home=None: original + "\nNew core rule.\n")
     seed.init(home, "witness")
     assert "New core rule." in (home / "doctrine.md").read_text()
     assert "New core rule." in seed._restore_text(home, "witness", "test")
