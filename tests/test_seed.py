@@ -10,6 +10,15 @@ from pathlib import Path
 from mishe_tauftauf.feed import Feed
 
 
+def seeded_home(tmp_path: Path, name: str = "site") -> Path:
+    """A site home whose parent directory is a Git worktree, as plant() requires."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+    home = workspace / name
+    return home
+
+
 def test_health_observation_ignores_changing_samples_but_keeps_verdicts() -> None:
     from mishe_tauftauf.seed import _observation_text
 
@@ -176,7 +185,7 @@ def test_doctor_rejects_tracked_local_plant(tmp_path: Path) -> None:
 def test_core_instruction_updates_reach_existing_site_without_losing_local_additions(tmp_path: Path, monkeypatch) -> None:
     from mishe_tauftauf import seed
 
-    home = tmp_path / "site"
+    home = seeded_home(tmp_path)
     seed.init(home, "witness")
     original = seed._core_doctrine()
     monkeypatch.setattr(seed, "_core_doctrine", lambda: original + "\nNew core rule.\n")
@@ -195,7 +204,7 @@ def test_core_instruction_updates_reach_existing_site_without_losing_local_addit
 def test_pre_baseline_doctrine_is_refreshed_as_a_default(tmp_path: Path, monkeypatch) -> None:
     from mishe_tauftauf import seed
 
-    home = tmp_path / "site"
+    home = seeded_home(tmp_path)
     (home / "doctrine.md").parent.mkdir()
     (home / "doctrine.md").write_text("legacy copy\n")
     digest = seed._digest
@@ -321,7 +330,7 @@ def test_generic_top_pain_ci_line_survives_shell_quoting(tmp_path: Path) -> None
     and dies with SyntaxError, silently dropping the CI line from the pane.
     The renderer must keep the Python quotes through the shell layer.
     """
-    home = tmp_path / "site"
+    home = seeded_home(tmp_path)
     assert cli(home, "init", "--slug", "genome").returncode == 0
     renderer = home / "top-pains" / "genome"
     command = subprocess.run(["sh", str(renderer)], capture_output=True, text=True)
@@ -330,7 +339,7 @@ def test_generic_top_pain_ci_line_survives_shell_quoting(tmp_path: Path) -> None
     assert "invalid syntax" not in command.stderr
 
 def test_seed_resident_channel_observes_repairs_and_restores(tmp_path: Path) -> None:
-    home = tmp_path / "site"
+    home = seeded_home(tmp_path)
     session = f"mishe-seed-test-{uuid.uuid4().hex[:10]}"
     fixture = tmp_path / "health.txt"
     fixture.write_text("RED\n")
@@ -490,7 +499,7 @@ def test_seed_resident_channel_observes_repairs_and_restores(tmp_path: Path) -> 
 
 
 def test_seed_follow_drives_a_checked_repair_without_a_judge(tmp_path: Path) -> None:
-    home = tmp_path / "site"
+    home = seeded_home(tmp_path)
     session = f"mishe-seed-test-{uuid.uuid4().hex[:10]}"
     fixture = tmp_path / "health.txt"
     fixture.write_text("RED\n")
@@ -545,7 +554,7 @@ def test_seed_follow_drives_a_checked_repair_without_a_judge(tmp_path: Path) -> 
 
 
 def test_seed_adds_live_channel_to_existing_owned_session(tmp_path: Path) -> None:
-    home = tmp_path / "site"
+    home = seeded_home(tmp_path)
     session = f"mishe-seed-test-{uuid.uuid4().hex[:10]}"
     trace = tmp_path / "resident.txt"
     assert cli(home, "init", "--slug", "genome").returncode == 0
@@ -578,7 +587,7 @@ def test_seed_adds_live_channel_to_existing_owned_session(tmp_path: Path) -> Non
 
 
 def test_seed_witness_profile_reads_chat_and_reports_missing_channels(tmp_path: Path) -> None:
-    home = tmp_path / "site"
+    home = seeded_home(tmp_path)
     assert cli(home, "init", "--slug", "genome").returncode == 0
     assert cli(home, "init", "--slug", "witness").returncode == 0
     assert "coordination steward" in (home / "charters" / "witness.md").read_text()

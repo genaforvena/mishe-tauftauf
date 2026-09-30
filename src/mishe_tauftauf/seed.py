@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .feed import Feed
-from .observations import executable, strip_owned_chrome, validate_slug
+from .observations import executable, strip_owned_chrome, validate_home, validate_slug
 from .tmux import OWNED_OPTION, _pane_stopped_or_dead, _python_command, _tmux, capture_raw, lease_value, owns_session
 
 
@@ -34,10 +34,27 @@ LEGACY_INSTRUCTION_HASHES = {
 
 @contextmanager
 def _lock(home: Path):
-    home.mkdir(parents=True, exist_ok=True)
+    validate_home(home)
     with (home / ".seed.lock").open("a+") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         yield
+
+
+def _require_worktree(home: Path) -> None:
+    """Gate the only legitimate site-creation path on the same rule plant() applies.
+
+    init() seeds a brand new site, so it cannot reuse validate_home(); instead it must
+    refuse the stray-generating shapes outright: a site is planted directly inside a Git
+    worktree, never as a plant-home-shaped subtree of another directory. Tests plant a
+    site by calling init() inside a freshly initialized repository, which this allows.
+    """
+    workspace = home.parent.resolve()
+    if not workspace.is_dir():
+        raise ValueError(f"site must be directly inside a Git worktree: {workspace}")
+    repository = subprocess.run(["git", "-C", str(workspace), "rev-parse", "--show-toplevel"],
+                                capture_output=True, text=True)
+    if repository.returncode or Path(repository.stdout.strip()).resolve() != workspace:
+        raise ValueError(f"site must be directly inside a Git worktree: {workspace}")
 
 
 def _receipt_line(body: str) -> str:
@@ -271,7 +288,9 @@ def _restore_text(home: Path, slug: str, session: str, *, wake_delivery: bool = 
     return (f"Read repository AGENTS.md for the agent contract.\nDOCTRINE\n{doctrine}\nCHARTER {slug}\n{charter}\nCURRENT HANDOFF\n{handoff}\n"
             f"WAKE STATE\n{status(home, slug)}\n"
             f"{next_action}\n"
-            f"The canonical site is {home.resolve()}. Fresh mind launches set MISHE_SEED_HOME to this path; if this older process lacks it, use this exact path in shell commands. Never retype the directory from memory.\n"
+            f"The canonical site is {home.resolve()}. The CLI resolves it automatically from MISHE_SEED_HOME, "
+            "which fresh mind launches set to this path; if this older process lacks it, use this exact path "
+            "in shell commands. Never retype the directory from memory.\n"
             f"Read the live top pane with mishe-tauftauf --home {shlex.quote(str(home))} pain read {slug} --launcher tmux --session {shlex.quote(session)}. "
             "For an explicit wake, act on one bounded obligation, verify it on the same surface, and leave an artifact.\n")
 
@@ -336,6 +355,7 @@ def init(home: Path, slug: str, engine_command: str = "codex") -> str:
     from .cli import initialize
 
     slug = validate_slug(slug)
+    _require_worktree(home)
     initialize(home)
     bin_dir = home / "bin"
     bin_dir.mkdir(exist_ok=True)

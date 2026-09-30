@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .feed import Feed
+from .observations import validate_home
 
 ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,95}\Z")
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}\Z")
@@ -36,6 +37,7 @@ class Request:
 
 @contextmanager
 def _lock(home: Path):
+    validate_home(home)
     root = home / "access"
     root.mkdir(parents=True, exist_ok=True)
     with (root / ".lock").open("a+") as handle:

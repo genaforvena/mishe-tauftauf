@@ -325,7 +325,8 @@ class Feed:
             # Carriage returns are valid Unicode text, but canonical line framing is LF-only.
             # Preserve them as content rather than accepting CRLF as ambiguous framing.
             pass
-        self.home.mkdir(parents=True, exist_ok=True)
+        from .observations import validate_home
+        validate_home(self.home)
         fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
         try:
             with os.fdopen(fd, "r+b", buffering=0) as handle:
