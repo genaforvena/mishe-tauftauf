@@ -788,7 +788,16 @@ def yield_wake(home: Path, slug: str, wake: int, handoff_file: Path, continue_ta
                     f". Read the checked outcome and next action below; full handoff: {archive}.\nHANDOFF:\n{excerpt}"
         yield_body = f"seed yield {slug} wake={wake}" + (" continue=1" if continue_task else "") + \
                      "\nThis receipt settles the exact wake after preserving its verified handoff and work receipt. " + \
-                     ("Its task continues after context clear." if continue_task else "No continuation was requested.")
+                     ((f"Task {selected_task} continues after context clear." if selected_task else "This investigation continues after context clear.")
+                      if continue_task else "No continuation was requested.")
+        if selected_state:
+            if not continue_task:
+                yield_body += f" Task {selected_task} remains {selected_state.status}."
+            if selected_state.status not in {"done", "dropped"} and selected_state.next_step:
+                yield_body += f" Next recorded action: {selected_state.next_step}"
+        planned_yield_body = yield_body.replace(
+            "This receipt settles the exact wake after preserving its verified handoff and work receipt.",
+            "The supervisor plans to settle this exact wake. It will publish a settlement receipt only after checking the admitted handoff files, exactly one matching canonical work receipt, and the still-pending wake.", 1)
         prior = [entry for entry in Feed(home).entries() if entry.source == "seed" and
                  entry.body.startswith(work_prefix)]
         if prior:
@@ -802,7 +811,7 @@ def yield_wake(home: Path, slug: str, wake: int, handoff_file: Path, continue_ta
         from .post_check import _save
         journal = json.loads(journal_path.read_text()) if journal_path.exists() else None
         identity = dict(role=slug, wake=wake, handoff_sha256=digest, result=result,
-                        continue_task=continue_task, work_data=work_data)
+                        continue_task=continue_task, work_data=work_data, yield_body=yield_body)
         if journal and any(journal.get(key) != value for key, value in identity.items()):
             raise ValueError(f"yield transaction differs; reconcile {journal_path} before retry")
         transaction = dict(event="yield", phase="prepared", role=slug, wake=wake,
@@ -820,13 +829,13 @@ def yield_wake(home: Path, slug: str, wake: int, handoff_file: Path, continue_ta
             guard_semantics="This publication creates the canonical work receipt after checking its handoff files. No prior work receipt is required. The later yield separately requires exactly one matching committed work receipt before settling the wake.")
         handoff_context = episode(home, slug, handoff_text, context=publication_data)
         work_context = episode(home, "seed", work_body, context=dict(publication_data, transaction=work_transaction))
-        yield_context = episode(home, "seed", yield_body, context=publication_data)
+        yield_context = episode(home, "seed", planned_yield_body, context=publication_data)
         if not prior:
             require(home, slug, handoff_text, context=handoff_context, stage="handoff")
             require(home, "seed", work_body, context=work_context)
         # Check the conditional settlement before effects. A recovery with an
         # already committed work receipt checks only the remaining publication.
-        require(home, "seed", yield_body, context=yield_context)
+        require(home, "seed", planned_yield_body, context=yield_context)
         if not _handoff_matches(handoff_file, digest):
             raise ValueError("handoff changed during publication review; resubmit the exact source")
         if not journal:
