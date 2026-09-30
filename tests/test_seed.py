@@ -314,6 +314,21 @@ def test_failed_temp_write_removes_partial_wake(tmp_path: Path, monkeypatch) -> 
     assert list((tmp_path / "tmp").iterdir()) == []
 
 
+def test_generic_top_pain_ci_line_survives_shell_quoting(tmp_path: Path) -> None:
+    """The generic top-pain embeds a `python3 -c` in a shell string.
+
+    A Python repr wrapped in shell single quotes collapses to `Path(/home/...)`
+    and dies with SyntaxError, silently dropping the CI line from the pane.
+    The renderer must keep the Python quotes through the shell layer.
+    """
+    home = tmp_path / "site"
+    assert cli(home, "init", "--slug", "genome").returncode == 0
+    renderer = home / "top-pains" / "genome"
+    command = subprocess.run(["sh", str(renderer)], capture_output=True, text=True)
+    assert command.returncode == 0, command.stderr
+    assert "SyntaxError" not in command.stderr
+    assert "invalid syntax" not in command.stderr
+
 def test_seed_resident_channel_observes_repairs_and_restores(tmp_path: Path) -> None:
     home = tmp_path / "site"
     session = f"mishe-seed-test-{uuid.uuid4().hex[:10]}"
