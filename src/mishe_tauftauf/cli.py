@@ -481,11 +481,8 @@ def _jev_call(request: str) -> tuple[float | None, str]:
     import subprocess as _subprocess
     import sys as _sys
 
-    path = Path(__file__).resolve().parents[2] / "examples" / "jev-judge.py"
-    if not path.exists():
-        return None, "examples/jev-judge.py is not shipped with this install"
     result = _subprocess.run(
-        [_sys.executable or "python3", str(path)],
+        [_sys.executable or "python3", "-m", "mishe_tauftauf.jev_judge"],
         input=request.encode("utf-8"),
         capture_output=True,
         timeout=120,
