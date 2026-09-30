@@ -287,7 +287,8 @@ class CompletionsJudgeTests(unittest.TestCase):
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            config = judge.Config(f"http://127.0.0.1:{server.server_port}/v1", "fixture", timeout=0.25)
+            # Include process startup while still expiring far before the slow body completes.
+            config = judge.Config(f"http://127.0.0.1:{server.server_port}/v1", "fixture", timeout=0.5)
             started = time.monotonic()
             children = []
             popen = subprocess.Popen
@@ -300,7 +301,7 @@ class CompletionsJudgeTests(unittest.TestCase):
             with patch.object(judge.subprocess, "Popen", side_effect=track):
                 result = judge.evaluate(DOC, config)
             self.assertIsNone(result.probability)
-            self.assertLess(time.monotonic() - started, 0.55)
+            self.assertLess(time.monotonic() - started, 0.8)
             self.assertTrue(received.is_set(), "deadline probe must reach the real server")
             self.assertEqual(len(children), 1)
             self.assertIsNotNone(children[0].poll(), "expired transport must be reaped")
