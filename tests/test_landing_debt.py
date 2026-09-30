@@ -210,3 +210,17 @@ def test_interrupted_registration_recovers_without_duplicate_task(tmp_path, monk
     identity = debt.intake(home, debt.audit(home, root))
     assert landing.queue(Feed(home).entries())[0].identity == identity
     assert len(task_state.states(Feed(home).entries())) == 1
+
+
+def test_generated_footer_keeps_both_verdicts_on_one_80_column_line(tmp_path):
+    import os
+    from mishe_tauftauf import seed
+    root = repo(tmp_path)
+    home = root / "site"
+    seed.init(home, "genome")
+    env = {**os.environ, "PYTHONPATH": str(__import__("pathlib").Path(debt.__file__).parents[1])}
+    output = subprocess.check_output([str(home / "top-pains/genome")], cwd=root, env=env, text=True)
+    footer = output.splitlines()[-1]
+    assert "STATE: GREEN doctor" in footer
+    assert "LANDING DEBT: GREEN" in footer
+    assert len(footer) < 80

@@ -343,7 +343,8 @@ def _restore_text(home: Path, slug: str, session: str, *, wake_delivery: bool = 
             f"The installed runtime source is {runtime}; the development checkout is {home.parent.resolve()}. "
             "Inspect the source that actually runs and the task's isolated candidate; development dirt is not deployed code. "
             f"Use the canonical CLI {home.resolve() / 'bin/mishe-tauftauf'} when present.\n"
-            f"Read the live top pane with mishe-tauftauf --home {shlex.quote(str(home))} pain read {slug} --launcher tmux --session {shlex.quote(session)}. "
+            f"Read the complete current dashboard with mishe-tauftauf --home {shlex.quote(str(home))} pain read {slug} --launcher dashboard. "
+            f"Verify presentation liveness separately with mishe-tauftauf --home {shlex.quote(str(home))} pain read {slug} --launcher tmux --session {shlex.quote(session)}. "
             "For an explicit wake, act on one bounded obligation, verify it on the same surface, and leave an artifact.\n")
 
 
@@ -467,9 +468,9 @@ def init(home: Path, slug: str, engine_command: str = "codex") -> str:
             f"{shlex.quote(sys.executable)} -c {shlex.quote(f'from pathlib import Path; from mishe_tauftauf.ci_watch import line; print(line(Path({str(home.resolve())!r})))')}\n"
             f"{shlex.quote(sys.executable)} -m mishe_tauftauf --home {shlex.quote(str(home.resolve()))} task landing-status\n"
             "printf 'GOAL: tend this repo · WORKTREE: %s changed\\n' \"$count\"\n"
-            "if [ \"$rc\" -eq 0 ]; then printf '%s\\n' 'STATE: GREEN · NEXT: verify and land one change'; "
-            "else printf '%s\\n' 'STATE: RED · NEXT: repair the failed check'; fi\n"
-            "printf '%s\\n' \"$debt\" | head -n 2\n",
+            "debt_state=$(printf '%s\\n' \"$debt\" | sed -n 's/^LANDING DEBT: \\([^ ]*\\).*/\\1/p' | head -n 1)\n"
+            "if [ \"$rc\" -eq 0 ]; then printf 'STATE: GREEN doctor · LANDING DEBT: %s\\n' \"${debt_state:-UNKNOWN}\"; "
+            "else printf 'STATE: RED doctor · LANDING DEBT: %s\\n' \"${debt_state:-UNKNOWN}\"; fi\n",
             encoding="utf-8",
             )
         top.chmod(0o755)
@@ -575,6 +576,12 @@ def tick(home: Path, session: str, slug: str, self_pick_seconds: float = 0) -> s
             return f"UNKNOWN seed {slug} top pane lease malformed"
         if not 0 <= age <= 30:
             return f"UNKNOWN seed {slug} top pane lease stale ({age:.1f}s)"
+        # The pane proves display liveness. Its viewport is not semantic evidence.
+        from .dashboard import read as read_dashboard
+        try:
+            full, _ = read_dashboard(home, slug)
+        except ValueError as exc:
+            return f"UNKNOWN seed {slug} {exc}"
         frame = strip_owned_chrome(full).strip()
         if not frame:
             return f"UNKNOWN seed {slug} top pane empty"

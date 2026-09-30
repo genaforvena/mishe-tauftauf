@@ -18,3 +18,10 @@ python -m mishe_tauftauf.landing_debt --home SITE --repo CHECKOUT claim \
 ```
 
 A claim requires a live task belonging to that role, and changes to either working or staged bytes invalidate it. The audit performs no cleanup. Preserve a backup and all unrelated/newer edits before reconciling an old source checkout. Never restore old HEAD bytes over a published draft. Delivery proceeds through exact-byte review, focused checks, accounted-for commit/push, exact-SHA CI, deployment and live consumers, followed by draft reconciliation. Runtime GREEN does not clear source debt.
+
+
+## One dashboard, three consumers
+
+`pain watch` composes the complete report once per refresh and atomically publishes SITE/dashboards/ROLE.json before printing the same frame to tmux. The mind reads `mishe-tauftauf --home SITE pain read ROLE --launcher dashboard`; the supervisor reads that same full frame. Terminal wrapping and scrollback do not enter the observation digest. Missing, corrupt, mismatched, future, or more-than-30-second-old dashboard snapshots are UNKNOWN, with no terminal-capture fallback. Tmux session ownership, pane health and a fresh visible lease still prove presentation liveness separately.
+
+Unchanged scans never rearm an intake. A changed checked source-debt fingerprint makes an idle intake actionable again; active wakes retain their reservation. A closed task's claim can be adopted by a new live owner through the canonical claim command, while a live owner's claim remains protected.
