@@ -95,6 +95,17 @@ tmux attach -t mishe-project
 
 The script creates an ignored `.mishe-seed/` site here or `.mishe-tauftauf/` in the target, initializes five resident windows and the permissions panel, adds the operator shell, runs initial discovery and CI readings, and enables user services for those channels and the CI watcher. `--engine-command 'omp --model ...'` can launch an installed OMP mind instead. `--no-services` starts a manually supervised trial. A repeat plant refreshes unchanged default instructions and resident services while preserving customized local additions, launchers, panes, and handoffs.
 The supervisor recognizes idle OMP and Codex prompts before delivering a wake. For another agent command, provide an executable, site-local `SITE/checks/mind-ready/ROLE` that exits zero only when the role's lower pane can accept a complete prompt. The probe receives `MISHE_SEED_SESSION`, `MISHE_SEED_ROLE`, and `MISHE_SEED_PANE`; an absent or failing probe holds delivery. A changed pane PID proves a clear rotated the process, while this readiness check gates the next wake.
+
+Recovery preserves the wake and handoff: `seed run` respawns dead resident panes,
+redelivers an unsettled wake after 60 seconds only at an idle prompt, and rotates
+a settled mind after the clear grace period at a stable idle boundary. OMP idle
+recognition accepts status tokens such as `INSERT y >` and rejects working
+spinners. If a channel stays `awaiting clear`, inspect `seed status --slug ROLE`,
+the lower pane, and the supervisor journal. Verify the supervisor's `PYTHONPATH`
+points to the repaired runtime; restarting a pinned old release does not load
+checkout changes. After verifying the mind is idle, `seed clear --session SESSION
+--slug ROLE` retries the normal handoff-preserving rotation. Do not kill a mind
+merely because its screen is unchanged; a tool may still be running.
 The generated services use this kernel checkout's Python source, so keep it available on the host.
 The reusable plant runtime lives in `src/mishe_tauftauf/`; it contains planting, feed, panes, local channels, and per-site CI observation. Host-side release coordination lives in the separate `coordination/` directory. `scripts/plant_local.py` and `scripts/sync_plants.py` are thin launchers for these two parts. External plants run the core package; the linked-site coordinator runs only in this checkout.
 

@@ -65,18 +65,19 @@ def test_omp_idle_prompt_survives_trailing_attachments_and_rejects_spinner(monke
 
     from mishe_tauftauf import seed
 
-    prompt = " π > INSERT >"
     attachments = "\n".join(f"  attachment card {index}" for index in range(12))
-    pane = f"{prompt}\n{attachments}\n\n"
-    monkeypatch.setattr(
-        seed, "_tmux",
-        lambda *args, **kwargs: CompletedProcess(args, 0, b"omp\n") if args[0] == "display-message"
-        else CompletedProcess(args, 0, pane.encode()),
-    )
-    assert seed._mind_ready("session", "genome")
+    for prompt in (" π > INSERT >", " π > INSERT y >"):
+        pane = f"{prompt}\n{attachments}\n\n"
+        monkeypatch.setattr(
+            seed, "_tmux",
+            lambda *args, **kwargs: CompletedProcess(args, 0, b"omp\n") if args[0] == "display-message"
+            else CompletedProcess(args, 0, pane.encode()),
+        )
+        assert seed._mind_ready("session", "genome")
 
     for output in ("⠋ Working...\n", f"{prompt}\n⠋ Working...\n",
-                   f"{prompt}\n ⠇ 6m > INSERT > ⬢ Atria Dawn Preview\n"):
+                   f"{prompt}\n ⠇ 6m > INSERT > ⬢ Atria Dawn Preview\n",
+                   f"{prompt}\n ⠇ 6m > INSERT y > ⬢ Atria Dawn Preview\n"):
         monkeypatch.setattr(
             seed, "_tmux",
             lambda *args, output=output, **kwargs: CompletedProcess(args, 0, b"omp\n")
