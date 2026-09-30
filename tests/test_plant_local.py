@@ -70,3 +70,34 @@ def test_replant_preserves_existing_custom_engine_without_default_binary(tmp_pat
     for slug in plant.ROLES:
         (minds / slug).write_text("#!/bin/sh\nexec custom-engine\n", encoding="utf-8")
     plant.ensure_engine_for_new_minds(home, "missing-engine-for-test")
+
+
+def test_runtime_only_cli_preserves_dirty_application_and_contract(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+    import uuid
+
+    workspace = tmp_path / "application"
+    workspace.mkdir()
+    subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+    home = workspace / ".mishe-tauftauf"
+    session = "mishe-refresh-test-" + uuid.uuid4().hex[:10]
+    argv = [sys.executable, "-m", "mishe_tauftauf.plant", "--workspace", str(workspace),
+            "--home", str(home), "--session", session, "--engine-command", "cat", "--no-services"]
+    try:
+        initial = subprocess.run(argv, capture_output=True, text=True, timeout=45)
+        assert initial.returncode == 0, initial.stderr
+        agents = workspace / "AGENTS.md"
+        agents.write_text("Unlanded application contract.\n")
+        application = workspace / "application.py"
+        application.write_text("unlanded application work\n")
+        mind = home / "minds/genome"
+        original_mind = mind.read_bytes()
+        refresh = subprocess.run([*argv, "--runtime-only"], capture_output=True, text=True, timeout=45)
+        assert refresh.returncode == 0, refresh.stderr
+        assert agents.read_text() == "Unlanded application contract.\n"
+        assert application.read_text() == "unlanded application work\n"
+        assert mind.read_bytes() == original_mind
+    finally:
+        subprocess.run([sys.executable, "-m", "mishe_tauftauf", "--home", str(home),
+                        "seed", "stop", "--session", session], capture_output=True, timeout=15)

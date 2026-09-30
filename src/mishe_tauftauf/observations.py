@@ -30,17 +30,25 @@ def validate_slug(slug: str) -> str:
 
 
 def validate_home(home: Path) -> Path:
-    """Require an existing directory before any site write or directory creation.
+    """Reject missing homes, repository roots, and uninitialized plant directories.
 
-    A site home is only meaningful as an already-planted directory: the seed loop, the
-    feed, and access storage read their state from it. Earlier entrypoints created the
-    tree first and validated later, so one mis-resolved --home silently planted a stray
-    site at an arbitrary path (health wakes 28 and 106 removed two such dormant trees).
-    Refuse the write instead.
+    Generic standalone feed directories outside Git remain supported. Inside a
+    worktree, or for a reserved .mishe-* home, require the initialized runtime
+    layout before any writer can create a second conversation tape.
     """
-    if not Path(home).is_dir():
+    home = Path(home)
+    if not home.is_dir():
         raise ValueError(f"site home does not exist: {home}")
-    return Path(home)
+    resolved = home.resolve()
+    if (resolved / ".git").exists():
+        raise ValueError(f"not an initialized site: {home} (repository root)")
+    in_worktree = any((parent / ".git").exists() for parent in resolved.parents)
+    if (in_worktree or home.name.startswith(".mishe-") or resolved.name.startswith(".mishe-")) and not (
+        (home / "top-pains").is_dir() and (home / "minds").is_dir()
+        and ((home / "chat.log").is_file() or (home / "feed").is_file())
+    ):
+        raise ValueError(f"not an initialized site: {home}")
+    return home
 
 
 def executable(path: Path) -> bool:

@@ -67,7 +67,9 @@ class TmuxTests(unittest.TestCase):
             renderer.write_text("#!/bin/sh\nprintf 'DESIRED STATE: green\\n'\n", encoding="utf-8")
             renderer.chmod(0o755)
             impostor = home / ".mishe-tuftauf"
-            impostor.mkdir()
+            # An initialized but unrelated site reaches the ownership gate;
+            # uninitialized typo homes are rejected earlier by site validation.
+            initialize(impostor)
             session = f"mishe-tauftauf-test-{os.getpid()}"
             try:
                 start(home, session, interval=0.2)

@@ -110,3 +110,51 @@ def test_init_still_plants_a_site_directly_inside_a_worktree(tmp_path: Path) -> 
     assert refused.returncode != 0
     assert "must be directly inside a Git worktree" in refused.stderr
     assert not (repository / ".mishe-tauftauf-example").exists()
+
+
+def test_existing_repository_root_and_typo_are_not_sites(tmp_path: Path) -> None:
+    repository = planted_repository(tmp_path)
+    site = repository / ".mishe-tauftauf"
+    assert cli(site, "seed", "init", "--slug", "genome").returncode == 0
+    typo = repository / ".mishe-tuftauf"
+    typo.mkdir()
+    before = tree(repository)
+    for wrong in (repository, typo):
+        for argv in (("append", "--source", "test", "misrouted"),
+                     ("seed", "tick", "--slug", "genome"),
+                     ("access", "request", "bad", "--owner", "senses", "--task", "t",
+                      "--capability", "c", "--unblocks", "u", "--reason", "r")):
+            refused = cli(wrong, *argv)
+            assert refused.returncode != 0, (wrong, argv)
+            assert "not an initialized site" in refused.stderr
+        try:
+            Feed(wrong).append("test", "misrouted")
+        except ValueError as exc:
+            assert "not an initialized site" in str(exc)
+        else:
+            raise AssertionError("library writer accepted a wrong existing home")
+    assert tree(repository) == before
+    assert cli(site, "append", "--source", "test", "canonical").returncode == 0
+
+
+def test_existing_plant_shaped_home_outside_worktree_is_refused(tmp_path: Path) -> None:
+    wrong = tmp_path / "typo-project" / ".mishe-tuftauf"
+    wrong.mkdir(parents=True)
+    before = tree(tmp_path)
+    refused = cli(wrong, "append", "--source", "test", "misrouted")
+    assert refused.returncode != 0
+    assert "not an initialized site" in refused.stderr
+    assert tree(tmp_path) == before
+
+
+def test_creation_entrypoints_cannot_initialize_a_nested_repository_root(tmp_path: Path) -> None:
+    outer = planted_repository(tmp_path)
+    nested = outer / "nested"
+    nested.mkdir()
+    subprocess.run(["git", "-C", str(nested), "init", "-q"], check=True)
+    before = tree(outer)
+    for argv in (("init",), ("seed", "init", "--slug", "genome")):
+        refused = cli(nested, *argv)
+        assert refused.returncode != 0
+        assert "repository root" in refused.stderr
+    assert tree(outer) == before
