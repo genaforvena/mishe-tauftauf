@@ -216,10 +216,10 @@ def sync_registered_sites(core_home: Path, ci: dict[str, str], *, runtime_only: 
             target = Path(row["home"])
             task = f"kernel-sync-{sha[:12]}-{target.parent.name}"
             try:
-                if _git(KERNEL, "rev-parse", "HEAD") != sha or _git(KERNEL, "status", "--porcelain"):
-                    raise RuntimeError("core checkout is not clean at the green CI commit")
                 _target_state(target, row["session"], runtime_only=runtime_only)
                 release = _release_source(core_home, sha)
+                if _git(release, "rev-parse", "HEAD") != sha or _git(release, "status", "--porcelain"):
+                    raise RuntimeError("release is not clean at the green CI commit")
                 env = os.environ.copy()
                 env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
                 env["PYTHONPATH"] = os.pathsep.join(
@@ -233,8 +233,8 @@ def sync_registered_sites(core_home: Path, ci: dict[str, str], *, runtime_only: 
                 if result.returncode:
                     raise RuntimeError(result.stderr.strip()[-400:] or result.stdout.strip()[-400:] or "plant command failed")
                 _verify(target, row["session"])
-                if _git(KERNEL, "rev-parse", "HEAD") != sha or _git(KERNEL, "status", "--porcelain"):
-                    raise RuntimeError("core checkout changed during linked-site refresh")
+                if _git(release, "rev-parse", "HEAD") != sha or _git(release, "status", "--porcelain"):
+                    raise RuntimeError("release changed during linked-site refresh")
                 _update_site(core_home, target, sha=sha, error=None)
                 detail = f"Replanted {target.parent} from core {sha}; expected top panes and resident services are live."
                 core_tag = f"[done] {task}" if row.get("error") else f"[sync] core sha={sha}"

@@ -222,7 +222,7 @@ def eligible(state: TaskState, entries: list[FeedEntry], now: datetime | None = 
                 or (state.retry_at and now >= _deadline(state.retry_at)))
 
 
-def select_task(entries: list[FeedEntry], owner: str, now: datetime | None = None) -> TaskState | None:
+def pending_tasks(entries: list[FeedEntry]) -> dict[tuple[str, int], str]:
     pending = {}
     for entry in entries:
         if entry.source != "seed":
@@ -232,17 +232,20 @@ def select_task(entries: list[FeedEntry], owner: str, now: datetime | None = Non
             pending[(match.group(1), entry.sequence)] = match.group(2)
         elif match := TASK_YIELD_RE.fullmatch(first):
             pending.pop((match.group(1), int(match.group(2))), None)
-    reserved = set(pending.values())
+    return pending
+
+
+def select_task(entries: list[FeedEntry], owner: str, now: datetime | None = None) -> TaskState | None:
+    reserved = set(pending_tasks(entries).values())
     plans = sorted((state for state in states(entries).values() if state.identity not in reserved),
                    key=lambda state: state.sequence)
     own = [state for state in plans if state.owner == owner and eligible(state, entries, now)]
     offered = [state for state in plans if owner in state.helpers and eligible(state, entries, now)]
-    if owner == "genome":
-        from .landing import registrations
-        positions = registrations(entries)
-        deliveries = [state for state in own if state.identity in positions]
-        if deliveries:
-            return min(deliveries, key=lambda state: positions[state.identity])
+    from .landing import priority_ids
+    positions = priority_ids(entries)
+    deliveries = [state for state in own if state.identity in positions]
+    if deliveries:
+        return min(deliveries, key=lambda state: positions[state.identity])
     return next(iter(own or offered), None)
 
 
@@ -313,6 +316,11 @@ def wait_for(home: Path, identity: str, owner: str, next_step: str, reason: str,
         entries = Feed(home).entries()
         old = _owned(entries, identity, owner)
         plans = registry(entries)
+        from .landing import check_waits, dependency_ids, priority_ids
+        protected = identity in priority_ids(entries)
+        if protected and not (retry_task or retry_at):
+            raise ValueError("landing wait requires a concrete producer task or an external retry deadline; "
+                             "use task step for an owned production step")
         status = "waiting"
         if retry_task:
             dependency = plans.get(retry_task)
@@ -337,6 +345,9 @@ def wait_for(home: Path, identity: str, owner: str, next_step: str, reason: str,
                                    if s.parent == cursor and s.status not in {"done", "dropped"})
             if dependency.status == "done":
                 status = "ready"
+            elif protected:
+                open_plans = {key: value for key, value in plans.items() if value.status not in {"done", "dropped"}}
+                check_waits(open_plans, dependency_ids(open_plans, retry_task))
         if alternative:
             candidate = plans.get(alternative)
             if not candidate or candidate.parent != identity or candidate.owner != owner or candidate.status != "ready":
@@ -399,6 +410,8 @@ def lines(entries: list[FeedEntry], owner: str | None = None) -> list[str]:
                       f"retry={retry}: {state.next_step}")
         if state.parent:
             output.append(f"  PARENT: {state.parent} — child completion does not complete this goal")
+        if state.evidence:
+            output.append(f"  EVIDENCE: {state.evidence} sha256={state.evidence_sha256}")
         if state.producer:
             output.append(f"  PREREQUISITE PRODUCER: {state.producer}")
         if state.alternative:

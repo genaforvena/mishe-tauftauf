@@ -315,6 +315,8 @@ def _redeliver_pending(home: Path, session: str, slug: str, pending: int) -> str
 
 
 def _restore_text(home: Path, slug: str, session: str, *, wake_delivery: bool = False) -> str:
+    from .runtime_source import source_for
+    runtime = source_for(home, Path(__file__).resolve().parents[2])
     doctrine = _instruction_text(home, "doctrine.md", _core_doctrine(home))
     charter = _instruction_text(home, f"charters/{slug}.md", _core_charter(slug, home))
     handoff_path = home / "handoffs" / f"{slug}.md"
@@ -334,6 +336,9 @@ def _restore_text(home: Path, slug: str, session: str, *, wake_delivery: bool = 
             f"The canonical site is {home.resolve()}. The CLI resolves it automatically from MISHE_SEED_HOME, "
             "which fresh mind launches set to this path; if this older process lacks it, use this exact path "
             "in shell commands. Never retype the directory from memory.\n"
+            f"The installed runtime source is {runtime}; the development checkout is {home.parent.resolve()}. "
+            "Inspect the source that actually runs and the task's isolated candidate; development dirt is not deployed code. "
+            f"Use the canonical CLI {home.resolve() / 'bin/mishe-tauftauf'} when present.\n"
             f"Read the live top pane with mishe-tauftauf --home {shlex.quote(str(home))} pain read {slug} --launcher tmux --session {shlex.quote(session)}. "
             "For an explicit wake, act on one bounded obligation, verify it on the same surface, and leave an artifact.\n")
 
@@ -617,7 +622,11 @@ def tick(home: Path, session: str, slug: str, self_pick_seconds: float = 0) -> s
                   + (f"TASK TO ADVANCE: {selected.identity}\nNEXT STEP: {selected.next_step}\n"
                      "Before yield, use task step with a changed outcome and checked evidence for a distinct next step, "
                      "or task wait naming the prerequisite producer and exact retry event/deadline/task. "
-                     "The delivered attempt is consumed. Complete a bounded child with task finish; keep its goal open.\n"
+                     f"EVIDENCE: {selected.evidence or '(none)'} sha256={selected.evidence_sha256 or '(none)'}\n"
+                     "This wake reserves the delivered task for your current attempt. Its consumed/waiting state "
+                     "prevents another dispatch; it does not block this attempt. The pane's next task is for a later idle turn. "
+                     "Read evidence at its exact path; site artifacts are intentionally outside tracked source. "
+                     "Complete a bounded child with task finish; keep its goal open.\n"
                      if selected is not None else "")
                   + "TASK STATE (waiting tasks must not be retaken unless their retry fires):\n"
                   + "\n".join(task_state.lines(entries, slug)) + "\n"
