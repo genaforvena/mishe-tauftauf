@@ -36,8 +36,10 @@ Add `--cases PATH --max-calls N` to replay a JSONL file whose lines contain
 N must cover the twelve controls plus all replay cases, and cannot exceed 100.
 Failed controls skip replay cases. Every evaluation makes at most one HTTP
 request with a default 20-second total network deadline, a bounded input and
-output, and no retry. The deadline is enforced while the response is read, so a
-server that trickles bytes cannot extend it; an exceeded deadline yields
+output, and no retry. An isolated transport process covers connection setup,
+headers, body and chunk framing within the total deadline; it is killed and
+reaped on expiry. Credentials travel over private stdin, never command arguments.
+A server that trickles bytes cannot extend the budget; an exceeded deadline yields
 UNKNOWN. These bounds limit calls, not dollar spend: use provider billing limits
 for a spending cap. Multiple invocations each have their own call allowance.
 

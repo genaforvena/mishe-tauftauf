@@ -11,6 +11,7 @@ import http.client
 import json
 import math
 import os
+import subprocess
 import sys
 import time
 import urllib.error
@@ -100,28 +101,67 @@ def _open(request, *, timeout):
     return urllib.request.build_opener(NoRedirect()).open(request, timeout=timeout)
 
 
-def _read_bounded(response, deadline):
-    """Read up to MAX_RESPONSE_BYTES + 1 while a monotonic deadline holds.
+def _fetch_bytes(request, *, timeout):
+    with _open(request, timeout=timeout) as response:
+        return response.read(MAX_RESPONSE_BYTES + 1)
 
-    urllib's socket timeout governs a single read, so a peer trickling one byte
-    at a time could outlast the budget. Recompute the remaining time before
-    every read and apply it to the underlying socket. Test doubles and
-    file-like responses expose no socket; then the deadline alone guards reads.
+
+def _transport_worker():
+    """Private child protocol; never put credentials or response text in errors."""
+    try:
+        data = sys.stdin.buffer.read(MAX_DOCUMENT_BYTES + 20_001)
+        if len(data) > MAX_DOCUMENT_BYTES + 20_000:
+            raise ValueError("oversized request")
+        value = json.loads(data)
+        request = urllib.request.Request(value["url"], data=value["body"].encode(),
+                                         headers=value["headers"], method="POST")
+        raw = _fetch_bytes(request, timeout=value["timeout"])
+        sys.stdout.buffer.write(b"S" + raw)
+    except urllib.error.HTTPError as exc:
+        sys.stdout.buffer.write(f"H{exc.code}".encode("ascii"))
+        exc.close()
+    except (OSError, ValueError, TypeError, KeyError, http.client.HTTPException):
+        sys.stdout.buffer.write(b"E")
+
+
+def _transport(request, *, timeout):
+    """Bound all HTTP phases, including DNS, headers and chunk framing.
+
+    A socket inactivity timeout cannot bound urllib's internal readline loops.
+    Own one isolated child and kill/reap it when the total budget expires.
+    The request travels through stdin, never argv; child stderr is discarded.
     """
-    raw = bytearray()
-    while len(raw) <= MAX_RESPONSE_BYTES:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError("completion total deadline expired")
-        socket = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
-        if socket is not None:
-            socket.settimeout(remaining)
-        chunk = response.read1(min(8192, MAX_RESPONSE_BYTES + 1 - len(raw)))
-        if chunk:
-            raw.extend(chunk)
-        else:
-            break
-    return bytes(raw)
+    deadline = time.monotonic() + timeout
+    data = json.dumps({"url": request.full_url, "body": request.data.decode(),
+                       "headers": dict(request.header_items()), "timeout": timeout}).encode()
+    source = str(Path(__file__).resolve().parents[1])
+    command = [sys.executable, "-I", "-c",
+               f"import sys; sys.path.insert(0, {source!r}); "
+               "from mishe_tauftauf.completions_judge import _transport_worker; _transport_worker()"]
+    environment = {k: v for k, v in os.environ.items()
+                   if k not in {"COMPLETIONS_API_KEY", "COMPLETIONS_KEY_FILE"}}
+    with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                          stderr=subprocess.DEVNULL, env=environment) as child:
+        try:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(command, timeout)
+            output, _ = child.communicate(data, timeout=remaining)
+        except subprocess.TimeoutExpired:
+            raise TimeoutError("completion total deadline expired") from None
+        finally:
+            # Cancellation also owns cleanup; Popen.__exit__ alone can wait
+            # indefinitely for a peer that never completes its response.
+            if child.poll() is None:
+                child.kill()
+                child.communicate()
+        if child.returncode or not output or len(output) > MAX_RESPONSE_BYTES + 2:
+            raise OSError("completion transport failed")
+        if output.startswith(b"H") and output[1:].isdigit():
+            raise urllib.error.HTTPError(request.full_url, int(output[1:]), "HTTP failure", {}, None)
+        if not output.startswith(b"S"):
+            raise OSError("completion transport failed")
+        return output[1:]
 
 
 def _request(state: dict, prompt: str, config: Config):
@@ -145,9 +185,7 @@ def _request(state: dict, prompt: str, config: Config):
     request = urllib.request.Request(config.base_url + "/chat/completions", data=body,
         headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"}, method="POST")
     try:
-        deadline = time.monotonic() + config.timeout
-        with _open(request, timeout=config.timeout) as response:
-            raw = _read_bounded(response, deadline)
+        raw = _transport(request, timeout=config.timeout)
     except urllib.error.HTTPError as exc:
         return None, Result(reason=f"completion HTTP {exc.code}")
     except (OSError, ValueError, http.client.HTTPException):

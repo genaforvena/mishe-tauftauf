@@ -27,7 +27,7 @@ def response(verdict="yes", **overrides):
     payload = {"model": "fixture-v1", "choices": [{"finish_reason": "stop", "message": {"content": json.dumps({"verdict": verdict})}}],
                "usage": {"prompt_tokens": 20, "completion_tokens": 5}}
     payload.update(overrides)
-    return io.BytesIO(json.dumps(payload).encode())
+    return json.dumps(payload).encode()
 
 
 class CompletionsJudgeTests(unittest.TestCase):
@@ -42,7 +42,7 @@ class CompletionsJudgeTests(unittest.TestCase):
 
     def test_request_separates_instructions_and_evidence_and_maps_categories(self):
         for verdict, probability in (("yes", 1.0), ("no", 0.0), ("unknown", None)):
-            with self.subTest(verdict=verdict), patch.object(judge, "_open", return_value=response(verdict)) as http:
+            with self.subTest(verdict=verdict), patch.object(judge, "_transport", return_value=response(verdict)) as http:
                 result = judge.evaluate(DOC, self.config)
                 self.assertEqual(result.probability, probability)
                 self.assertEqual(result.verdict, verdict)
@@ -62,28 +62,28 @@ class CompletionsJudgeTests(unittest.TestCase):
                {"choices": [{"finish_reason": "stop", "message": {"content": '```json\n{"verdict":"yes"}\n```'}}]},
                {"choices": [{"finish_reason": "stop", "message": {"content": '{"verdict":"yes"}', "refusal": "blocked"}}]}]
         for payload in bad:
-            with self.subTest(payload=payload), patch.object(judge, "_open", return_value=io.BytesIO(json.dumps(payload).encode())):
+            with self.subTest(payload=payload), patch.object(judge, "_transport", return_value=json.dumps(payload).encode()):
                 self.assertIsNone(judge.evaluate(DOC, self.config).probability)
 
     def test_http_and_transport_errors_do_not_echo_credentials_or_response(self):
         failures = [urllib.error.HTTPError("https://example.test", 401, "test-secret", {}, io.BytesIO(b"test-secret")),
                     urllib.error.URLError("test-secret"), TimeoutError("test-secret")]
         for failure in failures:
-            with self.subTest(failure=type(failure)), patch.object(judge, "_open", side_effect=failure):
+            with self.subTest(failure=type(failure)), patch.object(judge, "_transport", side_effect=failure):
                 result = judge.evaluate(DOC, self.config)
                 self.assertIsNone(result.probability)
                 self.assertNotIn("test-secret", result.reason)
 
     def test_broken_http_body_is_unknown(self):
-        with patch.object(judge, "_open", side_effect=http.client.IncompleteRead(b"partial")):
+        with patch.object(judge, "_transport", side_effect=http.client.IncompleteRead(b"partial")):
             self.assertIsNone(judge.evaluate(DOC, self.config).probability)
 
     def test_excessively_nested_json_is_unknown(self):
-        with patch.object(judge, "_open", return_value=io.BytesIO(b"[" * 31_000 + b"]" * 31_000)):
+        with patch.object(judge, "_transport", return_value=b"[" * 31_000 + b"]" * 31_000):
             self.assertIsNone(judge.evaluate(DOC, self.config).probability)
 
     def test_missing_key_invalid_document_and_oversize_never_call_http(self):
-        with patch.object(judge, "_open") as http:
+        with patch.object(judge, "_transport") as http:
             for doc in ("", "QUESTION made-up\n\nINSTRUCTIONS\nx", DOC + "x" * judge.MAX_DOCUMENT_BYTES):
                 self.assertIsNone(judge.evaluate(doc, self.config).probability)
             os.environ.pop("COMPLETIONS_API_KEY")
@@ -112,7 +112,7 @@ class CompletionsJudgeTests(unittest.TestCase):
         args = ["--base-url", self.config.base_url, "--model", self.config.model]
         for identity in (None, "wrong", self.config.identity()):
             out = io.StringIO()
-            with patch("sys.stdin", io.StringIO(DOC)), contextlib.redirect_stdout(out), patch.object(judge, "_open", return_value=response()) as http:
+            with patch("sys.stdin", io.StringIO(DOC)), contextlib.redirect_stdout(out), patch.object(judge, "_transport", return_value=response()) as http:
                 code = judge.main(args + (["--expected-identity", identity] if identity else []))
                 self.assertEqual(code, 0)
                 self.assertEqual(len(out.getvalue().splitlines()), 1)
@@ -126,7 +126,7 @@ class CompletionsJudgeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "report.jsonl"
             answers = [response(v) for _ in controls() for v in ("yes", "no")]
-            with patch.object(judge, "_open", side_effect=answers) as http:
+            with patch.object(judge, "_transport", side_effect=answers) as http:
                 code = judge.shadow(self.config, output, [], max_calls=12)
                 self.assertEqual(code, 0)
                 self.assertEqual(http.call_count, 12)
@@ -137,7 +137,7 @@ class CompletionsJudgeTests(unittest.TestCase):
             self.assertNotIn("test-secret", output.read_text())
             self.assertNotIn("document", rows[0])
             self.assertEqual(output.stat().st_mode & 0o777, 0o600)
-            with patch.object(judge, "_open") as http, self.assertRaises(FileExistsError):
+            with patch.object(judge, "_transport") as http, self.assertRaises(FileExistsError):
                 judge.shadow(self.config, output, [], max_calls=12)
             http.assert_not_called()
 
@@ -145,10 +145,10 @@ class CompletionsJudgeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             case = {"document": DOC, "expected": "no"}
-            with patch.object(judge, "_open", side_effect=lambda *_a, **_kw: response("unknown")) as http:
+            with patch.object(judge, "_transport", side_effect=lambda *_a, **_kw: response("unknown")) as http:
                 self.assertEqual(judge.shadow(self.config, root / "failed", [case], max_calls=13), 1)
                 self.assertEqual(http.call_count, 12)
-            with patch.object(judge, "_open") as http, self.assertRaises(ValueError):
+            with patch.object(judge, "_transport") as http, self.assertRaises(ValueError):
                 judge.shadow(self.config, root / "short", [case], max_calls=12)
             http.assert_not_called()
 
@@ -164,13 +164,13 @@ class CompletionsJudgeTests(unittest.TestCase):
             self.assertEqual([e["sequence"] for e in state["context"]], [1])
             self.assertEqual(state["previous_analysis"], "Already audited task A")
             answer = response()
-            payload = json.loads(answer.getvalue())
+            payload = json.loads(answer)
             payload["choices"][0]["message"]["content"] = '{"analysis":"progress-loop","evidence_sequences":[1,2]}'
-            with patch.object(judge, "_open", return_value=io.BytesIO(json.dumps(payload).encode())):
+            with patch.object(judge, "_transport", return_value=json.dumps(payload).encode()):
                 self.assertEqual(judge.witness_decision(state, self.config)["analysis"], "progress-loop")
             self.assertEqual(state.get("question"), "Which witness analysis, if any, is warranted by the new chat entries?")
             self.assertEqual((home / "chat.log").read_bytes(), before)
-            with patch.object(judge, "_open") as http:
+            with patch.object(judge, "_transport") as http:
                 self.assertEqual(judge.witness_decision(judge.witness_snapshot(home, 2), self.config)["analysis"], "none")
                 http.assert_not_called()
             with self.assertRaises(ValueError):
@@ -182,9 +182,9 @@ class CompletionsJudgeTests(unittest.TestCase):
                                ("arbitrary-command", [2]), ("evidence-audit", [True]),
                                ("progress-loop", []), ("progress-loop", "2")):
             with self.subTest(analysis=analysis, refs=refs):
-                payload = json.loads(response().getvalue())
+                payload = json.loads(response())
                 payload["choices"][0]["message"]["content"] = json.dumps({"analysis": analysis, "evidence_sequences": refs})
-                with patch.object(judge, "_open", return_value=io.BytesIO(json.dumps(payload).encode())):
+                with patch.object(judge, "_transport", return_value=json.dumps(payload).encode()):
                     self.assertEqual(judge.witness_decision(state, self.config)["analysis"], "unknown")
 
     def test_replay_metadata_cannot_change_control_gate_or_skip_summary(self):
@@ -211,7 +211,7 @@ class CompletionsJudgeTests(unittest.TestCase):
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
                 captured.append((self.path, json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
-                raw = response("no").getvalue()
+                raw = response("no")
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(raw)
@@ -237,13 +237,15 @@ class CompletionsJudgeTests(unittest.TestCase):
             thread.join(timeout=2)
 
     def test_trickling_response_obeys_total_request_deadline(self):
+        received = threading.Event()
         class SlowHandler(BaseHTTPRequestHandler):
             def do_POST(self):
                 self.rfile.read(int(self.headers["Content-Length"]))
+                received.set()
                 self.send_response(200)
                 self.end_headers()
                 try:
-                    for byte in response().getvalue():
+                    for byte in response():
                         self.wfile.write(bytes([byte]))
                         self.wfile.flush()
                         time.sleep(0.02)
@@ -257,15 +259,87 @@ class CompletionsJudgeTests(unittest.TestCase):
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            config = judge.Config(f"http://127.0.0.1:{server.server_port}/v1", "fixture", timeout=0.05)
+            config = judge.Config(f"http://127.0.0.1:{server.server_port}/v1", "fixture", timeout=0.25)
             started = time.monotonic()
-            result = judge.evaluate(DOC, config)
+            children = []
+            popen = subprocess.Popen
+            def track(*args, **kwargs):
+                child = popen(*args, **kwargs)
+                children.append(child)
+                self.assertNotIn("test-secret", repr(args))
+                self.assertNotIn("COMPLETIONS_API_KEY", kwargs['env'])
+                return child
+            with patch.object(judge.subprocess, "Popen", side_effect=track):
+                result = judge.evaluate(DOC, config)
             self.assertIsNone(result.probability)
-            self.assertLess(time.monotonic() - started, 0.3)
+            self.assertLess(time.monotonic() - started, 0.55)
+            self.assertTrue(received.is_set(), "deadline probe must reach the real server")
+            self.assertEqual(len(children), 1)
+            self.assertIsNotNone(children[0].poll(), "expired transport must be reaped")
         finally:
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)
+
+    def test_total_deadline_covers_headers_chunk_lines_and_trailers(self):
+        for phase in ("headers", "chunk-line", "trailer"):
+            with self.subTest(phase=phase):
+                self._slow_framing_probe(phase)
+
+    def _slow_framing_probe(self, phase):
+        received = threading.Event()
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                received.set()
+                try:
+                    if phase == "headers":
+                        self.wfile.write(b"HTTP/1.1 200 OK\r\nX-Slow: ")
+                        slow = b"x" * 100 + b"\r\n\r\n"
+                    else:
+                        self.wfile.write(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+                        if phase == "chunk-line":
+                            slow = b"1;" + b"x" * 100 + b"\r\nx\r\n0\r\n\r\n"
+                        else:
+                            raw = response()
+                            self.wfile.write(f"{len(raw):x}\r\n".encode() + raw + b"\r\n0\r\n")
+                            slow = b"X-Slow: " + b"x" * 100 + b"\r\n\r\n"
+                    self.wfile.flush()
+                    for byte in slow:
+                        self.wfile.write(bytes([byte]))
+                        self.wfile.flush()
+                        time.sleep(0.01)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            config = judge.Config(f"http://127.0.0.1:{server.server_port}/v1", "fixture", timeout=0.5)
+            started = time.monotonic()
+            result = judge.evaluate(DOC, config)
+            self.assertIsNone(result.probability)
+            self.assertLess(time.monotonic() - started, 0.8)
+            self.assertTrue(received.is_set(), "deadline probe must reach the real server")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_fetch_supports_read_only_file_like_response(self):
+        class ReadOnly:
+            def __enter__(self):
+                return self
+            def __exit__(self, *_args):
+                pass
+            def read(self, size):
+                return response()[:size]
+        with patch.object(judge, "_open", return_value=ReadOnly()):
+            self.assertEqual(judge._fetch_bytes(None, timeout=1), response())
 
 
 if __name__ == "__main__":
