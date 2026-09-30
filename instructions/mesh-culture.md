@@ -1,6 +1,10 @@
 # Mesh culture carried by this seed
 
+## Sources and scope
+
 Sources inspected 2026-09-29: `lte-workstation/AGENTS.md` (mesh contract and invariant registry `20260921.1`), `docs/autonomy/rules.md`, `docs/self-organization.md`, `scripts/mesh-omp-lifecycle`, and the mishe planting skill. This file records which rules this single-repository plant can actually enact. The sources remain authoritative for LTE; this copy grants no authority over LTE or other nodes.
+
+## Rule mapping
 
 | Mesh rule | Local behavior |
 | --- | --- |
@@ -14,12 +18,52 @@ Sources inspected 2026-09-29: `lte-workstation/AGENTS.md` (mesh contract and inv
 | `mesh:17` | Explore qualitative improvements within this owned plant, with a checked artifact and rollback edge. Privacy, credentials, and external systems remain outside the charter. |
 | `mind.top-pane-live.v1` | The supervisor checks a fresh lease and a live pane before waking a mind; the witness top reports window presence and open work. A passing renderer self-test does not prove the caller or visible viewport. |
 
-The self-organization loop is **maintain the substrate → advance one bounded development step → ideate from observed gaps → process wishes into owned tasks**. The shared tape uses `[task] <id> owner=<role>`, `[taking] <id>`, `[done] <id>`, and `[dropped] <id> — reason`. The witness keeps unfinished IDs visible and checks artifacts; genome owns reviewed source landing. Every mind may implement an owned, evidence-backed repair across Mishe's layers, including its rules and architecture, rather than treating its role as a file restriction. The operator's standing instruction to encourage these changes is carried in doctrine and both agent contracts; ownership, acceptance checks, independent review, and external boundaries still apply. A long task keeps one ID across handoffs and uses `seed yield --continue` until its next checked step is complete.
+## Self-organization and ownership
 
-Task prerequisites have a deterministic boundary: `task step` records progress/evidence and next step; `task wait` names an exact event or deadline; `task event` publishes the changed condition. The supervisor records a consumed attempt tied to wake and observation and refuses an unchanged waiting task on quiet picks or continuation. A new pane observation still invites investigation without making a waiting task actionable. `task offer` lets an owner name suitable helper charters; the shared seed lock and durable pending wake reserve an offered ready step before delivery, preventing another helper from taking it. These are local scheduling and cooperative ownership checks, not authority over arbitrary editor writes or external fleet resources.
+The self-organization loop is:
 
-The tracked genome contains reusable code and general rules. The live plant's chat, customized charters, handoffs, plans, checks, evidence, and service files belong under gitignored `.mishe-tauftauf/`, following LTE's `.mesh/` boundary. A reviewed general lesson is promoted deliberately into tracked source. Genome checks the Git index for local state before committing and pushing.
+**maintain the substrate → advance one bounded development step → ideate from observed gaps → process wishes into owned tasks**
 
-OMP's full mesh lifecycle uses native `session_start` and `session_stop` receipts, then an idle drain and context clear. This seed implements the smaller local boundary: an exact `seed yield` archives the handoff and writes a `[work]` receipt, and the supervisor clears only after a settled idle turn. The charter and handoff arrive with the next real wake, so clear creates no idle model turn; a durable continuation or fresh observation invites the next step. The local receipt is a deliberate subset, so native mesh TURN accounting, fleet board gates, and GPU rules are not claimed here.
+The shared tape uses `[task] <id> owner=<role>`, `[taking] <id>`, `[done] <id>`, and `[dropped] <id> — reason`. Witness keeps unfinished IDs visible and checks artifacts. Genome owns reviewed source landing.
 
-The older mishe planting skill is a mortal, no-clone culture demo with a complete `burn` path. This repository is the persistent development seed. Its planting skill installs user services only when used for that full local setup; it does not claim the demo's zero-footprint teardown contract.
+Every mind may implement an owned, evidence-backed repair across Mishe's layers, including its rules and architecture. A role is not a file restriction. The operator's standing instruction to encourage these changes is carried in doctrine and both agent contracts. Ownership, acceptance checks, independent review, and external boundaries still apply.
+
+A long task keeps one ID across handoffs and uses `seed yield --continue` until its next checked step is complete.
+
+## Task prerequisites and helper offers
+
+Task prerequisites have a deterministic boundary:
+
+- `task step` records progress, evidence, and the next step.
+- `task wait` names an exact event or deadline.
+- `task event` publishes the changed condition.
+
+The supervisor records a consumed attempt tied to the wake and observation. It refuses an unchanged waiting task on quiet picks or continuation. A new pane observation still invites investigation; it does not make a waiting task actionable.
+
+With `task offer`, an owner names suitable helper charters. The shared seed lock and durable pending wake reserve an offered ready step before delivery, preventing another helper from taking it.
+
+These are local scheduling and cooperative ownership checks. They grant no authority over arbitrary editor writes or external fleet resources.
+
+## Tracked rules and local state
+
+The tracked genome contains reusable code and general rules. The live plant's chat, customized charters, handoffs, plans, checks, evidence, and service files belong under gitignored `.mishe-tauftauf/`, following LTE's `.mesh/` boundary.
+
+A reviewed general lesson is promoted deliberately into tracked source. Genome checks the Git index for local state before committing and pushing.
+
+## The lifecycle this seed implements
+
+OMP's full mesh lifecycle uses native `session_start` and `session_stop` receipts, then an idle drain and context clear.
+
+This seed implements a smaller local boundary:
+
+1. An exact `seed yield` archives the handoff and writes a `[work]` receipt.
+2. The supervisor clears only after a settled idle turn.
+3. The charter and handoff arrive with the next real wake. A durable continuation or fresh observation invites the next step; clear creates no idle model turn.
+
+The local receipt is a deliberate subset. Native mesh TURN accounting, fleet board gates, and GPU rules are not claimed here.
+
+## Persistent seed, not the mortal demo
+
+The older mishe planting skill is a mortal, no-clone culture demo with a complete `burn` path. This repository is the persistent development seed.
+
+Its planting skill installs user services only when used for that full local setup. It does not claim the demo's zero-footprint teardown contract.

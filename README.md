@@ -1,165 +1,154 @@
 # mishe-tauftauf
 
-**A small, plantable culture for autonomous software development.** Clone the code onto a Linux host, give it an agent command, and plant a local tmux session. Each resident channel sees current evidence above its mind, works in the lower pane, and records its obligations and results in a shared text log. The plant can repair its own development loop and grow useful local capabilities one checked step at a time.
+**A small culture of coding agents that lives in a terminal and tends a Git worktree.**
 
-This repository supplies the loop, roles, and boundaries. A planted instance adds checks and senses for the system it actually owns. The planting script can tend this checkout or another Git worktree; its local charters and checks then grow around that target.
+Give it a Linux host and an installed coding agent. Mishe adds refreshing checks,
+resident tmux windows, a shared work log, and handoffs that survive an agent's
+context being cleared. The agents can inspect faults, make bounded repairs, and
+carry reusable changes through review, commit, push, and CI.
 
-## Repository layout
+Think sourdough starter for a codebase. Except this one is supposed to tell you
+when it hasn't risen.
 
-- `src/mishe_tauftauf/` — installable runtime and CLI; reusable production code belongs here.
-- `coordination/` — checkout-only planting and linked-site release commands; no forwarding scripts.
-- `examples/` — optional judge/mind adapters and the runnable demo.
-- `tests/` — automated behavioral checks.
-- `instructions/`, `skills/`, `.agents/skills/` — mind instructions and operator/agent workflows, not runtime code.
-- `.mishe-tauftauf/` — ignored local plant state, checks, artifacts, and handoffs; never shipped or committed.
+## What you actually get
 
-Keep new runtime features in the package and host orchestration in `coordination/`, rather than adding another script directory.
+Attach to the tmux session and you see the same evidence the agents see:
 
-## Hello world: one observed wake
+- **Checks above, agent below.** Each resident window has a refreshing status pane
+  and a coding agent's working pane. A moving timestamp means the display is alive,
+  not that the system is healthy.
+- **One shared text log.** `chat.log` records who took a task, what they checked,
+  what remains, and where the evidence lives.
+- **Work that survives a fresh context.** A supervisor archives a handoff, replaces
+  a settled agent process when it is idle, and restores its purpose and unfinished
+  work on the next wake.
+- **A loop that can repair itself.** Agents may improve Mishe's own code, checks,
+  or instructions within their owned scope. Shared source still needs verification
+  and independent review before landing.
 
-From a fresh Git checkout, with `tmux`, a working `codex` command, and a user systemd manager available:
+Mishe supplies the coordination and observation loop, **not the language model**.
+You bring the agent CLI and its authentication. It is a local development practice,
+not a hosted service, a sandbox, or a promise that every repair will be correct.
+
+## Start here
+
+| You want to… | Read |
+| --- | --- |
+| Plant it and watch one real task | [Getting started](docs/getting-started.md) |
+| Understand the roles, checks, and handoffs | [How it works](docs/how-it-works.md) |
+| Inspect, recover, or update a running plant | [Operating guide](docs/operating.md) |
+| Read the rules an agent must follow | [Agent contract](AGENTS.md) and [seed doctrine](src/mishe_tauftauf/seed_doctrine.md) |
+
+A **plant** is one running instance. Its **site** is the local directory holding
+its log, checks, charters, and evidence. A **mind** is the coding agent in a lower
+pane. No botany qualification required.
+
+## Plant your first instance
+
+You need **Linux, Python 3.10+, Git, tmux, an installed and authenticated coding
+agent, and a working user systemd manager** for the persistent setup. GitHub CLI
+(`gh`) with access to the repository is needed for GitHub Actions readings; missing
+CI access is reported as `UNKNOWN`, not success.
+
+From a fresh clone:
 
 ```bash
+git clone https://github.com/genaforvena/mishe-tauftauf.git
+cd mishe-tauftauf
 python3 -m coordination.launcher --engine-command codex
-.mishe-seed/bin/mishe-tauftauf --home .mishe-seed append --source operator \
-  '[task] hello-world owner=discover source=/proc/loadavg acceptance=fresh-scan-and-live-pane retry=next-scan. Read one real load value, cite the scan artifact, verify the discover top pane, and mark this task done.'
 tmux attach -t mishe-seed
 ```
 
-Watch `discover`: its upper pane should show the fresh reading, and its lower pane should take the task. In another shell, `tail -f .mishe-seed/chat.log` shows `[taking]`, a checked `[work]` receipt with its handoff, and `[done]`. The site directory is ignored by Git. Replace `codex` with your installed agent command if needed; the [planting section](#plant-a-local-instance) covers another worktree and manual trials.
+**This starts real agents and enables background user services.** Agent work may
+consume provider credits and change the owned worktree. The site is ignored by
+Git; the code is not. Read the [setup guide](docs/getting-started.md) first if you
+want a manually supervised trial or to plant another project. Planting another
+worktree also adds or refreshes a marked agent-contract block in its `AGENTS.md`.
 
-On an already planted checkout, the same script reuses its resident site and session; use the paths and session name printed by the planting command.
+The names above are fresh-clone defaults. If the checkout already has a plant,
+the launcher reuses it: use the site and session printed by the command rather
+than assuming `mishe-seed`.
 
-## How it lives
+A successful launch is only the beginning of the check. The setup guide walks
+through a real task, its live pane, its artifact, and its completion record.
+
+## How the loop works
 
 ```text
-local system and source → sampled observations → refreshing top panes
-                                                ↓
-                                      resident minds below
-                                                ↓
-                            bounded action → same live check
-                                                ↓
-                        artifact + handoff + append-only chat.log
-                                                ↓
-                              idle clear → next WAKE + restore → next step
+observe → choose one bounded step → act → check the live result
+   ↑                                           ↓
+next wake ← fresh context ← handoff + artifact + shared log
 ```
 
-The top pane is the current, shared view of a channel's goal, readings, and checks. Its moving lease proves the renderer is running; it does not make a failed check pass. A missing, stale, or conflicting reading is `UNKNOWN`. A reproducible fact belongs in a deterministic check with a real failure state. The lower pane is an agent's working shell. The agent chooses among plausible repairs or improvements, while the checks decide what happened.
+Scripts decide reproducible facts; agents choose what to do about them. Checks
+report healthy (`GREEN`), failed (`RED`), or missing/stale/conflicting evidence
+(`UNKNOWN`). **Unknown is not a reassuring shade of green.**
 
-`SITE/chat.log` is an append-only conversation and obligation tape. A stable `[task]` ID names work and its owner; `[taking]` records that work started; `[done]` requires a checked artifact; `[dropped]` records why an idea was declined. A handoff carries the current task and exact next step through a context clear. A charter carries the channel's lasting purpose. Neither substitutes for reading the live pane again after restoration.
-Every new entry must explain the event, evidence or artifact, and next owner or action in plain text. Stable protocol tags stay on the first line for replay; the entry also includes a human explanation. Unchanged repeated samples stay in local artifacts instead of filling the shared tape.
+Five resident roles share the work:
 
-The supervisor wakes a resident mind for a changed observation, an addressed event, a continuation, or a quiet self-pick. The mind takes one bounded step: inspect the source and obligation, reproduce a RED or UNKNOWN result, predict the effect of a change, make that change, and rerun the same check on the live pane. On a GREEN pane it can pursue one useful improvement grounded in its charter or an operator wish. It writes an artifact and handoff, then settles the exact wake with `seed yield --result changed|verified|blocked`. The supervisor archives the handoff, writes a `[work]` receipt, and rotates the lower pane to a fresh process at an idle boundary. It checks that the pane has a new live process, then delivers the charter and handoff with the next real wake. A long task keeps its ID and uses `--continue` to receive another step after the clear. An unsettled wake is reconciled before any possible effect is repeated.
+| Role | Responsibility |
+| --- | --- |
+| `discover` | Find useful local observations and check whether they are available. |
+| `senses` | Turn those observations into reliable readings with honest failure states. |
+| `health` | Keep the local feed, panes, and services working. |
+| `genome` | Improve reusable source and land verified, independently reviewed changes. |
+| `witness` | Follow open work and compare completion claims with evidence. |
 
-Every mind has standing authority to pursue useful work within its charter. When a source is unavailable, it leaves an honest `UNKNOWN` and an exact retry condition, then explores another candidate. A missing external capability goes through the scoped permissions ledger; granted capabilities are ready to use. Senses can sample and wire a new reading, then hand reusable source changes to genome for review and landing.
+There is also a permissions panel and an operator shell. Roles identify
+responsibilities, not walls around files: any mind can pursue an owned repair,
+while genome handles shared-source landing. The [concept guide](docs/how-it-works.md)
+explains the task protocol and what happens between wakes.
 
-## The initial channels
+## Scope, not a force field
 
-| Window | What the upper pane shows | What the lower pane does |
-| --- | --- | --- |
-| `discover` | Recent bounded reads and capability candidates | Finds useful local readings, tests availability, and routes a candidate to its steward |
-| `senses` | Sampled readings, freshness, and unknowns | Turns useful reads into truthful senses with a source, failure state, and consumer |
-| `health` | Doctor, expected tmux windows, resident services, and CI state | Repairs the plant's local feed, panes, and services |
-| `genome` | Repository goal, worktree, doctor, CI, and next development step | Changes reusable source, verifies it, obtains independent review, and lands owned changes |
-| `witness` | Open tasks, conversation, CI events, receipts, and channel health | Routes work, follows it through completion, and checks claims against artifacts and live results |
-| `permissions` | Pending and decided requests | Gives the operator a shell for scoped grant and revoke decisions |
-| `operator` | A shared shell | Lets a person or agent inspect and speak to the plant |
+Plant only in systems and worktrees you own or are authorized to maintain.
+Charters define intended authority; they do not enforce an operating-system
+sandbox. The permission ledger records scoped operator decisions—it does not
+grant Linux permissions or unlock a device.
 
-The progression is **discover → senses → health → genome → witness**: identify what can be observed, make the observation reliable, keep the local substrate working, improve the reusable code, and independently check that work is finished. These are responsibilities, not a mandatory sequence for every task. A fault goes to its owner; a reusable source change goes to genome. The witness keeps unfinished IDs visible. The operator can attach to the same text session and read the same tape.
+This seed borrows culture from [lte-workstation](https://github.com/genaforvena/lte-workstation),
+but **does not inherit authority over that mesh, remote nodes, accounts, or devices**.
+It starts with bounded local readings, not someone else's sensors. It needs your
+project's real build, test, service, and data checks to know what healthy means
+for that project.
 
-Discovery starts with bounded, read-only local samples: commands on `PATH`, `/proc` and `/sys` values, disk space, tmux windows, and input activity counters. A command's presence is only a candidate; a working sense needs an actual sample and an honest status. Input activity counts do not capture key content. The plant can ask for a capability it cannot use within its present scope: `permit request` records a stable ID, owner, task, capability, reason, and each path the decision would unblock. The operator's `permit grant` or `permit revoke` appears on the permissions pane and in `chat.log`. This ledger records a decision for this plant; it does not change Linux permissions or device access. A pending or revoked request is no authority to act.
-Each discovery log entry explains the observed commands, verified readings, unknowns, artifact, and next action in plain text. Repeated scans still refresh the local sample, but they add a chat entry only when availability, status, or an unknown reason changes. Discover and senses wake on those meaningful changes rather than on every changing counter.
+## Evidence, not just atmosphere
 
-## Where this fits
+The public [example repository](https://github.com/genaforvena/mishe-tauftauf-example)
+shows a plant tending a small application; its
+[commits](https://github.com/genaforvena/mishe-tauftauf-example/commits/main) and
+[Actions runs](https://github.com/genaforvena/mishe-tauftauf-example/actions) are
+public. Host readings, conversation, and handoffs stay in the ignored local site.
 
-| Project | Primary unit | What it gives you |
-| --- | --- | --- |
-| [LangGraph](https://docs.langchain.com/oss/python/langgraph/overview) | A graph of application steps | A runtime for long-running stateful agent workflows, with persistence and human review points. |
-| [OpenHands SDK](https://docs.openhands.dev/sdk/getting-started) | A framework for building software agents | Agents that interact with code, files, and system commands through tools and a workspace. |
-| mishe-tauftauf | A resident culture planted in a Git worktree | Persistent text panes, role charters, a shared obligation log, checked handoffs, and a path from observed failures to reviewed, pushed repairs. |
+For a concrete repair in this repository, see the
+[false-CI-unknown case study](docs/how-it-works.md#case-study-a-false-ci-unknown).
+It follows a bad reading through reproduction, review, push, and replacement CI.
+An agent saying “fixed” is a claim. The check is the receipt.
 
-These are different layers of a system. Mishe-tauftauf uses an installed coding agent as a mind and can incorporate other runtimes; its specific contribution is the ongoing local observation and repair loop around an owned codebase.
+## Find your way around the checkout
 
-## Case study: a false CI unknown in this repository
+| Path | What belongs there |
+| --- | --- |
+| `src/mishe_tauftauf/` | Installable runtime and CLI; reusable production code. |
+| `coordination/` | Checkout-only planting and linked-site release commands. |
+| `examples/` | Optional mind/judge adapters and a runnable demo. |
+| `tests/` | Automated behavioral checks. |
+| `docs/` | Reader guides: setup, mental model, and operations. |
+| `instructions/`, `skills/`, `.agents/skills/` | Mind instructions and agent/operator workflows. |
+| `.mishe-seed/` or `.mishe-tauftauf/` | Ignored local state: logs, customized charters, handoffs, checks, and artifacts. |
 
-On 29 September 2026, the live CI pane reported `UNKNOWN` for `origin/main` even though [run 36617398870](https://github.com/genaforvena/mishe-tauftauf/actions/runs/36617398870) had succeeded for that exact commit. The watcher listed recent branch runs and filtered their SHAs afterward; that query did not reliably find the run. Witness kept the discrepancy visible as a genome task. Genome reproduced the exact-SHA lookup, changed the watcher to query `gh run list --commit <full origin/main SHA>`, restored per-workflow result coverage, and obtained independent review. The focused tests passed (3). It pushed [commit 71b9aca](https://github.com/genaforvena/mishe-tauftauf/commit/71b9aca89c7e21519eb4b278e6fa409b8be0f167); [run 36619558220](https://github.com/genaforvena/mishe-tauftauf/actions/runs/36619558220) succeeded for that new SHA, and the live pane returned to `PASS`.
+A fresh clone gets the reusable code and default rules, not another host's living
+state. A local lesson becomes shared behavior only when deliberately promoted
+into reviewed source. The [culture mapping](instructions/mesh-culture.md) records
+which mesh rules this smaller seed actually carries.
 
-The observable improvement is precise: CI status is now queried for the remote commit being tended, and a GitHub query failure still remains `UNKNOWN`. The task stayed open through the code change, review, push, and replacement run; its completion was recorded in `chat.log` only after those checks.
-
-For a separate application with a running plant, see the public [check ledger example](https://github.com/genaforvena/mishe-tauftauf-example), its [commit history](https://github.com/genaforvena/mishe-tauftauf-example/commits/main), and its [Actions runs](https://github.com/genaforvena/mishe-tauftauf-example/actions). That repository records code and CI; the plant's chat, panes, and host readings remain in its ignored local site.
-
-## Plant a local instance
-
-The plant target is Linux with Python 3, tmux, an installed agent CLI, Git, GitHub CLI for CI readings, and a user systemd manager. From this checkout:
+For checkout development, with the local test environment available:
 
 ```bash
-python3 -m coordination.launcher --engine-command 'codex'
-tmux attach -t mishe-seed
+PYTHONPATH=src .venv/bin/pytest -q
 ```
 
-To plant the same kernel onto another owned Git worktree:
+Tests check behavior in isolation. The running caller, live pane, and shared log
+check whether it is actually wired. Both matter.
 
-```bash
-python3 -m coordination.launcher --workspace /path/to/project --engine-command 'codex'
-tmux attach -t mishe-project
-```
-
-The script creates an ignored `.mishe-seed/` site here or `.mishe-tauftauf/` in the target, initializes five resident windows and the permissions panel, adds the operator shell, runs initial discovery and CI readings, and enables user services for those channels and the CI watcher. `--engine-command 'omp --model ...'` can launch an installed OMP mind instead. `--no-services` starts a manually supervised trial. A repeat plant refreshes unchanged default instructions and resident services while preserving customized local additions, launchers, panes, and handoffs.
-The supervisor recognizes idle OMP and Codex prompts before delivering a wake. For another agent command, provide an executable, site-local `SITE/checks/mind-ready/ROLE` that exits zero only when the role's lower pane can accept a complete prompt. The probe receives `MISHE_SEED_SESSION`, `MISHE_SEED_ROLE`, and `MISHE_SEED_PANE`; an absent or failing probe holds delivery. A changed pane PID proves a clear rotated the process, while this readiness check gates the next wake.
-
-Recovery preserves the wake and handoff: `seed run` respawns dead resident panes,
-redelivers an unsettled wake after 60 seconds only at an idle prompt, and rotates
-a settled mind after the clear grace period at a stable idle boundary. OMP idle
-recognition accepts status tokens such as `INSERT y >` and rejects working
-spinners. If a channel stays `awaiting clear`, inspect `seed status --slug ROLE`,
-the lower pane, and the supervisor journal. Verify the supervisor's `PYTHONPATH`
-points to the repaired runtime; restarting a pinned old release does not load
-checkout changes. After verifying the mind is idle, `seed clear --session SESSION
---slug ROLE` retries the normal handoff-preserving rotation. Do not kill a mind
-merely because its screen is unchanged; a tool may still be running.
-The generated services use this kernel checkout's Python source, so keep it available on the host.
-The reusable plant runtime lives in `src/mishe_tauftauf/`; it contains planting, feed, panes, local channels, and per-site CI observation. Host commands live together in `coordination/`: `python3 -m coordination.launcher` plants a site and `python3 -m coordination.site_sync` refreshes linked sites. Run both from this checkout; they load its `src/` without requiring a package install or a separate launcher script. External plants run the core package; the linked-site coordinator runs only in this checkout.
-
-When a persistent external plant is created, its site and tmux session are recorded in this checkout's ignored `SITE/health/linked-sites.json`. The core checkout's separate release coordinator follows fresh CI readings and retries a linked-site refresh after GitHub Actions passes for the exact local `HEAD`. It skips an already applied SHA and holds if either worktree has unlanded changes or the target tmux session is not owned by that site. After planting, it checks the target's feed, top and mind panes, and resident services. Each sync or hold is explained in the core `chat.log`. A refreshed generated `AGENTS.md` block becomes a task for the target genome to review, commit, push, and check in that repository; application files are never copied from the kernel. Plant the core first, then plant an external worktree to register it. To retry immediately after clearing a hold, run `python3 -m coordination.site_sync --home SITE`, where `SITE` is this checkout's resident site.
-
-The core health pane also reads each registered site's `health/services.json` and
-checks those named units on the current host's user service manager. Inactive units
-make health RED; missing or malformed registry/site data, unavailable service
-status, and exhausted probe time make it UNKNOWN. Each render checks at most 16
-sites and 32 units per site, with a five-second shared service-probe budget. This
-is a live read-only check, independent of the deployment's recorded applied SHA.
-An absent registry means no linked sites are configured, as on an external plant;
-a registered site's missing manifest is still UNKNOWN.
-
-For an operator-requested runtime update while a target has unrelated application
-changes, use `python3 -m coordination.site_sync --home SITE --runtime-only`. This still
-requires clean core source, passing CI for its exact commit, and an existing owned
-target session. It refreshes the ignored runtime and services while preserving the
-target's `AGENTS.md` and application work. Normal automatic refreshes retain the
-clean-target gate. The core deployment report describes CI and applied releases;
-it is evidence of deployment convergence, not an approval gate for landing code.
-
-Inspect the running plant rather than inferring success from the install command:
-
-```bash
-tmux list-windows -t mishe-seed
-tmux capture-pane -p -t mishe-seed:health.0
-tmux capture-pane -p -t mishe-seed:genome.0
-.mishe-seed/bin/mishe-tauftauf --home .mishe-seed seed status --slug genome
-.mishe-seed/bin/mishe-tauftauf --home .mishe-seed discover show
-systemctl --user status mishe-seed-genome.service mishe-seed-health.service
-```
-
-The CI watcher matches Actions runs to the GitHub default branch's remote SHA, records each transition as `[ci]` in `chat.log`, and opens a genome task on failure. No run for the current SHA, an unavailable GitHub CLI, or a stale reading is `UNKNOWN`, never a pass inferred from an older commit. Genome keeps the task open through the repair commit, push, and successful replacement run. Each target can add its own CI or deployment checks to its local top panes.
-
-The generated checks are a starting point. Add the target system's real build, test, service, and data checks to its top-pane programs as the plant learns that system. Each consequential gate needs a visible verdict and a real failure state. The local [plant-mishe skill](.agents/skills/plant-mishe/SKILL.md) contains the setup and live verification workflow.
-
-## What stays in Git
-
-Tracked source holds reusable code, tests, setup, general instructions, and the default culture. The planted site's `chat.log`, customized charters, handoffs, artifacts, drafts, checks, service units, and permission ledger live under a gitignored site directory such as `.mishe-seed/` or this checkout's `.mishe-tauftauf/`. A fresh clone starts without another node's running state. A lesson becomes shared behavior only when reviewed and deliberately promoted into tracked source. Genome inspects the exact diff, excludes the site directory, commits accounted-for paths, pushes to this repository's configured origin, and records the SHA and push result; the task remains open until that delivery is complete.
-
-The local agent contract is [AGENTS.md](AGENTS.md). The plant's durable rules are [seed_doctrine.md](src/mishe_tauftauf/seed_doctrine.md), loaded from tracked source at each restore and mirrored into `SITE/doctrine.md` on planting. The [mesh culture mapping](instructions/mesh-culture.md) names the source rules this narrower seed carries. This seed does not claim the fleet authority or native lifecycle accounting of the larger mesh.
-
-## A working plant
-
-A fresh instance works when its top panes refresh with truthful results, its resident services and lower panes remain live, an addressed task or observed fault wakes the right mind, that mind leaves a checked artifact and `[work]` receipt, and the next wake restores the handoff after a clear without losing the next step. A successful unit test checks the protocol; the live pane, caller, and tape check the actual wiring. Run this checkout's suite with `.venv/bin/pytest -q` when its virtual environment is present.
+**[CC0 1.0](LICENSE)** — take it, fork it, grow your own. Keep the checks honest.
