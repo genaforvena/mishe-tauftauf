@@ -29,6 +29,20 @@ def validate_slug(slug: str) -> str:
     return slug
 
 
+def validate_home(home: Path) -> Path:
+    """Require an existing directory before any site write or directory creation.
+
+    A site home is only meaningful as an already-planted directory: the seed loop, the
+    feed, and access storage read their state from it. Earlier entrypoints created the
+    tree first and validated later, so one mis-resolved --home silently planted a stray
+    site at an arbitrary path (health wakes 28 and 106 removed two such dormant trees).
+    Refuse the write instead.
+    """
+    if not Path(home).is_dir():
+        raise ValueError(f"site home does not exist: {home}")
+    return Path(home)
+
+
 def executable(path: Path) -> bool:
     return path.is_file() and os.access(path, os.X_OK)
 

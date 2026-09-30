@@ -15,6 +15,7 @@ def run(home: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 def test_request_records_scope_and_revocable_decision(tmp_path: Path) -> None:
     home = tmp_path / "site"
+    home.mkdir()
     request = ("request", "keyboard-counter", "--owner", "senses", "--task", "sense-keyboard",
                "--capability", "input.activity.count", "--unblocks", "senses/keyboard",
                "--unblocks", "task/sense-keyboard/verify", "--reason", "read event counts, not keys")
@@ -40,6 +41,7 @@ def test_request_records_scope_and_revocable_decision(tmp_path: Path) -> None:
 
 def test_request_id_and_scope_cannot_be_silently_reused(tmp_path: Path) -> None:
     home = tmp_path / "site"
+    home.mkdir()
     base = ("--owner", "discover", "--task", "frontier", "--capability", "proc.read",
             "--unblocks", "discover/proc", "--reason", "sample readable counters")
     assert run(home, "request", "../escape", *base).returncode == 2

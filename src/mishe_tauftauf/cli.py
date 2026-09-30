@@ -13,13 +13,21 @@ from .checks import run_check
 from . import access, discovery
 from .feed import Feed, FeedError, parse_feed, utc_now
 from .judges import QUESTIONS, classify, controls, document, run_external
-from .observations import compose_frame, discover, executable, validate_slug
+from .observations import compose_frame, discover, executable, validate_home, validate_slug
 from .predictions import PredictionError, append_prediction, pending_predictions, replay_predictions
 from .runtime import Coordinator, RuntimeConfig, runtime_status
 
 
 def default_home() -> Path:
-    return Path(os.environ.get("MISHE_TAUFTAUF_HOME", ".mishe-tauftauf"))
+    """Resolve the site home the same way resident minds are told to name it.
+
+    seed.py exports MISHE_SEED_HOME to launched minds and the restore text points them
+    there, but this function read a different variable (MISHE_TAUFTAUF_HOME), so the
+    exported name was inert and a mind without it retyped a plausible-looking relative
+    path. Prefer the canonical site variable, then the workspace-local fallback.
+    """
+    return Path(os.environ.get("MISHE_SEED_HOME")
+                or os.environ.get("MISHE_TAUFTAUF_HOME", ".mishe-tauftauf"))
 
 
 def initialize(home: Path) -> None:
@@ -31,6 +39,8 @@ def initialize(home: Path) -> None:
 
 
 def cmd_init(args) -> int:
+    from .seed import _require_worktree
+    _require_worktree(args.home)
     initialize(args.home)
     print(args.home)
     return 0
@@ -247,6 +257,7 @@ def cmd_tmux_mind_run(args) -> int:
     from .feed import Feed
     from .tmux import capture_raw
     home, slug = args.home, validate_slug(args.slug)
+    validate_home(home)
     lock_path = home / "minds" / f".{slug}.lock"
     with lock_path.open("a+") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
@@ -496,6 +507,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     args.home = args.home.resolve()
     try:
+        if not (args.func is cmd_init or getattr(args, "seed_command", None) == "init"):
+            validate_home(args.home)
         return args.func(args)
     except (FeedError, PredictionError, ValueError, RuntimeError) as exc:
         print(f"mishe-tauftauf: {exc}", file=sys.stderr)
