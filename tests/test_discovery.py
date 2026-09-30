@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from mishe_tauftauf.discovery import _cpu_busy, latest, scan
+from mishe_tauftauf import discovery
 from mishe_tauftauf.feed import Feed
 
 
@@ -359,3 +360,94 @@ def test_cpu_busy_sample_is_short_window_and_unreadable_is_unknown(tmp_path: Pat
     assert observed["sense.proc.cpu-busy"]["state"] == "unknown"
     assert observed["sense.proc.cpu-busy"]["sample"] == "/proc/stat cpu fields unavailable"
     assert observed["sense.proc.cpu-busy"]["kind"] == "read"
+
+
+def _completed(stdout: str, returncode: int = 0) -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="")
+
+
+def test_journal_error_window_count_equals_the_grep_count() -> None:
+    """Acceptance: the reported count equals the grep count for the same window."""
+    lines = ["uvcvideo 1-6:1.1: Failed to resubmit video URB (-1)."] * 3 + ["spa.alsa: busy"] * 4
+    with patch("mishe_tauftauf.discovery.subprocess.run",
+               return_value=_completed("\n".join(lines))):
+        assert discovery._journal_error_window() == {
+            "state": "verified",
+            "sample": "last-10min kernel-error-count=3 endpoints=uvcvideo 1-6:1.1"}
+
+
+def test_journal_error_window_reports_every_contributing_endpoint_not_one_device() -> None:
+    """Amendment: show all contributing endpoints so one idle device is the whole signal."""
+    lines = ["uvcvideo 1-6:1.1: Failed to resubmit video URB (-1).",
+             "uvcvideo 1-7:1.0: Failed to resubmit video URB (-1).",
+             "uvcvideo 1-6:1.1: Failed to resubmit video URB (-1)."]
+    with patch("mishe_tauftauf.discovery.subprocess.run",
+               return_value=_completed("\n".join(lines))):
+        reading = discovery._journal_error_window()
+    assert reading["sample"] == ("last-10min kernel-error-count=3 "
+                                 "endpoints=uvcvideo 1-6:1.1,uvcvideo 1-7:1.0")
+
+
+def test_journal_error_window_reports_zero_without_inventing_a_rate() -> None:
+    lines = ["spa.alsa: capture open failed", "pw.node: suspended -> error"]
+    with patch("mishe_tauftauf.discovery.subprocess.run",
+               return_value=_completed("\n".join(lines))):
+        assert discovery._journal_error_window() == {
+            "state": "verified", "sample": "last-10min kernel-error-count=0"}
+
+
+def test_journal_error_window_is_a_neutral_reading_not_a_health_verdict() -> None:
+    """Amendment: the reading counts idle-camera status noise; it never reads as degradation."""
+    with patch("mishe_tauftauf.discovery.subprocess.run",
+               return_value=_completed("uvcvideo 1-6:1.1: Failed to resubmit video URB (-1).")):
+        reading = discovery._journal_error_window()
+    assert reading["state"] == "verified"
+    sample = reading["sample"]
+    # A consumer sees the contributing endpoint and a count, not a machine-health verdict.
+    assert sample == "last-10min kernel-error-count=1 endpoints=uvcvideo 1-6:1.1"
+
+
+def test_journal_error_window_falls_back_to_a_bounded_tail_never_a_full_boot() -> None:
+    calls = []
+
+    def run(cmd, *a, **kw):
+        if "--since" in cmd:
+            calls.append(cmd)
+            return _completed("", returncode=1)
+        calls.append(cmd)
+        assert "-n" in cmd and "400" in cmd, "fallback must be a bounded tail"
+        return _completed("uvcvideo 1-6:1.1: Failed to resubmit video URB (-1).")
+
+    with patch("mishe_tauftauf.discovery.subprocess.run", side_effect=run):
+        reading = discovery._journal_error_window()
+    assert reading["sample"] == "last-10min kernel-error-count=1 endpoints=uvcvideo 1-6:1.1"
+    assert sum(1 for c in calls if "--since" in c) == 1
+    assert sum(1 for c in calls if "-n" in c) == 1
+
+
+def test_journal_error_window_stays_unknown_when_no_bounded_source_answers() -> None:
+    with patch("mishe_tauftauf.discovery.subprocess.run", side_effect=OSError):
+        assert discovery._journal_error_window() == {}
+    with patch("mishe_tauftauf.discovery.subprocess.run",
+               side_effect=subprocess.TimeoutExpired(cmd=[], timeout=10)):
+        assert discovery._journal_error_window() == {}
+
+
+def test_sample_emits_journal_sense_even_when_the_journal_is_unreachable() -> None:
+    """No silent drop: an unreachable window reads unknown, and the pane can show it."""
+    with patch("mishe_tauftauf.discovery._journal_error_window", return_value={}):
+        observed = {row["id"]: row for row in discovery.sample(Path("/nonexistent-site"))["observations"]}
+    row = observed["sense.journal.kernel-error-rate"]
+    assert row["state"] == "unknown"
+    assert row["sample"] == "journal error window unavailable"
+    assert row["kind"] == "read"
+
+
+def test_sample_emits_journal_sense_with_the_live_count() -> None:
+    with patch("mishe_tauftauf.discovery._journal_error_window",
+               return_value={"state": "verified",
+                             "sample": "last-10min kernel-error-count=2 endpoints=uvcvideo 1-6:1.1"}):
+        observed = {row["id"]: row for row in discovery.sample(Path("/nonexistent-site"))["observations"]}
+    row = observed["sense.journal.kernel-error-rate"]
+    assert row["state"] == "verified"
+    assert row["kind"] == "read"
