@@ -114,6 +114,41 @@ def test_author_retry_notice_explains_the_registered_wait_it_releases(candidate,
     assert len([e for e in Feed(home).entries() if e.body.startswith("[task-event] delivery-repair-updated\n")]) == 1
 
 
+def test_unchanged_pending_ci_cannot_release_a_new_author_wait(candidate, monkeypatch):
+    home, _, _, _, head, review = candidate
+    submit(candidate)
+    monkeypatch.setattr(delivery, "read_ci", lambda *args: ci(head))
+    delivery.integrate(home, "repair", "operator")
+    monkeypatch.setattr(delivery, "read_ci", lambda *args: ci(head, "pending"))
+    delivery.check(home, "repair")
+    for step in ("deploy after final CI", "inspect deployment when final CI passes"):
+        task_state.wait_for(home, "repair", "senses", step, "main CI remains pending", review,
+                            retry_event="delivery-repair-updated")
+        delivery.check(home, "repair")
+        entries = Feed(home).entries()
+        assert not task_state.eligible(task_state.registry(entries)["repair"], entries)
+
+
+def test_saved_final_ci_transition_recovers_only_its_original_author_wait(candidate, monkeypatch):
+    home, _, _, _, head, review = candidate
+    submit(candidate)
+    monkeypatch.setattr(delivery, "read_ci", lambda *args: ci(head))
+    delivery.integrate(home, "repair", "operator")
+    monkeypatch.setattr(delivery, "read_ci", lambda *args: ci(head, "pending"))
+    delivery.check(home, "repair")
+    task_state.wait_for(home, "repair", "senses", "deploy after final CI", "main CI pending", review,
+                        retry_event="delivery-repair-updated")
+    wait_sequence = task_state.registry(Feed(home).entries())["repair"].sequence
+    monkeypatch.setattr(delivery, "read_ci", lambda *args: ci(head))
+    with patch.object(delivery, "_sync", side_effect=ValueError("crash after state save")):
+        with pytest.raises(ValueError, match="crash after state save"):
+            delivery.check(home, "repair")
+    assert delivery.load(home, "repair")["author_retry_wait_sequence"] == wait_sequence
+    delivery.check(home, "repair")
+    entries = Feed(home).entries()
+    assert task_state.eligible(task_state.registry(entries)["repair"], entries)
+
+
 def test_review_is_independent_exact_and_immutable(candidate, monkeypatch):
     home, _, _, base, head, review = candidate
     review.write_text(json.dumps(dict(base=base, head=head, reviewer="senses", verdict="pass")))

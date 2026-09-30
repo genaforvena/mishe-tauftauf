@@ -47,6 +47,9 @@ def load(home: Path, identity: str) -> dict:
             not isinstance(data.get("transition"), int) or data["transition"] < 1 or
             not isinstance(data.get("ci"), dict)):
         raise ValueError("invalid delivery record")
+    retry_wait = data.get("author_retry_wait_sequence")
+    if retry_wait is not None and (type(retry_wait) is not int or retry_wait < 1):
+        raise ValueError("invalid delivery author retry binding")
     validate_slug(data["owner"])
     if any(not re.fullmatch(r"[0-9a-f]{40}", data[key]) for key in ("base", "head")):
         raise ValueError("invalid delivery revision")
@@ -62,6 +65,16 @@ def _save(home: Path, record: dict) -> Path:
     old = load(home, record["identity"]) if path.exists() else None
     changed = old is None or any(old.get(key) != record.get(key) for key in ("head", "phase", "reason"))
     record["transition"] = (old.get("transition", 0) if old else 0) + int(changed)
+    if changed:
+        entries = Feed(home).entries()
+        author = task_state.registry(entries).get(record["identity"])
+        event = f"delivery-{record['identity']}-updated"
+        record["author_retry_wait_sequence"] = (
+            author.sequence if record["phase"] in {"blocked", "integrated"} and author
+            and author.owner == record["owner"] and author.status == "waiting"
+            and author.retry_event == event and not task_state.eligible(author, entries) else None)
+    else:
+        record["author_retry_wait_sequence"] = old.get("author_retry_wait_sequence")
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(record, sort_keys=True, indent=2) + "\n")
     temporary.replace(path)
@@ -189,7 +202,8 @@ def _sync(home: Path, record: dict, previous: dict | None) -> None:
         entries = Feed(home).entries()
         author = task_state.registry(entries).get(record["identity"])
         if (author and author.owner == record["owner"] and author.status == "waiting"
-                and author.retry_event == event and not task_state.eligible(author, entries)):
+                and author.retry_event == event and not task_state.eligible(author, entries)
+                and author.sequence == record.get("author_retry_wait_sequence")):
             reason = (f"The registered waiting author task {author.identity}, owned by {author.owner}, "
                       f"requires this exact retry event. Candidate transition {record['transition']} "
                       f"to {record['phase']} ({record['reason']}) now releases one eligible attempt: {author.next_step}. "
