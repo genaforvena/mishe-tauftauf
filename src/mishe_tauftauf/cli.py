@@ -111,7 +111,14 @@ def cmd_pain_read(args) -> int:
     validate_slug(args.slug)
     launcher = args.launcher
     if launcher == "tmux":
-        from .tmux import capture_raw
+        from .tmux import capture_raw, owns_session
+        # A typo'd or stale --home must not read another site's live pane as if
+        # it were this one: the pane is addressed only by session and window,
+        # so without this check every pane reads GREEN under a wrong home.
+        if not owns_session(args.home, args.session):
+            home = Path(args.home).resolve()
+            sys.stderr.write(f"UNKNOWN — session {args.session!r} is not owned by {home}\n")
+            return 1
         text = capture_raw(args.session, args.slug)
         sys.stdout.write(text)
         return 1 if text.startswith("UNKNOWN —") else 0
