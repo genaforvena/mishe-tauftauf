@@ -93,7 +93,7 @@ def test_closed_task_claim_is_debt_and_missing_origin_is_unknown(tmp_path):
     assert debt.audit(home, root)["state"] == "UNKNOWN"
 
 
-def test_outside_edits_create_one_prioritized_actionable_intake(tmp_path):
+def test_outside_edits_create_one_actionable_recovery_intake(tmp_path):
     from mishe_tauftauf.feed import Feed
     from mishe_tauftauf import task_state, landing
     root = repo(tmp_path)
@@ -105,7 +105,7 @@ def test_outside_edits_create_one_prioritized_actionable_intake(tmp_path):
     selected = task_state.select_task(entries, "genome")
     assert selected.identity == identity
     assert "assess whether" in selected.next_step
-    assert landing.queue(entries)[0].identity == identity
+    assert landing.queue(entries) == []
     before = len(entries)
     assert debt.intake(home, debt.audit(home, root)) == identity
     assert len(Feed(home).entries()) == before
@@ -193,23 +193,14 @@ def test_closed_claim_can_be_adopted_but_live_claim_conflicts(tmp_path):
     assert debt.audit(home, root)["paths"][0]["owner"] == "genome"
 
 
-def test_interrupted_registration_recovers_without_duplicate_task(tmp_path, monkeypatch):
-    from mishe_tauftauf import landing, task_state
+def test_draft_intake_does_not_register_or_hold_source_work(tmp_path):
+    from mishe_tauftauf import landing
     from mishe_tauftauf.feed import Feed
-    import pytest
     root = repo(tmp_path)
     home = tmp_path / "site"
     (root / "draft.txt").write_text("outside")
-    register = landing.register
-    def fail(*args, **kwargs):
-        raise OSError("interrupted registration")
-    monkeypatch.setattr(landing, "register", fail)
-    with pytest.raises(OSError):
-        debt.intake(home, debt.audit(home, root))
-    monkeypatch.setattr(landing, "register", register)
-    identity = debt.intake(home, debt.audit(home, root))
-    assert landing.queue(Feed(home).entries())[0].identity == identity
-    assert len(task_state.states(Feed(home).entries())) == 1
+    debt.intake(home, debt.audit(home, root))
+    assert landing.queue(Feed(home).entries()) == []
 
 
 def test_generated_footer_keeps_both_verdicts_on_one_80_column_line(tmp_path):

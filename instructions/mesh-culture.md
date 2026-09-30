@@ -24,7 +24,7 @@ The self-organization loop is:
 
 **maintain the substrate → advance one bounded development step → ideate from observed gaps → process wishes into owned tasks**
 
-The shared tape uses `[task] <id> owner=<role>`, `[taking] <id>`, `[done] <id>`, and `[dropped] <id> — reason`. Witness keeps unfinished IDs visible and checks artifacts. Genome owns reviewed source landing.
+The shared tape uses `[task] <id> owner=<role>`, `[taking] <id>`, `[done] <id>`, and `[dropped] <id> — reason`. Witness keeps unfinished IDs visible and checks artifacts. Source authors own delivery; genome serializes ready integration.
 
 Every mind may implement an owned, evidence-backed repair across Mishe's layers, including its rules and architecture. A role is not a file restriction. The operator's standing instruction to encourage these changes is carried in doctrine and both agent contracts. Ownership, acceptance checks, independent review, and external boundaries still apply.
 
@@ -46,7 +46,7 @@ These are local scheduling and cooperative ownership checks. They grant no autho
 
 ## Protected landing capacity
 
-`task landing` registers an explicit genome delivery with a source-bound evidence digest. Its first registration sequence, rather than its latest progress sequence, determines landing order. The selector chooses the oldest eligible registered genome delivery before ordinary work, preserving active-wake reservations and one-shot prerequisites. Registration does not certify review or landing, change task readiness, or preempt a running mind. `task landing-status` exposes debt; `task production-check` returns nonzero while any registered genome delivery remains open, including a blocked delivery. Producers then help delivery or pursue local observations rather than adding optional source candidates. Essential incident repairs require an explicit justification.
+`delivery submit` records an author-owned committed candidate with immutable exact-revision review. The existing CI watcher derives readiness from refs, review and branch push CI; a passing candidate creates one revision-bound genome integration step. Preparation children and other owners' tasks do not inherit priority. Historical landing records remain readable, without a global source hold. Authors retain final CI and deployment ownership; active wakes remain reserved.
 
 The guaranteed boundary is selection of the next available idle turn, conditional on actionable task state. Eventual delivery also requires finite verified steps, a responsive mind, review and test capacity, and an available remote. Production admission remains cooperative because this seed has no authority over arbitrary editor writes. Queue priority cannot make an unowned diff safe to commit, turn failed CI green, or justify unrelated changes. Evidence and charter wiring must be verified at the live caller after rollout.
 
@@ -83,3 +83,9 @@ Its planting skill installs user services only when used for that full local set
 The task lifecycle now shares one projection for display and scheduling. Managed tasks use evidence-backed `task add`, `task finish`, and `task reopen`; attaching a child protects its legacy parent from prose completion. A child finish keeps the overall goal open. Owner/evidence checks and completion-cycle checks are cooperative local boundaries, not protection against arbitrary direct file writes. Structured control tags are reserved to the CLI and validated before append.
 
 Work admission and result acceptance are separate. A checked waiting goal may name an independently admissible child with `--alternative`; missing locally owned deliverables become production steps. `task wait --producer ROLE --retry-task ID` wakes review after completed producer evidence, including a producer already completed when the wait is recorded. A stable checked waiting backlog receives one independent-work decision, then stays quiet until its inputs change. Progress/outcome comparison rejects repeated steps that merely replace an artifact hash. These mechanisms do not grant a new training budget or external authority.
+
+## Delivery boundary
+
+Authors own scoped source delivery in a separate worktree based on current origin/main: check, commit, obtain independent exact-revision review, push their branch, and submit it with `delivery submit`. Genome integrates only reviewed candidates whose exact branch CI passes; the author retains final main CI and deployed-consumer verification. See doctrine and `docs/operating.md` for the CLI. Preserve shared checkout drafts; never stage them into an isolated candidate.
+
+Main has one integration writer. The candidate author retains ownership through branch CI and rollout. Legacy landing registrations are history; no global source-admission hold or inherited preparation priority remains. Deterministic candidate facts create integration readiness. Progress prose and changing artifact hashes do not.

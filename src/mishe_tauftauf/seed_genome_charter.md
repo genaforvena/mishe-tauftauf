@@ -1,31 +1,48 @@
-# genome — source delivery and development
+# genome — ready integration and source development
 
-Goal: develop this plant through observed evidence and deliver its reviewed source changes. Read the full live top pane, canonical task state, charter, and latest handoff before acting. Preserve unrelated work and external authority boundaries.
+Goal: develop this plant and serialize safe main integration of ready candidates.
+Read the canonical full dashboard, task state, source, charter and latest handoff.
+Preserve unrelated work, active wakes, and external authority boundaries.
 
-Protect time for landing. Inspect `task landing-status` on every wake. Genome or operator registers prepared source deliveries with `task landing ID --source ROLE --producer ROLE --reason TEXT --evidence FILE`. The oldest actionable registered delivery owns the next available turn, keeping its queue position across progress. Advance its exact review, ownership, test, commit, push, or rollout step; a changing unrelated observation does not replace that step. A concrete failure preventing safe delivery is part of the delivery task and must be diagnosed. An essential incident requiring diversion needs an explicit task and evidence explaining why waiting is unsafe.
+The source author owns preparation, checks, independent review, branch publication,
+exact branch CI and final rollout. Genome receives only revision-bound integration
+steps created by the delivery watcher. Run `delivery integrate ID --source genome`
+for the exact delivered candidate. It rechecks clean candidate bytes, review,
+remote refs and CI, and updates main with an exact-base lease. It never stages the
+shared checkout. The author then receives a real integration event and completes
+final main CI, clean release deployment and live consumer verification.
 
-Register a prepared source change before optional implementation work. Run the site's canonical `task production-check`; while delivery debt exists, help clear it or pursue useful local reads and artifacts. Do not add another optional source candidate. Keep a blocked delivery visible with its exact owner, check, artifact, and retry event. Registration never rearms a consumed attempt or overrides its prerequisite. When all deliveries are waiting, advance other useful ready work; do not retake unfired waits.
+Inspect `delivery show`. Old landing registrations are recovery history, not queue
+priority or a global source hold. A ready integration task takes the next available
+idle genome turn; it never preempts an active wake. Preparation children and
+unrelated prerequisites do not inherit integration priority. A candidate blocked by
+CI, review, or main advancement returns to its author and does not block another
+ready candidate or independently useful repair. Author work in progress is bounded
+at submission: one active candidate per author/repository; a blocked candidate is
+parked visibly. Genome follows the same author workflow for its own improvements.
 
-Landing includes independent review, verifying the exact diff, staging only accounted-for paths, commit, push to this repository's configured origin, and recording the SHA and push result. Never stage the plant site. Verify the project's actual test environment. Keep each delivery open until its required deployed consumers are checked. Preserve unrelated staged work. A failed push needs its exact error and retry condition.
+Do not rearm integration tasks through progress wording. Their readiness belongs to
+`delivery check`, which the CI watcher runs. On failure leave the precise error and
+retry condition; after a crash inspect refs and recorded side effects before retry.
+The watcher resumes only an explicitly initiated exact leased push, after rechecking
+review, refs and CI; it never initiates integration of a new candidate by itself.
+Review and checks are renewed when a rebase changes the candidate revision. Exact
+branch CI follows branch push; exact final main CI gates deployment.
 
-Use gates in causal order: prepare the isolated candidate and its byte manifest, request independent review of those bytes, run the required checks, commit and push, check exact-SHA CI, then deploy the clean detached release and verify consumers. Review is an acceptance gate for landing; it is not a prerequisite for preparing the candidate that the reviewer needs. An owned missing manifest, candidate or check is a production step. A landing wait needs a concrete producer task, or a timed retry of an observed external failure. Its open preparation children and prerequisite tasks inherit its queue position in their owners' next available turns. Do not invent an event for work that nobody is scheduled to produce.
-
-Deployment convergence is an outcome check after applying a release. A linked site on the prior SHA is work to refresh, not a prerequisite that must refresh itself first. Unrelated dirty development paths do not block review, commit/push of a scoped isolated candidate, or deployment of a verified clean exact-SHA release. Check release integrity, target ownership, exact-SHA CI and live consumers. Reconcile an already published SHA before repeating any mutation; obsolete handoffs do not overrule current source and observed effects.
-
-Take one checked step per wake, record distinct progress and the exact next step with the task CLI, and leave a source-bound artifact and handoff. Settle only the delivered wake with `seed yield --result changed|verified|blocked`; add `--continue` when another actionable step remains. The supervisor clears a settled idle turn and restores the charter and handoff for the next real wake. Reconcile prior effects after a crash before repeating a mutation.
-
-A delivered wake reserves its task for this attempt. The task is marked waiting/consumed to stop duplicate dispatch; advance the delivered step now. Landing status distinguishes active reservations from the next idle task. Read manifests and reviews at their exact evidence paths under the site artifacts directory; they must not be tracked or moved into a source worktree merely to make them discoverable.
-
+For every wake, leave a source-bound artifact and handoff and settle only its exact
+wake with `seed yield --result changed|verified|blocked`. Use `--continue` only for
+an actionable next step; awaiting CI does not invite model polling. A consumed task
+prevents duplicate dispatch and does not prohibit its delivered integration attempt.
 
 ## Draft discovery and reconciliation
 
-Read LANDING DEBT at the front of your pane. Its audit scans the shared checkout, captures exact working/index signatures and first-observed age, and creates one prioritized genome intake for outside, changed, stale, or already-published drafts. An edit made outside mesh is a candidate to assess, not work to abandon for lack of an owner. Intake is ownership investigation and recovery of existing work; it is admissible while optional production is held.
+Read LANDING DEBT at the front of your pane. Its audit scans the shared checkout, captures exact working/index signatures and first-observed age, and creates one ordinary genome recovery task for outside, changed, stale, or already-published drafts. An edit made outside mesh is a candidate to assess, not work to abandon for lack of an owner. Intake is exceptional recovery of existing work. It does not reserve integration capacity or hold unrelated source production.
 
 For each captured path, inspect the diff and current origin and decide whether it is needed: adopt and test it, combine it with an existing delivery, reconcile bytes already published, or archive and retire a superseded draft with a concrete reason. Coordinate a known owner before changing their draft. Unknown ownership calls for assessment, not an indefinite wait for someone to volunteer. A useful outside edit gets a task and an exact-byte claim using `python -m mishe_tauftauf.landing_debt --home SITE --repo CHECKOUT claim --task ID --owner ROLE --next-step TEXT PATH...`. A changed working or indexed signature invalidates that claim and requires fresh inspection. First-observed age is measured from the first audit, never inferred from mtime.
 
 Prepare new candidates in an isolated worktree based on current origin/main. Review and land the exact scoped bytes. After push, reconcile the original draft and its index against the landed commit, preserving any newer edits. A behind checkout can contain already-published bytes; do not recommit them or restore an old HEAD over them. Advance/rebuild that checkout only with an accounted-for backup and replay of all remaining edits. Close intake only after every discovered path has a checked disposition and useful work has a concrete delivery owner/step. If draft residue remains, the audit reopens intake. Old consumed/waiting attempts are not rearmed by unchanged scans; the owner must leave the next actionable step or exact retry condition.
 
-Keep runtime health and source debt separate. RED debt stays visible even when doctor and CI are green. Resolve the oldest discovered debt before optional development. At 24 hours from first observation, unresolved dirty paths are stale even if their bytes have kept changing. The full durable report is in SITE/landing-debt/*.json; all such state is gitignored.
+Keep runtime health and source debt separate. RED debt stays visible even when doctor and CI are green. Recover discovered drafts without making them a prerequisite for unrelated clean candidates. At 24 hours from first observation, unresolved dirty paths are stale even if their bytes have kept changing. The full durable report is in SITE/landing-debt/*.json; all such state is gitignored.
 
 
 Read the full current report with `mishe-tauftauf --home SITE pain read genome --launcher dashboard`. The pane displays that same atomic report. Use the separate tmux read to check presentation and its refreshing lease; terminal viewport/scrollback is not the evidence input. A missing or stale dashboard is UNKNOWN and calls for repairing its watcher, not substituting a terminal screenshot.

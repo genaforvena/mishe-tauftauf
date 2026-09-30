@@ -302,9 +302,68 @@ Keep these boundaries when inspecting or landing work:
 - Do not stage or commit the site directory. Doctor checks for tracked/staged site files; an ignore rule alone does not untrack already committed files.
 - Do not promote a local observation, artifact, or private permission decision into shared source merely because it helped once.
 - A reusable lesson becomes shared behavior through a deliberate source change, verification, independent review, and scoped landing.
-- Genome inspects the exact diff, commits accounted-for paths excluding site state, pushes to the configured origin, and records the SHA and push result. The task stays open until delivery is complete; CI repairs also need the successful replacement run.
+- Authors commit scoped isolated candidates excluding site state, obtain independent review, publish branches and check exact CI. Genome integrates ready commits; authors verify final main CI and rollout. The task stays open until delivery is complete; CI repairs also need the successful replacement run.
 - Preserve the append-only tape and handoff trail during diagnosis. They explain what happened and which action remains owed.
 
 The local agent contract is [AGENTS.md](../AGENTS.md). Tracked [seed doctrine](../src/mishe_tauftauf/seed_doctrine.md) is loaded at restore and mirrored into `SITE/doctrine.md` at planting. The [mesh culture mapping](../instructions/mesh-culture.md) describes the source rules this narrower seed carries; this plant does not claim fleet authority or the larger mesh's native lifecycle accounting.
 
 For first-task proof, return to [Getting started](getting-started.md#what-counts-as-success). For charters, task protocol, and the observation-to-action loop, see [How it works](how-it-works.md).
+
+## Author-owned source delivery
+
+Source authors retain delivery ownership. Prepare each candidate in a separate linked
+worktree of this plant's repository, based on current origin/main. Keep one active
+candidate per author/repository; blocked candidates remain visible and free that slot.
+Shared checkout drafts are exceptional recovery work and cannot hold clean candidates.
+
+Run the required checks, commit scoped source bytes, obtain independent review of that
+exact base/head, and push the author branch. Store the review under SITE/artifacts as
+JSON with `base`, `head`, `reviewer` (a role different from the author), and `verdict`:
+`"pass"`. The artifact records the review result; its immutable digest binds submission
+and integration. Preserve the reviewer's full findings alongside it. The current
+workflow requirement is a successful push run named `CI` for the exact branch and SHA.
+
+```sh
+"$SITE/bin/mishe-tauftauf" --home "$SITE" delivery submit TASK_ID \
+  --owner senses --repo "$CANDIDATE" --base "$BASE_SHA" \
+  --branch "$AUTHOR_BRANCH" --review "$SITE/artifacts/review.json"
+"$SITE/bin/mishe-tauftauf" --home "$SITE" delivery show
+```
+
+Submission records the author's task waiting on `delivery-TASK_ID-updated`. The
+existing CI watcher checks candidate refs and exact branch CI every minute. Pending
+CI creates no genome task or model polling. A real failure returns work to the author;
+a passing reviewed commit creates one integration attempt per readiness transition.
+Genome receives only that integration step:
+
+```sh
+"$SITE/bin/mishe-tauftauf" --home "$SITE" delivery integrate TASK_ID --source genome
+```
+
+The command revalidates review, clean exact-head candidate, published branch and CI,
+then pushes a fast-forward to main with an exact-base lease. It changes no shared
+checkout bytes or index. If main advanced, the author rebases, reruns checks, renews
+review and publishes a new revision before resubmitting. After a crash, the watcher
+reconciles actual remote ancestry and repairs missing receipts before another push.
+Once genome/operator has initiated an exact integration, the watcher may resume that
+same leased push after revalidating refs, review and CI. A persistent rejection stays
+blocked without model retries; a new candidate revision requires a new initiation.
+An active integration attempt prevents candidate replacement until it settles.
+
+The author wakes after integration, checks the exact main push CI, deploys the clean
+release only to owned consumers, and verifies their live checks. Store a JSON rollout
+receipt with `sha`, `state`: `"pass"`, and a nonempty `consumers` list identifying the
+checked artifacts/targets. Then complete the author's delivery:
+
+```sh
+"$SITE/bin/mishe-tauftauf" --home "$SITE" delivery finish TASK_ID \
+  --owner senses --evidence "$SITE/artifacts/rollout.json"
+```
+
+Final main CI must pass; unfinished author child tasks prevent completion. The
+consumer receipt is the author's evidence claim and needs live verification. Records
+and immutable transition snapshots stay inside the ignored site. `delivery check
+TASK_ID` performs a bounded manual reconciliation; the watcher normally owns it.
+Historical `task landing-status` remains readable and `task production-check` reports
+source production allowed. New raw landing registrations are retired; no recursive
+landing graph or global HOLD remains.

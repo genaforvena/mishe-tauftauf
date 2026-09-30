@@ -67,3 +67,24 @@ def test_latest_run_per_workflow_supersedes_failed_attempt(tmp_path):
         result = ci_watch.read(tmp_path / "site")
         assert result["state"] == "fail"
         assert result["run"] == "12"
+
+
+def test_candidate_ci_requires_named_push_workflow_and_exact_origin(tmp_path):
+    sha = "a" * 40
+    metadata = json.dumps({"nameWithOwner": "o/r", "defaultBranchRef": {"name": "main"}})
+    rows = [dict(headSha=sha, workflowName="CI", databaseId=10, status="completed",
+                 conclusion="failure", url="https://example.test/10", event="push", headBranch="candidate"),
+            dict(headSha=sha, workflowName="CI", databaseId=11, status="completed",
+                 conclusion="success", url="https://example.test/11", event="pull_request", headBranch="candidate")]
+    with patch.object(ci_watch, "_command", side_effect=[metadata, json.dumps(rows)]) as command:
+        result = ci_watch.read(tmp_path / "site", workspace=tmp_path, sha=sha, branch="candidate",
+                              repository="https://github.com/o/r.git", required_workflows=("CI",))
+    assert result["state"] == "fail"
+    assert command.call_args_list[0].args[3] == "https://github.com/o/r.git"
+    assert "push" in command.call_args_list[1].args
+    rows[0]["workflowName"] = "Other"
+    rows[0]["conclusion"] = "success"
+    with patch.object(ci_watch, "_command", side_effect=[metadata, json.dumps(rows)]):
+        result = ci_watch.read(tmp_path / "site", workspace=tmp_path, sha=sha, branch="candidate",
+                              required_workflows=("CI",))
+    assert result["state"] == "unknown"
