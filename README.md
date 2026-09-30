@@ -4,12 +4,23 @@
 
 This repository supplies the loop, roles, and boundaries. A planted instance adds checks and senses for the system it actually owns. The planting script can tend this checkout or another Git worktree; its local charters and checks then grow around that target.
 
+## Repository layout
+
+- `src/mishe_tauftauf/` — installable runtime and CLI; reusable production code belongs here.
+- `coordination/` — checkout-only planting and linked-site release commands; no forwarding scripts.
+- `examples/` — optional judge/mind adapters and the runnable demo.
+- `tests/` — automated behavioral checks.
+- `instructions/`, `skills/`, `.agents/skills/` — mind instructions and operator/agent workflows, not runtime code.
+- `.mishe-tauftauf/` — ignored local plant state, checks, artifacts, and handoffs; never shipped or committed.
+
+Keep new runtime features in the package and host orchestration in `coordination/`, rather than adding another script directory.
+
 ## Hello world: one observed wake
 
 From a fresh Git checkout, with `tmux`, a working `codex` command, and a user systemd manager available:
 
 ```bash
-python3 scripts/plant_local.py --engine-command codex
+python3 -m coordination.launcher --engine-command codex
 .mishe-seed/bin/mishe-tauftauf --home .mishe-seed append --source operator \
   '[task] hello-world owner=discover source=/proc/loadavg acceptance=fresh-scan-and-live-pane retry=next-scan. Read one real load value, cite the scan artifact, verify the discover top pane, and mark this task done.'
 tmux attach -t mishe-seed
@@ -82,14 +93,14 @@ For a separate application with a running plant, see the public [check ledger ex
 The plant target is Linux with Python 3, tmux, an installed agent CLI, Git, GitHub CLI for CI readings, and a user systemd manager. From this checkout:
 
 ```bash
-python3 scripts/plant_local.py --engine-command 'codex'
+python3 -m coordination.launcher --engine-command 'codex'
 tmux attach -t mishe-seed
 ```
 
 To plant the same kernel onto another owned Git worktree:
 
 ```bash
-python3 scripts/plant_local.py --workspace /path/to/project --engine-command 'codex'
+python3 -m coordination.launcher --workspace /path/to/project --engine-command 'codex'
 tmux attach -t mishe-project
 ```
 
@@ -107,9 +118,9 @@ checkout changes. After verifying the mind is idle, `seed clear --session SESSIO
 --slug ROLE` retries the normal handoff-preserving rotation. Do not kill a mind
 merely because its screen is unchanged; a tool may still be running.
 The generated services use this kernel checkout's Python source, so keep it available on the host.
-The reusable plant runtime lives in `src/mishe_tauftauf/`; it contains planting, feed, panes, local channels, and per-site CI observation. Host-side release coordination lives in the separate `coordination/` directory. `scripts/plant_local.py` and `scripts/sync_plants.py` are thin launchers for these two parts. External plants run the core package; the linked-site coordinator runs only in this checkout.
+The reusable plant runtime lives in `src/mishe_tauftauf/`; it contains planting, feed, panes, local channels, and per-site CI observation. Host commands live together in `coordination/`: `python3 -m coordination.launcher` plants a site and `python3 -m coordination.site_sync` refreshes linked sites. Run both from this checkout; they load its `src/` without requiring a package install or a separate launcher script. External plants run the core package; the linked-site coordinator runs only in this checkout.
 
-When a persistent external plant is created, its site and tmux session are recorded in this checkout's ignored `SITE/health/linked-sites.json`. The core checkout's separate release coordinator follows fresh CI readings and retries a linked-site refresh after GitHub Actions passes for the exact local `HEAD`. It skips an already applied SHA and holds if either worktree has unlanded changes or the target tmux session is not owned by that site. After planting, it checks the target's feed, top and mind panes, and resident services. Each sync or hold is explained in the core `chat.log`. A refreshed generated `AGENTS.md` block becomes a task for the target genome to review, commit, push, and check in that repository; application files are never copied from the kernel. Plant the core first, then plant an external worktree to register it. To retry immediately after clearing a hold, run `python3 scripts/sync_plants.py --home SITE`, where `SITE` is this checkout's resident site.
+When a persistent external plant is created, its site and tmux session are recorded in this checkout's ignored `SITE/health/linked-sites.json`. The core checkout's separate release coordinator follows fresh CI readings and retries a linked-site refresh after GitHub Actions passes for the exact local `HEAD`. It skips an already applied SHA and holds if either worktree has unlanded changes or the target tmux session is not owned by that site. After planting, it checks the target's feed, top and mind panes, and resident services. Each sync or hold is explained in the core `chat.log`. A refreshed generated `AGENTS.md` block becomes a task for the target genome to review, commit, push, and check in that repository; application files are never copied from the kernel. Plant the core first, then plant an external worktree to register it. To retry immediately after clearing a hold, run `python3 -m coordination.site_sync --home SITE`, where `SITE` is this checkout's resident site.
 
 The core health pane also reads each registered site's `health/services.json` and
 checks those named units on the current host's user service manager. Inactive units
@@ -121,7 +132,7 @@ An absent registry means no linked sites are configured, as on an external plant
 a registered site's missing manifest is still UNKNOWN.
 
 For an operator-requested runtime update while a target has unrelated application
-changes, use `python3 scripts/sync_plants.py --home SITE --runtime-only`. This still
+changes, use `python3 -m coordination.site_sync --home SITE --runtime-only`. This still
 requires clean core source, passing CI for its exact commit, and an existing owned
 target session. It refreshes the ignored runtime and services while preserving the
 target's `AGENTS.md` and application work. Normal automatic refreshes retain the
