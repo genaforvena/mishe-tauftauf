@@ -105,6 +105,51 @@ def test_custom_mind_requires_a_site_readiness_probe(tmp_path: Path, monkeypatch
     assert seed._mind_ready("session", "genome")
 
 
+def test_omp_normal_idle_is_ready_but_pending_keys_and_spinner_are_not(monkeypatch):
+    from subprocess import CompletedProcess
+    from mishe_tauftauf import seed
+    for pane, ready in ((" π > NORMAL > ◑ GPT-6-Luna", True),
+                        (" π > NORMAL d >", False),
+                        (" π > NORMAL >\n ⠇ 6m > NORMAL >", False)):
+        monkeypatch.setattr(seed, "_tmux", lambda *args, **kwargs: CompletedProcess(
+            args, 0, ("omp\n" if args[0] == "display-message" else pane).encode()))
+        assert seed._mind_ready("session", "genome") is ready
+
+
+def test_omp_normal_delivery_enters_insert_before_typing(monkeypatch):
+    from subprocess import CompletedProcess
+    from mishe_tauftauf import seed
+    calls = []
+    def fake_tmux(*args, **kwargs):
+        calls.append(args)
+        inserted = ("send-keys", "-t", "session:genome.1", "i") in calls
+        output = "omp\n" if args[0] == "display-message" else " π > " + ("INSERT" if inserted else "NORMAL") + " >"
+        return CompletedProcess(args, 0, output.encode())
+    monkeypatch.setattr(seed, "_tmux", fake_tmux)
+    monkeypatch.setattr(seed.time, "sleep", lambda _: None)
+    seed._send("session:genome.1", "/clear")
+    assert calls.index(("send-keys", "-t", "session:genome.1", "i")) < calls.index(("send-keys", "-t", "session:genome.1", "C-u"))
+
+
+def test_omp_delivery_holds_when_idle_mode_cannot_be_verified(monkeypatch):
+    from subprocess import CompletedProcess
+    import pytest
+    from mishe_tauftauf import seed
+    for pane, capture_code in (("", 1), (" π > NORMAL d >", 0),
+                               (" π > NORMAL >\n ⠇ 6m > NORMAL >", 0),
+                               (" π > NORMAL >", 0)):
+        calls = []
+        def fake_tmux(*args, **kwargs):
+            calls.append(args)
+            return CompletedProcess(args, 0 if args[0] == "display-message" else capture_code,
+                                    ("omp\n" if args[0] == "display-message" else pane).encode())
+        monkeypatch.setattr(seed, "_tmux", fake_tmux)
+        monkeypatch.setattr(seed.time, "sleep", lambda _: None)
+        with pytest.raises(ValueError, match="delivery held"):
+            seed._send("session:genome.1", "/clear")
+        assert not any(args[0] == "send-keys" and args[-1] != "i" for args in calls)
+
+
 def test_codex_mind_requires_its_idle_prompt(monkeypatch) -> None:
     from subprocess import CompletedProcess
 
@@ -252,12 +297,16 @@ def test_omp_attachment_gets_a_submission_enter_only_while_idle(tmp_path: Path, 
          "The prior answer completed.\n π > INSERT >", 1),
     ):
         calls: list[tuple[str, ...]] = []
+        captures = 0
 
         def fake_tmux(*args: str, **_kwargs):
+            nonlocal captures
             calls.append(args)
+            if args[0] == "capture-pane":
+                captures += 1
             output = (str(tmp_path) + "\n" if args[0] == "show-option" else
                       "omp\n" if args[0] == "display-message" else
-                      pane_text if args[0] == "capture-pane" else "")
+                      (" π > INSERT >" if captures == 1 else pane_text) if args[0] == "capture-pane" else "")
             return CompletedProcess(args, 0, output.encode())
 
         monkeypatch.setattr(seed, "_tmux", fake_tmux)

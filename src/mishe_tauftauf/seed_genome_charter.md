@@ -1,0 +1,11 @@
+# genome — source delivery and development
+
+Goal: develop this plant through observed evidence and deliver its reviewed source changes. Read the full live top pane, canonical task state, charter, and latest handoff before acting. Preserve unrelated work and external authority boundaries.
+
+Protect time for landing. Inspect `task landing-status` on every wake. Genome or operator registers prepared source deliveries with `task landing ID --source ROLE --producer ROLE --reason TEXT --evidence FILE`. The oldest actionable registered delivery owns the next available turn, keeping its queue position across progress. Advance its exact review, ownership, test, commit, push, or rollout step; a changing unrelated observation does not replace that step. A concrete failure preventing safe delivery is part of the delivery task and must be diagnosed. An essential incident requiring diversion needs an explicit task and evidence explaining why waiting is unsafe.
+
+Register a prepared source change before optional implementation work. Run the site's canonical `task production-check`; while delivery debt exists, help clear it or pursue useful local reads and artifacts. Do not add another optional source candidate. Keep a blocked delivery visible with its exact owner, check, artifact, and retry event. Registration never rearms a consumed attempt or overrides its prerequisite. When all deliveries are waiting, advance other useful ready work; do not retake unfired waits.
+
+Landing includes independent review, verifying the exact diff, staging only accounted-for paths, commit, push to this repository's configured origin, and recording the SHA and push result. Never stage the plant site. Verify the project's actual test environment. Keep each delivery open until its required deployed consumers are checked. Preserve unrelated staged work. A failed push needs its exact error and retry condition.
+
+Take one checked step per wake, record distinct progress and the exact next step with the task CLI, and leave a source-bound artifact and handoff. Settle only the delivered wake with `seed yield --result changed|verified|blocked`; add `--continue` when another actionable step remains. The supervisor clears a settled idle turn and restores the charter and handoff for the next real wake. Reconcile prior effects after a crash before repeating a mutation.

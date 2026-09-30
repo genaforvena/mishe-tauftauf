@@ -44,6 +44,12 @@ With `task offer`, an owner names suitable helper charters. The shared seed lock
 
 These are local scheduling and cooperative ownership checks. They grant no authority over arbitrary editor writes or external fleet resources.
 
+## Protected landing capacity
+
+`task landing` registers an explicit genome delivery with a source-bound evidence digest. Its first registration sequence, rather than its latest progress sequence, determines landing order. The selector chooses the oldest eligible registered genome delivery before ordinary work, preserving active-wake reservations and one-shot prerequisites. Registration does not certify review or landing, change task readiness, or preempt a running mind. `task landing-status` exposes debt; `task production-check` returns nonzero while any registered genome delivery remains open, including a blocked delivery. Producers then help delivery or pursue local observations rather than adding optional source candidates. Essential incident repairs require an explicit justification.
+
+The guaranteed boundary is selection of the next available idle turn, conditional on actionable task state. Eventual delivery also requires finite verified steps, a responsive mind, review and test capacity, and an available remote. Production admission remains cooperative because this seed has no authority over arbitrary editor writes. Queue priority cannot make an unowned diff safe to commit, turn failed CI green, or justify unrelated changes. Evidence and charter wiring must be verified at the live caller after rollout.
+
 ## Tracked rules and local state
 
 The tracked genome contains reusable code and general rules. The live plant's chat, customized charters, handoffs, plans, checks, evidence, and service files belong under gitignored `.mishe-tauftauf/`, following LTE's `.mesh/` boundary.
