@@ -238,9 +238,9 @@ def test_sync_verification_rejects_dead_top_with_live_bottom(tmp_path: Path, mon
         site_sync._verify(target, "example")
 
 
-@pytest.mark.parametrize(("advances", "feed_exists"), [(True, True), (False, True), (True, False)])
+@pytest.mark.parametrize(("advances", "feed_exists", "delayed"), [(True, True, False), (False, True, False), (True, False, False), (True, True, True)])
 def test_sync_verifies_advancing_leases_and_allows_unrelated_window(tmp_path: Path, monkeypatch,
-                                                                    advances: bool, feed_exists: bool) -> None:
+                                                                    advances: bool, feed_exists: bool, delayed: bool) -> None:
     _core_home, target = setup_sites(tmp_path, monkeypatch)
     (target / "health").mkdir()
     (target / "health" / "windows.json").write_text(
@@ -261,7 +261,7 @@ def test_sync_verifies_advancing_leases_and_allows_unrelated_window(tmp_path: Pa
             return subprocess.CompletedProcess([], 0, "\n".join(rows).encode(), b"")
         assert args[0] == "capture-pane"
         count += 1
-        stamp = start + timedelta(seconds=7 if advances and count > len(site_sync.ROLES) else 0)
+        stamp = start + timedelta(seconds=7 if advances and count > (2 if delayed else 1) * len(site_sync.ROLES) else 0)
         frame = f"-- pane live {stamp.isoformat().replace('+00:00', 'Z')} · refresh 5s · ticks every frame --\n"
         return subprocess.CompletedProcess([], 0, frame.encode(), b"")
 
@@ -283,3 +283,20 @@ def test_follower_ignores_stale_or_malformed_ci_readings(tmp_path: Path, monkeyp
     assert site_sync.fresh_ci(tmp_path) is None
     sample["checked"] = "broken"
     assert site_sync.fresh_ci(tmp_path) is None
+
+
+def test_lease_age_is_measured_after_the_pane_is_captured(monkeypatch):
+    clock = [datetime.now(timezone.utc)]
+    class Clock:
+        @staticmethod
+        def now(zone):
+            return clock[0]
+        fromisoformat = staticmethod(datetime.fromisoformat)
+    def capture(*args):
+        clock[0] += timedelta(seconds=0.5)
+        stamp = clock[0].isoformat().replace('+00:00', 'Z')
+        frame = f"-- pane live {stamp} · refresh 5s · ticks every frame --\n"
+        return subprocess.CompletedProcess([], 0, frame.encode(), b"")
+    monkeypatch.setattr(site_sync, "datetime", Clock)
+    monkeypatch.setattr(site_sync, "_tmux", capture)
+    assert site_sync._leases("example", {"genome"})["genome"] == clock[0]
