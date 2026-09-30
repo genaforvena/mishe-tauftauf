@@ -135,9 +135,14 @@ def _verify(home: Path, session: str) -> None:
         raise RuntimeError(f"linked site has a missing or dead mind pane: {session}")
     leased = set(ROLES) & expected
     first = _leases(session, leased)
-    time.sleep(6)
-    second = _leases(session, leased)
-    if any(second[name] <= first[name] for name in leased):
+    # A frame includes a bounded probe (up to 10s), then its 5s refresh sleep.
+    # Allow that whole cycle while retaining a finite frozen-renderer failure.
+    for _ in range(3):
+        time.sleep(6)
+        second = _leases(session, leased)
+        if all(second[name] > first[name] for name in leased):
+            break
+    else:
         raise RuntimeError(f"linked site top-pane lease did not advance: {session}")
     if not (home / "chat.log").is_file():
         raise RuntimeError(f"linked site conversation feed is missing: {home / 'chat.log'}")
@@ -165,7 +170,6 @@ def _verify(home: Path, session: str) -> None:
 
 def _leases(session: str, expected: set[str]) -> dict[str, datetime]:
     observed: dict[str, datetime] = {}
-    now = datetime.now(timezone.utc)
     for name in expected:
         result = _tmux("capture-pane", "-p", "-t", f"{session}:{name}.0", "-S", "-50")
         lines = result.stdout.decode("utf-8", "replace").splitlines()
@@ -174,7 +178,7 @@ def _leases(session: str, expected: set[str]) -> dict[str, datetime]:
             raise RuntimeError(f"linked site top pane has no visible lease: {session}:{name}")
         stamp = matches[-1].removeprefix("-- pane live ").split(" · ", 1)[0]
         checked = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
-        age = (now - checked).total_seconds()
+        age = (datetime.now(timezone.utc) - checked).total_seconds()
         if not 0 <= age <= 20:
             raise RuntimeError(f"linked site top-pane lease is stale: {session}:{name} age={age:.1f}s")
         observed[name] = checked
