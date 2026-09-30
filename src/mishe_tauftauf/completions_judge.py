@@ -100,6 +100,30 @@ def _open(request, *, timeout):
     return urllib.request.build_opener(NoRedirect()).open(request, timeout=timeout)
 
 
+def _read_bounded(response, deadline):
+    """Read up to MAX_RESPONSE_BYTES + 1 while a monotonic deadline holds.
+
+    urllib's socket timeout governs a single read, so a peer trickling one byte
+    at a time could outlast the budget. Recompute the remaining time before
+    every read and apply it to the underlying socket. Test doubles and
+    file-like responses expose no socket; then the deadline alone guards reads.
+    """
+    raw = bytearray()
+    while len(raw) <= MAX_RESPONSE_BYTES:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("completion total deadline expired")
+        socket = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
+        if socket is not None:
+            socket.settimeout(remaining)
+        chunk = response.read1(min(8192, MAX_RESPONSE_BYTES + 1 - len(raw)))
+        if chunk:
+            raw.extend(chunk)
+        else:
+            break
+    return bytes(raw)
+
+
 def _request(state: dict, prompt: str, config: Config):
     key = os.environ.get("COMPLETIONS_API_KEY", "").strip()
     if not key:
@@ -121,8 +145,9 @@ def _request(state: dict, prompt: str, config: Config):
     request = urllib.request.Request(config.base_url + "/chat/completions", data=body,
         headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"}, method="POST")
     try:
+        deadline = time.monotonic() + config.timeout
         with _open(request, timeout=config.timeout) as response:
-            raw = response.read(MAX_RESPONSE_BYTES + 1)
+            raw = _read_bounded(response, deadline)
     except urllib.error.HTTPError as exc:
         return None, Result(reason=f"completion HTTP {exc.code}")
     except (OSError, ValueError, http.client.HTTPException):
@@ -187,9 +212,9 @@ def shadow(config: Config, output: Path, cases: list[dict], *, max_calls: int):
         for case in fixtures + cases:
             if count == len(fixtures) and not passed:
                 break
-            is_control = count < len(fixtures)
             started = time.monotonic()
             result = evaluate(case["document"], config)
+            is_control = count < len(fixtures)
             matched = result.verdict == case.get("expected") if case.get("expected") else None
             row = {"index": count, "identity": config.identity(), "document_sha256": hashlib.sha256(case["document"].encode()).hexdigest(),
                    "control": is_control, "expected": case.get("expected"), "matched": matched,
