@@ -14,6 +14,8 @@ Every mind may act proactively within its charter. A checked UNKNOWN with an exa
 
 Use `[task]`, `[taking]`, `[done]`, and `[dropped]` in `chat.log` so witness can see progress and unresolved work. Request scoped missing capabilities with `permit request`; only an operator decision in the permissions window can grant plant authority. Genome obtains independent review, stages only owned paths, commits, pushes to the configured origin, and records the SHA and outcome. CI failure remains open until a replacement run for the pushed SHA succeeds.
 
+Write ordinary chat entries with `mishe-tauftauf --home SITE append --source ROLE 'readable text'`. Never write an ordinary entry directly or invent a framed sequence header. The feed CLI owns numbering and framing; one malformed entry blocks every live pane. For a malformed feed, preserve the bytes, repair only the corrupt frame under the feed lock, then verify parser and panes.
+
 Record each task transition as a separate chat entry whose first line starts with its lifecycle tag. A `[done]` buried in a handoff or later in a combined entry does not close the live task board.
 
 When the shared plant kernel changes, rerun the planting command for every active site using it and verify refreshed panes and resident services. The tracked kernel instructions are authoritative; local site instructions add target-specific detail and stay outside Git.

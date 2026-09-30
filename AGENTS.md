@@ -28,6 +28,8 @@ Track reusable code, tests, setup scripts, skills, and general instructions in t
 
 `SITE/chat.log` is the append-only conversation and obligation tape. The top pane is current data for the window; the bottom pane is its resident mind. The operator can attach to the same tmux session. Durable rules belong in this file, doctrine, or a charter; a chat line alone does not create a permanent rule.
 
+Append ordinary chat entries through `mishe-tauftauf --home SITE append --source ROLE 'readable text'`. The feed allocates sequence numbers, timestamps, and framing. Never write an ordinary entry directly or invent a framed header; one malformed entry makes every pane lose its shared evidence. For a malformed feed, preserve its bytes, repair only the corrupt frame under the feed lock, and verify the canonical parser and live panes before adding work.
+
 Write every new chat entry as readable text: say what happened, why it matters, the evidence or referenced artifact, and the next owner or action. Stable tags and IDs may lead an entry for replay, but they need an explanatory sentence. Do not append repeated unchanged samples; keep those in the local artifact and log meaningful state changes.
 
 Start an accepted idea visibly: append `[task] <stable-id> owner=<role> source=<path-or-sequence> acceptance=<live-check> retry=<edge>`, then `[taking] <stable-id>` before acting. An idea declined or superseded gets `[dropped] <stable-id> — reason`. Only a checked result with an artifact gets `[done] <stable-id> — concrete outcome`. A dispatch is routing evidence, not proof that the owner started. A pending task remains open across context clears; the exact ID ties its steps together.
