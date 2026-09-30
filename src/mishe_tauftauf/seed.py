@@ -26,6 +26,9 @@ OBS_RE = re.compile(r"seed observation ([a-z0-9-]+) sha256=([0-9a-f]{64})\Z")
 WAKE_RE = re.compile(r"seed wake ([a-z0-9-]+) observation=([1-9][0-9]*)(?: event=([1-9][0-9]*))?(?: task=(\S+))?\Z")
 YIELD_RE = re.compile(r"seed yield ([a-z0-9-]+) wake=([1-9][0-9]*)( continue=1)?\Z")
 CLEAR_RE = re.compile(r"seed clear ([a-z0-9-]+) after=([1-9][0-9]*)\Z")
+# OMP's idle status can include a token after INSERT, e.g. "INSERT y >".
+# Recognize that status without treating a spinner-bearing line as idle.
+_OMP_INSERT_PROMPT_RE = re.compile(r"\s*π > INSERT(?: +[A-Za-z0-9!?-]+)* >")
 # The pre-baseline plant copied this exact doctrine into each site. Recognize it
 # during the first upgrade so an untouched copy is not replayed as local policy.
 LEGACY_INSTRUCTION_HASHES = {
@@ -204,7 +207,7 @@ def _send(target: str, message: str) -> None:
             if pane.returncode == 0:
                 lines = pane.stdout.decode("utf-8", "replace").splitlines()
                 prompt = next((index for index in range(len(lines) - 1, -1, -1)
-                               if lines[index].startswith(" π > INSERT >")), None)
+                               if _OMP_INSERT_PROMPT_RE.match(lines[index])), None)
                 before_prompt = ([line for line in lines[max(0, prompt - 12):prompt] if line.strip()]
                                  if prompt is not None else [])
                 card_open = any(line.startswith("╭── 📄 #") for line in before_prompt)
@@ -247,9 +250,9 @@ def _mind_ready(session: str, slug: str) -> bool:
     ready = False
     for line in lines:
         status = line.lstrip()
-        if status.startswith(tuple("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")) and ("Working..." in status or "> INSERT >" in status):
+        if status.startswith(tuple("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")) and ("Working..." in status or "> INSERT " in status):
             return False
-        if line.startswith(" π > INSERT >"):
+        if _OMP_INSERT_PROMPT_RE.match(line):
             ready = True
     return ready
 
