@@ -4,10 +4,11 @@ import json
 import re
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from mishe_tauftauf.discovery import _cpu_busy, latest, scan
+from mishe_tauftauf.discovery import _cpu_busy, latest, renew_scan, scan, scan_age
 from mishe_tauftauf import discovery
 from mishe_tauftauf.feed import Feed
 
@@ -451,3 +452,71 @@ def test_sample_emits_journal_sense_with_the_live_count() -> None:
     row = observed["sense.journal.kernel-error-rate"]
     assert row["state"] == "verified"
     assert row["kind"] == "read"
+
+
+def test_renew_scan_refreshes_missing_and_expired_evidence_without_log_spam(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "site"
+    clock = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock
+
+    monkeypatch.setattr(discovery, "datetime", Clock)
+    first = {"created": clock.isoformat(), "node": "node", "observations": [
+        {"id": "sense.value", "state": "verified", "sample": 1, "kind": "read"},
+    ]}
+    with patch("mishe_tauftauf.discovery.sample", return_value=first):
+        artifact = renew_scan(home)
+        assert artifact is not None
+        assert json.loads(artifact.read_text()) == latest(home) == first
+        baseline = Feed(home).entries()
+        assert len(baseline) == 1
+        assert scan_age(home) == 0
+
+        clock += timedelta(seconds=600)
+        assert scan_age(home) == 600
+        assert renew_scan(home) is None
+        assert latest(home) == first
+
+    clock += timedelta(microseconds=1)
+    fresh = {**first, "created": clock.isoformat()}
+    with patch("mishe_tauftauf.discovery.sample", return_value=fresh):
+        artifact = renew_scan(home)
+        assert artifact is not None
+        assert json.loads(artifact.read_text()) == latest(home) == fresh
+        assert scan_age(home) == 0
+        assert renew_scan(home) is None
+    assert Feed(home).entries() == baseline
+
+
+def test_resident_ticks_renew_freshness_evidence_even_when_top_panes_fail(tmp_path: Path, monkeypatch) -> None:
+    from mishe_tauftauf import seed
+
+    clock = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock
+
+    monkeypatch.setattr(discovery, "datetime", Clock)
+    monkeypatch.setattr(seed, "owns_session", lambda *args: True)
+    stale = {"created": (clock - timedelta(seconds=601)).isoformat(),
+             "node": "node", "observations": [
+                 {"id": "sense.value", "state": "verified", "sample": 1, "kind": "read"},
+             ]}
+    fresh = {**stale, "created": clock.isoformat()}
+    for stopped in (False, True):
+        monkeypatch.setattr(seed, "_pane_stopped_or_dead", lambda *args: stopped)
+        monkeypatch.setattr(seed, "capture_raw", lambda *args: "UNKNOWN — top-pain render failed")
+        for slug in ("discover", "senses", "genome"):
+            home = tmp_path / f"{slug}-{stopped}"
+            with patch("mishe_tauftauf.discovery.sample", return_value=stale):
+                scan(home)
+            baseline = Feed(home).entries()
+            with patch("mishe_tauftauf.discovery.sample", return_value=fresh):
+                assert seed.tick(home, "session", slug).startswith("UNKNOWN seed")
+            assert latest(home) == (fresh if slug in ("discover", "senses") else stale)
+            assert Feed(home).entries() == baseline
