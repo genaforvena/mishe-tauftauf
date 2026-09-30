@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-from mishe_tauftauf.discovery import latest, scan
+from mishe_tauftauf.discovery import _cpu_busy, latest, scan
 from mishe_tauftauf.feed import Feed
 
 
@@ -243,3 +243,152 @@ def test_keyboard_counter_distinguishes_absent_source_from_unreadable_counter(tm
     with patch("mishe_tauftauf.discovery._read", side_effect=with_interrupts):
         observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
     assert "/dev/input" not in str(observed["sense.input.keyboard-interrupt-count"]["sample"])
+
+def test_thermal_hwmon_is_deterministic_and_real_host_is_observational(tmp_path: Path) -> None:
+    from mishe_tauftauf import discovery
+
+    chip = tmp_path / "chip"
+    chip.mkdir()
+    valid = chip / "temp1_input"
+    malformed = chip / "temp2_input"
+    valid.write_text("42500\n", encoding="utf-8")
+    malformed.write_text("not-a-number\n", encoding="utf-8")
+    (chip / "name").write_text("testchip\n", encoding="utf-8")
+    with patch("mishe_tauftauf.discovery._thermal_slots", return_value=[valid, malformed]):
+        observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+    assert observed["sense.thermal.hwmon"] == {
+        "id": "sense.thermal.hwmon", "state": "verified",
+        "sample": "testchip=42.5C", "kind": "read",
+    }
+
+    real = discovery._thermal_slots(Path("/sys/class/hwmon"))
+    readable = [
+        slot for slot in real
+        if (value := discovery._read(slot, 64)) is not None
+        and value.strip().lstrip("-").isdigit()
+        and -273150 <= int(value.strip()) <= 200000
+    ]
+    if readable:
+        with patch("mishe_tauftauf.discovery._thermal_slots", return_value=readable):
+            observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+        assert observed["sense.thermal.hwmon"]["state"] == "verified"
+    with patch("mishe_tauftauf.discovery._thermal_slots", return_value=[]):
+        observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+    assert observed["sense.thermal.hwmon"]["state"] == "unknown"
+    assert observed["sense.thermal.hwmon"]["sample"] == "no readable hwmon temperature sensor"
+
+
+def test_thermal_hwmon_reports_chip_name_and_skips_malformed_sensor(tmp_path: Path) -> None:
+    from mishe_tauftauf import discovery
+
+    chip = tmp_path / "chip"
+    chip.mkdir()
+    synthetic = (chip / "temp1_input", chip / "temp2_input")
+    for slot, value in zip(synthetic, ("42500\n", "not-a-number\n")):
+        slot.write_text(value, encoding="utf-8")
+    (chip / "name").write_text("testchip\n", encoding="utf-8")
+    with patch("mishe_tauftauf.discovery._thermal_slots", return_value=list(synthetic)):
+        observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+    reading = observed["sense.thermal.hwmon"]
+    assert reading["state"] == "verified"
+    assert reading["sample"] == "testchip=42.5C"
+    # A malformed sensor must not break the read or appear in it.
+    assert "not-a-number" not in str(reading["sample"])
+
+
+def test_thermal_hwmon_skips_out_of_range_sensor_values(tmp_path: Path) -> None:
+    from mishe_tauftauf import discovery
+
+    chip = tmp_path / "chip"
+    chip.mkdir()
+    (chip / "name").write_text("testchip\n", encoding="utf-8")
+    cases = (("999000\n", 999000), ("-300000\n", -300000), ("\n", 0))
+    for text, _ in cases:
+        slot = chip / "temp1_input"
+        slot.write_text(text, encoding="utf-8")
+        with patch("mishe_tauftauf.discovery._thermal_slots",
+                   return_value=[slot]):
+            observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+        reading = observed["sense.thermal.hwmon"]
+        assert reading["state"] == "unknown", text
+        assert reading["sample"] == "no readable hwmon temperature sensor", text
+
+
+def test_cpu_busy_uses_idle_subtraction_and_includes_steal(tmp_path: Path) -> None:
+    from mishe_tauftauf import discovery
+
+    stat = tmp_path / "stat"
+    original_read = discovery._read
+    cases = [
+        (["cpu 60 0 0 40 0 0 0 0 0\n", "cpu 120 0 0 60 0 0 0 20 0\n"], 80.0),
+        (["cpu 0 0 0 0 0 0 0 0 0\n", "cpu 0 0 0 100 0 0 0 0 0\n"], 0.0),
+    ]
+    for samples, expected_busy in cases:
+        with patch("mishe_tauftauf.discovery._read",
+                   side_effect=lambda path, limit=65536: samples.pop(0) if path == stat else original_read(path, limit)):
+            reading = discovery._cpu_busy(path=stat, samples=2, interval=0)
+        assert reading == {"busy": expected_busy, "idle": 100.0 - expected_busy}
+
+    for samples in (
+        ["", "cpu 10 0 0 20 0 0 0 0 0\n"],
+        ["\n", "cpu 10 0 0 20 0 0 0 0 0\n"],
+        ["cpu 10 0 0 10 0 0 0 0 0\n", "cpu 9 0 0 20 0 0 0 0 0\n"],
+        ["cpu 10 0 0 10 0 0 0 0 0\n", "cpu 10 0 0 10 0 0 0 0 0\n"],
+    ):
+        with patch("mishe_tauftauf.discovery._read",
+                   side_effect=lambda path, limit=65536: samples.pop(0) if path == stat else original_read(path, limit)):
+            assert _cpu_busy(path=stat, samples=2, interval=0) == {}
+
+def test_cpu_busy_sample_is_short_window_and_unreadable_is_unknown(tmp_path: Path) -> None:
+    from mishe_tauftauf import discovery
+
+    observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+    reading = observed["sense.proc.cpu-busy"]
+    assert reading["kind"] == "read"
+    assert reading["state"] in {"verified", "unknown"}
+    if reading["state"] == "verified":
+        assert "short-window=0.1s" in str(reading["sample"])
+        assert "busy=" in str(reading["sample"])
+        assert "idle=" in str(reading["sample"])
+    with patch("mishe_tauftauf.discovery._cpu_busy", return_value={"busy": 100.0, "idle": 0.0}):
+        observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+    assert observed["sense.proc.cpu-busy"]["state"] == "verified"
+    assert " high" in str(observed["sense.proc.cpu-busy"]["sample"])
+    with patch("mishe_tauftauf.discovery._cpu_busy", return_value={}):
+        observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+    assert observed["sense.proc.cpu-busy"]["state"] == "unknown"
+    assert observed["sense.proc.cpu-busy"]["sample"] == "/proc/stat cpu fields unavailable"
+    assert observed["sense.proc.cpu-busy"]["kind"] == "read"
+
+
+def test_overlay_rate_uses_tx_rx_deltas_without_operstate_gate(tmp_path: Path) -> None:
+    from mishe_tauftauf import discovery
+
+    stats = tmp_path / "tailscale0" / "statistics"
+    stats.mkdir(parents=True)
+    tx, rx = stats / "tx_bytes", stats / "rx_bytes"
+    tx.write_text("1000\n")
+    rx.write_text("2000\n")
+    reads = {tx: iter(("1000\n", "1500\n")), rx: iter(("2000\n", "2300\n"))}
+    with patch("mishe_tauftauf.discovery._read",
+               side_effect=lambda path, limit=65536: next(reads[path])):
+        with patch("mishe_tauftauf.discovery.time.sleep"):
+            assert discovery._overlay_egress_rate(tmp_path, interval=0.1) == {
+                "state": "verified",
+                "sample": "short-window=0.1s egress=5000 B/s ingress=3000 B/s"}
+
+
+def test_overlay_rate_reports_unknown_for_missing_or_decreased_counter(tmp_path: Path) -> None:
+    from mishe_tauftauf import discovery
+
+    stats = tmp_path / "tailscale0" / "statistics"
+    stats.mkdir(parents=True)
+    tx, rx = stats / "tx_bytes", stats / "rx_bytes"
+    tx.write_text("1000\n")
+    rx.write_text("2000\n")
+    reads = {tx: iter(("1000\n", "900\n")), rx: iter(("2000\n", "2100\n"))}
+    with patch("mishe_tauftauf.discovery._read",
+               side_effect=lambda path, limit=65536: next(reads[path])):
+        with patch("mishe_tauftauf.discovery.time.sleep"):
+            result = discovery._overlay_egress_rate(tmp_path)
+    assert result == {"state": "unknown", "sample": "tailscale0 tx_bytes counter decreased"}
