@@ -316,7 +316,7 @@ class FleetViewTests(unittest.TestCase):
             self.assertEqual(result, 0)
             observations = [entry.body for entry in Feed(home).entries()
                             if entry.source == "observation/adint"]
-            self.assertEqual(observations, [self.ADINT])
+            self.assertEqual(observations, [safe_fleet_view(self.ADINT, "adint")])
             self.assertNotIn("PRIVATE-SENTINEL", "\n".join(observations))
             decisions = [entry.body for entry in Feed(home).entries() if entry.source == "mishe-tauftauf"]
             self.assertTrue(any("desired-state-met" in body and "unknown" in body for body in decisions))

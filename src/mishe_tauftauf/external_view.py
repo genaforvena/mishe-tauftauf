@@ -27,7 +27,7 @@ _SUMMARY = re.compile(
 # This is a separate protocol from the cleaner's projected publish view. The
 # producer may attach bounded typed diagnostic fields, but the external judge
 # receives only enums, never hashes, counts, private pane text, or predictions.
-FLEET_VERSION = "fleet-projected-v1"
+FLEET_VERSION = "fleet-projected-v2"
 FLEET_ROLES = frozenset((
     "adint", "check", "cleaner", "discover", "genome", "haunt", "hire", "job",
     "minds", "pub", "senses", "sound", "tg", "tg-roz", "vpn", "wake", "witness",
@@ -55,6 +55,9 @@ _FLEET_ENUMS = {
     "textin": frozenset(("up", "down", "wedged", "unknown")),
     "send": frozenset(("ok", "blocked")),
     "pipeline": frozenset(("present", "empty")),
+    "peers": frozenset(("offline-present", "online", "none")),
+    "tasks": frozenset(("unowned", "unfinished", "clear")),
+    "issues": frozenset(("present", "none")),
 }
 _FLEET_DIAGNOSTICS = {
     "signal": re.compile(r"[0-9a-f]{16}\Z"),
@@ -71,10 +74,10 @@ _FLEET_ROLE_FIELDS = {
     "cleaner": frozenset(("review",)),
     "tg": frozenset(("rx", "textin")),
     "tg-roz": frozenset(("send",)),
-    "vpn": frozenset(("peers-online", "peers-offline")),
+    "vpn": frozenset(("peers-online", "peers-offline", "peers")),
     "job": frozenset(("pipeline",)),
     "witness": frozenset(("tasks-total", "tasks-unfinished", "tasks-unowned",
-                          "mishe-issues", "issue-digest")),
+                          "mishe-issues", "issue-digest", "tasks", "issues")),
 }
 
 
@@ -151,12 +154,42 @@ def safe_fleet_view(projection: str, slug: str) -> str | None:
         or (state.group(1) == "GREEN" and (source != "top-pane" or freshness != "fresh"
                                            or fields.get(expected_value) != "fresh"))):
         return None
-    semantic = fields.get("semantic", "none")
+    count_keys = {"tasks-total", "tasks-unfinished", "tasks-unowned"}
+    if (("tasks" in fields and count_keys & fields.keys())
+        or ("peers" in fields and {"peers-online", "peers-offline"} & fields.keys())
+        or ("issues" in fields and {"mishe-issues", "issue-digest"} & fields.keys())):
+        return None
+    if count_keys <= fields.keys():
+        total, unfinished, unowned = (int(fields[key]) for key in
+                                     ("tasks-total", "tasks-unfinished", "tasks-unowned"))
+        if not unowned <= unfinished <= total:
+            return None
+        fields["tasks"] = "unowned" if unowned else "unfinished" if unfinished else "clear"
+    if "mishe-issues" in fields:
+        fields["issues"] = "present" if int(fields["mishe-issues"]) else "none"
+    if "peers-online" in fields:
+        fields["peers"] = ("offline-present" if int(fields["peers-offline"]) else
+                           "online" if int(fields["peers-online"]) else "none")
     typed = " ".join(f"{key}={fields[key]}" for key in (
-        expected_value, "value-coverage", "semantic", "review", "rx", "textin", "send", "pipeline"
+        expected_value, "value-coverage", "semantic", "review", "rx", "textin", "send", "pipeline", "peers", "tasks", "issues"
     ) if key in fields)
     return (f"STATE: {state.group(1)}\nOBSERVATION: source={source}/{role} "
-            f"freshness={freshness} {typed}" + ("" if "semantic" in fields else " semantic=none") + "\n")
+            f"freshness={freshness} {typed}\n")
+
+
+def projected_fleet_controls() -> tuple[str, str]:
+    """Pair fresh actionable and completed fleet states using the shipped schema."""
+    red = safe_fleet_view(
+        "STATE: RED\nOBSERVATION: source=top-pane/witness freshness=fresh journal=fresh "
+        "tasks-total=3 tasks-unfinished=2 tasks-unowned=1 mishe-issues=1 issue-digest=abcdef0123456789\n",
+        "witness")
+    green = safe_fleet_view(
+        "STATE: GREEN\nOBSERVATION: source=top-pane/witness freshness=fresh journal=fresh "
+        "tasks-total=3 tasks-unfinished=0 tasks-unowned=0 mishe-issues=0 issue-digest=abcdef0123456789\n",
+        "witness")
+    assert red is not None and green is not None
+    return red, green
+
 
 def safe_publish_view(projection: str) -> str | None:
     """Accept only an enumerated state and fixed-shape numeric summary.
