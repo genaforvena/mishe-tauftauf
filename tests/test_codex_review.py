@@ -128,7 +128,12 @@ def test_parent_timeout_terminates_nested_cli_group(tmp_path):
     pid=int(pidfile.read_text())
     for _ in range(50):
         status=__import__('pathlib').Path('/proc')/str(pid)/'status'
-        if not status.exists() or 'State:\tZ' in status.read_text():break
+        try:
+            child_status = status.read_text()
+        except FileNotFoundError:
+            break  # The reaped child may disappear between probes.
+        if 'State:\tZ' in child_status:
+            break
         time.sleep(.01)
     else:
         os.kill(pid,9)
