@@ -105,10 +105,10 @@ def test_failed_claim_append_leaves_owner_and_attempt_unchanged(tmp_path, monkey
     _, proof = ready_site(tmp_path, monkeypatch)
     attempt = wake(tmp_path, 'witness')
     original = Feed.append_task_control
-    def reject(self, source, body):
+    def reject(self, source, body, **kwargs):
         if body.startswith('[task-claim]'):
             raise ValueError('Publication rejected; correct the private draft.')
-        return original(self, source, body)
+        return original(self, source, body, **kwargs)
     monkeypatch.setattr(Feed, 'append_task_control', reject)
     before = Feed(tmp_path).tail_sequence()
     with pytest.raises(ValueError, match='Publication rejected'):
@@ -145,3 +145,23 @@ def test_already_completed_dependency_remains_visible_and_admissible(tmp_path, m
     assert 'producer' in '\n'.join(task_state.board(Feed(tmp_path).entries()))
     attempt = wake(tmp_path, 'witness')
     task_state.claim(tmp_path, 'repair', 'witness', attempt, 'Verify the completed producer evidence.', proof)
+
+
+def test_claim_evidence_changed_in_final_post_review_refuses_privately(tmp_path, monkeypatch):
+    from mishe_tauftauf import post_check
+    _, proof = ready_site(tmp_path, monkeypatch)
+    attempt = wake(tmp_path, 'witness')
+    original = post_check.require
+    def tamper(home, source, body, context=None, stage='post'):
+        result = original(home,source,body,context=context,stage=stage)
+        if body.startswith('[task-claim]'):
+            proof.write_text('Different evidence arrived during the final admission.')
+        return result
+    monkeypatch.setattr(post_check,'require',tamper)
+    before=Feed(tmp_path).read_bytes()
+    with pytest.raises(post_check.CorrectionRequired) as error:
+        task_state.claim(tmp_path,'repair','witness',attempt,'Perform the scoped check.',proof)
+    assert Feed(tmp_path).read_bytes()==before
+    assert task_state.registry(Feed(tmp_path).entries())['repair'].owner=='genome'
+    assert error.value.report['results'][-1]['id']=='D03'
+    assert 'claim evidence changed' in error.value.report['results'][-1]['reason']

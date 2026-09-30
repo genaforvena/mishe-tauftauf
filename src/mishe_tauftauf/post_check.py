@@ -174,11 +174,24 @@ def review(home, source, body, context=None, stage='post'):
             if isinstance(timeout,bool) or not isinstance(timeout,(int,float)) or not math.isfinite(timeout) or not 0 < timeout <= 300:
                 raise ValueError('timeout_seconds must be finite and in (0, 300]')
             request = {k:v for k,v in inputs.items() if k != 'config'}
+            scoped = inputs['context'].get('question_episodes') if isinstance(inputs['context'], dict) else None
+            if scoped is not None:
+                if not isinstance(scoped, dict) or any(not isinstance(scoped.get(q['id']), dict) for q in bank):
+                    raise ValueError('missing or invalid complete question episode')
+                # Full input still owns the cache/report identity. The transport
+                # omits duplicated audit views, never question evidence or text.
+                request['context'] = {'question_episodes': {q['id']: scoped[q['id']] for q in bank}}
+                request['audit_reference'] = {'path': str(path), 'input_hash': digest,
+                    'binding': 'input_hash binds exact full draft/context, checker identity and configuration; full audit retained privately'}
             request['input_hash'] = digest
             request['deadline_seconds'] = timeout
             encoded = _json(request).encode()
             if len(encoded) > MAX_BYTES:
                 raise ValueError('episode exceeds input byte budget')
+            report['worker_input_bytes'] = len(encoded)
+            # A crash or unavailable reviewer must leave the original full draft
+            # and evidence durable before the external process starts.
+            _save(path, report)
             output = _worker(command, encoded, timeout)
             answer = json.loads(output)
             if not isinstance(answer, dict):

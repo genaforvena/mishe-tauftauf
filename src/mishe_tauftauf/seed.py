@@ -677,28 +677,88 @@ def tick(home: Path, session: str, slug: str, self_pick_seconds: float = 0) -> s
         return f"wake seed {slug} {wake.sequence}"
 
 
+def _handoff_matches(path: Path, digest: str) -> bool:
+    return path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == digest
+
+
+def _write_handoff(path: Path, text: str) -> None:
+    """Durable atomic text replacement, without repeating an identical effect."""
+    data = text.encode("utf-8")
+    if path.is_file() and path.read_bytes() == data:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def _yield_guards(home: Path, slug: str, wake: int, digest: str, archive: Path,
+                  work_prefix: str, work_data: dict, *, require_work: bool) -> dict:
+    current = home / "handoffs" / f"{slug}.md"
+    if not _handoff_matches(archive, digest) or not _handoff_matches(current, digest):
+        raise ValueError("archive/current handoff bytes do not match the admitted source; reconcile before yielding")
+    entries = Feed(home).entries()
+    receipts = [entry for entry in entries if entry.source == "seed" and entry.body.startswith(work_prefix)]
+    if require_work and (len(receipts) != 1 or record_payload(receipts[0]) != work_data):
+        raise ValueError("work receipt does not match admitted handoff; reconcile before yielding")
+    return dict(archive_bytes_match_source=True, current_handoff_bytes_match_source=True,
+                archive=str(archive), current_handoff=str(current), handoff_sha256=digest,
+                work_receipt_matches=bool(receipts), work_receipt_sequence=receipts[0].sequence if receipts else None)
+
+
 def yield_wake(home: Path, slug: str, wake: int, handoff_file: Path, continue_task: bool = False,
                result: str = "unspecified") -> str:
     slug = validate_slug(slug)
-    handoff_text = handoff_file.read_text(encoding="utf-8")
+    handoff_text = handoff_file.read_bytes().decode("utf-8")
     if not handoff_text.strip():
         raise ValueError("handoff is empty")
     if result not in {"changed", "verified", "blocked", "unspecified"}:
         raise ValueError("result must be changed, verified, or blocked")
     with _lock(home), publication_lock(home):
-        _, pending, _, _, _, observation, _, _ = _state(home, slug)
+        _, pending, last_yield, _, _, observation, _, _ = _state(home, slug)
         if pending != wake:
+            # Reconcile a committed receipt whose final private journal write
+            # was interrupted. No new publication or handoff effect is repeated.
+            recovery_path = home / "checks" / f"yield-{slug}-{wake}.json"
+            recovery = json.loads(recovery_path.read_text()) if recovery_path.exists() else None
+            expected_digest = hashlib.sha256(handoff_text.encode("utf-8")).hexdigest()
+            if (pending is None and last_yield == wake and recovery
+                    and recovery.get("handoff_sha256") == expected_digest
+                    and recovery.get("result") == result and recovery.get("continue_task") == continue_task):
+                committed = [entry for entry in Feed(home).entries() if entry.source == "seed"
+                             and entry.body == recovery.get("yield_body")]
+                if len(committed) != 1:
+                    raise ValueError(f"yield recovery lacks its exact canonical receipt; reconcile {recovery_path}")
+                _yield_guards(home, slug, wake, expected_digest, Path(recovery["archive"]),
+                              f"[work] channel={slug} wake={wake} ", recovery["work_data"], require_work=True)
+                from .post_check import _save
+                recovery.update(phase="committed", yield_sequence=committed[0].sequence)
+                _save(recovery_path, recovery)
+                return f"yield seed {slug} {wake}"
             raise ValueError(f"wake {wake} is not the pending wake for {slug}")
         entries = Feed(home).entries()
         original = next(entry for entry in entries if entry.sequence == wake)
         wake_match = WAKE_RE.fullmatch(_receipt_line(original.body))
+        observation = int(wake_match.group(2)) if wake_match else observation
         selected_task = task_state.pending_tasks(entries).get((slug, wake)) or (wake_match.group(4) if wake_match else None)
         selected_state = task_state.registry(entries).get(selected_task) if selected_task else None
         if continue_task and selected_task and (selected_state is None or selected_state.status in {"done", "dropped"}
                                                or not task_state.eligible(selected_state, entries)):
             raise ValueError("continuation requires a checked next step or fired retry; record task step or task wait")
         archive = home / "artifacts" / f"seed-{slug}-wake-{wake}.md"
-        if archive.exists() and archive.read_text(encoding="utf-8") != handoff_text:
+        if archive.exists() and archive.read_bytes().decode("utf-8") != handoff_text:
             raise ValueError(f"archived handoff for wake {wake} differs; reconcile before yielding")
         digest = hashlib.sha256(handoff_text.encode("utf-8")).hexdigest()
         excerpt = handoff_text.strip()[:4096]
@@ -727,7 +787,7 @@ def yield_wake(home: Path, slug: str, wake: int, handoff_file: Path, continue_ta
         work_body = f"{header}\n{slug} reports {result} for " + (f"task {selected_task}" if selected_task else "this investigation") + \
                     f". Read the checked outcome and next action below; full handoff: {archive}.\nHANDOFF:\n{excerpt}"
         yield_body = f"seed yield {slug} wake={wake}" + (" continue=1" if continue_task else "") + \
-                     "\nThe mind settled this wake with an archived handoff and work receipt. " + \
+                     "\nThis receipt settles the exact wake after preserving its verified handoff and work receipt. " + \
                      ("Its task continues after context clear." if continue_task else "No continuation was requested.")
         prior = [entry for entry in Feed(home).entries() if entry.source == "seed" and
                  entry.body.startswith(work_prefix)]
@@ -738,27 +798,77 @@ def yield_wake(home: Path, slug: str, wake: int, handoff_file: Path, continue_ta
         from .records import prepare
         from .coordination_checks import episode
         work_body += "\n" + prepare(home, work_data, kind="work")
-        handoff_context = episode(home, slug, handoff_text, context=work_data)
-        work_context = episode(home, "seed", work_body, context=work_data)
-        yield_context = episode(home, "seed", yield_body)
-        require(home, slug, handoff_text, context=handoff_context, stage="handoff")
-        # Check both publications before changing the current handoff or receipt.
-        # The append boundary repeats exact-input checks for all callers.
-        require(home, "seed", work_body, context=work_context)
-        require(home, "seed", yield_body, context=yield_context)
-        path = home / "handoffs" / f"{slug}.md"
-        path.parent.mkdir(exist_ok=True)
-        temporary = path.with_name(f".{slug}.{os.getpid()}.tmp")
-        temporary.write_text(handoff_text, encoding="utf-8")
-        os.replace(temporary, path)
-        archive.parent.mkdir(exist_ok=True)
-        if not archive.exists():
-            archived_temp = archive.with_name(f".{archive.name}.{os.getpid()}.tmp")
-            archived_temp.write_text(handoff_text, encoding="utf-8")
-            os.replace(archived_temp, archive)
+        journal_path = home / "checks" / f"yield-{slug}-{wake}.json"
+        from .post_check import _save
+        journal = json.loads(journal_path.read_text()) if journal_path.exists() else None
+        identity = dict(role=slug, wake=wake, handoff_sha256=digest, result=result,
+                        continue_task=continue_task, work_data=work_data)
+        if journal and any(journal.get(key) != value for key, value in identity.items()):
+            raise ValueError(f"yield transaction differs; reconcile {journal_path} before retry")
+        transaction = dict(event="yield", phase="prepared", role=slug, wake=wake,
+            before=dict(pending_wake_matches=True, handoff_source=str(handoff_file),
+                        handoff_source_sha256=digest, handoff_source_read=True),
+            required_commit_guards=["archive bytes match admitted source", "current handoff bytes match admitted source",
+                                    "one matching canonical work receipt exists", "the exact wake remains pending"],
+            expected_effect=dict(canonical_receipt_settles_wake=wake, continue_requested=continue_task),
+            guard_semantics="Prepared transaction: required guards are code-enforced conditions before publication, not claims that future effects already happened.")
+        publication_data = dict(work_data, transaction=transaction, admitted_handoff_text=handoff_text)
+        work_transaction = dict(transaction, event="work",
+            required_commit_guards=["archive bytes match admitted source", "current handoff bytes match admitted source",
+                                    "the exact wake remains pending", "handoff source and selected task version unchanged"],
+            expected_effect=dict(creates_work_receipt=True, work_wake=wake, settles_wake=False),
+            guard_semantics="This publication creates the canonical work receipt after checking its handoff files. No prior work receipt is required. The later yield separately requires exactly one matching committed work receipt before settling the wake.")
+        handoff_context = episode(home, slug, handoff_text, context=publication_data)
+        work_context = episode(home, "seed", work_body, context=dict(publication_data, transaction=work_transaction))
+        yield_context = episode(home, "seed", yield_body, context=publication_data)
         if not prior:
-            Feed(home).append("seed", work_body, context=work_context)
-        Feed(home).append("seed", yield_body, context=yield_context)
+            require(home, slug, handoff_text, context=handoff_context, stage="handoff")
+            require(home, "seed", work_body, context=work_context)
+        # Check the conditional settlement before effects. A recovery with an
+        # already committed work receipt checks only the remaining publication.
+        require(home, "seed", yield_body, context=yield_context)
+        if not _handoff_matches(handoff_file, digest):
+            raise ValueError("handoff changed during publication review; resubmit the exact source")
+        if not journal:
+            journal = dict(identity, phase="prepared", archive=str(archive), work_body=work_body, yield_body=yield_body)
+            _save(journal_path, journal)
+        path = home / "handoffs" / f"{slug}.md"
+        def commit_yield_guard(require_work: bool) -> None:
+            _yield_guards(home, slug, wake, digest, archive, work_prefix, work_data, require_work=require_work)
+            current_entries = Feed(home).entries()
+            current_selected = task_state.registry(current_entries).get(selected_task) if selected_task else None
+            if (_state(home, slug)[1] != wake or not _handoff_matches(handoff_file, digest)
+                    or (selected_state is not None and (current_selected is None or current_selected.sequence != selected_state.sequence))):
+                raise ValueError("yield source/wake/task version changed during review; reconcile without repeating effects")
+
+        _write_handoff(path, handoff_text)
+        if not archive.exists():
+            _write_handoff(archive, handoff_text)
+        guarded = _yield_guards(home, slug, wake, digest, archive, work_prefix, work_data, require_work=False)
+        journal.update(phase="files-verified", postconditions=guarded)
+        _save(journal_path, journal)
+        if not prior:
+            work_postconditions = {key: value for key, value in guarded.items() if not key.startswith("work_receipt_")}
+            verified_work = dict(publication_data, transaction=dict(work_transaction, phase="verified", postconditions=work_postconditions))
+            verified_work_context = episode(home, "seed", work_body, context=verified_work)
+            require(home, "seed", work_body, context=verified_work_context)
+            commit_yield_guard(False)
+            Feed(home).append("seed", work_body, context=verified_work_context, commit_guard=lambda: commit_yield_guard(False))
+        guarded = _yield_guards(home, slug, wake, digest, archive, work_prefix, work_data, require_work=True)
+        if _state(home, slug)[1] != wake:
+            raise ValueError("exact wake changed before settlement; reconcile transaction")
+        journal.update(phase="work-verified", postconditions=guarded)
+        _save(journal_path, journal)
+        verified_yield = dict(publication_data, transaction=dict(transaction, phase="verified", postconditions=guarded))
+        verified_yield_context = episode(home, "seed", yield_body, context=verified_yield)
+        require(home, "seed", yield_body, context=verified_yield_context)
+        commit_yield_guard(True)
+        Feed(home).append("seed", yield_body, context=verified_yield_context, commit_guard=lambda: commit_yield_guard(True))
+        _, remaining, last_yield, _, _, _, _, _ = _state(home, slug)
+        if remaining is not None or last_yield != wake:
+            raise ValueError("canonical yield receipt did not settle the exact wake; reconcile transaction")
+        journal.update(phase="committed", yield_sequence=Feed(home).tail_sequence())
+        _save(journal_path, journal)
         return f"yield seed {slug} {wake}"
 
 
@@ -770,6 +880,28 @@ def clear(home: Path, session: str, slug: str) -> str:
         _, pending, last_yield, last_clear, _, _, _, _ = _state(home, slug)
         if pending is not None:
             raise ValueError(f"wake {pending} remains unsettled")
+        if last_yield is not None and last_yield == last_clear:
+            recovery_path = home / "checks" / f"clear-{slug}-{last_yield}.json"
+            recovery = json.loads(recovery_path.read_text()) if recovery_path.exists() else None
+            if recovery and recovery.get("session") == session and recovery.get("phase") in {"completed", "committed"}:
+                target = f"{session}:{slug}.1"
+                current_pid = _tmux("display-message", "-p", "-t", target, "#{pane_pid}").stdout.decode().strip()
+                current_dead = _tmux("display-message", "-p", "-t", target, "#{pane_dead}").stdout.decode().strip()
+                if (current_pid != recovery.get("new_pid") or current_dead != "0"
+                        or not _handoff_matches(home / "handoffs" / f"{slug}.md", recovery.get("handoff_sha256", ""))):
+                    raise ValueError(f"committed clear live effect differs; reconcile {recovery_path}")
+                receipts = [entry for entry in Feed(home).entries() if entry.source == "seed"
+                            and _receipt_line(entry.body) == f"seed clear {slug} after={last_yield}"]
+                if len(receipts) != 1:
+                    raise ValueError(f"clear recovery lacks its exact receipt; reconcile {recovery_path}")
+                data = record_payload(receipts[0])
+                observed = data.get("transaction", {}).get("postconditions", {})
+                if observed.get("old_pid") != recovery.get("old_pid") or observed.get("new_pid") != current_pid:
+                    raise ValueError(f"clear receipt differs from its observed effect; reconcile {recovery_path}")
+                from .post_check import _save
+                recovery.update(phase="committed", receipt_sequence=receipts[0].sequence)
+                _save(recovery_path, recovery)
+                return f"clear seed {slug} after {last_yield}"
         if last_yield is None or last_yield == last_clear:
             raise ValueError("no newly settled wake to clear")
         if not (home / "handoffs" / f"{slug}.md").is_file():
@@ -783,17 +915,28 @@ def clear(home: Path, session: str, slug: str) -> str:
         clear_body = f"seed clear {slug} after={last_yield}\n" + (
             "The supervisor rotated the idle mind to a fresh process in the same pane. "
             "Its charter and latest handoff will be delivered with the next wake.")
+        planned_body = f"seed clear {slug} after={last_yield}\n" + (
+            "The supervisor plans to rotate the settled, idle mind in the same pane. "
+            "It will verify a different live process before publishing the clear receipt; "
+            "the next wake will deliver the charter and handoff.")
         from .coordination_checks import episode
-        from .post_check import require
-        clear_context = episode(home, "seed", clear_body)
-        require(home, "seed", clear_body, context=clear_context)
-        from .post_check import _save
+        from .post_check import require, _save
+        from .records import prepare
         effect_path = home / "checks" / f"clear-{slug}-{last_yield}.json"
         current_pid = _tmux("display-message", "-p", "-t", target, "#{pane_pid}").stdout.decode().strip()
         effect = json.loads(effect_path.read_text()) if effect_path.exists() else None
         if effect and (effect.get("session") != session or effect.get("body") != clear_body):
             raise ValueError(f"clear effect identity differs; reconcile {effect_path}")
-        if effect and effect.get("phase") == "completed":
+        handoff = home / "handoffs" / f"{slug}.md"
+        handoff_digest = hashlib.sha256(handoff.read_bytes()).hexdigest()
+        transaction = dict(event="clear", phase="prepared", role=slug, settled_wake=last_yield,
+            before=dict(session_owned=True, exact_wake_settled=True, mind_idle_verified=True,
+                        pane_alive=True, old_pid=effect.get("old_pid") if effect else current_pid,
+                        handoff=str(handoff), handoff_sha256=handoff_digest),
+            expected_effect=dict(target=target, replace_process=True, next_wake_restores_charter_and_handoff=True),
+            required_commit_guards=["new process differs from old process", "new pane is alive", "handoff bytes unchanged"],
+            guard_semantics="Prepared transaction: rotation has not been claimed complete; actual observed postconditions are required before the receipt.")
+        if effect and effect.get("phase") in {"completed", "committed"}:
             if current_pid != effect.get("new_pid"):
                 raise ValueError(f"completed clear has a different live process; reconcile {effect_path}")
         else:
@@ -801,7 +944,14 @@ def clear(home: Path, session: str, slug: str) -> str:
                 raise ValueError(f"clear effect is uncertain after process change; reconcile {effect_path} before retry")
             if not current_pid:
                 raise ValueError("mind process identity is missing")
-            effect = dict(session=session, body=clear_body, old_pid=current_pid, phase="intent")
+            require(home, "seed", planned_body, context=episode(home, "seed", planned_body, context={"transaction":transaction}))
+            # Recheck all live mutation preconditions after potentially slow model review.
+            if (not owns_session(home, session) or _state(home, slug)[1] is not None or _state(home, slug)[2] != last_yield
+                    or not _mind_idle(session, slug)
+                    or _tmux("display-message", "-p", "-t", target, "#{pane_pid}").stdout.decode().strip() != current_pid
+                    or not _handoff_matches(handoff, handoff_digest)):
+                raise ValueError("clear preconditions changed during review; resubmit without rotating")
+            effect = dict(session=session, body=clear_body, old_pid=current_pid, phase="intent", handoff_sha256=handoff_digest)
             _save(effect_path, effect)
             _tmux("respawn-pane", "-k", "-t", target, *_mind_launch_argv(home, slug))
             time.sleep(0.5)
@@ -811,7 +961,30 @@ def clear(home: Path, session: str, slug: str) -> str:
                 raise ValueError(f"mind rotation could not be verified; reconcile {effect_path}")
             effect.update(phase="completed", new_pid=new_pid)
             _save(effect_path, effect)
-        Feed(home).append("seed", clear_body, context=clear_context)
+        # Recovery never rotates an already verified new process a second time.
+        new_pid = _tmux("display-message", "-p", "-t", target, "#{pane_pid}").stdout.decode().strip()
+        new_dead = _tmux("display-message", "-p", "-t", target, "#{pane_dead}").stdout.decode().strip()
+        if (new_pid != effect.get("new_pid") or new_pid == effect.get("old_pid") or new_dead != "0"
+                or not _handoff_matches(handoff, effect.get("handoff_sha256", handoff_digest))):
+            raise ValueError(f"mind rotation postconditions no longer hold; reconcile {effect_path}")
+        observed = dict(process_changed=True, pane_alive=True, old_pid=effect["old_pid"], new_pid=new_pid,
+                        same_pane=target, handoff_bytes_unchanged=True, verification="tmux pane_pid/pane_dead and exact handoff hash checked before receipt")
+        transaction = dict(transaction, phase="verified", postconditions=observed)
+        final_data = dict(role=slug, settled_wake=last_yield, transaction=transaction)
+        clear_body += "\n" + prepare(home, final_data, kind="clear")
+        verified_clear_context = episode(home, "seed", clear_body, context=final_data)
+        require(home, "seed", clear_body, context=verified_clear_context)
+        def commit_clear_guard() -> None:
+            state = _state(home, slug)
+            if (not owns_session(home, session) or state[1] is not None or state[2] != last_yield
+                    or _tmux("display-message", "-p", "-t", target, "#{pane_pid}").stdout.decode().strip() != new_pid
+                    or _tmux("display-message", "-p", "-t", target, "#{pane_dead}").stdout.decode().strip() != "0"
+                    or not _handoff_matches(handoff, effect.get("handoff_sha256", handoff_digest))):
+                raise ValueError(f"clear postconditions changed during final review; reconcile {effect_path}")
+        commit_clear_guard()
+        Feed(home).append("seed", clear_body, context=verified_clear_context, commit_guard=commit_clear_guard)
+        effect.update(phase="committed", receipt_sequence=Feed(home).tail_sequence())
+        _save(effect_path, effect)
         return f"clear seed {slug} after {last_yield}"
 
 

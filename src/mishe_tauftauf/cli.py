@@ -363,6 +363,9 @@ def cmd_delivery(args) -> int:
         result = delivery.check(args.home, args.id)
     elif action == "integrate":
         result = delivery.integrate(args.home, args.id, args.source)
+    elif action == "retire":
+        from .retirement import retire
+        result = retire(args.home, args.id)
     elif action == "finish":
         result = delivery.finish(args.home, args.id, args.owner, args.evidence)
     else:
@@ -589,6 +592,7 @@ def parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_delivery)
     p = delivery.add_parser("check"); p.add_argument("id"); p.set_defaults(func=cmd_delivery)
     p = delivery.add_parser("show"); p.set_defaults(func=cmd_delivery)
+    p = delivery.add_parser("retire"); p.add_argument("id"); p.set_defaults(func=cmd_delivery)
     p = delivery.add_parser("integrate"); p.add_argument("id")
     p.add_argument("--source", choices=("genome", "operator"), required=True); p.set_defaults(func=cmd_delivery)
     p = delivery.add_parser("finish"); p.add_argument("id"); p.add_argument("--owner", required=True)

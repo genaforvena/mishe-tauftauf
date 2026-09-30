@@ -97,3 +97,36 @@ def test_output_budget_refuses(tmp_path):
     with pytest.raises(post_check.CorrectionRequired) as caught:
         post_check.require(tmp_path, 'mind', 'Tests passed; Genome will review.')
     assert 'budget' in caught.value.report['error']
+
+
+def test_worker_transport_keeps_complete_questions_and_private_full_audit(tmp_path, monkeypatch):
+    configure(tmp_path, '')
+    episodes = {q['id']: {'context_complete': True, 'evidence_references': ['proof.txt'], 'fact': 'complete evidence ' + q['id']} for q in post_check.questions('post')}
+    context = {'question_episodes': episodes, 'history': 'full private audit ' * 20000}
+    captured = []
+    def worker(command, encoded, timeout):
+        request = json.loads(encoded)
+        captured.append(request)
+        audit = json.loads(__import__('pathlib').Path(request['audit_reference']['path']).read_text())
+        assert audit['context'] == context
+        assert audit['input_hash'] == request['audit_reference']['input_hash'] == request['input_hash']
+        assert request['context'] == {'question_episodes': episodes}
+        assert len(encoded) < 10000
+        return json.dumps({'version': 1, 'input_hash': request['input_hash'], 'results': [{'id': q['id'], 'verdict': 'clear', 'evidence': [], 'reason': 'fixture'} for q in request['questions']]}).encode()
+    monkeypatch.setattr(post_check, '_worker', worker)
+    first = post_check.require(tmp_path, 'mind', 'The source checks passed; Genome will inspect the report.', context=context)
+    changed = dict(context, history=context['history']+'additional audit fact')
+    context = changed
+    second = post_check.require(tmp_path, 'mind', 'The source checks passed; Genome will inspect the report.', context=changed)
+    assert first['input_hash'] != second['input_hash']
+    assert len(captured) == 2
+
+
+def test_transport_refuses_missing_question_episode_before_worker(tmp_path, monkeypatch):
+    configure(tmp_path, '')
+    def worker(*args):
+        pytest.fail('missing scoped input must not invoke the reviewer')
+    monkeypatch.setattr(post_check, '_worker', worker)
+    report = post_check.review(tmp_path, 'mind', 'The source checks passed; Genome will inspect the report.', context={'question_episodes': {'R01': {'context_complete': True, 'evidence_references': []}}})
+    assert report['status'] == 'unknown'
+    assert 'question episode' in report['error']

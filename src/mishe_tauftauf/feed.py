@@ -360,7 +360,7 @@ class Feed:
 
     def _append(self, source: str, body: str, *, reserved: bool = False, once: bool = False,
                request: str | None = None, conflicting: str | None = None,
-               task_control: bool = False, context: dict | None = None) -> FeedEntry:
+               task_control: bool = False, context: dict | None = None, commit_guard=None) -> FeedEntry:
         if not SOURCE_RE.fullmatch(source):
             raise FeedError("source must match [A-Za-z0-9._/-]+")
         if not reserved and (source in RESERVED_EXACT or source.startswith(RESERVED_PREFIXES)):
@@ -401,7 +401,21 @@ class Feed:
         if (self.home / "publication-check.json").exists() and (not context or "question_episodes" not in context):
             from .coordination_checks import episode
             context = episode(self.home, source, body, context=context)
-        require(self.home, source, body, context=context)
+        report = require(self.home, source, body, context=context)
+        if commit_guard is not None:
+            try:
+                commit_guard()
+            except ValueError as exc:
+                # Preserve the last-admission refusal privately just like model
+                # findings. No sequence or transition has been committed yet.
+                from .post_check import _save, CorrectionRequired
+                if isinstance(report, dict):
+                    refusal = {**report, 'clear':False, 'status':'unknown',
+                        'results':report['results'] + [{'id':'D03','verdict':'unknown','reason':str(exc),'evidence':[]}],
+                        'required_correction':'Reconcile changed commit evidence and resubmit without repeating effects.'}
+                    _save(Path(refusal['report_path']), refusal)
+                    raise CorrectionRequired(refusal) from exc
+                raise
         fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
         try:
             with os.fdopen(fd, "r+b", buffering=0) as handle:
@@ -464,7 +478,7 @@ class Feed:
     def append_runtime(self, source: str, body: str) -> FeedEntry:
         return self.append(source, body, reserved=True)
 
-    def append_task_control(self, source: str, body: str) -> FeedEntry:
+    def append_task_control(self, source: str, body: str, *, commit_guard=None) -> FeedEntry:
         """Structured task operations own these tags; ordinary chat cannot emit them."""
         from .task_state import validate_control
         from .records import payload
@@ -478,8 +492,8 @@ class Feed:
                 if data.get("evidence"):
                     explanation += f" Evidence: {data['evidence']}."
             return self.append_record(source, lines[0] + "\n" + explanation, data,
-                                      kind=lines[0].split()[0].strip("[]"), task_control=True)
-        return self.append(source, body, task_control=True)
+                                      kind=lines[0].split()[0].strip("[]"), task_control=True, commit_guard=commit_guard)
+        return self.append(source, body, task_control=True, commit_guard=commit_guard)
 
     def append_record(self, source: str, body: str, payload: dict, *, kind: str = "event",
                       **append_kwargs) -> FeedEntry:

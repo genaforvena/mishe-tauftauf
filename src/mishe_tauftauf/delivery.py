@@ -306,7 +306,10 @@ def check(home: Path, identity: str) -> dict:
 def check_all(home: Path) -> None:
     for path in sorted((home / "deliveries").glob("*.json")):
         try:
-            check(home, path.stem)
+            record = check(home, path.stem)
+            if record["phase"] == "done":
+                from .retirement import retire
+                retire(home, path.stem)
         except (OSError, ValueError, KeyError) as exc:
             # Malformed records remain visibly UNKNOWN; do not stop the main CI watcher.
             print(f"DELIVERY: UNKNOWN {path.name}: {exc}", flush=True)
@@ -361,6 +364,11 @@ def finish(home: Path, identity: str, owner: str, evidence: Path) -> dict:
         previous = load(home, identity)
         if previous["owner"] != owner:
             raise ValueError("delivery owner mismatch")
+        if previous["phase"] == "done" and previous.get("retirement", {}).get("state") == "retired":
+            path, digest = task_state._evidence(evidence)
+            if path != previous["rollout"] or digest != previous["rollout_sha256"]:
+                raise ValueError("retired delivery requires its original verified rollout evidence")
+            return previous
         if previous["phase"] not in {"integrated", "done"}:
             raise ValueError("integrate before completing rollout")
         head = previous["head"]
@@ -388,6 +396,8 @@ def line(home: Path) -> str:
     for path in sorted((home / "deliveries").glob("*.json")):
         try:
             record = load(home, path.stem)
+            if record["phase"] == "done" and record.get("retirement", {}).get("state") != "retired":
+                rows.append(f"{record['identity']} retirement=pending: {record.get('retirement', {}).get('reason', 'watcher will verify branch and worktree retirement')}")
             if record["phase"] != "done":
                 rows.append(f"{record['identity']} author={record['owner']} phase={record['phase']} head={record['head'][:12]}: {record['reason']}")
         except (OSError, ValueError, KeyError) as exc:
