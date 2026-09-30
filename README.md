@@ -188,6 +188,15 @@ for the hosted Jev judge and `python -m mishe_tauftauf.omp_mind` for one-shot OM
 invocations. The latter requires `MISHE_TAUFTAUF_WORKSPACE`; hosted Jev requires
 its TypeSafe credentials. The repository does not include a demo directory.
 
+The optional [Chat Completions judge trial](docs/completions-judge.md) uses an
+explicit provider and model; its read-only shadow runs do not activate a live
+judge or dispatch witness work.
+
+Task replay tolerates historical payload-free task-state notes, future state
+fields and stale steps after closure, without admitting those records through
+the current writer or hiding corrupt JSON. Health reports a missing or invalid
+local service manifest as UNKNOWN rather than treating it as no services.
+
 **[CC0 1.0](LICENSE)** — take it, fork it, grow your own. Keep the checks honest.
 
 ## Task continuity and productive waits

@@ -130,10 +130,19 @@ def health(home: Path) -> str:
                  (" dead=" + ",".join(dead) if dead else "") +
                  (" extra=" + ",".join(extra) if extra else ""))
     services_path = home / "health" / "services.json"
+    local_services_unknown = False
     try:
         services = json.loads(services_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        if (not isinstance(services, list) or len(services) > 32
+                or any(not isinstance(unit, str) or not unit.isprintable()
+                       or not unit.endswith(".service") or unit.startswith("-")
+                       or "/" in unit or any(c.isspace() for c in unit)
+                       for unit in services)):
+            raise ValueError("invalid local services list")
+    except (OSError, ValueError, TypeError):
         services = []
+        local_services_unknown = True
+        lines.append("SERVICES: UNKNOWN — local manifest unavailable or malformed")
     env = os.environ.copy()
     env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
     env.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path={env['XDG_RUNTIME_DIR']}/bus")
@@ -223,6 +232,9 @@ def health(home: Path) -> str:
     elif linked_unknown:
         verdict = "UNKNOWN health linked-site data unavailable"
         lines.append("STATE: UNKNOWN — linked-site service data unavailable")
+    elif local_services_unknown:
+        verdict = "UNKNOWN health local service data unavailable"
+        lines.append("STATE: UNKNOWN — local service data unavailable")
     elif not expected:
         verdict = "UNKNOWN health expected windows unset"
         lines.append("STATE: UNKNOWN — expected windows unset")

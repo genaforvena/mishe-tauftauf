@@ -265,3 +265,44 @@ def test_typed_control_rejects_invalid_helper_payload_before_append(tmp_path):
     with pytest.raises(ValueError, match="control"):
         Feed(tmp_path).append_task_control("genome", "[task-state] repair\n" + json.dumps(state))
     assert Feed(tmp_path).read_bytes() == before
+
+
+def historical_entries(*rows):
+    """Decode old framed bytes without asking today's writer to admit them."""
+    from mishe_tauftauf.feed import _encode_entry, parse_feed
+    return parse_feed(b"".join(
+        _encode_entry(sequence, "2026-09-30T00:00:00Z", source, body)
+        for sequence, (source, body) in enumerate(rows, 1)))
+
+
+def state_payload(**updates):
+    import json
+    from dataclasses import asdict
+    return json.dumps({**asdict(task_state.TaskState("repair", "genome", 1)),
+                       "next_step": "verify surviving board", **updates})
+
+
+def test_historical_note_preserves_later_step_but_corrupt_json_fails():
+    rows = [("operator", "[task] repair owner=genome source=test acceptance=checked"),
+            ("genome", "[task-state] repair — historical note"),
+            ("genome", "[task-state] repair\n" + state_payload())]
+    assert task_state.states(historical_entries(*rows))["repair"].next_step == "verify surviving board"
+    with pytest.raises(ValueError, match="invalid task state"):
+        task_state.states(historical_entries(*rows, ("genome", "[task-state] repair\nnot json")))
+
+
+def test_future_state_fields_preserve_known_fields_and_owner_checks():
+    rows = [("operator", "[task] repair owner=genome source=test acceptance=checked")]
+    body = "[task-state] repair\n" + state_payload(future_schema={"version": 2})
+    state = task_state.states(historical_entries(*rows, ("genome", body)))["repair"]
+    assert (state.owner, state.next_step) == ("genome", "verify surviving board")
+    with pytest.raises(ValueError, match="owner mismatch"):
+        task_state.states(historical_entries(*rows, ("witness", body)))
+
+
+def test_historical_stale_step_does_not_reopen_closed_task():
+    rows = [("operator", "[task] repair owner=genome source=test acceptance=checked"),
+            ("genome", "[done] repair — checked"),
+            ("genome", "[task-state] repair\n" + state_payload())]
+    assert task_state.registry(historical_entries(*rows))["repair"].status == "done"
+    assert task_state.states(historical_entries(*rows)) == {}

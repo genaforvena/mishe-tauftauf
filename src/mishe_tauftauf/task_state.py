@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, fields, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -151,12 +151,19 @@ def registry(entries: list[FeedEntry]) -> dict[str, TaskState]:
                     if entry.body.startswith(f"[{tag}] ")), None)
         if tag is None:
             continue
+        # Historical notes used this reserved tag before writers validated it.
+        # Only payload-free task-state notes are ignorable; corrupt JSON is not.
+        if tag == "task-state" and "\n" not in entry.body:
+            continue
         try:
             first, payload = entry.body.split("\n", 1)
             identity = first.removeprefix(f"[{tag}] ")
             data = json.loads(payload.splitlines()[0])
             if not isinstance(data, dict) or not isinstance(data.get("helpers", []), (list, tuple)):
                 raise ValueError("invalid state fields")
+            if tag == "task-state":
+                known = {field.name for field in fields(TaskState)}
+                data = {key: value for key, value in data.items() if key in known}
             data["helpers"] = tuple(data.get("helpers", ()))
             state = TaskState(**data)
             if state.identity != identity or state.status not in {"ready", "waiting", "done", "dropped"}:
@@ -170,6 +177,8 @@ def registry(entries: list[FeedEntry]) -> dict[str, TaskState]:
             if not isinstance(state.next_step, str) or not state.next_step.strip():
                 raise ValueError("missing next step")
             old = result.get(identity)
+            if tag == "task-state" and old is not None and old.status in {"done", "dropped"}:
+                continue
             if tag == "task-add":
                 if old is not None or entry.source not in {state.owner, "operator"}:
                     raise ValueError("task already exists or creator mismatch")
