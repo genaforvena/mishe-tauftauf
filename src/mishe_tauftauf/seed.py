@@ -271,6 +271,7 @@ def _restore_text(home: Path, slug: str, session: str, *, wake_delivery: bool = 
     return (f"Read repository AGENTS.md for the agent contract.\nDOCTRINE\n{doctrine}\nCHARTER {slug}\n{charter}\nCURRENT HANDOFF\n{handoff}\n"
             f"WAKE STATE\n{status(home, slug)}\n"
             f"{next_action}\n"
+            f"The canonical site is {home.resolve()}. Fresh mind launches set MISHE_SEED_HOME to this path; if this older process lacks it, use this exact path in shell commands. Never retype the directory from memory.\n"
             f"Read the live top pane with mishe-tauftauf --home {shlex.quote(str(home))} pain read {slug} --launcher tmux --session {shlex.quote(session)}. "
             "For an explicit wake, act on one bounded obligation, verify it on the same surface, and leave an artifact.\n")
 
@@ -411,6 +412,7 @@ def _mind_launch_argv(home: Path, slug: str) -> tuple[str, ...]:
     return ("-c", str(home.parent.resolve()), "env", f"PATH={mind_path}",
             f"PYTHONPATH={python_path}",
             f"XDG_RUNTIME_DIR={os.environ.get('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}')}",
+            f"MISHE_SEED_HOME={home.resolve()}",
             str(home / "minds" / slug))
 
 
