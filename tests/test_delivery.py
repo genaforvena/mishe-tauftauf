@@ -440,11 +440,11 @@ def test_submit_and_cross_role_claim_cannot_split_author_ownership(candidate, mo
     entering = threading.Event()
     release = threading.Event()
     original = Feed.append_task_control
-    def paused(self, source, body):
+    def paused(self, source, body, **kwargs):
         if body.startswith('[task-claim] repair'):
             entering.set()
             assert release.wait(3)
-        return original(self, source, body)
+        return original(self, source, body, **kwargs)
     monkeypatch.setattr(Feed, 'append_task_control', paused)
     with ThreadPoolExecutor(max_workers=2) as pool:
         claim = pool.submit(task_state.claim, home, 'repair', 'witness', attempt, 'Repair the scoped failure.', proof)

@@ -140,6 +140,37 @@ def _meaningful(data):
             for key, value in data.items() if key not in omitted and not key.endswith('_sha256')}
 
 
+def _current_evidence(home, values):
+    """Check current references only; historical artifacts stay in the audit.
+
+    Missing, changed, or oversized files are explicit UNKNOWN inputs. Content is
+    never clipped and paths/versions bind the checked result independently of prose.
+    """
+    result = []
+    seen = set()
+    for value in values:
+        path, expected = value.get("evidence"), value.get("evidence_sha256")
+        if not isinstance(path, str) or not path or (path, expected) in seen:
+            continue
+        seen.add((path, expected))
+        target = Path(path)
+        if not target.is_absolute():
+            target = Path(home) / target
+        row = dict(path=str(target), expected_sha256=expected, integrity="unavailable")
+        try:
+            if target.stat().st_size > 65536:
+                raise ValueError("current evidence exceeds complete-content admission budget; supply a bounded checked artifact")
+            data = target.read_bytes()
+            row["actual_sha256"] = hashlib.sha256(data).hexdigest()
+            row["integrity"] = "matched" if expected and expected == row["actual_sha256"] else "mismatch" if expected else "current-version-read"
+            row["text"] = data.decode("utf-8")
+            row["version_verified"] = bool(expected and row["integrity"] == "matched")
+        except (OSError, ValueError, UnicodeError) as exc:
+            row["error"] = str(exc)
+        result.append(row)
+    return result
+
+
 def episode(home, source, body, context=None, identity=None):
     """Build full evidence plus unclipped question inputs for private gates."""
     context = dict(context or {})
@@ -171,6 +202,20 @@ def episode(home, source, body, context=None, identity=None):
     references = sorted({value for event in relevant for key, value in event['payload'].items() if key in {'evidence', 'archive', 'offer_evidence'} and isinstance(value, str) and value})
     complete = view['context_complete'] and (not identity or state is not None or declaring) and (not dependency_id or dependency is not None)
     meaningful_proposal = _meaningful(context)
+    # Large audit/transaction fields belong only to the questions that need
+    # them. This is semantic scoping, not truncation of any selected evidence.
+    transaction = meaningful_proposal.pop("transaction", None)
+    admitted_handoff = meaningful_proposal.pop("admitted_handoff_text", None)
+    current_values = [value for value in (state, dependency, context, proposed_state) if isinstance(value, dict)]
+    raw_transaction = context.get("transaction", {})
+    if isinstance(raw_transaction, dict):
+        before = raw_transaction.get("before", {})
+        if isinstance(before, dict):
+            path = before.get("handoff_source") or before.get("handoff")
+            digest = before.get("handoff_source_sha256") or before.get("handoff_sha256")
+            if path:
+                current_values.append(dict(evidence=path, evidence_sha256=digest))
+    checked_evidence = _current_evidence(home, current_values)
     if state and isinstance(context.get('state'), dict) and _semantic(context['state']) == _semantic(state):
         meaningful_proposal.pop('state', None)
     semantic_receipts = []
@@ -195,12 +240,38 @@ def episode(home, source, body, context=None, identity=None):
                          proposed=meaningful_proposal, task_identity=identity)
     for number in range(1, 9):
         question_episodes[f'R{number:02d}'] = dict(event_context)
+    question_episodes['R06']['current_evidence'] = checked_evidence
+    if transaction:
+        for key in ('R06', 'P16'):
+            # P16 is attached after the pitfall base projection below.
+            if key in question_episodes:
+                question_episodes[key]['transaction'] = transaction
+        question_episodes['R06']['transaction_semantics'] = 'Prepared guards are future admission conditions, not observed effects. Verified postconditions are current caller checks and must match the claimed receipt.'
+    if admitted_handoff is not None:
+        question_episodes['R06']['admitted_handoff_text'] = admitted_handoff
     question_episodes['R08']['previous_same_source'] = [last_source['body']] if last_source else []
     task_context = dict(context_complete=complete, evidence_references=compact_references,
                         task=_semantic(state or {}), producer=_semantic(dependency or {}),
                         proposed=meaningful_proposal, task_applicable=bool(identity), new_task_declaration=declaring)
     for number in range(1, 29):
         question_episodes[f'P{number:02d}'] = dict(task_context)
+    question_episodes['P16']['current_evidence'] = checked_evidence
+    if transaction:
+        question_episodes['P16']['transaction'] = transaction
+    if admitted_handoff is not None:
+        question_episodes['P16']['admitted_handoff_text'] = admitted_handoff
+    for key in ('P17', 'P18', 'P19', 'P20', 'P21', 'P23', 'P24', 'P27'):
+        question_episodes[key]['current_evidence'] = checked_evidence
+    if admitted_handoff is not None:
+        question_episodes['P27']['admitted_handoff_text'] = admitted_handoff
+    authorization = dict(role=source, current_task_owner=state.get('owner') if state else None,
+                         scope_note='A charter supplies responsibility and granted local scope; mutation path ownership must still be named explicitly. A read-only proposal needs no mutation claim.')
+    charter = Path(home) / 'charters' / (source + '.md')
+    if charter.is_file():
+        authorization['charter_evidence'] = _current_evidence(home, [dict(evidence=str(charter))])
+    for key in ('P03', 'P13', 'P14'):
+        question_episodes[key]['authorization_context'] = authorization
+        question_episodes[key]['current_evidence'] = checked_evidence
     recent = semantic_receipts[-3:]
     for key in ('P08', 'P17', 'P18', 'P23', 'P24', 'P26', 'P27'):
         question_episodes[key]['recent_attempts'] = recent
@@ -210,9 +281,12 @@ def episode(home, source, body, context=None, identity=None):
         question_episodes[key]['deterministic_findings'] = [f for f in findings if f['task'] == identity]
     children = [_semantic(s) for s in view['tasks'].values() if s.get('parent') == identity] if identity else []
     question_episodes['P21']['children'] = children
-    declarations = [e['body'] for e in relevant if identity and re.match(r'\[task\]\s+' + re.escape(identity) + r'(?:\s|$)', e['body'])]
-    for key in ('P09', 'P10', 'P12', 'P21', 'P27'):
+    declarations = [e['body'] for e in relevant if identity and re.match(r'\[(?:task|task-add)\]\s+' + re.escape(identity) + r'(?:\s|$)', e['body'])]
+    for key in ('P09', 'P10', 'P12', 'P21', 'P27', 'P28'):
         question_episodes[key]['task_declarations'] = declarations
+    question_episodes['P28']['cause_identity'] = dict(canonical_task=identity,
+        recorded_task_exists=bool(state), declaration_count=len(declarations),
+        interpretation='A continuation of this canonical finding retains its identity. A new task still requires comparison against existing related findings; this fact does not declare semantic uniqueness.')
     available = [s for s in view['tasks'].values() if s['status'] == 'ready' and s['identity'] != identity]
     # A ready count establishes possible alternatives, never their usefulness.
     # Keep the question small on a long-running plant; usefulness still needs

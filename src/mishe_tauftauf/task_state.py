@@ -353,7 +353,7 @@ def claim(home: Path, identity: str, owner: str, wake: int, reason: str, evidenc
         raise ValueError("task prerequisite unchanged; wait for its exact retry")
     from .post_check import require
     from .coordination_checks import episode
-    selection = episode(home, owner, reason, context={"task": identity, "wake": wake, "evidence": path})
+    selection = episode(home, owner, reason, context={"task": identity, "wake": wake, "evidence": path, "evidence_sha256": digest})
     require(home, owner, reason, context=selection, stage="selection")
     with delivery_lock(home), _lock(home):
         entries = Feed(home).entries()
@@ -372,6 +372,8 @@ def claim(home: Path, identity: str, owner: str, wake: int, reason: str, evidenc
             raise ValueError("task prerequisite unchanged; wait for its exact retry")
         if old.sequence != prior.sequence:
             raise ValueError("task changed during selection checks; reconcile and resubmit")
+        if _evidence(Path(path))[1] != digest:
+            raise ValueError("claim evidence changed during selection review; reconcile and resubmit")
         state = replace(old, owner=owner, helpers=(), status="waiting", activity="taking",
                         attempt_wake=wake, attempt_observation=None, retry_event=None, retry_at=None,
                         retry_task=None, retry_after=None, progress=reason.strip(),
@@ -382,7 +384,12 @@ def claim(home: Path, identity: str, owner: str, wake: int, reason: str, evidenc
         return Feed(home).append_task_control(owner, f"[task-claim] {identity}\n" + json.dumps(data, sort_keys=True) +
             f"\n{owner} chose {identity} for wake {wake}: {reason.strip()} "
             f"The selected step is {old.next_step} Evidence: {path}. "
-            "Other minds must preserve this active attempt until its handoff settles.")
+            "Other minds must preserve this active attempt until its handoff settles.", commit_guard=lambda: _claim_evidence_guard(path, digest))
+
+
+def _claim_evidence_guard(path, digest):
+    if _evidence(Path(path))[1] != digest:
+        raise ValueError("claim evidence changed during final publication admission; reconcile and resubmit")
 
 
 def select_task(entries: list[FeedEntry], owner: str, now: datetime | None = None) -> TaskState | None:

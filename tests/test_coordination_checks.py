@@ -108,3 +108,33 @@ def test_checked_done_retires_suspicious_repetition_but_preserves_history():
     entries.append(FeedEntry(5, 'now', 'senses', '[task-close] a\n' + json.dumps(data)))
     assert not any(f['kind'] == 'repeated-attempt-review' for f in anomalies(entries))
     assert len(project(entries)['receipts']['a']) == 3
+
+
+def test_current_evidence_integrity_and_cause_identity_are_supplied(tmp_path, monkeypatch):
+    import hashlib
+    from mishe_tauftauf.feed import Feed
+    proof = tmp_path / "proof.txt"; proof.write_text("Read-only source check passed; no mutation was authorized.")
+    digest = hashlib.sha256(proof.read_bytes()).hexdigest()
+    entries = [task(1, "a"), state(2, "a", evidence=str(proof), evidence_sha256=digest)]
+    monkeypatch.setattr(Feed, "entries", lambda self: entries)
+    result = episode(tmp_path, "senses", "Continue the same read-only check.", context={"task":"a"})
+    evidence = result["question_episodes"]["P16"]["current_evidence"]
+    assert evidence[0]["integrity"] == "matched" and evidence[0]["text"] == proof.read_text()
+    assert result["question_episodes"]["P28"]["cause_identity"]["canonical_task"] == "a"
+    assert result["question_episodes"]["P28"]["task_declarations"] == [entries[0].body]
+    proof.write_text("tampered proof")
+    assert episode(tmp_path,"senses","Check.",context={"task":"a"})["question_episodes"]["P16"]["current_evidence"][0]["integrity"] == "mismatch"
+    proof.unlink()
+    assert episode(tmp_path,"senses","Check.",context={"task":"a"})["question_episodes"]["P16"]["current_evidence"][0]["integrity"] == "unavailable"
+
+
+def test_transaction_is_narrow_and_prepared_guards_are_not_effect_proofs(tmp_path, monkeypatch):
+    from mishe_tauftauf.feed import Feed
+    monkeypatch.setattr(Feed, "entries", lambda self: [])
+    transaction = {"event":"yield", "phase":"prepared", "required_commit_guards":["archive matches"], "before":{"handoff_source_read":True}}
+    result=episode(tmp_path,"seed","Settlement follows guarded archive installation.",context={"transaction":transaction,"admitted_handoff_text":"Actual checked outcome."})
+    episodes=result["question_episodes"]
+    assert episodes["R06"]["transaction"]["phase"] == "prepared"
+    assert "admitted_handoff_text" in episodes["R06"]
+    assert "transaction" not in episodes["R01"] and "admitted_handoff_text" not in episodes["P01"]
+    assert result["proposed"]["transaction"] == transaction
