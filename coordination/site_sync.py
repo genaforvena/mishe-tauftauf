@@ -149,6 +149,18 @@ def _verify(home: Path, session: str) -> None:
         result = subprocess.run(["systemctl", "--user", "is-active", "--quiet", unit], env=env, timeout=10)
         if result.returncode:
             raise RuntimeError(f"linked site service is not active: {unit}")
+    if (home / "health/runtime-release.json").exists():
+        from mishe_tauftauf.runtime_source import source_for
+        source = source_for(home, KERNEL)
+        for unit in units:
+            if unit.endswith("-coordination.service"):
+                continue  # The host release follower observes the development checkout.
+            result = subprocess.run(["systemctl", "--user", "show", unit, "-p", "Environment", "--value"],
+                                    env=env, capture_output=True, text=True, timeout=10)
+            if result.returncode or f"PYTHONPATH={source / 'src'}" not in result.stdout.split():
+                raise RuntimeError(f"linked site service source is not pinned: {unit}")
+        if str(source / "src") not in (home / "bin/mishe-tauftauf").read_text():
+            raise RuntimeError("linked site CLI source is not pinned")
 
 
 def _leases(session: str, expected: set[str]) -> dict[str, datetime]:
@@ -167,6 +179,16 @@ def _leases(session: str, expected: set[str]) -> dict[str, datetime]:
             raise RuntimeError(f"linked site top-pane lease is stale: {session}:{name} age={age:.1f}s")
         observed[name] = checked
     return observed
+
+
+def _release_source(core_home: Path, sha: str) -> Path:
+    """Never install a green commit from the development checkout's mutable path."""
+    from mishe_tauftauf.runtime_source import checked_source
+    release = core_home / "releases" / sha
+    if not release.exists():
+        release.parent.mkdir(parents=True, exist_ok=True)
+        _git(KERNEL, "worktree", "add", "--detach", str(release), sha)
+    return checked_source(release, sha)[0]
 
 
 def sync_registered_sites(core_home: Path, ci: dict[str, str], *, runtime_only: bool = False) -> list[str]:
@@ -193,13 +215,15 @@ def sync_registered_sites(core_home: Path, ci: dict[str, str], *, runtime_only: 
                 if _git(KERNEL, "rev-parse", "HEAD") != sha or _git(KERNEL, "status", "--porcelain"):
                     raise RuntimeError("core checkout is not clean at the green CI commit")
                 _target_state(target, row["session"], runtime_only=runtime_only)
+                release = _release_source(core_home, sha)
                 env = os.environ.copy()
                 env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
                 env["PYTHONPATH"] = os.pathsep.join(
-                    part for part in (str(KERNEL / "src"), env.get("PYTHONPATH", "")) if part)
+                    part for part in (str(release / "src"), env.get("PYTHONPATH", "")) if part)
                 result = subprocess.run(
                     [sys.executable, "-m", "mishe_tauftauf.plant",
                      "--workspace", str(target.parent), "--home", str(target), "--session", row["session"],
+                     "--runtime-source", str(release),
                      *(["--runtime-only"] if runtime_only else [])],
                     capture_output=True, text=True, timeout=240, env=env)
                 if result.returncode:

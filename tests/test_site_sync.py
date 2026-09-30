@@ -23,6 +23,31 @@ class FakeFeed:
         return 0
 
 
+def test_checked_sync_uses_detached_release_and_preserves_development_dirt(tmp_path, monkeypatch):
+    kernel = tmp_path / "kernel"
+    package = kernel / "src/mishe_tauftauf"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    subprocess.run(["git", "-C", str(kernel), "init", "-q"], check=True)
+    (kernel / ".git/info/exclude").write_text("/.mishe-tauftauf/\n")
+    subprocess.run(["git", "-C", str(kernel), "add", "src"], check=True)
+    subprocess.run(["git", "-C", str(kernel), "-c", "user.name=test", "-c", "user.email=test@example.com",
+                    "commit", "-qm", "release"], check=True)
+    sha = subprocess.check_output(["git", "-C", str(kernel), "rev-parse", "HEAD"], text=True).strip()
+    monkeypatch.setattr(site_sync, "KERNEL", kernel)
+    home = kernel / ".mishe-tauftauf"
+    # Later development must not alter the committed release bytes.
+    (package / "__init__.py").write_text("unlanded development")
+    release = site_sync._release_source(home, sha)
+    assert release != kernel
+    assert (release / "src/mishe_tauftauf/__init__.py").read_text() == ""
+    assert (package / "__init__.py").read_text() == "unlanded development"
+    assert site_sync._release_source(home, sha) == release
+    (release / "src/mishe_tauftauf/__init__.py").write_text("corrupt release")
+    with pytest.raises(ValueError, match="runtime source changed"):
+        site_sync._release_source(home, sha)
+
+
 def setup_sites(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
     kernel = tmp_path / "kernel"
     core_home = kernel / ".mishe-seed"
@@ -34,6 +59,7 @@ def setup_sites(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
     monkeypatch.setattr(site_sync, "KERNEL", kernel)
     monkeypatch.setattr(site_sync, "owns_session", lambda _home, _session: True)
     monkeypatch.setattr(site_sync, "Feed", FakeFeed)
+    monkeypatch.setattr(site_sync, "_release_source", lambda _home, _sha: kernel)
     FakeFeed.events = []
     return core_home, target
 

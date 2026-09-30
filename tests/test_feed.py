@@ -19,6 +19,18 @@ def once_worker(home: str) -> None:
 
 
 class FeedTests(unittest.TestCase):
+    def test_generic_append_rejects_reserved_task_control_prose(self):
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            feed.append("genome", "ordinary task update")
+            before = feed.read_bytes()
+            for body in ("[task-state] repair — source mismatch", " [task-event] ready",
+                         "[task-claim] repair owner=health previous=genome",
+                         "[task-close] repair\n{}", "[task-reopen] repair\n{}"):
+                with self.assertRaisesRegex(FeedError, "task.*CLI|task.*control"):
+                    feed.append("genome", body)
+                self.assertEqual(feed.read_bytes(), before)
+
     def test_multiline_final_newline_round_trip(self):
         with tempfile.TemporaryDirectory() as directory:
             feed = Feed(directory)

@@ -18,6 +18,7 @@ RECEIPT_RE = re.compile(r"wake (?:delivered|refused) top-pain [a-z0-9-]+ for ent
 INDEX_STRIDE = 128
 RESERVED_EXACT = {"mishe-tauftauf"}
 RESERVED_PREFIXES = ("prediction/", "observation/")
+TASK_CONTROL_TAGS = ("task-state", "task-event", "task-claim", "task-add", "task-close", "task-reopen")
 
 
 class FeedError(ValueError):
@@ -310,13 +311,19 @@ class Feed:
             return index["sequence"]
 
     def append(self, source: str, body: str, *, reserved: bool = False, once: bool = False,
-               request: str | None = None, conflicting: str | None = None) -> FeedEntry:
+               request: str | None = None, conflicting: str | None = None,
+               task_control: bool = False) -> FeedEntry:
         if not SOURCE_RE.fullmatch(source):
             raise FeedError("source must match [A-Za-z0-9._/-]+")
         if not reserved and (source in RESERVED_EXACT or source.startswith(RESERVED_PREFIXES)):
             raise FeedError(f"source {source!r} is reserved for the runtime")
         if not isinstance(body, str) or not body:
             raise FeedError("body must be non-empty UTF-8 text")
+        if any(body.lstrip().startswith(f"[{tag}]") for tag in TASK_CONTROL_TAGS):
+            if not task_control:
+                raise FeedError("reserved task control; use the task CLI for structured operations")
+            from .task_state import validate_control
+            validate_control(source, body)
         try:
             body.encode("utf-8")
         except UnicodeEncodeError as exc:
@@ -384,6 +391,10 @@ class Feed:
 
     def append_runtime(self, source: str, body: str) -> FeedEntry:
         return self.append(source, body, reserved=True)
+
+    def append_task_control(self, source: str, body: str) -> FeedEntry:
+        """Structured task operations own these tags; ordinary chat cannot emit them."""
+        return self.append(source, body, task_control=True)
 
     def append_runtime_once(self, source: str, body: str) -> FeedEntry:
         """Append one exact textual receipt atomically across cooperating writers."""

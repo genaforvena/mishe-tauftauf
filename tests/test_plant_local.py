@@ -72,6 +72,53 @@ def test_replant_preserves_existing_custom_engine_without_default_binary(tmp_pat
     plant.ensure_engine_for_new_minds(home, "missing-engine-for-test")
 
 
+def test_normal_replant_keeps_installed_immutable_source(tmp_path):
+    import json
+    import subprocess
+    from mishe_tauftauf import seed
+
+    release = tmp_path / "release"
+    package = release / "src/mishe_tauftauf"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    (package / "seed_doctrine.md").write_text("Reviewed frozen doctrine.\n")
+    (package / "seed_discover_charter.md").write_text("Reviewed frozen discovery charter.\n")
+    subprocess.run(["git", "-C", str(release), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(release), "add", "src"], check=True)
+    subprocess.run(["git", "-C", str(release), "-c", "user.name=test", "-c", "user.email=test@example.com",
+                    "commit", "-qm", "immutable runtime"], check=True)
+    sha = subprocess.check_output(["git", "-C", str(release), "rev-parse", "HEAD"], text=True).strip()
+    home = tmp_path / "application/.mishe-tauftauf"
+    (home / "health").mkdir(parents=True)
+    (home / "health/runtime-release.json").write_text(json.dumps({
+        "version": 1, "source": str(release), "sha": sha, "session": "owned"}))
+    assert f"Environment=PYTHONPATH={release / 'src'}" in plant.unit_text(home, "owned", "genome", "python3")
+    argv = seed._mind_launch_argv(home, "genome")
+    assert any(arg.startswith(f"PYTHONPATH={release / 'src'}") for arg in argv)
+    assert seed._core_doctrine(home) == "Reviewed frozen doctrine.\n"
+    assert seed._core_charter("discover", home) == "Reviewed frozen discovery charter.\n"
+    from mishe_tauftauf.runtime_source import refresh_cli
+    cli = home / "bin/mishe-tauftauf"
+    cli.parent.mkdir()
+    cli.write_text('#!/bin/sh\nexport PYTHONPATH=/old/src${PYTHONPATH:+:$PYTHONPATH}\nexec /usr/bin/python3 -m mishe_tauftauf "$@"\n')
+    cli.chmod(0o755)
+    refresh_cli(home, release)
+    assert str(release / "src") in cli.read_text()
+    assert cli.stat().st_mode & 0o111
+    # A corrupt or changed pin must fail instead of silently returning to mutable code.
+    (package / "__init__.py").write_text("changed")
+    with pytest.raises(ValueError, match="runtime.*clean|runtime.*changed"):
+        plant.unit_text(home, "owned", "genome", "python3")
+
+
+def test_runtime_source_rejects_whitespace_before_pin_write(tmp_path):
+    from mishe_tauftauf.runtime_source import select_source
+    home = tmp_path / "site"
+    with pytest.raises(ValueError, match="whitespace"):
+        select_source(home, tmp_path / "release with spaces", "owned")
+    assert not (home / "health/runtime-release.json").exists()
+
+
 def test_runtime_only_cli_preserves_dirty_application_and_contract(tmp_path: Path) -> None:
     import subprocess
     import sys
@@ -98,6 +145,24 @@ def test_runtime_only_cli_preserves_dirty_application_and_contract(tmp_path: Pat
         assert agents.read_text() == "Unlanded application contract.\n"
         assert application.read_text() == "unlanded application work\n"
         assert mind.read_bytes() == original_mind
+        # Select an independent committed package and exercise the real refresh caller.
+        import shutil
+        release = tmp_path / "release"
+        shutil.copytree(Path(plant.__file__).parents[1], release / "src", ignore=shutil.ignore_patterns("__pycache__"))
+        subprocess.run(["git", "-C", str(release), "init", "-q"], check=True)
+        subprocess.run(["git", "-C", str(release), "add", "src"], check=True)
+        subprocess.run(["git", "-C", str(release), "-c", "user.name=test", "-c", "user.email=test@example.com",
+                        "commit", "-qm", "runtime snapshot"], check=True)
+        selected = subprocess.run([*argv, "--runtime-only", "--runtime-source", str(release)],
+                                  capture_output=True, text=True, timeout=45)
+        assert selected.returncode == 0, selected.stderr
+        assert str(release / "src") in (home / "bin/mishe-tauftauf").read_text()
+        assert agents.read_text() == "Unlanded application contract.\n"
+        assert application.read_text() == "unlanded application work\n"
+        assert mind.read_bytes() == original_mind
+        pid = subprocess.check_output(["tmux", "display-message", "-p", "-t", f"{session}:genome.0", "#{pane_pid}"],
+                                      text=True).strip()
+        assert f"PYTHONPATH={release / 'src'}".encode() in Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
     finally:
         subprocess.run([sys.executable, "-m", "mishe_tauftauf", "--home", str(home),
                         "seed", "stop", "--session", session], capture_output=True, timeout=15)
