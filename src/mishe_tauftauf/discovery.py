@@ -14,9 +14,10 @@ from pathlib import Path
 from .feed import Feed
 
 COMMANDS = ("rg", "git", "tmux", "python3", "systemctl", "journalctl", "ps", "df",
+            "lsusb", "lspci", "sensors", "upower", "evtest")
 KERNEL_FAULT = "Failed to resubmit video URB"
 
-    """List bounded hwmon temperature inputs under root."""
+def _thermal_slots(root: Path) -> list[Path]:
     try:
         entries = sorted(root.iterdir())
     except OSError:
