@@ -338,6 +338,7 @@ def test_seed_resident_channel_observes_repairs_and_restores(tmp_path: Path) -> 
         f"log={str(mind_log)!r}\n"
         "with open(log, 'a') as out: out.write('CWD '+os.getcwd()+'\\n')\n"
         "with open(log, 'a') as out: out.write('RUNTIME '+str(os.environ.get('XDG_RUNTIME_DIR'))+'\\n')\n"
+        "with open(log, 'a') as out: out.write('SITE '+str(os.environ.get('MISHE_SEED_HOME'))+'\\n')\n"
         f"check=subprocess.run(['mishe-tauftauf','--home',{str(home)!r},'seed','status'],capture_output=True)\n"
         "with open(log, 'a') as out: out.write('CLI '+str(check.returncode)+'\\n')\n"
         "sys.stdout.write('\\x1b[?2004h'); sys.stdout.flush()\n"
@@ -359,6 +360,7 @@ def test_seed_resident_channel_observes_repairs_and_restores(tmp_path: Path) -> 
         assert "CHARTER genome" not in mind_log.read_text()
         assert f"CWD {tmp_path}" in mind_log.read_text()
         assert f"RUNTIME {os.environ.get('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}')}" in mind_log.read_text()
+        assert f"SITE {home}" in mind_log.read_text()
         first = cli(home, "tick", "--session", session, "--slug", "genome")
         assert first.returncode == 0, first.stderr
         assert "wake" in first.stdout
