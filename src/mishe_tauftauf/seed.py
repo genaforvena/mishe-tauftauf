@@ -444,6 +444,8 @@ def init(home: Path, slug: str, engine_command: str = "codex") -> str:
         else:
             top.write_text(
             "#!/bin/sh\n"
+            f"debt=$({shlex.quote(sys.executable)} -m mishe_tauftauf.landing_debt --home {shlex.quote(str(home.resolve()))} --repo {shlex.quote(str(home.parent.resolve()))} audit --intake 2>&1)\n"
+            "printf '%s\\n' \"$debt\"\n"
             "printf '%s\\n' 'GOAL: keep a living, plantable genome that can observe, repair, and reproduce its own development loop'\n"
             "printf '%s\\n' 'PURSUIT: turn recurring blind spots into checks, carry long work through handoff and clear, and grow useful capability from evidence'\n"
             "printf '%s\\n' 'DESIRED STATE: checks are truthful and the next bounded improvement is visible'\n"
@@ -466,7 +468,8 @@ def init(home: Path, slug: str, engine_command: str = "codex") -> str:
             f"{shlex.quote(sys.executable)} -m mishe_tauftauf --home {shlex.quote(str(home.resolve()))} task landing-status\n"
             "printf 'GOAL: tend this repo · WORKTREE: %s changed\\n' \"$count\"\n"
             "if [ \"$rc\" -eq 0 ]; then printf '%s\\n' 'STATE: GREEN · NEXT: verify and land one change'; "
-            "else printf '%s\\n' 'STATE: RED · NEXT: repair the failed check'; fi\n",
+            "else printf '%s\\n' 'STATE: RED · NEXT: repair the failed check'; fi\n"
+            "printf '%s\\n' \"$debt\" | head -n 2\n",
             encoding="utf-8",
             )
         top.chmod(0o755)
