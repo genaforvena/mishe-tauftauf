@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+from time import monotonic
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -133,12 +134,12 @@ def health(home: Path) -> str:
         services = json.loads(services_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         services = []
+    env = os.environ.copy()
+    env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    env.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path={env['XDG_RUNTIME_DIR']}/bus")
     failed_services = []
     for unit in services:
         try:
-            env = os.environ.copy()
-            env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
-            env.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path={env['XDG_RUNTIME_DIR']}/bus")
             status = subprocess.run(["systemctl", "--user", "is-active", unit], capture_output=True,
                                     text=True, timeout=2, env=env).stdout.strip() or "unknown"
         except (OSError, subprocess.TimeoutExpired):
@@ -146,10 +147,82 @@ def health(home: Path) -> str:
         lines.append(f"SERVICE {unit}: {status}")
         if status != "active":
             failed_services.append(unit)
+    linked_unknown = []
+    linked_failed = []
+    linked_path = home / "health" / "linked-sites.json"
+    try:
+        registry = json.loads(linked_path.read_text(encoding="utf-8"))
+        sites = registry["sites"] if isinstance(registry, dict) and registry.get("version") == 1 else None
+        if not isinstance(sites, list) or len(sites) > 16:
+            raise ValueError("unsupported or oversized linked-site registry")
+    except FileNotFoundError:
+        # External plants have no coordinator or linked-site registry.
+        sites = []
+    except (OSError, ValueError, KeyError, TypeError):
+        sites = None
+        linked_unknown.append("registry")
+        lines.append("LINKED SITES: UNKNOWN — registry unavailable or malformed")
+    deadline = monotonic() + 5
+    if sites is not None:
+        for index, site in enumerate(sites):
+            label = site.get("session") if isinstance(site, dict) else None
+            if not isinstance(label, str) or not label.isprintable():
+                label = str(index)
+            try:
+                if (not isinstance(site, dict) or not isinstance(site.get("home"), str)
+                        or not Path(site["home"]).is_absolute()
+                        or not isinstance(site.get("session"), str) or not site["session"].isprintable()):
+                    raise ValueError("invalid site record")
+                site_services = json.loads(
+                    (Path(site["home"]) / "health" / "services.json").read_text(encoding="utf-8"))
+                if (not isinstance(site_services, list) or len(site_services) > 32
+                        or any(not isinstance(unit, str) or not unit.isprintable()
+                               or not unit.endswith(".service")
+                               or unit.startswith("-") or "/" in unit or any(c.isspace() for c in unit)
+                               for unit in site_services)):
+                    raise ValueError("invalid services list")
+            except (OSError, ValueError, TypeError, KeyError):
+                lines.append(f"LINKED SITE {label}: UNKNOWN — services unavailable or malformed")
+                linked_unknown.append(label)
+                continue
+            site_failed = []
+            site_unknown = []
+            for unit in site_services:
+                try:
+                    remaining = deadline - monotonic()
+                    if remaining <= 0:
+                        status = "unknown"
+                    else:
+                        result = subprocess.run(
+                            ["systemctl", "--user", "is-active", unit], capture_output=True,
+                            text=True, timeout=min(2, remaining), env=env)
+                        status = result.stdout.strip()
+                        if (status not in {"active", "inactive", "failed", "activating",
+                                           "deactivating", "reloading", "maintenance"}
+                                or (status == "active" and result.returncode != 0)):
+                            status = "unknown"
+                except (OSError, subprocess.TimeoutExpired):
+                    status = "unknown"
+                lines.append(f"LINKED SERVICE {label} {unit}: {status}")
+                if status == "unknown":
+                    site_unknown.append(unit)
+                elif status != "active":
+                    site_failed.append(unit)
+            if site_failed:
+                linked_failed.append(label)
+                lines.append(f"LINKED SITE {label}: RED — inactive services={','.join(site_failed)}")
+            elif site_unknown:
+                linked_unknown.append(label)
+                lines.append(f"LINKED SITE {label}: UNKNOWN — service status unavailable")
+            else:
+                lines.append(f"LINKED SITE {label}: PASS")
     lines.append(ci_line(home))
-    if doctor.returncode or missing or extra or dead or failed_services:
+    if doctor.returncode or missing or extra or dead or failed_services or linked_failed:
         verdict = "FAIL health internal check"
         lines.append("STATE: RED — internal check needs repair")
+    elif linked_unknown:
+        verdict = "UNKNOWN health linked-site data unavailable"
+        lines.append("STATE: UNKNOWN — linked-site service data unavailable")
     elif not expected:
         verdict = "UNKNOWN health expected windows unset"
         lines.append("STATE: UNKNOWN — expected windows unset")

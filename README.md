@@ -100,6 +100,15 @@ The reusable plant runtime lives in `src/mishe_tauftauf/`; it contains planting,
 
 When a persistent external plant is created, its site and tmux session are recorded in this checkout's ignored `SITE/health/linked-sites.json`. The core checkout's separate release coordinator follows fresh CI readings and retries a linked-site refresh after GitHub Actions passes for the exact local `HEAD`. It skips an already applied SHA and holds if either worktree has unlanded changes or the target tmux session is not owned by that site. After planting, it checks the target's feed, top and mind panes, and resident services. Each sync or hold is explained in the core `chat.log`. A refreshed generated `AGENTS.md` block becomes a task for the target genome to review, commit, push, and check in that repository; application files are never copied from the kernel. Plant the core first, then plant an external worktree to register it. To retry immediately after clearing a hold, run `python3 scripts/sync_plants.py --home SITE`, where `SITE` is this checkout's resident site.
 
+The core health pane also reads each registered site's `health/services.json` and
+checks those named units on the current host's user service manager. Inactive units
+make health RED; missing or malformed registry/site data, unavailable service
+status, and exhausted probe time make it UNKNOWN. Each render checks at most 16
+sites and 32 units per site, with a five-second shared service-probe budget. This
+is a live read-only check, independent of the deployment's recorded applied SHA.
+An absent registry means no linked sites are configured, as on an external plant;
+a registered site's missing manifest is still UNKNOWN.
+
 For an operator-requested runtime update while a target has unrelated application
 changes, use `python3 scripts/sync_plants.py --home SITE --runtime-only`. This still
 requires clean core source, passing CI for its exact commit, and an existing owned
