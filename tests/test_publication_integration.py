@@ -185,3 +185,25 @@ def test_clear_recovers_completed_effect_without_rotating_twice(tmp_path, monkey
     seed.clear(tmp_path, 'session', 'witness')
     assert state['rotations'] == 1
     assert seed._state(tmp_path, 'witness')[3] is not None
+
+
+def test_publication_status_reads_saved_private_verdict_without_draft(tmp_path, capsys):
+    from mishe_tauftauf import cli
+    (tmp_path / 'publication-check.json').write_text('{}')
+    reports = tmp_path / 'post-checks'
+    reports.mkdir()
+    (reports / 'saved.json').write_text(json.dumps({'status': 'suspicious', 'stage': 'post', 'source': 'witness', 'body': 'private draft must not be displayed'}))
+    assert cli.main(['--home', str(tmp_path), 'publication', 'status']) == 0
+    output = capsys.readouterr().out
+    assert 'suspicious stage=post source=witness' in output
+    assert 'private draft must not be displayed' not in output
+
+
+def test_publication_status_distinguishes_in_progress_private_review(tmp_path, capsys):
+    from mishe_tauftauf import cli
+    (tmp_path / 'publication-check.json').write_text('{}')
+    reports = tmp_path / 'post-checks'
+    reports.mkdir()
+    (reports / 'saved.json').write_text(json.dumps({'stage': 'post', 'source': 'seed', 'semantic_status': 'untested', 'clear': False}))
+    assert cli.main(['--home', str(tmp_path), 'publication', 'status']) == 0
+    assert 'pending stage=post source=seed' in capsys.readouterr().out

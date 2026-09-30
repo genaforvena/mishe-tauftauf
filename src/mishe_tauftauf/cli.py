@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import json
 import os
 import shutil
 import subprocess
@@ -286,7 +287,7 @@ def cmd_publication(args) -> int:
         if paths:
             path = max(paths, key=lambda p: p.stat().st_mtime_ns)
             report = json.loads(path.read_text())
-            print(f"Latest private check: {report['status']} stage={report['stage']} source={report['source']}; report: {path}")
+            print(f"Latest private check: {report.get('status', 'pending')} stage={report['stage']} source={report['source']}; report: {path}")
         return 0 if configured else 1
     from .coordination_checks import episode
     body = args.file.read_text(encoding="utf-8")
