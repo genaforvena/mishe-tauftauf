@@ -50,6 +50,10 @@ These are local scheduling and cooperative ownership checks. They grant no autho
 
 The guaranteed boundary is selection of the next available idle turn, conditional on actionable task state. Eventual delivery also requires finite verified steps, a responsive mind, review and test capacity, and an available remote. Production admission remains cooperative because this seed has no authority over arbitrary editor writes. Queue priority cannot make an unowned diff safe to commit, turn failed CI green, or justify unrelated changes. Evidence and charter wiring must be verified at the live caller after rollout.
 
+Priority follows open preparation children and concrete producer prerequisites, including independent review in another owner's queue. Registered delivery work cannot create an event-only wait: it needs a scheduled producer task or an external retry deadline. This puts locally missing deliverables back into production while preserving one-shot attempts, dependency-cycle checks and active reservations. Existing historical waits remain readable and require explicit reconciliation.
+
+The source-delivery and deployment gates run in causal order: isolated candidate/manifest, independent byte-bound review, verification, commit/push, exact-SHA CI, clean release deployment, then consumer convergence. The deployment report uses the installed release pin when present and fails closed on a corrupt pin. The linked follower checks detached release integrity before and after refresh, rather than requiring the independent development checkout to be clean. Target ownership and live caller checks remain mandatory; deployment convergence cannot be its own prerequisite.
+
 ## Tracked rules and local state
 
 The tracked genome contains reusable code and general rules. The live plant's chat, customized charters, handoffs, plans, checks, evidence, and service files belong under gitignored `.mishe-tauftauf/`, following LTE's `.mesh/` boundary.

@@ -13,6 +13,8 @@ def report(home: Path) -> dict[str, object]:
     workspace = home.parent
     reasons: list[str] = []
     try:
+        from .runtime_source import source_for
+        workspace = source_for(home, workspace)
         candidate = subprocess.run(
             ["git", "-C", str(workspace), "rev-parse", "HEAD"],
             capture_output=True, text=True, check=True, timeout=10,
@@ -23,7 +25,7 @@ def report(home: Path) -> dict[str, object]:
         ).stdout.strip()
         if dirty:
             reasons.append("core worktree has unlanded changes")
-    except (OSError, subprocess.SubprocessError) as exc:
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
         candidate = ""
         reasons.append(f"candidate SHA unavailable: {exc}")
     if len(candidate) != 40:

@@ -59,7 +59,7 @@ def setup_sites(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
     monkeypatch.setattr(site_sync, "KERNEL", kernel)
     monkeypatch.setattr(site_sync, "owns_session", lambda _home, _session: True)
     monkeypatch.setattr(site_sync, "Feed", FakeFeed)
-    monkeypatch.setattr(site_sync, "_release_source", lambda _home, _sha: kernel)
+    monkeypatch.setattr(site_sync, "_release_source", lambda _home, _sha: kernel.parent / "release")
     FakeFeed.events = []
     return core_home, target
 
@@ -86,7 +86,7 @@ def test_registered_site_syncs_once_after_green_ci(tmp_path: Path, monkeypatch) 
     assert site_sync.sync_registered_sites(core_home, ci) == [f"synced {target.parent} {sha[:12]}"]
     assert site_sync._load(core_home)[0]["sha"] == sha
     assert [item[0] for item in calls] == ["plant", "verify"]
-    assert str(site_sync.KERNEL / "src") in child_environments[0]["PYTHONPATH"].split(":")
+    assert str(site_sync.KERNEL.parent / "release/src") in child_environments[0]["PYTHONPATH"].split(":")
     assert site_sync.sync_registered_sites(core_home, ci) == []
     assert [item[0] for item in calls] == ["plant", "verify"]
     assert any(body.startswith(f"[sync] core sha={sha}") for _, body in FakeFeed.events)
@@ -146,7 +146,7 @@ def test_failed_live_verification_keeps_old_sha_for_retry(tmp_path: Path, monkey
     assert site_sync._load(core_home)[0]["sha"] == "old"
 
 
-def test_explicit_runtime_refresh_allows_dirty_target_but_requires_clean_core(tmp_path, monkeypatch):
+def test_explicit_runtime_refresh_preserves_dirty_target_and_core(tmp_path, monkeypatch):
     core_home, target = setup_sites(tmp_path, monkeypatch)
     sha = "e" * 40
     core_dirty = False
@@ -157,7 +157,7 @@ def test_explicit_runtime_refresh_allows_dirty_target_but_requires_clean_core(tm
         if args == ("rev-parse", "--show-toplevel"):
             return str(workspace)
         if args == ("status", "--porcelain"):
-            return " M application.py" if workspace == target.parent or core_dirty else ""
+            return " M application.py" if workspace == target.parent or (core_dirty and workspace == site_sync.KERNEL) else ""
         raise AssertionError(args)
 
     monkeypatch.setattr(site_sync, "_git", git)
@@ -171,9 +171,9 @@ def test_explicit_runtime_refresh_allows_dirty_target_but_requires_clean_core(tm
     assert "--runtime-only" in calls[0]
     core_dirty = True
     site_sync._update_site(core_home, target, sha="old")
-    assert "core checkout is not clean" in site_sync.sync_registered_sites(
-        core_home, {"state": "pass", "sha": sha}, runtime_only=True)[0]
-    assert len(calls) == 1
+    assert site_sync.sync_registered_sites(
+        core_home, {"state": "pass", "sha": sha}, runtime_only=True) == [f"synced {target.parent} {sha[:12]}"]
+    assert len(calls) == 2
 
 
 def test_matching_sha_with_error_is_retried(tmp_path, monkeypatch):
@@ -193,7 +193,7 @@ def test_matching_sha_with_error_is_retried(tmp_path, monkeypatch):
     assert "error" not in site_sync._load(core_home)[0]
 
 
-def test_core_change_during_plant_keeps_old_site_sha(tmp_path: Path, monkeypatch) -> None:
+def test_release_change_during_plant_keeps_old_site_sha(tmp_path: Path, monkeypatch) -> None:
     core_home, target = setup_sites(tmp_path, monkeypatch)
     sha = "d" * 40
     site_sync._save(core_home, [{"home": str(target), "session": "example", "sha": "old"}])
@@ -205,7 +205,7 @@ def test_core_change_during_plant_keeps_old_site_sha(tmp_path: Path, monkeypatch
         if args == ("rev-parse", "--show-toplevel"):
             return str(workspace)
         if args == ("status", "--porcelain"):
-            return " M README.md" if changed and workspace == site_sync.KERNEL else ""
+            return " M README.md" if changed and workspace == site_sync.KERNEL.parent / "release" else ""
         raise AssertionError(args)
 
     def plant(argv, **_kwargs):
@@ -217,7 +217,7 @@ def test_core_change_during_plant_keeps_old_site_sha(tmp_path: Path, monkeypatch
     monkeypatch.setattr(site_sync.subprocess, "run", plant)
     monkeypatch.setattr(site_sync, "_verify", lambda *_args: None)
     outcome = site_sync.sync_registered_sites(core_home, {"state": "pass", "sha": sha})
-    assert len(outcome) == 1 and "core checkout changed" in outcome[0]
+    assert len(outcome) == 1 and "release changed" in outcome[0]
     assert site_sync._load(core_home)[0]["sha"] == "old"
 
 
