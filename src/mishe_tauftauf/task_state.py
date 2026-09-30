@@ -430,8 +430,11 @@ def _owned(entries: list[FeedEntry], identity: str, owner: str) -> TaskState:
 
 
 def _append(home: Path, source: str, state: TaskState, tag: str = "task-state") -> FeedEntry:
+    before = registry(Feed(home).entries()).get(state.identity)
+    transition = (f"moves from {before.status} to {state.status}" if before and before.status != state.status
+                  else f"remains {state.status}" if before else f"registers as {state.status}")
     return Feed(home).append_task_control(source, f"[{tag}] {state.identity}\n" + json.dumps(asdict(state), sort_keys=True) +
-                             f"\nTask {state.identity} is {state.status}, owned by {state.owner}; "
+                             f"\nTask {state.identity} {transition}, owned by {state.owner}; "
                              f"next step: {state.next_step}. " +
                              (f"Waiting because {state.reason}. " if state.reason else f"Progress: {state.progress}. ") +
                              f"Evidence: {state.evidence or 'pending delivered-attempt handoff'}; "

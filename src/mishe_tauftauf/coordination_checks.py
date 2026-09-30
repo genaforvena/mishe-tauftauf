@@ -269,6 +269,18 @@ def episode(home, source, body, context=None, identity=None):
     if admitted_handoff is not None:
         question_episodes['R06']['admitted_handoff_text'] = admitted_handoff
     question_episodes['R08']['previous_same_source'] = [last_source['body']] if last_source else []
+    if (identity and proposed_state.get('identity') == identity and 'status' in proposed_state
+            and re.match(r'^\[(?:task-state|task-add|task-close|task-reopen|task-claim)\]', body)):
+        current_task = _semantic(state or {})
+        proposed_task = _semantic(proposed_state)
+        registration = next((event for event in view['events'] if state and event['sequence'] == state['sequence']), None)
+        transition = dict(current=current_task, proposed=proposed_task,
+                          changed_fields=sorted(key for key in set(current_task) | set(proposed_task)
+                                                if current_task.get(key) != proposed_task.get(key)),
+                          registration=registration,
+                          semantics='This canonical control proposes the recorded task transition; publication commits it. Compare the current registration with the proposal, independently of earlier ordinary prose. A field or hash change alone does not establish meaningful progress or prove an external outcome; inspect the supplied checked evidence.')
+        for key in ('R06', 'R08'):
+            question_episodes[key]['task_transition'] = transition
     signal = re.match(r'^\[task-event\]\s+(\S+)', body)
     if signal and view['context_complete']:
         from .task_state import eligible

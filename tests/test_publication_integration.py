@@ -60,6 +60,25 @@ def test_retry_episode_includes_registered_wait_beyond_recent_chat(tmp_path, mon
     assert second['question_episodes']['R08']['retry_targets'][0]['eligible_before_post'] is True
 
 
+def test_task_transition_distinguishes_registration_from_prior_prose(tmp_path, monkeypatch):
+    from dataclasses import asdict, replace
+    from mishe_tauftauf.coordination_checks import episode
+    _, proof = ready_site(tmp_path, monkeypatch)
+    current = task_state.registry(Feed(tmp_path).entries())['repair']
+    Feed(tmp_path).append('genome', 'I will register a wait for checked final CI before deploying.')
+    proposed = replace(current, status='waiting', retry_event='final-ci-passed', reason='Final CI is pending.')
+    context = episode(tmp_path, 'genome', '[task-state] repair\nRegister the final CI wait.', context=asdict(proposed))
+    for key in ('R06', 'R08'):
+        transition = context['question_episodes'][key]['task_transition']
+        assert transition['current']['status'] == 'ready'
+        assert transition['proposed']['status'] == 'waiting'
+        assert 'status' in transition['changed_fields']
+        assert transition['registration']['sequence'] == current.sequence
+    receipt = task_state.wait_for(tmp_path, 'repair', 'genome', 'Deploy after final CI.', 'Final CI is pending.', proof,
+                                  retry_event='final-ci-passed')
+    assert 'moves from ready to waiting' in receipt.body
+
+
 def test_generated_task_transition_rejection_does_not_close(tmp_path, monkeypatch):
     _, proof = ready_site(tmp_path, monkeypatch)
     checker(tmp_path)
