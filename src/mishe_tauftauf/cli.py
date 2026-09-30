@@ -130,6 +130,15 @@ def cmd_pain_render(args) -> int:
 def cmd_pain_read(args) -> int:
     validate_slug(args.slug)
     launcher = args.launcher
+    if launcher == "dashboard":
+        from .dashboard import read
+        try:
+            frame, ok = read(args.home, args.slug)
+        except ValueError as exc:
+            sys.stdout.write(f"UNKNOWN — {exc}\n")
+            return 1
+        sys.stdout.write(frame)
+        return 0 if ok else 1
     if launcher == "tmux":
         from .tmux import capture_raw, owns_session
         # A typo'd or stale --home must not read another site's live pane as if
@@ -150,8 +159,10 @@ def cmd_pain_watch(args) -> int:
     feed = Feed(args.home)
     try:
         while True:
+            ok = False
             try:
                 rendered = compose_frame(args.home, args.slug, args.timeout)
+                ok = rendered.ok
                 entries = feed.entries()
                 status = runtime_status(entries, args.slug)
                 frame = rendered.body
@@ -159,11 +170,14 @@ def cmd_pain_watch(args) -> int:
                     frame += "\n"
                 frame += f"-- runtime: {status} --\n"
             except FeedError as exc:
+                ok = False
                 frame = (
                     "STATE: RED — chat feed is malformed; repair the framed feed before retrying\n"
                     f"FEED ERROR: {exc}\n"
                 )
             frame += f"-- pane live {utc_now()} · refresh {args.interval:g}s · ticks every frame --\n"
+            from .dashboard import publish
+            publish(args.home, args.slug, frame, ok)
             sys.stdout.write("\x1b[H\x1b[2J" + frame)
             sys.stdout.flush()
             time.sleep(args.interval)
@@ -557,7 +571,7 @@ def parser() -> argparse.ArgumentParser:
     pain = sub.add_parser("pain").add_subparsers(dest="pain_command", required=True)
     p = pain.add_parser("list"); p.set_defaults(func=cmd_pain_list)
     p = pain.add_parser("render"); p.add_argument("slug"); p.add_argument("--timeout", type=float, default=10.0); p.set_defaults(func=cmd_pain_render)
-    p = pain.add_parser("read"); p.add_argument("slug"); p.add_argument("--launcher", choices=("headless", "tmux"), default="headless"); p.add_argument("--session", default="mishe-tauftauf"); p.add_argument("--timeout", type=float, default=10.0); p.set_defaults(func=cmd_pain_read)
+    p = pain.add_parser("read"); p.add_argument("slug"); p.add_argument("--launcher", choices=("headless", "tmux", "dashboard"), default="headless"); p.add_argument("--session", default="mishe-tauftauf"); p.add_argument("--timeout", type=float, default=10.0); p.set_defaults(func=cmd_pain_read)
     p = pain.add_parser("watch"); p.add_argument("slug"); p.add_argument("--interval", type=float, default=5.0); p.add_argument("--timeout", type=float, default=10.0); p.set_defaults(func=cmd_pain_watch)
     p = sub.add_parser("run"); mode = p.add_mutually_exclusive_group(required=True); mode.add_argument("--once", action="store_true"); mode.add_argument("--follow", action="store_true"); judge = p.add_mutually_exclusive_group(); judge.add_argument("--judge"); judge.add_argument("--batch-judge"); p.add_argument("--launcher", choices=("headless", "tmux"), default="tmux"); p.add_argument("--session", default="mishe-tauftauf"); p.add_argument("--interval", type=float, default=5.0); p.add_argument("--observe-only", action="store_true"); p.add_argument("--slug"); p.add_argument("--laya-structured", action="store_true"); p.add_argument("--policy"); p.add_argument("--control-cache-ttl", type=float); p.add_argument("--refresh-controls", action="store_true"); p.add_argument("--external-view-slug", action="append", default=[]); p.add_argument("--external-delta-view-slug", action="append", default=[]); p.add_argument("--external-fleet-view-slug", action="append", default=[]); p.set_defaults(func=cmd_run)
     tmux = sub.add_parser("tmux").add_subparsers(dest="tmux_command", required=True)

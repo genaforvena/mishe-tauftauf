@@ -13,6 +13,8 @@ def supervisor(home, monkeypatch):
     monkeypatch.setattr(seed, "_pane_stopped_or_dead", lambda *args: False)
     monkeypatch.setattr(seed, "capture_raw", lambda *args: "STATE: GREEN\n-- pane live " +
                         datetime.now(timezone.utc).isoformat().replace("+00:00", "Z") + " · refresh 5s · ticks every frame --\n")
+    from mishe_tauftauf import dashboard
+    monkeypatch.setattr(dashboard, "read", lambda *args: (seed.capture_raw("session", "genome"), True))
     monkeypatch.setattr(seed, "_mind_ready", lambda *args: True)
     monkeypatch.setattr(seed, "_tmux", lambda *args, **kwargs: CompletedProcess(args, 0, b"0\n"))
     monkeypatch.setattr(seed, "_send", lambda target, prompt: sent.append(prompt))
