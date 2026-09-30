@@ -121,8 +121,8 @@ Five resident roles share the work:
 
 | Role | Responsibility |
 | --- | --- |
-| `discover` | Find useful local observations and check whether they are available. |
-| `senses` | Turn those observations into reliable readings with honest failure states. |
+| `discover` | Explore capabilities and related literature; assess applicability and propose new frontier experiments. |
+| `senses` | Build reliable, temporally valid readings, including new senses crossed from existing ones, with honest failure states. |
 | `health` | Keep the local feed, panes, and services working. |
 | `genome` | Improve reusable source and land verified, independently reviewed changes. |
 | `witness` | Follow open work and compare completion claims with evidence. |

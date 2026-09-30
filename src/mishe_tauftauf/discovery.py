@@ -304,3 +304,31 @@ def latest(home: Path) -> dict[str, object] | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+
+
+RENEWAL_MAX_AGE_SECONDS = 600.0
+"""Renew before the panes' 900-second freshness gate, leaving 300 seconds of margin."""
+
+
+def scan_age(home: Path) -> float | None:
+    """Age of the newest scan in seconds, or None when its timestamp is unavailable."""
+    snapshot = latest(home)
+    if snapshot is None:
+        return None
+    try:
+        created = datetime.fromisoformat(str(snapshot["created"]).replace("Z", "+00:00"))
+    except (ValueError, KeyError):
+        return None
+    return (datetime.now(timezone.utc) - created).total_seconds()
+
+
+def renew_scan(home: Path, max_age_seconds: float = RENEWAL_MAX_AGE_SECONDS) -> Path | None:
+    """Renew a missing or old scan without requiring a resident mind wake.
+
+    Return the new artifact path, or None while the latest scan is fresh.
+    scan() updates latest.json and deduplicates unchanged states in the feed.
+    """
+    age = scan_age(home)
+    if age is not None and age <= max_age_seconds:
+        return None
+    return scan(home)

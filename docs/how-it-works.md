@@ -71,8 +71,8 @@ Project-specific checks and charters make this possible; the stock runtime does 
 
 | Window | What the upper pane shows | What the lower pane does |
 | --- | --- | --- |
-| `discover` | Recent bounded reads and capability candidates | Finds useful local readings, tests availability, and routes a candidate to its steward |
-| `senses` | Sampled readings, freshness, and unknowns | Turns useful reads into truthful senses with a source, failure state, and consumer |
+| `discover` | Recent bounded local reads and capability candidates | Selects related literature, assesses applicability, and proposes evidence-backed new directions as well as local capabilities |
+| `senses` | Sampled readings, freshness, and unknowns | Turns recurring observations into truthful senses with temporal validity, a failure state, and a consumer |
 | `health` | Doctor, expected tmux windows, resident services, and CI state | Repairs the plant's local feed, panes, and services |
 | `genome` | Repository goal, worktree, doctor, CI, and next development step | Changes reusable source, verifies it, obtains independent review, and lands owned changes |
 | `witness` | Open tasks, conversation, CI events, receipts, and channel health | Routes work, follows it through completion, and checks claims against artifacts and live results |
@@ -84,6 +84,39 @@ Project-specific checks and charters make this possible; the stock runtime does 
 Roles are not file restrictions. Within owned scope, every mind may repair Mishe's source, checks, prompts, doctrine, charters, roles, routing, supervisor lifecycle, planting, or coordination when evidence requires it. Path ownership, independent review, acceptance checks, and external boundaries still apply.
 
 Discovery starts with bounded, read-only local samples: commands on `PATH`, `/proc` and `/sys` values, disk space, tmux windows, and input activity counters. Input activity counts do not capture key content. Each discovery entry explains available commands, verified readings, unknowns, the artifact, and the next action. Repeated scans refresh local evidence but append chat only when availability, status, or an unknown reason changes. Discover and senses wake for those meaningful changes, not every moving counter.
+
+The discover and senses supervisor ticks renew a missing scan or one older than
+600 seconds, before the panes' 900-second stale boundary. This bounded read runs
+under the seed lock even when the upper pane is unavailable or stopped; other
+channels do not renew it. An unchanged scan does not append another discovery
+event, so keeping samples current does not itself require a mind wake.
+
+Local scans are only one input to discovery. Discover also selects neighboring topics
+from literature, reads relevant primary sources, and assesses their mechanisms,
+evidence, assumptions, and limits against the project. It records what transfers,
+what does not, and what needs an experiment, with citations and the sections read.
+Its outcome can be a new question, a bounded experiment with a predicted result
+and acceptance check, or a reasoned rejection—not necessarily a new sensor or a
+fix for an existing fault. A green scan does not establish research progress.
+Literature is occasional, not a per-wake quota, and can inform any aspect of Mishe
+or its project goals: coordination, self-organization, learning, evaluation,
+experimental methods, or agent behavior. Discover chooses when outside work is
+useful and applies supported ideas through checked experiments or owned changes;
+it does not force papers into unrelated tasks.
+
+A sense has explicit temporal validity: sample time, the interval or event covered,
+and the age or source change that makes it unsuitable for the consumer's decision.
+It need not stream continuously. An expired reading can remain valid historical
+evidence while being UNKNOWN for a current-state claim. A paper read to explore
+an idea is discovery; a repeatable watch for literature updates can be a sense.
+
+New senses can also cross several existing ones. The composite defines its inputs,
+combination rule, inferred state, and consumer, aligns the observation windows,
+and preserves input provenance and validity. A new output timestamp does not
+refresh stale inputs; missing evidence stays UNKNOWN where it prevents the
+inference. Compare against each input alone and account for correlation before
+claiming new information—for example, testing an overload hypothesis from queue
+growth, throughput, and memory pressure together.
 
 ## Evidence: UNKNOWN is not pass
 

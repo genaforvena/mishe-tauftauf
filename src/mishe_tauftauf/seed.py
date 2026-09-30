@@ -17,9 +17,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .feed import Feed
-from . import task_state
+from . import discovery, task_state
 from .observations import executable, strip_owned_chrome, validate_home, validate_slug
 from .tmux import OWNED_OPTION, _pane_stopped_or_dead, _python_command, _tmux, capture_raw, lease_value, owns_session
+
+
+RENEWAL_SLUGS = frozenset({"discover", "senses"})
+"""Resident channels whose panes depend on discovery scan freshness."""
 
 
 OBS_RE = re.compile(r"seed observation ([a-z0-9-]+) sha256=([0-9a-f]{64})\Z")
@@ -551,6 +555,8 @@ def tick(home: Path, session: str, slug: str, self_pick_seconds: float = 0) -> s
     if not owns_session(home, session):
         raise ValueError(f"session {session} is not owned by {home}")
     with _lock(home):
+        if slug in RENEWAL_SLUGS:
+            discovery.renew_scan(home)
         if _pane_stopped_or_dead(session, slug):
             return f"UNKNOWN seed {slug} top pane stopped or dead"
         full = capture_raw(session, slug)

@@ -52,9 +52,9 @@ def discover(home: Path) -> str:
     lines.append(f"PERMISSION REQUESTS: {len(pending)} pending")
     for item, _ in pending[-5:]:
         lines.append(f"REQUEST {item.identity} unblocks={','.join(item.unblocks)}")
-    lines.extend(["GOAL: find new useful readings and capabilities, then hand verified candidates to their steward",
-                  "PURSUIT: scan read-only surfaces, sample a real value, price its use, and name the next check",
-                  "NEXT: run mishe-tauftauf discover scan; record one finding or reasoned rejection"])
+    lines.extend(["GOAL: discover useful new directions for Mishe and this plant's goals",
+                  "PURSUIT: explore capabilities and crossed senses; use related literature when useful, assess fit, and check ideas",
+                  "NEXT: renew an absent or stale scan; otherwise choose one observation, reading, or experiment and record its outcome"])
     _report(home, "discover", verdict)
     return "\n".join(lines) + "\n"
 
