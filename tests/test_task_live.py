@@ -7,9 +7,10 @@ import time
 import uuid
 
 from mishe_tauftauf.feed import Feed
+from mishe_tauftauf import task_state
 
 
-def test_offered_task_and_retry_through_live_caller(tmp_path):
+def test_mind_selected_task_and_retry_through_live_caller(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
@@ -60,11 +61,12 @@ def test_offered_task_and_retry_through_live_caller(tmp_path):
         proof.write_text("Health charter can inspect services; no tracked code mutation is needed.\n")
         cli("task", "step", "inspect-services", "--owner", "genome", "--next-step", "inspect service state",
             "--progress", "scoped read-only service inspection", "--evidence", str(proof))
-        cli("task", "offer", "inspect-services", "--owner", "genome", "--helper", "health", "--evidence", str(proof))
         first = cli("seed", "tick", "--session", session, "--slug", "health")
         wake = first.stdout.strip().split()[-1]
         assert first.stdout.startswith("wake ")
-        wait_for(lambda: (home / "health.trace").read_text(), "TASK TO ADVANCE: inspect-services")
+        wait_for(lambda: (home / "health.trace").read_text(), "MIND SELECTS")
+        cli("task", "claim", "inspect-services", "--owner", "health", "--wake", wake,
+            "--reason", "Health can carry out this scoped service investigation.", "--evidence", str(proof))
         pane = wait_for(lambda: cli("pain", "read", "witness", "--launcher", "tmux", "--session", session).stdout,
                         "inspect-services owner=health")
         assert "TASK STEP inspect-services owner=health state=waiting" in pane
@@ -81,10 +83,21 @@ def test_offered_task_and_retry_through_live_caller(tmp_path):
         retry = cli("seed", "tick", "--session", session, "--slug", "health")
         assert retry.stdout.startswith("wake ")
         wake2 = retry.stdout.strip().split()[-1]
+        cli("task", "claim", "inspect-services", "--owner", "health", "--wake", wake2,
+            "--reason", "The service-changed retry fired; check the new state.", "--evidence", str(proof))
+        cli("task", "wait", "inspect-services", "--owner", "health", "--next-step", "inspect another changed service",
+            "--reason", "The new service was checked; wait for another change.", "--retry-event", "service-changed",
+            "--evidence", str(proof))
         cli("seed", "yield", "--slug", "health", "--wake", wake2, "--file", str(note), "--result", "verified")
         cli("seed", "clear", "--session", session, "--slug", "health")
+        exploration = cli("seed", "tick", "--session", session, "--slug", "health", "--self-pick-seconds", "0.001")
+        assert exploration.stdout.startswith("wake ")
+        assert 'inspect-services' not in task_state.pending_tasks(Feed(home).entries()).values()
+        wake3 = exploration.stdout.strip().split()[-1]
+        cli("seed", "yield", "--slug", "health", "--wake", wake3, "--file", str(note), "--result", "verified")
+        cli("seed", "clear", "--session", session, "--slug", "health")
         assert "waiting" in cli("seed", "tick", "--session", session, "--slug", "health", "--self-pick-seconds", "0.001").stdout
-        assert sum(e.body.startswith("seed wake health ") for e in Feed(home).entries()) == 2
+        assert sum(e.body.startswith("seed wake health ") for e in Feed(home).entries()) == 3
     finally:
         cli("seed", "stop", "--session", session, ok=False)
 
@@ -140,9 +153,13 @@ def test_blocked_goal_delivers_cpu_child_and_completed_evidence_review(tmp_path)
                   "--owner", role, "--result", "100 CPU rows independently checked" if role == "witness" else "100 CPU rows produced",
                   "--evidence", str(output)]
         mind = home / "minds" / role
+        claim = [sys.executable, "-m", "mishe_tauftauf", "--home", str(home), "task", "claim", identity,
+                 "--owner", role, "--reason", "This scoped producer/reviewer task fits this charter.",
+                 "--evidence", str(home / "scope.md")]
         mind.write_text(f"#!{sys.executable}\nimport sys,json,subprocess\nfrom pathlib import Path\n"
                         "for line in sys.stdin:\n"
-                        f" if line.strip() == 'TASK TO ADVANCE: {identity}':\n"
+                        " if line.startswith('WAKE ') and line.split()[1].isdigit():\n"
+                        f"  subprocess.run({claim!r}+['--wake',line.split()[1]],check=True)\n"
                         f"  {work}\n"
                         f"  subprocess.run({finish!r},check=True)\n")
         mind.chmod(0o755)
@@ -185,7 +202,10 @@ def test_blocked_goal_delivers_cpu_child_and_completed_evidence_review(tmp_path)
         assert {t.identity for t in seed_board.open_tasks(entries)} == {"research"}
         assert task_state.states(entries)["research"].status == "waiting"
         for role, wake, file in (("genome", produced_wake, measured), ("witness", review_wake, reviewed)):
-            cli("seed", "yield", "--slug", role, "--wake", wake, "--file", str(file), "--result", "changed")
+            handoff = home / f"{role}-checked-handoff.md"
+            handoff.write_text(f"Completed {role}'s scoped CPU evidence task; 100 cases checked. Evidence: {file}.\n"
+                               "Next: choose useful work from the shared task board.\n")
+            cli("seed", "yield", "--slug", role, "--wake", wake, "--file", str(handoff), "--result", "changed")
             cli("seed", "clear", "--session", session, "--slug", role)
         cli("task", "add", "next-analysis", "--owner", "genome", "--parent", "research",
             "--next-step", "write measured limitations draft", "--reason", "CPU evidence and review complete",

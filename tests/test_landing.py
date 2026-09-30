@@ -10,9 +10,9 @@ def task(home, identity, owner="genome"):
 
 
 def queued(home, identity):
-    return Feed(home).append("operator", f"[landing] {identity}\n" + json.dumps({
+    return Feed(home).append_task_control("operator", f"[landing] {identity}\n" + json.dumps({
         "producer": "senses", "evidence": "/checked.md", "evidence_sha256": "a" * 64,
-        "reason": "historical delivery", "owner": "genome"}), task_control=True)
+        "reason": "historical delivery", "owner": "genome"}))
 
 
 def test_historical_registration_has_no_priority_or_global_hold(tmp_path):

@@ -1,0 +1,93 @@
+import json
+from dataclasses import asdict
+from types import SimpleNamespace
+
+from mishe_tauftauf.feed import Feed, FeedEntry
+from mishe_tauftauf.seed_witness_view import render
+from mishe_tauftauf.task_state import TaskState
+
+
+def wire(tmp_path, monkeypatch, entries):
+    import mishe_tauftauf.seed_witness_view as view
+    monkeypatch.setenv('MISHE_SEED_SESSION', 'test')
+    monkeypatch.setattr(view.subprocess, 'run', lambda *a, **kw: SimpleNamespace(returncode=0, stdout='', stderr=''))
+    monkeypatch.setattr(Feed, 'entries', lambda self: entries)
+
+
+def entry(seq, source, body):
+    return FeedEntry(seq, '2026-09-30T00:00:00Z', source, body)
+
+
+def test_witness_displays_own_and_seed_task_receipt_history(tmp_path, monkeypatch):
+    entries = [entry(1, 'witness', '[task] audit owner=witness acceptance=checked')]
+    for seq in (2,3,4):
+        data = {'channel':'witness','task':'audit','result':'verified','reason':'CI unchanged','retry_event':'ci'}
+        entries.append(entry(seq, 'seed', '[work] channel=witness wake=1 observation=2 result=verified continue=0\n' + json.dumps(data)))
+    wire(tmp_path, monkeypatch, entries)
+    output = render(tmp_path)
+    assert 'COORDINATION: RED' in output
+    assert 'task=audit' in output and 'repeated-prerequisite' in output
+    assert 'sequences=2,3,4' in output
+    assert '1 witness:' in output
+    assert '4 seed:' in output
+
+
+def test_conditional_ready_is_suspicion_with_unknown_health(tmp_path, monkeypatch):
+    state = asdict(TaskState('audit', 'witness', 2, next_step='When producer reports ownership, inspect latency.'))
+    entries = [entry(1,'witness','[task] audit owner=witness acceptance=checked'), entry(2,'witness','[task-state] audit\n'+json.dumps(state))]
+    wire(tmp_path, monkeypatch, entries)
+    output = render(tmp_path)
+    assert 'COORDINATION: SUSPICIOUS' in output
+    assert 'conditional-ready' in output
+    assert 'STATE: UNKNOWN' in output
+    assert 'COORDINATION: RED' not in output
+
+
+def test_corrupt_receipt_does_not_crash_or_render_green(tmp_path, monkeypatch):
+    entries = [entry(1,'seed','[work] channel=witness wake=1 observation=2 result=verified continue=0\n{bad')]
+    wire(tmp_path, monkeypatch, entries)
+    output = render(tmp_path)
+    assert 'COORDINATION: UNKNOWN' in output
+    assert 'invalid-context' in output
+    assert 'STATE: UNKNOWN' in output
+
+
+def test_private_gate_refusal_visible_without_draft_or_inference(tmp_path, monkeypatch):
+    import mishe_tauftauf.post_check as checks
+    wire(tmp_path, monkeypatch, [])
+    monkeypatch.setattr(checks, 'review', lambda *a, **k: (_ for _ in ()).throw(AssertionError('renderer invoked inference')))
+    (tmp_path / 'publication-check.json').write_text(json.dumps({'command':['worker']}))
+    private = tmp_path / 'post-checks'
+    private.mkdir()
+    (private / 'review.json').write_text(json.dumps({'status':'suspicious','semantic_status':'suspicious','source':'witness','stage':'handoff','body':'PRIVATE DRAFT MUST STAY PRIVATE','results':[{'id':'P18','verdict':'suspicious'}]}))
+    output = render(tmp_path)
+    assert 'PUBLICATION GATE: CONFIGURED' in output
+    assert 'PUBLICATION RESULT: REFUSED source=witness stage=handoff' in output
+    assert 'Correction questions: P18' in output
+    assert 'PRIVATE DRAFT MUST STAY PRIVATE' not in output
+    assert 'STATE: UNKNOWN' in output
+
+
+def test_unreadable_feed_keeps_coordination_unknown(tmp_path, monkeypatch):
+    wire(tmp_path, monkeypatch, [])
+    monkeypatch.setattr(Feed, 'entries', lambda self: (_ for _ in ()).throw(ValueError('broken canonical frame')))
+    output = render(tmp_path)
+    assert 'COORDINATION: UNKNOWN' in output
+    assert 'broken canonical frame' in output
+    assert 'STATE: UNKNOWN' in output
+
+
+def test_unconfigured_gate_is_explicitly_untested(tmp_path, monkeypatch):
+    wire(tmp_path, monkeypatch, [])
+    output = render(tmp_path)
+    assert 'PUBLICATION GATE: UNTESTED' in output
+    assert 'PUBLICATION RESULT: UNTESTED' in output
+    assert 'STATE: UNKNOWN' in output
+
+
+def test_new_finding_and_refusal_change_wake_observation_without_filename_churn():
+    from mishe_tauftauf.seed import _observation_text
+    base = "COORDINATION: UNKNOWN\nANOMALY: SUSPICIOUS task=repair kind=repeated-attempt id=stable\nPUBLICATION GATE: CONFIGURED\nPUBLICATION RESULT: CLEAR semantic=clear\n  Evidence: private report=first.json\nSTATE: UNKNOWN"
+    assert _observation_text('witness', base) == _observation_text('witness', base.replace('first.json','second.json'))
+    assert _observation_text('witness', base) != _observation_text('witness', base.replace('id=stable','id=new-cause'))
+    assert _observation_text('witness', base) != _observation_text('witness', base.replace('CLEAR semantic=clear','REFUSED source=genome stage=handoff semantic=suspicious'))

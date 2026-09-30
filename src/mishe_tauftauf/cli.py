@@ -277,9 +277,43 @@ def cmd_seed(args) -> int:
     return 0
 
 
+def cmd_publication(args) -> int:
+    from .post_check import review
+    if args.publication_command == "status":
+        configured = (args.home / "publication-check.json").is_file()
+        print("Publication semantics: " + ("configured; every verdict must pass" if configured else "UNTESTED; only deterministic admission active"))
+        paths = list((args.home / "post-checks").glob("*.json"))
+        if paths:
+            path = max(paths, key=lambda p: p.stat().st_mtime_ns)
+            report = json.loads(path.read_text())
+            print(f"Latest private check: {report['status']} stage={report['stage']} source={report['source']}; report: {path}")
+        return 0 if configured else 1
+    from .coordination_checks import episode
+    body = args.file.read_text(encoding="utf-8")
+    context = episode(args.home, args.source, body, identity=args.task)
+    report = review(args.home, args.source, body, context=context, stage=args.stage)
+    print(f"Publication check: {report['status']}; private report: {report['report_path']}")
+    for row in report['results']:
+        if row['verdict'] != "clear":
+            print(f"{row['id']}: {row['verdict']} — {row['reason']}")
+    if report.get('error'):
+        print(report['error'])
+    return 0 if report['clear'] else 2
+
+
 def cmd_task(args) -> int:
     from . import task_state
 
+    if args.task_command == "coordination-report":
+        from .coordination_checks import anomalies
+        entries = Feed(args.home).entries()
+        if args.cutoff is not None:
+            entries = [entry for entry in entries if entry.sequence <= args.cutoff]
+        findings = [f for f in anomalies(entries) if not args.task or f["task"] == args.task]
+        print(f"Coordination history: {len(entries)} entries; {len(findings)} findings.")
+        for item in findings:
+            print(f"{item['severity']} {item['task']} {item['kind']}: {item['message']} Evidence sequences: {item['sequences']}")
+        return int(any(f["severity"] in {"RED", "UNKNOWN"} for f in findings))
     if args.task_command in {"landing-status", "production-check"}:
         from .landing import line
         from .delivery import line as deliveries
@@ -293,6 +327,8 @@ def cmd_task(args) -> int:
         return 0
     if args.task_command == "step":
         entry = task_state.set_step(args.home, args.id, args.owner, args.next_step, args.progress, args.evidence)
+    elif args.task_command == "claim":
+        entry = task_state.claim(args.home, args.id, args.owner, args.wake, args.reason, args.evidence)
     elif args.task_command == "wait":
         entry = task_state.wait_for(args.home, args.id, args.owner, args.next_step, args.reason, args.evidence,
                                     retry_event=args.retry_event, retry_at=args.retry_at,
@@ -309,7 +345,8 @@ def cmd_task(args) -> int:
     elif args.task_command == "offer":
         entry = task_state.offer(args.home, args.id, args.owner, args.helper, args.evidence)
     else:
-        print("\n".join(task_state.lines(Feed(args.home).entries(), args.owner)) or "No open tasks.")
+        entries = Feed(args.home).entries()
+        print("\n".join(task_state.lines(entries, args.owner) if args.owner else task_state.board(entries)) or "No open tasks.")
         return 0
     print(entry.sequence)
     return 0
@@ -574,6 +611,9 @@ def parser() -> argparse.ArgumentParser:
     p = task.add_parser("event"); p.add_argument("event"); p.add_argument("--source", required=True)
     p.add_argument("--reason", required=True); p.add_argument("--evidence", type=Path, required=True); p.set_defaults(func=cmd_task)
     p = task.add_parser("show"); p.add_argument("--owner"); p.set_defaults(func=cmd_task)
+    p = task.add_parser("claim"); p.add_argument("id"); p.add_argument("--owner", required=True)
+    p.add_argument("--wake", type=int, required=True); p.add_argument("--reason", required=True)
+    p.add_argument("--evidence", type=Path, required=True); p.set_defaults(func=cmd_task)
     p = task.add_parser("offer"); p.add_argument("id"); p.add_argument("--owner", required=True)
     p.add_argument("--helper", action="append", default=[]); p.add_argument("--evidence", type=Path, required=True)
     p.set_defaults(func=cmd_task)
@@ -621,6 +661,10 @@ def parser() -> argparse.ArgumentParser:
     p = seed.add_parser("clear"); p.add_argument("--slug", default="genome"); p.add_argument("--session", default="mishe-seed"); p.set_defaults(func=cmd_seed)
     p = seed.add_parser("status"); p.add_argument("--slug", default="genome"); p.set_defaults(func=cmd_seed)
     p = sub.add_parser("tmux-mind-run", help=argparse.SUPPRESS); p.add_argument("slug"); p.add_argument("sequence", type=int); p.add_argument("attempt", type=int); p.add_argument("invocation"); p.add_argument("context_path"); p.add_argument("--session", default="mishe-tauftauf"); p.set_defaults(func=cmd_tmux_mind_run)
+    p = sub.add_parser("publication").add_subparsers(dest="publication_command", required=True)
+    c = p.add_parser("status"); c.set_defaults(func=cmd_publication)
+    c = p.add_parser("check"); c.add_argument("--source", required=True); c.add_argument("--file", type=Path, required=True); c.add_argument("--stage", choices=("post", "selection", "handoff"), default="post"); c.add_argument("--task"); c.set_defaults(func=cmd_publication)
+    c = task.add_parser("coordination-report"); c.add_argument("--task"); c.add_argument("--cutoff", type=int); c.set_defaults(func=cmd_task)
     return root
 
 
@@ -633,6 +677,14 @@ def main(argv: list[str] | None = None) -> int:
         return args.func(args)
     except (FeedError, PredictionError, ValueError, RuntimeError) as exc:
         print(f"mishe-tauftauf: {exc}", file=sys.stderr)
+        from .post_check import CorrectionRequired
+        if isinstance(exc, CorrectionRequired):
+            for row in exc.report["results"]:
+                if row["verdict"] != "clear":
+                    print(f"{row['id']}: {row['verdict']} — {row['reason']}", file=sys.stderr)
+            if exc.report.get("error"):
+                print(exc.report["error"], file=sys.stderr)
+            print(exc.report["required_correction"], file=sys.stderr)
         return 2
 
 

@@ -6,7 +6,7 @@ Read this contract, the full live top pane, your charter, latest handoff, releva
 
 ## Work and evidence
 
-- Act proactively within granted scope. On every wake, advance ready owned work or offered work before choosing a new improvement. Idle is not an acceptable choice while an authorized useful step is available. A healthy pane does not complete open tasks.
+- Act proactively within granted scope. On every wake, choose useful eligible work from the shared board before choosing a new improvement. Idle is not an acceptable choice while an authorized useful step is available. A healthy pane does not complete open tasks.
 - Look for defects, missed obligations, and useful opportunities throughout the work. Claim and repair a concrete finding, or route it with evidence, an owner, and an acceptance check. Every mind may improve any Mishe layer within owned scope; a role is a responsibility, not a file restriction. Coordinate existing owners and preserve unrelated work and windows.
 - Reproduce RED or UNKNOWN, predict a checkable result, compare two or three plausible approaches, choose a bounded repair, rerun the same check, and verify the live result. If no ready task remains, choose a useful charter improvement or operator wish. Missing, stale, conflicting, or untested evidence stays UNKNOWN; a refresh lease proves renderer liveness only.
 - Put recurring facts and consequential gates in deterministic checks with visible failure states. Verify the actual caller and tmux presentation as well as focused tests. A self-test alone does not prove deployment.
@@ -15,7 +15,7 @@ Read this contract, the full live top pane, your charter, latest handoff, releva
 
 ## Tasks and shared tape
 
-Use the canonical CLI and home from the restore prompt. Check `task show` for ownership, next steps, consumed attempts, and retries before acting. Active wakes reserve their tasks. Advance your own ready work, then offered ready work; helper selection records ownership transfer. Never retake an unchanged waiting task until its retry fires.
+Use the canonical CLI and home from the restore prompt. Check `task show` for ownership, next steps, consumed attempts, and retries before acting. Active wakes reserve their tasks. Choose useful eligible shared work; an atomic claim records ownership transfer. Never retake an unchanged waiting task until its retry fires.
 
 - Start visibly with a separate `[task] <stable-id> owner=<role> source=<path-or-sequence> acceptance=<check> retry=<edge>` entry, then `[taking] <stable-id>`. `[done]` requires checked completion and an artifact; `[dropped]` requires a reason. Dispatch is not proof of start or completion.
 - Create bounded deliverables with `task add ID --owner ROLE --parent GOAL --next-step TEXT --reason TEXT --evidence FILE`. Complete managed tasks only with `task finish ID --owner ROLE --result TEXT --evidence FILE`; keep parents open until their acceptance and children are complete. Correct a terminal task with evidence-backed `task reopen`; duplicate announcements never reopen it.
@@ -35,3 +35,9 @@ Source authors own delivery in an isolated worktree based on current `origin/mai
 When shared kernel instructions or code change, refresh every active site using that source and verify its next restore, live panes, and services. Python services must restart to load new code. Durable rules belong in contract, doctrine, or charters; case history belongs in artifacts.
 
 Track reusable source, tests, skills, and general instructions. Keep chat, local charters, handoffs, plans, checks, drafts, artifacts, and service units under gitignored `.mishe-tauftauf/`. Promote reusable lessons deliberately. Before every commit, verify `git ls-files .mishe-tauftauf` is empty and no staged path contains local state.
+
+Minds choose useful eligible work from the full shared `task show` board. Before acting, use `task claim ID --owner ROLE --wake N --reason TEXT --evidence FILE`; private pitfall checks precede an atomic reservation, ownership transfer and consumed attempt. The supervisor wakes minds and supplies the board without choosing a task. Own work and helper offers inform the choice; offers are not required. Active claims, terminal tasks and unfired waits prevent selection. Author delivery stays with its author; fact-owned main integration stays serialized by genome. External authority is unchanged.
+
+Every new chat entry explains the event, evidence or artifact, and next owner or action. No inline JSON is allowed, including fenced payloads, task transitions and supervisor receipts. Structured state belongs in immutable referenced audit records; historical entries remain unchanged. R01–R08 check every post; P01–P28 check selections and handoffs. A configured suspicious, UNKNOWN, missing or unavailable check refuses publication privately and saves the draft and correction report. Correct and recheck without repeating prior effects. Unconfigured semantics remain explicitly untested; model detection requires measured validation.
+
+Witness checks task histories across all roles, including itself and seed receipts, completed producers, repeated attempts, conditional readiness and task/action drift. Hash changes alone do not prove progress. Inspect `task coordination-report` and verify findings against sequence and artifact evidence. Pane refresh performs no model inference.

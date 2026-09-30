@@ -12,10 +12,12 @@ from pathlib import Path
 from .feed import Feed, FeedEntry
 from .observations import validate_slug
 from .seed_board import TASK_RE, STATE_RE, CLAIM_RE
+from .records import payload as record_payload
 
 EVENT_RE = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z")
 TASK_WAKE_RE = re.compile(r"seed wake ([a-z0-9-]+) observation=\d+(?: event=\d+)? task=(\S+)\Z")
 TASK_YIELD_RE = re.compile(r"seed yield ([a-z0-9-]+) wake=(\d+)(?: continue=1)?\Z")
+ACTIVE_WAKE_RE = re.compile(r"seed wake ([a-z0-9-]+) observation=\d+(?: event=\d+)?(?: task=\S+)?\Z")
 
 
 @dataclass(frozen=True)
@@ -80,7 +82,7 @@ def validate_control(source: str, body: str) -> None:
         return
     try:
         first, rest = body.split("\n", 1)
-        if first.startswith("[task-claim] "):
+        if first.startswith("[task-claim] ") and CLAIM_RE.fullmatch(first):
             if source != "seed" or not CLAIM_RE.fullmatch(first):
                 raise ValueError("invalid claim")
             return
@@ -93,7 +95,9 @@ def validate_control(source: str, body: str) -> None:
             if not data.get("reason") or not data.get("evidence"):
                 raise ValueError("event requires reason and evidence")
             digest = data.get("evidence_sha256", "")
-        elif tag in {"[task-state]", "[task-add]", "[task-close]", "[task-reopen]"}:
+        elif tag in {"[task-state]", "[task-add]", "[task-close]", "[task-reopen]", "[task-claim]"}:
+            if tag == "[task-claim]":
+                validate_slug(data.pop("previous_owner"))
             if not isinstance(data.get("helpers", []), (list, tuple)):
                 raise ValueError("helpers must be a list")
             state = TaskState(**data)
@@ -119,6 +123,8 @@ def validate_control(source: str, body: str) -> None:
                 _event(state.parent)
             if state.producer:
                 validate_slug(state.producer)
+            if tag == "[task-claim]" and (source != state.owner or not state.attempt_wake or state.activity != "taking"):
+                raise ValueError("claim requires its mind's active wake and selection")
             digest = state.evidence_sha256
             if tag != "[task-state]" and not state.evidence:
                 raise ValueError("lifecycle operation requires evidence")
@@ -135,8 +141,15 @@ def validate_control(source: str, body: str) -> None:
 def registry(entries: list[FeedEntry]) -> dict[str, TaskState]:
     """One lifecycle projection for scheduling and display, including terminal IDs."""
     result = {}
+    active = {}
     for entry in entries:
         first = entry.body.splitlines()[0].lstrip(" \t") if entry.body else ""
+        if entry.source == "seed":
+            if match := ACTIVE_WAKE_RE.fullmatch(first):
+                active[match.group(1)] = entry.sequence
+            elif match := TASK_YIELD_RE.fullmatch(first):
+                if active.get(match.group(1)) == int(match.group(2)):
+                    active.pop(match.group(1), None)
         if match := TASK_RE.match(first):
             identity, owner = match.groups()
             if identity not in result:
@@ -154,8 +167,10 @@ def registry(entries: list[FeedEntry]) -> dict[str, TaskState]:
             if old is None or old.owner != match.group(3) or match.group(2) not in old.helpers:
                 raise ValueError(f"invalid helper claim at entry {entry.sequence}")
             result[old.identity] = replace(old, owner=match.group(2), helpers=())
-        tag = next((tag for tag in ("task-state", "task-add", "task-close", "task-reopen")
+        tag = next((tag for tag in ("task-state", "task-add", "task-close", "task-reopen", "task-claim")
                     if entry.body.startswith(f"[{tag}] ")), None)
+        if tag == "task-claim" and CLAIM_RE.fullmatch(first):
+            continue
         if tag is None:
             continue
         # Historical notes used this reserved tag before writers validated it.
@@ -165,7 +180,8 @@ def registry(entries: list[FeedEntry]) -> dict[str, TaskState]:
         try:
             first, payload = entry.body.split("\n", 1)
             identity = first.removeprefix(f"[{tag}] ")
-            data = json.loads(payload.splitlines()[0])
+            data = dict(record_payload(entry))
+            previous_owner = data.pop("previous_owner", None) if tag == "task-claim" else None
             if not isinstance(data, dict) or not isinstance(data.get("helpers", []), (list, tuple)):
                 raise ValueError("invalid state fields")
             if tag == "task-state":
@@ -186,7 +202,12 @@ def registry(entries: list[FeedEntry]) -> dict[str, TaskState]:
             old = result.get(identity)
             if tag == "task-state" and old is not None and old.status in {"done", "dropped"}:
                 continue
-            if tag == "task-add":
+            if tag == "task-claim":
+                if (old is None or old.status in {"done", "dropped"} or old.owner != previous_owner
+                        or state.owner != entry.source or active.get(state.owner) != state.attempt_wake
+                        or state.status != "waiting" or state.activity != "taking"):
+                    raise ValueError("invalid mind claim or active wake")
+            elif tag == "task-add":
                 if old is not None or entry.source not in {state.owner, "operator"}:
                     raise ValueError("task already exists or creator mismatch")
                 if state.parent and (state.parent not in result or result[state.parent].status in {"done", "dropped"}):
@@ -241,14 +262,127 @@ def eligible(state: TaskState, entries: list[FeedEntry], now: datetime | None = 
 def pending_tasks(entries: list[FeedEntry]) -> dict[tuple[str, int], str]:
     pending = {}
     for entry in entries:
+        first = entry.body.splitlines()[0]
+        if entry.body.startswith("[task-claim] ") and not CLAIM_RE.fullmatch(first):
+            data = record_payload(entry)
+            pending[(data["owner"], data["attempt_wake"])] = data["identity"]
+        elif entry.source == "seed" and (match := TASK_WAKE_RE.fullmatch(first)):
+            pending[(match.group(1), entry.sequence)] = match.group(2)
+        elif entry.source == "seed" and (match := TASK_YIELD_RE.fullmatch(first)):
+            pending.pop((match.group(1), int(match.group(2))), None)
+    return pending
+
+
+def active_wakes(entries: list[FeedEntry]) -> dict[str, int]:
+    active = {}
+    for entry in entries:
         if entry.source != "seed":
             continue
         first = entry.body.splitlines()[0]
-        if match := TASK_WAKE_RE.fullmatch(first):
-            pending[(match.group(1), entry.sequence)] = match.group(2)
+        if match := ACTIVE_WAKE_RE.fullmatch(first):
+            active[match.group(1)] = entry.sequence
         elif match := TASK_YIELD_RE.fullmatch(first):
-            pending.pop((match.group(1), int(match.group(2))), None)
-    return pending
+            if active.get(match.group(1)) == int(match.group(2)):
+                active.pop(match.group(1), None)
+    return active
+
+
+def candidates(entries: list[FeedEntry], now: datetime | None = None) -> list[TaskState]:
+    """Advisory shared work; a role is a responsibility, not an eligibility partition."""
+    reserved = set(pending_tasks(entries).values())
+    return sorted((s for s in states(entries).values()
+                   if s.identity not in reserved and eligible(s, entries, now)), key=lambda s: s.sequence)
+
+
+def board(entries: list[FeedEntry]) -> list[str]:
+    output = ["SHARED TASK BOARD — choose useful work and claim before acting."]
+    priorities = {s.identity: s.sequence for s in states(entries).values() if s.delivery}
+    ready = {s.identity for s in candidates(entries)}
+    reserved = set(pending_tasks(entries).values())
+    for state in sorted(states(entries).values(), key=lambda s: (priorities.get(s.identity, float("inf")), s.sequence)):
+        if state.identity in priorities:
+            output.append(f"MAIN INTEGRATION PRIORITY: {state.identity}; ready integration position {priorities[state.identity]}.")
+        availability = "reserved" if state.identity in reserved else "ready" if state.identity in ready else "waiting"
+        output.append(f"{state.identity}: {availability}; responsible mind {state.owner}. Next: {state.next_step}")
+        if state.reason:
+            output.append(f"  Reason: {state.reason}")
+        if state.evidence:
+            output.append(f"  Evidence: {state.evidence}")
+        if state.retry_task:
+            dependency = registry(entries).get(state.retry_task)
+            output.append(f"  Producer {state.retry_task}: {dependency.status if dependency else 'UNKNOWN missing record'}.")
+            if dependency and dependency.status == "done":
+                output.append(f"  Completed result: {dependency.progress}. Evidence: {dependency.evidence}")
+        elif state.retry_event or state.retry_at:
+            output.append(f"  Retry: {state.retry_event or state.retry_at}.")
+    return output
+
+
+def _claim_delivery_owner(home: Path, identity: str, owner: str) -> None:
+    # The claim caller holds delivery then seed locks at mutation admission.
+    # An initial unlocked read supplies early feedback only.
+    if (home / "deliveries" / f"{identity}.json").exists():
+        from .delivery import load
+        record = load(home, identity)
+        if owner != record["owner"]:
+            raise ValueError("author retains delivery ownership; choose another eligible task")
+
+
+def claim(home: Path, identity: str, owner: str, wake: int, reason: str, evidence: Path) -> FeedEntry:
+    """Atomically reserve the mind's own choice; one record transfers and consumes it."""
+    from .seed import _lock
+    from .delivery import _lock as delivery_lock
+
+    _event(identity)
+    validate_slug(owner)
+    if not reason.strip():
+        raise ValueError("claim requires an explanation of why this step is useful")
+    path, digest = _evidence(evidence)
+    initial = Feed(home).entries()
+    prior = registry(initial).get(identity)
+    if active_wakes(initial).get(owner) != wake:
+        raise ValueError("claim requires this mind's exact active wake")
+    if prior is None or prior.status in {"done", "dropped"}:
+        raise ValueError("task is missing or terminal; completed work cannot be claimed")
+    _claim_delivery_owner(home, identity, owner)
+    if prior.delivery and owner != "genome":
+        raise ValueError("main integration is serialized by genome; choose another eligible task")
+    if identity in pending_tasks(initial).values() or (owner, wake) in pending_tasks(initial):
+        raise ValueError("task or wake is already reserved by an active claim")
+    if not eligible(prior, initial):
+        raise ValueError("task prerequisite unchanged; wait for its exact retry")
+    from .post_check import require
+    from .coordination_checks import episode
+    selection = episode(home, owner, reason, context={"task": identity, "wake": wake, "evidence": path})
+    require(home, owner, reason, context=selection, stage="selection")
+    with delivery_lock(home), _lock(home):
+        entries = Feed(home).entries()
+        if active_wakes(entries).get(owner) != wake:
+            raise ValueError("claim requires this mind's exact active wake")
+        old = registry(entries).get(identity)
+        if old is None or old.status in {"done", "dropped"}:
+            raise ValueError("task is missing or terminal; completed work cannot be claimed")
+        _claim_delivery_owner(home, identity, owner)
+        if old.delivery and owner != "genome":
+            raise ValueError("main integration is serialized by genome; choose another eligible task")
+        pending = pending_tasks(entries)
+        if identity in pending.values() or (owner, wake) in pending:
+            raise ValueError("task or wake is already reserved by an active claim")
+        if not eligible(old, entries):
+            raise ValueError("task prerequisite unchanged; wait for its exact retry")
+        if old.sequence != prior.sequence:
+            raise ValueError("task changed during selection checks; reconcile and resubmit")
+        state = replace(old, owner=owner, helpers=(), status="waiting", activity="taking",
+                        attempt_wake=wake, attempt_observation=None, retry_event=None, retry_at=None,
+                        retry_task=None, retry_after=None, progress=reason.strip(),
+                        evidence=path, evidence_sha256=digest,
+                        reason="The mind claimed this step; reconcile its effects before another attempt.")
+        data = asdict(state)
+        data["previous_owner"] = old.owner
+        return Feed(home).append_task_control(owner, f"[task-claim] {identity}\n" + json.dumps(data, sort_keys=True) +
+            f"\n{owner} chose {identity} for wake {wake}: {reason.strip()} "
+            f"The selected step is {old.next_step} Evidence: {path}. "
+            "Other minds must preserve this active attempt until its handoff settles.")
 
 
 def select_task(entries: list[FeedEntry], owner: str, now: datetime | None = None) -> TaskState | None:

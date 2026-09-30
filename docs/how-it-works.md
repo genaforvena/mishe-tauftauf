@@ -199,11 +199,11 @@ The task commands record an evidence-file path and SHA-256 digest. The file must
 
 ### Once per selected step or fired retry
 
-Before delivering a selected task, the supervisor holds the shared seed lock, writes a durable pending wake, and records a consumed attempt tied to that wake and observation. The task becomes waiting without a retry predicate until the owner records progress, an exact wait, or completion. This prevents the same unchanged step from becoming another quiet self-pick or continuation.
+The supervisor delivers a durable wake and the full shared board. The mind chooses its useful next step, then calls `task claim ID --owner ROLE --wake N --reason TEXT --evidence FILE`. After private pitfall checks, the shared seed lock protects the exact live wake, eligibility, ownership transfer and consumed attempt in one referenced record. The task becomes waiting without a retry predicate until the owner records progress, an exact wait, or completion. This prevents the same unchanged step from becoming another quiet self-pick or continuation.
 
 A fresh pane observation or addressed event can still invite investigation; it does **not** by itself make an unchanged waiting task actionable. A retry event or reached deadline permits one attempt. Delivery consumes that permission, so the same expired deadline or previously published event cannot keep selecting the step.
 
-The supervisor prefers a mind's own eligible work, then eligible offered work. Active pending wakes reserve their tasks. For an offered step, it records one ownership transfer before delivery and clears the helper offer; another helper cannot select the reserved task. These are cooperative scheduling checks, not locks on arbitrary editor writes.
+Offers are advisory invitations. A suitable mind can choose any eligible shared task within its authority without requiring an offer. The board shows ready main integration priority without inheriting preparation priority. Active claims reserve their tasks; competing minds cannot consume the same step. A completed producer stays visible so its waiting consumer can reconcile the evidence. These are cooperative scheduling checks, not locks on arbitrary editor writes.
 
 ### Settle, clear, restore
 
@@ -260,3 +260,11 @@ The improvement is specific: query CI for the remote commit being tended, while 
 ### A separate application example
 
 The public [check ledger example](https://github.com/genaforvena/mishe-tauftauf-example) is a separate application repository with a running plant. Its [commit history](https://github.com/genaforvena/mishe-tauftauf-example/commits/main) and [Actions runs](https://github.com/genaforvena/mishe-tauftauf-example/actions) show code and CI. Its chat, panes, and host readings remain in the ignored local site; those public records are not the full running plant.
+
+### Explainable entries and private correction
+
+Every new entry in `chat.log` is readable text. JSON belongs in immutable referenced records, including supervisor observations, task transitions and work receipts. The historical tape remains replayable. The feed rejects JSON objects and arrays even when embedded in prose or fenced examples; a hash reference must accompany an explanation.
+
+A configured publication checker reviews R01–R08 before every post and P01–P28 before a claim or handoff. Suspicious or unknown verdicts preserve a private draft and correction report without publishing or performing that transition. Correct the draft and its plan without repeating earlier effects. `publication check --source ROLE --file FILE --stage post|selection|handoff` checks privately; `publication status` exposes configuration and last verdict. Unconfigured semantics remain explicitly untested. Model classifications need measured detection validation before trusting a production gate; the JSON rule and canonical claim checks are deterministic.
+
+Witness follows task histories across all roles, including its own work and seed receipts. `task coordination-report` prints evidence-linked deterministic failures and semantic suspicions; panes display these without running model inference on refresh.
