@@ -64,6 +64,25 @@ def cmd_append(args) -> int:
     return 0
 
 
+def cmd_wall(args) -> int:
+    from . import wall
+    if args.wall_command == "show":
+        print(wall.context(args.home, args.owner))
+    elif args.wall_command == "write":
+        wall.write(args.home, args.owner, args.file.read_text())
+    elif args.wall_command == "dm":
+        text = args.file.read_text() if args.file else args.text
+        print(wall.message(args.home, args.source, args.to, text).sequence)
+    elif args.wall_command == "retry":
+        wall.retry(args.home, args.owner)
+    elif args.wall_command == "silence":
+        from . import activity
+        if args.seconds is not None:
+            activity.configure(args.home, args.seconds)
+        print(activity.line(args.home))
+    return 0
+
+
 def cmd_access(args) -> int:
     if args.access_command == "request":
         item = access.request(args.home, args.id, args.owner, args.task, args.capability,
@@ -359,7 +378,8 @@ def cmd_delivery(args) -> int:
 
     action = args.delivery_command
     if action == "submit":
-        result = delivery.submit(args.home, args.id, args.owner, args.repo, args.base, args.branch, args.review)
+        result = delivery.submit(args.home, args.id, args.owner, args.repo, args.base, args.branch, args.review,
+                                 main_only=args.main_only)
     elif action == "check":
         result = delivery.check(args.home, args.id)
     elif action == "integrate":
@@ -586,10 +606,20 @@ def parser() -> argparse.ArgumentParser:
     sub = root.add_subparsers(dest="command", required=True)
     p = sub.add_parser("init"); p.set_defaults(func=cmd_init)
     p = sub.add_parser("append"); p.add_argument("--source", required=True); p.add_argument("text", nargs="?"); p.set_defaults(func=cmd_append)
+    wall = sub.add_parser("wall").add_subparsers(dest="wall_command", required=True)
+    p = wall.add_parser("show"); p.add_argument("--owner", required=True); p.set_defaults(func=cmd_wall)
+    p = wall.add_parser("write"); p.add_argument("--owner", required=True); p.add_argument("--file", type=Path, required=True); p.set_defaults(func=cmd_wall)
+    p = wall.add_parser("retry"); p.add_argument("--owner", required=True); p.set_defaults(func=cmd_wall)
+    p = wall.add_parser("silence"); p.add_argument("--seconds", type=float); p.set_defaults(func=cmd_wall)
+    p = wall.add_parser("dm"); p.add_argument("--source", required=True); p.add_argument("--to", required=True)
+    message = p.add_mutually_exclusive_group(required=True)
+    message.add_argument("--file", type=Path); message.add_argument("--text"); p.set_defaults(func=cmd_wall)
     delivery = sub.add_parser("delivery").add_subparsers(dest="delivery_command", required=True)
     p = delivery.add_parser("submit"); p.add_argument("id"); p.add_argument("--owner", required=True)
     p.add_argument("--repo", type=Path, required=True); p.add_argument("--base", required=True)
     p.add_argument("--branch", required=True); p.add_argument("--review", type=Path, required=True)
+    p.add_argument("--main-only", action="store_true",
+                   help="candidate is not published; land from the exact local worktree and verify CI on main")
     p.set_defaults(func=cmd_delivery)
     p = delivery.add_parser("check"); p.add_argument("id"); p.set_defaults(func=cmd_delivery)
     p = delivery.add_parser("show"); p.set_defaults(func=cmd_delivery)
