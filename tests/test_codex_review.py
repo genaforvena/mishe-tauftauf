@@ -62,12 +62,26 @@ def clear_output(req):
     return (json.dumps({'type':'turn.started'})+'\n'+json.dumps({'type':'item.completed','item':{'type':'agent_message','text':json.dumps(answer)}})+'\n'+json.dumps({'type':'turn.completed'})).encode()
 
 
-def test_successful_stderr_tool_denial_refuses(tmp_path):
+def test_expected_disabled_host_stderr_requires_one_matching_notice(tmp_path):
+    import json
     cli,probe=fake_probe(tmp_path)
-    with patch.object(codex_review,'_invoke',return_value=(clear_output(request()),b'ERROR code-mode host is disabled')):
-        result=codex_review.review(request(),probe_path=probe,cli=str(cli))
-    assert result['results'][0]['verdict']=='unknown'
+    notice=json.dumps({'type':'item.completed','item':{'type':'error','message':codex_review.INITIALIZATION_NOTICE}}).encode()+b'\n'
+    stderr=b'2026-09-30T12:53:27.957439Z '+codex_review.DISABLED_HOST_STDERR
+    outputs=[(notice+clear_output(request()),'clear'),(notice+notice+clear_output(request()),'unknown'),(clear_output(request()),'unknown')]
+    for output,expected in outputs:
+        with patch.object(codex_review,'_invoke',return_value=(output,stderr)):
+            assert codex_review.review(request(),probe_path=probe,cli=str(cli))['results'][0]['verdict']==expected
 
+
+def test_unexpected_stderr_errors_refuse(tmp_path):
+    cli,probe=fake_probe(tmp_path)
+    stderr_values=[
+        b'ERROR codex_core::server: request failed',
+        b'ERROR plugin: earlier failure ERROR codex_core::tools::router: error=code-mode host is disabled',
+    ]
+    for stderr in stderr_values:
+        with patch.object(codex_review,'_invoke',return_value=(clear_output(request()),stderr)):
+            assert codex_review.review(request(),probe_path=probe,cli=str(cli))['results'][0]['verdict']=='unknown'
 
 def test_model_tool_event_refuses(tmp_path):
     import json
@@ -103,15 +117,18 @@ def test_parent_cache_tracks_explicit_cli_and_config(tmp_path,monkeypatch):
 
 
 
-def test_exact_preturn_disabled_host_notice_is_initialization_only(tmp_path):
+def test_disabled_host_notice_is_exactly_once_and_pre_turn(tmp_path):
     import json
     cli,probe=fake_probe(tmp_path)
     notice=json.dumps({'type':'item.completed','item':{'type':'error','message':codex_review.INITIALIZATION_NOTICE}}).encode()+b'\n'
-    with patch.object(codex_review,'_invoke',return_value=(notice+clear_output(request()),b'')):
-        assert codex_review.review(request(),probe_path=probe,cli=str(cli))['results'][0]['verdict']=='clear'
-    output=b'{"type":"turn.started"}\n'+notice+clear_output(request())
-    with patch.object(codex_review,'_invoke',return_value=(output,b'')):
-        assert codex_review.review(request(),probe_path=probe,cli=str(cli))['results'][0]['verdict']=='unknown'
+    outputs=[
+        (notice+clear_output(request()),'clear'),
+        (notice+notice+clear_output(request()),'unknown'),
+        (b'{"type":"turn.started"}\n'+notice+clear_output(request()),'unknown'),
+    ]
+    for output,expected in outputs:
+        with patch.object(codex_review,'_invoke',return_value=(output,b'')):
+            assert codex_review.review(request(),probe_path=probe,cli=str(cli))['results'][0]['verdict']==expected
 
 
 
