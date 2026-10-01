@@ -16,6 +16,7 @@ import tempfile
 import time
 
 INITIALIZATION_NOTICE = 'Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`.'
+DISABLED_HOST_STDERR = b'ERROR codex_core::tools::router: error=code-mode host is disabled'
 MAX_INPUT_BYTES = 120_000
 MAX_OUTPUT_BYTES = 2_000_000
 DISABLED_FEATURES = ('shell_tool','unified_exec','apps','plugins','remote_plugin','hooks','multi_agent','goals','computer_use','browser_use','browser_use_external','in_app_browser','image_generation','view_image','shell_snapshot','memories','skill_search','skill_mcp_dependency_install','tool_suggest','sleep_tool','code_mode_host')
@@ -147,9 +148,20 @@ def review(request, probe_path=None, timeout=180, cli='codex'):
             schema=directory/'response-schema.json';schema.write_text(json.dumps(response_schema(request)))
             instructions=directory/'review-instructions.txt';instructions.write_text(INSTRUCTIONS)
             stdout,stderr=_invoke(command(schema,directory,instructions,cli),encoded,timeout)
-        if b'code-mode host is disabled' in stderr or b'ERROR' in stderr:
+        stderr_lines = stderr.splitlines()
+        disabled_host_errors = [line for line in stderr_lines if line.endswith(DISABLED_HOST_STDERR)]
+        if (
+            len(disabled_host_errors)>1
+            or any(line.count(b'ERROR')!=1 for line in disabled_host_errors)
+            or any(
+                (b'ERROR' in line or b'code-mode host is disabled' in line)
+                and not line.endswith(DISABLED_HOST_STDERR)
+                for line in stderr_lines
+            )
+        ):
             raise ValueError('CLI reported execution-host/tool error')
         answer=None
+        initialization_notice_count=0
         turn_started=False
         turn_completed=False
         for line in stdout.splitlines():
@@ -159,16 +171,20 @@ def review(request, probe_path=None, timeout=180, cli='codex'):
             if event.get('type') in {'error','turn.failed'}:raise ValueError('CLI reported an error')
             if event.get('type') in {'item.started','item.updated','item.completed'}:
                 item=event.get('item',{})
-                # Current CLI emits this precise disabled-host diagnostic before
-                # the model turn even when no tool was requested. It is not a
-                # generated tool attempt; later errors and stderr still refuse.
-                if not turn_started and item.get('type')=='error' and item.get('message')==INITIALIZATION_NOTICE:
+                # The verified disabled-host probe emits this exact notice before the model turn.
+                # Only that pre-turn initialization event is benign; later errors remain refused.
+                if item.get('type')=='error' and item.get('message')==INITIALIZATION_NOTICE:
+                    if turn_started or initialization_notice_count:
+                        raise ValueError('duplicate or late disabled-host initialization notice')
+                    initialization_notice_count=1
                     continue
                 if item.get('type') not in {'agent_message','reasoning'}:
                     raise ValueError('CLI tool use or error refused: '+str(item.get('type')))
                 if item.get('type')=='agent_message' and event['type']=='item.completed':
                     answer=json.loads(item['text'])
         if answer is None or not turn_started or not turn_completed:raise ValueError('CLI omitted completed final typed review')
+        if disabled_host_errors and len(disabled_host_errors)!=initialization_notice_count:
+            raise ValueError('CLI disabled-host stderr did not match its exact pre-turn notice')
         result=validate_response(request,answer)
         result['model']={'checker':'installed Codex CLI default model','capability':capability,'adapter_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
         return result

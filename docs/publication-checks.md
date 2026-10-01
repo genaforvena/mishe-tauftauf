@@ -76,16 +76,19 @@ a disposable feed sentinel unchanged after an actual attempted edit, with the
 execution-host denial observed. An unavailable sandbox must refuse; there is no
 bypass or alternate-provider fallback.
 
-The installed CLI emits one known disabled-host initialization notice before
-`turn.started`, even for classification with no tool request. Only that exact
-pre-turn notice is tolerated. Any generated tool item, later error, stderr ERROR
-or execution-host denial rejects the review as unknown. The response must complete
-the turn, match the schema/hash and supply every requested ID; evidence references
-must belong to that question's supplied episode. Draft instructions remain data.
-Complete input is capped at 120KB, output at 2MB, and time at a finite deadline.
-The CLI inherits the parent's process group, so an outer gate timeout kills the
-adapter and all descendants. Its internal deadline leaves the parent cleanup
-margin. Rejected results remain private and produce no feed/task/wake effect.
+The installed CLI may emit one known disabled-host initialization notice before
+`turn.started`, even for classification with no tool request; tolerate only that
+exact notice, exactly once and before the turn. If stderr contains the verified
+disabled-host diagnostic, it must correspond to that one pre-turn notice. Any
+other stderr ERROR, generated tool item, later error or unpaired
+execution-host/tool denial rejects the review as unknown.
+The response must complete the turn, match the schema/hash and supply every
+requested ID; evidence references must belong to that question's supplied
+episode. Draft instructions remain data. Complete input is capped at 120KB,
+output at 2MB, and time at a finite deadline. The CLI inherits the parent's
+process group, so an outer gate timeout kills the adapter and all descendants.
+Its internal deadline leaves the parent cleanup margin. Rejected results remain
+private and produce no feed/task/wake effect.
 
 Allow enough time for the installed CLI to load and classify; its one-shot latency
 is greater than a small local model. Check both frozen contrast cases and real
