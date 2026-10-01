@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .feed import Feed
@@ -100,8 +102,46 @@ def check_report(home: Path, slug: str) -> str:
     return "SYSTEM ZERO\n" + text + ("" if text.endswith("\n") else "\n")
 
 
+def _watcher(home: Path) -> str:
+    path = home / "checks/silence-heartbeat.json"
+    if not path.exists():
+        return "unknown"
+    try:
+        at = datetime.fromisoformat(json.loads(path.read_text())["at"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return "unreadable"
+    return "stale" if (datetime.now(timezone.utc) - at).total_seconds() > 30 else "live"
+
+
+def headline(home: Path) -> str:
+    """A one-line focus: mind state, delivery staleness and watcher liveness."""
+    path = home / "checks/silence-watch.json"
+    reading = {}
+    if path.exists():
+        try:
+            reading = json.loads(path.read_text())
+        except (OSError, ValueError):
+            reading = {}
+    state = reading.get("state", "UNKNOWN")
+    idle = reading.get("idle_seconds")
+    watcher = _watcher(home)
+    facts = [f"mind {state.lower()}" + (f" idle {idle:.0f}s" if isinstance(idle, (int, float)) else ""),
+             f"watcher {watcher}"]
+    delivery = reading.get("delivery") or {}
+    if isinstance(delivery.get("last_commit_seconds"), (int, float)):
+        facts.append(f"commit {delivery['last_commit_seconds'] / 3600:.1f}h ago")
+    if isinstance(delivery.get("last_activation_seconds"), (int, float)):
+        facts.append(f"activation {delivery['last_activation_seconds'] / 3600:.1f}h ago")
+    level = "RED" if state in {"SILENT", "ENDED"} or watcher != "live" else "GREEN" if state == "OK" else "UNKNOWN"
+    return f"HEADLINE: {level} — " + "; ".join(facts) + "\n"
+
+
 def compose_frame(home: Path, slug: str, timeout: float = 10.0) -> RenderedPain:
     rendered = run_renderer(home, slug, timeout)
+    from . import wall
+    if wall.enabled(home):
+        failure = f"\nRENDERER: RED {rendered.reason or 'command failed'}\n" if not rendered.ok else ""
+        return RenderedPain(slug, headline(home) + rendered.body + failure + wall.pane(home, slug), rendered.ok, rendered.reason)
     entries = Feed(home).entries()
     body = rendered.body
     if not body.endswith("\n"):
