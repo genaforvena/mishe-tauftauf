@@ -398,10 +398,12 @@ class Feed:
         # privately and allocates neither a feed sequence nor a task transition.
         # Inference runs before the feed file's exclusive lock.
         from .post_check import require
-        if (self.home / "publication-check.json").exists() and (not context or "question_episodes" not in context):
+        from .wall import enabled as wall_enabled
+        wall_mode = wall_enabled(self.home)
+        if not wall_mode and (self.home / "publication-check.json").exists() and (not context or "question_episodes" not in context):
             from .coordination_checks import episode
             context = episode(self.home, source, body, context=context)
-        report = require(self.home, source, body, context=context)
+        report = None if wall_mode else require(self.home, source, body, context=context)
         if commit_guard is not None:
             try:
                 commit_guard()

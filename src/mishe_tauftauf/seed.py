@@ -277,6 +277,11 @@ def _send(target: str, message: str) -> None:
                                            before_prompt[-1].endswith("╯"))
                 if card_open and card_ends_at_prompt and _mind_ready(target.split(":", 1)[0],
                                                                      target.split(":", 1)[1].split(".", 1)[0]):
+                    # Attachment-only Enter can leave OMP idle indefinitely.
+                    # A short real input line submits the existing card, without
+                    # pasting another wake or touching a busy model's input.
+                    _tmux("send-keys", "-t", target, "-l",
+                          "Read the attached instructions; reconcile prior effects and the current dashboard.")
                     _tmux("send-keys", "-t", target, "C-m")
 
 
@@ -387,6 +392,9 @@ def _redeliver_pending(home: Path, session: str, slug: str, pending: int) -> str
 
 
 def _restore_text(home: Path, slug: str, session: str, *, wake_delivery: bool = False) -> str:
+    from . import wall
+    if wall.enabled(home):
+        return wall.restore(home, slug, session)
     from .runtime_source import source_for
     runtime = source_for(home, Path(__file__).resolve().parents[2])
     doctrine = _instruction_text(home, "doctrine.md", _core_doctrine(home))
@@ -557,7 +565,9 @@ def init(home: Path, slug: str, engine_command: str = "codex") -> str:
 
 def _mind_launch_argv(home: Path, slug: str) -> tuple[str, ...]:
     from .runtime_source import package_for
-    package_root = str(package_for(home, Path(__file__).resolve().parents[1]))
+    from . import wall
+    package_root = str(Path(__file__).resolve().parents[1] if wall.enabled(home)
+                       else package_for(home, Path(__file__).resolve().parents[1]))
     python_path = os.pathsep.join(part for part in (package_root, os.environ.get("PYTHONPATH", "")) if part)
     mind_path = os.pathsep.join((str(home / "bin"), os.environ.get("PATH", "/usr/bin:/bin")))
     return ("-c", str(home.parent.resolve()), "env", f"PATH={mind_path}",
@@ -592,7 +602,9 @@ def start(home: Path, session: str, slug: str, interval: float) -> str:
     _tmux("set-option", "-p", "-t", f"{target}.1", "remain-on-exit", "on")
     _tmux("select-layout", "-t", target, "even-vertical")
     from .runtime_source import package_for
-    package_root = str(package_for(home, Path(__file__).resolve().parents[1]))
+    from . import wall
+    package_root = str(Path(__file__).resolve().parents[1] if wall.enabled(home)
+                       else package_for(home, Path(__file__).resolve().parents[1]))
     python_path = os.pathsep.join(part for part in (package_root, os.environ.get("PYTHONPATH", "")) if part)
     top_cmd = ("env", f"MISHE_SEED_SESSION={session}", f"PYTHONPATH={python_path}",
                *_python_command("--home", str(home), "pain", "watch", slug, "--interval", str(interval)))
@@ -624,6 +636,13 @@ def stop(home: Path, session: str) -> str:
 
 def tick(home: Path, session: str, slug: str, self_pick_seconds: float = 0) -> str:
     slug = validate_slug(slug)
+    from . import wall
+    if wall.enabled(home):
+        from .tmux import TmuxError
+        try:
+            return wall.tick(home, session, slug, self_pick_seconds)
+        except (OSError, ValueError, TmuxError) as exc:
+            return f"UNKNOWN seed {slug} wall transport/observation: {exc}"
     if not owns_session(home, session):
         raise ValueError(f"session {session} is not owned by {home}")
     with _lock(home):
@@ -844,6 +863,9 @@ def yield_wake(home: Path, slug: str, wake: int, handoff_file: Path, continue_ta
         raise ValueError("handoff is empty")
     if result not in {"changed", "verified", "blocked", "unspecified"}:
         raise ValueError("result must be changed, verified, or blocked")
+    from . import wall
+    if wall.enabled(home):
+        return wall.settle(home, slug, wake, handoff_text, continue_task, result)
     with _lock(home), publication_lock(home):
         _, pending, last_yield, _, _, observation, _, _ = _state(home, slug)
         if pending != wake:
@@ -1001,6 +1023,9 @@ def yield_wake(home: Path, slug: str, wake: int, handoff_file: Path, continue_ta
 
 def clear(home: Path, session: str, slug: str) -> str:
     slug = validate_slug(slug)
+    from . import wall
+    if wall.enabled(home):
+        return wall.clear(home, session, slug)
     if not owns_session(home, session):
         raise ValueError(f"session {session} is not owned by {home}")
     with _lock(home), publication_lock(home):
