@@ -206,6 +206,49 @@ def test_unpublished_or_dirty_candidate_is_not_admitted(candidate):
         submit(candidate)
 
 
+def submit_main_only(candidate):
+    home, _, work, base, _, review = candidate
+    return delivery.submit(home, "repair", "senses", work, base, "candidate", review, main_only=True)
+
+
+def test_main_only_candidate_lands_without_a_publication_branch(candidate, monkeypatch):
+    home, primary, work, _, head, _ = candidate
+    # A main-only repository forbids publication branches: no remote candidate ref.
+    git(work, "push", "-q", "origin", "--delete", "candidate")
+    submit_main_only(candidate)
+    record = delivery.load(home, "repair")
+    assert record["main_only"] is True
+    assert record["phase"] == "ready"
+    # No branch CI is consulted; integration proceeds straight from exact review.
+    monkeypatch.setattr(delivery, "read_ci", lambda *args: ci(head))
+    selected = task_state.select_task(Feed(home).entries(), "genome")
+    assert selected is not None and selected.delivery == "repair"
+    delivery.integrate(home, "repair", "genome")
+    assert git(primary, "ls-remote", "origin", "refs/heads/main").split()[0] == head
+    assert delivery.load(home, "repair")["phase"] == "integrated"
+    proof = home / "rollout.json"
+    proof.write_text(json.dumps(dict(sha=head, state="pass", consumers=["owned-site"])))
+    delivery.finish(home, "repair", "senses", proof)
+    assert delivery.load(home, "repair")["phase"] == "done"
+    # Retirement must not require a remote publication branch either.
+    from mishe_tauftauf.retirement import retire
+    retired = retire(home, "repair")
+    assert retired["state"] == "retired"
+    assert git(primary, "for-each-ref", "--format=%(refname)", "refs/heads") == "refs/heads/main"
+
+
+def test_main_only_still_requires_clean_exact_independent_review(candidate):
+    _, _, work, base, _, review = candidate
+    git(work, "push", "-q", "origin", "--delete", "candidate")
+    (work / "code.txt").write_text("uncommitted")
+    with pytest.raises(ValueError, match="clean"):
+        submit_main_only(candidate)
+    git(work, "checkout", "-q", "--", "code.txt")
+    review.write_text(json.dumps(dict(base=base, head=git(work, "rev-parse", "HEAD"), reviewer="senses", verdict="pass")))
+    with pytest.raises(ValueError, match="independent"):
+        submit_main_only(candidate)
+
+
 def test_advanced_main_blocks_only_affected_candidate(candidate, monkeypatch):
     home, primary, _, _, head, _ = candidate
     submit(candidate)

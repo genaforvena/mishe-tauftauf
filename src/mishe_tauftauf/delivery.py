@@ -115,7 +115,14 @@ def _candidate(record: dict) -> str:
     _git(repo, "merge-base", "--is-ancestor", record["base"], record["head"])
     if record["base"] == record["head"] or _git(repo, "ls-files", ".mishe-tauftauf"):
         raise ValueError("candidate must change source and exclude local plant state")
-    if _remote(repo, record["branch"]) != record["head"]:
+    if record.get("main_only"):
+        # A main-only repository forbids publication branches. The exact local
+        # candidate is the reviewed artifact; exact main CI is verified after
+        # integration by `finish`. The candidate must still be an isolated
+        # worktree, so it must not simply be sitting on main.
+        if _git(repo, "rev-parse", "--abbrev-ref", "HEAD") == "main":
+            raise ValueError("main-only candidate must be an isolated worktree, not main")
+    elif _remote(repo, record["branch"]) != record["head"]:
         raise ValueError("candidate branch must be published at the exact head")
     path, digest = task_state._evidence(Path(record["review"]))
     review = json.loads(Path(path).read_text())
@@ -258,7 +265,8 @@ def _sync(home: Path, record: dict, previous: dict | None) -> None:
                 state = task_state.TaskState(identity, "genome", 0, managed=True,
                     delivery=record["identity"], delivery_token=token, evidence=evidence, evidence_sha256=digest,
                     next_step=f"Run delivery integrate {record['identity']} --source genome; author {record['owner']} owns rollout.",
-                    progress=f"Independent review and branch CI pass for exact head {record['head']}.")
+                    progress=("Independent review passes for exact head " + record['head'] + "; main-only landing, no publication branch."
+                              if record.get("main_only") else f"Independent review and branch CI pass for exact head {record['head']}."))
                 _publish(home, record, lambda guard: task_state._append(home, "genome", state, "task-add", commit_guard=guard), tasks=(identity,))
             elif (old.status == "waiting" and old.delivery_token != token
                   and identity not in task_state.pending_tasks(entries).values()):
@@ -323,7 +331,8 @@ def _sync(home: Path, record: dict, previous: dict | None) -> None:
             "Unrelated source work remains admissible.", record, kind="delivery", commit_guard=guard))
 
 
-def submit(home: Path, identity: str, owner: str, repo: Path, base: str, branch: str, review: Path) -> dict:
+def submit(home: Path, identity: str, owner: str, repo: Path, base: str, branch: str, review: Path,
+           *, main_only: bool = False) -> dict:
     task_state._event(identity)
     validate_slug(owner)
     if len(identity) > 100:
@@ -341,9 +350,12 @@ def submit(home: Path, identity: str, owner: str, repo: Path, base: str, branch:
         raise ValueError("candidate base must be a full SHA")
     path, digest = task_state._evidence(review)
     record = dict(version=1, identity=identity, owner=owner, repo=str(repo), workspace=str(home.parent.resolve()), base=base,
-                  head=_git(repo, "rev-parse", "HEAD"), branch=branch,
+                  head=_git(repo, "rev-parse", "HEAD"), branch=branch, main_only=main_only,
                   origin=_git(repo, "remote", "get-url", "origin"), review=path, review_sha256=digest,
-                  phase="branch-ci", reason="Published reviewed candidate awaits exact branch CI", ci={}, author_wait_pending=True)
+                  phase="ready" if main_only else "branch-ci",
+                  reason=("Reviewed main-only candidate awaits integration; no publication branch"
+                          if main_only else "Published reviewed candidate awaits exact branch CI"),
+                  ci={}, author_wait_pending=True)
     main = _candidate(record)
     if main != base:
         raise ValueError("main advanced; author must rebase and obtain exact review before submitting")
@@ -400,6 +412,8 @@ def check(home: Path, identity: str) -> dict:
                     record.update(phase="integrated", reason="Remote main contains exact candidate", integrated=record["head"])
                 elif main != record["base"]:
                     record.update(phase="blocked", reason="Remote main advanced; author must rebase and renew review/CI")
+                elif record.get("main_only"):
+                    record.update(phase="ready", reason="Exact review passes; main-only candidate awaits integration")
                 else:
                     result = read_ci(repo, record["head"], record["branch"])
                     record["ci"] = result
@@ -464,9 +478,10 @@ def integrate(home: Path, identity: str, source: str) -> dict:
         if main != record["head"]:
             if main != record["base"]:
                 raise ValueError("main advanced; author must rebase and renew review/CI")
-            result = read_ci(repo, record["head"], record["branch"])
-            if result.get("state") != "pass" or result.get("sha") != record["head"]:
-                raise ValueError("exact branch CI must pass before integration")
+            if not record.get("main_only"):
+                result = read_ci(repo, record["head"], record["branch"])
+                if result.get("state") != "pass" or result.get("sha") != record["head"]:
+                    raise ValueError("exact branch CI must pass before integration")
             # The ancestry check above makes this a fast-forward. The exact lease
             # rejects a concurrently changed main, including another site writer.
             record["integration_started"] = True

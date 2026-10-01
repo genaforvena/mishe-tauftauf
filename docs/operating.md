@@ -95,6 +95,7 @@ journalctl --user -u "$SESSION-$ROLE.service" -n 100 --no-pager
 ```
 
 The core plant also has a `SESSION-coordination.service` release follower. Manual trials have no newly installed resident services, so absence of those units is not itself a failed trial. Conversely, `--no-services` does not deactivate units from an earlier persistent plant.
+The health dashboard's `STATE: UNKNOWN — services unavailable: Failed to connect to bus: No medium found` means its renderer could not reach the user's systemd bus; it does not prove that a listed unit is down. Diagnose unit states as the same user with a reachable user bus (usually `XDG_RUNTIME_DIR=/run/user/$(id -u)`) before attributing UNKNOWN to service health. The dashboard supplies this runtime directory only when unset; genuine query failures remain UNKNOWN.
 
 ### Doctor is a check with a repair side effect
 
@@ -302,28 +303,37 @@ Keep these boundaries when inspecting or landing work:
 - Do not stage or commit the site directory. Doctor checks for tracked/staged site files; an ignore rule alone does not untrack already committed files.
 - Do not promote a local observation, artifact, or private permission decision into shared source merely because it helped once.
 - A reusable lesson becomes shared behavior through a deliberate source change, verification, independent review, and scoped landing.
-- Authors commit scoped isolated candidates excluding site state, obtain independent review, publish branches and check exact CI. Genome integrates ready commits; authors verify final main CI and rollout. The task stays open until delivery is complete; CI repairs also need the successful replacement run.
+- Land reviewed source to the durable `main` branch. Where repository policy forbids publication branches, submit the exact isolated candidate with `--main-only`; exact `main` CI is verified after integration. Genome integrates ready commits; authors verify final `main` CI and rollout. The task stays open until delivery is complete; CI repairs also need the successful replacement run.
 - Preserve the append-only tape and handoff trail during diagnosis. They explain what happened and which action remains owed.
 
 The local agent contract is [AGENTS.md](../AGENTS.md). Tracked [seed doctrine](../src/mishe_tauftauf/seed_doctrine.md) is loaded at restore and mirrored into `SITE/doctrine.md` at planting. The [mesh culture mapping](../instructions/mesh-culture.md) describes the source rules this narrower seed carries; this plant does not claim fleet authority or the larger mesh's native lifecycle accounting.
 
 For first-task proof, return to [Getting started](getting-started.md#what-counts-as-success). For charters, task protocol, and the observation-to-action loop, see [How it works](how-it-works.md).
 
-## Author-owned source delivery
+## Landing reviewed source
 
 Source authors retain delivery ownership. Prepare each candidate in a separate linked
-worktree of this plant's repository, based on current origin/main. Keep one active
+worktree of this plant's repository, based on the current `origin/main`. Keep one active
 candidate per author/repository; blocked candidates remain visible and free that slot.
 Shared checkout drafts are exceptional recovery work and cannot hold clean candidates.
 
-Run the required checks, commit scoped source bytes, obtain independent review of that
-exact base/head, and push the author branch. Store the review under SITE/artifacts as
-JSON with `base`, `head`, `reviewer` (a role different from the author), and `verdict`:
-`"pass"`. The artifact records the review result; its immutable digest binds submission
-and integration. Preserve the reviewer's full findings alongside it. The current
-workflow requirement is a successful push run named `CI` for the exact branch and SHA.
+Run the required checks, commit scoped source bytes, and obtain independent review of the
+exact base/head. Store the review under `SITE/artifacts` as JSON with `base`, `head`,
+`reviewer` (a role different from the author), and `verdict`: `"pass"`. The artifact
+records the review result; its immutable digest binds submission and integration.
+Preserve the reviewer's full findings alongside it.
+
+`main` is the sole durable branch, locally and on GitHub. A plant whose repository
+policy forbids publication branches submits the exact isolated candidate with
+`--main-only`: no temporary branch is created and no branch CI is consulted, and exact
+`main` CI is verified after integration. A plant whose policy allows branches may
+instead publish the candidate branch and have its exact branch CI checked before
+integration. Unfinished source stays in isolated detached candidates; a candidate need
+not have a local author branch, and retirement can bind a self-contained recovery bundle
+to its exact detached HEAD.
 
 ```sh
+# Add --main-only when repository policy forbids publication branches.
 "$SITE/bin/mishe-tauftauf" --home "$SITE" delivery submit TASK_ID \
   --owner senses --repo "$CANDIDATE" --base "$BASE_SHA" \
   --branch "$AUTHOR_BRANCH" --review "$SITE/artifacts/review.json"
@@ -340,24 +350,22 @@ Genome receives only that integration step:
 "$SITE/bin/mishe-tauftauf" --home "$SITE" delivery integrate TASK_ID --source genome
 ```
 
-The command revalidates review, clean exact-head candidate, published branch and CI,
-then pushes a fast-forward to main with an exact-base lease. It changes no shared
-checkout bytes or index. If main advanced, the author rebases, reruns checks, renews
-review and publishes a new revision before resubmitting. After a crash, the watcher
-reconciles actual remote ancestry and repairs missing receipts before another push.
-Once genome/operator has initiated an exact integration, the watcher may resume that
-same leased push after revalidating refs, review and CI. A persistent rejection stays
-blocked without model retries; a new candidate revision requires a new initiation.
-An active integration attempt prevents candidate replacement until it settles.
-Delivery records and the exact main lease are serialized separately from slow private
-publication checks. A saved fact may precede its admitted feed projection. Final
-commit guards reject a projection if its delivery snapshot or task registration
+The command revalidates review, the clean exact-head candidate, and exact CI (branch
+CI when a branch is published), then pushes a fast-forward to `main` with an exact-base
+lease. It changes no shared checkout bytes or index. If `main` advanced, the author
+rebases, reruns checks, renews review and submits a new revision. After a crash, the
+watcher reconciles actual remote ancestry and repairs missing receipts before another
+push. Once genome/operator has initiated an exact integration, the watcher may resume
+that same leased push after revalidating refs, review and CI. A persistent rejection
+stays blocked without model retries; a new candidate revision requires a new
+initiation. An active integration attempt prevents candidate replacement until it
+settles. Delivery records and the exact `main` lease are serialized separately from slow
+private publication checks. A saved fact may precede its admitted feed projection.
+Final commit guards reject a projection if its delivery snapshot or task registration
 changed during review. Reconcile the saved record after a refusal; do not repeat a
-successful remote push or overwrite a newer task wait. The watcher retries pending
-projections from current facts without retaining the global delivery lock during
-model work.
+successful remote push or overwrite a newer task wait.
 
-The author wakes after integration, checks the exact main push CI, deploys the clean
+The author wakes after integration, checks the exact `main` push CI, deploys the clean
 release only to owned consumers, and verifies their live checks. Store a JSON rollout
 receipt with `sha`, `state`: `"pass"`, and a nonempty `consumers` list identifying the
 checked artifacts/targets. Then complete the author's delivery:
@@ -367,7 +375,7 @@ checked artifacts/targets. Then complete the author's delivery:
   --owner senses --evidence "$SITE/artifacts/rollout.json"
 ```
 
-Final main CI must pass; unfinished author child tasks prevent completion. The
+Final `main` CI must pass; unfinished author child tasks prevent completion. The
 consumer receipt is the author's evidence claim and needs live verification. Records
 and immutable transition snapshots stay inside the ignored site. `delivery check
 TASK_ID` performs a bounded manual reconciliation; the watcher normally owns it.
@@ -375,29 +383,34 @@ Historical `task landing-status` remains readable and `task production-check` re
 source production allowed. New raw landing registrations are retired; no recursive
 landing graph or global HOLD remains.
 
-## Temporary branch retirement
+## Candidate retirement
 
-After `delivery finish`, the existing CI watcher checks retirement each tick. It verifies completed rollout, ancestry against actual remote main, exact unchanged local and remote candidate refs, a clean worktree, and no live process or installed runtime reference. It saves and verifies a recovery bundle under `SITE/retired-candidates/` before deleting the remote branch with an exact lease, atomically relocating the entire candidate directory and its exact Git administrative registration into private recovery archives, and atomically deleting the exact local ref. It preserves the shared checkout and detached runtime releases.
+After `delivery finish`, the existing CI watcher checks retirement each tick. It
+verifies completed rollout, ancestry against actual remote `main`, unchanged candidate
+refs, a clean worktree, and no live process or installed runtime reference. It saves and
+verifies a recovery bundle under `SITE/retired-candidates/` before deleting any
+temporary remote candidate branch with an exact lease, relocating the whole candidate
+directory and its exact Git administrative registration into private recovery archives,
+and deleting the exact local ref. It preserves the shared checkout and detached runtime
+releases.
 
-A busy process, new dirty files, advanced branch, unavailable check, or failed removal stays visible in `delivery show` as retirement pending. The watcher retries the same concrete condition; it does not create repeated model work. Run `delivery retire ID` for a bounded manual reconciliation from outside the candidate directory. Retirement resumes from the saved recovery edge after a crash. Full-directory relocation preserves ignored files even if they arrived after the admission check; no recursive deletion or broad registration pruning occurs. Useful unmerged or dirty work must first be reconciled, adopted into active delivery, or archived with a checked supersession reason. Main is the durable branch; temporary branches have an active task and are retired once their checked outcome is delivered.
+A busy process, new dirty files, advanced ref, unavailable check, or failed removal
+stays visible in `delivery show` as retirement pending. The watcher retries the same
+concrete condition; it does not create repeated model work. Run `delivery retire ID`
+for a bounded manual reconciliation from outside the candidate directory. Retirement
+resumes from the saved recovery edge after a crash. Full-directory relocation preserves
+ignored files even if they arrived after the admission check; no recursive deletion or
+broad registration pruning occurs. Useful unmerged or dirty work must first be
+reconciled, adopted into active delivery, or archived with a checked supersession
+reason. `main` is the durable branch; temporary branches, when a plant uses them, have
+an active task and are retired once their checked outcome is delivered.
 
+A retirement retry never repeats ref deletion after the durable deletion boundary if any
+owned local, remote, or tracking handle remains. A matching SHA can still be a new
+registration after a crash. Preserve it and the recovery artifacts; reconcile the
+remaining handle with its owner before retrying. An absent scoped ref inventory permits
+archive recovery to continue. A retired receipt also rechecks that inventory and cannot
+conceal a recreated handle.
 
-Runtime refresh samples CI without running candidate task projections. The persistent CI watcher continues to own delivery reconciliation and retirement; its configured publication checks may wait independently while the installer restarts services onto the selected clean release.
-
-
-Main is the sole durable branch, locally and on GitHub. Keep unfinished source
-in isolated detached candidates; a temporary remote author branch is only a
-publication handle for exact review, CI and integration. After checked delivery,
-retirement must remove the exact local, remote and origin tracking refs and
-verify the resulting inventory. A candidate need not have a local author branch:
-retirement can bind a self-contained recovery bundle to its exact detached HEAD.
-Advanced refs, dirty source and live use remain protected. Reconcile their useful
-work or preserve it in a verified recovery archive before removing their refs.
-A completed rollout with pending retirement is still unfinished reconciliation.
-
-A retirement retry never repeats ref deletion after the durable deletion boundary
-if any owned local, remote, or tracking handle remains. A matching SHA can still
-be a new registration after a crash. Preserve it and the recovery artifacts;
-reconcile the remaining handle with its owner before retrying. An absent scoped
-ref inventory permits archive recovery to continue. A retired receipt also
-rechecks that inventory and cannot conceal a recreated handle.
+The local wall-coordination trial uses one shared checkout and the reversible patch gate
+instead of this delivery flow; see [wall coordination](wall-coordination.md).
