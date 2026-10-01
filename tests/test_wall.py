@@ -279,3 +279,82 @@ def test_restarting_unit_stays_visible(tmp_path, monkeypatch):
     body = wall_view.render(home, "health")
     assert "SERVICE flaky.service: GREEN active/running restarts=7" in body
     assert "0 restarts" not in body
+
+
+def test_display_ages_do_not_create_observations_or_wakes(tmp_path, monkeypatch):
+    from mishe_tauftauf import wall, tmux, dashboard
+    setup_wall(tmp_path)
+    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
+    monkeypatch.setattr(tmux, "_pane_stopped_or_dead", lambda *a: False)
+    stamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    monkeypatch.setattr(tmux, "capture_raw", lambda *a: f"-- pane live {stamp} · refresh 5s · ticks every frame --\n")
+    sensor = ["HEADLINE: GREEN — mind ok idle 5s; watcher live; commit 0.1h ago; activation 0.5h ago\nPATCH repair: applied\nSTATE: GREEN steady\n"]
+    monkeypatch.setattr(dashboard, "read", lambda *a: (sensor[0], True))
+    monkeypatch.setattr(seed, "_mind_ready", lambda *a: True)
+    monkeypatch.setattr(seed, "_send", lambda *a: None)
+    first = int(wall.tick(tmp_path, "session", "genome", 3600).split()[-1])
+    note = tmp_path / "note"
+    note.write_text("Waiting for named producer evidence.")
+    seed.yield_wake(tmp_path, "genome", first, note, result="verified")
+    Feed(tmp_path).append("seed", f"seed clear genome after={first}\nRotated.")
+    before = len(Feed(tmp_path).entries())
+    sensor[0] = sensor[0].replace("idle 5s", "idle 22s").replace("0.1h ago", "0.2h ago")
+    assert wall.tick(tmp_path, "session", "genome", 3600).startswith("waiting")
+    assert len(Feed(tmp_path).entries()) == before
+    sensor[0] = sensor[0].replace("HEADLINE: GREEN", "HEADLINE: UNKNOWN").replace("watcher live", "watcher unknown")
+    assert wall.tick(tmp_path, "session", "genome", 3600).startswith("wake")
+
+
+@pytest.mark.parametrize("role", ["health", "witness", "genome"])
+def test_patch_and_headline_failures_are_meaningful_for_every_monitor(role):
+    from mishe_tauftauf import wall
+    healthy = "HEADLINE: GREEN — mind ok idle 5s; watcher live; commit unknown; activation unknown\nPATCH repair: applied\nSERVICES: GREEN — 1 listed\nSTATE: GREEN\n"
+    assert wall.observation_text(role, healthy) != wall.observation_text(role, healthy.replace("PATCH repair: applied", "PATCH repair: revert-failed"))
+    assert wall.observation_text(role, healthy) != wall.observation_text(role, healthy.replace("watcher live", "watcher unknown"))
+
+
+def test_wall_outcome_requires_evidence_and_cli_records_prose(tmp_path):
+    from mishe_tauftauf import wall
+    from mishe_tauftauf.cli import main
+    from mishe_tauftauf.records import payload
+    setup_wall(tmp_path)
+    note = tmp_path / "note.md"
+    note.write_text("Removed the failed camera hypothesis after a controlled comparison.")
+    evidence = tmp_path / "comparison.txt"
+    evidence.write_text("control=4 candidate=4")
+    with pytest.raises(ValueError, match="evidence"):
+        wall.outcome(tmp_path, "discover", "hypothesis-changed", note.read_text(), tmp_path / "absent")
+    assert main(["--home", str(tmp_path), "wall", "outcome", "--owner", "discover", "--kind", "hypothesis-changed", "--file", str(note), "--evidence", str(evidence)]) == 0
+    entry = Feed(tmp_path).entries()[-1]
+    assert entry.body.startswith("Wall outcome hypothesis-changed")
+    assert payload(entry)["evidence"]["sha256"]
+
+
+def test_delivery_dashboard_separates_source_and_runtime_and_marks_incomplete(tmp_path, monkeypatch):
+    from mishe_tauftauf import wall_view
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health/services.json").write_text(json.dumps(["test.service"]))
+    (home / "patches").mkdir()
+    (home / "patches/change.json").write_text(json.dumps({"phase": "applied"}))
+    monkeypatch.setattr(wall_view, "ci_line", lambda *a: "CI: PASS sha=older")
+    def commands(command, **kwargs):
+        output = ("newer\n" if "rev-parse" in command else " M file\n" if "status" in command else
+                  "Id=test.service\nActiveState=active\nSubState=running\nNRestarts=0\n")
+        return subprocess.CompletedProcess(command, 0, output, "")
+    monkeypatch.setattr(wall_view.subprocess, "run", commands)
+    text = wall_view.render(home, "genome")
+    assert "CI: PASS sha=older" in text and "SOURCE: checkout=newer changed_paths=1" in text
+    assert "DEPLOYED: root=" in text and "sha256=" in text
+    assert "PATCH change: applied delivery=incomplete" in text
+    (home / "patches/change.json").write_text(json.dumps({"phase": "applied", "delivery_verified": True}))
+    assert "PATCH change: applied delivery=verified" in wall_view.render(home, "genome")
+
+
+@pytest.mark.parametrize("value", [[1800], {"genome": -1}, {"genome": float("inf")}, {"genome": "soon"}])
+def test_invalid_periodic_review_config_is_visible_unknown(tmp_path, value):
+    setup_wall(tmp_path)
+    config = json.loads((tmp_path / "coordination-mode.json").read_text())
+    config["self_pick_seconds"] = value
+    (tmp_path / "coordination-mode.json").write_text(json.dumps(config))
+    assert "UNKNOWN" in seed.tick(tmp_path, "session", "genome")

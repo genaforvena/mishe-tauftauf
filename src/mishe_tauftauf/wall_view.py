@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -10,6 +11,31 @@ from pathlib import Path
 from . import seed_culture_views
 from .ci_watch import line as ci_line
 from .observations import validate_slug
+
+
+def deployment_lines(home: Path) -> list[str]:
+    """Show checkout identity separately from the actual imported runtime bytes."""
+    try:
+        sha = subprocess.run(["git", "-C", str(home.parent), "rev-parse", "HEAD"],
+                             capture_output=True, text=True, timeout=5)
+        dirty = subprocess.run(["git", "-C", str(home.parent), "status", "--porcelain"],
+                               capture_output=True, text=True, timeout=5)
+        source = (f"SOURCE: checkout={sha.stdout.strip()} changed_paths={len(dirty.stdout.splitlines())}; CI reported separately"
+                  if sha.returncode == dirty.returncode == 0 else "SOURCE: UNKNOWN — checkout identity unavailable")
+    except (OSError, subprocess.SubprocessError):
+        source = "SOURCE: UNKNOWN — checkout identity unavailable"
+    root = Path(__file__).resolve().parents[2]
+    digest = hashlib.sha256()
+    try:
+        files = sorted((root / "src/mishe_tauftauf").glob("*.py"))
+        if not files:
+            raise ValueError("runtime modules missing")
+        for path in files:
+            digest.update(path.name.encode() + b"\0" + path.read_bytes() + b"\0")
+        deployed = f"DEPLOYED: root={root} sha256={digest.hexdigest()} (Python modules; separate from checkout CI)"
+    except (OSError, ValueError) as exc:
+        deployed = f"DEPLOYED: UNKNOWN — runtime fingerprint unavailable: {exc}"
+    return [source, deployed]
 
 
 def render(home: Path, role: str) -> str:
@@ -23,12 +49,13 @@ def render(home: Path, role: str) -> str:
             return f"DOCS FILE: {document}\nSTATE: UNKNOWN — page unavailable: {exc}\n"
     if role in {"discover", "senses"}:
         return getattr(seed_culture_views, role)(home)
-    lines = ["OBSERVATION — deterministic facts; minds decide the next work", ci_line(home)]
+    lines = ["OBSERVATION — deterministic facts; minds decide the next work", ci_line(home), *deployment_lines(home)]
     for path in sorted((home / "patches").glob("*.json")):
         try:
             record = json.loads(path.read_text())
             phase = record["phase"]
-            lines.append(f"PATCH {path.stem}: {phase}" + (f" failure={record['failure']}" if record.get("failure") else ""))
+            delivery = (" delivery=" + ("verified" if record.get("delivery_verified") else "incomplete")) if phase == "applied" else ""
+            lines.append(f"PATCH {path.stem}: {phase}" + delivery + (f" failure={record['failure']}" if record.get("failure") else ""))
         except (OSError, ValueError, KeyError) as exc:
             lines.append(f"UNKNOWN patch {path.stem}: {exc}")
     try:

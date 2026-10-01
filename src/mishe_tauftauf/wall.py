@@ -268,7 +268,13 @@ def tick(home: Path, session: str, role: str, self_pick_seconds: float = 300) ->
     from .observations import strip_owned_chrome, run_filter
     from .tmux import owns_session, capture_raw, lease_value, _pane_stopped_or_dead
     cfg = settings(home)
-    self_pick_seconds = float(cfg.get("self_pick_seconds", {}).get(role, self_pick_seconds))
+    intervals = cfg.get("self_pick_seconds", {})
+    if not isinstance(intervals, dict):
+        raise ValueError("self_pick_seconds must map roles to review intervals")
+    try:
+        self_pick_seconds = float(intervals.get(role, self_pick_seconds))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("self_pick_seconds must be a numeric review interval") from exc
     if not math.isfinite(self_pick_seconds) or self_pick_seconds < 0:
         raise ValueError("self_pick_seconds must be finite and nonnegative")
     if cfg.get("paused"):

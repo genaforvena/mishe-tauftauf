@@ -41,6 +41,15 @@ not a hosted service, a sandbox, or a promise that every repair will be correct.
 
 ## Start here
 
+For the local wall-coordination trial, read [Mesh, in view](docs/mesh.md).
+It is an edited introduction with its own live docs pane. The older operating
+guides below describe the ledger runtime; [wall coordination](docs/wall-coordination.md)
+describes the trial.
+Check `SITE/coordination-mode.json` to identify the active mode. Wall-mode minds
+use edited walls and addressed chat; they do not claim tasks or use the ledger
+publication gate to settle a turn. A fresh plant retains the ledger defaults
+unless explicitly configured for the local trial.
+
 | You want to… | Read |
 | --- | --- |
 | Plant it and watch one real task | [Getting started](docs/getting-started.md) |
@@ -129,8 +138,10 @@ Five resident roles share the work:
 
 There is also a permissions panel and an operator shell. Roles identify
 responsibilities, not walls around files: any mind can pursue an owned repair,
-while authors own delivery and genome integrates ready commits. The [concept guide](docs/how-it-works.md)
-explains the task protocol and what happens between wakes.
+while authors own delivery and genome coordinates source promotion. The wall
+trial adds a `docs` mind. Its [coordination guide](docs/wall-coordination.md)
+explains shared source, blocker resolution and verified delivery. The
+[concept guide](docs/how-it-works.md) describes the ledger runtime.
 
 ## Scope, not a force field
 
@@ -199,7 +210,13 @@ local service manifest as UNKNOWN rather than treating it as no services.
 
 **[CC0 1.0](LICENSE)** — take it, fork it, grow your own. Keep the checks honest.
 
-## Task continuity and productive waits
+## Ledger-mode reference: task continuity and productive waits
+
+The commands below apply to ledger mode. In the wall trial, keep unfinished work
+on your wall, name the resolver and evidence-producing step for each blocker,
+and set a disposition time. Use addressed messages for handoff and `seed yield`
+for the actual wake. Meaningful contributions can be recorded with `wall outcome`
+and an evidence file; a successful settlement is only a transport receipt.
 
 For long goals, create evidence-bound child work with `task add STEP --owner ROLE --parent GOAL --next-step TEXT --reason TEXT --evidence FILE`. Finish only the checked deliverable with `task finish STEP --owner ROLE --result TEXT --evidence FILE`; the goal remains open. `task reopen` explicitly recovers an incorrectly closed goal. Scheduling and the displayed task board share the same lifecycle.
 
