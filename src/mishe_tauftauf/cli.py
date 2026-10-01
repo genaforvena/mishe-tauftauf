@@ -75,6 +75,8 @@ def cmd_wall(args) -> int:
         print(wall.message(args.home, args.source, args.to, text).sequence)
     elif args.wall_command == "retry":
         wall.retry(args.home, args.owner)
+    elif args.wall_command == "outcome":
+        print(wall.outcome(args.home, args.owner, args.kind, args.file.read_text(), args.evidence).sequence)
     elif args.wall_command == "silence":
         from . import activity
         if args.seconds is not None:
@@ -611,6 +613,9 @@ def parser() -> argparse.ArgumentParser:
     p = wall.add_parser("write"); p.add_argument("--owner", required=True); p.add_argument("--file", type=Path, required=True); p.set_defaults(func=cmd_wall)
     p = wall.add_parser("retry"); p.add_argument("--owner", required=True); p.set_defaults(func=cmd_wall)
     p = wall.add_parser("silence"); p.add_argument("--seconds", type=float); p.set_defaults(func=cmd_wall)
+    p = wall.add_parser("outcome"); p.add_argument("--owner", required=True)
+    p.add_argument("--kind", choices=("accepted", "blocker-resolved", "blocker-retired", "hypothesis-changed"), required=True)
+    p.add_argument("--file", type=Path, required=True); p.add_argument("--evidence", type=Path, required=True); p.set_defaults(func=cmd_wall)
     p = wall.add_parser("dm"); p.add_argument("--source", required=True); p.add_argument("--to", required=True)
     message = p.add_mutually_exclusive_group(required=True)
     message.add_argument("--file", type=Path); message.add_argument("--text"); p.set_defaults(func=cmd_wall)

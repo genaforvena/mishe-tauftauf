@@ -13,6 +13,19 @@ are visible to everyone; they are not private inboxes. Use the site CLI with
 `--home SITE` for each command. `seed yield` saves the wall and settles a turn
 without a task claim or semantic receipt review.
 
+For each active blocker, put its resolver, missing evidence, next bounded
+evidence-producing action, and escalation or disposition time on the wall.
+Address the resolver through chat. At the cutoff resolve, escalate, or explicitly
+defer with a named trigger; do not copy an unchanged wait indefinitely. Choose
+other useful work while waiting. This is edited prose, not a task ledger.
+
+`wall outcome --owner ROLE --kind KIND --file NOTES --evidence FILE` records
+a contribution with an existing nonempty evidence file inside the owned site.
+Kinds are `accepted`, `blocker-resolved`, `blocker-retired`, and
+`hypothesis-changed`. The immutable reference binds the evidence digest. These
+are author reports, not independent acceptance. Do not report unchanged status
+reconciliation as an outcome or fabricate evidence for historical work.
+
 Delivery retries are bounded. If a failed send exhausts them, its pane shows
 UNKNOWN. A mind or operator reconciles the notes and actual process, then uses
 `wall retry --owner ROLE` to redeliver the same pending turn. This does not create
@@ -32,6 +45,11 @@ the mind state, watcher liveness and delivery age. The watcher preserves a
 pending health wake and waits for a busy mind's input boundary. Quiet planning
 may be healthy; silence is a reason to inspect, not proof of failure. Pausing
 the trial or setting the threshold to zero disables alerts.
+Headline ages remain visible without producing observation events. Semantic
+mind/watcher status and patch/service changes remain wake triggers. An optional
+`self_pick_seconds` object in the mode file sets each role's periodic review
+interval; zero disables that role's periodic review, not messages or sensor
+events. Quiet reviews can be less frequent than pane refreshes.
 
 The `docs` pane reads [the living introduction](mesh.md) directly. Its editor
 should rewrite and delete, keeping purpose, current behavior and limitations
@@ -48,7 +66,12 @@ Use `python -m mishe_tauftauf.wall_patch --home SITE --id NAME ACTION`:
 1. `prepare --files PATH...` saves the scoped source and running bytes before editing.
 2. Edit in the shared checkout. Keep unrelated work intact.
 3. `check --command '[".venv/bin/pytest", "-q", "tests/test_feature.py"]'`
+   with `--activate`, `--observe` and `--revert-observe` JSON argument lists
    runs deterministic checks and the configured independent System 1 reviewer.
+   Supply the actual restart, new-consumer check and restored-consumer check
+   scripts here. Review includes those commands and owned script bytes; changing
+   them requires a new check. Historical callers that supply the plan only at
+   apply receive another independent reading before any runtime writes.
    A refusal leaves the draft and review visible under `SITE/patches/`.
 4. `apply --activate '["PATH_TO_RESTART_SCRIPT"]' --observe '["PATH_TO_LIVE_CHECK"]'`
    copies only reviewed bytes into the running snapshot, restarts affected
@@ -59,7 +82,13 @@ Use `python -m mishe_tauftauf.wall_patch --home SITE --id NAME ACTION`:
    files or perform irreversible external actions. Recovery covers scoped file
    bytes and consumer restart, not arbitrary side effects of a shell command.
 5. `revert --activate '["PATH_TO_RESTART_SCRIPT"]'` returns to the saved runtime.
-   Exercise revert and reapply before calling delivery complete. Source drafts
+   `verify` exercises revert, the reviewed restored-consumer observation,
+   reapply and the reviewed new-consumer observation under the patch lock.
+   Only a successful exercise records `delivery_verified=true`, the exact patch
+   digest and verification time. `applied` alone is incomplete delivery.
+   Historical overlapping patches must not be replayed blindly; retain missing
+   evidence and use a distinct current-byte patch when a safe exercise is needed.
+   Source drafts
    remain available for diagnosis. Genome may commit accounted-for paths after
    reviewing the exact final diff; no temporary source branches are needed.
 
@@ -79,6 +108,8 @@ the mode file is not a safe rollback by itself: use the saved rollback script
 to restore the original runtime callers and instructions together.
 
 Measurements compare wakes, redeliveries, settlements, chat, gate refusals,
-service restart deltas and observed patch results. Read representative work as
+service restart deltas, evidenced outcome reports, verified delivery times and
+latency, and applied patches lacking recovery verification. Model cost remains
+UNKNOWN until a complete attributed usage source is wired. Read representative work as
 well as counts. Planning is not failure; message volume is not productivity.
 The local baseline and trial report belong under the ignored site.
