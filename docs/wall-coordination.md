@@ -18,7 +18,7 @@ directory (`.mishe-tauftauf/` in this plant). `seed yield` saves the wall and
 settles a turn without a task claim or semantic receipt review.
 
 A wall is a short, current document, not an append-only log: `wall write` rejects
-a notes file over the hard limit (default 8192 bytes / 120 lines) with an error
+a notes file over the hard limit (default 16384 bytes / 200 lines) with an error
 naming the actual size and the limit. The bound keeps a wall readable and current —
 it must not accumulate stale detail, and superseded claims or past mistakes must
 not be carried forward to mislead the next reader. Rewrite the wall down instead
