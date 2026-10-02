@@ -27,6 +27,13 @@ _PUBLICATION_GUARDS = {}
 _PUBLICATION_GUARDS_LOCK = threading.Lock()
 _PUBLICATION_DEPTH = threading.local()
 
+# Parsed full-feed reads cost ~0.6s on a multi-megabyte tape and every pane
+# re-reads it per frame. Keep one parsed revision per feed path, keyed by the
+# index's file metadata, so unchanged frames skip the parse. Any append or
+# external rewrite changes inode/size/mtime/ctime and invalidates the entry.
+_ENTRIES_CACHE: dict[str, tuple[tuple, list]] = {}
+_ENTRIES_CACHE_LOCK = threading.Lock()
+
 
 @contextmanager
 def publication_lock(home):
@@ -326,6 +333,12 @@ class Feed:
             index = self._index(handle)
             if start > index["sequence"]:
                 return []
+            metadata = tuple(index["metadata"])
+            if start == 1 and limit is None:
+                with _ENTRIES_CACHE_LOCK:
+                    cached = _ENTRIES_CACHE.get(str(self.path))
+                if cached is not None and cached[0] == metadata:
+                    return list(cached[1])
             checkpoints = index["checkpoints"]
             first_seq, first_offset = max((seq, offset) for seq, offset in checkpoints if seq <= start)
             target = index["sequence"] if limit is None else min(index["sequence"], start + limit - 1)
@@ -337,6 +350,9 @@ class Feed:
             for entry in result:
                 if any(line.lstrip().startswith("[record]") for line in entry.body.splitlines()):
                     payload(entry)
+            if start == 1 and limit is None:
+                with _ENTRIES_CACHE_LOCK:
+                    _ENTRIES_CACHE[str(self.path)] = (metadata, list(result))
             return result
 
     def tail_sequence(self) -> int:
