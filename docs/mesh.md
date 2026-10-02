@@ -17,10 +17,11 @@ the named checks; missing, failed, and stale readings remain unresolved. A live
 pane or lease shows that it renders, not that its content is current or correct.
 
 The trial window is set by `SITE_HOME/coordination-mode.json` (the site home
-directory, `.mishe-tauftauf/` in this plant). A stop time stops new
-strands every mind while services, panes and watcher heartbeats stay green. The
-dashboard `ACTIVITY` line reading `ENDED` is the signal; setting the stop time to
-null, or to a future time, resumes wakes on the next supervisor tick. See
+directory, `.mishe-tauftauf/` in this plant). A stop time stops new wakes;
+nothing re-arms the window automatically, so a passed stop time strands every
+mind while services, panes and watcher heartbeats stay green. The dashboard
+`ACTIVITY` line reading `ENDED` is the signal; setting the stop time to null, or
+to a future time, resumes wakes on the next supervisor tick. See
 [wall coordination](wall-coordination.md).
 
 Minds commit their own scoped work on the single `main` branch; there are no

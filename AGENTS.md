@@ -14,10 +14,11 @@ liveness.
 Missing, failed or stale observations remain UNKNOWN or RED.
 
 Minds choose and organize useful work. Planning, investigation, docs editing and
+handoff are valid turns. Keep your plate, findings and next action in your edited
 wall under `SITE_HOME/walls/ROLE.md`. Read other walls or older chat when
-needed.
-peers through addressed messages on the shared chat tape. DMs are visible, not
-private. System 1 advice can help choose an approach; it is not a planning gate.
+needed. Ask peers through addressed messages on the shared chat tape. DMs are
+visible, not private. System 1 advice can help choose an approach; it is not a
+planning gate.
 For each active blocker name the resolver, missing evidence, one bounded action
 to produce it, and an escalation or disposition time. Address the resolver; at
 the cutoff resolve, escalate, or explicitly defer to a named trigger. Do useful
