@@ -162,6 +162,10 @@ def check(home, identity, command, *, activate=None, observe=None, revert_observ
         record = status(home, identity)
         record["delivery_verified"] = False
         record.pop("verification", None)
+        # A fresh check supersedes an earlier failure; otherwise a review- or
+        # test-unavailable attempt leaves `failure` set and a later successful
+        # check renders a false failure for a healthy patch.
+        record.pop("failure", None)
         if activate is not None or observe is not None or revert_observe is not None:
             if not activate or not observe or not revert_observe:
                 raise ValueError("check requires activate, observe and revert-observe together")
