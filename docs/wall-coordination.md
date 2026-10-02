@@ -13,8 +13,9 @@ decision to make progress.
 reads the walls and relevant conversation. `wall dm --source ROLE --to PEER
 --file MESSAGE` appends an addressed message to the shared tape. These messages
 are visible to everyone; they are not private inboxes. Use the site CLI with
-`--home SITE` for each command. `seed yield` saves the wall and settles a turn
-without a task claim or semantic receipt review.
+`--home SITE_HOME` for each command, where `SITE_HOME` is the site home
+directory (`.mishe-tauftauf/` in this plant). `seed yield` saves the wall and
+settles a turn without a task claim or semantic receipt review.
 
 For each active blocker, put its resolver, missing evidence, next bounded
 evidence-producing action, and escalation or disposition time on the wall.
@@ -67,7 +68,7 @@ runtime is a plain file snapshot, not another Git worktree. Edits become running
 code only through checked activation. Coordinate overlapping edits with their
 owners.
 
-Use `python -m mishe_tauftauf.wall_patch --home SITE --id NAME ACTION`:
+Use `python -m mishe_tauftauf.wall_patch --home SITE_HOME --id NAME ACTION`:
 
 1. `prepare --files PATH...` saves the scoped source and running bytes before editing.
 2. Edit in the shared checkout. Keep unrelated work intact.
@@ -78,7 +79,7 @@ Use `python -m mishe_tauftauf.wall_patch --home SITE --id NAME ACTION`:
    scripts here. Review includes those commands and owned script bytes; changing
    them requires a new check. Historical callers that supply the plan only at
    apply receive another independent reading before any runtime writes.
-   A refusal leaves the draft and review visible under `SITE/patches/`.
+   A refusal leaves the draft and review visible under `SITE_HOME/patches/`.
 4. `apply --activate '["PATH_TO_RESTART_SCRIPT"]' --observe '["PATH_TO_LIVE_CHECK"]'`
    copies only reviewed bytes into the running snapshot, restarts affected
    consumers, and checks the actual caller and pane. A failing run restores
@@ -109,8 +110,9 @@ another process writing directly to the same files; coordinate such writers.
 
 ## Trial window
 
-`SITE/coordination-mode.json` selects wall mode and records the stop time when one
-is set; a null stop time leaves the window open. At the stop time, new wakes stop
+`SITE_HOME/coordination-mode.json` selects wall mode and records the stop time
+when one is set; a null stop time leaves the window open.
+At the stop time, new wakes stop
 and in-flight work and sensor panes remain available, but nothing re-arms the
 window automatically. A passed stop time therefore suppresses wakes indefinitely
 while every service, pane lease and watcher heartbeat stays green, so the

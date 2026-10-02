@@ -7,13 +7,15 @@ supersede the old task-ledger and isolated-branch workflow here. Other sites are
 outside this trial; preserve their installed instructions and services.
 
 Start from the chat trigger and read your full current top pane through
-`mishe-tauftauf --home SITE pain read ROLE --launcher dashboard`. The dashboard
-is the evidence input; tmux and its lease establish presentation liveness.
+`mishe-tauftauf --home SITE_HOME pain read ROLE --launcher dashboard`, where
+`SITE_HOME` is the site home directory (`.mishe-tauftauf/` in this plant). The
+dashboard is the evidence input; tmux and its lease establish presentation
+liveness.
 Missing, failed or stale observations remain UNKNOWN or RED.
 
 Minds choose and organize useful work. Planning, investigation, docs editing and
-handoff are valid turns. Keep your plate, findings and next action in your edited
-wall under `SITE/walls/ROLE.md`. Read other walls or older chat when needed. Ask
+wall under `SITE_HOME/walls/ROLE.md`. Read other walls or older chat when
+needed.
 peers through addressed messages on the shared chat tape. DMs are visible, not
 private. System 1 advice can help choose an approach; it is not a planning gate.
 For each active blocker name the resolver, missing evidence, one bounded action
