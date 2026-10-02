@@ -107,12 +107,13 @@ outside the patch, reconcile rather than overwrite them.
 The patch lock serializes cooperating writers. It is not isolation against
 another process writing directly to the same files; coordinate such writers.
 
-## Ten-hour trial
+## Trial window
 
-`SITE/coordination-mode.json` selects wall mode and gives the stop time. At that
-time, new wakes stop; sensor panes and in-flight work remain available. Removing
-the mode file is not a safe rollback by itself: use the saved rollback script
-to restore the original runtime callers and instructions together.
+`SITE/coordination-mode.json` selects wall mode and records the stop time when one
+is set; a null stop time leaves the window open. At the stop time, new wakes stop;
+sensor panes and in-flight work remain available. Removing the mode file is not a
+safe rollback by itself: use the saved rollback script to restore the original
+runtime callers and instructions together.
 
 Measurements compare wakes, redeliveries, settlements, chat, gate refusals,
 service restart deltas, evidenced outcome reports, verified delivery times and
