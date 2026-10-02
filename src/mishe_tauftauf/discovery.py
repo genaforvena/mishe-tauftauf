@@ -73,7 +73,116 @@ def _cpu_busy(path: Path = Path("/proc/stat"), samples: int = 2, interval: float
     busy = 100.0 * (total - idle) / total
     return {"busy": busy, "idle": 100.0 - busy}
 
+TOP_CPU_ROWS = 8
+"""Rows retained per scan; a later scan attributes an event from this bounded set."""
 
+TOP_CPU_SAMPLE_SECONDS = 1.0
+"""Window between the two /proc cpu reads. One clock tick is 1/100 s, so a one
+second window resolves a rate in 1%-of-core steps; a shorter window drops a
+sustained but modest consumer to zero ticks and discards it again."""
+
+try:
+    _CLOCK_TICK = os.sysconf("SC_CLK_TCK")
+except (AttributeError, OSError, ValueError):
+    _CLOCK_TICK = 100
+
+
+def _cpu_jiffies(pid: int) -> int | None:
+    """utime + stime for one process in clock ticks, or None when unreadable.
+
+    `comm` may contain spaces and parentheses, so the field offset is taken past
+    the last closing parenthesis rather than by splitting the whole line.
+    """
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_text()
+    except (OSError, ValueError):
+        return None
+    fields = raw[raw.rindex(")") + 1:].split()
+    # utime and stime follow state, ppid, pgrp, sid, tty, tpgid, flags and four
+    # fault counters, so they are fields 11 and 12 after `comm`.
+    if len(fields) < 13:
+        return None
+    try:
+        return int(fields[11]) + int(fields[12])
+    except ValueError:
+        return None
+
+
+def _ps_processes() -> dict[int, dict[str, object]]:
+    """One bounded `ps` read: pid, lifetime %CPU, elapsed seconds and the command."""
+    try:
+        result = subprocess.run(["ps", "-eo", "pid,pcpu,etimes,args", "--no-headers"],
+                                capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    if result.returncode != 0:
+        return {}
+    processes: dict[int, dict[str, object]] = {}
+    for line in result.stdout.splitlines():
+        columns = line.split(None, 3)
+        if len(columns) < 4:
+            continue
+        pid_text, pcpu_text, etimes_text, args_text = columns
+        if not pid_text.isdigit():
+            continue
+        try:
+            pcpu = float(pcpu_text)
+            etimes = int(etimes_text)
+        except ValueError:
+            continue
+        processes[int(pid_text)] = {"pid": int(pid_text), "pcpu": pcpu,
+                                    "etimes": etimes,
+                                    "args": " ".join(args_text.split())[:160]}
+    return processes
+
+
+def _rate_key(row: dict[str, object]) -> tuple[float, float]:
+    """Rank by the sampled rate; the lifetime average only breaks its ties."""
+    rate = row.get("rate")
+    return ((rate if rate is not None else -1.0), row["pcpu"])
+
+
+def _row_text(row: dict[str, object]) -> str:
+    """Render one retained row, naming the key that produced it."""
+    if row.get("rate") is None:
+        return (f"pid={row['pid']} rate=unmeasured pcpu={row['pcpu']:.1f}% "
+                f"etimes={row['etimes']}s {row['args']}")
+    return (f"pid={row['pid']} rate={row['rate']:.1f}% pcpu={row['pcpu']:.1f}% "
+            f"etimes={row['etimes']}s {row['args']}")
+
+
+def _top_cpu_processes(rows: int = TOP_CPU_ROWS,
+                       sample_seconds: float = TOP_CPU_SAMPLE_SECONDS) -> list[dict[str, object]]:
+    """Retain the busiest processes so a later scan can attribute, not just detect.
+
+    Aggregate counters notice a pressure event only after it ends, and `ps` polled
+    afterwards sees nothing when the cause was sub-second. Keeping a bounded sample
+    in every persisted scan makes a sustained event attributable from the scan set
+    alone (discover wake 13786, evidenced senses 13884 -> 14053).
+
+    Ranking on `ps` %CPU does not serve that goal: it is a *lifetime* average
+    (cputime / etimes), so a long-running process cannot move it within one busy
+    second while a young process reaches the top rows by birth, and it is a
+    division by zero at `etimes` 0. A two-sample /proc cpu delta rates the window
+    the event actually lives in; the lifetime average and `etimes` stay as columns
+    for context. A process that burned no tick in the window still ranks below one
+    that did, and its lifetime average orders those ties rather than deciding them.
+    """
+    processes = _ps_processes()
+    if not processes:
+        return []
+    first = {pid: _cpu_jiffies(pid) for pid in processes}
+    time.sleep(sample_seconds)
+    for pid, info in processes.items():
+        later = _cpu_jiffies(pid)
+        start = first.get(pid)
+        if start is None or later is None or later < start:
+            # Unreadable, or the pid was recycled between the two reads; either
+            # way the delta is not about this process, so it stays unmeasured
+            # rather than being reported as idle in the window.
+            continue
+        info["rate"] = 100.0 * (later - start) / _CLOCK_TICK / sample_seconds
+    return sorted(processes.values(), key=_rate_key, reverse=True)[:rows]
 def _journal_error_window(past_minutes: int = 10, limit: int = 400) -> dict:
     """Read the journal's own error class over a bounded window.
 
@@ -175,6 +284,19 @@ def sample(home: Path) -> dict[str, object]:
     else:
         observed.append({"id": "sense.proc.cpu-busy", "state": "unknown",
                          "sample": "/proc/stat cpu fields unavailable", "kind": "read"})
+    top_cpu = _top_cpu_processes()
+    if top_cpu:
+        measured = [row for row in top_cpu if row.get("rate") is not None]
+        observed.append({"id": "sense.proc.top-cpu", "state": "verified",
+                         "sample": "; ".join(_row_text(row) for row in top_cpu)
+                                   + (f" key=delta-rate-over-{TOP_CPU_SAMPLE_SECONDS:.1f}s"
+                                      if measured else " key=ps-lifetime"),
+                         "processes": top_cpu, "kind": "read"})
+    else:
+        # A missing ps or a failed read is a transient, not a structural absence: the
+        # command is declared available and a retry can produce a sample.
+        observed.append({"id": "sense.proc.top-cpu", "state": "unknown",
+                         "sample": "ps process sample unavailable", "kind": "read"})
     interrupts = _read(Path("/proc/interrupts"), 65536)
     keyboard = []
     for line in (interrupts or "").splitlines():

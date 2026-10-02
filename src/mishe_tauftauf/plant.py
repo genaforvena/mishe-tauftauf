@@ -44,6 +44,28 @@ def unit_name(session: str, slug: str) -> str:
 def unit_fragment_matches(fragment: str, expected: Path) -> bool:
     return Path(fragment).resolve() == expected.resolve()
 
+def service_manifest(home: Path, session: str, persist: bool) -> list[str]:
+    """Units a plant is responsible for, merged with units already installed.
+
+    Out-of-band supervisors (`coordination`, `silence`) install their own units
+    and append themselves to the manifest; overwriting here would drop them from
+    dashboard coverage, so a dead one would read GREEN and silent. Keep any
+    installed unit of this session even when the plant no longer generates it.
+    """
+    units = [unit_name(session, slug) for slug in (*ROLES, "permissions", "ci")]
+    if not persist:
+        return []
+    installed = set()
+    path = home / "health" / "services.json"
+    if path.is_file():
+        try:
+            installed = {name for name in json.loads(path.read_text(encoding="utf-8"))
+                         if isinstance(name, str)}
+        except (OSError, ValueError, json.JSONDecodeError):
+            installed = set()
+    prefix = f"{session}-"
+    return sorted({*units, *(name for name in installed if name.startswith(prefix))})
+
 
 def ensure_engine_for_new_minds(home: Path, engine_command: str) -> None:
     argv = shlex.split(engine_command)
@@ -171,9 +193,8 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
     (home / "health").mkdir(exist_ok=True)
     (home / "health" / "windows.json").write_text(
         json.dumps(sorted({operator_window, *ROLES, "permissions"})) + "\n", encoding="utf-8")
-    units = [unit_name(session, slug) for slug in (*ROLES, "permissions", "ci")]
-    (home / "health" / "services.json").write_text(json.dumps(units if persist else []) + "\n",
-                                                   encoding="utf-8")
+    (home / "health" / "services.json").write_text(
+        json.dumps(service_manifest(home, session, persist)) + "\n", encoding="utf-8")
     previous_session = os.environ.get("MISHE_SEED_SESSION")
     os.environ["MISHE_SEED_SESSION"] = session
     try:

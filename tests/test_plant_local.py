@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -125,6 +126,53 @@ def test_runtime_source_rejects_whitespace_before_pin_write(tmp_path):
     with pytest.raises(ValueError, match="whitespace"):
         select_source(home, tmp_path / "release with spaces", "owned")
     assert not (home / "health/runtime-release.json").exists()
+
+
+def test_service_manifest_lists_every_planted_unit(tmp_path: Path) -> None:
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    assert plant.service_manifest(home, "core", persist=True) == sorted(
+        plant.unit_name("core", slug) for slug in (*plant.ROLES, "permissions", "ci"))
+
+
+def test_replant_keeps_installed_out_of_band_units_in_the_manifest(tmp_path: Path) -> None:
+    # `coordination` and `silence` install their own units out of band and append
+    # themselves here; the plant must not overwrite the file, or a dead one reads
+    # GREEN and silent on the dashboard.
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    manifest = home / "health" / "services.json"
+    manifest.write_text(json.dumps([
+        "core-ci.service", "core-genome.service",
+        "core-coordination.service", "core-silence.service",
+    ]) + "\n", encoding="utf-8")
+    names = plant.service_manifest(home, "core", persist=True)
+    assert set(names) >= {"core-coordination.service", "core-silence.service"}
+    assert plant.unit_name("core", "genome") in names
+
+
+def test_replant_drops_units_belonging_to_another_session(tmp_path: Path) -> None:
+    # Only this session's units are carried over; a stale unit from an earlier
+    # session name would otherwise stay in the coverage set forever.
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    manifest = home / "health" / "services.json"
+    manifest.write_text(json.dumps(["other-session-silence.service"]) + "\n", encoding="utf-8")
+    assert "other-session-silence.service" not in plant.service_manifest(home, "core", persist=True)
+
+
+def test_service_manifest_starts_empty_without_persist(tmp_path: Path) -> None:
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health" / "services.json").write_text('["core-ci.service"]\n', encoding="utf-8")
+    assert plant.service_manifest(home, "core", persist=False) == []
+
+
+def test_service_manifest_ignores_a_corrupt_manifest(tmp_path: Path) -> None:
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health" / "services.json").write_text("{not json", encoding="utf-8")
+    assert plant.unit_name("core", "ci") in plant.service_manifest(home, "core", persist=True)
 
 
 def test_python_search_path_keeps_order_and_collapses_duplicates() -> None:
