@@ -43,12 +43,12 @@ def configure(home, seconds):
         _save(home / "coordination-mode.json", config)
 
 
-def observe(home, *, now=None):
+def observe(home, *, now=None, entries=None):
     now = now or datetime.now(timezone.utc)
     config = settings(home)
     seconds = threshold(config)
     candidates = [(datetime.fromisoformat(config.get("started", now.isoformat())), "trial start")]
-    for entry in Feed(home).entries():
+    for entry in entries if entries is not None else Feed(home).entries():
         source = entry.source.removeprefix("mind/")
         if source in ROLES or (entry.source == "seed" and entry.body.startswith("seed yield ")):
             candidates.append((datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00")),
@@ -72,8 +72,8 @@ def observe(home, *, now=None):
             "threshold_seconds": seconds, "state": state, "silent": state == "SILENT"}
 
 
-def line(home, *, now=None):
-    reading = observe(home, now=now)
+def line(home, *, now=None, entries=None):
+    reading = observe(home, now=now, entries=entries)
     return (f"ACTIVITY: {reading['state']} — last mind action {reading['idle_seconds']:.0f}s ago; "
             f"silence threshold {reading['threshold_seconds']:g}s; {reading['evidence']}")
 

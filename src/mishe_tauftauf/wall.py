@@ -138,7 +138,7 @@ def pane(home: Path, role: str) -> str:
                       (" ".join(e.body.split())[:360] + (" …" if len(" ".join(e.body.split())) > 360 else ""))
                       for e in recent) or "(no conversation yet)"
     from . import seed
-    pending = seed._state(home, role)[1]
+    pending = seed._state(home, role, entries=shared)[1]
     path = home / "checks" / f"wall-send-{role}-{pending}.json"
     transport = ""
     if pending and path.exists():
@@ -146,7 +146,7 @@ def pane(home: Path, role: str) -> str:
         if data.get("phase") == "send-failed" or data.get("attempts", 0) >= 2:
             transport = f"\nTRANSPORT: UNKNOWN wake {pending}; reconcile pane/notes, then wall retry --owner {role} to redeliver the same turn\n"
     from .activity import line
-    activity = line(home)
+    activity = line(home, entries=shared)
     return "\nMIND WALL — edited notes; sensor truth is above\n" + text + transport + "\nMESSAGES\n" + "\n".join(
         f"{e.sequence} {e.source}: {e.body}" for e in entries) + "\n" + chat + "\n" + activity + "\n"
 

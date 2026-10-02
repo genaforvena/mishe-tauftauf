@@ -94,7 +94,9 @@ def _receipt_line(body: str) -> str:
     return body.splitlines()[0]
 
 
-def _state(home: Path, slug: str) -> tuple[str | None, int | None, int | None, int | None, int | None, int | None, datetime | None, int | None]:
+def _state(home: Path, slug: str, *, entries=None) -> tuple[str | None, int | None, int | None, int | None, int | None, int | None, datetime | None, int | None]:
+    if entries is None:
+        entries = Feed(home).entries()
     digest = None
     last_observation = None
     last_woken_observation = None
@@ -103,7 +105,7 @@ def _state(home: Path, slug: str) -> tuple[str | None, int | None, int | None, i
     last_yield = None
     last_clear = None
     continue_yield = None
-    for entry in Feed(home).entries():
+    for entry in entries:
         if entry.source != "seed":
             continue
         line = _receipt_line(entry.body)
@@ -571,11 +573,11 @@ def init(home: Path, slug: str, engine_command: str = "codex") -> str:
 
 
 def _mind_launch_argv(home: Path, slug: str) -> tuple[str, ...]:
-    from .runtime_source import package_for
+    from .runtime_source import package_for, python_search_path
     from . import wall
     package_root = str(Path(__file__).resolve().parents[1] if wall.enabled(home)
                        else package_for(home, Path(__file__).resolve().parents[1]))
-    python_path = os.pathsep.join(part for part in (package_root, os.environ.get("PYTHONPATH", "")) if part)
+    python_path = python_search_path(package_root, os.environ.get("PYTHONPATH", ""))
     mind_path = os.pathsep.join((str(home / "bin"), os.environ.get("PATH", "/usr/bin:/bin")))
     return ("-c", str(home.parent.resolve()), "env", f"PATH={mind_path}",
             f"PYTHONPATH={python_path}",
@@ -608,11 +610,11 @@ def start(home: Path, session: str, slug: str, interval: float) -> str:
     _tmux("set-option", "-p", "-t", f"{target}.0", "remain-on-exit", "on")
     _tmux("set-option", "-p", "-t", f"{target}.1", "remain-on-exit", "on")
     _tmux("select-layout", "-t", target, "even-vertical")
-    from .runtime_source import package_for
+    from .runtime_source import package_for, python_search_path
     from . import wall
     package_root = str(Path(__file__).resolve().parents[1] if wall.enabled(home)
                        else package_for(home, Path(__file__).resolve().parents[1]))
-    python_path = os.pathsep.join(part for part in (package_root, os.environ.get("PYTHONPATH", "")) if part)
+    python_path = python_search_path(package_root, os.environ.get("PYTHONPATH", ""))
     top_cmd = ("env", f"MISHE_SEED_SESSION={session}", f"PYTHONPATH={python_path}",
                *_python_command("--home", str(home), "pain", "watch", slug, "--interval", str(interval)))
     top_dead = _tmux("display-message", "-p", "-t", f"{target}.0", "#{pane_dead}").stdout.decode().strip() == "1"

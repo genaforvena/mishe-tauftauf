@@ -9,6 +9,7 @@ import sys
 import time
 from pathlib import Path
 
+from .runtime_source import python_search_path
 from .tmux import _python_command, _tmux, owns_session
 
 
@@ -52,7 +53,7 @@ def ensure(home: Path, session: str, interval: float = 5) -> str:
     bottom_dead = _tmux("display-message", "-p", "-t", f"{target}.1", "#{pane_dead}").stdout.decode().strip() == "1"
     if created or top_dead:
         package_root = str(Path(__file__).resolve().parents[1])
-        python_path = os.pathsep.join(part for part in (package_root, os.environ.get("PYTHONPATH", "")) if part)
+        python_path = python_search_path(package_root, os.environ.get("PYTHONPATH", ""))
         _tmux("respawn-pane", "-k", "-t", f"{target}.0", "env", f"MISHE_SEED_SESSION={session}",
               f"PYTHONPATH={python_path}",
               *_python_command("--home", str(home), "pain", "watch", "permissions", "--interval", str(interval)))

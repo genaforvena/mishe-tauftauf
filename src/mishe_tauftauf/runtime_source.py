@@ -2,9 +2,30 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import subprocess
 from pathlib import Path
+
+
+def python_search_path(*values: object) -> str:
+    """Join path components once, preserving order.
+
+    Callers prepend an installation root to an inherited ``PYTHONPATH`` that may
+    already name the same directory, so a naive join can repeat a component many
+    times. Repeated search-path entries are harmless to imports but make the pane
+    environment misleading, so collapse exact duplicates.
+    """
+    seen = set()
+    parts = []
+    for value in values:
+        if not value:
+            continue
+        for part in str(value).split(os.pathsep):
+            if part and part not in seen:
+                seen.add(part)
+                parts.append(part)
+    return os.pathsep.join(parts)
 
 
 def checked_source(source: Path, sha: str | None = None) -> tuple[Path, str]:
