@@ -17,6 +17,14 @@ are visible to everyone; they are not private inboxes. Use the site CLI with
 directory (`.mishe-tauftauf/` in this plant). `seed yield` saves the wall and
 settles a turn without a task claim or semantic receipt review.
 
+A wall is a short, current document, not an append-only log: `wall write` rejects
+a notes file over the hard limit (default 16384 bytes / 200 lines) with an error
+naming the actual size and the limit. The bound keeps a wall readable and current —
+it must not accumulate stale detail, and superseded claims or past mistakes must
+not be carried forward to mislead the next reader. Rewrite the wall down instead
+of appending. `coordination-mode.json` may tune `wall_max_bytes` and
+`wall_max_lines`.
+
 For each active blocker, put its resolver, missing evidence, next bounded
 evidence-producing action, and escalation or disposition time on the wall.
 Address the resolver through chat. At the cutoff resolve, escalate, or explicitly
