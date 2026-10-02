@@ -62,6 +62,13 @@ def test_default_plant_reuses_only_existing_resident_site(tmp_path: Path) -> Non
         choose(tmp_path, ".mishe-seed", None, None)
 
 
+def test_planted_roles_include_every_chartered_mind() -> None:
+    # docs is chartered (seed_docs_charter.md), wall-addressable and listed in
+    # activity.ROLES; it must be a planted role so a reboot recreates its window
+    # from a service instead of relying on an out-of-band respawn.
+    assert "docs" in plant.ROLES
+
+
 def test_replant_preserves_existing_custom_engine_without_default_binary(tmp_path: Path) -> None:
     home = tmp_path / ".mishe-tauftauf"
     minds = home / "minds"

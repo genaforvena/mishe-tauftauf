@@ -178,6 +178,43 @@ class TmuxTests(unittest.TestCase):
             self.assertIn("UNKNOWN — session 'mishe-tauftauf-unowned' is not owned", output)
             self.assertNotIn("renderer process is stopped or dead", output)
 
+    def test_doctor_panes_treats_an_unconfigured_renderer_as_information(self):
+        # A renderer with no configured resident window (observability, legacy
+        # one-shot surfaces) must not read as a RED failure that no service can
+        # clear. Only the site's declared windows are checked for liveness.
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            renderer = home / "top-pains" / "sensor"
+            renderer.write_text("#!/bin/sh\nprintf 'DESIRED STATE: green\\n'\n", encoding="utf-8")
+            renderer.chmod(0o755)
+            session = f"mishe-tauftauf-test-{os.getpid()}-configured"
+            with mock.patch.dict(os.environ):
+                os.environ.pop("MISHE_SEED_SESSION", None)
+                try:
+                    start(home, session, interval=0.2)
+                    (home / ".seed-raised").write_text(f"{session} $1\n", encoding="utf-8")
+                    (home / "health").mkdir(parents=True, exist_ok=True)
+                    (home / "health" / "windows.json").write_text('["sensor"]', encoding="utf-8")
+                    # A renderer created after the plant has no window; it is a
+                    # surface, not a missing resident channel.
+                    extra = home / "top-pains" / "observability"
+                    extra.write_text("#!/bin/sh\nprintf 'DESIRED STATE: bounded\\n'\n", encoding="utf-8")
+                    extra.chmod(0o755)
+                    for _ in range(40):
+                        if "-- pane live " in capture_raw(session, "sensor"):
+                            break
+                        time.sleep(0.1)
+                    buffer = io.StringIO()
+                    with contextlib.redirect_stdout(buffer):
+                        code = main(["--home", str(home), "doctor", "--panes", "--pane-wait", "0.4"])
+                finally:
+                    stop(home, session)
+            output = buffer.getvalue()
+            self.assertEqual(code, 0, output)
+            self.assertIn("PASS pane-live: sensor", output)
+            self.assertIn("INFO pane-surface: observability", output)
+            self.assertNotIn("pane-missing: observability", output)
+
     def test_recorded_session_reads_the_raise_receipt(self):
         from mishe_tauftauf.seed import recorded_session
         with tempfile.TemporaryDirectory() as directory:
