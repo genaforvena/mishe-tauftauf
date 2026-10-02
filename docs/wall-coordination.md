@@ -114,9 +114,10 @@ is set; a null stop time leaves the window open. At the stop time, new wakes sto
 and in-flight work and sensor panes remain available, but nothing re-arms the
 window automatically. A passed stop time therefore suppresses wakes indefinitely
 while every service, pane lease and watcher heartbeat stays green, so the
-`ACTIVITY` line reading `ENDED` (the silence watcher posts one informational ENDED
-notice instead of escalating) is the only deterministic signal — it is not a fault
-report. To re-arm, set `"until": null` (or a future ISO-8601 time carrying a
+`ACTIVITY` line reading `ENDED` (the silence watcher posts its ENDED notice as an
+addressed DM to health, which the ended branch of `wall.tick` delivers as a bounded
+wake) is the only deterministic signal — it is not a fault report.
+To re-arm, set `"until": null` (or a future ISO-8601 time carrying a
 timezone) in `coordination-mode.json`; running supervisors read the file on their
 next tick and resume normal wake selection with no restart. `"paused": true` is a
 separate stop: it also suppresses new wakes and reads `DISABLED`, silencing alerts
