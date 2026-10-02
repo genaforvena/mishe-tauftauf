@@ -48,6 +48,33 @@ def test_wall_write_rejects_uninitialized_reserved_home(tmp_path):
         wall.write(stray, "discover", "notes")
     assert not stray.exists()
 
+def test_wall_write_rejects_oversized_wall(tmp_path):
+    setup_wall(tmp_path)
+    from mishe_tauftauf import wall
+    with pytest.raises(ValueError, match="exceeds its size limit"):
+        wall.write(tmp_path, "genome", "x" * (wall.WALL_MAX_BYTES + 1))
+    assert not (tmp_path / "walls" / "genome.md").exists()
+
+
+def test_wall_write_rejects_too_many_lines(tmp_path):
+    setup_wall(tmp_path)
+    from mishe_tauftauf import wall
+    with pytest.raises(ValueError, match="exceeds its size limit"):
+        wall.write(tmp_path, "genome", "line\n" * (wall.WALL_MAX_LINES + 1))
+    assert not (tmp_path / "walls" / "genome.md").exists()
+
+
+def test_wall_limit_is_configurable_and_enforced_at_the_bound(tmp_path):
+    setup_wall(tmp_path)
+    from mishe_tauftauf import wall
+    (tmp_path / "coordination-mode.json").write_text(json.dumps({"mode": "wall", "wall_max_bytes": 32}))
+    wall.write(tmp_path, "genome", "y" * 32)
+    assert (tmp_path / "walls" / "genome.md").read_text() == "y" * 32
+    with pytest.raises(ValueError, match="exceeds its size limit"):
+        wall.write(tmp_path, "genome", "y" * 33)
+    assert (tmp_path / "walls" / "genome.md").read_text() == "y" * 32
+
+
 
 def test_wall_is_visible_without_hiding_failed_sensor(tmp_path, monkeypatch):
     setup_wall(tmp_path)

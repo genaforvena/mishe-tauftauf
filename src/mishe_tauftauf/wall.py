@@ -12,6 +12,10 @@ import shlex
 from .feed import Feed
 
 OUTCOME_KINDS = ("accepted", "blocker-resolved", "blocker-retired", "hypothesis-changed")
+WALL_MAX_BYTES = 16384
+"""Hard byte bound for one edited wall; walls are bounded prose, unlike chat.log."""
+WALL_MAX_LINES = 200
+"""Hard line bound for one edited wall; keeps the pane readable."""
 
 
 def outcome(home: Path, role: str, kind: str, text: str, evidence: Path):
@@ -75,11 +79,36 @@ def enabled(home: Path) -> bool:
     return settings(home)["mode"] == "wall"
 
 
+def limits(home: Path) -> tuple[int, int]:
+    """The hard wall bound; `coordination-mode.json` may tune it."""
+    config = settings(home)
+    chosen = []
+    for key, default in (("wall_max_bytes", WALL_MAX_BYTES), ("wall_max_lines", WALL_MAX_LINES)):
+        value = config.get(key, default)
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ValueError(f"coordination mode {key} must be a positive integer")
+        chosen.append(value)
+    return chosen[0], chosen[1]
+
+
 def write(home: Path, role: str, text: str) -> None:
     from .observations import validate_home, validate_slug
     from .seed import _write_handoff
     validate_home(home)
     validate_slug(role)
+    max_bytes, max_lines = limits(home)
+    size, lines = len(text.encode("utf-8")), len(text.splitlines())
+    exceeded = [f"{size} bytes (limit {max_bytes})"] if size > max_bytes else []
+    if lines > max_lines:
+        exceeded.append(f"{lines} lines (limit {max_lines})")
+    if exceeded:
+        raise ValueError(
+            f"wall {role} exceeds its size limit: {'; '.join(exceeded)}. A wall is a short, "
+            "current document, not an append-only log — cut stale detail and rewrite it down "
+            "so superseded claims and past mistakes do not mislead the next reader. Raise "
+            "wall_max_bytes/wall_max_lines in coordination-mode.json only when the bound is "
+            "genuinely too small."
+        )
     _write_handoff(home / "walls" / f"{role}.md", text)
 
 
