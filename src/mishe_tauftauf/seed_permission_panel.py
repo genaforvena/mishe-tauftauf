@@ -13,10 +13,8 @@ from .runtime_source import python_search_path
 from .tmux import _python_command, _tmux, owns_session
 
 
-def ensure(home: Path, session: str, interval: float = 5) -> str:
-    home = home.resolve()
-    if not owns_session(home, session):
-        raise ValueError(f"session {session} is not owned by {home}")
+def write_launchers(home: Path) -> None:
+    """Upgrade only our generated launcher, preserving operator customizations."""
     bin_dir = home / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
     permit = bin_dir / "permit"
@@ -25,11 +23,24 @@ def ensure(home: Path, session: str, interval: float = 5) -> str:
                           shlex.quote(str(home)) + " access \"$@\"\n", encoding="utf-8")
         permit.chmod(0o755)
     shell = bin_dir / "permissions-shell"
-    if not shell.exists():
-        shell.write_text("#!/bin/sh\nexport PATH=" + shlex.quote(str(bin_dir)) + ":\"$PATH\"\n"
-                         "printf '%s\\n' 'Operator decisions: permit list | permit grant ID | permit revoke ID'\n"
-                         "exec bash --noprofile --norc -i\n", encoding="utf-8")
+    legacy = ("#!/bin/sh\nexport PATH=" + shlex.quote(str(bin_dir)) + ":\"$PATH\"\n"
+              "printf '%s\\n' 'Operator decisions: permit list | permit grant ID | permit revoke ID'\n"
+              "exec bash --noprofile --norc -i\n")
+    generated = ("#!/bin/sh\n# mishe-generated permissions selector\nexport PATH=" + shlex.quote(str(bin_dir)) + ":\"$PATH\"\n"
+                 "permit menu\n"
+                 "printf '%s\\n' 'Permissions: permit (selector) | permit revoke (selector) | permit list'\n"
+                 "exec bash --noprofile --norc -i\n")
+    if not shell.exists() or shell.read_text() in {legacy, generated}:
+        shell.write_text(generated, encoding="utf-8")
         shell.chmod(0o755)
+
+
+def ensure(home: Path, session: str, interval: float = 5) -> str:
+    home = home.resolve()
+    if not owns_session(home, session):
+        raise ValueError(f"session {session} is not owned by {home}")
+    write_launchers(home)
+    shell = home / "bin" / "permissions-shell"
     top = home / "top-pains" / "permissions"
     if not top.exists():
         top.parent.mkdir(parents=True, exist_ok=True)

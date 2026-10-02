@@ -247,7 +247,8 @@ def health(home: Path) -> str:
 
 def permissions(home: Path) -> str:
     lines = ["GOAL: make every operator decision visible and scoped to the work it unblocks",
-             "COMMAND: permit list | permit grant REQUEST_ID | permit revoke REQUEST_ID",
+             "SELECT: bottom pane — Up/Down select, Enter grants one, q returns to shell",
+             "COMMAND: permit (selector) | permit revoke (selector) | permit list | permit grant REQUEST_ID",
              "REQUEST: permit request ID --owner ROLE --task TASK --capability NAME --unblocks PATH --reason TEXT"]
     requests = list_requests(home)
     pending = [(item, state) for item, state in requests if state == "pending"]

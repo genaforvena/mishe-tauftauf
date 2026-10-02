@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import difflib
 import json
 import os
 import re
@@ -92,7 +93,10 @@ def get(home: Path, identity: str) -> Request:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
-        raise ValueError(f"unknown request {identity}") from exc
+        identities = [p.stem for p in (home / "access" / "requests").glob("*.json")]
+        matches = difflib.get_close_matches(identity, identities, n=1, cutoff=0.6)
+        hint = f"; did you mean {matches[0]}?" if matches else ""
+        raise ValueError(f"unknown request {identity}{hint}; use access menu to select a request") from exc
     if data.get("id") != identity or not isinstance(data.get("unblocks"), list):
         raise ValueError(f"malformed request {identity}")
     return Request(identity, data["owner"], data["task"], data["capability"],
@@ -114,12 +118,17 @@ def state(home: Path, identity: str) -> str:
     return decisions(home).get(identity, "pending")
 
 
-def decide(home: Path, identity: str, decision: str) -> str:
+def decide(home: Path, identity: str, decision: str, *,
+           expected_request: Request | None = None, expected_state: str | None = None) -> str:
     if decision not in {"granted", "revoked"}:
         raise ValueError("decision must be granted or revoked")
     with _lock(home):
         item = get(home, identity)
         current = decisions(home).get(identity, "pending")
+        if expected_request is not None and item != expected_request:
+            raise ValueError("request scope changed; review the updated request before deciding")
+        if expected_state is not None and current != expected_state:
+            raise ValueError("request decision changed; review the updated request before deciding")
         if current == decision:
             return current
         Feed(home).append("operator/permissions", f"[permission] id={identity} decision={decision} "
