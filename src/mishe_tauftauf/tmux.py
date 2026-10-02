@@ -21,9 +21,10 @@ class TmuxError(RuntimeError):
 
 def _python_command(*args: str) -> list[str]:
     """Carry this installation into panes owned by an older tmux server."""
+    from .runtime_source import python_search_path
     package_root = str(Path(__file__).resolve().parents[1])
     inherited = os.environ.get("PYTHONPATH", "")
-    search_path = os.pathsep.join(part for part in (package_root, inherited) if part)
+    search_path = python_search_path(package_root, inherited)
     return ["env", f"PYTHONPATH={search_path}", sys.executable, "-m", "mishe_tauftauf", *args]
 
 

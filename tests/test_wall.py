@@ -59,6 +59,41 @@ def test_wall_is_visible_without_hiding_failed_sensor(tmp_path, monkeypatch):
     assert "STATE: RED sensor failed" in rendered.body and "Planning an investigation" in rendered.body
 
 
+def test_pane_reads_the_shared_feed_once(tmp_path, monkeypatch):
+    setup_wall(tmp_path)
+    from mishe_tauftauf import wall
+
+    calls = []
+    original = Feed.entries
+
+    def counting(self, **kwargs):
+        calls.append(self.home)
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(Feed, "entries", counting)
+    wall.pane(tmp_path, "genome")
+    assert len(calls) == 1, "a pane frame must not rescan the whole feed per section"
+
+
+def test_feed_read_paths_take_a_shared_lock(tmp_path, monkeypatch):
+    setup_wall(tmp_path)
+    Feed(tmp_path).append("genome", "Shared read lock probe with a real entry.")
+    import fcntl
+
+    modes = []
+    original = fcntl.flock
+
+    def recording(fd, mode):
+        modes.append(mode)
+        return original(fd, mode)
+
+    monkeypatch.setattr(fcntl, "flock", recording)
+    Feed(tmp_path).entries()
+    Feed(tmp_path).tail_sequence()
+    assert modes and all(mode == fcntl.LOCK_SH for mode in modes), \
+        "concurrent readers must not serialize behind an exclusive lock"
+
+
 def test_expired_trial_stops_new_wakes(tmp_path):
     from mishe_tauftauf import wall
     (tmp_path/"coordination-mode.json").write_text(json.dumps({"mode": "wall", "until": (datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat()}))

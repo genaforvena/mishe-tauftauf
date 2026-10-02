@@ -319,7 +319,10 @@ class Feed:
         if limit == 0:
             return []
         with self.path.open("rb") as handle:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            # A shared lock keeps concurrent readers concurrent; the writer's
+            # LOCK_EX still excludes every reader. Index rebuilds use an atomic
+            # replace, so racing readers waste a rebuild but cannot corrupt.
+            fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
             index = self._index(handle)
             if start > index["sequence"]:
                 return []
@@ -343,7 +346,7 @@ class Feed:
                 raise FeedError("feed missing while checkpoint exists")
             return 0
         with self.path.open("rb") as handle:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
             index = self._index(handle)
             if index["sequence"]:
                 handle.seek(index["tail_offset"])

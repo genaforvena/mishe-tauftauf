@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -117,6 +118,24 @@ def test_runtime_source_rejects_whitespace_before_pin_write(tmp_path):
     with pytest.raises(ValueError, match="whitespace"):
         select_source(home, tmp_path / "release with spaces", "owned")
     assert not (home / "health/runtime-release.json").exists()
+
+
+def test_python_search_path_keeps_order_and_collapses_duplicates() -> None:
+    from mishe_tauftauf.runtime_source import python_search_path
+
+    assert python_search_path("/a", "/a") == "/a"
+    assert python_search_path("/a", "/a:/b") == f"/a{os.pathsep}/b"
+    assert python_search_path("/a:/b", "/b:/c") == f"/a{os.pathsep}/b{os.pathsep}/c"
+    assert python_search_path(None, "") == ""
+
+
+def test_python_command_does_not_repeat_the_package_root(monkeypatch) -> None:
+    from mishe_tauftauf import tmux
+
+    root = str(Path(tmux.__file__).resolve().parents[1])
+    monkeypatch.setenv("PYTHONPATH", root)
+    command = tmux._python_command("--home", "site", "doctor")
+    assert f"PYTHONPATH={root}" in command
 
 
 def test_runtime_only_cli_preserves_dirty_application_and_contract(tmp_path: Path) -> None:
