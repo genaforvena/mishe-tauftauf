@@ -76,6 +76,87 @@ def test_unchanged_scan_updates_artifact_without_log_spam(tmp_path: Path) -> Non
         scan(home)
     assert len(Feed(home).entries()) == 1
     assert latest(home) == second
+def test_discovery_notices_existing_cpu_class_crossings_not_numeric_drift(tmp_path: Path) -> None:
+    home = tmp_path / "site"
+    snapshots = [
+        {"created": f"2026-01-01T00:00:0{second}Z", "node": "node", "observations": [
+            {"id": "sense.proc.cpu-busy", "state": "verified", "sample": cpu, "kind": "read"},
+            {"id": "sense.journal.kernel-error-rate", "state": "verified",
+             "sample": f"last-10min kernel-error-count={count}", "kind": "read"},
+        ]}
+        for second, cpu, count in [
+            (0, "short-window=0.1s busy=57.0% idle=43.0%", 0),
+            (1, "short-window=0.1s busy=58.0% idle=42.0%", 4),
+            (2, "short-window=0.1s busy=95.0% idle=5.0% high", 4),
+            (3, "short-window=0.1s busy=96.0% idle=4.0% high", 8),
+        ]
+    ]
+    with patch("mishe_tauftauf.discovery.sample", side_effect=snapshots):
+        artifacts = [scan(home) for _ in snapshots]
+
+    entries = Feed(home).entries()
+    assert len(entries) == 2
+    assert "sense.proc.cpu-busy class not-high -> high" in entries[-1].body
+    assert "short-window=0.1s busy=58.0% idle=42.0%" in entries[-1].body
+    assert "kernel-error-count=8" in json.dumps(latest(home))
+    assert latest(home) == snapshots[-1]
+    assert all(path.exists() for path in artifacts)
+
+
+def test_discovery_notices_state_availability_and_reason_transitions(tmp_path: Path) -> None:
+    home = tmp_path / "site"
+    snapshots = [
+        {"created": f"2026-01-01T00:00:0{second}Z", "node": "node", "observations": [
+            {"id": "sense.memory", "state": state, "sample": reason, "kind": "read"},
+            {"id": "command.evtest", "state": command_state, "sample": command_sample,
+             "kind": "declaration"},
+        ]}
+        for second, state, reason, command_state, command_sample in [
+            (0, "verified", "12 kB", "available", "/usr/bin/evtest"),
+            (1, "unknown", "memory source unreadable", "available", "/usr/bin/evtest"),
+            (2, "unknown", "pressure file missing", "available", "/usr/bin/evtest"),
+            (3, "unavailable", "no memory source on this host", "unavailable", "not on PATH"),
+        ]
+    ]
+    with patch("mishe_tauftauf.discovery.sample", side_effect=snapshots):
+        for _ in snapshots:
+            scan(home)
+
+    entries = Feed(home).entries()
+    assert len(entries) == 4
+    assert "sense.memory" in entries[1].body
+    assert "memory source unreadable" in entries[1].body
+    assert "pressure file missing" in entries[2].body
+    assert "command.evtest" in entries[3].body
+    assert "no memory source on this host" in entries[3].body
+
+
+def test_thermal_identity_changes_notify_but_temperature_drift_does_not(tmp_path: Path) -> None:
+    home = tmp_path / "site"
+    snapshots = [
+        {"created": f"2026-01-01T00:00:0{second}Z", "node": "node", "observations": [
+            {"id": "sense.thermal.hwmon", "state": "verified",
+             "sample": f"nvme:temp{index}({label})={value}C",
+             "identity": [{"channel": f"nvme:temp{index}({label})", "parent": None}],
+             "kind": "read"},
+        ]}
+        for second, index, label, value in [
+            (0, "1", "Composite", "42.0"),
+            (1, "1", "Composite", "43.0"),
+            (2, "2", "Sensor", "43.0"),
+        ]
+    ]
+    with patch("mishe_tauftauf.discovery.sample", side_effect=snapshots):
+        for _ in snapshots:
+            scan(home)
+
+    entries = Feed(home).entries()
+    assert len(entries) == 2
+    assert "sense.thermal.hwmon" in entries[-1].body
+    assert "nvme:temp2(Sensor)=43.0C" in entries[-1].body
+    assert latest(home) == snapshots[-1]
+
+
 def test_cpu_pressure_reports_valid_sample_and_unavailable_source(tmp_path: Path) -> None:
     from mishe_tauftauf import discovery
 
@@ -260,7 +341,8 @@ def test_thermal_hwmon_is_deterministic_and_real_host_is_observational(tmp_path:
         observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
     assert observed["sense.thermal.hwmon"] == {
         "id": "sense.thermal.hwmon", "state": "verified",
-        "sample": "testchip=42.5C", "kind": "read",
+        "sample": "testchip:temp1=42.5C",
+        "identity": [{"channel": "testchip:temp1", "parent": None}], "kind": "read",
     }
 
     real = discovery._thermal_slots(Path("/sys/class/hwmon"))
@@ -289,13 +371,45 @@ def test_thermal_hwmon_reports_chip_name_and_skips_malformed_sensor(tmp_path: Pa
     for slot, value in zip(synthetic, ("42500\n", "not-a-number\n")):
         slot.write_text(value, encoding="utf-8")
     (chip / "name").write_text("testchip\n", encoding="utf-8")
+    (chip / "temp1_label").write_text("Package id 0\n", encoding="utf-8")
     with patch("mishe_tauftauf.discovery._thermal_slots", return_value=list(synthetic)):
         observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
     reading = observed["sense.thermal.hwmon"]
     assert reading["state"] == "verified"
-    assert reading["sample"] == "testchip=42.5C"
+    assert reading["sample"] == "testchip:temp1(Package id 0)=42.5C"
+    assert reading["identity"] == [
+        {"channel": "testchip:temp1(Package id 0)", "parent": None}
+    ]
     # A malformed sensor must not break the read or appear in it.
     assert "not-a-number" not in str(reading["sample"])
+
+
+def test_thermal_parent_identity_distinguishes_same_named_channels(tmp_path: Path) -> None:
+    from mishe_tauftauf import discovery
+
+    slots = []
+    parents = []
+    for name in ("nvme-a", "nvme-b"):
+        chip = tmp_path / name
+        chip.mkdir()
+        (chip / "name").write_text("nvme\n", encoding="utf-8")
+        (chip / "temp1_input").write_text("42000\n", encoding="utf-8")
+        (chip / "temp1_label").write_text("Composite\n", encoding="utf-8")
+        target = tmp_path / f"device-{name}"
+        target.mkdir()
+        (chip / "device").symlink_to(target, target_is_directory=True)
+        slots.append(chip / "temp1_input")
+        parents.append(str(target.resolve()))
+
+    with patch("mishe_tauftauf.discovery._thermal_slots", return_value=slots):
+        reading = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}[
+            "sense.thermal.hwmon"
+        ]
+
+    assert [identity["channel"] for identity in reading["identity"]] == [
+        "nvme:temp1(Composite)", "nvme:temp1(Composite)"
+    ]
+    assert [identity["parent"] for identity in reading["identity"]] == parents
 
 
 def test_thermal_hwmon_skips_out_of_range_sensor_values(tmp_path: Path) -> None:

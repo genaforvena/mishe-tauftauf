@@ -50,6 +50,7 @@ def ensure_engine_for_new_minds(home: Path, engine_command: str) -> None:
 
 
 def preferred_operator_window(home: Path, requested: str | None) -> str:
+    """Name the human operator's convenience shell. It is not a role or a gate."""
     manifest = home / "health" / "windows.json"
     if manifest.exists():
         names = json.loads(manifest.read_text(encoding="utf-8"))
@@ -70,9 +71,8 @@ def site_and_session(workspace: Path, default_site_name: str, home: Path | None,
         if len(candidates) > 1:
             raise ValueError("multiple resident sites exist; pass --home and --session")
         home = candidates[0] if candidates else workspace / default_site_name
-    raised = home / ".seed-raised"
-    if session is None and raised.is_file():
-        session = raised.read_text(encoding="utf-8").split()[0]
+    if session is None:
+        session = seed.recorded_session(home)
     if session is None:
         session = "mishe-seed" if default_site_name == ".mishe-seed" else "mishe-" + workspace.name.replace("_", "-")
     return home, session

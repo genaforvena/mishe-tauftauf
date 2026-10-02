@@ -160,21 +160,25 @@ def check_pane(home: Path, session: str, slug: str, wait: float = 11.0) -> tuple
     if _pane_stopped_or_dead(session, slug):
         return False, f"HOLD pane-frozen: {slug} renderer process is stopped or dead"
     first = capture_raw(session, slug)
-    if "pane missing" in first:
+    # capture_raw returns sentinel strings when it cannot read the pane; match
+    # them exactly, because a live pane's own text may quote the same words.
+    if first == f"UNKNOWN — top-pain {slug} pane missing\n":
         return False, f"HOLD pane-missing: {slug}"
-    if "pane empty" in first:
+    if first == f"UNKNOWN — top-pain {slug} pane empty\n":
         return False, f"HOLD pane-empty: {slug}"
     if first.startswith("UNKNOWN — top-pain"):
         return False, f"HOLD pane-fallback: {slug}"
     lease1 = lease_value(first)
     if lease1 is None:
         return False, f"HOLD pane-fallback: {slug} has no owned lease"
-    time.sleep(wait)
-    second = capture_raw(session, slug)
-    lease2 = lease_value(second)
-    if lease2 is None or lease2 == lease1:
-        return False, f"HOLD pane-frozen: {slug} lease did not advance"
-    return True, f"PASS pane-live: {slug}"
+    # A loaded host can starve a healthy renderer past a single window; only two
+    # consecutive windows with no advance mean the pane is actually frozen.
+    for _ in range(2):
+        time.sleep(wait)
+        lease2 = lease_value(capture_raw(session, slug))
+        if lease2 is not None and lease2 != lease1:
+            return True, f"PASS pane-live: {slug}"
+    return False, f"HOLD pane-frozen: {slug} lease did not advance"
 def repair_top(home: Path, session: str, slug: str) -> tuple[bool, str]:
     if not owns_session(home, session):
         return False, f"UNKNOWN pane command ownership for {session}:{slug}.0"

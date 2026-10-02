@@ -31,6 +31,19 @@ def default_home() -> Path:
                 or os.environ.get("MISHE_TAUFTAUF_HOME", ".mishe-tauftauf"))
 
 
+def _default_session(home: Path) -> str:
+    """Resolve an omitted --session to the session this plant records for itself.
+
+    The literal fallback only fits a default-named plant. A custom-named plant
+    records its session in .seed-raised, so addressing the literal points at a
+    session it does not own and every pane reads as a dead renderer.
+    """
+    session = os.environ.get("MISHE_SEED_SESSION")
+    if session:
+        return session
+    from .seed import recorded_session
+    return recorded_session(home) or "mishe-tauftauf"
+
 def initialize(home: Path) -> None:
     home.mkdir(parents=True, exist_ok=True)
     for name in ("top-pains", "minds", "observations", "filters", "projectors", "handoffs", "plans"):
@@ -163,14 +176,18 @@ def cmd_pain_read(args) -> int:
         return 0 if ok else 1
     if launcher == "tmux":
         from .tmux import capture_raw, owns_session
+        # Resolve the session only where a pane is actually addressed: the
+        # dashboard path has no tmux target, and in-process callers build a
+        # Namespace without `session`.
+        session = getattr(args, "session", None) or _default_session(args.home)
         # A typo'd or stale --home must not read another site's live pane as if
         # it were this one: the pane is addressed only by session and window,
         # so without this check every pane reads GREEN under a wrong home.
-        if not owns_session(args.home, args.session):
+        if not owns_session(args.home, session):
             home = Path(args.home).resolve()
-            sys.stderr.write(f"UNKNOWN — session {args.session!r} is not owned by {home}\n")
+            sys.stderr.write(f"UNKNOWN — session {session!r} is not owned by {home}\n")
             return 1
-        text = capture_raw(args.session, args.slug)
+        text = capture_raw(session, args.slug)
         sys.stdout.write(text)
         return 1 if text.startswith("UNKNOWN —") else 0
     return cmd_pain_render(args)
@@ -505,11 +522,16 @@ def cmd_doctor(args) -> int:
     for prediction in pending:
         print(f"PENDING prediction {prediction.sequence} top-pain {prediction.slug} check {prediction.check_at.isoformat()}")
     if args.panes:
-        from .tmux import check_pane
-        for slug in discover(args.home):
-            ok, line = check_pane(args.home, args.session, slug, args.pane_wait)
-            print(line)
-            failures += 0 if ok else 1
+        from .tmux import check_pane, owns_session
+        session = getattr(args, "session", None) or _default_session(args.home)
+        if shutil.which("tmux") and not owns_session(args.home, session):
+            print(f"UNKNOWN — session {session!r} is not owned by {args.home}")
+            failures += 1
+        else:
+            for slug in discover(args.home):
+                ok, line = check_pane(args.home, session, slug, args.pane_wait)
+                print(line)
+                failures += 0 if ok else 1
     if shutil.which("tmux"):
         print("PASS optional tmux available")
     else:
@@ -622,9 +644,11 @@ def parser() -> argparse.ArgumentParser:
     delivery = sub.add_parser("delivery").add_subparsers(dest="delivery_command", required=True)
     p = delivery.add_parser("submit"); p.add_argument("id"); p.add_argument("--owner", required=True)
     p.add_argument("--repo", type=Path, required=True); p.add_argument("--base", required=True)
-    p.add_argument("--branch", required=True); p.add_argument("--review", type=Path, required=True)
-    p.add_argument("--main-only", action="store_true",
-                   help="candidate is not published; land from the exact local worktree and verify CI on main")
+    p.add_argument("--review", type=Path, required=True)
+    p.add_argument("--branch", default="main",
+                   help="legacy label only; main-only is the default and no branch is published")
+    p.add_argument("--main-only", action="store_true", default=True,
+                   help="main is the single branch; land from the exact local worktree and verify CI on main")
     p.set_defaults(func=cmd_delivery)
     p = delivery.add_parser("check"); p.add_argument("id"); p.set_defaults(func=cmd_delivery)
     p = delivery.add_parser("show"); p.set_defaults(func=cmd_delivery)
@@ -677,14 +701,14 @@ def parser() -> argparse.ArgumentParser:
     p = discover_cmd.add_parser("show"); p.set_defaults(func=cmd_discover)
     p = sub.add_parser("feed"); p.set_defaults(func=cmd_feed)
     p = sub.add_parser("dispatch-receipt"); p.add_argument("slug"); p.add_argument("entry", type=int); p.add_argument("outcome", choices=("delivered", "refused")); p.add_argument("--request-id"); p.add_argument("--generation", type=int); p.set_defaults(func=cmd_dispatch_receipt)
-    p = sub.add_parser("doctor"); p.add_argument("--panes", action="store_true"); p.add_argument("--session", default="mishe-tauftauf"); p.add_argument("--pane-wait", type=float, default=11.0); p.add_argument("--live-laya", action="store_true"); p.add_argument("--live-jev", action="store_true"); p.add_argument("--verbose", action="store_true"); p.set_defaults(func=cmd_doctor)
+    p = sub.add_parser("doctor"); p.add_argument("--panes", action="store_true"); p.add_argument("--session"); p.add_argument("--pane-wait", type=float, default=11.0); p.add_argument("--live-laya", action="store_true"); p.add_argument("--live-jev", action="store_true"); p.add_argument("--verbose", action="store_true"); p.set_defaults(func=cmd_doctor)
     p = sub.add_parser("check"); p.add_argument("slug"); p.add_argument("program", nargs=argparse.REMAINDER); p.set_defaults(func=cmd_check)
     p = sub.add_parser("predict"); p.add_argument("slug"); p.add_argument("file", nargs="?"); p.add_argument("--replaces", type=int); p.set_defaults(func=cmd_predict)
     p = sub.add_parser("handoff"); p.add_argument("slug"); p.add_argument("file", nargs="?"); p.set_defaults(func=cmd_handoff)
     pain = sub.add_parser("pain").add_subparsers(dest="pain_command", required=True)
     p = pain.add_parser("list"); p.set_defaults(func=cmd_pain_list)
     p = pain.add_parser("render"); p.add_argument("slug"); p.add_argument("--timeout", type=float, default=10.0); p.set_defaults(func=cmd_pain_render)
-    p = pain.add_parser("read"); p.add_argument("slug"); p.add_argument("--launcher", choices=("headless", "tmux", "dashboard"), default="headless"); p.add_argument("--session", default="mishe-tauftauf"); p.add_argument("--timeout", type=float, default=10.0); p.set_defaults(func=cmd_pain_read)
+    p = pain.add_parser("read"); p.add_argument("slug"); p.add_argument("--launcher", choices=("headless", "tmux", "dashboard"), default="headless"); p.add_argument("--session"); p.add_argument("--timeout", type=float, default=10.0); p.set_defaults(func=cmd_pain_read)
     p = pain.add_parser("watch"); p.add_argument("slug"); p.add_argument("--interval", type=float, default=5.0); p.add_argument("--timeout", type=float, default=10.0); p.set_defaults(func=cmd_pain_watch)
     p = sub.add_parser("run"); mode = p.add_mutually_exclusive_group(required=True); mode.add_argument("--once", action="store_true"); mode.add_argument("--follow", action="store_true"); judge = p.add_mutually_exclusive_group(); judge.add_argument("--judge"); judge.add_argument("--batch-judge"); p.add_argument("--launcher", choices=("headless", "tmux"), default="tmux"); p.add_argument("--session", default="mishe-tauftauf"); p.add_argument("--interval", type=float, default=5.0); p.add_argument("--observe-only", action="store_true"); p.add_argument("--slug"); p.add_argument("--laya-structured", action="store_true"); p.add_argument("--policy"); p.add_argument("--control-cache-ttl", type=float); p.add_argument("--refresh-controls", action="store_true"); p.add_argument("--external-view-slug", action="append", default=[]); p.add_argument("--external-delta-view-slug", action="append", default=[]); p.add_argument("--external-fleet-view-slug", action="append", default=[]); p.set_defaults(func=cmd_run)
     tmux = sub.add_parser("tmux").add_subparsers(dest="tmux_command", required=True)

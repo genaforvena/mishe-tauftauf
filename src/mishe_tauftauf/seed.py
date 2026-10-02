@@ -55,6 +55,13 @@ LEGACY_INSTRUCTION_HASHES = {
 }
 
 
+def recorded_session(home: Path) -> str | None:
+    """The session this site raised, from its receipt, or None when unraised."""
+    try:
+        return (home / ".seed-raised").read_text(encoding="utf-8").split()[0]
+    except (OSError, IndexError):
+        return None
+
 @contextmanager
 def _lock(home: Path):
     validate_home(home)
