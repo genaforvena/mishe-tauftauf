@@ -45,10 +45,10 @@ For the local wall-coordination trial, read [Mesh, in view](docs/mesh.md).
 It is an edited introduction with its own live docs pane. The older operating
 guides below describe the ledger runtime; [wall coordination](docs/wall-coordination.md)
 describes the trial.
-Check `SITE/coordination-mode.json` to identify the active mode. Wall-mode minds
-use edited walls and addressed chat; they do not claim tasks or use the ledger
-publication gate to settle a turn. A fresh plant retains the ledger defaults
-unless explicitly configured for the local trial.
+Check `SITE_HOME/coordination-mode.json` (the site home directory) to identify
+the active mode. Wall-mode minds use edited walls and addressed chat; they do
+not claim tasks or use the ledger publication gate to settle a turn. A fresh
+plant retains the ledger defaults unless explicitly configured for the local trial.
 
 | You want to… | Read |
 | --- | --- |
