@@ -244,6 +244,10 @@ def sync_registered_sites(core_home: Path, ci: dict[str, str], *, runtime_only: 
                 outcomes.append(f"synced {target.parent} {sha[:12]}")
             except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
                 error = str(exc)[:400]
+                # Record the hold first: the notice append is publication-gated and
+                # may raise, so writing it afterwards would leave the registry
+                # without the error and retry the same refused append on every tick.
+                _update_site(core_home, target, sha=row["sha"], error=error)
                 if not row.get("error"):
                     Feed(core_home).append("sync", f"[task] {task} owner=genome source=ci\n"
                                            f"Refresh {target.parent} from green core commit {sha}; "
@@ -257,8 +261,6 @@ def sync_registered_sites(core_home: Path, ci: dict[str, str], *, runtime_only: 
                                             "Resolve the local blocker, then the core CI follower will retry.", once=True)
                     except (OSError, ValueError):
                         pass
-                # Keep the old applied SHA until verification succeeds so the next CI tick can retry.
-                _update_site(core_home, target, sha=row["sha"], error=error)
                 outcomes.append(f"held {target.parent}: {error}")
         return outcomes
 
