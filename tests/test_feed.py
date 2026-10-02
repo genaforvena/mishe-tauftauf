@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
+from mishe_tauftauf import feed as feed_module
 from mishe_tauftauf.feed import Feed, FeedError, parse_feed
 
 
@@ -30,6 +31,28 @@ class FeedTests(unittest.TestCase):
                 with self.assertRaisesRegex(FeedError, "task.*CLI|task.*control"):
                     feed.append("genome", body)
                 self.assertEqual(feed.read_bytes(), before)
+
+    def test_unchanged_full_read_reuses_the_parsed_revision(self):
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            feed.append("genome", "first cached entry\n")
+            parses = []
+            original = feed_module.parse_feed
+
+            def counting(*args, **kwargs):
+                parses.append(1)
+                return original(*args, **kwargs)
+
+            with patch.object(feed_module, "parse_feed", counting):
+                first = feed.entries()
+                second = Feed(directory).entries()
+                self.assertEqual([e.sequence for e in first], [e.sequence for e in second])
+                self.assertEqual(len(parses), 1, "an unchanged feed must not be reparsed")
+            feed.append("genome", "second entry invalidates the cached revision\n")
+            with patch.object(feed_module, "parse_feed", counting):
+                third = feed.entries()
+                self.assertEqual(len(parses), 2, "a new revision must be reparsed")
+            self.assertEqual([e.sequence for e in third], [1, 2])
 
     def test_multiline_final_newline_round_trip(self):
         with tempfile.TemporaryDirectory() as directory:
