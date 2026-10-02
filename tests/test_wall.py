@@ -38,6 +38,16 @@ def test_wall_dm_and_shared_walls(tmp_path):
     assert "Investigating rollback" in text and "Sample is ready" in text
     assert "health" in text
 
+def test_wall_write_rejects_uninitialized_reserved_home(tmp_path):
+    setup_wall(tmp_path)
+    from mishe_tauftauf import wall
+    # A typo'd --home must not silently raise a second site tree. A reserved
+    # .mishe-* name inside a worktree needs the initialized layout first.
+    stray = tmp_path / ".mishe-tauftauft"
+    with pytest.raises(ValueError):
+        wall.write(stray, "discover", "notes")
+    assert not stray.exists()
+
 
 def test_wall_is_visible_without_hiding_failed_sensor(tmp_path, monkeypatch):
     setup_wall(tmp_path)

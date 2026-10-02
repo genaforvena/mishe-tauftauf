@@ -213,7 +213,7 @@ def sample(home: Path) -> dict[str, object]:
                      "sample": sum(wakeup_counts) if wakeup_counts else "counter unavailable",
                      "kind": "counter"})
     hwmon_root = Path("/sys/class/hwmon")
-    temperatures: list[str] = []
+    temperatures: list[tuple[str, dict[str, str | None]]] = []
     for slot in _thermal_slots(hwmon_root):
         value = _read(slot, 64)
         if value is None or not value.strip().lstrip("-").isdigit():
@@ -225,11 +225,26 @@ def sample(home: Path) -> dict[str, object]:
             continue
         chip = _read(slot.parent / "name", 64)
         name = chip.strip() if chip else slot.parent.name
-        temperatures.append(f"{name}={millidegrees / 1000.0:.1f}C")
+        channel = re.fullmatch(r"temp(\d+)_input", slot.name)
+        if channel is None:
+            continue
+        index = channel.group(1)
+        label_text = _read(slot.with_name(f"temp{index}_label"), 64)
+        label = label_text.strip() if label_text and label_text.strip() else None
+        channel_id = f"temp{index}" + (f"({label})" if label else "")
+        device_path = slot.parent / "device"
+        try:
+            parent = str(device_path.resolve()) if device_path.exists() else None
+        except (OSError, RuntimeError):
+            parent = None
+        channel_identity = f"{name}:{channel_id}"
+        temperatures.append((f"{channel_identity}={millidegrees / 1000.0:.1f}C",
+                             {"channel": channel_identity, "parent": parent}))
+    thermal_identity = [identity for _, identity in temperatures]
     observed.append({"id": "sense.thermal.hwmon", "state": "verified" if temperatures else "unknown",
-                     "sample": ", ".join(temperatures)
+                     "sample": ", ".join(sample_text for sample_text, _ in temperatures)
                      if temperatures else "no readable hwmon temperature sensor",
-                     "kind": "read"})
+                     "identity": thermal_identity, "kind": "read"})
     session = os.environ.get("MISHE_SEED_SESSION")
     if not session:
         try:
@@ -274,17 +289,59 @@ def scan(home: Path) -> Path:
     def signature(data: dict[str, object] | None) -> dict[str, tuple[str, str]]:
         if data is None:
             return {}
-        return {str(item["id"]): (str(item["state"]), str(item["sample"])
-                                    if item["state"] == "unknown" or item["kind"] == "declaration" else "")
-                for item in data.get("observations", [])}
+        result = {}
+        for item in data.get("observations", []):
+            identifier = str(item["id"])
+            state = str(item["state"])
+            sample_text = str(item["sample"])
+            if item["kind"] == "declaration" or state != "verified":
+                detail = sample_text
+            elif identifier == "sense.proc.cpu-busy":
+                detail = "high" if re.search(r"(?:^|\s)high(?:$|\s)", sample_text) else "not-high"
+            elif identifier == "sense.thermal.hwmon":
+                detail = json.dumps(item.get("identity", []), ensure_ascii=False, sort_keys=True)
+            else:
+                detail = ""
+            result[identifier] = (state, detail)
+        return result
 
     current_signature = signature(snapshot)
     old_signature = signature(previous)
     changed = [name for name in current_signature if current_signature[name] != old_signature.get(name)]
     if previous is not None and not changed:
         return artifact
+    change_details = []
+    for name in changed:
+        if previous is None:
+            change_details.append(name)
+            continue
+        old_reading = next((item for item in previous.get("observations", [])
+                            if item["id"] == name), None)
+        new_reading = next((item for item in readings if item["id"] == name), None)
+        if old_reading and new_reading and old_reading["state"] == new_reading["state"] == "verified":
+            if name == "sense.proc.cpu-busy":
+                old_class = "high" if re.search(
+                    r"(?:^|\s)high(?:$|\s)", str(old_reading["sample"])) else "not-high"
+                new_class = "high" if re.search(
+                    r"(?:^|\s)high(?:$|\s)", str(new_reading["sample"])) else "not-high"
+                change_details.append(
+                    f"{name} class {old_class} -> {new_class} (short sample: "
+                    f"{old_reading['sample']} -> {new_reading['sample']})")
+                continue
+            if name == "sense.thermal.hwmon":
+                def describe_identity(reading):
+                    return "; ".join(
+                        f"channel {item.get('channel', 'unknown')}, "
+                        f"parent device {item.get('parent') or 'unavailable'}"
+                        for item in reading.get("identity", []) if isinstance(item, dict)
+                    ) or "unavailable"
+                old_identity = describe_identity(old_reading)
+                new_identity = describe_identity(new_reading)
+                change_details.append(f"{name} identity {old_identity} -> {new_identity}")
+                continue
+        change_details.append(name)
     change_text = ("Initial baseline." if previous is None else
-                   "Changed states or unknown reasons: " + ", ".join(changed) + ".")
+                   "Material changes: " + "; ".join(change_details) + ".")
     lines = [f"[discovery] Read-only scan at {snapshot['created']} on {snapshot['node']}.",
              change_text,
              f"Available commands ({len(available)}): {', '.join(available) or 'none'}.",
