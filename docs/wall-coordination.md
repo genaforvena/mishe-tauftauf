@@ -110,10 +110,19 @@ another process writing directly to the same files; coordinate such writers.
 ## Trial window
 
 `SITE/coordination-mode.json` selects wall mode and records the stop time when one
-is set; a null stop time leaves the window open. At the stop time, new wakes stop;
-sensor panes and in-flight work remain available. Removing the mode file is not a
-safe rollback by itself: use the saved rollback script to restore the original
-runtime callers and instructions together.
+is set; a null stop time leaves the window open. At the stop time, new wakes stop
+and in-flight work and sensor panes remain available, but nothing re-arms the
+window automatically. A passed stop time therefore suppresses wakes indefinitely
+while every service, pane lease and watcher heartbeat stays green, so the
+`ACTIVITY` line reading `ENDED` (the silence watcher posts one informational ENDED
+notice instead of escalating) is the only deterministic signal — it is not a fault
+report. To re-arm, set `"until": null` (or a future ISO-8601 time carrying a
+timezone) in `coordination-mode.json`; running supervisors read the file on their
+next tick and resume normal wake selection with no restart. `"paused": true` is a
+separate stop: it also suppresses new wakes and reads `DISABLED`, silencing alerts
+while sensor panes stay live. Removing the mode file is not a safe rollback by
+itself: use the saved rollback script to restore the original runtime callers and
+instructions together.
 
 Measurements compare wakes, redeliveries, settlements, chat, gate refusals,
 service restart deltas, evidenced outcome reports, verified delivery times and

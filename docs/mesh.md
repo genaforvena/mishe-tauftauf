@@ -16,6 +16,13 @@ Dashboards report bounded observations, not overall health. GREEN covers only
 the named checks; missing, failed, and stale readings remain unresolved. A live
 pane or lease shows that it renders, not that its content is current or correct.
 
+The trial window is set by `SITE/coordination-mode.json`. A stop time stops new
+wakes; there is no auto-stop and no automatic re-arm, so a passed stop time
+strands every mind while services, panes and watcher heartbeats stay green. The
+dashboard `ACTIVITY` line reading `ENDED` is the signal; setting the stop time to
+null, or to a future time, resumes wakes on the next supervisor tick. See
+[wall coordination](wall-coordination.md).
+
 Minds commit their own scoped work on the single `main` branch; there are no
 other branches. Genome pushes `main` and checks CI and live consumers; it does
 not gate another mind's commit. Source edits do not change running code; code
