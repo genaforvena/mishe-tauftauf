@@ -50,3 +50,14 @@ def test_sampler_preserves_partial_sample_on_service_timeout(tmp_path, monkeypat
     monkeypatch.setattr(trial_metrics.subprocess, "run", timeout)
     sample = trial_metrics.collect(home, datetime.now(timezone.utc))
     assert "unknown" in sample["services"]["test.service"]
+
+
+def test_sampler_accepts_open_ended_window_until_null(tmp_path, monkeypatch):
+    home = site(tmp_path, monkeypatch)
+    (home / "coordination-mode.json").write_text(json.dumps({
+        "mode": "wall", "started": "2026-10-01T15:33:48.126048+00:00", "until": None}))
+    directory = tmp_path / "metrics"
+    monkeypatch.setattr("sys.argv", ["trial_metrics", "--home", str(home), "--directory", str(directory)])
+    trial_metrics.main()
+    assert (directory / "latest.json").exists()
+    assert (directory / "report.md").exists()

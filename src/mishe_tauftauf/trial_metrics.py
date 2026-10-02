@@ -125,24 +125,24 @@ def main():
         parser.error("interval must be positive")
     config = settings(args.home)
     start = datetime.fromisoformat(config["started"])
-    until = datetime.fromisoformat(config["until"])
+    until = datetime.fromisoformat(config["until"]) if config["until"] else None
     args.directory.mkdir(parents=True, exist_ok=True)
-    initial_path = args.directory / "initial.json"
+    initial_path = args.directory / "baseline.json"
     initial = json.loads(initial_path.read_text()) if initial_path.exists() else collect(args.home, start)
     _save(initial_path, initial)
     while True:
         now = datetime.now(timezone.utc)
-        sample = collect(args.home, start, end=min(now, until))
+        sample = collect(args.home, start, end=min(now, until) if until else now)
         _save(args.directory / "latest.json", sample)
         _save(args.directory / ("sample-"+str(int(now.timestamp()))+".json"), sample)
         report(args.home, args.directory, sample, initial)
         print(f"sample {sample['hours']:.2f}h entries={sample['entries']} wakes={sample['counts']['wakes']}", flush=True)
-        if now >= until:
+        if until and now >= until:
             _save(args.directory / "final.json", sample)
             break
         if not args.watch:
             break
-        time.sleep(min(args.interval, max(0.01, (until-now).total_seconds())))
+        time.sleep(min(args.interval, max(0.01, (until-now).total_seconds())) if until else args.interval)
 
 
 if __name__ == "__main__":
