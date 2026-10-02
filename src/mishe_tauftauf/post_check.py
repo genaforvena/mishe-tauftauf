@@ -52,7 +52,11 @@ def _deterministic(body):
     decoder = json.JSONDecoder()
     # Decode at every possible object/list start, including prose and fences.
     # No presentation wrapper authorizes JSON on the shared text surface.
-    for match in re.finditer(r'[\[{]', body):
+    # A `[` right after an identifier character or a closing bracket is source
+    # syntax (argv[0], rows[i - 1]), not the start of a JSON literal, so it
+    # cannot begin structured data. This keeps embedded Python and shell text
+    # like tracebacks from being refused as state dumps.
+    for match in re.finditer(r'(?<![\w\]])[\[{]', body):
         try:
             value, length = decoder.raw_decode(body[match.start():])
         except (ValueError, TypeError):
