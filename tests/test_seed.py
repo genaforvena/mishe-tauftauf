@@ -607,6 +607,31 @@ def test_seed_follow_drives_a_checked_repair_without_a_judge(tmp_path: Path) -> 
         cli(home, "stop", "--session", session)
 
 
+def test_seed_run_holds_on_checker_outage_instead_of_exiting(monkeypatch, capsys) -> None:
+    """An unavailable semantic checker must not kill the resident supervisor."""
+    import pytest
+
+    from mishe_tauftauf import seed
+
+    calls = {"tick": 0}
+
+    def fake_tick(*args, **kwargs):
+        calls["tick"] += 1
+        if calls["tick"] == 1:
+            raise ValueError("Codex CLI failed with exit 1")
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(seed, "start", lambda *args, **kwargs: "ready")
+    monkeypatch.setattr(seed, "tick", fake_tick)
+    monkeypatch.setattr(seed, "_clear_due", lambda *args, **kwargs: False)
+    monkeypatch.setattr(seed.time, "sleep", lambda _: None)
+    with pytest.raises(KeyboardInterrupt):
+        seed.run(Path("/nonexistent-site"), "mishe-test", "genome", 0.1, 0)
+    output = capsys.readouterr().out
+    assert "HOLD seed genome tick: Codex CLI failed with exit 1" in output
+    assert calls["tick"] == 2
+
+
 def test_seed_adds_live_channel_to_existing_owned_session(tmp_path: Path) -> None:
     home = seeded_home(tmp_path)
     session = f"mishe-seed-test-{uuid.uuid4().hex[:10]}"

@@ -1193,7 +1193,13 @@ def run(home: Path, session: str, slug: str, interval: float, self_pick_seconds:
         raise ValueError("clear grace must be nonnegative")
     while True:
         start(home, session, slug, interval)
-        print(tick(home, session, slug, self_pick_seconds), flush=True)
+        # A semantic checker outage (for example an unavailable model) is a
+        # HOLD, not a fatal error. Let the resident supervisor keep tending
+        # instead of exiting and letting systemd restart it in a tight loop.
+        try:
+            print(tick(home, session, slug, self_pick_seconds), flush=True)
+        except ValueError as exc:
+            print(f"HOLD seed {slug} tick: {exc}", flush=True)
         if _clear_due(home, slug, clear_grace_seconds) and _mind_idle(session, slug):
             try:
                 print(clear(home, session, slug), flush=True)

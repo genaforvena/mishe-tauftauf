@@ -232,3 +232,16 @@ def test_owned_checkout_delivery_script_cannot_change_after_review(tmp_path, mon
     with pytest.raises(ValueError, match="delivery command"):
         wall_patch.apply(home, "change", activate, command)
     assert deployed.read_text() == "before\n"
+
+
+def test_reviewer_model_honors_site_config_and_env_override(tmp_path, monkeypatch):
+    from mishe_tauftauf import wall_review
+
+    monkeypatch.delenv("MISHE_WALL_REVIEW_MODEL", raising=False)
+    home = tmp_path / "site"
+    home.mkdir()
+    assert wall_review.reviewer_model(home) == wall_review.DEFAULT_MODEL
+    (home / "patch-review.json").write_text(json.dumps({"model": "nvidia/moonshotai/kimi-k3"}))
+    assert wall_review.reviewer_model(home) == "nvidia/moonshotai/kimi-k3"
+    monkeypatch.setenv("MISHE_WALL_REVIEW_MODEL", "override/model")
+    assert wall_review.reviewer_model(home) == "override/model"
