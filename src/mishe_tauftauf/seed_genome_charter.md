@@ -1,17 +1,20 @@
-# genome — ready integration and source development
+# genome — push and check the single main branch
 
-Goal: develop this plant and serialize safe main integration of ready candidates.
-Follow doctrine for work priority, evidence, task state, and wake completion.
-Advance ready integrations on the next available turn; blocked candidates leave
+Goal: develop this plant, push the single `main` branch, and check its CI and live
+consumers. Follow doctrine for work priority, evidence, task state, and wake
+completion. Advance ready pushes on the next available turn; a blocked push leaves
 room for other ready work or a bounded improvement. Preserve active wakes.
 
-The source author owns preparation, checks, independent review, branch publication,
-exact branch CI and final rollout. Genome receives only revision-bound integration
-steps created by the delivery watcher. Run `delivery integrate ID --source genome`
-for the exact delivered candidate. It rechecks clean candidate bytes, review,
-remote refs and CI, and updates main with an exact-base lease. It never stages the
-shared checkout. The author then receives a real integration event and completes
-final main CI, clean release deployment and live consumer verification.
+Authors commit their own scoped work on `main`; there are no candidate or
+publication branches. Genome's job is to push `main` and check the pushed commit's
+CI and live consumers. It does not author or gate another mind's commit, so no
+reviewed work is parked waiting on genome or on an operator. Run
+`git -C WORKSPACE push origin main`, then read the exact-SHA CI and the deployed
+consumers. The author still owns the rollout and consumer verification for their
+commit; the push is genome's, the delivery is the author's.
+
+The legacy isolated-candidate flow below (`delivery show`/`integrate`) is retained
+for recovery and non-wall plants only; the wall trial does not need it.
 
 Inspect `delivery show`. Old landing registrations are recovery history, not queue
 priority or a global source hold. A ready integration task takes the next available
@@ -46,6 +49,6 @@ Keep runtime health and source debt separate. RED debt stays visible even when d
 
 Read the full current report with `mishe-tauftauf --home SITE pain read genome --launcher dashboard`. The pane displays that same atomic report. Use the separate tmux read to check presentation and its refreshing lease; terminal viewport/scrollback is not the evidence input. A missing or stale dashboard is UNKNOWN and calls for repairing its watcher, not substituting a terminal screenshot.
 
-A wake delivers the shared board without assigning work. Choose a ready integration or useful source step and claim it with `task claim` before acting. Main integration remains serialized by genome; claim admission preserves this boundary while other work may move across suitable roles. Inspect a private correction report after rejected selection, publication or handoff, revise the plan/text and recheck without repeating performed effects.
+A wake delivers the shared board without assigning work. Choose a ready push or useful source step and claim it with `task claim` before acting. Genome owns the push and CI check; claim admission preserves this boundary while other work may move across suitable roles. Inspect a private correction report after rejected selection, publication or handoff, revise the plan/text and recheck without repeating performed effects.
 
-Temporary source branches exist only for active work. After verified delivery, the watcher retires the exact integrated branch and clean inactive candidate worktree, preserving a verified Git recovery bundle. Dirty files, advanced refs, live process use or unavailable checks prevent removal and remain visible with an exact retry condition. Keep main as the durable source branch; detached runtime releases provide rollback. Resolve useful unmerged work before retirement; never erase it to make the queue look clean.
+`main` is the only branch, locally and remotely; do not create candidate or publication branches. Detached runtime releases provide rollback. If legacy retirement state exists, resolve useful unmerged work before retirement; never erase it to make the queue look clean.

@@ -24,7 +24,7 @@ The self-organization loop is:
 
 **maintain the substrate → advance one bounded development step → ideate from observed gaps → process wishes into owned tasks**
 
-The shared tape uses `[task] <id> owner=<role>`, `[taking] <id>`, `[done] <id>`, and `[dropped] <id> — reason`. Witness keeps unfinished IDs visible and checks artifacts. Source authors own delivery; genome serializes ready integration.
+The shared tape uses `[task] <id> owner=<role>`, `[taking] <id>`, `[done] <id>`, and `[dropped] <id> — reason`. Witness keeps unfinished IDs visible and checks artifacts. Authors commit their own scoped work on the single `main` branch; genome pushes `main` and checks CI.
 
 Every mind may implement an owned, evidence-backed repair across Mishe's layers, including its rules and architecture. A role is not a file restriction. The operator's standing instruction to encourage these changes is carried in doctrine and both agent contracts. Ownership, acceptance checks, independent review, and external boundaries still apply.
 
@@ -40,21 +40,21 @@ Task prerequisites have a deterministic boundary:
 
 The supervisor delivers an advisory board without choosing a task. The mind records one atomic claim tied to its exact wake and observation. It refuses an unchanged waiting task on quiet picks or continuation. A new pane observation still invites investigation; it does not make a waiting task actionable.
 
-With `task offer`, an owner names suitable helper charters as advice. An offer is not required. `task claim` under the shared lock reserves an eligible step for one active wake and transfers ownership, preventing another mind from taking it. Author delivery and fact-owned integration retain their required owners.
+With `task offer`, an owner names suitable helper charters as advice. An offer is not required. `task claim` under the shared lock reserves an eligible step for one active wake and transfers ownership, preventing another mind from taking it. Authors retain their own committed delivery; genome retains the push and CI check.
 
 These are local scheduling and cooperative ownership checks. They grant no authority over arbitrary editor writes or external fleet resources.
 
 ## Ready integration and delivery
 
-Authors prepare isolated candidates, obtain independent exact-revision review, publish branches, and submit delivery. The CI watcher derives readiness from actual refs, immutable review, and exact branch CI. Passing candidates create revision-bound genome integration steps for the next available turn; active wakes remain reserved. Preparation children do not inherit integration priority. Historical landing records and source debt impose no global production hold.
+Authors commit their own scoped work directly on the single `main` branch and report the exact commit. There are no candidate or publication branches. Genome pushes `main` and checks its CI and live consumers; it does not author or gate another mind's commit. Historical landing records and source debt impose no global production hold.
 
-The author retains final main CI, clean release deployment, and consumer verification. Deployment reads the installed release pin and fails closed on corruption; independent development dirt is not deployed code. Target ownership and live caller checks remain mandatory. Deployment convergence cannot be its own prerequisite.
+The author retains final CI, clean release deployment, and consumer verification for the pushed commit. Deployment reads the installed release pin and fails closed on corruption; independent development dirt is not deployed code. Target ownership and live caller checks remain mandatory. Deployment convergence cannot be its own prerequisite.
 
 ## Tracked rules and local state
 
 The tracked genome contains reusable code and general rules. The live plant's chat, customized charters, handoffs, plans, checks, evidence, and service files belong under gitignored `.mishe-tauftauf/`, following LTE's `.mesh/` boundary.
 
-A reviewed general lesson is promoted deliberately into tracked source. Genome checks the Git index for local state before committing and pushing.
+A reviewed general lesson is promoted deliberately into tracked source. Authors keep the Git index free of local state when they commit; genome checks the index again before pushing.
 
 ## The lifecycle this seed implements
 

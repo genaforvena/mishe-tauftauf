@@ -24,7 +24,7 @@ Jump to: [vocabulary](#the-vocabulary-without-the-potting-soil) ·
 | **Handoff** | The current task, evidence, uncertain effects, and exact next step saved in `SITE/handoffs/ROLE.md` and archived when the wake is settled. Unlike a charter, it describes work in progress. |
 | **Wake** | A supervisor-issued invitation to take one bounded step. Its sequence number ties the action, handoff, and receipt to an exact entry in `chat.log`. |
 | **Lease** | The top pane's refresh timestamp. A fresh lease is evidence that the renderer is running, not that the system being checked is healthy. |
-| **Genome** | The reusable tracked code and general rules; also the resident channel that serializes ready integration of reviewed author commits. Local instance state is not part of this tracked genome. |
+| **Genome** | The reusable tracked code and general rules; also the resident channel that pushes the single `main` branch and checks its CI. Local instance state is not part of this tracked genome. |
 | **Sense** | A repeatable observation with a real source, freshness, an honest failure or unknown state, and a consumer. Finding a command on `PATH` is only a candidate for one. |
 | **Artifact** | A saved record of source-bound observations, actions, and checks, normally under `SITE/artifacts/`. A claim in prose alone is not a checked result. |
 
@@ -74,12 +74,12 @@ Project-specific checks and charters make this possible; the stock runtime does 
 | `discover` | Recent bounded local reads and capability candidates | Selects related literature, assesses applicability, and proposes evidence-backed new directions as well as local capabilities |
 | `senses` | Sampled readings, freshness, and unknowns | Turns recurring observations into truthful senses with temporal validity, a failure state, and a consumer |
 | `health` | Doctor, expected tmux windows, resident services, and CI state | Repairs the plant's local feed, panes, and services |
-| `genome` | Repository goal, worktree, doctor, CI, and next development step | Develops source and serializes integration of reviewed, CI-passing author commits |
+| `genome` | Repository goal, worktree, doctor, CI, and next development step | Develops source, pushes the single `main` branch, and checks its CI and live consumers |
 | `witness` | Open tasks, conversation, CI events, receipts, and channel health | Routes work, follows it through completion, and checks claims against artifacts and live results |
 | `permissions` | Pending and decided requests | Gives the operator a shell for scoped grant and revoke decisions |
-| `operator` | A shared shell | Lets a person or agent inspect and speak to the plant |
+| `operator` | The human owner's shell | A convenience for the person; not a role and not a gate on work |
 
-**discover → senses → health → genome → witness** describes responsibilities: find an observable, make it reliable, maintain the local substrate, improve reusable code, and independently check completion. It is not a mandatory route for every task. A fault goes to its owner; source authors retain delivery through independent review, exact CI (main-only or branch, per repository policy), ready genome integration and rollout. Witness keeps unfinished IDs visible. A person can attach to the same text session and read the same tape.
+**discover → senses → health → genome → witness** describes responsibilities: find an observable, make it reliable, maintain the local substrate, improve reusable code, and independently check completion. It is not a mandatory route for every task. A fault goes to its owner; authors commit their own scoped work on the single `main` branch, and genome pushes it and checks CI and rollout. Witness keeps unfinished IDs visible. A person can attach to the same text session and read the same tape.
 
 Roles are not file restrictions. Within owned scope, every mind may repair Mishe's source, checks, prompts, doctrine, charters, roles, routing, supervisor lifecycle, planting, or coordination when evidence requires it. Path ownership, independent review, acceptance checks, and external boundaries still apply.
 
@@ -233,7 +233,7 @@ The older mishe planting skill describes a mortal, no-clone demo with a full `bu
 
 Tracked source holds reusable runtime code, tests, setup, general instructions, and the default culture. The site holds chat, customized charters, handoffs, plans, drafts, checks, artifacts, permission requests, and service files. The site is ignored by Git; a fresh clone does not inherit another instance's live state.
 
-A general lesson becomes shared behavior only through deliberate review and promotion into tracked source. The author prepares an isolated committed candidate and obtains exact independent review. `main` is the sole durable branch; a repository that forbids publication branches lands with `--main-only` and verifies exact `main` CI, while one that allows branches may publish the candidate branch and check its exact CI. Genome integrates ready commits; the author verifies final CI and deployed consumers. The task remains open until delivery completes or an exact blocker has a retry edge. Kernel changes also need to reach active sites and their live services, not merely the checkout.
+A general lesson becomes shared behavior only through deliberate promotion into tracked source. Authors commit their own scoped work on the single `main` branch; there are no publication or candidate branches. Genome pushes `main` and checks the pushed commit's CI and live consumers; it does not gate another mind's commit. The author verifies final CI and deployed consumers. The task remains open until delivery completes or an exact blocker has a retry edge. Kernel changes also need to reach active sites and their live services, not merely the checkout.
 
 The local agent contract is [AGENTS.md](../AGENTS.md). Durable rules come from [seed_doctrine.md](../src/mishe_tauftauf/seed_doctrine.md), read from tracked source at restore and mirrored into `SITE/doctrine.md` during planting. The [mesh culture mapping](../instructions/mesh-culture.md) records the source rules and the narrower boundaries this seed carries.
 

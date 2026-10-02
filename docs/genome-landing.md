@@ -17,7 +17,7 @@ python -m mishe_tauftauf.landing_debt --home SITE --repo CHECKOUT claim \
   --task TASK --owner genome --next-step 'prepare candidate and focused checks' PATH...
 ```
 
-A claim requires a live task belonging to that role, and changes to either working or staged bytes invalidate it. The audit performs no cleanup. Preserve a backup and all unrelated/newer edits before reconciling an old source checkout. Never restore old HEAD bytes over a published draft. Delivery proceeds through exact-byte review, focused checks, accounted-for commit/push to `main` (using `--main-only` when repository policy forbids publication branches), exact-SHA CI, deployment and live consumers, followed by draft reconciliation. Runtime GREEN does not clear source debt.
+A claim requires a live task belonging to that role, and changes to either working or staged bytes invalidate it. The audit performs no cleanup. Preserve a backup and all unrelated/newer edits before reconciling an old source checkout. Never restore old HEAD bytes over a published draft. Delivery proceeds through focused checks, an accounted-for commit by the author on the single `main` branch, a genome push to `main`, exact-SHA CI, deployment and live consumers, followed by draft reconciliation. Runtime GREEN does not clear source debt.
 
 
 ## One dashboard, three consumers

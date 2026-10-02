@@ -43,7 +43,7 @@ A **site** is the local directory containing this plant's state. A **session** i
 Before running the launcher, understand its scope:
 
 - It creates an ignored site with launchers, charters, checks, observations, handoffs, artifacts, a permission ledger, and an append-only `chat.log`. If necessary, it adds a local ignore rule to Git's `info/exclude`; it does not commit that state.
-- It creates five resident windows (`discover`, `senses`, `health`, `genome`, `witness`), a `permissions` panel, and an `operator` shell. Each resident window has a refreshing observation pane above an agent pane.
+- It creates five resident windows (`discover`, `senses`, `health`, `genome`, `witness`), a `permissions` panel, and an `operator` shell. Each resident window has a refreshing observation pane above an agent pane. The `operator` shell is the human owner's convenience, not a role or a gate on work.
 - It starts the agents, takes an initial bounded discovery sample, and attempts a CI reading. Persistent supervisors can subsequently wake agents for tasks, changed observations, continuations, or quiet self-selected work within their charters. This is not an inert dashboard.
 - Unless `--no-services` is supplied, it writes, links, enables, and starts user services: `SESSION-ROLE.service` for the five minds, plus `SESSION-permissions.service` and `SESSION-ci.service`. Replanting refreshes those units and restarts ones already active.
 - Planting this core checkout persistently also installs `SESSION-coordination.service`, the linked-site release coordinator. A persistent external plant registers with that coordinator if the core plant already exists.
@@ -89,7 +89,7 @@ With the default tmux key bindings, press **Ctrl-b**, release it, then:
 | `d` | Detach back to your terminal; leave the plant running. |
 | `[` | Enter scrollback; `q` leaves scrollback. |
 
-The upper pane is the current evidence display. The lower pane belongs to the agent; do not type diagnostics into a busy mind. Use the `operator` window or a second terminal for commands. Detaching is not stopping. The plant does not interpret your closing a terminal as a resignation letter.
+The upper pane is the current evidence display. The lower pane belongs to the agent; do not type diagnostics into a busy mind. Use the `operator` window or a second terminal for commands; it is a convenience for the person, not a gate on any mind. Detaching is not stopping. The plant does not interpret your closing a terminal as a resignation letter.
 
 ## 4. Give it one real, bounded task
 

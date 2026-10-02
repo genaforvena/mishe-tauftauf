@@ -1,10 +1,34 @@
-"""Independent, tool-free Luna patch reading; no task or receipt admission."""
+"""Independent, tool-free patch reading; no task or receipt admission.
+
+The reviewer model is configurable so a limited or exhausted provider is not a
+permanent hard gate. Set `MISHE_WALL_REVIEW_MODEL` (or the `model` key of
+`SITE/patch-review.json`) to any independent, tool-free reviewer.
+"""
 from __future__ import annotations
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+
+DEFAULT_MODEL = "openai-codex/gpt-6-luna"
+
+
+def reviewer_model(home: Path | None = None) -> str:
+    if os.environ.get("MISHE_WALL_REVIEW_MODEL"):
+        return os.environ["MISHE_WALL_REVIEW_MODEL"]
+    if home is not None:
+        for name in ("patch-review.json", "publication-check.json"):
+            config = home / name
+            if config.exists():
+                try:
+                    model = json.loads(config.read_text()).get("model")
+                except (OSError, ValueError):
+                    model = None
+                if model:
+                    return str(model)
+    return DEFAULT_MODEL
 
 
 def main():
@@ -28,7 +52,7 @@ def main():
         path = Path(directory) / "request.txt"
         path.write_text(prompt)
         result = subprocess.run(["omp", "--print", "--no-session", "--no-extensions", "--no-tools",
-            "--no-lsp", "--no-pty", "--model", "openai-codex/gpt-6-luna", "--thinking", "high",
+            "--no-lsp", "--no-pty", "--model", reviewer_model(), "--thinking", "high",
             "--cwd", directory, "@" + str(path)], capture_output=True, text=True, timeout=240)
     if result.returncode:
         raise RuntimeError(f"patch reader failed: {result.stderr[-1000:]}")

@@ -4,7 +4,10 @@ The local trial uses edited walls and addressed chat instead of a task ledger.
 Each wake supplies a short trigger and asks the mind to read its current full
 dashboard. Minds choose work, organize their plate and ask peers for help.
 Planning and investigation are valid turns. System 1 advice is optional for
-planning; it remains required for applying code.
+planning; it remains required for applying code. The operator is the human
+owner, not a pane or a role: the `operator` shell is only that person's
+convenience, and no blocker may require an operator window or an operator
+decision to make progress.
 
 `wall write --owner ROLE --file NOTES` replaces a wall. `wall show --owner ROLE`
 reads the walls and relevant conversation. `wall dm --source ROLE --to PEER
@@ -57,9 +60,12 @@ readable. Rendering freshness is not proof of editorial freshness.
 
 ## Shared source and reversible patches
 
-There is one development Git checkout. The runtime is a plain file snapshot,
-not another Git worktree. Edits become running code only through checked
-activation. Coordinate with genome before changing an overlapping patch.
+There is one development Git checkout and one branch: `main`, locally and on the
+remote. Authors commit their own scoped work on it; genome pushes `main` and
+checks CI and live consumers. There are no candidate or publication branches. The
+runtime is a plain file snapshot, not another Git worktree. Edits become running
+code only through checked activation. Coordinate overlapping edits with their
+owners.
 
 Use `python -m mishe_tauftauf.wall_patch --home SITE --id NAME ACTION`:
 
@@ -89,8 +95,9 @@ Use `python -m mishe_tauftauf.wall_patch --home SITE --id NAME ACTION`:
    Historical overlapping patches must not be replayed blindly; retain missing
    evidence and use a distinct current-byte patch when a safe exercise is needed.
    Source drafts
-   remain available for diagnosis. Genome may commit accounted-for paths after
-   reviewing the exact final diff; no temporary source branches are needed.
+   remain available for diagnosis. Authors commit their own accounted-for paths
+   on `main` after reviewing the exact final diff; genome pushes `main` and checks
+   CI. No temporary source branches are needed.
 
 Arguments shown as JSON are CLI configuration, never chat payloads. A check
 command must exercise the changed behavior; a successful dummy command proves

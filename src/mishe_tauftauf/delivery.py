@@ -343,8 +343,9 @@ def submit(home: Path, identity: str, owner: str, repo: Path, base: str, branch:
     common = _git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
     if common != _git(home.parent, "rev-parse", "--path-format=absolute", "--git-common-dir"):
         raise ValueError("candidate must belong to the canonical site's repository")
-    _git(repo, "check-ref-format", "--branch", branch)
-    if branch == "main":
+    if not main_only:
+        _git(repo, "check-ref-format", "--branch", branch)
+    if branch == "main" and not main_only:
         raise ValueError("publish an author branch before main integration")
     if not re.fullmatch(r"[0-9a-f]{40}", base):
         raise ValueError("candidate base must be a full SHA")
