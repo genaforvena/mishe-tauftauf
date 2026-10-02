@@ -287,6 +287,23 @@ def tick(home: Path, session: str, role: str, self_pick_seconds: float = 300) ->
                     raise ValueError("session is not owned")
                 return deliver(home, session, role, pending, observation,
                     "The trial window ended. Reconcile and finish this already pending turn; no new wake is created.")
+            # A bounded stop suppresses autonomous wake selection, but it must
+            # never mute an addressed escalation. The silence watcher's ENDED
+            # notice, a peer message and an operator DM stay deliverable, so a
+            # stranded plant can still decide to re-arm, escalate or report.
+            entries = Feed(home).entries()
+            last_wake = next((e.sequence for e in reversed(entries) if e.body.startswith(f"seed wake {role} ")), 0)
+            inbox = [e for e in entries if addressed(e, role) and e.sequence > last_wake]
+            if inbox:
+                if not seed._mind_ready(session, role):
+                    return f"held seed {role} mind busy; addressed message preserved while the window is ended"
+                if not owns_session(home, session):
+                    raise ValueError("session is not owned")
+                wake = Feed(home).append("seed", f"seed wake {role} observation={observation}\n"
+                    "The trial window ended, but an addressed message awaits you. "
+                    "Reconcile it and decide: re-arm, escalate, or report. No autonomous wake was created.")
+                return deliver(home, session, role, wake.sequence, observation,
+                    "\n".join(f"{e.sequence} {e.source}: {e.body}" for e in inbox[-12:]))
         return "wall trial ended; no new wakes; in-flight work and sensors preserved"
     if not owns_session(home, session):
         raise ValueError("session is not owned")
