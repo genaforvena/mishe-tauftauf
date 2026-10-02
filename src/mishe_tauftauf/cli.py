@@ -99,6 +99,9 @@ def cmd_wall(args) -> int:
 
 
 def cmd_access(args) -> int:
+    if args.access_command in {None, "menu"} or (args.access_command in {"grant", "revoke"} and args.id is None):
+        from .permission_menu import run
+        return run(args.home, "revoked" if args.access_command == "revoke" else "granted")
     if args.access_command == "request":
         item = access.request(args.home, args.id, args.owner, args.task, args.capability,
                               args.unblocks, args.reason)
@@ -717,11 +720,14 @@ def parser() -> argparse.ArgumentParser:
             if action == "add":
                 p.add_argument("--parent")
         p.set_defaults(func=cmd_task)
-    access_cmd = sub.add_parser("access").add_subparsers(dest="access_command", required=True)
+    access_parser = sub.add_parser("access", aliases=["permit"])
+    access_parser.set_defaults(func=cmd_access)
+    access_cmd = access_parser.add_subparsers(dest="access_command")
     p = access_cmd.add_parser("request"); p.add_argument("id"); p.add_argument("--owner", required=True); p.add_argument("--task", required=True); p.add_argument("--capability", required=True); p.add_argument("--unblocks", action="append", required=True); p.add_argument("--reason", required=True); p.set_defaults(func=cmd_access)
     for verb in ("grant", "revoke", "check"):
-        p = access_cmd.add_parser(verb); p.add_argument("id"); p.set_defaults(func=cmd_access)
+        p = access_cmd.add_parser(verb); p.add_argument("id", nargs="?" if verb != "check" else None); p.set_defaults(func=cmd_access)
     p = access_cmd.add_parser("list"); p.set_defaults(func=cmd_access)
+    p = access_cmd.add_parser("menu"); p.set_defaults(func=cmd_access)
     discover_cmd = sub.add_parser("discover").add_subparsers(dest="discover_command", required=True)
     p = discover_cmd.add_parser("scan"); p.set_defaults(func=cmd_discover)
     p = discover_cmd.add_parser("show"); p.set_defaults(func=cmd_discover)
