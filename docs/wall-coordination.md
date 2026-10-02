@@ -18,7 +18,7 @@ directory (`.mishe-tauftauf/` in this plant). `seed yield` saves the wall and
 settles a turn without a task claim or semantic receipt review.
 
 A wall is a short, current document, not an append-only log: `wall write` rejects
-a notes file over the hard limit (default 16384 bytes / 200 lines) with an error
+a notes file over the hard limit (default 8192 bytes / 120 lines) with an error
 naming the actual size and the limit. The bound keeps a wall readable and current —
 it must not accumulate stale detail, and superseded claims or past mistakes must
 not be carried forward to mislead the next reader. Rewrite the wall down instead
@@ -96,6 +96,11 @@ Use `python -m mishe_tauftauf.wall_patch --home SITE_HOME --id NAME ACTION`:
    Activation scripts restart consumers; they must not edit unrelated runtime
    files or perform irreversible external actions. Recovery covers scoped file
    bytes and consumer restart, not arbitrary side effects of a shell command.
+
+An activation that restarts the service of the mind running `apply` or `revert`
+kills the in-flight turn: the record stays at `phase=applying`, the reviewed bytes
+are already in the runtime, and no seed role can safely re-run either command.
+Only `check` (which restarts no service) can move the record back to `reviewed`.
 5. `revert --activate '["PATH_TO_RESTART_SCRIPT"]'` returns to the saved runtime.
    `verify` exercises revert, the reviewed restored-consumer observation,
    reapply and the reviewed new-consumer observation under the patch lock.
