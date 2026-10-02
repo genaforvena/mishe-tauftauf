@@ -97,10 +97,17 @@ Use `python -m mishe_tauftauf.wall_patch --home SITE_HOME --id NAME ACTION`:
    files or perform irreversible external actions. Recovery covers scoped file
    bytes and consumer restart, not arbitrary side effects of a shell command.
 
-An activation that restarts the service of the mind running `apply` or `revert`
-kills the in-flight turn: the record stays at `phase=applying`, the reviewed bytes
-are already in the runtime, and no seed role can safely re-run either command.
-Only `check` (which restarts no service) can move the record back to `reviewed`.
+An activation that restarts the seed services no longer necessarily kills the
+session: the resident session is raised in its own transient user scope, beside
+the seed services rather than inside one, so a seed-unit restart leaves the tmux
+server and every pane alive. Where the scope is unavailable (no systemd user
+session, or `MISHE_SESSION_RUNNER=""`), the older hazard returns and an
+activation that restarts the service of the mind running `apply` or `revert`
+kills the in-flight turn. The record then stays at `phase=applying`, the reviewed
+bytes are already in the runtime, and no seed role can safely re-run either
+command; only `check` (which restarts no service) can move the record back to
+`reviewed`. Recovery there is `revert` → `check` → `apply` → `verify` as one
+script run outside the session.
 5. `revert --activate '["PATH_TO_RESTART_SCRIPT"]'` returns to the saved runtime.
    `verify` exercises revert, the reviewed restored-consumer observation,
    reapply and the reviewed new-consumer observation under the patch lock.

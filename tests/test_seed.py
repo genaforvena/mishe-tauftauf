@@ -19,6 +19,56 @@ def seeded_home(tmp_path: Path, name: str = "site") -> Path:
     return home
 
 
+def test_new_session_raises_the_server_in_its_own_scope(monkeypatch) -> None:
+    # A seed supervisor's cgroup would otherwise own the tmux server, so an
+    # activation restarting the seed set cgroup-kills the session and every turn.
+    from mishe_tauftauf import seed
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    runs = []
+    monkeypatch.setattr(seed.shutil, "which", lambda name: "/usr/bin/systemd-run")
+    monkeypatch.setattr(seed.subprocess, "run", lambda argv, **kwargs: runs.append(argv))
+    seed._new_session("mishe-core", "genome", "/workspace")
+    assert runs and runs[0][:6] == ["/usr/bin/systemd-run", "--user", "--scope", "--collect",
+                                    "--unit", "mishe-core-session.scope"]
+    assert runs[0][6:8] == ["--description", "Mishe resident session mishe-core"]
+    assert runs[0][8:] == ["tmux", "new-session", "-d", "-s", "mishe-core",
+                           "-n", "genome", "-c", "/workspace", "sh"]
+
+
+def test_new_session_falls_back_to_plain_tmux_without_systemd(monkeypatch) -> None:
+    from subprocess import CompletedProcess
+
+    from mishe_tauftauf import seed
+
+    calls = []
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    monkeypatch.setattr(seed.shutil, "which", lambda name: "")
+    monkeypatch.setattr(seed, "_tmux", lambda *args, **kwargs: (calls.append(args), CompletedProcess(args, 0, b""))[1])
+    seed._new_session("mishe-core", "genome", "/workspace")
+    assert calls == [("new-session", "-d", "-s", "mishe-core", "-n", "genome", "-c", "/workspace", "sh")]
+
+
+def test_runner_override_selects_the_plain_tmux_path(monkeypatch) -> None:
+    from subprocess import CompletedProcess
+
+    from mishe_tauftauf import seed
+
+    # An explicit empty runner is the opt-out for hosts without systemd; it must
+    # not fall back to a discovered systemd-run.
+    calls = []
+    monkeypatch.setenv("MISHE_SESSION_RUNNER", "")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    monkeypatch.setattr(seed.shutil, "which", lambda name: "/usr/bin/systemd-run")
+    monkeypatch.setattr(seed, "_tmux", lambda *args, **kwargs: (calls.append(args), CompletedProcess(args, 0, b""))[1])
+    runs = []
+    monkeypatch.setattr(seed.subprocess, "run", lambda argv, **kwargs: runs.append(argv))
+    seed._new_session("mishe-unit-test-session", "genome", "/workspace")
+    assert calls == [("new-session", "-d", "-s", "mishe-unit-test-session",
+                      "-n", "genome", "-c", "/workspace", "sh")]
+    assert runs == []
+
+
 def test_health_observation_ignores_changing_samples_but_keeps_verdicts() -> None:
     from mishe_tauftauf.seed import _observation_text
 

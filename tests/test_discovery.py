@@ -634,3 +634,157 @@ def test_resident_ticks_renew_freshness_evidence_even_when_top_panes_fail(tmp_pa
                 assert seed.tick(home, "session", slug).startswith("UNKNOWN seed")
             assert latest(home) == (fresh if slug in ("discover", "senses") else stale)
             assert Feed(home).entries() == baseline
+
+
+def test_top_cpu_processes_ranks_by_sampled_rate_not_lifetime_average() -> None:
+    from mishe_tauftauf import discovery
+
+    # A long-lived pane at a high lifetime average that burns no tick in the
+    # window must rank below a young process that is actually working now.
+    stdout = "\n".join([
+        "  42  99.0  9000 /usr/bin/llama-server --port 7000",
+        "   7 200.0     1 python3 worker.py  arg with   spaces",
+        " 300  99.9     0 /home/user/.venv/bin/python -m long " + "x" * 400,
+    ])
+    jiffies = {42: [1000, 1000], 7: [1, 2], 300: [5, 10]}
+    reads: list[int] = []
+
+    def jreader(pid: int) -> int | None:
+        # Two reads per pid: the baseline, then the value after the window.
+        seen = reads.count(pid)
+        reads.append(pid)
+        return jiffies[pid][min(seen, len(jiffies[pid]) - 1)]
+
+    with patch("mishe_tauftauf.discovery.subprocess.run",
+               return_value=_completed(stdout)), \
+            patch("mishe_tauftauf.discovery._cpu_jiffies", side_effect=jreader), \
+            patch("mishe_tauftauf.discovery.time.sleep"):
+        rows = discovery._top_cpu_processes(rows=2)
+    # Five clock ticks in one second is 5% of a core, not 500%: a jiffy is 1/100 s.
+    assert rows[0]["rate"] == 100.0 * 5 / discovery._CLOCK_TICK / discovery.TOP_CPU_SAMPLE_SECONDS
+    assert rows[1]["rate"] == 100.0 / discovery._CLOCK_TICK / discovery.TOP_CPU_SAMPLE_SECONDS
+    assert rows[0]["args"] == "/home/user/.venv/bin/python -m long " + "x" * 124
+    assert len(rows[1]["args"]) == 33
+    # etimes=0 ranks on its measured rate, not on an undefined lifetime division.
+    assert rows[0]["etimes"] == 0 and rows[0]["pcpu"] == 99.9
+
+
+def test_top_cpu_processes_breaks_rate_ties_on_the_lifetime_average() -> None:
+    from mishe_tauftauf import discovery
+
+    stdout = "\n".join([
+        "  10  9.0  300 slower-lifetime",
+        "  11  3.0   12 faster-lifetime",
+    ])
+    jiffies = {10: [0, 1], 11: [0, 1]}
+    reads: list[int] = []
+
+    def jreader(pid: int) -> int | None:
+        seen = reads.count(pid)
+        reads.append(pid)
+        return jiffies[pid][min(seen, len(jiffies[pid]) - 1)]
+
+    with patch("mishe_tauftauf.discovery.subprocess.run",
+               return_value=_completed(stdout)), \
+            patch("mishe_tauftauf.discovery._cpu_jiffies", side_effect=jreader), \
+            patch("mishe_tauftauf.discovery.time.sleep"):
+        # Both earn exactly one tick, so the tie falls to the lifetime average
+        # rather than to whichever pid the dictionary happened to visit last.
+        rows = discovery._top_cpu_processes()
+    assert [row["pid"] for row in rows] == [10, 11]
+    assert rows[0]["rate"] == rows[1]["rate"]
+
+
+def test_top_cpu_processes_keeps_unmeasured_rows_below_measured_ones() -> None:
+    from mishe_tauftauf import discovery
+
+    # `ps` lines that cannot be parsed are skipped before any /proc read, so a
+    # pid that never appears in the table cannot be retained by its jiffies.
+    stdout = "\n".join([
+        "  10  5.0  30 real-process",
+        "not-a-pid 5.0 30 unparseable pid",
+        "  11 abc  30 non-numeric pcpu",
+        "  12  5.0  45 earns-two-ticks",
+        "  13  2.0   9 unreadable-proc",
+        "",
+    ])
+    # Two reads each: pid 10 earns no tick, pid 12 earns two, pid 13 has no
+    # readable /proc entry on either read.
+    jiffies = {10: [0, 0], 12: [45, 47], 13: [None, None]}
+    reads: list[int] = []
+
+    def jreader(pid: int) -> int | None:
+        seen = reads.count(pid)
+        reads.append(pid)
+        return jiffies[pid][min(seen, len(jiffies[pid]) - 1)]
+
+    with patch("mishe_tauftauf.discovery.subprocess.run",
+               return_value=_completed(stdout)), \
+            patch("mishe_tauftauf.discovery._cpu_jiffies", side_effect=jreader), \
+            patch("mishe_tauftauf.discovery.time.sleep"):
+        rows = discovery._top_cpu_processes()
+    # The measured row leads; the idle row keeps its place so the retained
+    # sample still names it; the unmeasurable row is retained below both.
+    assert [row["pid"] for row in rows] == [12, 10, 13]
+    assert rows[0]["rate"] == 100.0 * 2 / discovery._CLOCK_TICK / discovery.TOP_CPU_SAMPLE_SECONDS
+    assert rows[1]["rate"] == 0.0
+    assert rows[2].get("rate") is None
+
+
+def test_top_cpu_processes_reports_unknown_when_ps_is_unavailable() -> None:
+    from mishe_tauftauf import discovery
+
+    original = discovery.subprocess.run
+    for failing in (OSError("ps unavailable"),
+                    _completed("", returncode=1),
+                    subprocess.TimeoutExpired(cmd=["ps"], timeout=10)):
+        def broken(*args, **kwargs):
+            if isinstance(failing, BaseException):
+                raise failing
+            return failing
+        with patch("mishe_tauftauf.discovery.subprocess.run", side_effect=broken):
+            rows = discovery._top_cpu_processes()
+            assert rows == []
+            observed = {row["id"]: row for row in discovery.sample(Path("/nonexistent"))["observations"]}
+        reading = observed["sense.proc.top-cpu"]
+        assert reading["state"] == "unknown"
+        assert reading["sample"] == "ps process sample unavailable"
+        assert reading["kind"] == "read"
+    assert discovery.subprocess.run is original
+
+
+def test_sample_carries_a_bounded_top_cpu_read() -> None:
+    from mishe_tauftauf import discovery
+
+    stdout = "  42  117.0  1500 /usr/bin/llama-server --port 7000\n"
+    with patch("mishe_tauftauf.discovery.subprocess.run",
+               return_value=_completed(stdout)), \
+            patch("mishe_tauftauf.discovery._cpu_jiffies", side_effect=lambda pid: 100), \
+            patch("mishe_tauftauf.discovery.time.sleep"):
+        observed = {row["id"]: row for row in discovery.sample(Path("/nonexistent"))["observations"]}
+    reading = observed["sense.proc.top-cpu"]
+    assert reading["state"] == "verified"
+    assert reading["kind"] == "read"
+    assert reading["processes"] == [{"pid": 42, "pcpu": 117.0, "etimes": 1500,
+                                     "args": "/usr/bin/llama-server --port 7000",
+                                     "rate": 0.0}]
+    assert "pid=42 rate=0.0% pcpu=117.0% etimes=1500s" in reading["sample"]
+    assert reading["sample"].endswith(" key=delta-rate-over-1.0s")
+
+
+def test_top_cpu_row_count_is_bounded_on_a_busy_host() -> None:
+    from mishe_tauftauf import discovery
+
+    stdout = "\n".join(f"  {pid}  {1.0 + pid / 10:.1f}  {pid} proc-{pid}" for pid in range(64))
+    with patch("mishe_tauftauf.discovery.subprocess.run",
+               return_value=_completed(stdout)), \
+            patch("mishe_tauftauf.discovery._cpu_jiffies", side_effect=lambda pid: pid), \
+            patch("mishe_tauftauf.discovery.time.sleep"):
+        rows = discovery._top_cpu_processes()
+    assert len(rows) == discovery.TOP_CPU_ROWS
+    # Every process earns one tick, so the bound is reached by the row limit and
+    # the tie order falls back to the lifetime average, highest first.
+    rates = [row["rate"] for row in rows]
+    assert rates == sorted(rates, reverse=True)
+    pids = [row["pid"] for row in rows]
+    assert pids == sorted(pids, reverse=True)

@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -586,6 +587,29 @@ def _mind_launch_argv(home: Path, slug: str) -> tuple[str, ...]:
             str(home / "minds" / slug))
 
 
+def _new_session(session: str, first_window: str, workspace: str) -> None:
+    """Create the tmux server outside any seed service cgroup.
+
+    A seed supervisor creates the server, so it inherits that unit's cgroup; a
+    later activation restarting the seed set cgroup-kills the server and every
+    mind turn with it. Raising the server in its own transient user scope puts
+    it beside the seed services instead of inside one, so a restart of any seed
+    unit leaves the session alive. systemd is optional: where it is missing the
+    plain tmux call still works, and the cgroup hazard does not arise there.
+    """
+    argv = ["new-session", "-d", "-s", session, "-n", first_window, "-c", workspace, "sh"]
+    runner = os.environ.get("MISHE_SESSION_RUNNER")
+    if runner is None:
+        runner = shutil.which("systemd-run") or ""
+    if runner and os.environ.get("XDG_RUNTIME_DIR"):
+        scoped = [runner, "--user", "--scope", "--collect",
+                  "--unit", f"{session}-session.scope",
+                  "--description", f"Mishe resident session {session}",
+                  "tmux", *argv]
+        subprocess.run(scoped, check=True)
+        return
+    _tmux(*argv)
+
 def start(home: Path, session: str, slug: str, interval: float) -> str:
     slug = validate_slug(slug)
     workspace = str(home.parent.resolve())
@@ -593,7 +617,7 @@ def start(home: Path, session: str, slug: str, interval: float) -> str:
         raise ValueError(f"seed {slug} needs executable top-pains/{slug} and minds/{slug}")
     created = _tmux("has-session", "-t", session, check=False).returncode != 0
     if created:
-        _tmux("new-session", "-d", "-s", session, "-n", slug, "-c", workspace, "sh")
+        _new_session(session, slug, workspace)
         _tmux("set-option", "-t", session, OWNED_OPTION, str(home.resolve()))
         identity = _tmux("display-message", "-p", "-t", session, "#{session_id}").stdout.decode().strip()
         (home / ".seed-raised").write_text(f"{session} {identity}\n", encoding="utf-8")
