@@ -234,6 +234,30 @@ def test_owned_checkout_delivery_script_cannot_change_after_review(tmp_path, mon
     assert deployed.read_text() == "before\n"
 
 
+def test_successful_recheck_clears_stale_failure(tmp_path, monkeypatch):
+    home, source, deployed = layout(tmp_path)
+    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
+    source.write_text("after\n")
+    command = [sys.executable, "-c", "pass"]
+
+    def unavailable(*args):
+        raise OSError("reviewer usage limit reached")
+
+    monkeypatch.setattr(wall_patch, "review", unavailable)
+    with pytest.raises(OSError, match="usage limit"):
+        wall_patch.check(home, "change", command)
+    failed = wall_patch.status(home, "change")
+    assert failed["phase"] == "review-unavailable" and failed["failure"]
+
+    # Once the reviewer recovers, a fresh successful check must not keep
+    # rendering the old failure beside a healthy reviewed patch.
+    monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": True})
+    wall_patch.check(home, "change", command)
+    recovered = wall_patch.status(home, "change")
+    assert recovered["phase"] == "reviewed"
+    assert "failure" not in recovered
+
+
 def test_reviewer_model_honors_site_config_and_env_override(tmp_path, monkeypatch):
     from mishe_tauftauf import wall_review
 
