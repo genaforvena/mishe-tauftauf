@@ -18,7 +18,11 @@ from . import ci_watch, discovery, seed, seed_permission_panel
 from .feed import Feed
 from .tmux import _tmux, owns_session
 
-ROLES = ("genome", "witness", "discover", "senses", "health")
+# Resident mind roles the plant launches and supervises. `docs` is a chartered,
+# wall-addressable role (activity.ROLES, seed_docs_charter.md); leaving it out
+# meant its pane existed only when something else respawned it directly, so a
+# reboot dropped it with no service to raise it again.
+ROLES = ("genome", "witness", "discover", "senses", "health", "docs")
 EXPLORATION = ("discover", "senses", "health")
 CONTRACT_START = "<!-- mishe-tauftauf plant contract -->"
 CONTRACT_END = "<!-- end mishe-tauftauf plant contract -->"

@@ -479,6 +479,25 @@ def _repair_handoffs(home: Path, entries) -> list[str]:
     return repaired
 
 
+def _configured_windows(home: Path, surfaces: list[str]) -> list[str]:
+    """Resident windows this site declared, intersected with its renderers.
+
+    `health/windows.json` is the plant's own manifest of windows it means to
+    raise (roles plus the permissions panel and the operator shell). Requiring a
+    pane only for those surfaces keeps renderer-only observations honest instead
+    of reporting a RED failure for a window no service is chartered to create.
+    An absent or unreadable manifest falls back to every discovered surface.
+    """
+    try:
+        names = json.loads((home / "health/windows.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return list(surfaces)
+    if not isinstance(names, list) or any(not isinstance(name, str) for name in names):
+        return list(surfaces)
+    configured = set(names)
+    return [slug for slug in surfaces if slug in configured]
+
+
 def cmd_doctor(args) -> int:
     failures = 0
     site = args.home.resolve()
@@ -524,14 +543,21 @@ def cmd_doctor(args) -> int:
     if args.panes:
         from .tmux import check_pane, owns_session
         session = getattr(args, "session", None) or _default_session(args.home)
+        surfaces = discover(args.home)
+        required = _configured_windows(args.home, surfaces)
         if shutil.which("tmux") and not owns_session(args.home, session):
             print(f"UNKNOWN — session {session!r} is not owned by {args.home}")
             failures += 1
         else:
-            for slug in discover(args.home):
+            for slug in required:
                 ok, line = check_pane(args.home, session, slug, args.pane_wait)
                 print(line)
                 failures += 0 if ok else 1
+            for slug in [name for name in surfaces if name not in set(required)]:
+                # A renderer with no configured resident window (observability,
+                # legacy one-shot surfaces) is an informational observation, not
+                # a RED failure that no service can clear.
+                print(f"INFO pane-surface: {slug} has a renderer but no configured resident window")
     if shutil.which("tmux"):
         print("PASS optional tmux available")
     else:
