@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import shlex
 import shutil
 import subprocess
@@ -223,19 +222,19 @@ def silence_unit_text(home: Path, session: str, python: str) -> str:
     )
 
 
-_SOURCE_ROOT = re.compile(r"^/.*/src$")
-
-
 def repoint_release_root(text: str, source: Path) -> str:
-    """Repoint every ``Environment=PYTHONPATH`` source entry at ``source``.
+    """Repoint this site's release entry in ``Environment=PYTHONPATH``.
 
     Generated units are rewritten whole from ``unit_text``; units carrying
     custom content are edited in place, so only the release component each
     process imports may change. The plant's convention is one absolute
-    ``<root>/src`` search-path entry, so a pin advance moves exactly that and
-    leaves every other line and any extra search-path entry untouched.
+    ``<home>/releases/<rev>/src`` search-path entry, so a pin advance moves
+    exactly the entries inside this site's ``releases`` directory and leaves
+    every other line, plus any unrelated ``/src`` or extra search-path entry,
+    untouched.
     """
     pinned = str(source)
+    releases = source.parent.parent
     prefix = "Environment=PYTHONPATH="
     lines = text.splitlines(keepends=True)
     for index, line in enumerate(lines):
@@ -243,10 +242,16 @@ def repoint_release_root(text: str, source: Path) -> str:
         if not body.startswith(prefix):
             continue
         entries = body[len(prefix):].split(os.pathsep)
-        rewritten = os.pathsep.join(pinned if _SOURCE_ROOT.match(entry) else entry
-                                    for entry in entries)
-        lines[index] = prefix + rewritten + ("\n" if line.endswith("\n") else "")
+        lines[index] = prefix + os.pathsep.join(
+            pinned if _is_release_source(entry, releases) else entry for entry in entries
+        ) + ("\n" if line.endswith("\n") else "")
     return "".join(lines)
+
+
+def _is_release_source(entry: str, releases: Path) -> bool:
+    """True for a ``<...>/releases/<rev>/src`` entry under this site's releases."""
+    path = Path(entry)
+    return path.name == "src" and path.parent.parent == releases
 
 
 def _reconcilable_fragment(home: Path, name: str, env: dict[str, str]) -> Path | None:
