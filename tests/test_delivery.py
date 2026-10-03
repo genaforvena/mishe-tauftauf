@@ -575,8 +575,25 @@ def test_submit_and_cross_role_claim_cannot_split_author_ownership(candidate, mo
         assert entering.wait(3)
         submitted = pool.submit(submit, candidate)
         release.set()
-        claim.result(timeout=5)
-        with pytest.raises(ValueError, match='belong to its author'):
-            submitted.result(timeout=5)
-    assert not (home / 'deliveries' / 'repair.json').exists()
-    assert task_state.registry(Feed(home).entries())['repair'].owner == 'witness'
+        # Submit and the cross-role claim serialize on different locks, so either may
+        # win the race. The invariant is that exactly one wins and ownership never
+        # splits between the delivery record and the task registry.
+        outcomes = []
+        for future in (claim, submitted):
+            try:
+                future.result(timeout=5)
+                outcomes.append(None)
+            except ValueError as exc:
+                outcomes.append(exc)
+    assert sum(outcome is None for outcome in outcomes) == 1
+    owner = task_state.registry(Feed(home).entries())['repair'].owner
+    delivery = home / 'deliveries' / 'repair.json'
+    if outcomes[0] is None:
+        # The cross-role claim won; the competing submit was refused and wrote no record.
+        assert 'belong to its author' in str(outcomes[1])
+        assert not delivery.exists()
+        assert owner == 'witness'
+    else:
+        # The submit won; the claim was refused and the task stayed with its author.
+        assert delivery.exists()
+        assert owner == 'senses'
