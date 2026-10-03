@@ -912,7 +912,7 @@ def _yield_guards(home: Path, slug: str, wake: int, digest: str, archive: Path,
 
 def yield_wake(home: Path, slug: str, wake: int, handoff_file: Path, continue_task: bool = False,
                result: str = "unspecified") -> str:
-    slug = validate_slug(slug)
+    handoff_file = Path(handoff_file).resolve()
     handoff_text = handoff_file.read_bytes().decode("utf-8")
     if not handoff_text.strip():
         raise ValueError("handoff is empty")
