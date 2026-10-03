@@ -176,6 +176,42 @@ def test_normal_replant_keeps_installed_immutable_source(tmp_path):
         plant.unit_text(home, "owned", "genome", "python3")
 
 
+def test_unit_path_keeps_this_site_bin_once_across_replants(tmp_path, monkeypatch):
+    # The seed service runs with this site's bin on PATH, so a replant that
+    # prepended it again added a duplicate every time: the generated unit was
+    # never idempotent and the PATH grew without bound. Feed the generated PATH
+    # back through unit_text as the next replant does and the site bin must stay
+    # exactly once, at the front, with every other entry untouched.
+    release = tmp_path / "release"
+    package = release / "src/mishe_tauftauf"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    subprocess.run(["git", "-C", str(release), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(release), "add", "src"], check=True)
+    subprocess.run(["git", "-C", str(release), "-c", "user.name=test", "-c", "user.email=test@example.com",
+                    "commit", "-qm", "release"], check=True)
+    sha = subprocess.check_output(["git", "-C", str(release), "rev-parse", "HEAD"], text=True).strip()
+    home = tmp_path / "application/.mishe-tauftauf"
+    (home / "health").mkdir(parents=True)
+    (home / "health/runtime-release.json").write_text(json.dumps({
+        "version": 1, "source": str(release), "sha": sha, "session": "owned"}))
+
+    def search_path(text: str) -> str:
+        prefix = "Environment=PATH="
+        return next(line[len(prefix):] for line in text.splitlines() if line.startswith(prefix))
+
+    site_bin = str(home / "bin")
+    monkeypatch.setenv("PATH", os.pathsep.join(
+        [site_bin, "/usr/bin", site_bin, "", "/bin", "/opt/tool", "/opt/tool"]))
+    first = plant.unit_text(home, "owned", "genome", "python3")
+    # The site bin is collapsed to one entry at the front; unrelated duplicates
+    # and the empty (current-directory) entry keep their order.
+    assert search_path(first).split(os.pathsep) == [site_bin, "/usr/bin", "", "/bin", "/opt/tool", "/opt/tool"]
+    # The generated PATH is what the seed service inherits on the next replant.
+    monkeypatch.setenv("PATH", search_path(first))
+    assert plant.unit_text(home, "owned", "genome", "python3") == first
+
+
 def test_runtime_source_rejects_whitespace_before_pin_write(tmp_path):
     from mishe_tauftauf.runtime_source import select_source
     home = tmp_path / "site"
@@ -525,3 +561,30 @@ def test_reconcile_services_edits_a_self_installed_fragment_in_place(tmp_path: P
     text = fragment.read_text(encoding="utf-8")
     assert f"Environment=PYTHONPATH={tmp_path}/releases/new/src\n" in text
     assert "releases/old" not in text
+
+
+def test_reconcile_services_refuses_a_drifted_site_unit_fragment(tmp_path: Path, monkeypatch) -> None:
+    # A site unit file is the source of truth only while systemd actually loads
+    # it. When the systemd path holds a regular file (or a foreign symlink),
+    # repointing the site file reconciles nothing while the restart still reports
+    # success, so the plant must refuse the shape as it does for a generated unit.
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health/services.json").write_text(
+        json.dumps(["core-coordination.service"]) + "\n", encoding="utf-8")
+    site_unit = home / "core-coordination.service"
+    site_unit.write_text(
+        "[Service]\n"
+        f"Environment=PYTHONPATH={tmp_path}/releases/old/src\n", encoding="utf-8")
+    drifted = tmp_path / "config/core-coordination.service"
+    drifted.parent.mkdir()
+    drifted.write_text("[Service]\nExecStart=/bin/true\n", encoding="utf-8")
+    monkeypatch.setattr("mishe_tauftauf.runtime_source.source_for",
+                        lambda home, default: tmp_path / "releases" / "new")
+    fragments = {plant.unit_name("core", slug): home / plant.unit_name("core", slug)
+                 for slug in (*plant.ROLES, "permissions", "ci", *plant.OUT_OF_BAND)}
+    fragments["core-coordination.service"] = drifted
+    _fake_systemctl(monkeypatch, fragments)
+
+    with pytest.raises(RuntimeError, match="regular file instead of a symlink"):
+        plant.reconcile_services(home, "core", True, "/usr/bin/python3")
