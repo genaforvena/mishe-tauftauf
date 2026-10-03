@@ -423,6 +423,31 @@ def test_delivery_dashboard_separates_source_and_runtime_and_marks_incomplete(tm
     assert "PATCH change: applied delivery=verified" in wall_view.render(home, "genome")
 
 
+def test_dashboard_flags_runtime_drift_against_the_pin(tmp_path, monkeypatch):
+    from mishe_tauftauf import runtime_source, wall_view
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    running = tmp_path / "running"
+    assert wall_view._runtime_line(home, running) == f"RUNTIME: running={running} pin=UNPINNED"
+    (home / "health/runtime-release.json").write_text("{}")
+    pinned = tmp_path / "release"
+
+    def at(source):
+        return lambda h, default: source
+
+    monkeypatch.setattr(runtime_source, "source_for", at(pinned))
+    line = wall_view._runtime_line(home, running)
+    assert line.endswith("DRIFT") and str(pinned) in line
+    monkeypatch.setattr(runtime_source, "source_for", at(running))
+    assert wall_view._runtime_line(home, running).endswith("MATCH")
+
+    def broken(h, default):
+        raise ValueError("runtime pin invalid: missing release")
+
+    monkeypatch.setattr(runtime_source, "source_for", broken)
+    assert "pin=UNKNOWN" in wall_view._runtime_line(home, running)
+
+
 @pytest.mark.parametrize("value", [[1800], {"genome": -1}, {"genome": float("inf")}, {"genome": "soon"}])
 def test_invalid_periodic_review_config_is_visible_unknown(tmp_path, value):
     setup_wall(tmp_path)
