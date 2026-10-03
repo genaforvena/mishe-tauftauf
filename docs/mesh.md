@@ -1,9 +1,11 @@
 # Mesh
 
-Mesh is a local coordination trial in one shared development checkout. Minds
-choose useful work, including planning and investigation, and coordinate
-through edited walls and a shared chat tape rather than a task ledger. Addressed
-messages are visible to everyone, not private.
+Mesh is a local coordination trial in which each plant develops the Git
+repository containing its site; this plant's repository is this shared
+development checkout. Minds choose useful work, including planning and
+investigation, and coordinate through edited walls and a shared chat tape
+rather than a task ledger. Addressed messages are visible to everyone, not
+private.
 
 The minds are `genome` (shared source and its CI), `health` (services, panes
 and observations), `witness` (contradictions and missed work), `discover`
