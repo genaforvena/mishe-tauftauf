@@ -215,6 +215,47 @@ class TmuxTests(unittest.TestCase):
             self.assertIn("INFO pane-surface: observability", output)
             self.assertNotIn("pane-missing: observability", output)
 
+    def test_doctor_panes_reports_a_dead_chartered_mind(self):
+        # The renderer lease cannot see a dead mind pane, so doctor must check
+        # `.1` for chartered roles. Regression for the tiny-fleet docs mind that
+        # died at status 127 while its top pane stayed live and green.
+        from mishe_tauftauf.tmux import OWNED_OPTION, _python_command, _tmux
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            renderer = home / "top-pains" / "docs"
+            renderer.write_text("#!/bin/sh\nprintf 'DESIRED STATE: green\\n'\n", encoding="utf-8")
+            renderer.chmod(0o755)
+            (home / "health").mkdir(parents=True, exist_ok=True)
+            (home / "health" / "windows.json").write_text('["docs"]', encoding="utf-8")
+            session = f"mishe-tauftauf-test-{os.getpid()}-mind"
+            try:
+                _tmux("new-session", "-d", "-s", session, "-c", str(home))
+                _tmux("set-option", "-t", session, OWNED_OPTION, str(home.resolve()))
+                _tmux("new-window", "-d", "-t", session, "-n", "docs", "-c", str(home), "sh")
+                _tmux("split-window", "-v", "-t", f"{session}:docs", "-c", str(home), "sh")
+                _tmux("set-option", "-p", "-t", f"{session}:docs.1", "remain-on-exit", "on")
+                command = ("env", f"MISHE_SEED_SESSION={session}",
+                           *_python_command("--home", str(home), "pain", "watch", "docs", "--interval", "0.2"))
+                _tmux("respawn-pane", "-k", "-t", f"{session}:docs.0", *command)
+                for _ in range(40):
+                    if "-- pane live " in capture_raw(session, "docs"):
+                        break
+                    time.sleep(0.1)
+                # Kill the mind pane with a distinct status; remain-on-exit keeps
+                # it visible so `.1` reads dead while `.0` still advances.
+                _tmux("respawn-pane", "-k", "-t", f"{session}:docs.1", "sh", "-c", "exit 7")
+                buffer = io.StringIO()
+                with contextlib.redirect_stdout(buffer):
+                    code = main(["--home", str(home), "doctor", "--panes",
+                                 "--session", session, "--pane-wait", "0.4"])
+            finally:
+                _tmux("kill-session", "-t", session, check=False)
+            output = buffer.getvalue()
+            self.assertEqual(code, 1, output)
+            self.assertIn("PASS pane-live: docs", output)
+            self.assertIn("HOLD mind-pane-dead: docs", output)
+
+
     def test_recorded_session_reads_the_raise_receipt(self):
         from mishe_tauftauf.seed import recorded_session
         with tempfile.TemporaryDirectory() as directory:
@@ -224,6 +265,30 @@ class TmuxTests(unittest.TestCase):
             self.assertEqual(recorded_session(home), "planted-session")
             (home / ".seed-raised").write_text("", encoding="utf-8")
             self.assertIsNone(recorded_session(home))
+
+class MindPaneTests(unittest.TestCase):
+    def test_check_mind_pane_reports_missing_dead_and_live(self):
+        # `check_pane` reads `.0` only, so a dead chartered mind pane stayed
+        # invisible. Cover the three pane states without needing tmux.
+        from mishe_tauftauf import tmux as tmux_module
+        from mishe_tauftauf.tmux import check_mind_pane
+
+        def result(returncode, stdout):
+            return subprocess.CompletedProcess([], returncode, stdout.encode(), b"")
+
+        with mock.patch.object(tmux_module, "_tmux", return_value=result(0, "0")):
+            ok, line = check_mind_pane("session", "docs")
+        self.assertTrue(ok, line)
+        self.assertIn("mind-pane-live: docs", line)
+        with mock.patch.object(tmux_module, "_tmux", return_value=result(0, "1")):
+            ok, line = check_mind_pane("session", "docs")
+        self.assertFalse(ok, line)
+        self.assertIn("mind-pane-dead: docs", line)
+        with mock.patch.object(tmux_module, "_tmux", return_value=result(1, "")):
+            ok, line = check_mind_pane("session", "docs")
+        self.assertFalse(ok, line)
+        self.assertIn("mind-pane-missing: docs", line)
+
 
 if __name__ == "__main__":
     unittest.main()

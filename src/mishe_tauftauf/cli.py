@@ -544,7 +544,8 @@ def cmd_doctor(args) -> int:
     for prediction in pending:
         print(f"PENDING prediction {prediction.sequence} top-pain {prediction.slug} check {prediction.check_at.isoformat()}")
     if args.panes:
-        from .tmux import check_pane, owns_session
+        from .plant import ROLES
+        from .tmux import check_mind_pane, check_pane, owns_session
         session = getattr(args, "session", None) or _default_session(args.home)
         surfaces = discover(args.home)
         required = _configured_windows(args.home, surfaces)
@@ -554,6 +555,13 @@ def cmd_doctor(args) -> int:
         else:
             for slug in required:
                 ok, line = check_pane(args.home, session, slug, args.pane_wait)
+                print(line)
+                failures += 0 if ok else 1
+            for slug in [name for name in required if name in ROLES]:
+                # A chartered mind pane that died is invisible to the renderer
+                # lease above; it is the class of failure that wedged the
+                # tiny-fleet docs mind at status 127 while its top pane stayed live.
+                ok, line = check_mind_pane(session, slug)
                 print(line)
                 failures += 0 if ok else 1
             for slug in [name for name in surfaces if name not in set(required)]:
