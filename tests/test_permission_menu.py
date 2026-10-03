@@ -4,6 +4,7 @@ import curses
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -196,3 +197,149 @@ def test_new_permissions_bottom_pane_gets_its_own_import_root(tmp_path, monkeypa
     bottom = [c for c in calls if c[0] == "respawn-pane" and c[-1].endswith("permissions-shell")]
     assert list(bottom[0]) == ["respawn-pane", "-k", "-t", "probe:permissions.1", "env",
                                f"PYTHONPATH={expected}", str(home / "bin" / "permissions-shell")]
+
+
+def _write_cli(home: Path, package_root: Path, body: str | None = None) -> None:
+    (home / "bin").mkdir(parents=True, exist_ok=True)
+    (package_root / "mishe_tauftauf").mkdir(parents=True, exist_ok=True)
+    (package_root / "mishe_tauftauf" / "__init__.py").write_text("", encoding="utf-8")
+    (home / "bin" / "mishe-tauftauf").write_text(
+        body if body is not None else
+        "#!/bin/sh\n"
+        f"export PYTHONPATH={package_root}${{PYTHONPATH:+:$PYTHONPATH}}\n"
+        'exec /usr/bin/python3 -m mishe_tauftauf "$@"\n', encoding="utf-8")
+
+
+def _fake_tty(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "stdin", type("T", (), {"isatty": staticmethod(lambda: True)})())
+    monkeypatch.setattr(sys, "stdout", type("T", (), {"isatty": staticmethod(lambda: True)})())
+
+
+def test_cli_package_root_keeps_a_colon_in_the_path(tmp_path):
+    # ``shlex.quote`` leaves a colon unquoted, so the pinned entry must not be
+    # split on ``:`` or a site installed under a colon path never reloads.
+    from mishe_tauftauf import permission_menu
+
+    home = (tmp_path / "site").resolve()
+    target = tmp_path / "releases" / "odd:name" / "src"
+    _write_cli(home, target)
+
+    assert permission_menu._cli_package_root(home) == target
+
+
+def test_selector_reloads_when_the_site_cli_repins(tmp_path, monkeypatch):
+    # The selector is long-lived and its pane is respawned only when created or
+    # dead, so after a checked release activation it must notice that the site
+    # CLI wrapper now prepends a different release and reload in place.
+    from mishe_tauftauf import permission_menu
+
+    home = (tmp_path / "site").resolve()
+    _write_cli(home, tmp_path / "releases" / "new" / "src")
+    monkeypatch.setattr(curses, "curs_set", lambda value: None)
+    requested(home)
+
+    with pytest.raises(permission_menu._Restart):
+        permission_menu.interactive(Screen([ord("q")]), home)
+
+
+def test_selector_run_reexecs_the_repinned_cli(tmp_path, monkeypatch):
+    from mishe_tauftauf import permission_menu
+
+    home = (tmp_path / "site").resolve()
+    _write_cli(home, tmp_path / "releases" / "new" / "src")
+    requested(home)
+    chdirs, execs = [], []
+    monkeypatch.setattr(curses, "curs_set", lambda value: None)
+    _fake_tty(monkeypatch)
+    monkeypatch.setattr(permission_menu, "curses", type("C", (), {
+        "curs_set": staticmethod(lambda value: None),
+        "wrapper": staticmethod(lambda fn, *args: fn(Screen([ord("q")]), *args)),
+        "error": curses.error,
+    }))
+    monkeypatch.setattr(permission_menu.os, "chdir", chdirs.append)
+    monkeypatch.setattr(permission_menu.os, "execv", lambda path, argv: execs.append((path, argv)))
+
+    permission_menu.run(home)
+    assert chdirs == [home]
+    assert execs == [(str(home / "bin" / "mishe-tauftauf"),
+                      [str(home / "bin" / "mishe-tauftauf"), "--home", str(home), "access", "menu"])]
+
+
+def test_selector_run_reexecs_revoke_selector(tmp_path, monkeypatch):
+    from mishe_tauftauf import permission_menu
+
+    home = (tmp_path / "site").resolve()
+    _write_cli(home, tmp_path / "releases" / "new" / "src")
+    requested(home)
+    execs = []
+    monkeypatch.setattr(permission_menu, "curses", type("C", (), {
+        "curs_set": staticmethod(lambda value: None),
+        "wrapper": staticmethod(lambda fn, *args: fn(Screen([ord("q")]), *args)),
+        "error": curses.error,
+    }))
+    monkeypatch.setattr(permission_menu.os, "chdir", lambda path: None)
+    monkeypatch.setattr(permission_menu.os, "execv", lambda path, argv: execs.append(argv))
+    _fake_tty(monkeypatch)
+
+    permission_menu.run(home, "revoked")
+    assert execs[0][-1] == "revoke"
+
+
+def test_selector_surfaces_a_failed_reload(tmp_path, monkeypatch):
+    from mishe_tauftauf import permission_menu
+
+    home = (tmp_path / "site").resolve()
+    _write_cli(home, tmp_path / "releases" / "new" / "src")
+    requested(home)
+    monkeypatch.setattr(permission_menu, "curses", type("C", (), {
+        "curs_set": staticmethod(lambda value: None),
+        "wrapper": staticmethod(lambda fn, *args: fn(Screen([ord("q")]), *args)),
+        "error": curses.error,
+    }))
+    monkeypatch.setattr(permission_menu.os, "chdir", lambda path: None)
+
+    def gone(path, argv):
+        raise OSError("wrapper gone")
+
+    monkeypatch.setattr(permission_menu.os, "execv", gone)
+    _fake_tty(monkeypatch)
+
+    with pytest.raises(ValueError, match="could not reload"):
+        permission_menu.run(home)
+
+
+def test_selector_stays_when_the_cli_matches_its_own_release(tmp_path, monkeypatch):
+    from mishe_tauftauf import permission_menu
+
+    home = (tmp_path / "site").resolve()
+    _write_cli(home, Path(permission_menu.__file__).resolve().parents[1])
+    monkeypatch.setattr(curses, "curs_set", lambda value: None)
+    requested(home)
+
+    assert permission_menu.interactive(Screen([ord("q")]), home) == 0
+
+
+def test_selector_never_restarts_for_a_wrapper_without_a_package(tmp_path, monkeypatch):
+    # A custom or unparseable wrapper cannot be converged by re-executing it;
+    # reloading must not loop on it.
+    from mishe_tauftauf import permission_menu
+
+    home = (tmp_path / "site").resolve()
+    _write_cli(home, tmp_path / "custom",
+               body='#!/bin/sh\nexport PYTHONPATH=/a/src:/b/src\nexec python3 -m mishe_tauftauf "$@"\n')
+    monkeypatch.setattr(curses, "curs_set", lambda value: None)
+    requested(home)
+
+    assert permission_menu._release_changed(home) is False
+    assert permission_menu.interactive(Screen([ord("q")]), home) == 0
+
+
+def test_selector_without_a_site_cli_never_restarts(tmp_path, monkeypatch):
+    from mishe_tauftauf import permission_menu
+
+    home = (tmp_path / "site").resolve()
+    monkeypatch.setattr(curses, "curs_set", lambda value: None)
+    requested(home)
+
+    assert permission_menu._cli_package_root(home) is None
+    assert permission_menu.interactive(Screen([ord("q")]), home) == 0
