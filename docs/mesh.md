@@ -22,7 +22,7 @@ wakes and nothing re-arms the window automatically, so a passed stop time strand
 the plant in silence while services, panes and watcher heartbeats stay green.
 The dashboard `ACTIVITY` line then reads `ENDED`; the silence watcher wakes
 health with an addressed notice, and an addressed message still reaches its mind,
-so the plant can decide to re-arm, escalate or report. Setting the stop time to
+so the plant can decide to re-arm, escalate or report. Setting the `until` key to
 null, or to a future time, resumes wakes on the next supervisor tick. See
 [wall coordination](wall-coordination.md).
 

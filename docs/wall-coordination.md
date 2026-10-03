@@ -81,7 +81,9 @@ snapshot equal to the shared checkout), so those bytes reach only a consumer tha
 imports it: here the role renderer scripts `SITE_HOME/top-pains/<role>`, which
 hardcode that root. The site CLI, the minds and the seed services load the pin
 source or an installed release instead, so patched bytes stay invisible to them
-until a replant or restart. The dashboard prints three deployment lines. `SOURCE`
+until a replant or restart. The health, genome and witness dashboards print three
+deployment lines (the docs pane shows this book, and discover and senses their
+culture views). `SOURCE`
 names the checkout commit and its changed-path count; `DEPLOYED` the rendering
 process's own root and module fingerprint; `RUNTIME` the pin beside the roots the
 seed services actually import, flagging `DRIFT` when they differ — the pin and the
