@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import curses
+import json
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -15,6 +15,11 @@ def requested(home: Path, identity: str = "long-request-20260930") -> access.Req
     home.mkdir(exist_ok=True)
     return access.request(home, identity, "discover", "research", "public-source.read",
                           ["research/source"], "Measure the selected public source.")
+
+
+def run_cli(home: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run([sys.executable, "-m", "mishe_tauftauf", "--home", str(home),
+                           "access", *args], text=True, capture_output=True)
 
 
 @pytest.mark.parametrize("verb", ["menu", "grant", "revoke"])
@@ -135,3 +140,20 @@ def test_revocation_selector_does_not_grant_pending_request(tmp_path, monkeypatc
     assert interactive(Screen([10, ord("q")]), tmp_path, "revoked") == 0
     assert access.state(tmp_path, granted.identity) == "revoked"
     assert access.state(tmp_path, pending.identity) == "pending"
+
+
+def test_non_string_unblocks_are_malformed_not_a_menu_crash(tmp_path):
+    # A hand-edited request file may carry dict-valued unblocks. Parsing must
+    # reject it rather than let the value reach the menu's string join.
+    item = requested(tmp_path, "hand-edited")
+    path = tmp_path / "access/requests/hand-edited.json"
+    data = json.loads(path.read_text())
+    data["unblocks"] = [{"path": "/etc/shadow"}]
+    path.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="malformed request hand-edited"):
+        access.get(tmp_path, item.identity)
+    # The CLI grant path hits the same join, so it must fail cleanly too.
+    assert run_cli(tmp_path, "grant", "hand-edited").returncode != 0
+    # A well-formed request beside it stays decidable.
+    other = requested(tmp_path, "well-formed")
+    assert access.decide(tmp_path, other.identity, "granted") == "granted"
