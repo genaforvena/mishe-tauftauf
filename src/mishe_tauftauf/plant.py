@@ -180,6 +180,22 @@ def site_and_session(workspace: Path, default_site_name: str, home: Path | None,
     return home, session
 
 
+def _service_search_path(home: Path) -> str:
+    """The service ``PATH`` with this site's ``bin`` exactly once, at the front.
+
+    The seed service already runs with this site's ``bin`` on ``PATH`` from the
+    unit that launched it, so prepending it unconditionally added one duplicate
+    on every replant: the generated unit was never idempotent and the entry list
+    grew without bound. Keep the site entry at the front, drop its earlier
+    occurrences, and leave every other entry — duplicates and empty entries
+    included — in order.
+    """
+    site_bin = str(home / "bin")
+    inherited = os.environ.get("PATH", "/usr/bin:/bin")
+    rest = [entry for entry in inherited.split(os.pathsep) if entry != site_bin]
+    return os.pathsep.join([site_bin, *rest])
+
+
 def unit_text(home: Path, session: str, slug: str, python: str) -> str:
     from .runtime_source import source_for
     source = source_for(home, ROOT)
@@ -194,7 +210,7 @@ def unit_text(home: Path, session: str, slug: str, python: str) -> str:
         "[Service]\nType=simple\n"
         f"WorkingDirectory={home.parent}\n"
         f"Environment=PYTHONPATH={source / 'src'}\n"
-        f"Environment=PATH={home / 'bin'}:{os.environ.get('PATH', '/usr/bin:/bin')}\n"
+        f"Environment=PATH={_service_search_path(home)}\n"
         f"ExecStart={command}\n"
         "Restart=always\nRestartSec=15\n\n[Install]\nWantedBy=default.target\n"
     )
@@ -258,15 +274,22 @@ def _reconcilable_fragment(home: Path, name: str, env: dict[str, str]) -> Path |
     """The file to edit for a covered unit the plant does not generate.
 
     A site unit file is the source of truth when present, because the systemd
-    fragment symlinks to it. A self-installed unit has no site file, so its
-    fragment is edited in place; it is the only shape the unit has. Returns
-    None when there is no editable file.
+    fragment symlinks to it — but only while it really does. A regular file or a
+    foreign symlink at the systemd path means systemd loads something else, so
+    repointing the site file would silently reconcile nothing and still report a
+    successful restart on a consumer running the old release. Refuse that drifted
+    shape exactly as the generated units do. A self-installed unit has no site
+    file, so its fragment is edited in place; it is the only shape the unit has.
+    Returns None when there is no editable file.
     """
-    unit = home / name
-    if unit.is_file():
-        return unit
     linked = subprocess.run(["systemctl", "--user", "show", name, "-p", "FragmentPath", "--value"],
                             capture_output=True, text=True, check=False, env=env).stdout.strip()
+    unit = home / name
+    if unit.is_file():
+        problem = unit_fragment_mismatch(linked, unit) if linked else None
+        if problem:
+            raise RuntimeError(f"service {name} is a {problem}: {linked}")
+        return unit
     fragment = Path(linked) if linked else None
     return fragment if fragment is not None and fragment.is_file() else None
 
