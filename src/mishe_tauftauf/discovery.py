@@ -607,6 +607,11 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
     # The registry lists the *other* sites this one coordinates, so the scanning
     # site is absent from it; its own units share its bus and need its pin too.
     own_session = os.environ.get("MISHE_SEED_SESSION")
+    if not own_session:
+        try:
+            own_session = (home / ".seed-raised").read_text(encoding="utf-8").split()[0]
+        except (OSError, IndexError):
+            own_session = None
     if own_session and own_session not in site_by_prefix:
         map_site(str(Path(home).resolve()), own_session)
     if not site_by_prefix:
@@ -646,7 +651,7 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
         parts.append("unpinned=" + ",".join(unpinned))
     if stale:
         parts.append("stale=" + ",".join(f"{unit}@{Path(root).name}" for unit, root in sorted(stale.items())))
-    state = "drift" if stale else "verified"
+    state = "drift" if stale else "unknown" if unpinned or unattributed else "verified"
     return {"id": "sense.runtime.drift-across-sites", "state": state,
             "sample": " ".join(parts), "kind": "read",
             "identity": {"sites": sorted(site_by_prefix), "stale": stale,

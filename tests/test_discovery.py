@@ -1360,6 +1360,27 @@ def test_drift_across_sites_reads_verified_when_every_unit_matches_its_own_pin(
     assert row["identity"]["unattributed"] == []
 
 
+def test_drift_across_sites_falls_back_to_seed_raised_for_own_session(
+        tmp_path: Path) -> None:
+    own_sha: list[str] = []
+    own_pin = tmp_path / "releases" / "own"
+    _release_tree(own_pin, own_sha)
+    home = tmp_path / "plant"
+    _pin(home, own_pin, own_sha[0], "mishe-self")
+    _linked_registry(home, [{"home": str(tmp_path / "other"),
+                             "session": "mishe-other", "sha": own_sha[0]}])
+    (home / ".seed-raised").write_text("mishe-self wake-1\n", encoding="utf-8")
+    units = ["mishe-self-discover.service", "mishe-cleaner-recovered.service"]
+    with patch.object(discovery, "_active_site_units", return_value=(units, None)), \
+            patch.object(discovery, "_unit_import_roots",
+                         return_value={units[0]: str(own_pin)}), \
+            patch.dict(os.environ, {}, clear=True):
+        row = discovery._runtime_drift_across_sites(home)
+    assert row["state"] == "unknown"
+    assert row["identity"]["sites"] == ["mishe-other", "mishe-self"]
+    assert row["identity"]["unattributed"] == [units[1]]
+
+
 def test_drift_across_sites_includes_the_scanning_sites_own_units(
         tmp_path: Path) -> None:
     # The registry lists the *other* sites; the scanning site's own units share
@@ -1385,6 +1406,26 @@ def test_drift_across_sites_includes_the_scanning_sites_own_units(
     assert row["state"] == "verified"
     assert row["identity"]["stale"] == {}
     assert row["identity"]["unattributed"] == []
+
+
+def test_drift_across_sites_is_unknown_when_active_unit_is_unattributed(
+        tmp_path: Path) -> None:
+    pinned_sha: list[str] = []
+    other_pin = tmp_path / "releases" / "other"
+    _release_tree(other_pin, pinned_sha)
+    other = tmp_path / "site-other"
+    _pin(other, other_pin, pinned_sha[0], "mishe-other")
+    home = tmp_path / "plant"
+    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
+                             "sha": pinned_sha[0]}])
+    unit = "mishe-unlisted-senses.service"
+    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
+            patch.object(discovery, "_unit_import_roots", return_value={}), \
+            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
+        row = discovery._runtime_drift_across_sites(home)
+    assert row["state"] == "unknown"
+    assert row["identity"]["stale"] == {}
+    assert row["identity"]["unattributed"] == [unit]
 
 
 def test_active_site_units_reads_the_list_units_table_not_show_properties(
