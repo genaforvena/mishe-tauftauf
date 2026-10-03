@@ -18,7 +18,10 @@ from mishe_tauftauf.observations import FOOTER_LEASE_RE
 from mishe_tauftauf.tmux import _tmux, owns_session
 
 KERNEL = Path(__file__).resolve().parents[1]
-ROLES = ("genome", "witness", "discover", "senses", "health", "permissions")
+# Mind panes the refresh must find alive, and whose top-pane leases must advance.
+# `docs` is a chartered wall-addressable mind (plant.ROLES); leaving it out let a
+# site be recorded healthy while its docs mind pane was dead for hours.
+ROLES = ("genome", "witness", "discover", "senses", "health", "docs", "permissions")
 
 
 def resident_home() -> Path | None:

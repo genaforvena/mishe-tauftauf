@@ -238,6 +238,40 @@ def test_sync_verification_rejects_dead_top_with_live_bottom(tmp_path: Path, mon
         site_sync._verify(target, "example")
 
 
+def test_sync_verification_rejects_dead_docs_mind_pane(tmp_path: Path, monkeypatch) -> None:
+    # `docs` is a chartered, wall-addressable mind (plant.ROLES). Omitting it from
+    # the verified mind panes let a site be recorded healthy with its docs mind
+    # pane dead (health wake 14959).
+    _core_home, target = setup_sites(tmp_path, monkeypatch)
+    (target / "health").mkdir()
+    (target / "health" / "windows.json").write_text(
+        '["genome", "witness", "discover", "senses", "health", "permissions", "docs", "operator"]',
+        encoding="utf-8")
+    (target / "health" / "services.json").write_text("[]", encoding="utf-8")
+    (target / "chat.log").write_text("", encoding="utf-8")
+    names = ["genome", "witness", "discover", "senses", "health", "permissions", "docs"]
+
+    def panes(*_args):
+        rows = [f"{name} 0 0" for name in (*names, "operator")]
+        rows += [f"{name} 1 {1 if name == 'docs' else 0}" for name in names]
+        return subprocess.CompletedProcess([], 0, "\n".join(rows).encode(), b"")
+
+    stamps = iter(range(1000))
+    monkeypatch.setattr(site_sync, "_tmux", panes)
+    monkeypatch.setattr(site_sync, "_leases", lambda _session, leased: {
+        name: datetime.now(timezone.utc) + timedelta(seconds=next(stamps)) for name in leased})
+    with pytest.raises(RuntimeError, match="dead mind pane"):
+        site_sync._verify(target, "example")
+
+
+def test_sync_verifies_every_planted_mind_role() -> None:
+    # The verified mind set must cover every chartered mind the plant launches;
+    # a role missing here is silently unchecked on every refresh.
+    from mishe_tauftauf.plant import ROLES as PLANTED
+
+    assert set(PLANTED) <= set(site_sync.ROLES)
+
+
 @pytest.mark.parametrize(("advances", "feed_exists", "delayed"), [(True, True, False), (False, True, False), (True, False, False), (True, True, True)])
 def test_sync_verifies_advancing_leases_and_allows_unrelated_window(tmp_path: Path, monkeypatch,
                                                                     advances: bool, feed_exists: bool, delayed: bool) -> None:
