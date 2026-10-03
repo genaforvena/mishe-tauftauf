@@ -84,8 +84,9 @@ other stderr ERROR, generated tool item, later error or unpaired
 execution-host/tool denial rejects the review as unknown.
 The response must complete the turn, match the schema/hash and supply every
 requested ID; evidence references must belong to that question's supplied
-episode. Draft instructions remain data. Complete input is capped at 120KB,
-output at 2MB, and time at a finite deadline. The CLI inherits the parent's
+episode. Draft instructions remain data. Complete input is capped at 120KB;
+oversized stdin returns a structured unknown refusal without truncation. Output
+is capped at 2MB, and time at a finite deadline. The CLI inherits the parent's
 process group, so an outer gate timeout kills the adapter and all descendants.
 Its internal deadline leaves the parent cleanup margin. Rejected results remain
 private and produce no feed/task/wake effect.

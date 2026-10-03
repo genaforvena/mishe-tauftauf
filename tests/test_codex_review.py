@@ -162,3 +162,17 @@ def test_parent_timeout_terminates_nested_cli_group(tmp_path):
         except ProcessLookupError:
             pass
         pytest.fail('nested CLI survived parent deadline')
+
+
+def test_oversized_stdin_returns_structured_fail_closed_result(monkeypatch,capsys):
+    import io,sys
+    from pathlib import Path
+    monkeypatch.setattr(sys,'argv',['codex_review','--probe-report','unused','--cli','/usr/bin/codex','--runtime-config',str(Path.home()/'.codex/config.toml')])
+    monkeypatch.setattr(sys,'stdin',type('Input',(),{'buffer':io.BytesIO(b'x'*(codex_review.MAX_INPUT_BYTES+1))})())
+    codex_review.main()
+    result=__import__('json').loads(capsys.readouterr().out)
+    assert result['version']==1
+    assert result['results']==[]
+    assert 'no truncation permitted' in result['error']
+
+
