@@ -22,7 +22,7 @@ from .tmux import _tmux, owns_session
 # wall-addressable role (activity.ROLES, seed_docs_charter.md); leaving it out
 # meant its pane existed only when something else respawned it directly, so a
 # reboot dropped it with no service to raise it again.
-ROLES = ("genome", "witness", "discover", "senses", "health", "docs")
+ROLES = ("genome", "witness", "discover", "senses", "health", "docs", "research-methods")
 EXPLORATION = ("discover", "senses", "health")
 CONTRACT_START = "<!-- mishe-tauftauf plant contract -->"
 CONTRACT_END = "<!-- end mishe-tauftauf plant contract -->"
@@ -199,11 +199,12 @@ def _service_search_path(home: Path) -> str:
 def unit_text(home: Path, session: str, slug: str, python: str) -> str:
     from .runtime_source import source_for
     source = source_for(home, ROOT)
+    self_pick_seconds = 3600 if slug == "research-methods" else 600 if slug == "discover" else 300
     command = (f"{python} -m mishe_tauftauf.ci_watch --home {home} --follow" if slug == "ci" else
                f"{python} -m mishe_tauftauf.seed_permission_panel --home {home} --session {session} --follow"
                if slug == "permissions" else
                f"{python} -m mishe_tauftauf --home {home} seed run --session {session} "
-               f"--slug {slug} --interval 5 --self-pick-seconds {600 if slug == 'discover' else 300} "
+               f"--slug {slug} --interval 5 --self-pick-seconds {self_pick_seconds} "
                "--clear-grace-seconds 30")
     return (
         f"[Unit]\nDescription=Mishe {slug} resident channel\nAfter=default.target\n\n"

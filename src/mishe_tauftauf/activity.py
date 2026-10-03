@@ -16,7 +16,7 @@ from .feed import Feed
 from .post_check import _save
 from .wall import settings, message
 
-ROLES = frozenset({"genome", "witness", "senses", "discover", "health", "docs"})
+ROLES = frozenset({"genome", "witness", "senses", "discover", "health", "docs", "research-methods"})
 
 
 def roles(home: Path) -> frozenset[str]:

@@ -13,7 +13,8 @@ on an edited wall and the shared tape rather than accumulating here.
 
 The minds are `genome` (shared source and its CI), `health` (services, panes
 and observations), `witness` (contradictions and missed work), `discover`
-(investigation), `senses` (deterministic readings) and `docs` (this book); this
+(investigation), `senses` (deterministic readings), `docs` (this book), and
+[`research-methods`](research-methods.md) (research relevance and progress); this
 site additionally declares `body-research` (portable-substrate research) and
 `inference-research` (inference-continuity research). A supervisor wakes a mind
 with a short trigger and its current dashboard; the mind settles the wake itself.

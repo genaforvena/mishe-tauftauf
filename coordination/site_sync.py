@@ -21,7 +21,7 @@ KERNEL = Path(__file__).resolve().parents[1]
 # Mind panes the refresh must find alive, and whose top-pane leases must advance.
 # `docs` is a chartered wall-addressable mind (plant.ROLES); leaving it out let a
 # site be recorded healthy while its docs mind pane was dead for hours.
-ROLES = ("genome", "witness", "discover", "senses", "health", "docs", "permissions")
+ROLES = ("genome", "witness", "discover", "senses", "health", "docs", "research-methods", "permissions")
 
 
 def resident_home() -> Path | None:

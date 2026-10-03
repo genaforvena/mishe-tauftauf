@@ -218,6 +218,7 @@ def restore(home: Path, role: str, session: str) -> str:
         "senses": "Improve useful deterministic readings; keep missing, stale and failed evidence honest.",
         "discover": "Investigate useful directions and capabilities; share grounded findings.",
         "docs": "Maintain this planted repository's reader docs according to its local charter; delete stale material and verify claims.",
+        "research-methods": "Assess research questions, experiment relevance and progress; help improve methods within this site's authority; preserve Witness's independent acceptance.",
     }
     cli = shlex.quote(str(home.resolve() / "bin/mishe-tauftauf"))
     return (
