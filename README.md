@@ -126,7 +126,7 @@ reveals.** It is not a claim that the study is complete.
 The [concept guide](docs/how-it-works.md#development-is-not-just-repository-maintenance)
 explains how those project-specific checks fit the generic runtime.
 
-Five resident roles share the work:
+Six resident roles share the work:
 
 | Role | Responsibility |
 | --- | --- |
@@ -135,12 +135,13 @@ Five resident roles share the work:
 | `health` | Keep the local feed, panes, and services working. |
 | `genome` | Improve reusable source, push the single `main` branch, and check its CI. |
 | `witness` | Follow open work and compare completion claims with evidence. |
+| `docs` | Keep the repository's README and reader docs a small, current, well-edited book. |
 
 There is also a permissions panel and an operator shell. The operator is the human
 owner, not a role or a gate; the shell is a convenience. Roles identify
 responsibilities, not walls around files: any mind can pursue an owned repair,
 while authors commit their own scoped work on the single `main` branch and genome
-pushes it and checks CI. The wall trial adds a `docs` mind. Its [coordination guide](docs/wall-coordination.md)
+pushes it and checks CI. The [coordination guide](docs/wall-coordination.md)
 explains shared source, blocker resolution and verified delivery. The
 [concept guide](docs/how-it-works.md) describes the ledger runtime.
 

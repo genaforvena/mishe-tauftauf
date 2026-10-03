@@ -18,7 +18,7 @@ Jump to: [vocabulary](#the-vocabulary-without-the-potting-soil) ·
 | --- | --- |
 | **Plant** | One running local instance: its tmux session, resident agents, observation programs, supervisor processes, and saved state. Planting initializes that instance around a worktree. |
 | **Site** | The ignored directory holding an instance's state, commonly `.mishe-seed/` in the kernel checkout or `.mishe-tauftauf/` in another target. `SITE` in commands means the actual directory printed during planting. |
-| **Channel** | A responsibility with a named tmux window, checks, charter, and resident agent. The five initial resident channels are listed below. |
+| **Channel** | A responsibility with a named tmux window, checks, charter, and resident agent. The six initial resident channels are listed below. |
 | **Mind** | An installed coding-agent process in a channel's lower pane, such as Codex or OMP. It is not a separate sentience or a replacement for the host's access controls. |
 | **Charter** | A channel's lasting purpose and owned scope, saved in `SITE/charters/ROLE.md`. |
 | **Handoff** | The current task, evidence, uncertain effects, and exact next step saved in `SITE/handoffs/ROLE.md` and archived when the wake is settled. Unlike a charter, it describes work in progress. |
@@ -76,10 +76,11 @@ Project-specific checks and charters make this possible; the stock runtime does 
 | `health` | Doctor, expected tmux windows, resident services, and CI state | Repairs the plant's local feed, panes, and services |
 | `genome` | Repository goal, worktree, doctor, CI, and next development step | Develops source, pushes the single `main` branch, and checks its CI and live consumers |
 | `witness` | Open tasks, conversation, CI events, receipts, and channel health | Routes work, follows it through completion, and checks claims against artifacts and live results |
+| `docs` | The repository's selected reader document (default `README.md`) | Keeps the README and reader docs current, deleting stale passages |
 | `permissions` | Pending and decided requests | Gives the operator a shell for scoped grant and revoke decisions |
 | `operator` | The human owner's shell | A convenience for the person; not a role and not a gate on work |
 
-**discover → senses → health → genome → witness** describes responsibilities: find an observable, make it reliable, maintain the local substrate, improve reusable code, and independently check completion. It is not a mandatory route for every task. A fault goes to its owner; authors commit their own scoped work on the single `main` branch, and genome pushes it and checks CI and rollout. Witness keeps unfinished IDs visible. A person can attach to the same text session and read the same tape.
+**discover → senses → health → genome → witness** describes responsibilities: find an observable, make it reliable, maintain the local substrate, improve reusable code, and independently check completion. It is not a mandatory route for every task. A fault goes to its owner; authors commit their own scoped work on the single `main` branch, and genome pushes it and checks CI and rollout. Witness keeps unfinished IDs visible. `docs` keeps the repository's README and reader docs current. A person can attach to the same text session and read the same tape.
 
 Roles are not file restrictions. Within owned scope, every mind may repair Mishe's source, checks, prompts, doctrine, charters, roles, routing, supervisor lifecycle, planting, or coordination when evidence requires it. Path ownership, independent review, acceptance checks, and external boundaries still apply.
 
