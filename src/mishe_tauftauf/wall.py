@@ -135,7 +135,12 @@ def retry(home: Path, role: str) -> None:
 
 
 def addressed(entry, role: str) -> bool:
-    return entry.source not in {role, f"mind/{role}"} and entry.body.splitlines()[0] == f"[dm] to={role}"
+    first = entry.body.splitlines()[0] if entry.body else ""
+    if entry.source == "operator/permissions":
+        decision = re.match(r"\[permission\] id=\S+ decision=(?:granted|revoked) owner=([A-Za-z0-9._:/-]+)(?:\s|$)", first)
+        if decision:
+            return decision.group(1) == role
+    return entry.source not in {role, f"mind/{role}"} and first == f"[dm] to={role}"
 
 
 def context(home: Path, role: str) -> str:
@@ -220,6 +225,8 @@ def restore(home: Path, role: str, session: str) -> str:
         + (f"DOCS DOCUMENT {docs_document(home)}\n" if role == "docs" else "")
         + f"ROLE {role}: {goals.get(role, 'Choose useful work in this owned project.')}\n"
         "Wall trial supersedes ledger and branch instructions. Choose and organize your work; "
+        "Do not task claim or wait on ledger selection/receipt checks in wall mode, even if "
+        "inherited doctrine or charters still prescribe them. They are not permission gates for this trial. "
         "planning and investigation are valid turns. Read the dashboard now, then relevant "
         "chat and other walls as needed. Keep your plate and next action on your edited wall. "
         "Preserve others' work and reconcile prior effects. Use System 1 advice if useful, "
@@ -241,6 +248,20 @@ def restore(home: Path, role: str, session: str) -> str:
         "action, and escalation or disposition time. Send the resolver an addressed request. "
         "At that time resolve, escalate, or explicitly defer with a named trigger; do not "
         "repeat unchanged reconciliation. Choose another useful step while waiting. "
+        "Recovery is the default: attempt a bounded repair within existing authority, or "
+        "address its peer resolver. A failed attempt or unresolved obligation does not make the mind blocked. "
+        "Do not ask permission for owned work already authorized. For a persisting blocker, "
+        "record CLI permit recover ID --owner ROLE --task GOAL --resolver ROLE --missing TEXT "
+        "--action TEXT --alternative TEXT --cutoff ISO_TIME --evidence FILE. Include an existing "
+        "owned-site diagnosis, a concrete permitted alternative (or a named deferral trigger), and cutoff. "
+        "Only for genuinely missing authority add --capability NAME --unblocks PATH --reason TEXT; "
+        "this routes a scoped request to permissions. The record never changes work eligibility. "
+        "At cutoff resolve, escalate or defer to a named trigger; retry only on changed inputs "
+        "or the bounded scheduled attempt. A grant is not recovery: retry and use CLI permit resolve ID "
+        "--checked-action TEXT --evidence FILE only after checking success. Select the recorded action; "
+        "a permission route needs a grant, while --via-alternative selects a recorded permitted fallback "
+        "and retires the unnecessary request without new authority. Keep choosing useful independent work; "
+        "settle changed or verified when that work produced progress even if another obligation waits. "
         "Record meaningful outcomes with CLI wall outcome --owner ROLE --kind KIND "
         "--file NOTES --evidence FILE (an owned-site evidence file); kinds: accepted, "
         "blocker-resolved, blocker-retired, hypothesis-changed. Counts remain author reports. "

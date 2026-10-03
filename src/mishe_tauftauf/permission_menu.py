@@ -40,8 +40,9 @@ def interactive(screen, home: Path, decision: str = "granted") -> int:
     status = "No decisions are made until you press Enter."
     verb = "Grant" if decision == "granted" else "Revoke"
     while True:
+        retired = access.retired_requests(home)
         rows = [(item, state) for item, state in access.list_requests(home)
-                if (state != "granted" if decision == "granted" else state == "granted")]
+                if (state != "granted" and item.identity not in retired if decision == "granted" else state == "granted")]
         if selected:
             index = next((i for i, (item, _) in enumerate(rows) if item.identity == selected), index)
         index = min(max(0, index), max(0, len(rows) - 1))
@@ -67,6 +68,14 @@ def interactive(screen, home: Path, decision: str = "granted") -> int:
             details = [f"Request: {item.identity}", f"Status: {state}; owner: {item.owner}",
                        f"Task: {item.task}", f"Capability: {item.capability}",
                        "Unblocks: " + ", ".join(item.unblocks), "Reason: " + item.reason]
+            recovery = next((row for row in access.recoveries(home)
+                             if row["permission"] == item.identity), None)
+            if recovery:
+                details.extend([f"Resolver: {recovery['resolver']}",
+                                f"Missing: {recovery['missing']}", f"After grant: {recovery['action']}",
+                                "Alternatives: " + "; ".join(recovery["alternatives"]),
+                                f"Cutoff: {recovery['cutoff']}",
+                                "Grant permits a retry; success still needs evidence."])
             wrapped = [line for detail in details
                        for line in textwrap.wrap(_safe(detail), max(1, width - 2))]
             top = 5 + count
