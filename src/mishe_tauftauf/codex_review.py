@@ -204,7 +204,9 @@ def main():
     if not args.cli.is_absolute() or args.runtime_config.resolve()!=(config_home/'config.toml').resolve():
         raise ValueError('explicit CLI/config cache dependencies must match installed runtime')
     raw=__import__('sys').stdin.buffer.read(MAX_INPUT_BYTES+1)
-    if len(raw)>MAX_INPUT_BYTES:raise ValueError('complete request exceeds checker input budget')
+    if len(raw)>MAX_INPUT_BYTES:
+        print(json.dumps({'version':1,'input_hash':'','results':[],'error':'complete request exceeds checker input budget; no truncation permitted'}))
+        return
     result=review(json.loads(raw),probe_path=args.probe_report,timeout=args.timeout_seconds,cli=str(args.cli))
     print(json.dumps(result))
 
