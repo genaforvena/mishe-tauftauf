@@ -13,7 +13,8 @@ from .feed import Feed
 from .predictions import expectations_text
 
 SLUG_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\Z")
-FOOTER_RUNTIME_RE = re.compile(r"^-- runtime: .* --$")
+FOOTER_LEDGER_LABEL = "ledger"
+FOOTER_LEDGER_RE = re.compile(rf"^-- {re.escape(FOOTER_LEDGER_LABEL)}: .* --$")
 FOOTER_LEASE_RE = re.compile(r"^-- pane live \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z · refresh [0-9.]+s · ticks every frame --$")
 
 
@@ -155,7 +156,7 @@ def strip_owned_chrome(text: str, *, strip_expectations: bool = False) -> str:
     output: list[str] = []
     in_expectations = False
     for line in lines:
-        if FOOTER_RUNTIME_RE.fullmatch(line) or FOOTER_LEASE_RE.fullmatch(line):
+        if FOOTER_LEDGER_RE.fullmatch(line) or FOOTER_LEASE_RE.fullmatch(line):
             continue
         if strip_expectations and line == "EXPECTATIONS":
             in_expectations = True
