@@ -13,6 +13,19 @@ from .ci_watch import line as ci_line
 from .observations import validate_slug
 
 
+def _runtime_line(home: Path, root: Path) -> str:
+    """Compare the imported runtime root with the pinned release so drift stays visible."""
+    if not (home / "health/runtime-release.json").exists():
+        return f"RUNTIME: running={root} pin=UNPINNED"
+    try:
+        from .runtime_source import source_for
+        pinned = source_for(home, root).resolve()
+    except (OSError, TypeError, ValueError) as exc:
+        return f"RUNTIME: running={root} pin=UNKNOWN — {exc}"
+    state = "MATCH" if pinned == root.resolve() else "DRIFT"
+    return f"RUNTIME: running={root} pin={pinned} {state}"
+
+
 def deployment_lines(home: Path) -> list[str]:
     """Show checkout identity separately from the actual imported runtime bytes."""
     try:
@@ -35,7 +48,7 @@ def deployment_lines(home: Path) -> list[str]:
         deployed = f"DEPLOYED: root={root} sha256={digest.hexdigest()} (Python modules; separate from checkout CI)"
     except (OSError, ValueError) as exc:
         deployed = f"DEPLOYED: UNKNOWN — runtime fingerprint unavailable: {exc}"
-    return [source, deployed]
+    return [source, deployed, _runtime_line(home, root)]
 
 
 def render(home: Path, role: str) -> str:
