@@ -19,6 +19,26 @@ from .wall import settings, message
 ROLES = frozenset({"genome", "witness", "senses", "discover", "health", "docs"})
 
 
+def roles(home: Path) -> frozenset[str]:
+    """Roles whose activity counts: the built-in set plus site-declared residents.
+
+    A site can add a resident beyond the built-in defaults — a tmux window, an
+    executable ``minds/<slug>`` launcher and a ``charters/<slug>.md`` charter.
+    Counting only the hard-coded set would leave that resident's activity and
+    silence invisible on every pane. ``plant`` preserves extra charters and
+    launchers it did not generate, so a declared resident stays monitored across
+    a replant; an unreadable site falls back to the built-in set.
+    """
+    declared = set()
+    try:
+        for path in (home / "charters").glob("*.md"):
+            if (home / "minds" / path.stem).is_file():
+                declared.add(path.stem)
+    except OSError:
+        return ROLES
+    return ROLES | declared
+
+
 @contextmanager
 def lock(home):
     with (home / ".silence.lock").open("a+") as handle:
@@ -47,14 +67,15 @@ def observe(home, *, now=None, entries=None):
     now = now or datetime.now(timezone.utc)
     config = settings(home)
     seconds = threshold(config)
+    monitored = roles(home)
     candidates = [(datetime.fromisoformat(config.get("started", now.isoformat())), "trial start")]
     for entry in entries if entries is not None else Feed(home).entries():
         source = entry.source.removeprefix("mind/")
-        if source in ROLES or (entry.source == "seed" and entry.body.startswith("seed yield ")):
+        if source in monitored or (entry.source == "seed" and entry.body.startswith("seed yield ")):
             candidates.append((datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00")),
                                f"chat.log {entry.sequence} {entry.source}"))
     for path in (home / "walls").glob("*.md"):
-        if path.stem in ROLES:
+        if path.stem in monitored:
             candidates.append((datetime.fromtimestamp(path.stat().st_mtime, timezone.utc), f"walls/{path.name}"))
     at, evidence = max(candidates)
     idle = max(0, (now - at).total_seconds())

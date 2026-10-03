@@ -120,3 +120,24 @@ def test_heartbeat_records_watcher_liveness(tmp_path):
     activity.beat(tmp_path,"OK")
     data=json.loads((tmp_path/"checks"/"silence-heartbeat.json").read_text())
     assert data["state"]=="OK" and "at" in data
+
+
+def test_site_declared_resident_is_monitored(tmp_path):
+    from mishe_tauftauf import activity
+    now=site(tmp_path)
+    Feed(tmp_path).append("body-research","researched the substrate")
+    assert activity.observe(tmp_path,now=now+timedelta(seconds=5))["evidence"]=="trial start"
+    (tmp_path/"charters").mkdir();(tmp_path/"charters"/"body-research.md").write_text("charter")
+    (tmp_path/"minds").mkdir();(tmp_path/"minds"/"body-research").write_text("#!/bin/sh\n")
+    assert "body-research" in activity.observe(tmp_path,now=now+timedelta(seconds=5))["evidence"]
+
+
+def test_site_declared_wall_edit_counts(tmp_path):
+    from mishe_tauftauf import activity
+    now=site(tmp_path)
+    (tmp_path/"charters").mkdir();(tmp_path/"charters"/"body-research.md").write_text("charter")
+    (tmp_path/"minds").mkdir();(tmp_path/"minds"/"body-research").write_text("#!/bin/sh\n")
+    (tmp_path/"walls").mkdir()
+    wall=tmp_path/"walls"/"body-research.md";wall.write_text("Investigating")
+    os.utime(wall,(now.timestamp()+8,now.timestamp()+8))
+    assert activity.observe(tmp_path,now=now+timedelta(seconds=11))["idle_seconds"]==3
