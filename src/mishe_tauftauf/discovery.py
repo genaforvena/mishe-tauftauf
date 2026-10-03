@@ -141,7 +141,15 @@ def _ps_processes(session: str | None = None) -> dict[int, dict[str, object]]:
     A later reader cannot reconstruct it: on this host five of eight retained
     top-CPU rows are gone from a snapshot taken seconds later, because the busiest
     processes are short-lived `mesh-*` tools.
+
+    A session names the work to attribute processes to. An empty name names none:
+    tmux resolves an empty target to the *calling* session, so `""` would be read
+    as a real session and every process beneath this plant's panes would be
+    claimed for a session the caller never named. Normalize it here, one level
+    below both callers, so a future caller cannot pass the hazard through.
     """
+    if session == "":
+        session = None
     try:
         result = subprocess.run(["ps", "-eo", "pid,ppid,pcpu,etimes,args", "--no-headers"],
                                 capture_output=True, text=True, timeout=10)
@@ -632,10 +640,9 @@ def sample(home: Path) -> dict[str, object]:
     else:
         observed.append({"id": "sense.proc.cpu-busy", "state": "unknown",
                          "sample": "/proc/stat cpu fields unavailable", "kind": "read"})
-    # An empty name means no session was named, which tmux resolves to the
-    # calling session: membership would be claimed for every process in it. Pass
-    # None instead so descent is reported as not assessed rather than attributed
-    # to a session the scan never named.
+    # An empty name names no session, and _ps_processes normalizes it: an empty
+    # tmux target resolves to the calling session, so descent would be claimed for
+    # a session the scan never named.
     session = os.environ.get("MISHE_SEED_SESSION") or None
     top_cpu = _top_cpu_processes(session)
     if top_cpu:
