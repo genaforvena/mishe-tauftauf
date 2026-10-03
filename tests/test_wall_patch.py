@@ -269,3 +269,52 @@ def test_reviewer_model_honors_site_config_and_env_override(tmp_path, monkeypatc
     assert wall_review.reviewer_model(home) == "nvidia/moonshotai/kimi-k3"
     monkeypatch.setenv("MISHE_WALL_REVIEW_MODEL", "override/model")
     assert wall_review.reviewer_model(home) == "override/model"
+
+
+def test_reviewer_timeout_honors_site_config_and_env_override(tmp_path, monkeypatch):
+    from mishe_tauftauf import wall_review
+    import importlib
+
+    monkeypatch.delenv("MISHE_WALL_REVIEW_TIMEOUT", raising=False)
+    home = tmp_path / "site"
+    home.mkdir()
+    importlib.reload(wall_review)
+    assert wall_review.reviewer_timeout(home) == wall_review.DEFAULT_TIMEOUT
+    (home / "patch-review.json").write_text(json.dumps({"timeout_seconds": 420}))
+    assert wall_review.reviewer_timeout(home) == 420
+    monkeypatch.setenv("MISHE_WALL_REVIEW_TIMEOUT", "300")
+    assert wall_review.reviewer_timeout(home) == 300.0
+    for bad in ("0", "-1", "601", "x"):
+        monkeypatch.setenv("MISHE_WALL_REVIEW_TIMEOUT", bad)
+        with pytest.raises(ValueError, match="reviewer timeout"):
+            wall_review.reviewer_timeout(home)
+
+
+def test_outer_worker_budget_exceeds_configured_reviewer_budget():
+    # A reviewer allowed 420s by patch-review.json must not be killed at the old
+    # 295s outer clamp; the outer budget settles strictly above the model call.
+    assert wall_patch._worker_timeout({}) == 295 + wall_patch.WORKER_SETTLE_SECONDS
+    assert wall_patch._worker_timeout({"timeout_seconds": 420}) == 480
+    for bad in (0, -1, 601, "x", True, None):
+        with pytest.raises(ValueError, match="timeout_seconds"):
+            wall_patch._worker_timeout({"timeout_seconds": bad})
+
+
+def test_review_passes_the_configured_outer_budget_to_the_worker(tmp_path, monkeypatch):
+    home, source, deployed = layout(tmp_path)
+    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
+    source.write_text("after\n")
+    (home / "patch-review.json").write_text(json.dumps(
+        {"command": [sys.executable, "-c", "pass"], "timeout_seconds": 420}))
+    seen = {}
+
+    def spy(command, encoded, timeout):
+        seen["timeout"] = timeout
+        request = json.loads(encoded.decode())
+        return json.dumps({"version": 1, "input_hash": request["input_hash"],
+                           "results": [{"id": "PATCH", "verdict": "clear", "reason": "ok", "evidence": []}]}).encode()
+
+    monkeypatch.setattr(wall_patch, "_worker", spy)
+    wall_patch.check(home, "change", [sys.executable, "-c", "pass"])
+    assert seen["timeout"] == 480
+    assert wall_patch.status(home, "change")["phase"] == "reviewed"
