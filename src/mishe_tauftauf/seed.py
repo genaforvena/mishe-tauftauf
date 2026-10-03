@@ -527,10 +527,10 @@ def init(home: Path, slug: str, engine_command: str = "codex") -> str:
         mind.chmod(0o755)
     top = home / "top-pains" / slug
     if not top.exists():
-        if slug == "research-methods":
+        if slug in {"docs", "research-methods"}:
             top.write_text("#!/bin/sh\nexec " + shlex.quote(sys.executable) +
                            " -m mishe_tauftauf.wall_view --home " + shlex.quote(str(home.resolve())) +
-                           " --role research-methods\n", encoding="utf-8")
+                           " --role " + shlex.quote(slug) + "\n", encoding="utf-8")
         elif slug == "witness":
             top.write_text("#!/bin/sh\nexec " + shlex.quote(sys.executable) +
                            " -m mishe_tauftauf.seed_witness_view --home " + shlex.quote(str(home.resolve())) + "\n",
