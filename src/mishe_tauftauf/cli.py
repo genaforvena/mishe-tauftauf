@@ -14,7 +14,7 @@ from .checks import run_check
 from . import access, discovery
 from .feed import Feed, FeedError, parse_feed, utc_now
 from .judges import QUESTIONS, classify, controls, document, run_external
-from .observations import compose_frame, discover, executable, validate_home, validate_slug
+from .observations import FOOTER_LEDGER_LABEL, compose_frame, discover, executable, validate_home, validate_slug
 from .predictions import PredictionError, append_prediction, pending_predictions, replay_predictions
 from .runtime import Coordinator, RuntimeConfig, runtime_status
 
@@ -210,7 +210,7 @@ def cmd_pain_watch(args) -> int:
                 frame = rendered.body
                 if not frame.endswith("\n"):
                     frame += "\n"
-                frame += f"-- runtime: {status} --\n"
+                frame += f"-- {FOOTER_LEDGER_LABEL}: {status} --\n"
             except FeedError as exc:
                 ok = False
                 frame = (
