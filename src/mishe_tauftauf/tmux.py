@@ -180,6 +180,20 @@ def check_pane(home: Path, session: str, slug: str, wait: float = 11.0) -> tuple
         if lease2 is not None and lease2 != lease1:
             return True, f"PASS pane-live: {slug}"
     return False, f"HOLD pane-frozen: {slug} lease did not advance"
+
+def check_mind_pane(session: str, slug: str) -> tuple[bool, str]:
+    """Verify a chartered mind's resident pane, which the renderer lease cannot see.
+
+    `check_pane` reads `{session}:{slug}.0` only, so a mind pane that died
+    (`remain-on-exit` keeps it visible at status 127) still reports a live
+    renderer. The linked-site verifier checks `.1`; the local plant must too.
+    """
+    result = _tmux("display-message", "-p", "-t", f"{session}:{slug}.1", "#{pane_dead}", check=False)
+    if result.returncode:
+        return False, f"HOLD mind-pane-missing: {slug}"
+    if result.stdout.decode("ascii", "replace").strip() != "0":
+        return False, f"HOLD mind-pane-dead: {slug}"
+    return True, f"PASS mind-pane-live: {slug}"
 def repair_top(home: Path, session: str, slug: str) -> tuple[bool, str]:
     if not owns_session(home, session):
         return False, f"UNKNOWN pane command ownership for {session}:{slug}.0"
