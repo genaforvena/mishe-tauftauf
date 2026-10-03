@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -222,6 +223,109 @@ def silence_unit_text(home: Path, session: str, python: str) -> str:
     )
 
 
+_SOURCE_ROOT = re.compile(r"^/.*/src$")
+
+
+def repoint_release_root(text: str, source: Path) -> str:
+    """Repoint every ``Environment=PYTHONPATH`` source entry at ``source``.
+
+    Generated units are rewritten whole from ``unit_text``; units carrying
+    custom content are edited in place, so only the release component each
+    process imports may change. The plant's convention is one absolute
+    ``<root>/src`` search-path entry, so a pin advance moves exactly that and
+    leaves every other line and any extra search-path entry untouched.
+    """
+    pinned = str(source)
+    prefix = "Environment=PYTHONPATH="
+    lines = text.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        body = line.rstrip("\n")
+        if not body.startswith(prefix):
+            continue
+        entries = body[len(prefix):].split(os.pathsep)
+        rewritten = os.pathsep.join(pinned if _SOURCE_ROOT.match(entry) else entry
+                                    for entry in entries)
+        lines[index] = prefix + rewritten + ("\n" if line.endswith("\n") else "")
+    return "".join(lines)
+
+
+def _reconcilable_fragment(home: Path, name: str, env: dict[str, str]) -> Path | None:
+    """The file to edit for a covered unit the plant does not generate.
+
+    A site unit file is the source of truth when present, because the systemd
+    fragment symlinks to it. A self-installed unit has no site file, so its
+    fragment is edited in place; it is the only shape the unit has. Returns
+    None when there is no editable file.
+    """
+    unit = home / name
+    if unit.is_file():
+        return unit
+    linked = subprocess.run(["systemctl", "--user", "show", name, "-p", "FragmentPath", "--value"],
+                            capture_output=True, text=True, check=False, env=env).stdout.strip()
+    fragment = Path(linked) if linked else None
+    return fragment if fragment is not None and fragment.is_file() else None
+
+
+def _service_active(name: str, env: dict[str, str]) -> bool:
+    return subprocess.run(
+        ["systemctl", "--user", "is-active", "--quiet", name], env=env
+    ).returncode == 0
+
+
+def reconcile_services(home: Path, session: str, persist: bool, python: str) -> None:
+    """Reconcile every covered service onto the pinned release.
+
+    Generated units are rewritten whole. Units the dashboard covers but the
+    plant does not generate — a site-declared mind or a self-installing
+    supervisor — carry custom content and one may be a regular fragment rather
+    than a symlink, so only their ``PYTHONPATH`` release component is repointed
+    in place. Skipping them leaves them importing the previous release after a
+    pin advance, and the dashboard then reads DRIFT.
+    """
+    if not persist:
+        return
+    env = os.environ.copy()
+    env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    # ``silence`` is a supervisor rather than a mind, but a pin advance that
+    # skips it leaves the watcher importing the previous root and reading
+    # DRIFT, so it is reconciled alongside the units a replant launches.
+    reconciled = {slug: unit_text(home, session, slug, python)
+                  for slug in (*ROLES, "permissions", "ci")}
+    reconciled["silence"] = silence_unit_text(home, session, python)
+    generated = {unit_name(session, slug) for slug in reconciled}
+    active_before = {}
+    for slug, text in reconciled.items():
+        unit = home / unit_name(session, slug)
+        unit.write_text(text, encoding="utf-8")
+        linked = subprocess.run(["systemctl", "--user", "show", unit.name, "-p", "FragmentPath", "--value"],
+                                capture_output=True, text=True, check=True, env=env).stdout.strip()
+        problem = unit_fragment_mismatch(linked, unit) if linked else None
+        if problem:
+            raise RuntimeError(f"service {unit.name} is a {problem}: {linked}")
+        if not linked:
+            subprocess.run(["systemctl", "--user", "link", str(unit)], check=True, env=env)
+        active_before[unit.name] = _service_active(unit.name, env)
+    from .runtime_source import source_for
+    pinned = source_for(home, ROOT) / "src"
+    for name in service_manifest(home, session, persist):
+        if name in generated:
+            continue
+        fragment = _reconcilable_fragment(home, name, env)
+        if fragment is None:
+            continue
+        current = fragment.read_text(encoding="utf-8")
+        updated = repoint_release_root(current, pinned)
+        if updated == current:
+            continue
+        active_before[name] = _service_active(name, env)
+        fragment.write_text(updated, encoding="utf-8")
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, env=env)
+    for name, was_active in active_before.items():
+        subprocess.run(["systemctl", "--user", "enable", "--now", name], check=True, env=env)
+        if was_active:
+            subprocess.run(["systemctl", "--user", "restart", name], check=True, env=env)
+
+
 def plant(home: Path, session: str, engine_command: str, operator_window: str, persist: bool,
           *, runtime_only: bool = False) -> None:
     home = home.resolve()
@@ -306,35 +410,7 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
             os.environ.pop("MISHE_SEED_SESSION", None)
         else:
             os.environ["MISHE_SEED_SESSION"] = previous_session
-    if persist:
-        env = os.environ.copy()
-        env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
-        # ``silence`` is a supervisor rather than a mind, but a pin advance that
-        # skips it leaves the watcher importing the previous root and reading
-        # DRIFT, so it is reconciled alongside the units a replant launches.
-        reconciled = {slug: unit_text(home, session, slug, sys.executable)
-                      for slug in (*ROLES, "permissions", "ci")}
-        reconciled["silence"] = silence_unit_text(home, session, sys.executable)
-        active_before = {}
-        for slug, text in reconciled.items():
-            unit = home / unit_name(session, slug)
-            unit.write_text(text, encoding="utf-8")
-            linked = subprocess.run(["systemctl", "--user", "show", unit.name, "-p", "FragmentPath", "--value"],
-                                    capture_output=True, text=True, check=True, env=env).stdout.strip()
-            problem = unit_fragment_mismatch(linked, unit) if linked else None
-            if problem:
-                raise RuntimeError(f"service {unit.name} is a {problem}: {linked}")
-            if not linked:
-                subprocess.run(["systemctl", "--user", "link", str(unit)], check=True, env=env)
-            active_before[slug] = subprocess.run(
-                ["systemctl", "--user", "is-active", "--quiet", unit.name], env=env
-            ).returncode == 0
-        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, env=env)
-        for slug in reconciled:
-            unit = home / unit_name(session, slug)
-            subprocess.run(["systemctl", "--user", "enable", "--now", unit.name], check=True, env=env)
-            if active_before[slug]:
-                subprocess.run(["systemctl", "--user", "restart", unit.name], check=True, env=env)
+    reconcile_services(home, session, persist, sys.executable)
     actual = set(_tmux("list-windows", "-t", session, "-F", "#{window_name}").stdout.decode().splitlines())
     required = {operator_window, *ROLES, "permissions", *site_declared_roles(home)}
     if not required <= actual:
