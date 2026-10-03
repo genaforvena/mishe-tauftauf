@@ -136,14 +136,16 @@ snapshot equal to the shared checkout). The role renderer scripts
 one of the snapshot renderers. The site CLI, the minds and the seed services load the
 pin source (the checkout or an installed release) instead, so patched snapshot bytes
 stay invisible to them until a replant, and an observe script that shells out to
-`bin/mishe-tauftauf` reads that pin source, not the patched bytes. Every dashboard
-except the `docs`, `discover` and `senses` panes prints three deployment lines;
-`docs` shows this book, and `discover` and `senses` their culture views. `SOURCE`
-names the checkout commit and its changed-path count; `DEPLOYED` the rendering
-process's own root and module fingerprint; `RUNTIME` the pin beside the roots the
-seed services actually import, flagging `DRIFT` when they differ — the pin and the
-seed roots are separate and can diverge. When the pin fails that check — a dirty
-tree, a SHA that no longer matches HEAD, or a path that is not a Git worktree —
+`bin/mishe-tauftauf` reads that pin source, not the patched bytes. Every pane
+rendered by the standard role view prints three deployment lines; `docs` shows
+this book and `discover` and `senses` their culture views, while a site-declared
+resident may render its own pane (here `body-research` and `inference-research`
+do). `SOURCE` names the checkout commit and its changed-path count; `DEPLOYED`
+the rendering process's own root and module fingerprint; `RUNTIME` the pin beside
+the roots the seed services actually import, flagging `DRIFT` when they differ —
+the pin and the seed roots are separate and can diverge. When the pin fails that
+check — a dirty tree, a SHA that no longer matches HEAD, or a path that is not
+a Git worktree —
 `RUNTIME` instead reads `pin=UNKNOWN` with the reason. The line reports the
 condition honestly; it is not itself a fault. Edits become running code only
 through checked activation. Coordinate overlapping edits with their owners.
