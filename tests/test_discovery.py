@@ -1269,6 +1269,166 @@ def test_service_import_roots_reports_an_empty_manifest() -> None:
     assert failure == "service manifest empty"
 
 
+
+def _release_tree(root: Path, sha_out: list[str]) -> None:
+    """A clean git release worktree, reporting its real HEAD.
+
+    The runtime pin agrees only with a clean tree whose HEAD equals its ``sha``,
+    so a release the sensor compares is a real repository and the pin is written
+    from the HEAD it actually has rather than a sha invented for the test.
+    """
+    (root / "src" / "mishe_tauftauf").mkdir(parents=True)
+    (root / "src" / "mishe_tauftauf" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "src" / "mishe_tauftauf" / "discovery.py").write_text(
+        "SENSOR_ID = 'sense.stand-in'\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    env = {**os.environ, "GIT_AUTHOR_NAME": "senses", "GIT_AUTHOR_EMAIL": "senses@plant",
+           "GIT_COMMITTER_NAME": "senses", "GIT_COMMITTER_EMAIL": "senses@plant",
+           "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"}
+    subprocess.run(["git", "-C", str(root), "add", "."], check=True, env=env)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "release"],
+                   check=True, env=env)
+    head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                          check=True, env=env, capture_output=True,
+                          text=True).stdout.strip()
+    sha_out.append(head)
+
+
+def _pin(home: Path, root: Path, sha: str, session: str) -> Path:
+    """A site home whose runtime-release pin names ``root`` at exactly ``sha``."""
+    (home / "health").mkdir(parents=True, exist_ok=True)
+    (home / "health" / "runtime-release.json").write_text(
+        json.dumps({"version": 1, "source": str(root),
+                    "sha": sha, "session": session}), encoding="utf-8")
+    return home
+
+
+def _linked_registry(home: Path, sites: list[dict[str, str]]) -> None:
+    (home / "health").mkdir(parents=True, exist_ok=True)
+    (home / "health" / "linked-sites.json").write_text(
+        json.dumps({"sites": sites, "version": 1}), encoding="utf-8")
+
+
+def test_drift_across_sites_names_a_unit_running_a_release_its_site_pin_rejects(
+        tmp_path: Path) -> None:
+    # The site's own manifest does not list the unit, so the manifest-scoped
+    # sensor cannot see it; only the shared bus and the session prefix can.
+    pinned_sha: list[str] = []
+    stale_sha: list[str] = []
+    pinned = tmp_path / "releases" / "pinned"
+    stale = tmp_path / "releases" / "stale"
+    _release_tree(pinned, pinned_sha)
+    _release_tree(stale, stale_sha)
+    other = tmp_path / "site-other"
+    _pin(other, pinned, pinned_sha[0], "mishe-other")
+    home = tmp_path / "plant"
+    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
+                             "sha": pinned_sha[0]}])
+    with patch.object(discovery, "_active_site_units",
+                      return_value=(["mishe-other-silence.service"], None)), \
+            patch.object(discovery, "_unit_import_roots",
+                         return_value={"mishe-other-silence.service": str(stale)}):
+        row = discovery._runtime_drift_across_sites(home)
+    assert row["state"] == "drift"
+    assert f"stale=mishe-other-silence.service@{stale.name}" in row["sample"]
+    assert row["identity"]["stale"] == {"mishe-other-silence.service": str(stale)}
+
+
+def test_drift_across_sites_reads_verified_when_every_unit_matches_its_own_pin(
+        tmp_path: Path) -> None:
+    # A second site's units are checked against the second site's pin, not the
+    # scanning site's, so a different-but-agreeing site is not a drift.
+    own_sha: list[str] = []
+    other_sha: list[str] = []
+    own_pin = tmp_path / "releases" / "own"
+    other_pin = tmp_path / "releases" / "other"
+    _release_tree(own_pin, own_sha)
+    _release_tree(other_pin, other_sha)
+    other = tmp_path / "site-other"
+    _pin(other, other_pin, other_sha[0], "mishe-other")
+    home = tmp_path / "plant"
+    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
+                             "sha": other_sha[0]}])
+    units = ["mishe-other-senses.service", "mishe-other-witness.service"]
+    with patch.object(discovery, "_active_site_units", return_value=(units, None)), \
+            patch.object(discovery, "_unit_import_roots",
+                         return_value={unit: str(other_pin) for unit in units}), \
+            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
+        row = discovery._runtime_drift_across_sites(home)
+    assert row["state"] == "verified"
+    assert row["identity"]["stale"] == {}
+    assert row["identity"]["unattributed"] == []
+
+
+def test_drift_across_sites_includes_the_scanning_sites_own_units(
+        tmp_path: Path) -> None:
+    # The registry lists the *other* sites; the scanning site's own units share
+    # its bus, so they are checked against its own pin rather than reported as
+    # unattributed.
+    own_sha: list[str] = []
+    other_sha: list[str] = []
+    own_pin = tmp_path / "releases" / "own"
+    _release_tree(own_pin, own_sha)
+    _release_tree(tmp_path / "releases" / "other", other_sha)
+    other = tmp_path / "site-other"
+    _pin(other, tmp_path / "releases" / "other", other_sha[0], "mishe-other")
+    home = tmp_path / "plant"
+    _pin(home, own_pin, own_sha[0], "mishe-self")
+    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
+                             "sha": other_sha[0]}])
+    with patch.object(discovery, "_active_site_units",
+                      return_value=(["mishe-self-senses.service"], None)), \
+            patch.object(discovery, "_unit_import_roots",
+                         return_value={"mishe-self-senses.service": str(own_pin)}), \
+            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
+        row = discovery._runtime_drift_across_sites(home)
+    assert row["state"] == "verified"
+    assert row["identity"]["stale"] == {}
+    assert row["identity"]["unattributed"] == []
+
+
+def test_active_site_units_reads_the_list_units_table_not_show_properties(
+        tmp_path: Path) -> None:
+    # ``list-units`` ignores ``-p`` and prints an indented column table, so the
+    # state is positional: a mishe service is active only when both columns say so.
+    table = "\n".join([
+        "  mishe-a-senses.service    loaded    active   running Mishe senses",
+        "  mishe-b-stopped.service   loaded    inactive dead    Mishe stopped",
+        "  mische-c-degraded.service loaded    active   failed  Mishe degraded",
+        "  other.service             loaded    active   running Not a site unit",
+    ])
+    completed = subprocess.CompletedProcess(["systemctl"], 0, table, "")
+    with patch.object(discovery.subprocess, "run", return_value=completed):
+        units, failure = discovery._active_site_units()
+    assert failure is None
+    assert units == ["mishe-a-senses.service"]
+
+
+def test_active_site_units_reports_a_failed_systemctl() -> None:
+    completed = subprocess.CompletedProcess(["systemctl"], 1, "", "unit not found")
+    with patch.object(discovery.subprocess, "run", return_value=completed):
+        units, failure = discovery._active_site_units()
+    assert units == []
+    assert failure == "systemctl failed"
+
+
+def test_unit_import_roots_deduplicates_a_shared_path_component() -> None:
+    # ``show`` prints one block per unit; a unit with several PYTHONPATH entries
+    # keeps only the first that names a source root, and one with none is absent.
+    stdout = "\n".join([
+        "Id=mishe-a-senses.service",
+        "Environment=PYTHONPATH=/releases/aaa/src PATH=/usr/bin",
+        "",
+        "Id=mishe-a-witness.service",
+        "Environment=PATH=/usr/bin",
+    ])
+    completed = subprocess.CompletedProcess(["systemctl"], 0, stdout, "")
+    with patch.object(discovery.subprocess, "run", return_value=completed):
+        roots = discovery._unit_import_roots(["mishe-a-senses.service",
+                                              "mishe-a-witness.service"])
+    assert roots == {"mishe-a-senses.service": "/releases/aaa"}
+
+
 def tmp_site_with_services() -> Path:
     import tempfile
     import os as _os

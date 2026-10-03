@@ -451,6 +451,49 @@ def _service_import_roots(home: Path) -> tuple[list[str], str | None]:
                     roots.append(root)
     return roots, None
 
+SITE_UNIT_PREFIX = "mishe-"
+"""Shared prefix of every unit this plant installs, across every site session.
+
+A site's manifest names its own session's units, so the prefix is what makes a
+second site's services visible to a scan of this one.
+"""
+
+
+def _active_site_units() -> tuple[list[str], str | None]:
+    """Running ``mishe-*`` services in this user instance, with a failure reason.
+    Every site's services share one systemd user bus, so a unit absent from a
+    site's own manifest still runs here and can drift against that site's pin.
+    """
+    environment = os.environ.copy()
+    environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    try:
+        result = subprocess.run(["systemctl", "--user", "list-units",
+                                 "--type=service", "--no-legend", "--all"],
+                                capture_output=True, text=True, timeout=5,
+                                env=environment)
+    except (OSError, subprocess.SubprocessError):
+        return [], "systemctl unavailable"
+    if result.returncode:
+        return [], "systemctl failed"
+    # ``list-units`` prints a fixed column table and ignores ``-p``, unlike
+    # ``show``, so the state is read positionally rather than as key=value rows.
+    units: list[str] = []
+    seen: set[str] = set()
+    for row in result.stdout.splitlines():
+        columns = row.split()
+        # ``list-units`` indents the unit column, so the prefix is matched after
+        # the split rather than against the raw row.
+        if len(columns) < 4 or not columns[0].startswith(SITE_UNIT_PREFIX):
+            continue
+        if columns[2] != "active" or columns[3] != "running":
+            continue
+        unit = columns[0]
+        if not unit.endswith(".service") or unit in seen:
+            continue
+        seen.add(unit)
+        units.append(unit)
+    return units, None
+
 
 def _pinned_root(home: Path, default: str) -> tuple[str | None, str | None]:
     """The root the runtime pin names, or None with a reason it could not."""
@@ -483,6 +526,133 @@ def _runtime_drift(home: Path) -> dict[str, object]:
               if distinct else f"pin={pinned} services=none {state}")
     return {"id": "sense.runtime.drift", "state": state, "sample": sample,
             "kind": "read", "identity": {"pin": pinned, "services": distinct}}
+
+
+def _unit_import_roots(units: list[str]) -> dict[str, str]:
+    """The source root each named unit imports, keyed by unit.
+
+    One ``systemctl show`` answers every unit, so a plant's whole service set
+    costs a single call. Units running without a ``PYTHONPATH`` are absent from
+    the result: they make no release claim.
+    """
+    if not units:
+        return {}
+    environment = os.environ.copy()
+    environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    try:
+        result = subprocess.run(["systemctl", "--user", "show", *units,
+                                 "-p", "Id,Environment"],
+                                capture_output=True, text=True, timeout=5,
+                                env=environment)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if result.returncode:
+        return {}
+    roots: dict[str, str] = {}
+    for block in result.stdout.split("\n\n"):
+        values = dict(row.split("=", 1) for row in block.splitlines() if "=" in row)
+        unit = str(values.get("Id", ""))
+        for item in values.get("Environment", "").split():
+            if not item.startswith("PYTHONPATH="):
+                continue
+            for component in item[len("PYTHONPATH="):].split(os.pathsep):
+                root = _import_root(component)
+                if root:
+                    roots[unit] = root
+                    break
+            break
+    return roots
+
+
+def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
+    """Compare every running site service with the pin of the site it serves.
+
+    ``sense.runtime.drift`` reads one site's manifest, but every site's services
+    share one systemd user bus and a site's manifest names only its own session.
+    A service of another site therefore runs here invisible to that sensor, and
+    one can carry a release the site's own pin contradicts. A session's units
+    share its prefix, so the registry's session maps any unit to its site —
+    including a unit the site's own manifest omits, which is how a stale release
+    hides from the service coverage that would otherwise name it.
+    """
+    registry_path = home / "health" / "linked-sites.json"
+    try:
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {"id": "sense.runtime.drift-across-sites", "state": "unavailable",
+                "sample": "no linked-site registry on this plant", "kind": "read"}
+    except (OSError, ValueError):
+        return {"id": "sense.runtime.drift-across-sites", "state": "unknown",
+                "sample": "linked-site registry unreadable", "kind": "read"}
+    sites = registry.get("sites") if isinstance(registry, dict) else None
+    if not isinstance(sites, list) or not sites:
+        return {"id": "sense.runtime.drift-across-sites", "state": "unknown",
+                "sample": "linked-site registry lists no sites", "kind": "read"}
+    site_by_prefix: dict[str, str] = {}
+    pins: dict[str, tuple[str | None, str | None]] = {}
+
+    def map_site(site_home: str, session: str) -> None:
+        pins[session] = _pinned_root(Path(site_home), str(Path(site_home).parent))
+        # A unit of this session is named by its prefix, so the mapping covers a
+        # unit the site's own manifest omits as well as one it lists.
+        site_by_prefix[session] = site_home
+
+    for site in sites:
+        if not isinstance(site, dict) or not isinstance(site.get("home"), str):
+            continue
+        session = site.get("session")
+        if not isinstance(session, str) or not session:
+            continue
+        map_site(site["home"], session)
+    # The registry lists the *other* sites this one coordinates, so the scanning
+    # site is absent from it; its own units share its bus and need its pin too.
+    own_session = os.environ.get("MISHE_SEED_SESSION")
+    if own_session and own_session not in site_by_prefix:
+        map_site(str(Path(home).resolve()), own_session)
+    if not site_by_prefix:
+        return {"id": "sense.runtime.drift-across-sites", "state": "unknown",
+                "sample": "registry names no site with a home and a session", "kind": "read"}
+    active, failure = _active_site_units()
+    if failure is not None:
+        return {"id": "sense.runtime.drift-across-sites", "state": "unknown",
+                "sample": f"running units unreadable: {failure}", "kind": "read"}
+    roots = _unit_import_roots(active)
+    stale: dict[str, str] = {}
+    unpinned: list[str] = []
+    unattributed: list[str] = []
+    for unit in active:
+        session = next((prefix for prefix in site_by_prefix
+                        if unit.startswith(prefix + "-")), None)
+        if session is None:
+            # A site service the registry does not name is a coverage gap of its
+            # own, not a release claim this sensor can judge.
+            unattributed.append(unit)
+            continue
+        root = roots.get(unit)
+        if root is None:
+            # Running without an import path makes no release claim, so it is
+            # not drift; a stopped unit is no claim either.
+            continue
+        pinned, pin_failure = pins[session]
+        if pin_failure is not None or pinned is None:
+            unpinned.append(unit)
+            continue
+        if Path(root).resolve() != Path(pinned).resolve():
+            stale[unit] = root
+    parts = [f"sites={len(site_by_prefix)} running={len(active)}"]
+    if unattributed:
+        parts.append("unattributed=" + ",".join(unattributed))
+    if unpinned:
+        parts.append("unpinned=" + ",".join(unpinned))
+    if stale:
+        parts.append("stale=" + ",".join(f"{unit}@{Path(root).name}" for unit, root in sorted(stale.items())))
+    state = "drift" if stale else "verified"
+    return {"id": "sense.runtime.drift-across-sites", "state": state,
+            "sample": " ".join(parts), "kind": "read",
+            "identity": {"sites": sorted(site_by_prefix), "stale": stale,
+                         "unpinned": unpinned, "unattributed": unattributed,
+                         "running": active}}
+
 
 def _sensor_names(root: str) -> tuple[set[str], str | None]:
     """The ``sense.*`` ids a source root can emit, or None with a reason.
@@ -768,7 +938,7 @@ def sample(home: Path) -> dict[str, object]:
                      "sample": names or "session unavailable", "kind": "read"})
     roots, _coverage_failure = _service_import_roots(home)
     observed.append(_sensor_coverage(home, roots))
-    observed.append(_runtime_drift(home))
+    observed.append(_runtime_drift_across_sites(home))
     return {"created": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
             "node": os.uname().nodename, "observations": observed}
 
