@@ -127,7 +127,11 @@ def _service_block(home: Path) -> tuple[list[str], list[str] | None]:
 def render(home: Path, role: str) -> str:
     validate_slug(role)
     if role == "docs":
-        document = home.parent / "docs/mesh.md"
+        from .wall import docs_document
+        try:
+            document = docs_document(home)
+        except (OSError, ValueError) as exc:
+            return f"STATE: UNKNOWN — docs repository selection unavailable: {exc}\n"
         try:
             text = document.read_text()
             return f"DOCS FILE: {document}\n" + text + "\nSTATE: GREEN — page readable; lease is not a content review\n"
