@@ -245,6 +245,29 @@ This still requires clean core source, passing CI for its exact commit, and an e
 
 The core deployment report describes CI freshness and recorded applied releases. It is evidence of **deployment convergence**, not an approval gate for reviewing or landing code.
 
+### Advance the core plant's own runtime pin
+
+The core plant's minds, panes and services import the release named in
+`SITE/health/runtime-release.json`, not the shared checkout, so a committed
+kernel change becomes running code only when that pin moves. Point the core at a
+clean detached worktree of the exact commit — the release coordinator creates
+these under `SITE/releases/<sha>` — with the launcher:
+
+```bash
+python3 -m coordination.launcher \
+  --home "$CORE_SITE" --session "$SESSION" \
+  --runtime-only --runtime-source "$CORE_SITE/releases/<sha>"
+```
+
+The launcher requires an existing owned session and refuses a source that is not
+a clean Git worktree root or that lacks the runtime package. It writes the pin,
+repoints the site CLI, respawns the upper evidence panes, and reconciles the
+generated and covered services onto the release, leaving lower minds' work and
+the checkout's `AGENTS.md` untouched. Then confirm the dashboards' `RUNTIME` line
+reads `MATCH` — `DRIFT` names a service still importing another root — and check
+the actual consumer and its live pane. Moving the pin is not a push or a CI
+result; keep source, CI and running code as separate evidence.
+
 ### Linked health is a separate live check
 
 The core health pane reads each registered site's `health/services.json` and checks those named units on **this host's user systemd manager**. It is read-only with respect to linked services and independent of the recorded applied SHA. It is not remote fleet monitoring.
