@@ -73,10 +73,14 @@ readable. Rendering freshness is not proof of editorial freshness.
 There is one development Git checkout and one branch: `main`, locally and on the
 remote. Authors commit their own scoped work on it; genome pushes `main` and
 checks CI and live consumers. There are no candidate or publication branches.
-The runtime source the plant installs is a clean exact-SHA Git worktree — the
-shared checkout or an installed release — recorded as the pin in
-`SITE_HOME/health/runtime-release.json`. A patch writes reviewed bytes into the
-snapshot named by `coordination-mode.json`'s `runtime` key (`wall_patch` refuses a
+The runtime source the plant installs is recorded as the pin in
+`SITE_HOME/health/runtime-release.json`, and the pin is honoured only while its
+source is a clean Git worktree whose own root and HEAD agree with the pinned SHA. A
+pin naming the shared checkout can satisfy that only at an instantaneous clean
+HEAD, so the next commit or concurrent edit re-stales it; an installed release is a
+Git worktree pinned at its own commit, so it does not move when the checkout does.
+A patch writes reviewed bytes into the snapshot named by
+`coordination-mode.json`'s `runtime` key (`wall_patch` refuses a
 snapshot equal to the shared checkout), so those bytes reach only a consumer that
 imports it: here the role renderer scripts `SITE_HOME/top-pains/<role>`, which
 hardcode that root. The site CLI, the minds and the seed services load the pin
@@ -87,11 +91,11 @@ culture views). `SOURCE`
 names the checkout commit and its changed-path count; `DEPLOYED` the rendering
 process's own root and module fingerprint; `RUNTIME` the pin beside the roots the
 seed services actually import, flagging `DRIFT` when they differ — the pin and the
-seed roots are separate and can diverge. When the pin's source is not a clean
-exact-SHA worktree — a dirty shared checkout, or a SHA that no longer matches HEAD —
-`RUNTIME` instead reads `pin=UNKNOWN` with the reason; that is the sensor reporting
-the condition, not a defect. Edits become running code only through checked
-activation. Coordinate overlapping edits with their owners.
+seed roots are separate and can diverge. When the pin fails that check — a dirty
+tree, a SHA that no longer matches HEAD, or a path that is not a Git worktree —
+`RUNTIME` instead reads `pin=UNKNOWN` with the reason. The line reports the
+condition honestly; it is not itself a fault. Edits become running code only
+through checked activation. Coordinate overlapping edits with their owners.
 
 Use `python -m mishe_tauftauf.wall_patch --home SITE_HOME --id NAME ACTION`:
 
