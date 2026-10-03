@@ -84,12 +84,14 @@ other stderr ERROR, generated tool item, later error or unpaired
 execution-host/tool denial rejects the review as unknown.
 The response must complete the turn, match the schema/hash and supply every
 requested ID; evidence references must belong to that question's supplied
-episode. Draft instructions remain data. Complete input is capped at 120KB;
-oversized stdin returns a structured unknown refusal without truncation. Output
-is capped at 2MB, and time at a finite deadline. The CLI inherits the parent's
-process group, so an outer gate timeout kills the adapter and all descendants.
-Its internal deadline leaves the parent cleanup margin. Rejected results remain
-private and produce no feed/task/wake effect.
+episode. Draft instructions remain data. The parent request is capped at 2MB for
+transport. The Codex worker separately caps review input at 120KB; a complete
+request above that review budget returns a question-complete structured unknown
+refusal, without truncation or model inference. Output is capped at 2MB, and time
+at a finite deadline. The CLI inherits the parent's process group, so an outer gate
+timeout kills the adapter and all descendants. Its internal deadline leaves the
+parent cleanup margin. Rejected results remain private and produce no feed/task/wake
+effect.
 
 Allow enough time for the installed CLI to load and classify; its one-shot latency
 is greater than a small local model. Check both frozen contrast cases and real
