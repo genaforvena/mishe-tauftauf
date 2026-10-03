@@ -150,7 +150,10 @@ def context(home: Path, role: str) -> str:
     sections = []
     own = home / "walls" / f"{role}.md"
     sections.append(f"YOUR WALL ({own})\n" + (own.read_text() if own.exists() else "(empty; write your plan here)"))
-    for name in sorted(roles(home) - {role}):
+    peers = set(roles(home) - {role})
+    if role != "operator" and (home / "walls" / "operator.md").is_file():
+        peers.add("operator")
+    for name in sorted(peers):
         path = home / "walls" / f"{name}.md"
         if path.is_file():
             sections.append(f"WALL {name}\n{path.read_text()}")
