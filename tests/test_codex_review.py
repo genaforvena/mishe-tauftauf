@@ -143,11 +143,15 @@ def test_parent_timeout_terminates_nested_cli_group(tmp_path):
         _worker([sys.executable,str(parent)],b'',.3)
     assert pidfile.exists()
     pid=int(pidfile.read_text())
+    # The probe loop runs after the group kill, so the task can be reaped between
+    # iterations. A missing /proc entry raises FileNotFoundError, but a live-but-dying
+    # entry raises ProcessLookupError instead: both mean the grandchild is gone and the
+    # deadline was enforced.
     for _ in range(50):
         status=__import__('pathlib').Path('/proc')/str(pid)/'status'
         try:
             child_status = status.read_text()
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError):
             break  # The reaped child may disappear between probes.
         if 'State:\tZ' in child_status:
             break
