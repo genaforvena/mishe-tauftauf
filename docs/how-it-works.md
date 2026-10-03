@@ -80,6 +80,11 @@ Project-specific checks and charters make this possible; the stock runtime does 
 | `permissions` | Pending and decided requests | Gives the operator a shell for scoped grant and revoke decisions |
 | `operator` | The human owner's shell | A convenience for the person; not a role and not a gate on work |
 
+A site can declare additional resident channels beyond the built-in six by adding
+a charter and an executable launcher. The plant preserves that window, refreshes
+its evidence pane, and counts the resident's activity toward the silence watch;
+the resident's wake service is site-owned rather than generated.
+
 **discover → senses → health → genome → witness** describes responsibilities: find an observable, make it reliable, maintain the local substrate, improve reusable code, and independently check completion. It is not a mandatory route for every task. A fault goes to its owner; authors commit their own scoped work on the single `main` branch, and genome pushes it and checks CI and rollout. Witness keeps unfinished IDs visible. `docs` keeps the repository's README and reader docs current. A person can attach to the same text session and read the same tape.
 
 Roles are not file restrictions. Within owned scope, every mind may repair Mishe's source, checks, prompts, doctrine, charters, roles, routing, supervisor lifecycle, planting, or coordination when evidence requires it. Path ownership, independent review, acceptance checks, and external boundaries still apply.
