@@ -48,5 +48,7 @@ other branches. Genome pushes `main` and checks CI and live consumers; it does
 not gate another mind's commit. Source edits do not change running code; code
 delivery is complete only after deterministic checks, an independent reading,
 checked activation and live observation, and a verified recovery exercise. CI,
-checkout source, and running code are separate evidence. See
+checkout source, and running code are separate evidence: the plant runs pinned
+runtime bytes that can lag the committed source, so a green check is not proof
+of what a service or pane has loaded. See
 [wall coordination](wall-coordination.md).
