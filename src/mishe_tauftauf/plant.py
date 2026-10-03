@@ -354,6 +354,24 @@ def reconcile_services(home: Path, session: str, persist: bool, python: str) -> 
             subprocess.run(["systemctl", "--user", "restart", name], check=True, env=env)
 
 
+def _refresh_permissions_bottom_pane(home: Path, session: str, source: Path) -> None:
+    """Refresh the permissions selector's bottom pane environment when idle.
+
+    The bottom pane is only respawned by ``ensure`` when created or dead,
+    so it keeps the tmux server's stale ``PYTHONPATH`` across pin advances.
+    Respawn only when no foreground command is running, preserving active
+    decisions in the permissions store.
+    """
+    perm_target = f"{session}:permissions"
+    perm_panes = _tmux("list-panes", "-t", perm_target, "-F", "#{pane_index}").stdout.decode().splitlines()
+    if "1" in perm_panes:
+        current_cmd = _tmux("display-message", "-p", "-t", f"{perm_target}.1",
+                            "#{pane_current_command}").stdout.decode().strip()
+        if current_cmd == "bash":
+            shell = home / "bin" / "permissions-shell"
+            _tmux("respawn-pane", "-k", "-t", f"{perm_target}.1", "env",
+                  f"PYTHONPATH={source / 'src'}", str(shell))
+
 def plant(home: Path, session: str, engine_command: str, operator_window: str, persist: bool,
           *, runtime_only: bool = False) -> None:
     home = home.resolve()
@@ -418,6 +436,7 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
                   f"MISHE_SEED_SESSION={session}", f"PYTHONPATH={source / 'src'}",
                   sys.executable, "-m", "mishe_tauftauf", "--home", str(home),
                   "pain", "watch", slug, "--interval", "5")
+        _refresh_permissions_bottom_pane(home, session, source)
     for name in (operator_window, *ROLES, "permissions", *site_declared_roles(home)):
         _tmux("set-window-option", "-t", f"{session}:{name}", "automatic-rename", "off")
     (home / "health").mkdir(exist_ok=True)
