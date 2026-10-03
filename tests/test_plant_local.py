@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -31,6 +32,61 @@ def test_linked_systemd_fragment_matches_site_unit(tmp_path: Path) -> None:
     linked.symlink_to(unit)
     assert module["unit_fragment_matches"](str(linked), unit)
     assert not module["unit_fragment_matches"](str(tmp_path / "other.service"), unit)
+
+def test_fragment_mismatch_names_a_drifted_regular_file(tmp_path: Path) -> None:
+    # An out-of-band hand edit that copies unit content into the systemd path
+    # replaces the symlink shape the plant installs, and the old "already belongs
+    # to" refusal reads like a write conflict rather than the shape defect it is.
+    mismatch = plant.unit_fragment_mismatch
+    unit = tmp_path / "site" / "mishe-example-silence.service"
+    unit.parent.mkdir()
+    unit.write_text("[Unit]\n")
+    # systemd's FragmentPath resolves symlinks, so a resolving symlink agrees.
+    linked = tmp_path / "systemd" / unit.name
+    linked.parent.mkdir()
+    linked.symlink_to(unit)
+    assert mismatch(str(linked), unit) is None
+    # A regular file at the systemd path, byte-identical or not, is the drift.
+    linked.unlink()
+    linked.write_text(unit.read_text())
+    assert mismatch(str(linked), unit) == "regular file instead of a symlink to the site unit"
+    # A symlink to anywhere else is a foreign link, not a shape defect.
+    other = tmp_path / "elsewhere" / unit.name
+    other.parent.mkdir()
+    other.write_text("[Unit]\n")
+    linked.write_text("")
+    linked.unlink()
+    linked.symlink_to(other)
+    assert mismatch(str(linked), unit) == f"symlink points at {other} instead of the site unit"
+    # An absent fragment means systemd has not linked the unit yet.
+    assert mismatch("", unit) is None
+
+
+def test_silence_unit_follows_the_pinned_release(tmp_path: Path) -> None:
+    from mishe_tauftauf.runtime_source import select_source
+
+    workspace = tmp_path / "repo"
+    package = workspace / "src" / "mishe_tauftauf"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(workspace), "add", "src"], check=True)
+    subprocess.run(["git", "-C", str(workspace), "-c", "user.name=test", "-c", "user.email=test@example.com",
+                    "commit", "-qm", "release"], check=True)
+    sha = subprocess.check_output(["git", "-C", str(workspace), "rev-parse", "HEAD"], text=True).strip()
+    release = tmp_path / "release"
+    subprocess.run(["git", "-C", str(workspace), "worktree", "add", "--detach", str(release), sha],
+                   check=True, capture_output=True)
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    select_source(home, release, "core")
+    text = plant.silence_unit_text(home, "core", "/usr/bin/python3")
+    assert "mishe_tauftauf.activity --home " in text
+    assert "--session core --interval 5" in text
+    assert f"Environment=PYTHONPATH={release / 'src'}" in text
+    # The watcher does not take a pane, so it restarts on failure only.
+    assert "Restart=on-failure" in text
+    assert "Restart=always" not in text
 
 
 def test_replant_keeps_existing_operator_window_name(tmp_path: Path) -> None:
@@ -131,14 +187,16 @@ def test_runtime_source_rejects_whitespace_before_pin_write(tmp_path):
 def test_service_manifest_lists_every_planted_unit(tmp_path: Path) -> None:
     home = tmp_path / "site"
     (home / "health").mkdir(parents=True)
+    # `silence` is generated now, so a fresh site's manifest names it without
+    # waiting for an out-of-band install to append it.
     assert plant.service_manifest(home, "core", persist=True) == sorted(
-        plant.unit_name("core", slug) for slug in (*plant.ROLES, "permissions", "ci"))
+        plant.unit_name("core", slug) for slug in (*plant.ROLES, "permissions", "ci", *plant.OUT_OF_BAND))
 
 
 def test_replant_keeps_installed_out_of_band_units_in_the_manifest(tmp_path: Path) -> None:
-    # `coordination` and `silence` install their own units out of band and append
-    # themselves here; the plant must not overwrite the file, or a dead one reads
-    # GREEN and silent on the dashboard.
+    # `coordination` still installs itself out of band and appends itself here;
+    # the plant must not overwrite the file, or a dead one reads GREEN and silent
+    # on the dashboard. `silence` is generated now, so it is present either way.
     home = tmp_path / "site"
     (home / "health").mkdir(parents=True)
     manifest = home / "health" / "services.json"

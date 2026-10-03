@@ -26,6 +26,16 @@ ROLES = ("genome", "witness", "discover", "senses", "health", "docs")
 EXPLORATION = ("discover", "senses", "health")
 CONTRACT_START = "<!-- mishe-tauftauf plant contract -->"
 CONTRACT_END = "<!-- end mishe-tauftauf plant contract -->"
+OUT_OF_BAND = ("silence",)
+"""Supervisors the plant reconciles but does not launch.
+
+``coordination`` installs itself (coordination/launcher.py) because only the core
+checkout runs it; ``silence`` has no site unit file at all on this plant, so it is
+reconciled from ``silence_unit_text``. Both stay out of ``ROLES``: they are
+supervisors, not seeded minds, so neither gets a pane or a mind directory. They
+*are* in the persist loop, because a pin advance that repoints only the seeded
+minds leaves them importing the old root and the dashboard reads DRIFT.
+"""
 
 
 def refresh_contract(current: str, contract: str) -> str:
@@ -44,6 +54,26 @@ def unit_name(session: str, slug: str) -> str:
 def unit_fragment_matches(fragment: str, expected: Path) -> bool:
     return Path(fragment).resolve() == expected.resolve()
 
+
+def unit_fragment_mismatch(fragment: str, expected: Path) -> str | None:
+    """Why a linked fragment is not ``expected``, or None when it agrees.
+
+    A linked fragment that resolves to the site unit is the shape plant itself
+    installs, so a replant rewrites it in place. Anything else is a defect the
+    caller must not paper over: a *regular file* at the systemd path has drifted
+    out of band and silently blocks every later refresh, and the bare "already
+    belongs to" that ``plant`` used to raise reads like a write conflict rather
+    than the shape defect it is, so name the shape.
+    """
+    if not fragment:
+        return None
+    linked = Path(fragment)
+    if linked.resolve() == expected.resolve():
+        return None
+    if linked.is_symlink():
+        return f"symlink points at {linked.resolve()} instead of the site unit"
+    return f"regular file instead of a symlink to the site unit"
+
 def service_manifest(home: Path, session: str, persist: bool) -> list[str]:
     """Units a plant is responsible for, merged with units already installed.
 
@@ -51,8 +81,12 @@ def service_manifest(home: Path, session: str, persist: bool) -> list[str]:
     and append themselves to the manifest; overwriting here would drop them from
     dashboard coverage, so a dead one would read GREEN and silent. Keep any
     installed unit of this session even when the plant no longer generates it.
+    `silence` is the exception: the plant generates it now (see
+    ``silence_unit_text``), so it is named here rather than only inherited from
+    an existing manifest. `coordination` still installs itself, because only the
+    core checkout runs it.
     """
-    units = [unit_name(session, slug) for slug in (*ROLES, "permissions", "ci")]
+    units = [unit_name(session, slug) for slug in (*ROLES, "permissions", "ci", *OUT_OF_BAND)]
     if not persist:
         return []
     installed = set()
@@ -136,6 +170,28 @@ def unit_text(home: Path, session: str, slug: str, python: str) -> str:
         f"Environment=PATH={home / 'bin'}:{os.environ.get('PATH', '/usr/bin:/bin')}\n"
         f"ExecStart={command}\n"
         "Restart=always\nRestartSec=15\n\n[Install]\nWantedBy=default.target\n"
+    )
+
+def silence_unit_text(home: Path, session: str, python: str) -> str:
+    """The silence watcher's unit, generated from the same pin as the minds.
+
+    This plant never had a site ``silence`` unit, so the installed fragment was an
+    out-of-band regular file in ``~/.config/systemd/user``: nothing reconciled it
+    on a pin advance, and a hand edit that copied content into it replaced the
+    symlink shape plant uses, which then aborted every later replant. Generating
+    it here gives the watcher the same single source of truth as a seeded mind.
+    """
+    from .runtime_source import source_for
+    source = source_for(home, ROOT)
+    return (
+        "[Unit]\nDescription=Mishe independent mind silence watcher\nAfter=default.target\n\n"
+        "[Service]\nType=simple\n"
+        f"WorkingDirectory={home.parent}\n"
+        f"Environment=PYTHONPATH={source / 'src'}\n"
+        f"Environment=XDG_RUNTIME_DIR=/run/user/{os.getuid()}\n"
+        f"ExecStart={python} -m mishe_tauftauf.activity --home {home} "
+        f"--session {session} --interval 5\n"
+        "Restart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n"
     )
 
 
@@ -224,21 +280,28 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
     if persist:
         env = os.environ.copy()
         env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+        # ``silence`` is a supervisor rather than a mind, but a pin advance that
+        # skips it leaves the watcher importing the previous root and reading
+        # DRIFT, so it is reconciled alongside the units a replant launches.
+        reconciled = {slug: unit_text(home, session, slug, sys.executable)
+                      for slug in (*ROLES, "permissions", "ci")}
+        reconciled["silence"] = silence_unit_text(home, session, sys.executable)
         active_before = {}
-        for slug in (*ROLES, "permissions", "ci"):
+        for slug, text in reconciled.items():
             unit = home / unit_name(session, slug)
-            unit.write_text(unit_text(home, session, slug, sys.executable), encoding="utf-8")
+            unit.write_text(text, encoding="utf-8")
             linked = subprocess.run(["systemctl", "--user", "show", unit.name, "-p", "FragmentPath", "--value"],
                                     capture_output=True, text=True, check=True, env=env).stdout.strip()
-            if linked and not unit_fragment_matches(linked, unit):
-                raise RuntimeError(f"service {unit.name} already belongs to {linked}")
+            problem = unit_fragment_mismatch(linked, unit) if linked else None
+            if problem:
+                raise RuntimeError(f"service {unit.name} is a {problem}: {linked}")
             if not linked:
                 subprocess.run(["systemctl", "--user", "link", str(unit)], check=True, env=env)
             active_before[slug] = subprocess.run(
                 ["systemctl", "--user", "is-active", "--quiet", unit.name], env=env
             ).returncode == 0
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, env=env)
-        for slug in (*ROLES, "permissions", "ci"):
+        for slug in reconciled:
             unit = home / unit_name(session, slug)
             subprocess.run(["systemctl", "--user", "enable", "--now", unit.name], check=True, env=env)
             if active_before[slug]:
