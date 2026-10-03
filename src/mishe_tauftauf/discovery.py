@@ -150,35 +150,50 @@ def _ps_processes(session: str | None = None) -> dict[int, dict[str, object]]:
         processes[pid] = {"pid": pid, "ppid": ppid, "pcpu": pcpu,
                           "etimes": etimes, "args": args}
     if session is not None:
-        # Mark descent from this session's tmux server, recording an explicit
-        # in_session key so a reader distinguishes "not in this session" from
-        # "descent was not assessed". Its pid is matched by exact argv tokens
-        # rather than by `tmux display-message -p '#{pid}'`, which answers the
-        # *client's* server and returns a live pid for a session that does not
-        # exist; a substring match is no better, since other servers run here
-        # with `-s rns` or `-s gate`.
-        server = _session_server(commands, session)
+        # Mark descent from this session, recording an explicit in_session key so
+        # a reader distinguishes "not in this session" from "descent was not
+        # assessed". One tmux server hosts every session on a socket, so a server
+        # that is an ancestor is not sufficient membership evidence on its own:
+        # the peers of this session share it. Descent is therefore claimed only
+        # for a process under one of this session's pane roots, whose own
+        # ancestry still has to reach the server, so a pane whose tmux tree was
+        # severed reports undetermined instead of claiming membership.
+        server = _session_server(session)
+        roots = _session_pane_roots(session)
         for pid in processes:
-            processes[pid]["in_session"] = _descends_from(pid, parents, server)
+            processes[pid]["in_session"] = _session_membership(pid, parents, server, roots)
     return processes
 
 
-def _session_server(commands: dict[int, str], session: str) -> int | None:
-    """The pid running `tmux new-session -s session`, or None when it is not running.
+def _session_server(session: str) -> int | None:
+    """The pid of the server hosting `session`, or None when it is not running.
 
-    `_new_session` starts the server with a literal `-d -s <name> -n <window>` argv,
-    so the name is matched as an exact argv word and never as a substring. `ps`
-    reports the executable by its full path, so only argv[0]'s basename is compared,
-    and a bare `tmux` invocation matches too.
+    `_new_session` raises the server with `systemd-run --user --scope`, so the
+    server's own argv sits behind that wrapper and does not name the session it
+    hosts. Worse, one server hosts every session on a socket: on this plant the
+    single server started as `tmux new-session -d -s mishe-tiny-fleet` also hosts
+    `mishe-self-development-current`, so matching argv words resolved descent for
+    one session and left every other session's rows reading undetermined. Asking
+    tmux for the server pid answers the socket actually backing the session.
+
+    `has-session` is checked first because a session that has exited still has a
+    live server hosting others: without it, the pid would be returned and every
+    row would be assessed against a server the session no longer belongs to.
     """
-    prefix = ["new-session", "-d", "-s", session]
-    for pid, args in commands.items():
-        words = args.split()
-        if len(words) < len(prefix) + 1:
-            continue
-        if words[0].rsplit("/", 1)[-1] == "tmux" and words[1:1 + len(prefix)] == prefix:
-            return pid
-    return None
+    if shutil.which("tmux") is None:
+        return None
+    if subprocess.run(["tmux", "has-session", "-t", session],
+                      capture_output=True).returncode != 0:
+        return None
+    result = subprocess.run(["tmux", "display-message", "-p", "-t", session, "#{pid}"],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        return None
+    try:
+        pid = int(result.stdout.split()[0])
+    except (ValueError, IndexError):
+        return None
+    return pid
 
 
 def _descends_from(pid: int, parents: dict[int, int], ancestor: int | None,
@@ -213,6 +228,57 @@ def _descends_from(pid: int, parents: dict[int, int], ancestor: int | None,
         current = parent
     return None
 
+
+def _session_pane_roots(session: str) -> list[int]:
+    """The pids tmux reports as the foreground process of the session's panes.
+
+    A server's process subtree spans every session it hosts, so the panes are
+    what separates one session's work from another's. A pane whose command has
+    exited is still listed: tmux reports the pid it spawned, which is the root a
+    descendant is reached from.
+    """
+    if shutil.which("tmux") is None:
+        return []
+    result = subprocess.run(["tmux", "list-panes", "-s", "-t", session,
+                            "-F", "#{pane_pid}"], capture_output=True, text=True)
+    if result.returncode != 0:
+        return []
+    roots: list[int] = []
+    for token in result.stdout.split():
+        try:
+            roots.append(int(token))
+        except ValueError:
+            continue
+    return roots
+
+
+def _session_membership(pid: int, parents: dict[int, int], server: int | None,
+                        roots: list[int]) -> bool | None:
+    """Whether `pid` is a member of the session, claiming only what is known.
+
+    Reaching a pane root is not enough on its own: that pane may belong to a
+    session sharing this server, and a pane detached from a dead server would
+    claim every process beneath it. The root's own ancestry is re-walked to the
+    server, so membership needs both a live session pane and the server it
+    belongs to. None is returned when the server or the pane roots are unreadable,
+    or a chain to a root is broken: an unreadable session is reported as
+    undetermined rather than as outside it.
+    """
+    if server is None or not roots:
+        return None
+    undecided = False
+    for root in roots:
+        reached = _descends_from(pid, parents, root)
+        if reached is None:
+            # The chain to this root is broken or too deep to walk, so this root
+            # decides nothing. Another root may still decide, and only if none
+            # does is the membership undetermined.
+            undecided = True
+            continue
+        if not reached:
+            continue
+        return _descends_from(root, parents, server) is True
+    return None if undecided else False
 
 def _rate_key(row: dict[str, object]) -> tuple[float, float]:
     """Rank by the sampled rate; the lifetime average only breaks its ties."""
@@ -544,10 +610,12 @@ def sample(home: Path) -> dict[str, object]:
     else:
         observed.append({"id": "sense.proc.cpu-busy", "state": "unknown",
                          "sample": "/proc/stat cpu fields unavailable", "kind": "read"})
-    # Pass the name even when it is empty: a persisted scan then always carries an
-    # in_session key, so a reader distinguishes "outside this session" from
-    # "descent was not assessed" instead of guessing at a missing field.
-    top_cpu = _top_cpu_processes(os.environ.get("MISHE_SEED_SESSION") or "")
+    # An empty name means no session was named, which tmux resolves to the
+    # calling session: membership would be claimed for every process in it. Pass
+    # None instead so descent is reported as not assessed rather than attributed
+    # to a session the scan never named.
+    session = os.environ.get("MISHE_SEED_SESSION") or None
+    top_cpu = _top_cpu_processes(session)
     if top_cpu:
         measured = [row for row in top_cpu if row.get("rate") is not None]
         observed.append({"id": "sense.proc.top-cpu", "state": "verified",
