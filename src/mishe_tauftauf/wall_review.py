@@ -9,12 +9,14 @@ import math
 import json
 import os
 from pathlib import Path
-import subprocess
+import time
 import sys
+import subprocess
 import tempfile
 
 DEFAULT_MODEL = "openai-codex/gpt-6-luna"
 DEFAULT_TIMEOUT = 240
+MAX_EMPTY_RETRIES = 3
 
 
 def reviewer_model(home: Path | None = None) -> str:
@@ -61,6 +63,15 @@ def _checked_timeout(value: object, source: str) -> float:
         raise ValueError(f"reviewer timeout from {source} must be finite and in (0, 600]")
     return float(value)
 
+def remaining_budget(budget: float, started: float) -> float:
+    """Seconds left in the single reviewer budget; a retry cannot widen it."""
+    remaining = budget - (time.monotonic() - started)
+    if remaining <= 0:
+        raise RuntimeError(
+            f"patch reader exhausted its {budget:.0f}s budget on empty retries")
+    return remaining
+
+
 
 def main():
     request = json.load(sys.stdin)
@@ -85,18 +96,43 @@ def main():
     with tempfile.TemporaryDirectory(prefix="mishe-wall-review-") as directory:
         path = Path(directory) / "request.txt"
         path.write_text(prompt)
-        result = subprocess.run(["omp", "--print", "--no-session", "--no-extensions", "--no-tools",
-            "--no-lsp", "--no-pty", "--model", reviewer_model(home), "--thinking", "high",
-            "--cwd", directory, "@" + str(path)], capture_output=True, text=True, timeout=reviewer_timeout(home))
-    if result.returncode:
-        raise RuntimeError(f"patch reader failed: {result.stderr[-1000:]}")
-    raw = result.stdout.strip()
-    if raw.startswith("```json\n") and raw.endswith("\n```"):
-        raw = raw[8:-4]
-    answer = json.loads(raw)
+        answer = review_answer(reviewer_model(home), directory, path)
     from .codex_review import validate_response
     validate_response(request, answer)
     print(json.dumps(answer))
+
+
+def review_answer(model: str, directory: Path, path: Path, runner=subprocess.run) -> dict:
+    """Call the reviewer until it answers; an rc=0 empty stdout is not an answer.
+
+    A reviewer can exit 0 with completely empty stdout, which json.loads turned into
+    an unattributable JSONDecodeError. Empty runs are fast on the flaky provider
+    (13-35 s against a 540 s budget), so retry inside the single reviewer budget
+    rather than widening the outer worker deadline. ``runner`` is injectable so the
+    retry can be tested without a model call.
+    """
+    home = Path(os.environ["MISHE_SEED_HOME"]) if os.environ.get("MISHE_SEED_HOME") else None
+    budget = reviewer_timeout(home)
+    started = time.monotonic()
+    attempt = 0
+    while True:
+        attempt += 1
+        result = runner(["omp", "--print", "--no-session", "--no-extensions", "--no-tools",
+                         "--no-lsp", "--no-pty", "--model", model, "--thinking", "high",
+                         "--cwd", str(directory), "@" + str(path)],
+                        capture_output=True, text=True, timeout=remaining_budget(budget, started))
+        if result.returncode:
+            raise RuntimeError(f"patch reader failed: {result.stderr[-1000:]}")
+        raw = result.stdout.strip()
+        if raw:
+            break
+        if attempt >= MAX_EMPTY_RETRIES:
+            raise RuntimeError(
+                f"patch reader returned empty output on {attempt} attempts; "
+                f"last stderr was {result.stderr[-400:]!r}")
+    if raw.startswith("```json\n") and raw.endswith("\n```"):
+        raw = raw[8:-4]
+    return json.loads(raw)
 
 
 if __name__ == "__main__":
