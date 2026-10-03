@@ -81,11 +81,12 @@ HEAD, so the next commit or concurrent edit re-stales it; an installed release i
 Git worktree pinned at its own commit, so it does not move when the checkout does.
 A patch writes reviewed bytes into the snapshot named by
 `coordination-mode.json`'s `runtime` key (`wall_patch` refuses a
-snapshot equal to the shared checkout), so those bytes reach only a consumer that
-imports it: here the role renderer scripts `SITE_HOME/top-pains/<role>`, which
-hardcode that root. The site CLI, the minds and the seed services load the pin
-source or an installed release instead, so patched bytes stay invisible to them
-until a replant or restart. The health, genome and witness dashboards print three
+snapshot equal to the shared checkout). The role renderer scripts
+`SITE_HOME/top-pains/<role>` import that root, so a patch's observation must
+exercise a renderer. The site CLI, the minds and the seed services load the pin
+source (the checkout or an installed release) instead, so patched snapshot bytes
+stay invisible to them until a replant, and an observe script that shells out to
+`bin/mishe-tauftauf` reads the checkout, not the patched bytes. The health, genome and witness dashboards print three
 deployment lines (the docs pane shows this book, and discover and senses their
 culture views). `SOURCE`
 names the checkout commit and its changed-path count; `DEPLOYED` the rendering
