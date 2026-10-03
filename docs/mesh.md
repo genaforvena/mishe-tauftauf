@@ -1,5 +1,7 @@
 # Mesh
 
+[README](../README.md) · [Getting started](getting-started.md) · [How it works](how-it-works.md) · [Operating the plant](operating.md) · [Wall coordination](wall-coordination.md)
+
 Mesh is a local coordination trial in which each plant develops the Git
 repository containing its site; this plant's repository is this shared
 development checkout. Minds choose useful work, including planning and
