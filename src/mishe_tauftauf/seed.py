@@ -590,6 +590,16 @@ def _mind_launch_argv(home: Path, slug: str) -> tuple[str, ...]:
             str(home / "minds" / slug))
 
 
+def _await_session(session: str, timeout: float = 15.0) -> bool:
+    """Wait for a peer supervisor's concurrent session raise to become visible."""
+    deadline = time.monotonic() + timeout
+    while _tmux("has-session", "-t", session, check=False).returncode != 0:
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.1)
+    return True
+
+
 def _new_session(session: str, first_window: str, workspace: str) -> None:
     """Create the tmux server outside any seed service cgroup.
 
@@ -609,7 +619,16 @@ def _new_session(session: str, first_window: str, workspace: str) -> None:
                   "--unit", f"{session}-session.scope",
                   "--description", f"Mishe resident session {session}",
                   "tmux", *argv]
-        subprocess.run(scoped, check=True)
+        try:
+            subprocess.run(scoped, check=True)
+        except subprocess.CalledProcessError:
+            # Every supervisor for this session races the same fixed scope unit
+            # name, so a peer that wins makes the others fail here with "unit was
+            # already loaded". Attach to the peer's session instead of exiting,
+            # which would crash-loop the supervisor and turn a server restart
+            # into a plant-wide RED.
+            if not _await_session(session):
+                raise
         return
     _tmux(*argv)
 
