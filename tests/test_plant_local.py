@@ -160,6 +160,14 @@ def test_normal_replant_keeps_installed_immutable_source(tmp_path):
     assert f"Environment=PYTHONPATH={release / 'src'}" in plant.unit_text(home, "owned", "genome", "python3")
     argv = seed._mind_launch_argv(home, "genome")
     assert any(arg.startswith(f"PYTHONPATH={release / 'src'}") for arg in argv)
+    path_arg = next(arg for arg in argv if arg.startswith("PATH="))
+    site_bin = str(home / "bin")
+    path_entries = path_arg.removeprefix("PATH=").split(os.pathsep)
+    assert path_entries.count(site_bin) == 1
+    assert path_entries[0] == site_bin
+    expected_tail = [entry for entry in os.environ.get("PATH", "/usr/bin:/bin").split(os.pathsep)
+                     if entry != site_bin]
+    assert path_entries[1:] == expected_tail
     assert seed._core_doctrine(home) == "Reviewed frozen doctrine.\n"
     assert seed._core_charter("discover", home) == "Reviewed frozen discovery charter.\n"
     from mishe_tauftauf.runtime_source import refresh_cli

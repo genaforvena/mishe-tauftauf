@@ -582,7 +582,10 @@ def _mind_launch_argv(home: Path, slug: str) -> tuple[str, ...]:
     package_root = str(Path(__file__).resolve().parents[1] if wall.enabled(home)
                        else package_for(home, Path(__file__).resolve().parents[1]))
     python_path = python_search_path(package_root, os.environ.get("PYTHONPATH", ""))
-    mind_path = os.pathsep.join((str(home / "bin"), os.environ.get("PATH", "/usr/bin:/bin")))
+    site_bin = str(home / "bin")
+    inherited_path = os.environ.get("PATH", "/usr/bin:/bin")
+    path_tail = [entry for entry in inherited_path.split(os.pathsep) if entry != site_bin]
+    mind_path = os.pathsep.join((site_bin, *path_tail))
     return ("-c", str(home.parent.resolve()), "env", f"PATH={mind_path}",
             f"PYTHONPATH={python_path}",
             f"XDG_RUNTIME_DIR={os.environ.get('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}')}",
