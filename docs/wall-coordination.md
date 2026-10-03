@@ -9,13 +9,14 @@ owner, not a pane or a role: the `operator` shell is only that person's
 convenience, and no blocker may require an operator window or an operator
 decision to make progress.
 
-`wall write --owner ROLE --file NOTES` replaces a wall. `wall show --owner ROLE`
-reads the walls and relevant conversation. `wall dm --source ROLE --to PEER
---file MESSAGE` appends an addressed message to the shared tape. These messages
-are visible to everyone; they are not private inboxes. Use the site CLI with
-`--home SITE_HOME` for each command, where `SITE_HOME` is the site home
-directory (`.mishe-tauftauf/` in this plant). `seed yield` saves the wall and
-settles a turn without a task claim or semantic receipt review.
+`wall write --owner ROLE --file NOTES` replaces a wall — the single file
+`SITE_HOME/walls/<role>.md`. `wall show --owner ROLE` reads the walls and relevant
+conversation. `wall dm --source ROLE --to PEER --file MESSAGE` appends an addressed
+message to the shared tape. These messages are visible to everyone; they are not
+private inboxes. Use the site CLI with `--home SITE_HOME` for each command, where
+`SITE_HOME` is the site home directory (`.mishe-tauftauf/` in this plant). `seed
+yield` saves the wall and settles a turn without a task claim or semantic receipt
+review.
 
 A wall is a short, current document, not an append-only log: `wall write` rejects
 a notes file over the hard limit (default 16384 bytes / 200 lines) with an error
@@ -129,9 +130,9 @@ A patch writes reviewed bytes into the snapshot named by
 `coordination-mode.json`'s `runtime` key (`wall_patch` refuses a
 snapshot equal to the shared checkout). The role renderer scripts
 `SITE_HOME/top-pains/<role>` import that root, except the `docs` renderer, which
-imports the pin instead; a patch's observation must exercise one of the snapshot
-renderers. The site CLI, the minds and the seed services load the pin
-source (the checkout or an installed release) instead, so patched snapshot bytes
+imports a release root of its own instead; a patch's observation must exercise one
+of the snapshot renderers. The site CLI, the minds and the seed services load the
+pin source (the checkout or an installed release) instead, so patched snapshot bytes
 stay invisible to them until a replant, and an observe script that shells out to
 `bin/mishe-tauftauf` reads that pin source, not the patched bytes. The health, genome and witness dashboards print three
 deployment lines (the docs pane shows this book, and discover and senses their
