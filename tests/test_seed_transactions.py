@@ -15,6 +15,26 @@ def setup_wake(home,monkeypatch):
     return attempt,handoff
 
 
+def test_yield_records_canonical_absolute_handoff_path(tmp_path, monkeypatch):
+    attempt, handoff = setup_wake(tmp_path, monkeypatch)
+    original = post_check.require
+    contexts = []
+
+    def capture(home, source, body, context=None, stage="post"):
+        if body.startswith("seed yield "):
+            contexts.append(context)
+        return original(home, source, body, context=context, stage=stage)
+
+    monkeypatch.setattr(post_check, "require", capture)
+    relative = Path("draft.txt")
+    monkeypatch.chdir(tmp_path)
+    seed.yield_wake(tmp_path, "witness", attempt, relative, result="blocked")
+    transaction = contexts[0]["proposed"]["transaction"]
+    assert transaction["before"]["handoff_source"] == str(handoff.resolve())
+    evidence = contexts[0]["question_episodes"]["P17"]["current_evidence"]
+    assert any(row["path"] == str(handoff.resolve()) and row["integrity"] == "matched" for row in evidence)
+
+
 def test_handoff_source_changed_during_review_has_no_effect(tmp_path,monkeypatch):
     attempt,handoff=setup_wake(tmp_path,monkeypatch)
     before=Feed(tmp_path).read_bytes()
