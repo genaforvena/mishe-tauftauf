@@ -353,3 +353,65 @@ runpy.run_module('mishe_tauftauf.plant', run_name='__main__')
     finally:
         subprocess.run([sys.executable, "-m", "mishe_tauftauf", "--home", str(home),
                         "seed", "stop", "--session", session], capture_output=True, timeout=15)
+
+
+def test_site_declared_roles_finds_chartered_residents(tmp_path: Path) -> None:
+    home = tmp_path / "site"
+    (home / "charters").mkdir(parents=True)
+    (home / "minds").mkdir(parents=True)
+    (home / "charters" / "body-research.md").write_text("# Body research\n", encoding="utf-8")
+    (home / "minds" / "body-research").write_text("#!/bin/sh\nexec omp\n", encoding="utf-8")
+    assert plant.site_declared_roles(home) == {"body-research"}
+
+
+def test_site_declared_roles_requires_charter_and_launcher(tmp_path: Path) -> None:
+    home = tmp_path / "site"
+    (home / "charters").mkdir(parents=True)
+    (home / "minds").mkdir(parents=True)
+    # Charter without launcher is not a declared resident.
+    (home / "charters" / "ghost.md").write_text("# Ghost\n", encoding="utf-8")
+    # Launcher without charter is not a declared resident.
+    (home / "minds" / "orphan").write_text("#!/bin/sh\nexec omp\n", encoding="utf-8")
+    assert plant.site_declared_roles(home) == set()
+
+
+def test_site_declared_roles_empty_for_fresh_site(tmp_path: Path) -> None:
+    home = tmp_path / "site"
+    assert plant.site_declared_roles(home) == set()
+
+
+def test_preferred_operator_window_ignores_site_declared_roles(tmp_path: Path) -> None:
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "charters").mkdir(parents=True)
+    (home / "minds").mkdir(parents=True)
+    (home / "charters" / "body-research.md").write_text("# Body research\n", encoding="utf-8")
+    (home / "minds" / "body-research").write_text("#!/bin/sh\nexec omp\n", encoding="utf-8")
+    (home / "health" / "windows.json").write_text(
+        json.dumps(["operator", "body-research", "genome", "health"]) + "\n", encoding="utf-8"
+    )
+    assert plant.preferred_operator_window(home, None) == "operator"
+    assert plant.preferred_operator_window(home, "operator") == "operator"
+    with pytest.raises(ValueError, match="site already uses operator window"):
+        plant.preferred_operator_window(home, "different")
+
+
+def test_manifest_windows_reads_existing(tmp_path: Path) -> None:
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health" / "windows.json").write_text(
+        json.dumps(["operator", "body-research", "genome"]) + "\n", encoding="utf-8"
+    )
+    assert plant._manifest_windows(home) == ["operator", "body-research", "genome"]
+
+
+def test_manifest_windows_empty_when_missing(tmp_path: Path) -> None:
+    home = tmp_path / "site"
+    assert plant._manifest_windows(home) == []
+
+
+def test_manifest_windows_empty_when_corrupt(tmp_path: Path) -> None:
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health" / "windows.json").write_text("{not json", encoding="utf-8")
+    assert plant._manifest_windows(home) == []
