@@ -85,8 +85,9 @@ Use `python -m mishe_tauftauf.wall_patch --home SITE_HOME --id NAME ACTION`:
    with `--activate`, `--observe` and `--revert-observe` JSON argument lists
    runs deterministic checks and the configured independent System 1 reviewer.
    The command inherits the caller's environment and runs from the repository
-   root; that `PYTHONPATH` names a pinned release or the running snapshot, not
-   the working tree, so name `PYTHONPATH=src` to exercise the edited source.
+   root; the imported package is whatever that `PYTHONPATH` resolves to (a
+   pinned release, the running snapshot, or the checkout), so name
+   `PYTHONPATH=src` to be certain you exercise the edited source.
    Supply the actual restart, new-consumer check and restored-consumer check
    scripts here. Review includes those commands and owned script bytes; changing
    them requires a new check. Historical callers that supply the plan only at
