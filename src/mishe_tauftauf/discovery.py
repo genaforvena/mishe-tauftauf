@@ -34,6 +34,28 @@ def _thermal_slots(root: Path) -> list[Path]:
             continue
     return slots
 
+def _chip_qualifier(chip: Path) -> str:
+    """The shortest label that separates this chip from its same-named peers.
+
+    Two controllers of the same model expose the same channel names under the
+    same chip name, so ``nvme:temp1(Composite)`` names a reading of either drive
+    and a sample printing both cannot attribute either temperature. The parent
+    device distinguishes them; its basename is short enough for a sample string
+    and stable across reboots, unlike a ``hwmonN`` index that is enumeration
+    order. Falls back to the ``hwmon`` directory name when the chip exposes no
+    resolvable parent device, which still separates the chips on this host even
+    though it is not stable across replug or reboot.
+    """
+    device = chip / "device"
+    try:
+        if device.exists():
+            resolved = device.resolve()
+            if resolved.name:
+                return resolved.name
+    except (OSError, RuntimeError):
+        pass
+    return chip.name
+
 
 
 def _read(path: Path, limit: int = 65536) -> str | None:
@@ -666,8 +688,21 @@ def sample(home: Path) -> dict[str, object]:
                      "sample": sum(wakeup_counts) if wakeup_counts else "counter unavailable",
                      "kind": "counter"})
     hwmon_root = Path("/sys/class/hwmon")
+    slots = _thermal_slots(hwmon_root)
+    # A qualifier costs sample-string bytes on a line the dashboard truncates, so
+    # pay it only where a name is shared by more than one chip: a sole chip's
+    # readings are already attributable, and adding its parent there is noise.
+    slot_names = [slot.parent / "name" for slot in slots]
+    chip_names = [(_read(path, 64) or path.parent.name).strip() for path in slot_names]
+    chips_by_name: dict[str, set[Path]] = {}
+    for slot, chip_name in zip(slots, chip_names):
+        chips_by_name.setdefault(chip_name, set()).add(slot.parent)
+    # A name shared by one chip across several sensors is not ambiguous; only a
+    # name on two distinct chips makes a reading unattributable.
+    collisions = {name for name, seen in chips_by_name.items() if len(seen) > 1}
+    chips: dict[Path, str | None] = {}
     temperatures: list[tuple[str, dict[str, str | None]]] = []
-    for slot in _thermal_slots(hwmon_root):
+    for slot, name in zip(slots, chip_names):
         value = _read(slot, 64)
         if value is None or not value.strip().lstrip("-").isdigit():
             continue
@@ -676,11 +711,20 @@ def sample(home: Path) -> dict[str, object]:
             # An out-of-range value is a stuck or absent sensor, not a
             # temperature; skipping keeps the reported sample honest.
             continue
-        chip = _read(slot.parent / "name", 64)
-        name = chip.strip() if chip else slot.parent.name
         channel = re.fullmatch(r"temp(\d+)_input", slot.name)
         if channel is None:
             continue
+        # Two controllers of the same model publish the same channel names under
+        # the same chip name, so the name alone cannot attribute a reading. The
+        # parent device tells them apart; its basename is short enough for a
+        # sample string and stable across reboots, unlike a ``hwmonN`` index that
+        # is enumeration order. It is resolved once per chip, keeping the walk
+        # linear in sensors rather than in chips squared.
+        if name in collisions:
+            if slot.parent not in chips:
+                chips[slot.parent] = _chip_qualifier(slot.parent)
+            qualifier = chips[slot.parent]
+            name = f"{name}@{qualifier}"
         index = channel.group(1)
         label_text = _read(slot.with_name(f"temp{index}_label"), 64)
         label = label_text.strip() if label_text and label_text.strip() else None

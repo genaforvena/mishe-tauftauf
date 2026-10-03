@@ -408,10 +408,68 @@ def test_thermal_parent_identity_distinguishes_same_named_channels(tmp_path: Pat
             "sense.thermal.hwmon"
         ]
 
+    # The channel itself distinguishes the two drives; the parent records the
+    # device it was read from so a name change can still be reported as a move.
     assert [identity["channel"] for identity in reading["identity"]] == [
-        "nvme:temp1(Composite)", "nvme:temp1(Composite)"
+        "nvme@device-nvme-a:temp1(Composite)", "nvme@device-nvme-b:temp1(Composite)"
     ]
     assert [identity["parent"] for identity in reading["identity"]] == parents
+    assert reading["sample"] == (
+        "nvme@device-nvme-a:temp1(Composite)=42.0C, nvme@device-nvme-b:temp1(Composite)=42.0C"
+    )
+    assert len({identity["channel"] for identity in reading["identity"]}) == 2
+
+
+def test_thermal_leaves_a_sole_chip_unqualified(tmp_path: Path) -> None:
+    from mishe_tauftauf import discovery
+
+    # A qualifier costs bytes on a sample line the dashboard truncates, so a chip
+    # whose name no other chip shares keeps the shorter form.
+    chip = tmp_path / "nvme"
+    chip.mkdir()
+    (chip / "name").write_text("nvme\n", encoding="utf-8")
+    (chip / "temp1_input").write_text("42000\n", encoding="utf-8")
+    (chip / "temp1_label").write_text("Composite\n", encoding="utf-8")
+    target = tmp_path / "device-nvme"
+    target.mkdir()
+    (chip / "device").symlink_to(target, target_is_directory=True)
+
+    with patch("mishe_tauftauf.discovery._thermal_slots",
+               return_value=[chip / "temp1_input"]):
+        reading = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}[
+            "sense.thermal.hwmon"
+        ]
+
+    assert reading["identity"] == [
+        {"channel": "nvme:temp1(Composite)", "parent": str(target.resolve())}
+    ]
+    assert reading["sample"] == "nvme:temp1(Composite)=42.0C"
+
+
+def test_thermal_qualifier_falls_back_when_parent_device_is_unresolvable(tmp_path: Path) -> None:
+    from mishe_tauftauf import discovery
+
+    # The collision still has to be reported even when neither chip resolves a
+    # parent device, so the qualifier falls back to a label that separates them
+    # on this host rather than collapsing the two readings into one name.
+    slots = []
+    for name in ("nvme-a", "nvme-b"):
+        chip = tmp_path / name
+        chip.mkdir()
+        (chip / "name").write_text("nvme\n", encoding="utf-8")
+        (chip / "temp1_input").write_text("42000\n", encoding="utf-8")
+        (chip / "temp1_label").write_text("Composite\n", encoding="utf-8")
+        (chip / "device").symlink_to(tmp_path / "gone", target_is_directory=True)
+        slots.append(chip / "temp1_input")
+
+    with patch("mishe_tauftauf.discovery._thermal_slots", return_value=slots):
+        reading = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}[
+            "sense.thermal.hwmon"
+        ]
+
+    assert [identity["channel"] for identity in reading["identity"]] == [
+        "nvme@nvme-a:temp1(Composite)", "nvme@nvme-b:temp1(Composite)"
+    ]
 
 
 def test_thermal_hwmon_skips_out_of_range_sensor_values(tmp_path: Path) -> None:
