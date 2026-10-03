@@ -35,6 +35,7 @@ def test_wall_context_includes_only_monitored_role_walls(tmp_path):
     (tmp_path / "walls").mkdir(exist_ok=True)
     (tmp_path / "walls" / "genome.md").write_text("Genome plan")
     (tmp_path / "walls" / "health.md").write_text("Health plan")
+    (tmp_path / "walls" / "operator.md").write_text("Operator position")
     (tmp_path / "walls" / "audit.md").write_text("Scratch audit")
     (tmp_path / "charters").mkdir()
     (tmp_path / "minds").mkdir()
@@ -44,7 +45,8 @@ def test_wall_context_includes_only_monitored_role_walls(tmp_path):
     wall.message(tmp_path, "health", "genome", "Sample is ready; see artifacts/sample.md")
     text = wall.context(tmp_path, "genome")
     sections = [line for line in text.splitlines() if line.startswith("WALL ")]
-    assert sections == ["WALL health", "WALL resident"]
+    assert sections == ["WALL health", "WALL operator", "WALL resident"]
+    assert "Operator position" in text
     assert "Scratch audit" not in text
     assert "Sample is ready; see artifacts/sample.md" in text
 def test_wall_write_rejects_uninitialized_reserved_home(tmp_path):
