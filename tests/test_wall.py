@@ -428,7 +428,7 @@ def test_dashboard_flags_runtime_drift_against_the_pin(tmp_path, monkeypatch):
     home = tmp_path / "site"
     (home / "health").mkdir(parents=True)
     running = tmp_path / "running"
-    assert wall_view._runtime_line(home, running) == f"RUNTIME: running={running} pin=UNPINNED"
+    assert wall_view._runtime_line(home, running) == "RUNTIME: pin=UNPINNED"
     (home / "health/runtime-release.json").write_text("{}")
     pinned = tmp_path / "release"
 
@@ -436,16 +436,45 @@ def test_dashboard_flags_runtime_drift_against_the_pin(tmp_path, monkeypatch):
         return lambda h, default: source
 
     monkeypatch.setattr(runtime_source, "source_for", at(pinned))
-    line = wall_view._runtime_line(home, running)
+    assert wall_view._runtime_line(home, running, [str(pinned)]).endswith("MATCH")
+    line = wall_view._runtime_line(home, running, [str(tmp_path / "other")])
     assert line.endswith("DRIFT") and str(pinned) in line
-    monkeypatch.setattr(runtime_source, "source_for", at(running))
-    assert wall_view._runtime_line(home, running).endswith("MATCH")
+    assert wall_view._runtime_line(home, running).endswith("services=UNKNOWN")
+    assert wall_view._runtime_line(home, running, []).endswith("services=none")
 
     def broken(h, default):
         raise ValueError("runtime pin invalid: missing release")
 
     monkeypatch.setattr(runtime_source, "source_for", broken)
-    assert "pin=UNKNOWN" in wall_view._runtime_line(home, running)
+    assert "pin=UNKNOWN" in wall_view._runtime_line(home, running, [])
+
+
+def test_import_roots_reads_pythonpath_from_systemd_environment():
+    from mishe_tauftauf import wall_view
+    assert wall_view._import_roots("PYTHONPATH=/srv/checkout/src") == ["/srv/checkout"]
+    assert wall_view._import_roots(
+        "PYTHONPATH=/a/releases/x:/a/releases/x/src XDG_RUNTIME_DIR=/run/user/1000") == ["/a/releases/x", "/a/releases/x"]
+    assert wall_view._import_roots("HOME=/root") == []
+
+
+def test_dashboard_runtime_line_compares_pin_with_service_environment(tmp_path, monkeypatch):
+    from mishe_tauftauf import runtime_source, wall_view
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health/services.json").write_text(json.dumps(["test.service"]))
+    (home / "health/runtime-release.json").write_text("{}")
+    monkeypatch.setattr(wall_view, "ci_line", lambda *a: "CI: PASS")
+    monkeypatch.setattr(runtime_source, "source_for", lambda h, default: tmp_path / "pinned")
+
+    def commands(command, **kwargs):
+        output = ("pinned\n" if "rev-parse" in command else "" if "status" in command else
+                  "Id=test.service\nActiveState=active\nSubState=running\nNRestarts=0\n"
+                  "Environment=PYTHONPATH=/srv/other/src\n")
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    monkeypatch.setattr(wall_view.subprocess, "run", commands)
+    text = wall_view.render(home, "genome")
+    assert "RUNTIME: pin=" in text and "services=/srv/other DRIFT" in text
 
 
 @pytest.mark.parametrize("value", [[1800], {"genome": -1}, {"genome": float("inf")}, {"genome": "soon"}])
