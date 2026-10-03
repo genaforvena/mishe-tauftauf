@@ -343,8 +343,11 @@ def test_runtime_only_cli_preserves_dirty_application_and_contract(tmp_path: Pat
         import shutil
         release = tmp_path / "release"
         shutil.copytree(Path(plant.__file__).parents[1], release / "src", ignore=shutil.ignore_patterns("__pycache__"))
+        # A runnable release ignores interpreter caches, like the real repository.
+        # Otherwise a live renderer's imports make this synthetic snapshot dirty.
+        (release / ".gitignore").write_text("__pycache__/\n")
         subprocess.run(["git", "-C", str(release), "init", "-q"], check=True)
-        subprocess.run(["git", "-C", str(release), "add", "src"], check=True)
+        subprocess.run(["git", "-C", str(release), "add", "src", ".gitignore"], check=True)
         subprocess.run(["git", "-C", str(release), "-c", "user.name=test", "-c", "user.email=test@example.com",
                         "commit", "-qm", "runtime snapshot"], check=True)
         selected = subprocess.run([*argv, "--runtime-only", "--runtime-source", str(release)],

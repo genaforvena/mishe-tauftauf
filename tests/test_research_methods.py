@@ -14,6 +14,19 @@ from coordination import site_sync
 ROLE = "research-methods"
 
 
+def test_research_methods_seeds_bounded_wall_view_and_preserves_local_view(tmp_path, monkeypatch):
+    monkeypatch.setattr(seed, "_require_worktree", lambda home: None)
+    seed.init(tmp_path, ROLE, "sh")
+    top = tmp_path / "top-pains" / ROLE
+    text = top.read_text()
+    assert "mishe_tauftauf.wall_view" in text
+    assert f"--role {ROLE}" in text
+    assert "landing_debt" not in text and "task landing-status" not in text
+    top.write_text("#!/bin/sh\nprintf 'STATE: UNKNOWN local research source unavailable\\n'\n")
+    seed.init(tmp_path, ROLE, "sh")
+    assert "local research source unavailable" in top.read_text()
+
+
 def test_research_methods_has_a_specific_seeded_charter_and_site_scope(tmp_path):
     repository = tmp_path / "application"
     home = repository / ".mishe-tauftauf"
