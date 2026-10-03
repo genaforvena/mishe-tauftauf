@@ -62,14 +62,20 @@ def ensure(home: Path, session: str, interval: float = 5) -> str:
     _tmux("select-layout", "-t", target, "even-vertical")
     top_dead = _tmux("display-message", "-p", "-t", f"{target}.0", "#{pane_dead}").stdout.decode().strip() == "1"
     bottom_dead = _tmux("display-message", "-p", "-t", f"{target}.1", "#{pane_dead}").stdout.decode().strip() == "1"
-    if created or top_dead:
+    if created or top_dead or bottom_dead:
+        # A pane respawned without an explicit PYTHONPATH inherits the tmux
+        # server's environment, which keeps whatever release the server was
+        # started with: the selector imports that stale code for as long as the
+        # pane lives, and only the plant's idle refresh can correct it later.
+        # Pass this process's own import root, the same one the mind panes get.
         package_root = str(Path(__file__).resolve().parents[1])
         python_path = python_search_path(package_root, os.environ.get("PYTHONPATH", ""))
+    if created or top_dead:
         _tmux("respawn-pane", "-k", "-t", f"{target}.0", "env", f"MISHE_SEED_SESSION={session}",
               f"PYTHONPATH={python_path}",
               *_python_command("--home", str(home), "pain", "watch", "permissions", "--interval", str(interval)))
     if created or bottom_dead:
-        _tmux("respawn-pane", "-k", "-t", f"{target}.1", str(shell))
+        _tmux("respawn-pane", "-k", "-t", f"{target}.1", "env", f"PYTHONPATH={python_path}", str(shell))
     return f"permissions panel ready in {session}"
 
 
