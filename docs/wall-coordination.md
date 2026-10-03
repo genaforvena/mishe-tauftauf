@@ -86,7 +86,7 @@ snapshot equal to the shared checkout). The role renderer scripts
 exercise a renderer. The site CLI, the minds and the seed services load the pin
 source (the checkout or an installed release) instead, so patched snapshot bytes
 stay invisible to them until a replant, and an observe script that shells out to
-`bin/mishe-tauftauf` reads the checkout, not the patched bytes. The health, genome and witness dashboards print three
+`bin/mishe-tauftauf` reads that pin source, not the patched bytes. The health, genome and witness dashboards print three
 deployment lines (the docs pane shows this book, and discover and senses their
 culture views). `SOURCE`
 names the checkout commit and its changed-path count; `DEPLOYED` the rendering
