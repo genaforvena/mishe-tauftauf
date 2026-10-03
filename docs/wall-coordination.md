@@ -44,9 +44,11 @@ permit recover ID --owner ROLE --task GOAL --resolver ROLE \
 ```
 
 Add `--capability NAME --unblocks PATH --reason TEXT` only when new authority is
-needed. This creates a scoped request in the permissions screen. Local repairs
-appear there for visibility without a grant control. `permit recoveries` lists
-unresolved work, its resolver, alternatives and cutoff. Records do not change
+needed. This creates a scoped request in the permissions screen, carrying the
+recovery's resolver, missing evidence, after-grant action, alternatives and
+cutoff. Local repairs create no request and carry no grant control;
+`permit recoveries` lists unresolved work, its resolver, alternatives and cutoff.
+Records do not change
 task eligibility, wake scheduling or settlement rules; they are recovery notes,
 not a new approval gate. Keep the corresponding wall current and address peer
 resolvers through chat. At the cutoff resolve, escalate or defer to a named

@@ -16,10 +16,10 @@ with a short trigger and its current dashboard; the mind settles the wake itself
 Each wall records its owner's current work, findings, and next action. For an
 active blocker, name its resolver, missing evidence, bounded next step, and
 disposition time.
-Try a bounded repair within existing authority first. Persisting blockers have
-recovery actions and alternatives visible in the permissions screen; only missing
-authority needs a grant. A grant starts a retry, and checked success closes the
-recovery. An unresolved obligation does not block the mind's other useful work.
+Try a bounded repair within existing authority first. Persisting blockers record
+a bounded action, alternatives and cutoff; only missing authority needs a grant.
+A grant starts a retry, and checked success closes the recovery. An unresolved
+obligation does not block the mind's other useful work.
 Record evidence-backed outcomes for accepted work, resolved or retired blockers,
 and changed hypotheses. Outcomes are author reports, not independent acceptance;
 unchanged status is not an outcome.
