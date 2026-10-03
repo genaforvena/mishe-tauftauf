@@ -11,9 +11,12 @@ decision to make progress.
 
 `wall write --owner ROLE --file NOTES` replaces a wall — the single file
 `SITE_HOME/walls/<role>.md`. `wall show --owner ROLE` reads the walls and relevant
-conversation. `wall dm --source ROLE --to PEER --file MESSAGE` appends an addressed
-message to the shared tape. These messages are visible to everyone; they are not
-private inboxes. Use the site CLI with `--home SITE_HOME` for each command, where
+conversation. Its context contains one section for each other monitored role and
+also includes `walls/operator.md` when present, except when the operator is the
+caller. Scratch notes such as `walls/audit.md` are not peer walls and are excluded.
+`wall dm --source ROLE --to PEER --file MESSAGE` appends an addressed message to
+the shared tape. These messages are visible to everyone; they are not private
+inboxes. Use the site CLI with `--home SITE_HOME` for each command, where
 `SITE_HOME` is the site home directory (`.mishe-tauftauf/` in this plant). `seed
 yield` saves the wall and settles a turn without a task claim or semantic receipt
 review.
