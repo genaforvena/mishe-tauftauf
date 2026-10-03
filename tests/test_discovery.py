@@ -1018,6 +1018,30 @@ def test_top_cpu_processes_reports_unknown_descent_when_the_server_is_absent() -
     assert "outside-session" not in discovery._row_text(by_pid[2461])
 
 
+def test_top_cpu_processes_treats_an_empty_session_as_unnamed() -> None:
+    from mishe_tauftauf import discovery
+
+    stdout = "\n".join([
+        " 1236     1  0.0  9000 /lib/systemd/systemd --user",
+        " 2461  1236  5.0   30 pane-renderer",
+    ])
+
+    def fake_run(argv, **kwargs):
+        # An empty tmux target resolves to the calling session and would answer
+        # for a session nobody named, so no tmux call may be reached at all.
+        assert argv[0] != "tmux", f"tmux was consulted for an empty session: {argv}"
+        return _completed(stdout, returncode=0)
+
+    with patch("mishe_tauftauf.discovery.subprocess.run", side_effect=fake_run), \
+            patch("mishe_tauftauf.discovery._cpu_jiffies", side_effect=lambda pid: pid), \
+            patch("mishe_tauftauf.discovery.time.sleep"):
+        rows = discovery._top_cpu_processes("")
+    # No session was named, so descent is not assessed rather than attributed to
+    # the session that happened to run the scan.
+    assert all("in_session" not in row for row in rows)
+    assert rows and rows[0]["pid"] == 2461
+
+
 def _unit_block(ident: str, pythonpath: str) -> str:
     """One `systemctl --user show` record naming an effective PYTHONPATH."""
     return f"Id={ident}\nEnvironment=PYTHONPATH={pythonpath}\n"
