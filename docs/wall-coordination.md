@@ -72,10 +72,14 @@ readable. Rendering freshness is not proof of editorial freshness.
 
 There is one development Git checkout and one branch: `main`, locally and on the
 remote. Authors commit their own scoped work on it; genome pushes `main` and
-checks CI and live consumers. There are no candidate or publication branches. The
-runtime is a plain file snapshot, not another Git worktree. Edits become running
-code only through checked activation. Coordinate overlapping edits with their
-owners.
+checks CI and live consumers. There are no candidate or publication branches.
+The runtime source the plant installs is a clean exact-SHA Git worktree — the
+shared checkout or an installed release — recorded as the pin in
+`SITE_HOME/health/runtime-release.json`; a patch writes reviewed bytes into a
+separate running snapshot. The dashboard `RUNTIME` line prints that pin beside the
+roots the seed services actually import and flags `DRIFT` when they differ. Edits
+become running code only through checked activation. Coordinate overlapping edits
+with their owners.
 
 Use `python -m mishe_tauftauf.wall_patch --home SITE_HOME --id NAME ACTION`:
 
