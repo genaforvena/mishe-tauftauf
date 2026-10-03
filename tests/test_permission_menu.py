@@ -157,3 +157,42 @@ def test_non_string_unblocks_are_malformed_not_a_menu_crash(tmp_path):
     # A well-formed request beside it stays decidable.
     other = requested(tmp_path, "well-formed")
     assert access.decide(tmp_path, other.identity, "granted") == "granted"
+
+
+def test_new_permissions_bottom_pane_gets_its_own_import_root(tmp_path, monkeypatch):
+    # A pane respawned without an explicit PYTHONPATH inherits the tmux
+    # server's environment and imports whatever release that server started
+    # with, so a freshly created selector would run stale code until the next
+    # plant. ensure() must pass its own import root when it makes the pane.
+    from pathlib import Path
+
+    from mishe_tauftauf import seed_permission_panel
+    from mishe_tauftauf.runtime_source import python_search_path
+
+    home = (tmp_path / "site").resolve()
+    calls = []
+
+    def fake_tmux(*args, check=True):
+        calls.append(args)
+
+        class R:
+            returncode = 0
+            stdout = b""
+
+        if args[0] == "list-panes":
+            R.stdout = b"0\n"
+        elif args[0] == "display-message":
+            R.stdout = b"0\n"
+        return R()
+
+    monkeypatch.setattr(seed_permission_panel, "_tmux", fake_tmux)
+    monkeypatch.setattr(seed_permission_panel, "owns_session", lambda home, session: True)
+    monkeypatch.setenv("PYTHONPATH", "/stale/server/root")
+
+    assert seed_permission_panel.ensure(home, "probe") == "permissions panel ready in probe"
+
+    expected = python_search_path(Path(seed_permission_panel.__file__).resolve().parents[1],
+                                  "/stale/server/root")
+    bottom = [c for c in calls if c[0] == "respawn-pane" and c[-1].endswith("permissions-shell")]
+    assert list(bottom[0]) == ["respawn-pane", "-k", "-t", "probe:permissions.1", "env",
+                               f"PYTHONPATH={expected}", str(home / "bin" / "permissions-shell")]
