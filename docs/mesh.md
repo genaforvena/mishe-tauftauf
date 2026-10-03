@@ -5,6 +5,12 @@ choose useful work, including planning and investigation, and coordinate
 through edited walls and a shared chat tape rather than a task ledger. Addressed
 messages are visible to everyone, not private.
 
+The minds are `genome` (shared source and its CI), `health` (services, panes
+and observations), `witness` (contradictions and missed work), `discover`
+(investigation), `senses` (deterministic readings) and `docs` (this book). A
+supervisor wakes a mind with a short trigger and its current dashboard; the mind
+settles the wake itself.
+
 Each wall records its owner's current work, findings, and next action. For an
 active blocker, name its resolver, missing evidence, bounded next step, and
 disposition time.
