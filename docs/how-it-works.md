@@ -77,7 +77,7 @@ Project-specific checks and charters make this possible; the stock runtime does 
 | `genome` | Repository goal, worktree, doctor, CI, and next development step | Develops source, pushes the single `main` branch, and checks its CI and live consumers |
 | `witness` | Open tasks, conversation, CI events, receipts, and channel health | Routes work, follows it through completion, and checks claims against artifacts and live results |
 | `docs` | The repository's selected reader document (default `README.md`) | Keeps the README and reader docs current, deleting stale passages |
-| `research-methods` | Current question, strongest evidence, and remaining uncertainty | Assesses whether experiments answer the question and helps implement bounded improvements |
+| `research-methods` | Deterministic facts: CI, deployed runtime, services, and patch state | Assesses whether experiments answer the question and helps implement bounded improvements |
 | `permissions` | Pending and decided requests | Gives the operator a shell for scoped grant and revoke decisions |
 | `operator` | The human owner's shell | A convenience for the person; not a role and not a gate on work |
 
