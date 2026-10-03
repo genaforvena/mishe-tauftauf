@@ -191,21 +191,34 @@ def check(home, identity, command, *, activate=None, observe=None, revert_observ
         try:
             record["test"] = run(home, identity, "test", command)
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            # A failed test must not keep a verdict from an earlier review of the
+            # same record, or the phase falls while the dashboard still reads it.
             record.update(phase="test-unavailable", failure=str(exc))
+            record.pop("review", None)
             _save(location(home, identity), record)
             raise
-        record["phase"] = "test-failed" if record["test"]["code"] else "tested"
-        _save(location(home, identity), record)
         if record["test"]["code"]:
+            # A failing deterministic check invalidates any earlier verdict on this
+            # record; leaving it renders a healthy review under a failed phase.
+            record.update(phase="test-failed")
+            record.pop("review", None)
+            _save(location(home, identity), record)
             raise ValueError("deterministic patch check failed")
         if any(snapshot(target(home.parent, name)) != values["after"] for name, values in record["files"].items()):
-            record["phase"] = "test-mutated-source"
+            # Bytes changed under the check; any earlier verdict was on those bytes.
+            record.update(phase="test-mutated-source")
+            record.pop("review", None)
             _save(location(home, identity), record)
             raise ValueError("source changed during deterministic check; recheck exact bytes")
         try:
             record["review"] = review(home, record)
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            # A failed attempt must not leave a stale verdict behind: a superseding
+            # flake overwrites the phase while keeping an older passing result, and
+            # the dashboard prints only this failure string, hiding a real delivery
+            # failure (wall_view.py).
             record.update(phase="review-unavailable", failure=str(exc))
+            record.pop("review", None)
             _save(location(home, identity), record)
             raise
         record["phase"] = "reviewed" if record["review"]["clear"] else "review-refused"
@@ -264,7 +277,10 @@ def _apply(home, identity, record, activate, observe):
         try:
             record["review"] = review(home, record)
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            # Same hazard as check(): a flake here must not leave the verdict of an
+            # earlier review, which certified different evidence, under a failed phase.
             record.update(phase="review-unavailable", failure=str(exc))
+            record.pop("review", None)
             _save(location(home, identity), record)
             raise
         if not record["review"]["clear"]:

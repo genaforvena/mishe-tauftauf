@@ -2,6 +2,7 @@ import json
 import sys
 import pytest
 from mishe_tauftauf import wall_patch
+import subprocess
 
 
 def layout(tmp_path):
@@ -318,3 +319,147 @@ def test_review_passes_the_configured_outer_budget_to_the_worker(tmp_path, monke
     wall_patch.check(home, "change", [sys.executable, "-c", "pass"])
     assert seen["timeout"] == 480
     assert wall_patch.status(home, "change")["phase"] == "reviewed"
+
+
+def test_failed_review_drops_the_stale_verdict(tmp_path, monkeypatch):
+    # A superseding review flake overwrote the phase but kept an older passing
+    # verdict, so the dashboard could render a healthy review under a failed phase.
+    home, source, deployed = layout(tmp_path)
+    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
+    source.write_text("after\n")
+    command = [sys.executable, "-c", "pass"]
+
+    monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": True})
+    wall_patch.check(home, "change", command)
+    assert wall_patch.status(home, "change")["phase"] == "reviewed"
+
+    def unavailable(*args):
+        raise OSError("reviewer usage limit reached")
+
+    monkeypatch.setattr(wall_patch, "review", unavailable)
+    with pytest.raises(OSError, match="usage limit"):
+        wall_patch.check(home, "change", command)
+    failed = wall_patch.status(home, "change")
+    assert failed["phase"] == "review-unavailable"
+    assert failed["failure"]
+    assert "review" not in failed, "a failed attempt must not keep the stale passing verdict"
+
+
+def test_empty_reviewer_output_is_retried_then_succeeds(tmp_path, monkeypatch):
+    # A reviewer can exit 0 with empty stdout, which json.loads turned into an
+    # unattributable JSONDecodeError. Empty output must be retried, not fatal.
+    from mishe_tauftauf import wall_review
+    import importlib
+
+    runs = []
+    good = '{"version": 1, "input_hash": "h", "results": []}'
+
+    def empty_then_ok(*args, **kwargs):
+        runs.append(1)
+        if len(runs) < wall_review.MAX_EMPTY_RETRIES:
+            return type("R", (), {"returncode": 0, "stdout": "", "stderr": "Working..."})()
+        return type("R", (), {"returncode": 0, "stdout": good, "stderr": ""})()
+
+    monkeypatch.setenv("MISHE_WALL_REVIEW_TIMEOUT", "120")
+    importlib.reload(wall_review)
+    answer = wall_review.review_answer("model", tmp_path, tmp_path / "req.txt", runner=empty_then_ok)
+    importlib.reload(wall_review)
+    assert len(runs) == 3, "empty output must be retried, not accepted on the empty run"
+    assert answer == json.loads(good)
+
+
+def test_empty_reviewer_output_names_the_failure_when_retries_exhaust(tmp_path, monkeypatch):
+    from mishe_tauftauf import wall_review
+    import importlib
+
+    monkeypatch.setenv("MISHE_WALL_REVIEW_TIMEOUT", "120")
+    importlib.reload(wall_review)
+    with pytest.raises(RuntimeError, match="patch reader returned empty output"):
+        wall_review.review_answer("model", tmp_path, tmp_path / "req.txt",
+                                  runner=lambda *a, **k:
+                                  type("R", (), {"returncode": 0, "stdout": "",
+                                                 "stderr": "Working..."})())
+    importlib.reload(wall_review)
+
+
+def test_review_answer_reports_a_nonzero_reviewer_exit(tmp_path, monkeypatch):
+    from mishe_tauftauf import wall_review
+    import importlib
+
+    monkeypatch.setenv("MISHE_WALL_REVIEW_TIMEOUT", "120")
+    importlib.reload(wall_review)
+    with pytest.raises(RuntimeError, match="patch reader failed"):
+        wall_review.review_answer("model", tmp_path, tmp_path / "req.txt",
+                                  runner=lambda *a, **k:
+                                  type("R", (), {"returncode": 2, "stdout": "",
+                                                 "stderr": "boom"})())
+    importlib.reload(wall_review)
+
+
+def test_failed_test_drops_the_stale_review_verdict(tmp_path, monkeypatch):
+    # A test failure must not keep a verdict from an earlier review of the same
+    # record, or the phase falls while the dashboard still reads the old verdict.
+    home, source, deployed = layout(tmp_path)
+    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
+    source.write_text("after\n")
+    monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": True})
+    passing = [sys.executable, "-c", "pass"]
+    wall_patch.check(home, "change", passing)
+    assert wall_patch.status(home, "change")["phase"] == "reviewed"
+
+    failing = [sys.executable, "-c", "raise SystemExit(3)"]
+    with pytest.raises(ValueError, match="deterministic patch check failed"):
+        wall_patch.check(home, "change", failing)
+    failed = wall_patch.status(home, "change")
+    assert failed["phase"] == "test-failed"
+    assert "review" not in failed, "a failed test must not keep the stale passing verdict"
+
+
+def test_legacy_apply_time_review_flake_drops_the_stale_verdict(tmp_path, monkeypatch):
+    # The legacy apply path re-reviews a delivery plan; a flake there must not
+    # leave the verdict of the earlier review, which certified different evidence.
+    home, source, deployed = layout(tmp_path)
+    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
+    source.write_text("after\n")
+    command = [sys.executable, "-c", "pass"]
+    monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": True})
+    wall_patch.check(home, "change", command)
+    assert wall_patch.status(home, "change")["phase"] == "reviewed"
+
+    # Simulate a delivery plan that flaked at apply time by re-reviewing.
+    record = wall_patch.status(home, "change")
+    record.pop("delivery_plan", None)
+    wall_patch._save(wall_patch.location(home, "change"), record)
+
+    def unavailable(*args):
+        raise OSError("reviewer usage limit reached")
+
+    monkeypatch.setattr(wall_patch, "review", unavailable)
+    with pytest.raises(OSError, match="usage limit"):
+        wall_patch.apply(home, "change", [sys.executable, "-c", "pass"], command)
+    failed = wall_patch.status(home, "change")
+    assert failed["phase"] == "review-unavailable"
+    assert "review" not in failed, "a flaked apply-time review must not keep the stale verdict"
+
+
+def test_mutated_source_drops_the_stale_review_verdict(tmp_path, monkeypatch):
+    # A concurrent edit to the scoped source invalidates any earlier verdict, which
+    # was over different bytes; the failed phase must not render that stale verdict.
+    home, source, deployed = layout(tmp_path)
+    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
+    source.write_text("after\n")
+    monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": True})
+    command = [sys.executable, "-c", "pass"]
+    wall_patch.check(home, "change", command)
+    assert wall_patch.status(home, "change")["phase"] == "reviewed"
+
+    # A legitimate writer edits the shared source *while* the check's test runs:
+    # check() re-snapshots `after` at the top of the loop, so a pre-run edit is
+    # absorbed as the new expected bytes and would not trip the guard.
+    mutating = [sys.executable, "-c",
+                f"open({str(source)!r}, 'a').write('# a peer edit\\n')"]
+    with pytest.raises(ValueError, match="source changed during deterministic check"):
+        wall_patch.check(home, "change", mutating)
+    failed = wall_patch.status(home, "change")
+    assert failed["phase"] == "test-mutated-source"
+    assert "review" not in failed, "mutated bytes must not keep a verdict over the old bytes"
