@@ -77,9 +77,12 @@ The runtime source the plant installs is a clean exact-SHA Git worktree — the
 shared checkout or an installed release — recorded as the pin in
 `SITE_HOME/health/runtime-release.json`; a patch writes reviewed bytes into a
 separate running snapshot. The dashboard `RUNTIME` line prints that pin beside the
-roots the seed services actually import and flags `DRIFT` when they differ. Edits
-become running code only through checked activation. Coordinate overlapping edits
-with their owners.
+roots the seed services actually import and flags `DRIFT` when they differ.
+When the pin's source is not a clean exact-SHA worktree — a dirty shared
+checkout, or a SHA that no longer matches HEAD — the line instead reads
+`pin=UNKNOWN` with the reason; that is the sensor reporting the condition,
+not a defect. Edits become running code only through checked activation.
+Coordinate overlapping edits with their owners.
 
 Use `python -m mishe_tauftauf.wall_patch --home SITE_HOME --id NAME ACTION`:
 
