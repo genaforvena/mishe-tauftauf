@@ -59,6 +59,7 @@ tmux capture-pane -p -t "$SESSION:genome.0"
 "$SITE/bin/mishe-tauftauf" --home "$SITE" discover show
 "$SITE/bin/mishe-tauftauf" --home "$SITE" access list
 ```
+The genome pane's `LANDING DEBT` line tracks unlanded outside edits; [genome landing and outside edits](genome-landing.md) documents its states, staleness and claim flow.
 
 For an ownership-checked reading of the actual top pane, not a newly rendered approximation:
 
@@ -108,6 +109,7 @@ The health dashboard's `STATE: UNKNOWN — services unavailable: Failed to conne
 ```
 
 The pane check waits for live-pane evidence (11 seconds by default). Optional `laya` being unavailable is not a missing dependency for the default plant. Do not add hosted-adapter live flags unless you intend to invoke those services.
+The optional witness analysis advisor asks a local Laya model which investigation to try; [observable analysis advice](analysis-advisor.md) covers its setup, feedback and handoff repeat check.
 
 If doctor reports site files staged or tracked in Git, resolve that boundary before landing work. If it reports corrupt feed framing, preserve the tape and diagnose the reported entry rather than appending invented receipts or deleting history to turn the pane green.
 
