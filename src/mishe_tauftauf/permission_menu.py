@@ -2,11 +2,53 @@
 from __future__ import annotations
 
 import curses
+import os
+import shlex
 import sys
 import textwrap
 from pathlib import Path
 
 from . import access
+
+
+class _Restart(Exception):
+    """The selector's own release changed; reload the pinned code in place."""
+
+
+def _cli_package_root(home: Path) -> Path | None:
+    """Package root the site CLI wrapper would import, or None when unavailable.
+
+    ``refresh_cli`` rewrites ``bin/mishe-tauftauf`` on every checked release
+    activation to prepend the pinned ``src`` to ``PYTHONPATH``. The long-lived
+    selector must notice that change and reload, since ``ensure`` only respawns
+    its pane when the pane is created or dead and the menu never exits on its own.
+    """
+    try:
+        lines = (home / "bin" / "mishe-tauftauf").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        if not line.startswith("export PYTHONPATH="):
+            continue
+        # The pinned entry is the literal prefix before the ``${PYTHONPATH:+...}``
+        # suffix. Do not split it on ``:`` — a colon is a legal path character and
+        # ``shlex.quote`` leaves it unquoted.
+        entry = line[len("export PYTHONPATH="):].split("${", 1)[0]
+        try:
+            parts = shlex.split(entry)
+        except ValueError:
+            return None
+        if parts:
+            return Path(parts[0])
+    return None
+
+
+def _release_changed(home: Path) -> bool:
+    target = _cli_package_root(home)
+    if target is None or not (target / "mishe_tauftauf" / "__init__.py").is_file():
+        # An unparseable or custom wrapper cannot be converged by re-executing it.
+        return False
+    return target.resolve() != Path(__file__).resolve().parents[1]
 
 
 def decide_selected(home: Path, item: access.Request, state: str, decision: str) -> str:
@@ -40,6 +82,8 @@ def interactive(screen, home: Path, decision: str = "granted") -> int:
     status = "No decisions are made until you press Enter."
     verb = "Grant" if decision == "granted" else "Revoke"
     while True:
+        if _release_changed(home):
+            raise _Restart()
         retired = access.retired_requests(home)
         rows = [(item, state) for item, state in access.list_requests(home)
                 if (state != "granted" and item.identity not in retired if decision == "granted" else state == "granted")]
@@ -116,7 +160,22 @@ def run(home: Path, decision: str = "granted") -> int:
         raise ValueError("permission selection needs an interactive terminal; use access list and access grant/revoke REQUEST_ID")
     if decision not in {"granted", "revoked"}:
         raise ValueError("decision must be granted or revoked")
+    home = home.resolve()
     try:
-        return curses.wrapper(interactive, home.resolve(), decision)
+        return curses.wrapper(interactive, home, decision)
+    except _Restart:
+        # Reload the pinned release in place instead of waiting for the pane to
+        # die: the operator's decision store is untouched and the selector
+        # stops running the code from before the last checked activation.
+        cli = home / "bin" / "mishe-tauftauf"
+        command = "revoke" if decision == "revoked" else "menu"
+        try:
+            # ``python -m`` puts the current directory ahead of PYTHONPATH, so a
+            # selector started inside a package directory would re-import the same
+            # shadowing copy forever. Leave a directory that holds no package.
+            os.chdir(home)
+            os.execv(str(cli), [str(cli), "--home", str(home), "access", command])
+        except OSError as exc:
+            raise ValueError(f"permissions selector could not reload the pinned release: {exc}") from exc
     except curses.error as exc:
         raise ValueError(f"permission menu terminal unavailable: {exc}; use access list and an exact request ID") from exc
