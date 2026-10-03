@@ -136,9 +136,9 @@ snapshot equal to the shared checkout). The role renderer scripts
 one of the snapshot renderers. The site CLI, the minds and the seed services load the
 pin source (the checkout or an installed release) instead, so patched snapshot bytes
 stay invisible to them until a replant, and an observe script that shells out to
-`bin/mishe-tauftauf` reads that pin source, not the patched bytes. The health, genome and witness dashboards print three
-deployment lines (the docs pane shows this book, and discover and senses their
-culture views). `SOURCE`
+`bin/mishe-tauftauf` reads that pin source, not the patched bytes. Every dashboard
+except the `docs`, `discover` and `senses` panes prints three deployment lines;
+`docs` shows this book, and `discover` and `senses` their culture views. `SOURCE`
 names the checkout commit and its changed-path count; `DEPLOYED` the rendering
 process's own root and module fingerprint; `RUNTIME` the pin beside the roots the
 seed services actually import, flagging `DRIFT` when they differ — the pin and the
