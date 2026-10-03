@@ -67,6 +67,21 @@ def service_manifest(home: Path, session: str, persist: bool) -> list[str]:
     return sorted({*units, *(name for name in installed if name.startswith(prefix))})
 
 
+def write_service_manifest(home: Path, session: str, persist: bool) -> list[str]:
+    """Record the units this plant is responsible for without erasing coverage.
+
+    A plant that installs no services computes an empty manifest; writing it over
+    a live site's manifest would drop every unit from dashboard coverage, so an
+    existing manifest is preserved. A fresh site still gets the empty manifest so
+    the dashboard reports the missing services rather than an unreadable file.
+    """
+    manifest = service_manifest(home, session, persist)
+    path = home / "health" / "services.json"
+    if manifest or not path.exists():
+        path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+    return manifest
+
+
 def ensure_engine_for_new_minds(home: Path, engine_command: str) -> None:
     argv = shlex.split(engine_command)
     if not argv:
@@ -193,8 +208,7 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
     (home / "health").mkdir(exist_ok=True)
     (home / "health" / "windows.json").write_text(
         json.dumps(sorted({operator_window, *ROLES, "permissions"})) + "\n", encoding="utf-8")
-    (home / "health" / "services.json").write_text(
-        json.dumps(service_manifest(home, session, persist)) + "\n", encoding="utf-8")
+    write_service_manifest(home, session, persist)
     previous_session = os.environ.get("MISHE_SEED_SESSION")
     os.environ["MISHE_SEED_SESSION"] = session
     try:
