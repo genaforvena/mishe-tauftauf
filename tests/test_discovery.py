@@ -642,9 +642,9 @@ def test_top_cpu_processes_ranks_by_sampled_rate_not_lifetime_average() -> None:
     # A long-lived pane at a high lifetime average that burns no tick in the
     # window must rank below a young process that is actually working now.
     stdout = "\n".join([
-        "  42  99.0  9000 /usr/bin/llama-server --port 7000",
-        "   7 200.0     1 python3 worker.py  arg with   spaces",
-        " 300  99.9     0 /home/user/.venv/bin/python -m long " + "x" * 400,
+        "  42  1001  99.0  9000 /usr/bin/llama-server --port 7000",
+        "   7     1 200.0     1 python3 worker.py  arg with   spaces",
+        " 300    42  99.9     0 /home/user/.venv/bin/python -m long " + "x" * 400,
     ])
     jiffies = {42: [1000, 1000], 7: [1, 2], 300: [5, 10]}
     reads: list[int] = []
@@ -667,14 +667,15 @@ def test_top_cpu_processes_ranks_by_sampled_rate_not_lifetime_average() -> None:
     assert len(rows[1]["args"]) == 33
     # etimes=0 ranks on its measured rate, not on an undefined lifetime division.
     assert rows[0]["etimes"] == 0 and rows[0]["pcpu"] == 99.9
+    assert rows[0]["ppid"] == 42
 
 
 def test_top_cpu_processes_breaks_rate_ties_on_the_lifetime_average() -> None:
     from mishe_tauftauf import discovery
 
     stdout = "\n".join([
-        "  10  9.0  300 slower-lifetime",
-        "  11  3.0   12 faster-lifetime",
+        "  10  100  9.0  300 slower-lifetime",
+        "  11   10  3.0   12 faster-lifetime",
     ])
     jiffies = {10: [0, 1], 11: [0, 1]}
     reads: list[int] = []
@@ -701,11 +702,11 @@ def test_top_cpu_processes_keeps_unmeasured_rows_below_measured_ones() -> None:
     # `ps` lines that cannot be parsed are skipped before any /proc read, so a
     # pid that never appears in the table cannot be retained by its jiffies.
     stdout = "\n".join([
-        "  10  5.0  30 real-process",
-        "not-a-pid 5.0 30 unparseable pid",
+        "  10    1  5.0  30 real-process",
+        "not-a-pid  5.0  30 unparseable pid",
         "  11 abc  30 non-numeric pcpu",
-        "  12  5.0  45 earns-two-ticks",
-        "  13  2.0   9 unreadable-proc",
+        "  12   10  5.0  45 earns-two-ticks",
+        "  13    1  2.0   9 unreadable-proc",
         "",
     ])
     # Two reads each: pid 10 earns no tick, pid 12 earns two, pid 13 has no
@@ -756,7 +757,7 @@ def test_top_cpu_processes_reports_unknown_when_ps_is_unavailable() -> None:
 def test_sample_carries_a_bounded_top_cpu_read() -> None:
     from mishe_tauftauf import discovery
 
-    stdout = "  42  117.0  1500 /usr/bin/llama-server --port 7000\n"
+    stdout = "  42  1001  117.0  1500 /usr/bin/llama-server --port 7000\n"
     with patch("mishe_tauftauf.discovery.subprocess.run",
                return_value=_completed(stdout)), \
             patch("mishe_tauftauf.discovery._cpu_jiffies", side_effect=lambda pid: 100), \
@@ -765,17 +766,18 @@ def test_sample_carries_a_bounded_top_cpu_read() -> None:
     reading = observed["sense.proc.top-cpu"]
     assert reading["state"] == "verified"
     assert reading["kind"] == "read"
-    assert reading["processes"] == [{"pid": 42, "pcpu": 117.0, "etimes": 1500,
+    assert reading["processes"] == [{"pid": 42, "ppid": 1001, "pcpu": 117.0,
+                                     "etimes": 1500,
                                      "args": "/usr/bin/llama-server --port 7000",
-                                     "rate": 0.0}]
-    assert "pid=42 rate=0.0% pcpu=117.0% etimes=1500s" in reading["sample"]
+                                     "in_session": None, "rate": 0.0}]
+    assert "pid=42 ppid=1001 rate=0.0% pcpu=117.0% etimes=1500s" in reading["sample"]
     assert reading["sample"].endswith(" key=delta-rate-over-1.0s")
 
 
 def test_top_cpu_row_count_is_bounded_on_a_busy_host() -> None:
     from mishe_tauftauf import discovery
 
-    stdout = "\n".join(f"  {pid}  {1.0 + pid / 10:.1f}  {pid} proc-{pid}" for pid in range(64))
+    stdout = "\n".join(f"  {pid}  {pid + 1}  {1.0 + pid / 10:.1f}  {pid} proc-{pid}" for pid in range(64))
     with patch("mishe_tauftauf.discovery.subprocess.run",
                return_value=_completed(stdout)), \
             patch("mishe_tauftauf.discovery._cpu_jiffies", side_effect=lambda pid: pid), \
@@ -788,3 +790,218 @@ def test_top_cpu_row_count_is_bounded_on_a_busy_host() -> None:
     assert rates == sorted(rates, reverse=True)
     pids = [row["pid"] for row in rows]
     assert pids == sorted(pids, reverse=True)
+
+
+def test_session_server_matches_the_exact_argv_word_not_a_substring() -> None:
+    from mishe_tauftauf import discovery
+
+    commands = {
+        1584: "/usr/bin/tmux new-session -d -s mishe-current -n docs -c /srv sh",
+        939406: "tmux new-session -d -s restore-test-939095 -n placeholder",
+        943026: "tmux new-session -d -s gate -n p sleep 194203",
+        72420: "/opt/venv/bin/python3 /opt/bin/rnsh -l -a deadbeef -- "
+                "tmux new-session -A -s rns",
+    }
+    assert discovery._session_server(commands, "mishe-current") == 1584
+    # A session whose name merely prefixes or contains another's is not matched,
+    # and a server wrapped behind another executable is not matched either.
+    assert discovery._session_server(commands, "mishe") is None
+    assert discovery._session_server(commands, "gate-") is None
+    assert discovery._session_server(commands, "rns") is None
+    assert discovery._session_server(commands, "absent-session") is None
+
+
+def test_descends_from_reports_unknown_rather_than_false_for_a_broken_chain() -> None:
+    from mishe_tauftauf import discovery
+
+    parents = {10: 11, 11: 12, 12: 0}
+    # 13 exited before this snapshot, so its parent is unknown: descent is
+    # undetermined, not absent, and must not be reported as outside the session.
+    assert discovery._descends_from(10, parents, 12) is True
+    assert discovery._descends_from(10, parents, 99) is False
+    assert discovery._descends_from(13, parents, 12) is None
+    assert discovery._descends_from(10, {}, 12) is None
+    assert discovery._descends_from(10, {10: 11, 11: 10}, 12) is None
+
+
+def test_top_cpu_processes_records_descent_from_the_named_session() -> None:
+    from mishe_tauftauf import discovery
+
+    # A pane renderer and an agent inside the session both descend from the tmux
+    # server; a systemd-supervised seed and an unrelated tool do not. Both outside
+    # rows name a parent the snapshot contains, so their chains reach ppid 0 and
+    # "outside" is a complete decision rather than a broken one.
+    stdout = "\n".join([
+        "    1     0  0.0  9000 /sbin/init",
+        " 1236     1  0.0  9000 /lib/systemd/systemd --user",
+        " 1584  1236  0.1  9000 tmux new-session -d -s s1 -n docs -c /srv sh",
+        " 2461  1584  5.0   30 pane-renderer",
+        " 9001  1584  3.0   12 /opt/bin/omp --model any",
+        " 4039  1236  2.0   60 supervised-seed",
+        " 7000  6999  4.0    2 unrelated-tool",
+        " 6999     0  0.0   60 parent-with-no-parent",
+    ])
+    with patch("mishe_tauftauf.discovery.subprocess.run",
+               return_value=_completed(stdout)), \
+            patch("mishe_tauftauf.discovery._cpu_jiffies", side_effect=lambda pid: pid), \
+            patch("mishe_tauftauf.discovery.time.sleep"):
+        rows = discovery._top_cpu_processes("s1")
+    by_pid = {row["pid"]: row for row in rows}
+    assert by_pid[1584]["in_session"] is True
+    assert by_pid[2461]["in_session"] is True
+    assert by_pid[9001]["in_session"] is True
+    assert by_pid[4039]["in_session"] is False
+    assert by_pid[7000]["in_session"] is False
+    assert "in-session" in discovery._row_text(by_pid[2461])
+    assert "outside-session" in discovery._row_text(by_pid[4039])
+
+
+def test_top_cpu_processes_reports_unknown_descent_when_the_server_is_absent() -> None:
+    from mishe_tauftauf import discovery
+
+    stdout = "\n".join([
+        " 1236     1  0.0  9000 /lib/systemd/systemd --user",
+        " 2461  1236  5.0   30 pane-renderer",
+    ])
+    with patch("mishe_tauftauf.discovery.subprocess.run",
+               return_value=_completed(stdout)), \
+            patch("mishe_tauftauf.discovery._cpu_jiffies", side_effect=lambda pid: pid), \
+            patch("mishe_tauftauf.discovery.time.sleep"):
+        rows = discovery._top_cpu_processes("no-such-session")
+    by_pid = {row["pid"]: row for row in rows}
+    # The named session is not running, so descent is undetermined for every row
+    # rather than being reported as outside it.
+    assert by_pid[2461]["in_session"] is None
+    assert "in-session" not in discovery._row_text(by_pid[2461])
+    assert "outside-session" not in discovery._row_text(by_pid[2461])
+
+
+def _unit_block(ident: str, pythonpath: str) -> str:
+    """One `systemctl --user show` record naming an effective PYTHONPATH."""
+    return f"Id={ident}\nEnvironment=PYTHONPATH={pythonpath}\n"
+
+
+def test_import_root_drops_a_trailing_src_component() -> None:
+    from mishe_tauftauf import discovery
+
+    assert discovery._import_root("/srv/releases/abc/src") == "/srv/releases/abc"
+    assert discovery._import_root("/srv/checkout") == "/srv/checkout"
+    assert discovery._import_root("") is None
+
+
+def test_runtime_drift_reads_the_effective_environment_not_the_base_unit() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    stdout = (
+        _unit_block("stale.service", "/srv/releases/14f85927/src")
+        + "\n" + _unit_block("live.service", "/srv/releases/7ed4b955/src"))
+    with patch("mishe_tauftauf.discovery._service_import_roots",
+               return_value=(["/srv/releases/14f85927", "/srv/releases/7ed4b955"], None)), \
+            patch("mishe_tauftauf.discovery._pinned_root",
+                  return_value=("/srv/releases/7ed4b955", None)):
+        reading = discovery._runtime_drift(home)
+    assert reading["state"] == "drift"
+    assert reading["identity"] == {
+        "pin": "/srv/releases/7ed4b955",
+        "services": ["/srv/releases/14f85927", "/srv/releases/7ed4b955"],
+    }
+    assert reading["sample"] == ("pin=/srv/releases/7ed4b955 "
+                                 "services=/srv/releases/14f85927,/srv/releases/7ed4b955 drift")
+    assert "stdout" not in reading
+
+
+def test_runtime_drift_reports_match_when_every_service_imports_the_pin() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    with patch("mishe_tauftauf.discovery._service_import_roots",
+               return_value=(["/srv/checkout", "/srv/checkout"], None)), \
+            patch("mishe_tauftauf.discovery._pinned_root",
+                  return_value=("/srv/checkout", None)):
+        reading = discovery._runtime_drift(home)
+    assert reading["state"] == "verified"
+    assert reading["sample"] == "pin=/srv/checkout services=/srv/checkout verified"
+
+
+def test_runtime_drift_keeps_a_weak_pin_visible_without_claiming_drift() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    with patch("mishe_tauftauf.discovery._service_import_roots",
+               return_value=(["/srv/checkout"], None)), \
+            patch("mishe_tauftauf.discovery._pinned_root",
+                  return_value=(None, "pin invalid: not a clean worktree")):
+        reading = discovery._runtime_drift(home)
+    assert reading["state"] == "unknown"
+    assert reading["sample"] == "service roots=['/srv/checkout'] but pin invalid: not a clean worktree"
+
+
+def test_service_import_roots_parses_and_deduplicates_pythonpath() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    stdout = (
+        _unit_block("a.service", "/srv/releases/x/src:/srv/releases/x")
+        + "\n" + _unit_block("b.service", "/srv/checkout/src")
+        + "\n" + _unit_block("c.service", "/srv/releases/x/src"))
+    completed = subprocess.CompletedProcess(["systemctl"], 0, stdout, "")
+    with patch("mishe_tauftauf.discovery.subprocess.run", return_value=completed):
+        roots, failure = discovery._service_import_roots(home)
+    assert failure is None
+    assert roots == ["/srv/releases/x", "/srv/checkout"]
+
+
+def test_service_import_roots_reports_an_unreadable_manifest() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    (home / "health" / "services.json").write_text("{not json", encoding="utf-8")
+    roots, failure = discovery._service_import_roots(home)
+    assert roots == []
+    assert failure == "service manifest unreadable"
+
+
+def test_service_import_roots_reports_a_failed_systemctl() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    completed = subprocess.CompletedProcess(["systemctl"], 1, "", "unit not found")
+    with patch("mishe_tauftauf.discovery.subprocess.run", return_value=completed):
+        roots, failure = discovery._service_import_roots(home)
+    assert roots == []
+    assert failure == "systemctl failed"
+
+
+def test_service_import_roots_reports_an_empty_manifest() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    (home / "health" / "services.json").write_text("[]", encoding="utf-8")
+    roots, failure = discovery._service_import_roots(home)
+    assert roots == []
+    assert failure == "service manifest empty"
+
+
+def tmp_site_with_services() -> Path:
+    import tempfile
+    import os as _os
+
+    home = Path(tempfile.mkdtemp(prefix="senses-runtime-"))
+    (home / "health").mkdir()
+    (home / "health" / "services.json").write_text(
+        json.dumps(["a.service", "b.service"]), encoding="utf-8")
+    # A site home sits beside its checkout, and the pin names the checkout root.
+    (home / "checkout").mkdir()
+    atexit_register(home)
+    return home
+
+
+def atexit_register(home: Path) -> None:
+    import atexit
+    import shutil
+
+    def remove(path: Path) -> None:
+        shutil.rmtree(path, ignore_errors=True)
+
+    atexit.register(remove, home)
