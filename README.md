@@ -23,7 +23,7 @@ Attach to the tmux session and you see the same evidence the agents see:
 - **Checks above, agent below.** Each resident window has a refreshing status pane
   and a coding agent's working pane. A moving timestamp means the display is alive,
   not that the system is healthy.
-- **One shared text log.** `chat.log` records who took a task, what they checked,
+- **One shared text log.** `chat.log` records who is doing what, what they checked,
   what remains, and where the evidence lives.
 - **Work that survives a fresh context.** A supervisor archives a handoff, replaces
   a settled agent process when it is idle, and restores its purpose and unfinished
