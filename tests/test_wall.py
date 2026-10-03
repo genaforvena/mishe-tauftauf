@@ -429,7 +429,7 @@ def test_dashboard_flags_runtime_drift_against_the_pin(tmp_path, monkeypatch):
     home = tmp_path / "site"
     (home / "health").mkdir(parents=True)
     running = tmp_path / "running"
-    assert wall_view._runtime_line(home, running) == "RUNTIME: pin=UNPINNED"
+    assert wall_view._runtime_state(home, running) == ("UNPINNED", "RUNTIME: pin=UNPINNED")
     (home / "health/runtime-release.json").write_text("{}")
     pinned = tmp_path / "release"
 
@@ -437,17 +437,18 @@ def test_dashboard_flags_runtime_drift_against_the_pin(tmp_path, monkeypatch):
         return lambda h, default: source
 
     monkeypatch.setattr(runtime_source, "source_for", at(pinned))
-    assert wall_view._runtime_line(home, running, [str(pinned)]).endswith("MATCH")
-    line = wall_view._runtime_line(home, running, [str(tmp_path / "other")])
-    assert line.endswith("DRIFT") and str(pinned) in line
-    assert wall_view._runtime_line(home, running).endswith("services=UNKNOWN")
-    assert wall_view._runtime_line(home, running, []).endswith("services=none")
+    state, line = wall_view._runtime_state(home, running, [str(pinned)])
+    assert state == "MATCH" and line.endswith("MATCH")
+    state, line = wall_view._runtime_state(home, running, [str(tmp_path / "other")])
+    assert state == "DRIFT" and line.endswith("DRIFT") and str(pinned) in line
+    assert wall_view._runtime_state(home, running)[1].endswith("services=UNKNOWN")
+    assert wall_view._runtime_state(home, running, [])[1].endswith("services=none")
 
     def broken(h, default):
         raise ValueError("runtime pin invalid: missing release")
 
     monkeypatch.setattr(runtime_source, "source_for", broken)
-    assert "pin=UNKNOWN" in wall_view._runtime_line(home, running, [])
+    assert "pin=UNKNOWN" in wall_view._runtime_state(home, running, [])[1]
 
 
 def test_import_roots_reads_pythonpath_from_systemd_environment():
@@ -458,24 +459,64 @@ def test_import_roots_reads_pythonpath_from_systemd_environment():
     assert wall_view._import_roots("HOME=/root") == []
 
 
-def test_dashboard_runtime_line_compares_pin_with_service_environment(tmp_path, monkeypatch):
+def test_dashboard_runtime_drift_downgrades_the_state_line(tmp_path, monkeypatch):
     from mishe_tauftauf import runtime_source, wall_view
     home = tmp_path / "site"
     (home / "health").mkdir(parents=True)
     (home / "health/services.json").write_text(json.dumps(["test.service"]))
     (home / "health/runtime-release.json").write_text("{}")
     monkeypatch.setattr(wall_view, "ci_line", lambda *a: "CI: PASS")
-    monkeypatch.setattr(runtime_source, "source_for", lambda h, default: tmp_path / "pinned")
+    other = tmp_path / "other"
 
     def commands(command, **kwargs):
         output = ("pinned\n" if "rev-parse" in command else "" if "status" in command else
                   "Id=test.service\nActiveState=active\nSubState=running\nNRestarts=0\n"
-                  "Environment=PYTHONPATH=/srv/other/src\n")
+                  f"Environment=PYTHONPATH={other}/src\n")
         return subprocess.CompletedProcess(command, 0, output, "")
 
     monkeypatch.setattr(wall_view.subprocess, "run", commands)
-    text = wall_view.render(home, "genome")
-    assert "RUNTIME: pin=" in text and "services=/srv/other DRIFT" in text
+    monkeypatch.setattr(runtime_source, "source_for", lambda h, default: other)
+    matched = wall_view.render(home, "genome")
+    assert f"RUNTIME: pin={other} services={other} MATCH" in matched
+    assert "STATE: GREEN — listed services running" in matched
+
+    monkeypatch.setattr(runtime_source, "source_for", lambda h, default: tmp_path / "pinned")
+    drifted = wall_view.render(home, "genome")
+    assert "RUNTIME: pin=" in drifted and f"services={other} DRIFT" in drifted
+    assert "STATE: RED — runtime drift: service import roots differ from the pinned release" in drifted
+    assert "STATE: GREEN" not in drifted
+
+
+def test_runtime_drift_state_forces_notification_past_a_hold_filter(tmp_path, monkeypatch):
+    from mishe_tauftauf import wall, tmux, dashboard
+    from mishe_tauftauf.records import payload
+    setup_wall(tmp_path)
+    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
+    monkeypatch.setattr(tmux, "_pane_stopped_or_dead", lambda *a: False)
+    stamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    monkeypatch.setattr(tmux, "capture_raw", lambda *a: f"-- pane live {stamp} · refresh 5s · ticks every frame --\n")
+    monkeypatch.setattr(seed, "_mind_ready", lambda *a: True)
+    monkeypatch.setattr(seed, "_send", lambda *a: None)
+    monkeypatch.setattr(observations, "run_filter", lambda *a, **k: observations.FilterResult(False, "hold"))
+    sensor = ["HEADLINE: GREEN — mind ok idle 5s; watcher live; commit unknown; activation unknown\n"
+              "STATE: GREEN — listed services running; CI reported separately\n"]
+    monkeypatch.setattr(dashboard, "read", lambda *a: (sensor[0], True))
+
+    def last_notify():
+        record = [e for e in Feed(tmp_path).entries() if "[record] " in e.body][-1]
+        return payload(record)["notify"]
+
+    first = int(wall.tick(tmp_path, "session", "genome", 3600).split()[-1])
+    assert last_notify() is False
+    note = tmp_path / "note"
+    note.write_text("Held for the drift observation.")
+    seed.yield_wake(tmp_path, "genome", first, note, result="verified")
+    Feed(tmp_path).append("seed", f"seed clear genome after={first}\nRotated.")
+    sensor[0] = sensor[0].replace(
+        "STATE: GREEN — listed services running; CI reported separately",
+        "STATE: RED — runtime drift: service import roots differ from the pinned release")
+    assert wall.tick(tmp_path, "session", "genome", 3600).startswith("wake")
+    assert last_notify() is True
 
 
 @pytest.mark.parametrize("value", [[1800], {"genome": -1}, {"genome": float("inf")}, {"genome": "soon"}])
