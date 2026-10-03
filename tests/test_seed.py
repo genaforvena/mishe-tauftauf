@@ -69,6 +69,46 @@ def test_runner_override_selects_the_plain_tmux_path(monkeypatch) -> None:
     assert runs == []
 
 
+def test_new_session_attaches_when_a_peer_won_the_raise(monkeypatch) -> None:
+    from subprocess import CalledProcessError, CompletedProcess
+
+    from mishe_tauftauf import seed
+
+    # Concurrent supervisors race one fixed scope unit name, so every loser fails
+    # with "unit was already loaded". A peer's session exists: attach, don't exit.
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    monkeypatch.setattr(seed.shutil, "which", lambda name: "/usr/bin/systemd-run")
+
+    def losing_run(argv, **kwargs):
+        raise CalledProcessError(1, argv)
+
+    monkeypatch.setattr(seed.subprocess, "run", losing_run)
+    monkeypatch.setattr(seed, "_tmux", lambda *args, **kwargs: CompletedProcess(args, 0, b""))
+    seed._new_session("mishe-core", "genome", "/workspace")
+
+
+def test_new_session_reraises_when_no_peer_session_appears(monkeypatch) -> None:
+    import pytest
+    from subprocess import CalledProcessError, CompletedProcess
+
+    from mishe_tauftauf import seed
+
+    # A raise that is not a lost race must stay fatal instead of being swallowed.
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    monkeypatch.setattr(seed.shutil, "which", lambda name: "/usr/bin/systemd-run")
+
+    def failing_run(argv, **kwargs):
+        raise CalledProcessError(1, argv)
+
+    monkeypatch.setattr(seed.subprocess, "run", failing_run)
+    monkeypatch.setattr(seed, "_tmux", lambda *args, **kwargs: CompletedProcess(args, 1, b""))
+    monkeypatch.setattr(seed.time, "sleep", lambda _seconds: None)
+    clock = iter([0.0, 0.0, 1e9, 2e9])
+    monkeypatch.setattr(seed.time, "monotonic", lambda: next(clock))
+    with pytest.raises(CalledProcessError):
+        seed._new_session("mishe-core", "genome", "/workspace")
+
+
 def test_health_observation_ignores_changing_samples_but_keeps_verdicts() -> None:
     from mishe_tauftauf.seed import _observation_text
 
