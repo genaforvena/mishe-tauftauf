@@ -97,7 +97,8 @@ def get(home: Path, identity: str) -> Request:
         matches = difflib.get_close_matches(identity, identities, n=1, cutoff=0.6)
         hint = f"; did you mean {matches[0]}?" if matches else ""
         raise ValueError(f"unknown request {identity}{hint}; use access menu to select a request") from exc
-    if data.get("id") != identity or not isinstance(data.get("unblocks"), list):
+    paths = data.get("unblocks")
+    if data.get("id") != identity or not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
         raise ValueError(f"malformed request {identity}")
     return Request(identity, data["owner"], data["task"], data["capability"],
                    tuple(data["unblocks"]), data["reason"], data["created"])
