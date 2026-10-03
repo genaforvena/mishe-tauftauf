@@ -37,6 +37,34 @@ supervisors, not seeded minds, so neither gets a pane or a mind directory. They
 minds leaves them importing the old root and the dashboard reads DRIFT.
 """
 
+def site_declared_roles(home: Path) -> set[str]:
+    """Site-declared residents beyond the built-in roles.
+
+    A site can add a resident by dropping a charter in ``charters/<slug>.md``
+    and an executable launcher in ``minds/<slug>``. The plant preserves those
+    windows across a replant instead of overwriting them with the hard-coded
+    set. An unreadable site returns an empty set.
+    """
+    declared: set[str] = set()
+    try:
+        for path in (home / "charters").glob("*.md"):
+            if (home / "minds" / path.stem).is_file():
+                declared.add(path.stem)
+    except OSError:
+        return set()
+    return declared
+
+
+def _manifest_windows(home: Path) -> list[str]:
+    """Windows already recorded in ``health/windows.json``, or an empty list."""
+    manifest = home / "health" / "windows.json"
+    if not manifest.exists():
+        return []
+    try:
+        return json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+
 
 def refresh_contract(current: str, contract: str) -> str:
     block = contract.rstrip() + "\n" + CONTRACT_END
@@ -126,10 +154,9 @@ def ensure_engine_for_new_minds(home: Path, engine_command: str) -> None:
 
 def preferred_operator_window(home: Path, requested: str | None) -> str:
     """Name the human operator's convenience shell. It is not a role or a gate."""
-    manifest = home / "health" / "windows.json"
-    if manifest.exists():
-        names = json.loads(manifest.read_text(encoding="utf-8"))
-        candidates = set(names) - {*ROLES, "permissions"}
+    names = _manifest_windows(home)
+    if names:
+        candidates = set(names) - {*ROLES, "permissions", *site_declared_roles(home)}
         if len(candidates) == 1:
             existing = candidates.pop()
             if requested and requested != existing:
@@ -254,16 +281,18 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
         from .runtime_source import source_for
         source = source_for(home, ROOT)
         # Refresh only upper evidence panes. Running lower minds retain their work.
-        for slug in (*ROLES, "permissions"):
+        for slug in (*ROLES, "permissions", *site_declared_roles(home)):
             _tmux("respawn-pane", "-k", "-t", f"{session}:{slug}.0", "env",
                   f"MISHE_SEED_SESSION={session}", f"PYTHONPATH={source / 'src'}",
                   sys.executable, "-m", "mishe_tauftauf", "--home", str(home),
                   "pain", "watch", slug, "--interval", "5")
-    for name in (operator_window, *ROLES, "permissions"):
+    for name in (operator_window, *ROLES, "permissions", *site_declared_roles(home)):
         _tmux("set-window-option", "-t", f"{session}:{name}", "automatic-rename", "off")
     (home / "health").mkdir(exist_ok=True)
+    all_windows = {operator_window, *ROLES, "permissions", *site_declared_roles(home)}
+    all_windows.update(_manifest_windows(home))
     (home / "health" / "windows.json").write_text(
-        json.dumps(sorted({operator_window, *ROLES, "permissions"})) + "\n", encoding="utf-8")
+        json.dumps(sorted(all_windows)) + "\n", encoding="utf-8")
     write_service_manifest(home, session, persist)
     previous_session = os.environ.get("MISHE_SEED_SESSION")
     os.environ["MISHE_SEED_SESSION"] = session
@@ -307,7 +336,7 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
             if active_before[slug]:
                 subprocess.run(["systemctl", "--user", "restart", unit.name], check=True, env=env)
     actual = set(_tmux("list-windows", "-t", session, "-F", "#{window_name}").stdout.decode().splitlines())
-    required = {operator_window, *ROLES, "permissions"}
+    required = {operator_window, *ROLES, "permissions", *site_declared_roles(home)}
     if not required <= actual:
         raise RuntimeError(f"missing windows: {sorted(required - actual)}")
     print(f"plant ready: session={session} windows={','.join(sorted(actual))} services={'enabled' if persist else 'skipped'}")
