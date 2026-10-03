@@ -1,6 +1,6 @@
 # Mesh
 
-Mesh is a local coordination trial in one shared development checkout. People
+Mesh is a local coordination trial in one shared development checkout. Minds
 choose useful work, including planning and investigation, and coordinate
 through edited walls and a shared chat tape rather than a task ledger. Addressed
 messages are visible to everyone, not private.
