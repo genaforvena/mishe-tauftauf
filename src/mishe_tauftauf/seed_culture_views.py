@@ -90,6 +90,37 @@ def senses(home: Path) -> str:
     _report(home, "senses", verdict)
     return "\n".join(lines) + "\n"
 
+def _service_readings(units: list[str], env: dict[str, str]) -> dict[str, tuple[str, str, int | None]]:
+    """One coherent systemctl sample for every listed unit, keyed by unit name.
+
+    Per-unit ``is-active`` loops sample different instants, so a unit that crashes
+    and is auto-restarted between two calls reads healthy each time: the restart
+    window and the durable ``NRestarts`` counter never reach the pane. A failed
+    read yields no readings, leaving every unit unknown rather than fabricating a
+    healthy state.
+    """
+    if not units:
+        return {}
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "show", *units, "-p", "Id,ActiveState,SubState,NRestarts"],
+            capture_output=True, text=True, timeout=5, env=env)
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    if result.returncode:
+        return {}
+    readings: dict[str, tuple[str, str, int | None]] = {}
+    for block in result.stdout.strip().split("\n\n"):
+        values = dict(row.split("=", 1) for row in block.splitlines() if "=" in row)
+        name = values.get("Id")
+        if not name:
+            continue
+        count = values.get("NRestarts", "")
+        readings[name] = (values.get("ActiveState", "unknown"), values.get("SubState", "unknown"),
+                          int(count) if count.isdigit() else None)
+    return readings
+
+
 
 def health(home: Path) -> str:
     lines = ["GOAL: keep this plant's panes, feed, and resident services working",
@@ -146,16 +177,33 @@ def health(home: Path) -> str:
     env = os.environ.copy()
     env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
     env.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path={env['XDG_RUNTIME_DIR']}/bus")
+    restarts_path = home / "health" / "service-restarts.json"
+    try:
+        previous_restarts = json.loads(restarts_path.read_text(encoding="utf-8"))
+        if not isinstance(previous_restarts, dict):
+            previous_restarts = {}
+    except (OSError, ValueError):
+        previous_restarts = {}
+    readings = _service_readings(services, env)
     failed_services = []
+    current_restarts: dict[str, int] = {}
     for unit in services:
-        try:
-            status = subprocess.run(["systemctl", "--user", "is-active", unit], capture_output=True,
-                                    text=True, timeout=2, env=env).stdout.strip() or "unknown"
-        except (OSError, subprocess.TimeoutExpired):
-            status = "unknown"
-        lines.append(f"SERVICE {unit}: {status}")
-        if status != "active":
+        active, sub, restarts = readings.get(unit, ("unknown", "unknown", None))
+        baseline = previous_restarts.get(unit)
+        restarted = (isinstance(restarts, int) and isinstance(baseline, int)
+                     and not isinstance(baseline, bool) and restarts > baseline)
+        if isinstance(restarts, int):
+            current_restarts[unit] = restarts
+        lines.append(f"SERVICE {unit}: {active}/{sub}" +
+                     (f" restarts={restarts}" if isinstance(restarts, int) else ""))
+        if active != "active" or sub == "auto-restart" or restarted:
             failed_services.append(unit)
+    if current_restarts:
+        try:
+            restarts_path.parent.mkdir(parents=True, exist_ok=True)
+            restarts_path.write_text(json.dumps(current_restarts, sort_keys=True), encoding="utf-8")
+        except OSError:
+            pass
     linked_unknown = []
     linked_failed = []
     linked_path = home / "health" / "linked-sites.json"

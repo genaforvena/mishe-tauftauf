@@ -240,3 +240,58 @@ def test_health_reports_invalid_local_services_manifest_as_unknown(
     assert "STATE: UNKNOWN — local service data unavailable" in rendered
     assert (home / "observations" / "health").read_text(encoding="utf-8") == (
         "UNKNOWN health local service data unavailable\n")
+
+
+def _service_home(tmp_path: Path, units: list[str]) -> Path:
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health" / "windows.json").write_text('["health"]', encoding="utf-8")
+    (home / "health" / "services.json").write_text(json.dumps(units), encoding="utf-8")
+    return home
+
+
+def _fake_systemctl(monkeypatch, show: str, *, rc: int = 0) -> None:
+    def run(argv, **_kwargs):
+        if argv[0] == "tmux":
+            return subprocess.CompletedProcess(argv, 0, "health 0 0\n", "")
+        if argv[0] == "systemctl":
+            return subprocess.CompletedProcess(argv, rc, show, "")
+        return subprocess.CompletedProcess(argv, 0, "PASS doctor\n", "")
+
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.subprocess.run", run)
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.ci_line", lambda _home: "CI: PASS")
+    monkeypatch.setenv("MISHE_SEED_SESSION", "test-session")
+
+
+def test_health_reports_a_restart_window_instead_of_a_lucky_sample(tmp_path: Path, monkeypatch) -> None:
+    """A crash-looping unit must not read healthy because one sample missed the window."""
+    home = _service_home(tmp_path, ["flaky.service"])
+    _fake_systemctl(monkeypatch, "Id=flaky.service\nActiveState=activating\n"
+                                 "SubState=auto-restart\nNRestarts=31\n")
+    rendered = health(home)
+    assert "SERVICE flaky.service: activating/auto-restart restarts=31" in rendered
+    assert "STATE: RED" in rendered
+    assert json.loads((home / "health" / "service-restarts.json").read_text()) == {"flaky.service": 31}
+
+
+def test_health_marks_a_new_restart_red_and_a_steady_unit_green(tmp_path: Path, monkeypatch) -> None:
+    home = _service_home(tmp_path, ["steady.service"])
+    _fake_systemctl(monkeypatch, "Id=steady.service\nActiveState=active\n"
+                                 "SubState=running\nNRestarts=4\n")
+    first = health(home)
+    assert "SERVICE steady.service: active/running restarts=4" in first
+    assert "STATE: GREEN" in first
+    (home / "health" / "service-restarts.json").write_text('{"steady.service": 3}', encoding="utf-8")
+    assert "STATE: RED" in health(home)
+    assert "STATE: GREEN" in health(home)
+
+
+def test_health_leaves_units_unknown_and_keeps_the_baseline_when_systemctl_fails(
+        tmp_path: Path, monkeypatch) -> None:
+    home = _service_home(tmp_path, ["steady.service"])
+    (home / "health" / "service-restarts.json").write_text('{"steady.service": 4}', encoding="utf-8")
+    _fake_systemctl(monkeypatch, "", rc=1)
+    rendered = health(home)
+    assert "SERVICE steady.service: unknown/unknown" in rendered
+    assert "STATE: RED" in rendered
+    assert (home / "health" / "service-restarts.json").read_text() == '{"steady.service": 4}'
