@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 _CHECKOUT_ROOT = Path(__file__).resolve().parent.parent
@@ -75,13 +76,17 @@ def test_the_guard_refuses_a_package_imported_from_a_foreign_root() -> None:
 
     This is the failure the guard exists for: an ``AttributeError`` for a helper
     a checkout test names but a pinned release predates reads as a broken change
-    while describing a different tree.
+    while describing a different tree. The foreign copy is built in a scratch
+    tree rather than named from the site, so the test does not depend on a
+    release worktree that only the author's checkout happens to have.
     """
-    foreign = _CHECKOUT_ROOT / ".mishe-tauftauf" / "releases" / \
-        "a437ee8efa183cbecbc6f7b0e33ce008d098ec7b" / "src"
-    completed = _probe(str(foreign), _CONFTEST, cwd="/tmp")
-    assert completed.returncode != 0
-    assert "not this checkout" in completed.stderr
+    with tempfile.TemporaryDirectory(prefix="guard-foreign-") as scratch:
+        foreign = Path(scratch) / "src" / "mishe_tauftauf"
+        foreign.mkdir(parents=True)
+        (foreign / "__init__.py").write_text("", encoding="utf-8")
+        completed = _probe(str(Path(scratch) / "src"), _CONFTEST, cwd="/tmp")
+        assert completed.returncode != 0
+        assert "not this checkout" in completed.stderr
 
 
 def test_the_guard_refuses_silence_when_the_package_resolves_from_nowhere() -> None:
