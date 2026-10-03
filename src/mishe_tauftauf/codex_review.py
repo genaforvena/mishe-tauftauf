@@ -18,6 +18,7 @@ import time
 INITIALIZATION_NOTICE = 'Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`.'
 DISABLED_HOST_STDERR = b'ERROR codex_core::tools::router: error=code-mode host is disabled'
 MAX_INPUT_BYTES = 120_000
+MAX_TRANSPORT_BYTES = 2_000_000
 MAX_OUTPUT_BYTES = 2_000_000
 DISABLED_FEATURES = ('shell_tool','unified_exec','apps','plugins','remote_plugin','hooks','multi_agent','goals','computer_use','browser_use','browser_use_external','in_app_browser','image_generation','view_image','shell_snapshot','memories','skill_search','skill_mcp_dependency_install','tool_suggest','sleep_tool','code_mode_host')
 INSTRUCTIONS = """You review proposed coordination drafts against supplied structured evidence.
@@ -203,9 +204,9 @@ def main():
     config_home=Path(os.environ.get('CODEX_HOME',str(Path.home()/'.codex')))
     if not args.cli.is_absolute() or args.runtime_config.resolve()!=(config_home/'config.toml').resolve():
         raise ValueError('explicit CLI/config cache dependencies must match installed runtime')
-    raw=__import__('sys').stdin.buffer.read(MAX_INPUT_BYTES+1)
-    if len(raw)>MAX_INPUT_BYTES:
-        print(json.dumps({'version':1,'input_hash':'','results':[],'error':'complete request exceeds checker input budget; no truncation permitted'}))
+    raw=__import__('sys').stdin.buffer.read(MAX_TRANSPORT_BYTES+1)
+    if len(raw)>MAX_TRANSPORT_BYTES:
+        print(json.dumps({'version':1,'input_hash':'','results':[],'error':'complete request exceeds worker transport budget; no truncation permitted'}))
         return
     result=review(json.loads(raw),probe_path=args.probe_report,timeout=args.timeout_seconds,cli=str(args.cli))
     print(json.dumps(result))

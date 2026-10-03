@@ -117,6 +117,26 @@ def test_parent_cache_tracks_explicit_cli_and_config(tmp_path,monkeypatch):
 
 
 
+def test_post_check_worker_round_trip_refuses_complete_oversized_request(tmp_path, monkeypatch):
+    import hashlib, json, os, sys
+    from mishe_tauftauf import post_check
+    cli=tmp_path/'codex';cli.write_text('fixture cli')
+    probe=tmp_path/'probe.json'
+    probe.write_text(json.dumps({'cli_sha256':hashlib.sha256(cli.read_bytes()).hexdigest(),'returncode':0,'sentinel_unchanged':True,'stderr':'code-mode host is disabled','command':codex_review.command(tmp_path/'schema',tmp_path,tmp_path/'instructions',str(cli))}))
+    config=tmp_path/'config.toml';config.write_text('model = "fixture"')
+    monkeypatch.setenv('CODEX_HOME',str(tmp_path))
+    argv=[sys.executable,'-m','mishe_tauftauf.codex_review','--cli',str(cli),'--runtime-config',str(config),'--probe-report',str(probe)]
+    (tmp_path/'publication-check.json').write_text(json.dumps({'command':argv,'timeout_seconds':10}))
+    report=post_check.review(tmp_path,'mind','ordinary review draft '+('x'*121000))
+    assert report['semantic_status']=='unknown'
+    assert report['status']=='unknown' and report['clear'] is False
+    assert report['input_hash']
+    assert {row['id'] for row in report['results']}=={q['id'] for q in post_check.questions('post')}
+    assert all(row['verdict']=='unknown' for row in report['results'])
+    assert not report['untested_questions']
+    assert 'no truncation permitted' in report['results'][0]['reason']
+
+
 def test_disabled_host_notice_is_exactly_once_and_pre_turn(tmp_path):
     import json
     cli,probe=fake_probe(tmp_path)
@@ -164,15 +184,13 @@ def test_parent_timeout_terminates_nested_cli_group(tmp_path):
         pytest.fail('nested CLI survived parent deadline')
 
 
-def test_oversized_stdin_returns_structured_fail_closed_result(monkeypatch,capsys):
-    import io,sys
+def test_oversized_stdin_returns_question_complete_refusal(monkeypatch,capsys):
+    import io,sys,json
     from pathlib import Path
+    req=request();req['body']='x'*(codex_review.MAX_INPUT_BYTES+1)
     monkeypatch.setattr(sys,'argv',['codex_review','--probe-report','unused','--cli','/usr/bin/codex','--runtime-config',str(Path.home()/'.codex/config.toml')])
-    monkeypatch.setattr(sys,'stdin',type('Input',(),{'buffer':io.BytesIO(b'x'*(codex_review.MAX_INPUT_BYTES+1))})())
+    monkeypatch.setattr(sys,'stdin',type('Input',(),{'buffer':io.BytesIO(json.dumps(req).encode())})())
     codex_review.main()
-    result=__import__('json').loads(capsys.readouterr().out)
-    assert result['version']==1
-    assert result['results']==[]
-    assert 'no truncation permitted' in result['error']
-
-
+    result=json.loads(capsys.readouterr().out)
+    assert result['version']==1 and result['input_hash']==req['input_hash']
+    assert result['results']==[{'id':'R06','verdict':'unknown','reason':'complete request exceeds checker input budget; no truncation permitted','evidence':[]}]
