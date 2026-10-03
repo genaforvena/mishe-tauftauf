@@ -168,6 +168,24 @@ def test_service_manifest_starts_empty_without_persist(tmp_path: Path) -> None:
     assert plant.service_manifest(home, "core", persist=False) == []
 
 
+def test_plant_without_services_preserves_an_existing_manifest(tmp_path: Path) -> None:
+    # A `--no-services` plant installs nothing, so it must keep recording the
+    # site's units; an emptied manifest reads RED and hides a genuinely dead unit.
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    manifest = home / "health" / "services.json"
+    manifest.write_text(json.dumps(["core-ci.service"]) + "\n", encoding="utf-8")
+    assert plant.write_service_manifest(home, "core", persist=False) == []
+    assert json.loads(manifest.read_text(encoding="utf-8")) == ["core-ci.service"]
+
+
+def test_plant_without_services_records_an_empty_manifest_for_a_fresh_site(tmp_path: Path) -> None:
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    plant.write_service_manifest(home, "core", persist=False)
+    assert json.loads((home / "health" / "services.json").read_text(encoding="utf-8")) == []
+
+
 def test_service_manifest_ignores_a_corrupt_manifest(tmp_path: Path) -> None:
     home = tmp_path / "site"
     (home / "health").mkdir(parents=True)
