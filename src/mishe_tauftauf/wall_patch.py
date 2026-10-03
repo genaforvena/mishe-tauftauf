@@ -8,6 +8,7 @@ from contextlib import contextmanager
 import fcntl
 import hashlib
 import json
+import math
 from pathlib import Path
 import subprocess
 
@@ -15,6 +16,8 @@ from .observations import validate_slug
 from .post_check import _save, _worker
 from .wall import settings
 
+WORKER_SETTLE_SECONDS = 60
+"""Extra outer budget so the reviewer can settle after its own model-call budget."""
 
 def snapshot(path):
     if path.is_symlink():
@@ -111,6 +114,14 @@ def patch_hash(record):
     return hashlib.sha256(json.dumps({name: values["after"] for name, values in record["files"].items()}, sort_keys=True).encode()).hexdigest()
 
 
+def _worker_timeout(config) -> float:
+    """Outer review budget: the configured budget plus settle slack."""
+    chosen = config.get("timeout_seconds", 295)
+    if isinstance(chosen, bool) or not isinstance(chosen, (int, float)) or not math.isfinite(chosen) or not 0 < chosen <= 600:
+        raise ValueError("review timeout_seconds must be finite and in (0, 600]")
+    return float(chosen) + WORKER_SETTLE_SECONDS
+
+
 def prepare(home, identity, paths):
     with lock(home):
         path = location(home, identity)
@@ -152,7 +163,10 @@ def review(home, record):
     request = {"version": 1, "input_hash": hashlib.sha256(body.encode()).hexdigest(), "body": "Review the complete scoped patch and test evidence supplied in context.",
         "questions": [{"id": "PATCH", "question": "Do the supplied patch bytes and test result support this bounded change under its stated cooperating-writer scope? Check code correctness, visible failures and scoped runtime recovery. Activation commands are required to restart consumers without editing source or performing irreversible external actions; arbitrary shell side effects and hostile concurrent writers are outside this scope. Do not require task/receipt/branch machinery or whole-system transactions. Suspicious for a concrete code defect under these preconditions; unknown for missing essential evidence."}],
         "context": {"context_complete": True, "evidence_references": [reference], "patch": evidence}}
-    result = json.loads(_worker(config["command"], json.dumps(request).encode(), min(config.get("timeout_seconds", 295), 295)))
+    # The outer budget must exceed the reviewer's own model-call budget, or the
+    # gate kills a reviewer that would have finished and reports a false refusal.
+    outer = _worker_timeout(config)
+    result = json.loads(_worker(config["command"], json.dumps(request).encode(), outer))
     validate_response(request, result)
     return {"clear": result["results"][0].get("verdict") == "clear", "request_hash": request["input_hash"], "response": result}
 

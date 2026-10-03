@@ -520,6 +520,9 @@ def init(home: Path, slug: str, engine_command: str = "codex") -> str:
         argv = shlex.split(engine_command)
         if not argv:
             raise ValueError("engine command is empty")
+        # An absolute engine keeps the mind runnable under a PATH that no longer
+        # names it; the write happens once, so a bare name is never healed later.
+        argv[0] = shutil.which(argv[0]) or argv[0]
         mind.write_text("#!/bin/sh\nexec " + shlex.join(argv) + "\n", encoding="utf-8")
         mind.chmod(0o755)
     top = home / "top-pains" / slug

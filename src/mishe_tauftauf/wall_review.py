@@ -5,6 +5,7 @@ permanent hard gate. Set `MISHE_WALL_REVIEW_MODEL` (or the `model` key of
 `SITE/patch-review.json`) to any independent, tool-free reviewer.
 """
 from __future__ import annotations
+import math
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ import sys
 import tempfile
 
 DEFAULT_MODEL = "openai-codex/gpt-6-luna"
+DEFAULT_TIMEOUT = 240
 
 
 def reviewer_model(home: Path | None = None) -> str:
@@ -29,6 +31,35 @@ def reviewer_model(home: Path | None = None) -> str:
                 if model:
                     return str(model)
     return DEFAULT_MODEL
+
+
+def reviewer_timeout(home: Path | None = None) -> float:
+    """Model-call budget; the outer worker budget must stay above it."""
+    for name, env in (("patch-review.json", "MISHE_WALL_REVIEW_TIMEOUT"),):
+        if os.environ.get(env):
+            return _checked_timeout(os.environ[env], env)
+        if home is not None:
+            config = home / name
+            if config.exists():
+                try:
+                    value = json.loads(config.read_text()).get("timeout_seconds")
+                except (OSError, ValueError):
+                    value = None
+                if value is not None:
+                    return _checked_timeout(value, f"{name} timeout_seconds")
+    return DEFAULT_TIMEOUT
+
+
+def _checked_timeout(value: object, source: str) -> float:
+    # Environment values arrive as strings; refuse anything that is not a plain number.
+    if isinstance(value, str):
+        try:
+            value = float(value.strip())
+        except ValueError:
+            value = None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 < value <= 600:
+        raise ValueError(f"reviewer timeout from {source} must be finite and in (0, 600]")
+    return float(value)
 
 
 def main():
@@ -56,7 +87,7 @@ def main():
         path.write_text(prompt)
         result = subprocess.run(["omp", "--print", "--no-session", "--no-extensions", "--no-tools",
             "--no-lsp", "--no-pty", "--model", reviewer_model(home), "--thinking", "high",
-            "--cwd", directory, "@" + str(path)], capture_output=True, text=True, timeout=240)
+            "--cwd", directory, "@" + str(path)], capture_output=True, text=True, timeout=reviewer_timeout(home))
     if result.returncode:
         raise RuntimeError(f"patch reader failed: {result.stderr[-1000:]}")
     raw = result.stdout.strip()
