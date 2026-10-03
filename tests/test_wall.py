@@ -29,15 +29,24 @@ def test_planning_turn_settles_without_task_claim(tmp_path):
     assert seed._state(tmp_path, "genome")[1] is None
 
 
-def test_wall_dm_and_shared_walls(tmp_path):
+def test_wall_context_includes_only_monitored_role_walls(tmp_path):
     setup_wall(tmp_path)
     from mishe_tauftauf import wall
-    wall.write(tmp_path, "genome", "Investigating rollback; waiting for the health sample.")
+    (tmp_path / "walls").mkdir(exist_ok=True)
+    (tmp_path / "walls" / "genome.md").write_text("Genome plan")
+    (tmp_path / "walls" / "health.md").write_text("Health plan")
+    (tmp_path / "walls" / "audit.md").write_text("Scratch audit")
+    (tmp_path / "charters").mkdir()
+    (tmp_path / "minds").mkdir()
+    (tmp_path / "charters" / "resident.md").write_text("resident")
+    (tmp_path / "minds" / "resident").write_text("#!/bin/sh\n")
+    (tmp_path / "walls" / "resident.md").write_text("Resident plan")
     wall.message(tmp_path, "health", "genome", "Sample is ready; see artifacts/sample.md")
     text = wall.context(tmp_path, "genome")
-    assert "Investigating rollback" in text and "Sample is ready" in text
-    assert "health" in text
-
+    sections = [line for line in text.splitlines() if line.startswith("WALL ")]
+    assert sections == ["WALL health", "WALL resident"]
+    assert "Scratch audit" not in text
+    assert "Sample is ready; see artifacts/sample.md" in text
 def test_wall_write_rejects_uninitialized_reserved_home(tmp_path):
     setup_wall(tmp_path)
     from mishe_tauftauf import wall

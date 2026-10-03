@@ -145,13 +145,15 @@ def addressed(entry, role: str) -> bool:
 
 def context(home: Path, role: str) -> str:
     from .observations import validate_slug
+    from .activity import roles
     validate_slug(role)
     sections = []
     own = home / "walls" / f"{role}.md"
     sections.append(f"YOUR WALL ({own})\n" + (own.read_text() if own.exists() else "(empty; write your plan here)"))
-    for path in sorted((home / "walls").glob("*.md")):
-        if path != own:
-            sections.append(f"WALL {path.stem}\n{path.read_text()}")
+    for name in sorted(roles(home) - {role}):
+        path = home / "walls" / f"{name}.md"
+        if path.is_file():
+            sections.append(f"WALL {name}\n{path.read_text()}")
     entries = Feed(home).entries()
     inbox = [e for e in entries if addressed(e, role)][-12:]
     sections.append("ADDRESSED MESSAGES (shared tape, not private)\n" + "\n".join(
