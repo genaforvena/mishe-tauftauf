@@ -99,6 +99,23 @@ def cmd_wall(args) -> int:
 
 
 def cmd_access(args) -> int:
+    if args.access_command == "recover":
+        row = access.recover(args.home, args.id, owner=args.owner, task=args.task,
+                             resolver=args.resolver, missing=args.missing, action=args.action,
+                             alternatives=args.alternative, cutoff=args.cutoff, evidence=args.evidence,
+                             capability=args.capability, unblocks=args.unblocks, reason=args.reason)
+        print(f"{row['id']} {row['status']}; next: {row['action']}; continue other useful work")
+        return 0
+    if args.access_command == "resolve":
+        access.resolve_recovery(args.home, args.id, args.evidence,
+                                checked_action=args.checked_action, via_alternative=args.via_alternative)
+        print(f"{args.id} resolved with evidence")
+        return 0
+    if args.access_command == "recoveries":
+        for row in access.recoveries(args.home):
+            print(f"{row['id']} {row['status']} owner={row['owner']} resolver={row['resolver']} "
+                  f"next={row['action']} alternatives={'; '.join(row['alternatives'])} cutoff={row['cutoff']}")
+        return 0
     if args.access_command in {None, "menu"} or (args.access_command in {"grant", "revoke"} and args.id is None):
         from .permission_menu import run
         return run(args.home, "revoked" if args.access_command == "revoke" else "granted")
@@ -732,6 +749,23 @@ def parser() -> argparse.ArgumentParser:
     access_parser.set_defaults(func=cmd_access)
     access_cmd = access_parser.add_subparsers(dest="access_command")
     p = access_cmd.add_parser("request"); p.add_argument("id"); p.add_argument("--owner", required=True); p.add_argument("--task", required=True); p.add_argument("--capability", required=True); p.add_argument("--unblocks", action="append", required=True); p.add_argument("--reason", required=True); p.set_defaults(func=cmd_access)
+    p = access_cmd.add_parser("recover")
+    p.add_argument("id")
+    for name in ("owner", "task", "resolver", "missing", "action", "cutoff"):
+        p.add_argument("--" + name, required=True)
+    p.add_argument("--alternative", action="append", required=True)
+    p.add_argument("--evidence", type=Path, required=True)
+    p.add_argument("--capability")
+    p.add_argument("--unblocks", action="append")
+    p.add_argument("--reason")
+    p.set_defaults(func=cmd_access)
+    p = access_cmd.add_parser("resolve")
+    p.add_argument("id")
+    p.add_argument("--evidence", type=Path, required=True)
+    p.add_argument("--checked-action", required=True)
+    p.add_argument("--via-alternative", action="store_true")
+    p.set_defaults(func=cmd_access)
+    p = access_cmd.add_parser("recoveries"); p.set_defaults(func=cmd_access)
     for verb in ("grant", "revoke", "check"):
         p = access_cmd.add_parser(verb); p.add_argument("id", nargs="?" if verb != "check" else None); p.set_defaults(func=cmd_access)
     p = access_cmd.add_parser("list"); p.set_defaults(func=cmd_access)

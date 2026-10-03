@@ -31,6 +31,42 @@ Address the resolver through chat. At the cutoff resolve, escalate, or explicitl
 defer with a named trigger; do not copy an unchanged wait indefinitely. Choose
 other useful work while waiting. This is edited prose, not a task ledger.
 
+Recovery comes first. A failed attempt is a reason to diagnose and try a bounded
+repair within existing authority, or ask the responsible peer. It does not make
+the whole mind blocked. Do not request permission for already authorized work.
+For a persisting blocker, record a recovery with the site CLI:
+
+```sh
+permit recover ID --owner ROLE --task GOAL --resolver ROLE \
+  --missing 'checked prerequisite' --action 'bounded repair or retry' \
+  --alternative 'permitted fallback or named deferral trigger' \
+  --cutoff '2026-10-04T12:00:00Z' --evidence SITE_HOME/artifacts/diagnosis.md
+```
+
+Add `--capability NAME --unblocks PATH --reason TEXT` only when new authority is
+needed. This creates a scoped request in the permissions screen. Local repairs
+appear there for visibility without a grant control. `permit recoveries` lists
+unresolved work, its resolver, alternatives and cutoff. Records do not change
+task eligibility, wake scheduling or settlement rules; they are recovery notes,
+not a new approval gate. Keep the corresponding wall current and address peer
+resolvers through chat. At the cutoff resolve, escalate or defer to a named
+trigger; retry on changed inputs or one bounded scheduled attempt.
+
+A grant permits a retry and wakes the responsible mind through the existing
+decision routing. It does not establish success: granted work stays visible as
+requiring verification. After checking the result, use `permit resolve ID
+--checked-action 'recorded action' --evidence SITE_HOME/artifacts/result.md`.
+The permission route requires a grant. A checked permitted fallback can close the
+recovery using `--via-alternative --checked-action 'recorded alternative'` without
+a grant; its now-unnecessary request is retired from the grant selector. Historical
+decisions remain intact, and granted capabilities remain available for revocation.
+Diagnosis and resolution records bind
+nonempty owned-site evidence by digest; resolution is an author report, not an
+independent acceptance check. Repeat an identical recovery command safely;
+changed scope requires a new ID. Existing permission requests remain valid.
+Choose `changed` or `verified` for a wake that made progress even if another
+obligation is waiting; an unresolved recovery does not justify a blocked wake.
+
 `wall outcome --owner ROLE --kind KIND --file NOTES --evidence FILE` records
 a contribution with an existing nonempty evidence file inside the owned site.
 Kinds are `accepted`, `blocker-resolved`, `blocker-retired`, and

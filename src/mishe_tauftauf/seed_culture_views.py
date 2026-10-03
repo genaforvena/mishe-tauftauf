@@ -11,7 +11,7 @@ from time import monotonic
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .access import list_requests
+from .access import list_requests, recoveries, retired_requests
 from .ci_watch import line as ci_line
 from .discovery import latest
 
@@ -299,14 +299,25 @@ def permissions(home: Path) -> str:
              "COMMAND: permit (selector) | permit revoke (selector) | permit list | permit grant REQUEST_ID",
              "REQUEST: permit request ID --owner ROLE --task TASK --capability NAME --unblocks PATH --reason TEXT"]
     requests = list_requests(home)
-    pending = [(item, state) for item, state in requests if state == "pending"]
+    retired = retired_requests(home)
+    pending = [(item, state) for item, state in requests if state == "pending" and item.identity not in retired]
     lines.append(f"PENDING: {len(pending)} · TOTAL: {len(requests)}")
     for item, state in requests[-20:]:
-        lines.append(f"{item.identity} {state.upper()} owner={item.owner} task={item.task} "
+        display_state = f"RETIRED ({state.upper()})" if item.identity in retired else state.upper()
+        lines.append(f"{item.identity} {display_state} owner={item.owner} task={item.task} "
                      f"capability={item.capability} unblocks={','.join(item.unblocks)}")
-        if state == "pending":
+        if state == "pending" and item.identity not in retired:
             lines.append(f"  WHY: {item.reason}")
-    verdict = "PASS permission requests visible"
+    active = recoveries(home)
+    lines.append(f"RECOVERIES: {len(active)} unresolved obligations; keep other useful work moving")
+    for row in active:
+        status = "GRANTED; VERIFY RECOVERY" if row["status"] == "retry" else row["status"].upper()
+        lines.extend([f"{row['id']} {status} owner={row['owner']} task={row['task']} resolver={row['resolver']}",
+                      f"  MISSING: {row['missing']}", f"  NEXT: {row['action']}",
+                      f"  ALTERNATIVES: {'; '.join(row['alternatives'])}",
+                      f"  CUTOFF: {row['cutoff']}",
+                      f"  EVIDENCE: {row['evidence']['path']}"])
+    verdict = "UNKNOWN permission recovery route incomplete" if any(row["status"] == "unknown" for row in active) else "PASS permission requests visible"
     _report(home, "permissions", verdict)
     return "\n".join(lines) + "\n"
 
