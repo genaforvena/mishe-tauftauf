@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -935,6 +937,126 @@ def test_runtime_drift_keeps_a_weak_pin_visible_without_claiming_drift() -> None
         reading = discovery._runtime_drift(home)
     assert reading["state"] == "unknown"
     assert reading["sample"] == "service roots=['/srv/checkout'] but pin invalid: not a clean worktree"
+
+
+def _root_with_sensors(root: Path, identifiers: list[str]) -> Path:
+    """Write a release-shaped source root emitting the named sensor ids."""
+    (root / "src" / "mishe_tauftauf").mkdir(parents=True, exist_ok=True)
+    lines = ["def sample(home):", "    observed = []"]
+    for identifier in identifiers:
+        lines.append(f'    observed.append({{"id": "{identifier}", "kind": "read"}})')
+    lines.append("    return observed")
+    (root / "src" / "mishe_tauftauf" / "discovery.py").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8")
+    return root
+
+
+def test_sensor_names_reads_the_ids_a_source_root_can_emit() -> None:
+    from mishe_tauftauf import discovery
+
+    root = _root_with_sensors(Path("/tmp") / f"sensor-names-{os.getpid()}", [
+        "sense.proc.top-cpu", "sense.tmux.windows"])
+    try:
+        names, failure = discovery._sensor_names(str(root))
+    finally:
+        shutil.rmtree(root)
+    assert failure is None
+    assert names == {"sense.proc.top-cpu", "sense.tmux.windows"}
+
+
+def test_sensor_names_reports_an_unparseable_release_instead_of_importing_it() -> None:
+    from mishe_tauftauf import discovery
+
+    root = _root_with_sensors(Path("/tmp") / f"sensor-broken-{os.getpid()}", [])
+    (root / "src" / "mishe_tauftauf" / "discovery.py").write_text(
+        "def broken(:\n", encoding="utf-8")
+    try:
+        names, failure = discovery._sensor_names(str(root))
+    finally:
+        shutil.rmtree(root)
+    assert names == set()
+    assert failure.startswith("module unparseable: invalid syntax")
+
+
+def test_sensor_coverage_names_a_sensor_the_pin_emits_but_a_service_dropped() -> None:
+    from mishe_tauftauf import discovery
+
+    pin = _root_with_sensors(Path("/tmp") / f"sensor-pin-{os.getpid()}", [
+        "sense.proc.top-cpu", "sense.runtime.drift"])
+    stale = _root_with_sensors(Path("/tmp") / f"sensor-stale-{os.getpid()}", [
+        "sense.runtime.drift"])
+    try:
+        with patch("mishe_tauftauf.discovery._pinned_root",
+                   return_value=(str(pin), None)):
+            reading = discovery._sensor_coverage(Path("/tmp"), [str(stale)])
+    finally:
+        shutil.rmtree(pin)
+        shutil.rmtree(stale)
+    assert reading["state"] == "drift"
+    assert reading["sample"] == f"{stale.name}=1 {stale.name} missing=sense.proc.top-cpu"
+    assert reading["identity"]["missing"] == {str(stale): ["sense.proc.top-cpu"]}
+    assert reading["identity"]["extra"] == {}
+
+
+def test_sensor_coverage_reports_verified_when_a_service_emits_the_pins_set() -> None:
+    from mishe_tauftauf import discovery
+
+    pin = _root_with_sensors(Path("/tmp") / f"sensor-match-pin-{os.getpid()}", [
+        "sense.proc.top-cpu", "sense.runtime.drift"])
+    live = _root_with_sensors(Path("/tmp") / f"sensor-match-live-{os.getpid()}", [
+        "sense.runtime.drift", "sense.proc.top-cpu"])
+    try:
+        with patch("mishe_tauftauf.discovery._pinned_root",
+                   return_value=(str(pin), None)):
+            reading = discovery._sensor_coverage(Path("/tmp"), [str(live)])
+    finally:
+        shutil.rmtree(pin)
+        shutil.rmtree(live)
+    assert reading["state"] == "verified"
+    assert reading["sample"] == f"{live.name}=2"
+
+
+def test_sensor_coverage_stays_unknown_without_an_imported_root() -> None:
+    from mishe_tauftauf import discovery
+
+    reading = discovery._sensor_coverage(Path("/tmp"), [])
+    assert reading["state"] == "unknown"
+    assert reading["sample"] == "no imported root to read"
+
+
+def test_sensor_coverage_keeps_an_unreadable_pin_unknown_without_claiming_drift() -> None:
+    from mishe_tauftauf import discovery
+
+    live = _root_with_sensors(Path("/tmp") / f"sensor-weakpin-{os.getpid()}", [
+        "sense.proc.top-cpu"])
+    try:
+        with patch("mishe_tauftauf.discovery._pinned_root",
+                   return_value=(None, "pin invalid: not a clean worktree")):
+            reading = discovery._sensor_coverage(Path("/tmp"), [str(live)])
+    finally:
+        shutil.rmtree(live)
+    # The pin's own sensor set is unreadable, so the comparison has no ground
+    # truth and the read stays unknown rather than naming every sensor missing.
+    assert reading["state"] == "unknown"
+    assert "pin sensor set unreadable: pin invalid: not a clean worktree" in reading["sample"]
+
+
+def test_sensor_coverage_names_a_sensor_a_service_added_that_the_pin_lacks() -> None:
+    from mishe_tauftauf import discovery
+
+    pin = _root_with_sensors(Path("/tmp") / f"sensor-extra-pin-{os.getpid()}", [
+        "sense.runtime.drift"])
+    live = _root_with_sensors(Path("/tmp") / f"sensor-extra-live-{os.getpid()}", [
+        "sense.runtime.drift", "sense.tmux.windows"])
+    try:
+        with patch("mishe_tauftauf.discovery._pinned_root",
+                   return_value=(str(pin), None)):
+            reading = discovery._sensor_coverage(Path("/tmp"), [str(live)])
+    finally:
+        shutil.rmtree(pin)
+        shutil.rmtree(live)
+    assert reading["state"] == "drift"
+    assert reading["sample"] == f"{live.name}=2 {live.name} added=sense.tmux.windows"
 
 
 def test_service_import_roots_parses_and_deduplicates_pythonpath() -> None:

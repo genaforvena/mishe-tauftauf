@@ -1,6 +1,7 @@
 """Read-only local frontier scan; values are evidence, not authority."""
 
 from __future__ import annotations
+import ast
 
 import json
 import os
@@ -17,6 +18,8 @@ COMMANDS = ("rg", "git", "tmux", "python3", "systemctl", "journalctl", "ps", "df
             "lsusb", "lspci", "sensors", "upower", "evtest")
 
 KERNEL_FAULT = "Failed to resubmit video URB"
+
+SENSOR_ID = re.compile(r"^sense\.[a-z0-9]+(?:\.[a-z0-9-]+)+$")
 
 def _thermal_slots(root: Path) -> list[Path]:
     try:
@@ -385,6 +388,94 @@ def _runtime_drift(home: Path) -> dict[str, object]:
     return {"id": "sense.runtime.drift", "state": state, "sample": sample,
             "kind": "read", "identity": {"pin": pinned, "services": distinct}}
 
+def _sensor_names(root: str) -> tuple[set[str], str | None]:
+    """The ``sense.*`` ids a source root can emit, or None with a reason.
+
+    Roots are directories, not imports, so the module is parsed rather than
+    imported: a release with a syntax error reports the failure instead of
+    poisoning this process's own namespace. A root names its package under
+    ``src/``, the layout a release and a checkout share.
+    """
+    module = Path(root) / "src" / "mishe_tauftauf" / "discovery.py"
+    try:
+        source = module.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return set(), "module unreadable"
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        return set(), f"module unparseable: {exc}"
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            match = SENSOR_ID.match(node.value)
+            if match:
+                names.add(match.group(0))
+    return names, None
+
+
+def _sensor_coverage(home: Path, roots: list[str]) -> dict[str, object]:
+    """Compare the sensors each imported root can emit with the pin's.
+
+    ``sense.runtime.drift`` compares roots and is blind once they agree, because a
+    release can carry a source tree that silently drops or adds a sensor. A restart
+    into such a release changes what the plant can observe with no other visible
+    sign, so the emitted ids are counted per root and compared with the pin's.
+    The pin is the reference rather than the previous sample: after the restart
+    being caught, ``latest.json`` already lists the reduced set and would hide it.
+    """
+    if not roots:
+        return {"id": "sense.runtime.sensor-coverage", "state": "unknown",
+                "sample": "no imported root to read", "kind": "read"}
+    per_root: dict[str, list[str]] = {}
+    failures: dict[str, str] = {}
+    for root in roots:
+        names, failure = _sensor_names(root)
+        if failure is None:
+            per_root[root] = sorted(names)
+        else:
+            failures[root] = failure
+    if failures and not per_root:
+        reason = next(iter(failures.values()))
+        return {"id": "sense.runtime.sensor-coverage", "state": "unknown",
+                "sample": f"sensor set unreadable: {reason}", "kind": "read"}
+    pinned, pin_failure = _pinned_root(home, str(Path(home).resolve().parent))
+    baseline: set[str] = set()
+    if pinned is not None:
+        names, pin_module_failure = _sensor_names(pinned)
+        baseline = set() if pin_module_failure is not None else names
+        if pin_module_failure is not None:
+            pin_failure = pin_failure or pin_module_failure
+    missing = {root: sorted(baseline - set(names))
+               for root, names in per_root.items() if baseline - set(names)}
+    extra = {root: sorted(set(names) - baseline)
+             for root, names in per_root.items() if set(names) - baseline}
+    state = "verified"
+    parts = [", ".join(f"{Path(root).name}={len(names)}" for root, names in per_root.items())]
+    if baseline:
+        # The pin's sensor set is the ground truth. Without it, both directions of
+        # the comparison are meaningless: every sensor a service has would read as
+        # added, and every one it lacks as dropped.
+        if missing:
+            state = "drift"
+            for root, names in sorted(missing.items()):
+                parts.append(f"{Path(root).name} missing={','.join(names)}")
+        for root, names in sorted(extra.items()):
+            if state == "verified":
+                state = "drift"
+            parts.append(f"{Path(root).name} added={','.join(names)}")
+    if failures:
+        state = "drift"
+        parts.append("unreadable=" + ",".join(sorted(failures)))
+    if not baseline:
+        state = "unknown" if state == "verified" else state
+        parts.append(f"pin sensor set unreadable: {pin_failure}")
+    return {"id": "sense.runtime.sensor-coverage", "state": state,
+            "sample": " ".join(parts), "kind": "read",
+            "identity": {"roots": per_root, "unreadable": failures,
+                         "missing": missing, "extra": extra,
+                         "pin": pinned if pin_failure is None else None}}
+
 def sample(home: Path) -> dict[str, object]:
     """Take bounded reads; never open input event streams or record key content."""
     observed: list[dict[str, object]] = []
@@ -556,6 +647,8 @@ def sample(home: Path) -> dict[str, object]:
         names = []
     observed.append({"id": "sense.tmux.windows", "state": "verified" if names else "unknown",
                      "sample": names or "session unavailable", "kind": "read"})
+    roots, _coverage_failure = _service_import_roots(home)
+    observed.append(_sensor_coverage(home, roots))
     observed.append(_runtime_drift(home))
     return {"created": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
             "node": os.uname().nodename, "observations": observed}
