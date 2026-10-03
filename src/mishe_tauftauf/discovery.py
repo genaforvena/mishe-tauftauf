@@ -108,32 +108,107 @@ def _cpu_jiffies(pid: int) -> int | None:
         return None
 
 
-def _ps_processes() -> dict[int, dict[str, object]]:
-    """One bounded `ps` read: pid, lifetime %CPU, elapsed seconds and the command."""
+def _ps_processes(session: str | None = None) -> dict[int, dict[str, object]]:
+    """One bounded `ps` read: pid, parent, lifetime %CPU, elapsed seconds, command.
+
+    `ppid` comes from the same snapshot as the row, so a retained row's ancestry is
+    internally consistent by construction rather than being read in a second pass.
+    A later reader cannot reconstruct it: on this host five of eight retained
+    top-CPU rows are gone from a snapshot taken seconds later, because the busiest
+    processes are short-lived `mesh-*` tools.
+    """
     try:
-        result = subprocess.run(["ps", "-eo", "pid,pcpu,etimes,args", "--no-headers"],
+        result = subprocess.run(["ps", "-eo", "pid,ppid,pcpu,etimes,args", "--no-headers"],
                                 capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
         return {}
     if result.returncode != 0:
         return {}
     processes: dict[int, dict[str, object]] = {}
+    parents: dict[int, int] = {}
+    commands: dict[int, str] = {}
     for line in result.stdout.splitlines():
-        columns = line.split(None, 3)
-        if len(columns) < 4:
+        columns = line.split(None, 4)
+        if len(columns) < 5:
             continue
-        pid_text, pcpu_text, etimes_text, args_text = columns
-        if not pid_text.isdigit():
+        pid_text, ppid_text, pcpu_text, etimes_text, args_text = columns
+        if not pid_text.isdigit() or not ppid_text.isdigit():
             continue
         try:
+            pid = int(pid_text)
+            ppid = int(ppid_text)
             pcpu = float(pcpu_text)
             etimes = int(etimes_text)
         except ValueError:
             continue
-        processes[int(pid_text)] = {"pid": int(pid_text), "pcpu": pcpu,
-                                    "etimes": etimes,
-                                    "args": " ".join(args_text.split())[:160]}
+        args = " ".join(args_text.split())[:160]
+        parents[pid] = ppid
+        commands[pid] = args
+        processes[pid] = {"pid": pid, "ppid": ppid, "pcpu": pcpu,
+                          "etimes": etimes, "args": args}
+    if session is not None:
+        # Mark descent from this session's tmux server, recording an explicit
+        # in_session key so a reader distinguishes "not in this session" from
+        # "descent was not assessed". Its pid is matched by exact argv tokens
+        # rather than by `tmux display-message -p '#{pid}'`, which answers the
+        # *client's* server and returns a live pid for a session that does not
+        # exist; a substring match is no better, since other servers run here
+        # with `-s rns` or `-s gate`.
+        server = _session_server(commands, session)
+        for pid in processes:
+            processes[pid]["in_session"] = _descends_from(pid, parents, server)
     return processes
+
+
+def _session_server(commands: dict[int, str], session: str) -> int | None:
+    """The pid running `tmux new-session -s session`, or None when it is not running.
+
+    `_new_session` starts the server with a literal `-d -s <name> -n <window>` argv,
+    so the name is matched as an exact argv word and never as a substring. `ps`
+    reports the executable by its full path, so only argv[0]'s basename is compared,
+    and a bare `tmux` invocation matches too.
+    """
+    prefix = ["new-session", "-d", "-s", session]
+    for pid, args in commands.items():
+        words = args.split()
+        if len(words) < len(prefix) + 1:
+            continue
+        if words[0].rsplit("/", 1)[-1] == "tmux" and words[1:1 + len(prefix)] == prefix:
+            return pid
+    return None
+
+
+def _descends_from(pid: int, parents: dict[int, int], ancestor: int | None,
+                   limit: int = 48) -> bool | None:
+    """Whether `pid` reaches `ancestor` by parent, claiming only what is known.
+
+    Returns None when the chain cannot be walked to a decision — the ancestor is not
+    running, or a parent is missing from this snapshot — instead of reporting that
+    as `False`. A missing parent is a process that exited between the snapshot and
+    this walk, so descent is genuinely undetermined, not absent.
+    """
+    if ancestor is None:
+        return None
+    seen: set[int] = set()
+    current = pid
+    for _ in range(limit):
+        if current == ancestor:
+            return True
+        if current in seen:
+            return None
+        seen.add(current)
+        parent = parents.get(current)
+        if parent is None:
+            # This pid is absent from the snapshot, so the chain is broken rather
+            # than complete: its own parent may well reach the ancestor, and
+            # reporting "outside the session" would be a guess.
+            return None
+        if parent == 0:
+            # ppid 0 is init or a kernel thread, neither of which has a parent to
+            # walk; the chain is complete and the ancestor is not above it.
+            return False
+        current = parent
+    return None
 
 
 def _rate_key(row: dict[str, object]) -> tuple[float, float]:
@@ -143,15 +218,19 @@ def _rate_key(row: dict[str, object]) -> tuple[float, float]:
 
 
 def _row_text(row: dict[str, object]) -> str:
-    """Render one retained row, naming the key that produced it."""
+    """Render one retained row, naming the keys that produced it."""
+    in_session = row.get("in_session")
+    tag = ("" if in_session is None
+           else " in-session" if in_session is True else " outside-session")
     if row.get("rate") is None:
-        return (f"pid={row['pid']} rate=unmeasured pcpu={row['pcpu']:.1f}% "
-                f"etimes={row['etimes']}s {row['args']}")
-    return (f"pid={row['pid']} rate={row['rate']:.1f}% pcpu={row['pcpu']:.1f}% "
-            f"etimes={row['etimes']}s {row['args']}")
+        return (f"pid={row['pid']} ppid={row['ppid']} rate=unmeasured "
+                f"pcpu={row['pcpu']:.1f}% etimes={row['etimes']}s{tag} {row['args']}")
+    return (f"pid={row['pid']} ppid={row['ppid']} rate={row['rate']:.1f}% "
+            f"pcpu={row['pcpu']:.1f}% etimes={row['etimes']}s{tag} {row['args']}")
 
 
-def _top_cpu_processes(rows: int = TOP_CPU_ROWS,
+def _top_cpu_processes(session: str | None = None,
+                       rows: int = TOP_CPU_ROWS,
                        sample_seconds: float = TOP_CPU_SAMPLE_SECONDS) -> list[dict[str, object]]:
     """Retain the busiest processes so a later scan can attribute, not just detect.
 
@@ -167,8 +246,12 @@ def _top_cpu_processes(rows: int = TOP_CPU_ROWS,
     the event actually lives in; the lifetime average and `etimes` stay as columns
     for context. A process that burned no tick in the window still ranks below one
     that did, and its lifetime average orders those ties rather than deciding them.
+
+    `ppid` and `in_session` are recorded beside the row because a later reader
+    cannot recover them: most retained rows are short-lived tools that have already
+    exited by the next snapshot.
     """
-    processes = _ps_processes()
+    processes = _ps_processes(session)
     if not processes:
         return []
     first = {pid: _cpu_jiffies(pid) for pid in processes}
@@ -215,6 +298,92 @@ def _journal_error_window(past_minutes: int = 10, limit: int = 400) -> dict:
     return {"state": "verified",
             "sample": f"last-{past_minutes}min kernel-error-count={len(faults)} endpoints={names}"}
 
+
+
+def _import_root(path: str) -> str | None:
+    """The source root a PYTHONPATH entry imports, or None when it names none.
+
+    A release install imports from ``<release>/src`` and a checkout from its own
+    root, so dropping a trailing ``src`` component yields the root either layout
+    names. This matches :func:`mishe_tauftauf.wall_view._import_roots`, keeping
+    the dashboard and the scan reading one root per service.
+    """
+    if not path:
+        return None
+    candidate = Path(path)
+    return str(candidate.parent) if candidate.name == "src" else str(candidate)
+
+
+def _service_import_roots(home: Path) -> tuple[list[str], str | None]:
+    """Import roots the listed seed services actually run, with a failure reason.
+
+    ``systemctl --user show`` reports the *effective* environment, so a drop-in
+    overriding the base unit cannot hide: its value is the one systemd applies.
+    """
+    manifest = home / "health" / "services.json"
+    try:
+        units = json.loads(manifest.read_text())
+    except (OSError, ValueError):
+        return [], "service manifest unreadable"
+    if not isinstance(units, list) or not units:
+        return [], "service manifest empty"
+    environment = os.environ.copy()
+    environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    try:
+        result = subprocess.run(["systemctl", "--user", "show", *units,
+                                 "-p", "Id,Environment"],
+                                capture_output=True, text=True, timeout=5,
+                                env=environment)
+    except (OSError, subprocess.SubprocessError):
+        return [], "systemctl unavailable"
+    if result.returncode:
+        return [], "systemctl failed"
+    roots: list[str] = []
+    seen: set[str] = set()
+    for block in result.stdout.split("\n\n"):
+        values = dict(row.split("=", 1) for row in block.splitlines() if "=" in row)
+        for item in values.get("Environment", "").split():
+            if not item.startswith("PYTHONPATH="):
+                continue
+            for component in item[len("PYTHONPATH="):].split(os.pathsep):
+                root = _import_root(component)
+                if root and root not in seen:
+                    seen.add(root)
+                    roots.append(root)
+    return roots, None
+
+
+def _pinned_root(home: Path, default: str) -> tuple[str | None, str | None]:
+    """The root the runtime pin names, or None with a reason it could not."""
+    try:
+        from .runtime_source import source_for
+        return str(source_for(Path(home), Path(default)).resolve()), None
+    except (OSError, TypeError, ValueError, ImportError) as exc:
+        return None, f"pin invalid: {exc}"
+
+
+def _runtime_drift(home: Path) -> dict[str, object]:
+    """Compare the pin with the roots the seed services import.
+
+    A service can run a release older or newer than the pin without any pane going
+    dark, and a drop-in can outrank the base unit it amends, so the effective
+    environment is the only honest source. Distinct roots are a drift even when one
+    of them is the pin: the services disagree with each other as well as the record.
+    """
+    pinned, pin_failure = _pinned_root(home, str(Path(home).resolve().parent))
+    roots, failure = _service_import_roots(home)
+    if failure is not None:
+        return {"id": "sense.runtime.drift", "state": "unknown",
+                "sample": f"service roots unreadable: {failure}", "kind": "read"}
+    if pin_failure is not None:
+        return {"id": "sense.runtime.drift", "state": "unknown",
+                "sample": f"service roots={roots} but {pin_failure}", "kind": "read"}
+    distinct = sorted(set(roots))
+    state = "verified" if distinct == [pinned] else "drift"
+    sample = (f"pin={pinned} services={','.join(distinct)} {state}"
+              if distinct else f"pin={pinned} services=none {state}")
+    return {"id": "sense.runtime.drift", "state": state, "sample": sample,
+            "kind": "read", "identity": {"pin": pinned, "services": distinct}}
 
 def sample(home: Path) -> dict[str, object]:
     """Take bounded reads; never open input event streams or record key content."""
@@ -284,7 +453,10 @@ def sample(home: Path) -> dict[str, object]:
     else:
         observed.append({"id": "sense.proc.cpu-busy", "state": "unknown",
                          "sample": "/proc/stat cpu fields unavailable", "kind": "read"})
-    top_cpu = _top_cpu_processes()
+    # Pass the name even when it is empty: a persisted scan then always carries an
+    # in_session key, so a reader distinguishes "outside this session" from
+    # "descent was not assessed" instead of guessing at a missing field.
+    top_cpu = _top_cpu_processes(os.environ.get("MISHE_SEED_SESSION") or "")
     if top_cpu:
         measured = [row for row in top_cpu if row.get("rate") is not None]
         observed.append({"id": "sense.proc.top-cpu", "state": "verified",
@@ -384,6 +556,7 @@ def sample(home: Path) -> dict[str, object]:
         names = []
     observed.append({"id": "sense.tmux.windows", "state": "verified" if names else "unknown",
                      "sample": names or "session unavailable", "kind": "read"})
+    observed.append(_runtime_drift(home))
     return {"created": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
             "node": os.uname().nodename, "observations": observed}
 
