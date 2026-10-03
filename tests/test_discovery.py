@@ -771,7 +771,10 @@ def test_sample_carries_a_bounded_top_cpu_read() -> None:
     assert reading["processes"] == [{"pid": 42, "ppid": 1001, "pcpu": 117.0,
                                      "etimes": 1500,
                                      "args": "/usr/bin/llama-server --port 7000",
-                                     "in_session": None, "rate": 0.0}]
+                                     "rate": 0.0}]
+    # No session was named, so the row carries no in_session key rather than
+    # attributing the process to a session the scan never named.
+    assert "in_session" not in reading["processes"][0]
     assert "pid=42 ppid=1001 rate=0.0% pcpu=117.0% etimes=1500s" in reading["sample"]
     assert reading["sample"].endswith(" key=delta-rate-over-1.0s")
 
@@ -794,23 +797,84 @@ def test_top_cpu_row_count_is_bounded_on_a_busy_host() -> None:
     assert pids == sorted(pids, reverse=True)
 
 
-def test_session_server_matches_the_exact_argv_word_not_a_substring() -> None:
+def test_session_server_asks_tmux_for_the_hosting_server_not_the_argv() -> None:
     from mishe_tauftauf import discovery
 
-    commands = {
-        1584: "/usr/bin/tmux new-session -d -s mishe-current -n docs -c /srv sh",
-        939406: "tmux new-session -d -s restore-test-939095 -n placeholder",
-        943026: "tmux new-session -d -s gate -n p sleep 194203",
-        72420: "/opt/venv/bin/python3 /opt/bin/rnsh -l -a deadbeef -- "
-                "tmux new-session -A -s rns",
-    }
-    assert discovery._session_server(commands, "mishe-current") == 1584
-    # A session whose name merely prefixes or contains another's is not matched,
-    # and a server wrapped behind another executable is not matched either.
-    assert discovery._session_server(commands, "mishe") is None
-    assert discovery._session_server(commands, "gate-") is None
-    assert discovery._session_server(commands, "rns") is None
-    assert discovery._session_server(commands, "absent-session") is None
+    # One tmux server hosts every session on a socket, and the server is raised
+    # behind `systemd-run --scope`, so its argv cannot identify the session it
+    # hosts. The pid has to come from tmux itself.
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if argv[:2] == ["tmux", "has-session"]:
+            return _completed("", returncode=0 if argv[3] != "absent-session" else 1)
+        if argv[:3] == ["tmux", "display-message", "-p"]:
+            return _completed("3652039\n", returncode=0)
+        return _completed("", returncode=1)
+
+    with patch("mishe_tauftauf.discovery.subprocess.run", side_effect=fake_run):
+        assert discovery._session_server("mishe-self-development-current") == 3652039
+        assert discovery._session_server("absent-session") is None
+
+    def for_session(name):
+        return [call for call in calls
+                if name in call and call[1] in ("has-session", "display-message")]
+
+    # An exited session still has a live server hosting others, so existence is
+    # checked before the pid is trusted.
+    assert for_session("mishe-self-development-current") == [
+        ["tmux", "has-session", "-t", "mishe-self-development-current"],
+        ["tmux", "display-message", "-p", "-t",
+         "mishe-self-development-current", "#{pid}"]]
+    # A session that has exited is not asked for a pid: its server is still live
+    # and hosting others, so the pid would name the wrong session.
+    assert for_session("absent-session") == [
+        ["tmux", "has-session", "-t", "absent-session"]]
+
+
+def test_session_server_reports_none_when_tmux_is_missing() -> None:
+    from mishe_tauftauf import discovery
+
+    with patch("mishe_tauftauf.discovery.shutil.which", return_value=None):
+        assert discovery._session_server("mishe-self-development-current") is None
+        assert discovery._session_pane_roots("mishe-self-development-current") == []
+
+
+def test_session_pane_roots_reads_the_pids_tmux_reports() -> None:
+    from mishe_tauftauf import discovery
+
+    stdout = "3652080\n3654275\nnot-a-pid\n\n"
+    with patch("mishe_tauftauf.discovery.subprocess.run",
+               return_value=_completed(stdout)):
+        assert discovery._session_pane_roots("mishe-current") == [3652080, 3654275]
+    failed = _completed("can't find window: nope", returncode=1)
+    with patch("mishe_tauftauf.discovery.subprocess.run", return_value=failed):
+        assert discovery._session_pane_roots("nope") == []
+
+
+def test_session_membership_needs_both_a_session_pane_and_the_server() -> None:
+    from mishe_tauftauf import discovery
+
+    parents = {1: 0, 10: 1, 11: 10, 12: 11, 20: 1, 21: 20, 30: 1}
+    # The pane root reaches the server, so a process beneath it is a member.
+    assert discovery._session_membership(12, parents, 1, [11]) is True
+    # A process beneath a root that is the server itself is a member: the root
+    # reaches the ancestor it is asked about.
+    assert discovery._session_membership(21, parents, 1, [20]) is True
+    # A process under no pane root is outside the session.
+    assert discovery._session_membership(30, parents, 1, [11, 20]) is False
+    # Without a server the session is unreadable, not empty.
+    assert discovery._session_membership(12, parents, None, [11]) is None
+    # Without pane roots the session is unreadable, not empty.
+    assert discovery._session_membership(12, parents, 1, []) is None
+    # A chain that ends before the only root decides nothing: the pid's parent is
+    # absent from the snapshot, so the root is neither reached nor ruled out.
+    assert discovery._session_membership(12, {12: 99}, 1, [11]) is None
+    # A pid above the only root reaches no decision either: it does not descend
+    # from the root, which is a complete no-reached answer and not evidence of a
+    # broken session, so it reads outside rather than undetermined.
+    assert discovery._session_membership(10, parents, 1, [11]) is False
 
 
 def test_descends_from_reports_unknown_rather_than_false_for_a_broken_chain() -> None:
@@ -829,29 +893,41 @@ def test_descends_from_reports_unknown_rather_than_false_for_a_broken_chain() ->
 def test_top_cpu_processes_records_descent_from_the_named_session() -> None:
     from mishe_tauftauf import discovery
 
-    # A pane renderer and an agent inside the session both descend from the tmux
-    # server; a systemd-supervised seed and an unrelated tool do not. Both outside
-    # rows name a parent the snapshot contains, so their chains reach ppid 0 and
-    # "outside" is a complete decision rather than a broken one.
+    # A pane renderer and an agent inside the session both descend from a pane
+    # root of the session; a systemd-supervised seed and an unrelated tool do
+    # not. Both outside rows name a parent the snapshot contains, so their chains
+    # reach ppid 0 and "outside" is a complete decision rather than a broken one.
     stdout = "\n".join([
         "    1     0  0.0  9000 /sbin/init",
         " 1236     1  0.0  9000 /lib/systemd/systemd --user",
         " 1584  1236  0.1  9000 tmux new-session -d -s s1 -n docs -c /srv sh",
         " 2461  1584  5.0   30 pane-renderer",
-        " 9001  1584  3.0   12 /opt/bin/omp --model any",
+        " 9001  2461  3.0   12 /opt/bin/omp --model any",
         " 4039  1236  2.0   60 supervised-seed",
         " 7000  6999  4.0    2 unrelated-tool",
         " 6999     0  0.0   60 parent-with-no-parent",
     ])
-    with patch("mishe_tauftauf.discovery.subprocess.run",
-               return_value=_completed(stdout)), \
+
+    def fake_run(argv, **kwargs):
+        if argv[:2] == ["tmux", "has-session"]:
+            return _completed("", returncode=0)
+        if argv[:3] == ["tmux", "display-message", "-p"]:
+            return _completed("1584\n", returncode=0)
+        if argv[:2] == ["tmux", "list-panes"]:
+            return _completed("2461\n", returncode=0)
+        return _completed(stdout, returncode=0)
+
+    with patch("mishe_tauftauf.discovery.subprocess.run", side_effect=fake_run), \
             patch("mishe_tauftauf.discovery._cpu_jiffies", side_effect=lambda pid: pid), \
             patch("mishe_tauftauf.discovery.time.sleep"):
         rows = discovery._top_cpu_processes("s1")
     by_pid = {row["pid"]: row for row in rows}
-    assert by_pid[1584]["in_session"] is True
+    # The pane root reaches the server, so it and the agent beneath it are members.
     assert by_pid[2461]["in_session"] is True
     assert by_pid[9001]["in_session"] is True
+    # The server is not itself a pane root, so it is not a member: membership is
+    # claimed per pane, not per server, and one server hosts every session.
+    assert by_pid[1584]["in_session"] is False
     assert by_pid[4039]["in_session"] is False
     assert by_pid[7000]["in_session"] is False
     assert "in-session" in discovery._row_text(by_pid[2461])
@@ -865,8 +941,14 @@ def test_top_cpu_processes_reports_unknown_descent_when_the_server_is_absent() -
         " 1236     1  0.0  9000 /lib/systemd/systemd --user",
         " 2461  1236  5.0   30 pane-renderer",
     ])
-    with patch("mishe_tauftauf.discovery.subprocess.run",
-               return_value=_completed(stdout)), \
+    def fake_run(argv, **kwargs):
+        # The session does not exist, so has-session fails before a pid or any
+        # pane root is asked for.
+        if argv[:2] == ["tmux", "has-session"]:
+            return _completed("", returncode=1)
+        return _completed(stdout, returncode=0)
+
+    with patch("mishe_tauftauf.discovery.subprocess.run", side_effect=fake_run), \
             patch("mishe_tauftauf.discovery._cpu_jiffies", side_effect=lambda pid: pid), \
             patch("mishe_tauftauf.discovery.time.sleep"):
         rows = discovery._top_cpu_processes("no-such-session")
