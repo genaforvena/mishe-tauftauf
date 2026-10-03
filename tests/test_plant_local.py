@@ -457,6 +457,14 @@ def test_repoint_release_root_keeps_extra_search_path_entries(tmp_path: Path) ->
     assert plant.repoint_release_root(unit, pinned) == f"Environment=PYTHONPATH={pinned}:/opt/extra/lib\n"
 
 
+def test_repoint_release_root_keeps_an_unrelated_source_entry(tmp_path: Path) -> None:
+    # Only entries inside this site's ``releases`` directory are the pin; a
+    # custom unit may legitimately add its own ``/src`` search path.
+    pinned = tmp_path / "releases/new/src"
+    unit = f"Environment=PYTHONPATH={tmp_path}/releases/old/src:/opt/vendor/src\n"
+    assert plant.repoint_release_root(unit, pinned) == f"Environment=PYTHONPATH={pinned}:/opt/vendor/src\n"
+
+
 def test_repoint_release_root_leaves_other_lines_alone(tmp_path: Path) -> None:
     unit = "[Service]\nEnvironment=PATH=/site/bin:/usr/bin\nExecStart=/bin/true\n"
     assert plant.repoint_release_root(unit, tmp_path / "releases/new/src") == unit
@@ -477,7 +485,7 @@ def test_reconcile_services_repoints_a_site_declared_unit(tmp_path: Path, monkey
         "Environment=PATH=/site/bin:/usr/bin\n"
         "ExecStart=/site/bin/coordination --follow\n", encoding="utf-8")
     monkeypatch.setattr("mishe_tauftauf.runtime_source.source_for",
-                        lambda home, default: tmp_path / "release")
+                        lambda home, default: tmp_path / "releases" / "new")
     fragments = {plant.unit_name("core", slug): home / plant.unit_name("core", slug)
                  for slug in (*plant.ROLES, "permissions", "ci", *plant.OUT_OF_BAND)}
     calls = _fake_systemctl(monkeypatch, fragments)
@@ -485,7 +493,7 @@ def test_reconcile_services_repoints_a_site_declared_unit(tmp_path: Path, monkey
     plant.reconcile_services(home, "core", True, "/usr/bin/python3")
 
     text = coordination.read_text(encoding="utf-8")
-    assert f"Environment=PYTHONPATH={tmp_path}/release/src\n" in text
+    assert f"Environment=PYTHONPATH={tmp_path}/releases/new/src\n" in text
     assert "releases/old" not in text
     assert "ExecStart=/site/bin/coordination --follow\n" in text
     assert ["systemctl", "--user", "daemon-reload"] in calls
@@ -505,7 +513,7 @@ def test_reconcile_services_edits_a_self_installed_fragment_in_place(tmp_path: P
         f"Environment=PYTHONPATH={tmp_path}/releases/old/src\n"
         "Environment=PATH=/site/bin:/usr/bin\n", encoding="utf-8")
     monkeypatch.setattr("mishe_tauftauf.runtime_source.source_for",
-                        lambda home, default: tmp_path / "release")
+                        lambda home, default: tmp_path / "releases" / "new")
     fragments = {plant.unit_name("core", slug): home / plant.unit_name("core", slug)
                  for slug in (*plant.ROLES, "permissions", "ci", *plant.OUT_OF_BAND)}
     fragments["core-body.service"] = fragment
@@ -515,5 +523,5 @@ def test_reconcile_services_edits_a_self_installed_fragment_in_place(tmp_path: P
 
     assert not (home / "core-body.service").exists()
     text = fragment.read_text(encoding="utf-8")
-    assert f"Environment=PYTHONPATH={tmp_path}/release/src\n" in text
+    assert f"Environment=PYTHONPATH={tmp_path}/releases/new/src\n" in text
     assert "releases/old" not in text
