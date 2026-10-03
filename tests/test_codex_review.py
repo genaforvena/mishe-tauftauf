@@ -157,5 +157,8 @@ def test_parent_timeout_terminates_nested_cli_group(tmp_path):
             break
         time.sleep(.01)
     else:
-        os.kill(pid,9)
+        try:
+            os.kill(pid, 9)
+        except ProcessLookupError:
+            pass
         pytest.fail('nested CLI survived parent deadline')
