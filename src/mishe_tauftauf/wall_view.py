@@ -32,27 +32,30 @@ def _import_roots(environment: str) -> list[str]:
     return roots
 
 
-def _runtime_line(home: Path, root: Path, service_roots: list[str] | None = None) -> str:
-    """Compare the pinned release with the roots the running seed services import.
+def _runtime_state(home: Path, root: Path, service_roots: list[str] | None = None) -> tuple[str, str]:
+    """The runtime verdict and its line, comparing the pin with the service roots.
 
     The renderer's own root cannot show this drift: the panes and services import
     their own copies. ``service_roots`` is ``None`` when the environment could not
-    be read, and empty when the manifest lists no service.
+    be read, and empty when the manifest lists no service. The verdict is
+    ``MATCH``, ``DRIFT``, ``UNPINNED``, ``UNKNOWN`` or ``NONE``; only ``DRIFT``
+    is running code that differs from the pin, and the state line must not hide
+    it behind GREEN.
     """
     if not (home / "health/runtime-release.json").exists():
-        return "RUNTIME: pin=UNPINNED"
+        return "UNPINNED", "RUNTIME: pin=UNPINNED"
     try:
         from .runtime_source import source_for
         pinned = str(source_for(home, root).resolve())
     except (OSError, TypeError, ValueError) as exc:
-        return f"RUNTIME: pin=UNKNOWN — {exc}"
+        return "UNKNOWN", f"RUNTIME: pin=UNKNOWN — {exc}"
     if service_roots is None:
-        return f"RUNTIME: pin={pinned} services=UNKNOWN"
+        return "UNKNOWN", f"RUNTIME: pin={pinned} services=UNKNOWN"
     distinct = sorted(set(service_roots))
     if not distinct:
-        return f"RUNTIME: pin={pinned} services=none"
+        return "NONE", f"RUNTIME: pin={pinned} services=none"
     state = "MATCH" if distinct == [pinned] else "DRIFT"
-    return f"RUNTIME: pin={pinned} services={','.join(distinct)} {state}"
+    return state, f"RUNTIME: pin={pinned} services={','.join(distinct)} {state}"
 
 
 def deployment_lines(home: Path) -> list[str]:
@@ -80,11 +83,12 @@ def deployment_lines(home: Path) -> list[str]:
     return [source, deployed]
 
 
-def _service_block(home: Path) -> tuple[list[str], list[str] | None]:
-    """Service state rows and the import roots those units actually run.
+def _service_block(home: Path) -> tuple[list[str], list[str] | None, str]:
+    """Service rows, the import roots those units run, and the service-state note.
 
     ``None`` roots means the environment could not be read; an empty list means
-    the manifest lists no service.
+    the manifest lists no service. The note is the STATE line's own verdict; the
+    caller folds in the runtime verdict so a drift cannot hide behind GREEN.
     """
     try:
         units = json.loads((home / "health/services.json").read_text())
@@ -118,10 +122,11 @@ def _service_block(home: Path) -> tuple[list[str], list[str] | None]:
                 lines.append(f"SERVICES: {len(rows)} listed; showing {len(notable)} with restarts or failures")
             for ident, good, active, sub, restarts in notable:
                 lines.append(f"SERVICE {ident}: {'GREEN' if good else 'RED'} {active}/{sub} restarts={restarts}")
-        lines.append("STATE: " + ("GREEN — listed services running; CI reported separately" if healthy else "RED — service failure or empty manifest"))
-        return lines, roots
+        note = ("GREEN — listed services running; CI reported separately" if healthy
+                else "RED — service failure or empty manifest")
+        return lines, roots, note
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
-        return [f"STATE: UNKNOWN — services unavailable: {exc}"], None
+        return [], None, f"UNKNOWN — services unavailable: {exc}"
 
 
 def render(home: Path, role: str) -> str:
@@ -139,9 +144,10 @@ def render(home: Path, role: str) -> str:
             return f"DOCS FILE: {document}\nSTATE: UNKNOWN — page unavailable: {exc}\n"
     if role in {"discover", "senses"}:
         return getattr(seed_culture_views, role)(home)
-    service_lines, service_roots = _service_block(home)
+    service_lines, service_roots, service_note = _service_block(home)
+    runtime_state, runtime_line = _runtime_state(home, Path(__file__).resolve().parents[2], service_roots)
     lines = ["OBSERVATION — deterministic facts; minds decide the next work", ci_line(home), *deployment_lines(home),
-             _runtime_line(home, Path(__file__).resolve().parents[2], service_roots)]
+             runtime_line]
     for path in sorted((home / "patches").glob("*.json")):
         try:
             record = json.loads(path.read_text())
@@ -151,6 +157,9 @@ def render(home: Path, role: str) -> str:
         except (OSError, ValueError, KeyError) as exc:
             lines.append(f"UNKNOWN patch {path.stem}: {exc}")
     lines.extend(service_lines)
+    if runtime_state == "DRIFT" and service_note.startswith("GREEN"):
+        service_note = "RED — runtime drift: service import roots differ from the pinned release"
+    lines.append("STATE: " + service_note)
     return "\n".join(lines) + "\n"
 
 
