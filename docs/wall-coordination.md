@@ -44,9 +44,10 @@ UNKNOWN. A mind or operator reconciles the notes and actual process, then uses
 a new task or repeat an action automatically.
 
 The activity line shows seconds since the latest mind message, wall edit or
-settled turn, plus the mind state (`OK`, `SILENT`, `ENDED` or `DISABLED`) and
-the seconds since the last Git commit and patch activation. Display refreshes,
-operator messages and automatic supervisor traffic do not reset it.
+settled turn, the mind state (`OK`, `SILENT`, `ENDED` or `DISABLED`) and the
+silence threshold. The `HEADLINE` above it adds the seconds since the last Git
+commit and patch activation. Display refreshes, operator messages and automatic
+supervisor traffic do not reset it.
 `wall silence --seconds 600` adjusts the threshold; zero disables alerts, and
 omitting `--seconds` shows the current reading. An independent local watcher
 checks every five seconds, posts one addressed `chat.log` alert per silent
