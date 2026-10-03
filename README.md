@@ -126,7 +126,7 @@ reveals.** It is not a claim that the study is complete.
 The [concept guide](docs/how-it-works.md#development-is-not-just-repository-maintenance)
 explains how those project-specific checks fit the generic runtime.
 
-Six resident roles share the work:
+Six resident roles ship by default and share the work:
 
 | Role | Responsibility |
 | --- | --- |
@@ -136,6 +136,10 @@ Six resident roles share the work:
 | `genome` | Improve reusable source, push the single `main` branch, and check its CI. |
 | `witness` | Follow open work and compare completion claims with evidence. |
 | `docs` | Keep the repository's README and reader docs a small, current, well-edited book. |
+
+A site can declare additional residents by adding a `charters/<slug>.md` charter
+and an executable `minds/<slug>` launcher; planting preserves their windows and
+counts their activity, so the built-in six are a default rather than a fixed set.
 
 There is also a permissions panel and an operator shell. The operator is the human
 owner, not a role or a gate; the shell is a convenience. Roles identify
