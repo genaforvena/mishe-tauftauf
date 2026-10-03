@@ -202,6 +202,7 @@ def test_docs_pane_reads_edits_and_reports_missing_page(tmp_path):
     home.mkdir()
     docs = tmp_path / "docs"
     docs.mkdir()
+    (home / "coordination-mode.json").write_text(json.dumps({"mode": "wall", "docs_document": "docs/mesh.md"}))
     page = docs / "mesh.md"
     page.write_text("Mesh helps minds observe their work.")
     assert "Mesh helps" in render(home, "docs")

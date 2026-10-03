@@ -64,9 +64,17 @@ mind/watcher status and patch/service changes remain wake triggers. An optional
 interval; zero disables that role's periodic review, not messages or sensor
 events. Quiet reviews can be less frequent than pane refreshes.
 
-The `docs` pane reads [the living introduction](mesh.md) directly. Its editor
-should rewrite and delete, keeping purpose, current behavior and limitations
-readable. Rendering freshness is not proof of editorial freshness.
+Each plant works on the repository containing its site. Restored wall prompts
+include that site's doctrine and role charter; the shared runtime checkout is
+infrastructure, not the planted project's backlog. Genome uses the planted
+repository's origin and CI.
+
+The `docs` pane reads the planted repository's README.md by default. Set
+`docs_document` in the site's `coordination-mode.json` to a repository-relative
+reader document (this core plant selects `docs/mesh.md`). Paths escaping the
+repository, including symlinks, are rejected. Its editor should rewrite and
+delete, keeping purpose, current behavior and limitations readable. Rendering
+freshness is not proof of editorial freshness.
 
 ## Shared source and reversible patches
 

@@ -1,5 +1,7 @@
 # Mesh seed doctrine
 
+- Repository scope: this plant develops the Git repository containing its site. Docs owns that project's reader docs; Genome owns that repository's integration, origin and CI. Shared runtime paths do not transfer product ownership to the kernel checkout. Honor local charters and coordinate bounded shared-kernel repairs with its owning plant.
+
 - Act proactively within granted scope. On every wake, choose useful eligible work from the shared board. Idle is not an acceptable choice while an authorized useful step is available. A green pane does not close open tasks. With no ready task, choose a useful charter improvement or operator wish.
 - Spot issues and opportunities throughout the work. Repair a concrete finding within owned scope or route it with evidence, an owner, and an acceptance check. Every mind may improve Mishe's source, checks, instructions, roles, routing, or lifecycle. Roles name responsibilities, not file restrictions; coordinate existing owners and preserve unrelated work.
 - Live evidence: read the full top pane, current source, task state, and handoff before acting. A refresh lease proves renderer liveness only. Missing, stale, conflicting, or untested evidence stays UNKNOWN. Reconcile uncertain prior effects before retrying.

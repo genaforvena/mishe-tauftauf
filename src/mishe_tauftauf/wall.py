@@ -180,18 +180,45 @@ def pane(home: Path, role: str) -> str:
         f"{e.sequence} {e.source}: {e.body}" for e in entries) + "\n" + chat + "\n" + activity + "\n"
 
 
+def docs_document(home: Path) -> Path:
+    """Resolve the reader document inside the repository containing this plant."""
+    repository = home.resolve().parent
+    selected = settings(home).get("docs_document", "README.md")
+    if not isinstance(selected, str) or not selected.strip():
+        raise ValueError("docs_document must name a document inside the repository")
+    relative = Path(selected)
+    document = (repository / relative).resolve()
+    if relative.is_absolute() or not document.is_relative_to(repository):
+        raise ValueError("docs_document must stay inside the planted repository")
+    return document
+
+
 def restore(home: Path, role: str, session: str) -> str:
+    from .observations import validate_slug
+    validate_slug(role)
+    repository = home.resolve().parent
+    instructions = []
+    for label, path in (("LOCAL DOCTRINE", home / "doctrine.md"),
+                        (f"LOCAL CHARTER {role}", home / "charters" / f"{role}.md")):
+        instructions.append(f"{label}\n" + (path.read_text() if path.exists() else "(not supplied; read repository AGENTS.md)"))
     goals = {
-        "genome": "Develop and review shared source; coordinate checked application and rollback.",
+        "genome": "Develop and integrate this planted repository; use its Git origin and CI; coordinate checked application and rollback.",
         "witness": "Read walls, chat and observations; investigate missed work or contradictions and help resolve them.",
         "health": "Keep local services, panes and observations working; investigate visible failures.",
         "senses": "Improve useful deterministic readings; keep missing, stale and failed evidence honest.",
         "discover": "Investigate useful directions and capabilities; share grounded findings.",
-        "docs": "Edit docs/mesh.md as a concise current book for readers; delete stale material and verify claims.",
+        "docs": "Maintain this planted repository's reader docs according to its local charter; delete stale material and verify claims.",
     }
     cli = shlex.quote(str(home.resolve() / "bin/mishe-tauftauf"))
     return (
-        f"ROLE {role}: {goals.get(role, 'Choose useful work in this owned project.')}\n"
+        f"REPOSITORY {repository}\n"
+        "This plant develops the repository containing its site. The installed runtime is infrastructure, "
+        "not another product backlog. Resolve source and docs paths against this repository. "
+        "Local charter and explicit user instructions govern work selection; coordinate any bounded "
+        "shared-kernel repair with its owning plant. Read repository AGENTS.md.\n"
+        + "\n".join(instructions) + "\n"
+        + (f"DOCS DOCUMENT {docs_document(home)}\n" if role == "docs" else "")
+        + f"ROLE {role}: {goals.get(role, 'Choose useful work in this owned project.')}\n"
         "Wall trial supersedes ledger and branch instructions. Choose and organize your work; "
         "planning and investigation are valid turns. Read the dashboard now, then relevant "
         "chat and other walls as needed. Keep your plate and next action on your edited wall. "
@@ -199,7 +226,7 @@ def restore(home: Path, role: str, session: str) -> str:
         "not as permission to plan. Deterministic sensors own facts; a lease proves rendering only. "
         "Adjust filters without hiding failures. Work in the single shared checkout. "
         "Source application requires tests, independent System 1 review, live observation "
-        "and reversible activation; coordinate with genome (docs/wall-coordination.md). "
+        "and reversible activation; follow this repository's instructions and coordinate with genome. "
         "Do not deploy to linked sites or contact external people.\n"
         f"SHARED CHECKOUT {home.parent.resolve()}\n"
         f"CLI {cli} --home {shlex.quote(str(home.resolve()))}\n"
