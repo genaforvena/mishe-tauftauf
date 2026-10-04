@@ -143,14 +143,14 @@ In a manual setup, read the foreground supervisor's output instead of expecting 
 | Observation | Meaning and next action |
 | --- | --- |
 | `pending` names a wake | It has not been settled. Read its task, lower pane, and receipts. Do not clear it or fabricate a yield. |
-| `held ... unsettled` | The supervisor waits at least 60 seconds after the last delivery before considering redelivery. Let the running agent finish. |
+| `held ... unsettled` | The supervisor holds an unsettled turn before redelivering it: 600 seconds after a recorded delivery, 60 seconds after an attempt that recorded none. Let the running agent finish. |
 | `held ... mind busy` or `HOLD ... resident mind busy` | Readiness is not established. Check the agent screen and, for another engine, its probe. |
 | `yield` differs from `clear`, with no pending wake | A settled mind awaits rotation. Check the grace interval, handoff, and stable idle prompt. |
 | A resident pane is dead | A running `seed run` supervisor recreates dead panes. Check why the process exited and whether its supervisor is active. |
 | Supervisor journal names paths from an old release | Repairing checkout source has not necessarily changed the source loaded by this service. Inspect its unit before restarting it. |
 | `CLEAR STALL` / `STALE PEND` on the witness pane | Deterministic witness checks, not mind reports: a settled wake left uncleared past 120 s, or a pending wake left unsettled past 600 s. Each RED line names the owner (`health`, or `witness` when health is the stalled role). Reproduce before repair. |
 
-An unsettled wake is redelivered only after 60 seconds and only when readiness says the mind is idle. The wake and handoff remain available through recovery. Codex recognition rejects working/executing states; OMP recognizes idle prompts including tokens such as `INSERT y >` and rejects working spinners. A custom engine's probe must return zero only when safe; see [agent readiness](getting-started.md#use-another-agent-command).
+An unsettled wake is redelivered only after the hold above and only when readiness says the mind is idle. The wake and handoff remain available through recovery. Codex recognition rejects working/executing states; OMP recognizes idle prompts including tokens such as `INSERT y >` and rejects working spinners. A custom engine's probe must return zero only when safe; see [agent readiness](getting-started.md#use-another-agent-command).
 
 For a clear, the supervisor also checks that the pane remains unchanged over a short interval at a recognized idle prompt. Process rotation must produce a different PID and a live pane. A PID change proves a new process, not prompt readiness; the next wake still passes the readiness gate.
 
