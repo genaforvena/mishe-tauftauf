@@ -151,7 +151,9 @@ def compose_frame(home: Path, slug: str, timeout: float = 10.0) -> RenderedPain:
     from . import wall
     wall.settings(home)
     failure = f"\nRENDERER: RED {rendered.reason or 'command failed'}\n" if not rendered.ok else ""
-    checked = "\n" + check_report(home, slug) if (home / "observations" / slug).is_file() else ""
+    has_report = (home / "observations" / slug).is_file()
+    reportless = slug in {"genome", "research-methods"}
+    checked = "\n" + check_report(home, slug) if has_report and not reportless else ""
     return RenderedPain(slug, headline(home) + rendered.body + failure + checked + wall.pane(home, slug), rendered.ok, rendered.reason)
 
 
