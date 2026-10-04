@@ -34,7 +34,8 @@ EXIT_RE = re.compile(r"^mind exited top-pain ([a-z0-9-]+) for entry (\d+) attemp
 HANDOFF_RE = re.compile(r"^handoff top-pain ([a-z0-9-]+) invocation ([^\s]+)$", re.MULTILINE)
 BOOKKEEPING_PREFIXES = (
     "judged ", "entry ", "mind starting ", "mind exited ", "mind stdout ", "mind stderr ",
-    "mind blocked ", "mind output ", "top-pain ", "prediction ", "desired state for prediction ", "handoff top-pain ",
+    "mind blocked ", "mind output ", "mind model ", "top-pain ", "prediction ",
+    "desired state for prediction ", "handoff top-pain ",
     "wake requested ", "wake delivered ", "wake refused ", "UNKNOWN automatic-wake ",
 )
 

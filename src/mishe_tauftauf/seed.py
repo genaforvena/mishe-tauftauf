@@ -437,6 +437,46 @@ def _mind_launch_argv(home: Path, slug: str) -> tuple[str, ...]:
             str(home / "minds" / slug))
 
 
+_MODEL_FLAG_RE = re.compile(r"(?:^|\s)--model[ \t]+(\S+)")
+
+
+def _launcher_model(path: Path) -> str | None:
+    """Read the model a mind launcher selects, without running it.
+
+    Model identity is otherwise observable only from ``/proc/<pid>/cmdline``; the
+    launcher bytes are the durable record of which model an invocation runs on.
+    Shell comments are skipped so a decoy ``--model`` in a comment cannot mask it.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        match = _MODEL_FLAG_RE.search(line)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _record_mind_model(home: Path, slug: str, launcher: Path, reason: str) -> None:
+    """Record the model a respawned mind runs on.
+
+    Emitted only after a respawn, and read from the launcher the new process
+    actually runs, so the record can never attribute a stale launcher to a
+    running mind. Absence is recorded too: a launcher losing ``--model`` is a
+    model change, not silence. ``append_runtime_once`` keeps one marker per
+    (slug, launcher, reason, model), so an idle rotation that lands on the same
+    model does not add a line per clear.
+    """
+    from .feed import Feed
+    chosen = _launcher_model(launcher)
+    marker = (f"mind model top-pain {slug} launcher={launcher} reason={reason} "
+               f"model={chosen if chosen is not None else 'none'}")
+    Feed(home).append_runtime_once("mishe-tauftauf", marker)
+
+
 def _await_session(session: str, timeout: float = 15.0) -> bool:
     """Wait for a peer supervisor's concurrent session raise to become visible."""
     deadline = time.monotonic() + timeout
@@ -514,6 +554,7 @@ def start(home: Path, session: str, slug: str, interval: float) -> str:
     mind_dead = _tmux("display-message", "-p", "-t", f"{target}.1", "#{pane_dead}").stdout.decode().strip() == "1"
     if created or new_window or mind_dead:
         _tmux("respawn-pane", "-k", "-t", f"{target}.1", *_mind_launch_argv(home, slug))
+        _record_mind_model(home, slug, home / "minds" / slug, "start")
         time.sleep(2.0)
         if _state(home, slug)[1] is not None:
             _send(f"{target}.1", _restore_text(home, slug, session))
