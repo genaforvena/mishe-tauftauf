@@ -12,11 +12,28 @@ from pathlib import Path
 from .feed import Feed, utc_now
 
 
+_COMMAND_ATTEMPTS = 2
+# A transient GitHub transport error (connection reset, TLS, timeout) is not a CI
+# state; retry it once inside the same tick instead of publishing UNKNOWN.
+
+_COMMAND_RETRY_SECONDS = 1.0
+
+
 def _command(*argv: str, cwd: Path | None = None) -> str:
-    result = subprocess.run(argv, capture_output=True, text=True, timeout=25, cwd=cwd)
-    if result.returncode:
-        raise RuntimeError(result.stderr.strip() or f"{' '.join(argv)} failed")
-    return result.stdout.strip()
+    # A nonzero exit is how ``gh`` reports a transport failure (the EOF/TLS text
+    # lands in stderr), so both it and an OS-level spawn/timeout error are
+    # retried. A persistent failure still raises after the bounded attempts and
+    # read() keeps returning UNKNOWN, as does a legitimate empty run list.
+    for attempt in range(_COMMAND_ATTEMPTS):
+        try:
+            result = subprocess.run(argv, capture_output=True, text=True, timeout=25, cwd=cwd)
+            if result.returncode:
+                raise RuntimeError(result.stderr.strip() or f"{' '.join(argv)} failed")
+            return result.stdout.strip()
+        except (OSError, subprocess.TimeoutExpired, RuntimeError):
+            if attempt + 1 >= _COMMAND_ATTEMPTS:
+                raise
+            time.sleep(_COMMAND_RETRY_SECONDS)
 
 
 def read(home: Path, *, workspace: Path | None = None, sha: str | None = None,
