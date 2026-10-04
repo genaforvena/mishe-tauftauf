@@ -15,14 +15,14 @@ def run_blocked(call, monkeypatch, *, body_prefix=None):
     entered, release = threading.Event(), threading.Event()
     errors = []
     from mishe_tauftauf import post_check
-    original = post_check.require
+    original = post_check.require_prose
     def reviewer(*args, **kwargs):
         if body_prefix and not args[2].startswith(body_prefix):
             return original(*args, **kwargs)
         entered.set()
         assert release.wait(5), "test admission was not released"
         return original(*args, **kwargs)
-    monkeypatch.setattr(post_check, "require", reviewer)
+    monkeypatch.setattr(post_check, "require_prose", reviewer)
     def execute():
         try:
             call()
@@ -63,8 +63,7 @@ def test_slow_ready_projection_is_rejected_if_facts_change(candidate, monkeypatc
         worker.join(5)
     assert not worker.is_alive()
     assert errors, "stale projection unexpectedly committed"
-    report = getattr(errors[0], "report", {})
-    assert any(row["id"] == "D03" and "delivery changed" in row["reason"] for row in report.get("results", [])), errors
+    assert "delivery changed" in str(errors[0]), errors
     integration = delivery._integration_id(delivery.load(home, "repair"))
     assert integration not in task_state.registry(Feed(home).entries())
     assert delivery.load(home, "repair")["phase"] == "blocked"
@@ -132,8 +131,7 @@ def test_claim_admission_releases_fact_lock_and_rechecks_integration(candidate, 
         worker.join(5)
     assert not worker.is_alive()
     assert errors
-    report = getattr(errors[0], "report", {})
-    assert any(row["id"] == "D03" and "delivery changed" in row["reason"] for row in report.get("results", [])), errors
+    assert "delivery changed" in str(errors[0]), errors
     assert not task_state.pending_tasks(Feed(home).entries())
 
 

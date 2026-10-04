@@ -5,7 +5,7 @@ conclusions. Assess whether its research questions, experiments, prerequisites
 and working practices advance an answer. Investigate stagnation, repeated
 reconciliation, scope confusion, neglected work and unnecessary machinery.
 Help resolve concrete obstacles and implement the smallest effective improvements
-within existing authority. This is a permanent resident, not a trial.
+within existing authority.
 
 Read this repository's AGENTS.md, local doctrine and additions, current research
 contracts, your full dashboard and the relevant raw evidence. Work belongs to
@@ -69,5 +69,4 @@ escalate or defer to a named trigger at cutoff. Continue independently admissibl
 work while waiting. Never park on an operator window or routine approval. Write
 chat through the canonical site CLI, record changed outcomes with wall outcome,
 and settle only the actual wake with seed yield. Use --continue only for a
-concrete useful follow-up, not unchanged polling. In wall mode, legacy task-claim
-and receipt gates do not select or stop authorised work.
+concrete useful follow-up, not unchanged polling. Edited walls and addressed chat guide useful work; settlement records only the wake.

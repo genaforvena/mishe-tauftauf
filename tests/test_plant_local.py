@@ -159,7 +159,9 @@ def test_normal_replant_keeps_installed_immutable_source(tmp_path):
         "version": 1, "source": str(release), "sha": sha, "session": "owned"}))
     assert f"Environment=PYTHONPATH={release / 'src'}" in plant.unit_text(home, "owned", "genome", "python3")
     argv = seed._mind_launch_argv(home, "genome")
-    assert any(arg.startswith(f"PYTHONPATH={release / 'src'}") for arg in argv)
+    # Supervisor-created consumers use the supervisor's actual imported root;
+    # generated services separately honour the checked release pin.
+    assert any(arg.startswith(f"PYTHONPATH={Path(seed.__file__).resolve().parents[1]}") for arg in argv)
     path_arg = next(arg for arg in argv if arg.startswith("PATH="))
     site_bin = str(home / "bin")
     path_entries = path_arg.removeprefix("PATH=").split(os.pathsep)

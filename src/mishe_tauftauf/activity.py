@@ -56,8 +56,6 @@ def threshold(config):
 def configure(home, seconds):
     with lock(home):
         config = settings(home)
-        if config["mode"] != "wall":
-            raise ValueError("silence watch requires wall mode")
         config["silence_seconds"] = seconds
         threshold(config)
         _save(home / "coordination-mode.json", config)
@@ -68,7 +66,7 @@ def observe(home, *, now=None, entries=None):
     config = settings(home)
     seconds = threshold(config)
     monitored = roles(home)
-    candidates = [(datetime.fromisoformat(config.get("started", now.isoformat())), "trial start")]
+    candidates = [(datetime.fromisoformat(config.get("started", now.isoformat()).replace("Z", "+00:00")), "plant start")]
     for entry in entries if entries is not None else Feed(home).entries():
         source = entry.source.removeprefix("mind/")
         if source in monitored or (entry.source == "seed" and entry.body.startswith("seed yield ")):
@@ -79,8 +77,8 @@ def observe(home, *, now=None, entries=None):
             candidates.append((datetime.fromtimestamp(path.stat().st_mtime, timezone.utc), f"walls/{path.name}"))
     at, evidence = max(candidates)
     idle = max(0, (now - at).total_seconds())
-    armed = config["mode"] == "wall" and not config.get("paused")
-    within = not config.get("until") or now < datetime.fromisoformat(config["until"])
+    armed = not config.get("paused")
+    within = not config.get("until") or now < datetime.fromisoformat(config["until"].replace("Z", "+00:00"))
     if not armed or not seconds:
         state = "DISABLED"
     elif not within:

@@ -203,7 +203,7 @@ def test_draft_intake_does_not_register_or_hold_source_work(tmp_path):
     assert landing.queue(Feed(home).entries()) == []
 
 
-def test_generated_footer_keeps_both_verdicts_on_one_80_column_line(tmp_path):
+def test_fresh_genome_pane_uses_canonical_observations_without_debt_intake(tmp_path):
     import os
     from mishe_tauftauf import seed
     root = repo(tmp_path)
@@ -211,7 +211,7 @@ def test_generated_footer_keeps_both_verdicts_on_one_80_column_line(tmp_path):
     seed.init(home, "genome")
     env = {**os.environ, "PYTHONPATH": str(__import__("pathlib").Path(debt.__file__).parents[1])}
     output = subprocess.check_output([str(home / "top-pains/genome")], cwd=root, env=env, text=True)
-    footer = output.splitlines()[-1]
-    assert "STATE: GREEN doctor" in footer
-    assert "LANDING DEBT: GREEN" in footer
-    assert len(footer) < 80
+    assert "OBSERVATION — deterministic facts" in output
+    assert "STATE: UNKNOWN" in output  # Fresh manual site has no service manifest.
+    assert "LANDING DEBT:" not in output
+    assert not list((home / "landing-debt").glob("*.json"))

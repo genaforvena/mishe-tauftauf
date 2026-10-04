@@ -23,7 +23,7 @@ from .tmux import _tmux, owns_session
 # meant its pane existed only when something else respawned it directly, so a
 # reboot dropped it with no service to raise it again.
 ROLES = ("genome", "witness", "discover", "senses", "health", "docs", "research-methods")
-EXPLORATION = ("discover", "senses", "health")
+EXPLORATION = ("discover", "senses")
 CONTRACT_START = "<!-- mishe-tauftauf plant contract -->"
 CONTRACT_END = "<!-- end mishe-tauftauf plant contract -->"
 OUT_OF_BAND = ("silence",)

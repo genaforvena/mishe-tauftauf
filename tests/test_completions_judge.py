@@ -17,7 +17,6 @@ from unittest.mock import patch
 
 from mishe_tauftauf import completions_judge as judge
 from mishe_tauftauf.judges import controls, document
-from mishe_tauftauf.feed import Feed
 
 
 DOC = document("desired-state-met", "sensor", "RED", "exit 1; reading unavailable")
@@ -122,12 +121,12 @@ class CompletionsJudgeTests(unittest.TestCase):
                     self.assertTrue(out.getvalue().startswith("unknown "))
                     http.assert_not_called()
 
-    def test_shadow_is_bounded_private_and_records_controls_without_raw_evidence(self):
+    def test_report_is_bounded_private_and_records_controls_without_raw_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "report.jsonl"
             answers = [response(v) for _ in controls() for v in ("yes", "no")]
             with patch.object(judge, "_transport", side_effect=answers) as http:
-                code = judge.shadow(self.config, output, [], max_calls=12)
+                code = judge.report(self.config, output, [], max_calls=12)
                 self.assertEqual(code, 0)
                 self.assertEqual(http.call_count, 12)
             rows = [json.loads(line) for line in output.read_text().splitlines()]
@@ -138,54 +137,40 @@ class CompletionsJudgeTests(unittest.TestCase):
             self.assertNotIn("document", rows[0])
             self.assertEqual(output.stat().st_mode & 0o777, 0o600)
             with patch.object(judge, "_transport") as http, self.assertRaises(FileExistsError):
-                judge.shadow(self.config, output, [], max_calls=12)
+                judge.report(self.config, output, [], max_calls=12)
             http.assert_not_called()
 
-    def test_shadow_failed_controls_skip_replays_and_insufficient_budget_calls_nothing(self):
+    def test_report_failed_controls_skip_replays_and_insufficient_budget_calls_nothing(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             case = {"document": DOC, "expected": "no"}
             with patch.object(judge, "_transport", side_effect=lambda *_a, **_kw: response("unknown")) as http:
-                self.assertEqual(judge.shadow(self.config, root / "failed", [case], max_calls=13), 1)
+                self.assertEqual(judge.report(self.config, root / "failed", [case], max_calls=13), 1)
                 self.assertEqual(http.call_count, 12)
             with patch.object(judge, "_transport") as http, self.assertRaises(ValueError):
-                judge.shadow(self.config, root / "short", [case], max_calls=12)
+                judge.report(self.config, root / "short", [case], max_calls=12)
             http.assert_not_called()
 
-    def test_witness_reads_canonical_delta_and_previous_analysis_without_writing_feed(self):
+    def test_retired_witness_routing_options_are_unavailable(self):
+        args = ["--base-url", self.config.base_url, "--model", self.config.model]
         with tempfile.TemporaryDirectory() as directory:
-            home = Path(directory)
-            feed = Feed(home)
-            feed.append("operator", "Check this unresolved wish")
-            feed.append("witness", "I checked; no change")
-            before = (home / "chat.log").read_bytes()
-            state = judge.witness_snapshot(home, 1, "Already audited task A")
-            self.assertEqual([e["sequence"] for e in state["new_entries"]], [2])
-            self.assertEqual([e["sequence"] for e in state["context"]], [1])
-            self.assertEqual(state["previous_analysis"], "Already audited task A")
-            answer = response()
-            payload = json.loads(answer)
-            payload["choices"][0]["message"]["content"] = '{"analysis":"progress-loop","evidence_sequences":[1,2]}'
-            with patch.object(judge, "_transport", return_value=json.dumps(payload).encode()):
-                self.assertEqual(judge.witness_decision(state, self.config)["analysis"], "progress-loop")
-            self.assertEqual(state.get("question"), "Which witness analysis, if any, is warranted by the new chat entries?")
-            self.assertEqual((home / "chat.log").read_bytes(), before)
-            with patch.object(judge, "_transport") as http:
-                self.assertEqual(judge.witness_decision(judge.witness_snapshot(home, 2), self.config)["analysis"], "none")
-                http.assert_not_called()
-            with self.assertRaises(ValueError):
-                judge.witness_snapshot(home, 3)
+            for option, value in (("--witness-home", directory), ("--since", "0"),
+                                  ("--last-analysis", str(Path(directory) / "previous.md")),
+                                  ("--shadow", str(Path(directory) / "old.jsonl"))):
+                with self.subTest(option=option):
+                    with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+                        judge.main(args + [option, value])
+                    self.assertEqual(error.exception.code, 2)
 
-    def test_witness_rejects_old_only_invented_or_malformed_analysis_references(self):
-        state = {"context": [{"sequence": 1}], "new_entries": [{"sequence": 2}]}
-        for analysis, refs in (("progress-loop", [1]), ("progress-loop", [999]),
-                               ("arbitrary-command", [2]), ("evidence-audit", [True]),
-                               ("progress-loop", []), ("progress-loop", "2")):
-            with self.subTest(analysis=analysis, refs=refs):
-                payload = json.loads(response())
-                payload["choices"][0]["message"]["content"] = json.dumps({"analysis": analysis, "evidence_sequences": refs})
-                with patch.object(judge, "_transport", return_value=json.dumps(payload).encode()):
-                    self.assertEqual(judge.witness_decision(state, self.config)["analysis"], "unknown")
+    def test_report_cli_runs_supported_provider_diagnostics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "report.jsonl"
+            answers = [response(v) for _ in controls() for v in ("yes", "no")]
+            with patch.object(judge, "_transport", side_effect=answers):
+                code = judge.main(["--base-url", self.config.base_url, "--model", self.config.model,
+                                   "--report", str(output), "--max-calls", "12"])
+            self.assertEqual(code, 0)
+            self.assertTrue(json.loads(output.read_text().splitlines()[-1])["controls_passed"])
 
     def test_replay_metadata_cannot_change_control_gate_or_skip_summary(self):
         verdicts = [judge.Result(verdict=verdict)
@@ -195,7 +180,7 @@ class CompletionsJudgeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             report = Path(directory) / "trial.jsonl"
             with patch.object(judge, "evaluate", side_effect=verdicts):
-                result = judge.shadow(self.config, report,
+                result = judge.report(self.config, report,
                                       [{"document": DOC, "control": True}], max_calls=13)
             rows = [json.loads(line) for line in report.read_text().splitlines()]
         self.assertEqual(result, 0)

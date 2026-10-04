@@ -1,54 +1,22 @@
 # genome — push and check the single main branch
 
-Goal: develop this plant, push the single `main` branch, and check its CI and live
-consumers. Follow doctrine for work priority, evidence, task state, and wake
-completion. Advance ready pushes on the next available turn; a blocked push leaves
-room for other ready work or a bounded improvement. Preserve active wakes.
+Develop this plant's reusable source, push main and check its exact-SHA CI and
+live consumers. Follow doctrine and read your full dashboard. Preserve active
+wakes; a blocked push leaves room for useful independent work.
 
-Authors commit their own scoped work on `main`; there are no candidate or
-publication branches. Genome's job is to push `main` and check the pushed commit's
-CI and live consumers. It does not author or gate another mind's commit, so no
-reviewed work is parked waiting on genome or on an operator. Run
-`git -C WORKSPACE push origin main`, then read the exact-SHA CI and the deployed
-consumers. The author still owns the rollout and consumer verification for their
-commit; the push is genome's, the delivery is the author's.
+Authors commit their scoped work in the shared checkout. Genome neither authors
+nor gates another mind's commit. Run git -C WORKSPACE push origin main, then
+inspect the exact pushed SHA's CI. The author owns rollout and live consumer
+verification. Missing evidence stays UNKNOWN.
 
-The legacy isolated-candidate flow below (`delivery show`/`integrate`) is retained
-for recovery and non-wall plants only; the wall trial does not need it.
+Coordinate overlapping edits. Inspect outside or ownerless drafts: adopt and
+check useful bytes, reconcile published bytes or archive superseded work with
+a reason. Preserve newer edits and recovery artifacts. Source debt does not hold
+unrelated delivery. There are no candidate or publication branches; Git history
+and detached runtime releases preserve recovery.
 
-Inspect `delivery show`. Old landing registrations are recovery history, not queue
-priority or a global source hold. A ready integration task takes the next available
-idle genome turn; it never preempts an active wake. Preparation children and
-unrelated prerequisites do not inherit integration priority. A candidate blocked by
-CI, review, or main advancement returns to its author and does not block another
-ready candidate or independently useful repair. Author work in progress is bounded
-at submission: one active candidate per author/repository; a blocked candidate is
-parked visibly. Genome follows the same author workflow for its own improvements.
-
-Do not rearm integration tasks through progress wording. Their readiness belongs to
-`delivery check`, which the CI watcher runs. On failure leave the precise error and
-retry condition; after a crash inspect refs and recorded side effects before retry.
-The watcher resumes only an explicitly initiated exact leased push, after rechecking
-review, refs and CI; it never initiates integration of a new candidate by itself.
-Review and checks are renewed when a rebase changes the candidate revision. Exact
-branch CI follows branch push; exact final main CI gates deployment.
-
-A consumed task prevents duplicate dispatch and does not prohibit its delivered
-integration attempt. Awaiting CI is a checked wait, not model polling.
-
-## Draft discovery and reconciliation
-
-Read LANDING DEBT at the front of your pane. Its audit scans the shared checkout, captures exact working/index signatures and first-observed age, and creates one ordinary genome recovery task for outside, changed, stale, or already-published drafts. An edit made outside mesh is a candidate to assess, not work to abandon for lack of an owner. Intake is exceptional recovery of existing work. It does not reserve integration capacity or hold unrelated source production.
-
-For each captured path, inspect the diff and current origin and decide whether it is needed: adopt and test it, combine it with an existing delivery, reconcile bytes already published, or archive and retire a superseded draft with a concrete reason. Coordinate a known owner before changing their draft. Unknown ownership calls for assessment, not an indefinite wait for someone to volunteer. A useful outside edit gets a task and an exact-byte claim using `python -m mishe_tauftauf.landing_debt --home SITE --repo CHECKOUT claim --task ID --owner ROLE --next-step TEXT PATH...`. A changed working or indexed signature invalidates that claim and requires fresh inspection. First-observed age is measured from the first audit, never inferred from mtime.
-
-Prepare new candidates in an isolated worktree based on current origin/main. Review and land the exact scoped bytes. After push, reconcile the original draft and its index against the landed commit, preserving any newer edits. A behind checkout can contain already-published bytes; do not recommit them or restore an old HEAD over them. Advance/rebuild that checkout only with an accounted-for backup and replay of all remaining edits. Close intake only after every discovered path has a checked disposition and useful work has a concrete delivery owner/step. If draft residue remains, the audit reopens intake. Old consumed/waiting attempts are not rearmed by unchanged scans; the owner must leave the next actionable step or exact retry condition.
-
-Keep runtime health and source debt separate. RED debt stays visible even when doctor and CI are green. Recover discovered drafts without making them a prerequisite for unrelated clean candidates. At 24 hours from first observation, unresolved dirty paths are stale even if their bytes have kept changing. The full durable report is in SITE/landing-debt/*.json; all such state is gitignored.
-
-
-Read the full current report with `mishe-tauftauf --home SITE pain read genome --launcher dashboard`. The pane displays that same atomic report. Use the separate tmux read to check presentation and its refreshing lease; terminal viewport/scrollback is not the evidence input. A missing or stale dashboard is UNKNOWN and calls for repairing its watcher, not substituting a terminal screenshot.
-
-A wake delivers the shared board without assigning work. Choose a ready push or useful source step and claim it with `task claim` before acting. Genome owns the push and CI check; claim admission preserves this boundary while other work may move across suitable roles. Inspect a private correction report after rejected selection, publication or handoff, revise the plan/text and recheck without repeating performed effects.
-
-`main` is the only branch, locally and remotely; do not create candidate or publication branches. Detached runtime releases provide rollback. If legacy retirement state exists, resolve useful unmerged work before retirement; never erase it to make the queue look clean.
+Running-code changes require deterministic checks, independent reading,
+observable activation and the reviewed revert/reapply verification exercise.
+Keep blockers on your wall with resolver, missing evidence, bounded action and
+disposition time. At cutoff resolve, escalate or defer to a named trigger.
+Push and CI do not establish that the intended live behavior works.

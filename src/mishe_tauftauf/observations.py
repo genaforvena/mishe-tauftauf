@@ -13,7 +13,9 @@ from .feed import Feed
 from .predictions import expectations_text
 
 SLUG_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\Z")
-FOOTER_LEDGER_LABEL = "ledger"
+FOOTER_WAKE_LABEL = "wake"
+FOOTER_WAKE_RE = re.compile(r"^-- wake: .* --$")
+FOOTER_LEDGER_LABEL = "ledger"  # Historical frames remain readable.
 FOOTER_LEDGER_RE = re.compile(rf"^-- {re.escape(FOOTER_LEDGER_LABEL)}: .* --$")
 FOOTER_LEASE_RE = re.compile(r"^-- pane live \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z · refresh [0-9.]+s · ticks every frame --$")
 
@@ -140,15 +142,10 @@ def headline(home: Path) -> str:
 def compose_frame(home: Path, slug: str, timeout: float = 10.0) -> RenderedPain:
     rendered = run_renderer(home, slug, timeout)
     from . import wall
-    if wall.enabled(home):
-        failure = f"\nRENDERER: RED {rendered.reason or 'command failed'}\n" if not rendered.ok else ""
-        return RenderedPain(slug, headline(home) + rendered.body + failure + wall.pane(home, slug), rendered.ok, rendered.reason)
-    entries = Feed(home).entries()
-    body = rendered.body
-    if not body.endswith("\n"):
-        body += "\n"
-    body += "\n" + check_report(home, slug) + "\n" + expectations_text(home, entries, slug)
-    return RenderedPain(slug, body, rendered.ok, rendered.reason)
+    wall.settings(home)
+    failure = f"\nRENDERER: RED {rendered.reason or 'command failed'}\n" if not rendered.ok else ""
+    checked = "\n" + check_report(home, slug) if (home / "observations" / slug).is_file() else ""
+    return RenderedPain(slug, headline(home) + rendered.body + failure + checked + wall.pane(home, slug), rendered.ok, rendered.reason)
 
 
 def strip_owned_chrome(text: str, *, strip_expectations: bool = False) -> str:
@@ -156,7 +153,7 @@ def strip_owned_chrome(text: str, *, strip_expectations: bool = False) -> str:
     output: list[str] = []
     in_expectations = False
     for line in lines:
-        if FOOTER_LEDGER_RE.fullmatch(line) or FOOTER_LEASE_RE.fullmatch(line):
+        if FOOTER_WAKE_RE.fullmatch(line) or FOOTER_LEDGER_RE.fullmatch(line) or FOOTER_LEASE_RE.fullmatch(line):
             continue
         if strip_expectations and line == "EXPECTATIONS":
             in_expectations = True

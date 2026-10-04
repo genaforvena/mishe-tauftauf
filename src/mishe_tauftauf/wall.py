@@ -61,13 +61,16 @@ def observation_text(role: str, sensor: str) -> str:
 def settings(home: Path) -> dict:
     path = home / "coordination-mode.json"
     if not path.exists():
-        return {"mode": "ledger"}
+        return {"mode": "wall"}
     try:
         data = json.loads(path.read_text())
-        if data.get("mode") not in {"wall", "ledger"}:
-            raise ValueError("invalid mode")
+        if not isinstance(data, dict):
+            raise ValueError("settings must be an object")
+        if data.get("mode", "wall") != "wall":
+            raise ValueError("ledger coordination is retired; migrate this site explicitly before activation")
+        data["mode"] = "wall"
         if data.get("until"):
-            deadline = datetime.fromisoformat(data["until"])
+            deadline = datetime.fromisoformat(data["until"].replace("Z", "+00:00"))
             if deadline.tzinfo is None:
                 raise ValueError("deadline needs timezone")
         return data
@@ -76,7 +79,8 @@ def settings(home: Path) -> dict:
 
 
 def enabled(home: Path) -> bool:
-    return settings(home)["mode"] == "wall"
+    settings(home)
+    return True
 
 
 def limits(home: Path) -> tuple[int, int]:
@@ -205,12 +209,14 @@ def docs_document(home: Path) -> Path:
 
 def restore(home: Path, role: str, session: str) -> str:
     from .observations import validate_slug
+    from . import seed
     validate_slug(role)
     repository = home.resolve().parent
     instructions = []
     for label, path in (("LOCAL DOCTRINE", home / "doctrine.md"),
                         (f"LOCAL CHARTER {role}", home / "charters" / f"{role}.md")):
-        instructions.append(f"{label}\n" + (path.read_text() if path.exists() else "(not supplied; read repository AGENTS.md)"))
+        default = seed._core_doctrine() if path.name == "doctrine.md" else seed._core_charter(role)
+        instructions.append(f"{label}\n" + seed._instruction_text(home, str(path.relative_to(home)), default))
     goals = {
         "genome": "Develop and integrate this planted repository; use its Git origin and CI; coordinate checked application and rollback.",
         "witness": "Read walls, chat and observations; investigate missed work or contradictions and help resolve them.",
@@ -230,10 +236,10 @@ def restore(home: Path, role: str, session: str) -> str:
         + "\n".join(instructions) + "\n"
         + (f"DOCS DOCUMENT {docs_document(home)}\n" if role == "docs" else "")
         + f"ROLE {role}: {goals.get(role, 'Choose useful work in this owned project.')}\n"
-        "Wall trial supersedes ledger and branch instructions. Choose and organize your work; "
-        "Do not task claim or wait on ledger selection/receipt checks in wall mode, even if "
-        "inherited doctrine or charters still prescribe them. They are not permission gates for this trial. "
-        "planning and investigation are valid turns. Read the dashboard now, then relevant "
+        "Wall coordination is canonical. Choose and organize your work; "
+        "Do not task claim or wait on retired ledger selection/receipt checks, even if "
+        "inherited doctrine or charters still prescribe them. Planning and investigation are valid turns. "
+        "Read the dashboard now, then relevant "
         "chat and other walls as needed. Keep your plate and next action on your edited wall. "
         "Preserve others' work and reconcile prior effects. Use System 1 advice if useful, "
         "not as permission to plan. Deterministic sensors own facts; a lease proves rendering only. "
@@ -279,10 +285,20 @@ def restore(home: Path, role: str, session: str) -> str:
 
 def settle(home: Path, role: str, wake: int, text: str, continuation: bool, result: str) -> str:
     from . import seed
+    from .observations import validate_slug
+    validate_slug(role)
+    settings(home)
     with seed._lock(home):
         _, pending, last_yield, *_ = seed._state(home, role)
         if pending != wake:
             if last_yield == wake:
+                wall_path = home / "walls" / f"{role}.md"
+                handoff_path = home / "handoffs" / f"{role}.md"
+                if not all(path.is_file() and path.read_text() == text for path in (wall_path, handoff_path)):
+                    raise ValueError("settled turn notes differ; reconcile instead of attributing a new effect")
+                receipt = next(e for e in reversed(Feed(home).entries()) if e.source == "seed" and e.body.startswith(f"seed yield {role} wake={wake}"))
+                if (" continue=1" in receipt.body.splitlines()[0]) != continuation or f"Turn settled ({result});" not in receipt.body:
+                    raise ValueError("settled turn result or continuation differs")
                 return f"yield seed {role} wake {wake} already settled"
             raise ValueError(f"wake {wake} is not pending for {role}")
         write(home, role, text)
@@ -296,22 +312,73 @@ def settle(home: Path, role: str, wake: int, text: str, continuation: bool, resu
 
 def clear(home: Path, session: str, role: str) -> str:
     from . import seed
+    from .post_check import _save
     from .tmux import owns_session
+    from .observations import validate_slug
+    validate_slug(role)
+    settings(home)
     if not owns_session(home, session):
         raise ValueError("session is not owned")
     with seed._lock(home):
         _, pending, settled, cleared, *_ = seed._state(home, role)
-        if pending or not settled or settled == cleared:
+        if pending or not settled:
             return f"held seed {role} no settled turn to clear"
-        if not seed._mind_idle(session, role):
-            return f"held seed {role} mind busy"
+        path = home / "checks" / f"wall-clear-{role}-{settled}.json"
+        journal = json.loads(path.read_text()) if path.exists() else None
         target = f"{session}:{role}.1"
-        before = seed._tmux("display-message", "-p", "-t", target, "#{pane_pid}").stdout
-        seed._tmux("respawn-pane", "-k", "-t", target, *seed._mind_launch_argv(home, role))
-        after = seed._tmux("display-message", "-p", "-t", target, "#{pane_pid}").stdout
-        if before == after:
-            raise ValueError("mind process did not rotate")
-        Feed(home).append("seed", f"seed clear {role} after={settled}\nIdle mind rotated; next wake restores walls and messages.")
+        def live_pid():
+            pid = seed._tmux("display-message", "-p", "-t", target, "#{pane_pid}").stdout.decode().strip()
+            dead = seed._tmux("display-message", "-p", "-t", target, "#{pane_dead}").stdout.decode().strip()
+            if not pid or dead != "0":
+                raise ValueError("rotated mind missing or dead; reconcile clear")
+            return pid
+        if settled == cleared:
+            if journal and journal.get("phase") in {"rotated", "committed"}:
+                if journal.get("session") != session or live_pid() != journal.get("after_pid"):
+                    raise ValueError("committed clear process differs; reconcile")
+                journal["phase"] = "committed"
+                _save(path, journal)
+            return f"held seed {role} no settled turn to clear"
+        if journal and journal.get("phase") == "rotating" and journal.get("session") == session:
+            # The respawn may have completed before the next journal write.
+            # Reconcile its exact intended launcher, never repeat an uncertain send.
+            current_pid = live_pid()
+            command = seed._tmux("display-message", "-p", "-t", target, "#{pane_start_command}").stdout.decode().strip()
+            try:
+                matches = shlex.split(command) == journal.get("launch_command")
+            except ValueError:
+                matches = False
+            if current_pid == journal.get("before_pid") or not matches:
+                raise ValueError("clear rotation is uncertain; inspect journal and live process before retry")
+            journal.update(phase="rotated", after_pid=current_pid, reconciled_intent=True)
+            _save(path, journal)
+        if journal:
+            if journal.get("session") != session or journal.get("phase") != "rotated":
+                raise ValueError("clear rotation is uncertain; inspect journal and live process before retry")
+            if live_pid() != journal.get("after_pid"):
+                raise ValueError("rotated mind process changed; reconcile clear")
+        else:
+            if not seed._mind_idle(session, role):
+                return f"held seed {role} mind busy"
+            before = live_pid()
+            launch_argv = seed._mind_launch_argv(home, role)
+            journal = {"phase":"rotating", "session":session, "role":role, "settled":settled,
+                       "before_pid":before, "launch_command":list(launch_argv[2:])}
+            _save(path, journal)
+            seed._tmux("respawn-pane", "-k", "-t", target, *launch_argv)
+            after = live_pid()
+            if before == after:
+                raise ValueError("mind process did not rotate")
+            journal.update(phase="rotated", after_pid=after)
+            _save(path, journal)
+        def commit_guard():
+            _, current_pending, current_settled, current_cleared, *_ = seed._state(home, role)
+            if (current_pending or current_settled != settled or current_cleared == settled
+                    or not owns_session(home, session) or live_pid() != journal["after_pid"]):
+                raise ValueError("clear evidence changed before receipt; reconcile")
+        Feed(home).append("seed", f"seed clear {role} after={settled}\nIdle mind rotated; next wake restores walls and messages.", commit_guard=commit_guard)
+        journal["phase"] = "committed"
+        _save(path, journal)
     return f"clear seed {role} after {settled}"
 
 
@@ -361,15 +428,15 @@ def tick(home: Path, session: str, role: str, self_pick_seconds: float = 300) ->
     if not math.isfinite(self_pick_seconds) or self_pick_seconds < 0:
         raise ValueError("self_pick_seconds must be finite and nonnegative")
     if cfg.get("paused"):
-        return "wall trial paused; sensor panes remain live; no new model delivery"
-    if cfg.get("until") and datetime.now(timezone.utc) >= datetime.fromisoformat(cfg["until"]):
+        return "wake window paused; sensor panes remain live; no new model delivery"
+    if cfg.get("until") and datetime.now(timezone.utc) >= datetime.fromisoformat(cfg["until"].replace("Z", "+00:00")):
         with seed._lock(home):
             _, pending, _, _, observation, *_ = seed._state(home, role)
             if pending is not None:
                 if not owns_session(home, session):
                     raise ValueError("session is not owned")
                 return deliver(home, session, role, pending, observation,
-                    "The trial window ended. Reconcile and finish this already pending turn; no new wake is created.")
+                    "The wake window ended. Reconcile and finish this already pending turn; no new wake is created.")
             # A bounded stop suppresses autonomous wake selection, but it must
             # never mute an addressed escalation. The silence watcher's ENDED
             # notice, a peer message and an operator DM stay deliverable, so a
@@ -383,11 +450,11 @@ def tick(home: Path, session: str, role: str, self_pick_seconds: float = 300) ->
                 if not owns_session(home, session):
                     raise ValueError("session is not owned")
                 wake = Feed(home).append("seed", f"seed wake {role} observation={observation}\n"
-                    "The trial window ended, but an addressed message awaits you. "
+                    "The wake window ended, but an addressed message awaits you. "
                     "Reconcile it and decide: re-arm, escalate, or report. No autonomous wake was created.")
                 return deliver(home, session, role, wake.sequence, observation,
                     "\n".join(f"{e.sequence} {e.source}: {e.body}" for e in inbox[-12:]))
-        return "wall trial ended; no new wakes; in-flight work and sensors preserved"
+        return "wake window ended; no new wakes; in-flight work and sensors preserved"
     if not owns_session(home, session):
         raise ValueError("session is not owned")
     with seed._lock(home):
@@ -424,7 +491,7 @@ def tick(home: Path, session: str, role: str, self_pick_seconds: float = 300) ->
             observation = observed.sequence
         if pending is not None:
             return deliver(home, session, role, pending, observation,
-                "Existing unsettled turn. Trial wall notes preserve the earlier obligations; read them before continuing.")
+                "Existing unsettled turn. Edited wall notes preserve the earlier obligations; read them before continuing.")
         if settled and settled != cleared:
             return f"held seed {role} awaiting idle rotation"
         last_wake = next((e.sequence for e in reversed(entries) if e.body.startswith(f"seed wake {role} ")), 0)

@@ -227,3 +227,18 @@ def require(home, source, body, context=None, stage='post'):
     if not report['clear']:
         raise CorrectionRequired(report)
     return report
+
+
+def require_prose(home, source, body):
+    """Keep chat readable without running a semantic publication gate."""
+    failures = _deterministic(body)
+    if not failures:
+        return
+    digest = hashlib.sha256(_json({"source":source,"body":body,"stage":"prose"}).encode()).hexdigest()
+    path = Path(home) / "post-checks" / (digest + ".json")
+    report = {"version":1, "input_hash":digest, "source":source, "body":body,
+              "stage":"prose", "report_path":str(path), "results":failures,
+              "semantic_status":"not a publication gate", "clear":False,
+              "status":"suspicious", "required_correction":"Keep structured state in referenced evidence and explain the event in prose."}
+    _save(path, report)
+    raise CorrectionRequired(report)

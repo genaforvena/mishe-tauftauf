@@ -126,7 +126,7 @@ def test_site_declared_resident_is_monitored(tmp_path):
     from mishe_tauftauf import activity
     now=site(tmp_path)
     Feed(tmp_path).append("body-research","researched the substrate")
-    assert activity.observe(tmp_path,now=now+timedelta(seconds=5))["evidence"]=="trial start"
+    assert activity.observe(tmp_path,now=now+timedelta(seconds=5))["evidence"]=="plant start"
     (tmp_path/"charters").mkdir();(tmp_path/"charters"/"body-research.md").write_text("charter")
     (tmp_path/"minds").mkdir();(tmp_path/"minds"/"body-research").write_text("#!/bin/sh\n")
     assert "body-research" in activity.observe(tmp_path,now=now+timedelta(seconds=5))["evidence"]

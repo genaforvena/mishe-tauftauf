@@ -65,7 +65,7 @@ def read(home: Path, *, workspace: Path | None = None, sha: str | None = None,
 
 def tick(home: Path, *, check_deliveries: bool = True) -> dict[str, str]:
     from . import wall
-    wall_mode = wall.enabled(home)
+    wall.settings(home)
     path = home / "ci" / "latest.json"
     previous = latest(home)
     result = read(home)
@@ -82,19 +82,8 @@ def tick(home: Path, *, check_deliveries: bool = True) -> dict[str, str]:
                    "unknown": "The watcher cannot establish a result for the current remote commit."}[result["state"]]
         Feed(home).append("ci", "[ci] state={state} sha={sha} run={run} url={url} detail={detail}\n"
                           "{meaning}".format(**result, meaning=meaning))
-        if result["state"] == "fail" and wall_mode:
+        if result["state"] == "fail":
             wall.message(home, "ci", "genome", f"Observed CI failure for {result['sha']}: {result['url']}. Read the current CI sensor and decide the repair.")
-        elif result["state"] == "fail":
-            from .delivery import main_owner
-            owner = main_owner(home, result["sha"])
-            Feed(home).append("ci", f"[task] ci-{result['sha'][:12]} owner={owner} "
-                              f"repair failing CI run={result['run']} url={result['url']}; "
-                              "verify the replacement run is green before closing.\n"
-                              "GitHub Actions failed for this remote commit. Reproduce the failed job, "
-                              "land a scoped repair, and close this task only after CI passes on the new SHA.", once=True)
-    if check_deliveries and not wall_mode:
-        from .delivery import check_all
-        check_all(home)
     return result
 
 
