@@ -3,7 +3,7 @@ import os
 import time
 
 from mishe_tauftauf.seed_witness_view import _publication_lines
-from mishe_tauftauf.seed import _observation_text
+from mishe_tauftauf.wall import observation_text
 
 
 def prepare(home):
@@ -13,7 +13,7 @@ def prepare(home):
     return reports
 
 
-def test_inflight_review_preserves_latest_finalized_verdict_and_observation(tmp_path):
+def test_inflight_review_changes_full_frame_observation_without_overwriting_result(tmp_path):
     reports = prepare(tmp_path)
     completed = reports / 'completed.json'
     completed.write_text(json.dumps({'status': 'clear', 'semantic_status': 'clear', 'stage': 'post', 'source': 'seed', 'results': []}))
@@ -24,7 +24,7 @@ def test_inflight_review_preserves_latest_finalized_verdict_and_observation(tmp_
     assert not uncertain_before and not uncertain_after
     assert any('PUBLICATION ACTIVE: PENDING' in line for line in after)
     assert any('PUBLICATION RESULT: CLEAR semantic=clear' in line for line in after)
-    assert _observation_text('witness', '\n'.join(before)) == _observation_text('witness', '\n'.join(after))
+    assert observation_text('witness', '\n'.join(before)) != observation_text('witness', '\n'.join(after))
 
 
 def test_abandoned_inflight_review_is_unknown_without_overwriting_last_result(tmp_path):

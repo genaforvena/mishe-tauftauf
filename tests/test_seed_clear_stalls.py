@@ -23,9 +23,12 @@ def test_stall_requires_an_overdue_settled_wake():
     assert seed.clear_stalls([wake, settled, entry(3, "seed wake genome observation=3")], now=NOW) == {}
 
 
-def test_witness_observation_keeps_stall_identity_but_not_chat():
+def test_witness_dispatch_observes_stall_identity_and_chat_content():
+    from mishe_tauftauf.wall import observation_text
     frame = "WINDOWS: GREEN\nCLEAR STALL: RED genome wake=1 owner=health\nLATEST CHAT.LOG TEXT\nSTATE: RED\n"
-    assert seed._observation_text("witness", frame) != seed._observation_text("witness", frame.replace("wake=1", "wake=2"))
+    baseline = observation_text("witness", frame)
+    assert observation_text("witness", frame.replace("wake=1", "wake=2")) != baseline
+    assert observation_text("witness", frame.replace("STATE: RED", "STATE: GREEN")) != baseline
 
 
 
@@ -96,6 +99,7 @@ def test_health_stall_routes_to_witness(tmp_path, monkeypatch):
     assert "CLEAR STALL: RED health wake=1 yield=2 owner=witness" in frame
 
 
-def test_receipt_details_and_elapsed_time_do_not_rewake_witness():
+def test_receipt_detail_updates_witness_full_frame_observation():
+    from mishe_tauftauf.wall import observation_text
     first = "WINDOWS: GREEN\nCLEAR STALL: RED genome wake=1 yield=2 owner=health\n  Evidence: clock sample A\nSTATE: RED\n"
-    assert seed._observation_text("witness", first) == seed._observation_text("witness", first.replace("sample A", "sample B"))
+    assert observation_text("witness", first) != observation_text("witness", first.replace("sample A", "sample B"))
