@@ -595,7 +595,7 @@ def test_journal_error_window_falls_back_to_a_bounded_tail_never_a_full_boot() -
 
     with patch("mishe_tauftauf.discovery.subprocess.run", side_effect=run):
         reading = discovery._journal_error_window()
-    assert reading["sample"] == "last-10min kernel-error-count=1 endpoints=uvcvideo 1-6:1.1"
+    assert reading["sample"] == "last-400-errors kernel-error-count=1 endpoints=uvcvideo 1-6:1.1"
     assert sum(1 for c in calls if "--since" in c) == 1
     assert sum(1 for c in calls if "-n" in c) == 1
 
