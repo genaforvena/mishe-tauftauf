@@ -194,3 +194,14 @@ def test_oversized_stdin_returns_question_complete_refusal(monkeypatch,capsys):
     result=json.loads(capsys.readouterr().out)
     assert result['version']==1 and result['input_hash']==req['input_hash']
     assert result['results']==[{'id':'R06','verdict':'unknown','reason':'complete request exceeds checker input budget; no truncation permitted','evidence':[]}]
+
+
+def test_worker_failure_names_the_stderr_tail(tmp_path):
+    import subprocess,sys
+    from mishe_tauftauf.post_check import WorkerFailed,_worker
+    script=tmp_path/'fail.py'
+    script.write_text("import sys; sys.stderr.write('provider unavailable: quota exhausted'); sys.exit(3)")
+    with pytest.raises(WorkerFailed) as caught:
+        _worker([sys.executable,str(script)],b'',10)
+    assert caught.value.returncode==3
+    assert 'provider unavailable: quota exhausted' in str(caught.value)
