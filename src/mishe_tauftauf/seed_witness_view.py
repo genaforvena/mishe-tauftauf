@@ -86,6 +86,40 @@ def _publication_lines(home):
     return lines, uncertain
 
 
+def _mind_pane_live(session: str, role: str) -> bool:
+    """True when ``role``'s mind pane exists, is alive, and runs a mind engine.
+
+    Mirrors the engine set ``seed._mind_ready`` accepts. A missing pane, a dead
+    pane, or a foreign foreground command is not a live mind, so its settled wake
+    cannot be a rotation the supervisor is holding.
+    """
+    from . import seed
+    probe = seed._tmux("display-message", "-p", "-t", f"{session}:{role}.1",
+                       "#{pane_dead} #{pane_current_command}", check=False)
+    if probe.returncode:
+        return False
+    fields = probe.stdout.decode("utf-8", "replace").split()
+    return len(fields) == 2 and fields[0] == "0" and fields[1] in {"omp", "codex"}
+
+
+def _mind_not_idle(session: str, role: str) -> bool:
+    """True when a live ``role`` mind is mid-turn rather than at its idle prompt.
+
+    ``wall.clear`` respawns a mind only when ``seed._mind_idle(session, role)`` is
+    True — the same gate read here — so an overdue settled wake on a live, mid-turn
+    mind is a rotation the supervisor is holding, not a fault. Every other state —
+    no session, a missing or dead pane, a foreign engine, or an unreadable probe —
+    returns False so the fault stays visible, never hidden.
+    """
+    from . import seed
+    if not session or not _mind_pane_live(session, role):
+        return False
+    try:
+        return not seed._mind_idle(session, role)
+    except (OSError, RuntimeError):
+        return False
+
+
 def render(home: Path) -> str:
     lines = ["DESIRED STATE: planted channels stay live and coordination gaps stay visible"]
     session = os.environ.get("MISHE_SEED_SESSION", "") or recorded_session(home) or ""
@@ -137,12 +171,21 @@ def render(home: Path) -> str:
             stalls = clear_stalls(entries)
             if not stalls:
                 lines.append("CLEAR STALL: GREEN — no overdue settled wake")
+            faulted = False
             for role, receipt in sorted(stalls.items()):
                 wake = int(YIELD_RE.fullmatch(_receipt_line(receipt.body))[2])
                 owner = "witness" if role == "health" else "health"
+                if _mind_not_idle(session, role):
+                    # The supervisor holds the rotation, not a fault to repair.
+                    lines.append(f"CLEAR STALL: HELD {role} wake={wake} yield={receipt.sequence} "
+                                 "mind not idle; supervisor holding rotation")
+                    lines.append(f"  Evidence: {Feed(home).path} settled={receipt.timestamp}; "
+                                 "recheck after the mind's turn ends")
+                    continue
                 lines.append(f"CLEAR STALL: RED {role} wake={wake} yield={receipt.sequence} owner={owner}")
                 lines.append(f"  Evidence: {Feed(home).path} settled={receipt.timestamp}; inspect supervisor and idle prompt before repair")
-            if stalls:
+                faulted = True
+            if faulted:
                 verdict = "FAIL witness overdue clear needs checked supervisor repair"
         except (ValueError, TypeError, OverflowError) as exc:
             lines.append(f"CLEAR STALL: UNKNOWN — receipt timing unavailable: {exc}")
