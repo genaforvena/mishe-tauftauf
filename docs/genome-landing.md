@@ -2,7 +2,7 @@
 
 Genome owns assessment as well as delivery. A dirty path does not need to have been created by mesh to deserve attention.
 
-The genome top pane runs `python -m mishe_tauftauf.landing_debt --home SITE --repo CHECKOUT audit --intake` before runtime health. It reports exact working/index signatures, first-observed age, ownership, whether the working bytes already match origin/main, and checkout distance from that locally known ref. Fetch origin before preparing a candidate; the audit never performs network operations or alters source/index bytes.
+Genome inspects outside edits with `python -m mishe_tauftauf.landing_debt --home SITE --repo CHECKOUT audit --intake`; the shipped genome pane does not run it automatically. It reports exact working/index signatures, first-observed age, ownership, whether the working bytes already match origin/main, and checkout distance from that locally known ref. Fetch origin before preparing a candidate; the audit never performs network operations or alters source/index bytes.
 
 Unclaimed, changed-claim, stale, closed-task and already-published drafts are RED. Claimed fresh drafts are AMBER; no dirt is GREEN. Missing origin or failed measurement is UNKNOWN. The default stale threshold is 24 hours since first observation, retained across edits. Reports and claims live under the ignored site landing-debt directory. The initial scan cannot reconstruct historical age.
 

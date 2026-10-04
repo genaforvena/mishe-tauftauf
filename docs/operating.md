@@ -63,6 +63,8 @@ tmux capture-pane -p -t "$SESSION:genome.0"
 The standard genome, health and witness panes show deterministic CI, runtime,
 service and patch observations, followed by the mind's edited wall.
 
+Genome inspects unlanded outside edits with `python -m mishe_tauftauf.landing_debt`; [genome landing and outside edits](genome-landing.md) documents its states, staleness and claim flow.
+
 For an ownership-checked reading of the actual top pane, not a newly rendered approximation:
 
 ```bash
