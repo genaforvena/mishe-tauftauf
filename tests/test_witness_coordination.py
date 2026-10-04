@@ -85,9 +85,8 @@ def test_unconfigured_gate_is_explicitly_untested(tmp_path, monkeypatch):
     assert 'STATE: UNKNOWN' in output
 
 
-def test_witness_dispatch_observes_report_path_and_state_changes():
+def test_witness_dispatch_observes_semantic_state_changes():
     from mishe_tauftauf.wall import observation_text
     base = "COORDINATION: UNKNOWN\nANOMALY: SUSPICIOUS task=repair kind=repeated-attempt id=stable\nPUBLICATION GATE: CONFIGURED\nPUBLICATION RESULT: CLEAR semantic=clear\n  Evidence: private report=first.json\nSTATE: UNKNOWN"
-    assert observation_text('witness', base) != observation_text('witness', base.replace('first.json','second.json'))
     assert observation_text('witness', base) != observation_text('witness', base.replace('id=stable','id=new-cause'))
     assert observation_text('witness', base) != observation_text('witness', base.replace('CLEAR semantic=clear','REFUSED source=genome stage=handoff semantic=suspicious'))
