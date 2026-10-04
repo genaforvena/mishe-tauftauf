@@ -374,6 +374,7 @@ def _journal_error_window(past_minutes: int = 10, limit: int = 400) -> dict:
     the sample names every contributing endpoint instead of implying health.
     A full-boot scan is unbounded and is never attempted.
     """
+    coverage = f"last-{past_minutes}min"
     try:
         primary = subprocess.run(
             ["journalctl", "-b", "-p", "err", "--since", f"-{past_minutes}min",
@@ -384,18 +385,19 @@ def _journal_error_window(past_minutes: int = 10, limit: int = 400) -> dict:
                 ["journalctl", "-b", "-p", "err", "-n", str(limit),
                  "-o", "cat", "--no-pager"],
                 capture_output=True, text=True, timeout=10)
+            coverage = f"last-{limit}-errors"
         window = primary.stdout.splitlines()
     except (OSError, subprocess.TimeoutExpired):
         return {}
     faults = [line for line in window if KERNEL_FAULT in line]
     if not faults:
         return {"state": "verified" if window else "unknown",
-                "sample": (f"last-{past_minutes}min kernel-error-count=0"
+                "sample": (f"{coverage} kernel-error-count=0"
                            if window else "journal error window unavailable")}
     endpoints = sorted({line.split(": Failed", 1)[0].strip() for line in faults})
     names = ",".join(endpoints)
     return {"state": "verified",
-            "sample": f"last-{past_minutes}min kernel-error-count={len(faults)} endpoints={names}"}
+            "sample": f"{coverage} kernel-error-count={len(faults)} endpoints={names}"}
 
 
 
