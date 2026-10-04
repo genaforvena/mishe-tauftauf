@@ -123,6 +123,8 @@ def test_health_observation_ignores_changing_samples_but_keeps_verdicts() -> Non
     assert _observation_text("health", frame.replace("COVERAGE: UNKNOWN", "COVERAGE: VERIFIED")) != baseline
     assert _observation_text("health", frame.replace("SERVICE health.service: active",
                                                       "SERVICE health.service: failed")) != baseline
+    stale_frame = frame.replace("SYSTEM ZERO\nPASS", "SYSTEM ZERO\nSTALE — check report exceeds 900 seconds\nPASS")
+    assert _observation_text("health", stale_frame) != baseline
 
 
 def test_witness_observation_ignores_own_chat_counters_but_keeps_signals() -> None:
