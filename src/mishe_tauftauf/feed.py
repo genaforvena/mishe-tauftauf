@@ -287,8 +287,12 @@ class Feed:
             wrapper = json.loads(self.index_path.read_text(encoding="utf-8"))
         except FileNotFoundError:
             wrapper = None
-        except (ValueError, OSError) as exc:
-            raise FeedError(f"corrupt feed index: {exc}") from exc
+        except (ValueError, OSError):
+            # A zero-byte or truncated checkpoint is a torn or aborted rebuild: the
+            # writer that created it crashed before any payload was written, or an
+            # out-of-band reader merely opened the path. The canonical tape is intact,
+            # so rebuild instead of failing every read and append on that home.
+            wrapper = None
         if wrapper is not None:
             try:
                 index = wrapper["payload"]
