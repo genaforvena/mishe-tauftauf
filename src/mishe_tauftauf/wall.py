@@ -49,10 +49,29 @@ def observation_text(role: str, sensor: str) -> str:
     body = "\n".join(line for line in lines if not line.startswith("HEADLINE:"))
     if role == "docs":
         body = "\n".join(line for line in lines if line.startswith(("STATE:", "DOCS FILE:")))
-    elif role in {"health", "witness", "genome"}:
-        # These panes are already bounded deterministic views. Legacy role filters
-        # discard PATCH/SERVICES and must not hide their state transitions here.
+    elif role in {"health", "genome"}:
+        # These panes are already bounded deterministic views; keep transitions.
         pass
+    elif role == "witness":
+        normalized = []
+        in_chat = False
+        for line in lines:
+            if line.startswith("CHAT RATE:"):
+                line = re.sub(r"CHAT RATE: (RED|GREEN).*", r"CHAT RATE: \1", line)
+            if line.startswith("LATEST CHAT.LOG TEXT"):
+                normalized.append(line)
+                normalized.append("(volatile chat text omitted)")
+                in_chat = True
+                continue
+            if in_chat:
+                if line.startswith(("GOAL:", "PURSUIT:", "NEXT:", "STATE:")):
+                    in_chat = False
+                else:
+                    continue
+            line = re.sub(r"((?:Active )?[Ee]vidence: private report=)\S+", r"\1<private evidence path>", line)
+            line = re.sub(r"(?<=Evidence: )/(?:\S+)", "<private evidence path>", line)
+            normalized.append(line)
+        body = "\n".join(normalized)
     else:
         body = seed._observation_text(role, body)
     return "\n".join(headline + [body])

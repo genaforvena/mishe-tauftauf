@@ -490,6 +490,31 @@ def test_patch_and_headline_failures_are_meaningful_for_every_monitor(role):
     assert wall.observation_text(role, healthy) != wall.observation_text(role, healthy.replace("watcher live", "watcher unknown"))
 
 
+def test_witness_digest_normalizes_only_volatile_evidence_and_chat_text():
+    from mishe_tauftauf.wall import observation_text
+    first = (
+        "CHAT RATE: RED — source: 8 entries. Trace it.\n"
+        "PUBLICATION RESULT: CLEAR semantic=clear\n"
+        "Active evidence: private report=/site/private/a.json\n"
+        "Evidence: private report=/site/private/b.json\n"
+        "Evidence: /site/private/c.json\n"
+        "ANOMALY: RED id=stable transition=opened\n"
+        "LATEST CHAT.LOG TEXT (all roles):\n"
+        "42 genome: first changing message\n"
+        "GOAL: preserve monitoring\n"
+        "STATE: RED\n"
+    )
+    second = first.replace("/site/private/a.json", "/other/private/a.json")
+    second = second.replace("/site/private/b.json", "/other/private/b.json")
+    second = second.replace("/site/private/c.json", "/other/private/c.json")
+    second = second.replace("8 entries. Trace it.", "11 entries. More churn.")
+    second = second.replace("first changing message", "later changing message")
+    assert observation_text("witness", first) == observation_text("witness", second)
+    assert observation_text("witness", first) != observation_text("witness", first.replace("CHAT RATE: RED", "CHAT RATE: GREEN"))
+    assert observation_text("witness", first) != observation_text("witness", first.replace("id=stable", "id=changed"))
+    assert observation_text("witness", first) != observation_text("witness", first.replace("STATE: RED", "STATE: GREEN"))
+
+
 def test_wall_outcome_requires_evidence_and_cli_records_prose(tmp_path):
     from mishe_tauftauf import wall
     from mishe_tauftauf.cli import main
