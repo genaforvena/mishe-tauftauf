@@ -1,7 +1,7 @@
 # Observable analysis advice
 
 Witness can ask a local Laya model which investigation to try. Advice changes
-focus, never wake admission, task ownership, completion checks or retry rules.
+focus, never wake admission, work ownership, completion checks or recovery rules.
 `none` means no particular analysis stands out; it does not cancel the wake.
 The mind can override any suggestion after reading the full evidence.
 
@@ -78,8 +78,7 @@ It checks the `Next:` paragraph or a Markdown `Next step` section against canoni
 chat text. Case, punctuation and whitespace are normalized; matches require at
 least eight words. Exit 2 reports a repeat or missing next step, with matching
 source sequences and hashes. This is exact text matching, not semantic duplicate
-detection or proof that the work is done. Reconcile earlier effects and task retry
-state, then write a changed next step or a concrete waiting/retry condition.
+detection or proof that the work is done. Reconcile earlier effects and the blocker disposition, then write a changed next step or a concrete waiting/retry condition.
 A repeat can be legitimate; do not rephrase unchanged work merely to pass.
 The command stores its last result in `SITE/handoff-check.json`; `--status`
 shows it on the pane and returns UNKNOWN when the handoff bytes change.
@@ -93,7 +92,7 @@ outcomes for systematic wrong focus, missing context, repeats or excess overhead
 Do not tune confidence to make a metric green. Compare a proposed change with the
 current version on frozen cases and its live effect; preserve old observations.
 Own the paths, obtain independent review, and carry reusable source through
-genome's landing process. Improve one cause when evidence warrants it; do not
+the shared main workflow. Improve one cause when evidence warrants it; do not
 rewrite the advisor on every wake or treat agreement as success.
 
 A digest improvement should preserve relevant ownership, retries, contradictions

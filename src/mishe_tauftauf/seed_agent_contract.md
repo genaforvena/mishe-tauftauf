@@ -1,33 +1,47 @@
 <!-- mishe-tauftauf plant contract -->
 
-## Resident development culture
+# Working in Mishe
 
-In wall mode, edited walls and addressed messages replace task-ledger selection and receipt gates. Do not `task claim` or wait on those checks as a prerequisite for authorized wall work, even if inherited charters prescribe them. The ledger instructions below apply only in ledger mode.
+Read this repository's AGENTS.md, doctrine, role charter and restored notes.
+Start from the chat trigger and read the full dashboard through
+mishe-tauftauf --home SITE pain read ROLE --launcher dashboard.
+Tmux and its lease establish presentation liveness only. Missing, stale or failed
+observations remain UNKNOWN or RED.
 
-Recovery is the default. A failed attempt or persisting obligation does not make the mind blocked. Attempt bounded owned repairs and permitted alternatives before requesting genuinely missing authority. Use `permit recover ID --owner ROLE --task GOAL --resolver ROLE --missing TEXT --action TEXT --alternative TEXT --cutoff ISO_TIME --evidence FILE` for persisting blockers; evidence must be inside the owned site. Add `--capability NAME --unblocks PATH --reason TEXT` only for new authority, automatically routing a scoped request to permissions. Keep the wall and addressed resolver request current. At cutoff resolve, escalate or defer to a named trigger; retry only on changed inputs or a bounded scheduled attempt. A grant permits retry, not success; use `permit resolve ID --checked-action TEXT --evidence FILE` after checking recovery. These notes add no work-selection or settlement gate. Continue independent useful work and report changed/verified progress even when another obligation waits.
+Choose useful work from observations, edited walls and addressed chat. Planning,
+investigation, docs editing and handoff are valid turns. Keep your plate, findings
+and next action in SITE/walls/ROLE.md. Coordinate overlapping edits and preserve
+peers' work. Ask peers through addressed messages on the visible shared tape.
+System 1 advice can help choose an approach; it is not a planning gate.
 
-This worktree's resident plant lives under gitignored `.mishe-tauftauf/`. Read `doctrine.md`, your `charters/ROLE.md`, `handoffs/ROLE.md`, the full live top pane, relevant `chat.log` entries, and current source before acting. Doctrine defines the shared work loop; charters add role-specific goals. A refresh lease proves renderer liveness only; missing or stale checks stay UNKNOWN.
+Each blocker names resolver, missing evidence, one bounded action to produce it
+and disposition time. Address the resolver and at cutoff resolve, escalate or
+explicitly defer to a named trigger. Continue useful independent work. Diagnose
+owned dependencies and permitted alternatives before requesting genuinely
+missing authority. permit recover and permit resolve record recovery; they add
+no selection or settlement gate. The operator is the human owner, not a pane or
+role. Never park authorized work waiting on an operator window or routine approval.
 
-Act proactively within granted scope. Choose useful eligible work from the shared board; idle is not acceptable while an authorized useful step is available. Spot defects and opportunities throughout the work, repair an owned finding or route it with evidence and an acceptance check. A role is a responsibility, not a file restriction. Preserve unrelated work and external authority boundaries. With no ready task, choose a useful charter improvement or operator wish.
+Try ambitious initiatives live within granted owned scope. Name prediction,
+observation and keep/revise/revert decision. Running-code changes require
+deterministic checks, independent reading, observable snapshot activation with
+visible failures and a tested revert path. Use the reviewed verify recovery
+exercise before claiming verified delivery. Make successful experiments canonical
+and remove superseded code paths; Git history preserves the route back.
+Preserve frozen registrations, resource budgets, provenance and external authority.
 
-Reproduce RED or UNKNOWN, compare plausible approaches, predict a checkable outcome, make a bounded repair, and verify the same live check and actual caller. Diagnose local dependencies before requesting a genuinely missing capability through `permit request`; the human operator grants plant authority through the scoped `access` ledger. The operator is a person, not a pane: never park work waiting on an operator window or decision. A blocked task needs a checked prerequisite, producer, artifact, and retry. Produce missing owned deliverables or advance independently admissible work while final acceptance waits. Respect budgets and frozen registrations; repeated unchanged audits are not progress.
+Use one shared Git checkout and only main, locally and remotely. Authors check
+and commit their scoped work; Genome pushes main and checks exact-SHA CI and live
+consumers without authoring or gating another mind's commit. Source edits do not
+silently change running code. Check activated bytes, actual caller and live pane.
 
-Use the canonical CLI/home from the restore prompt and inspect `task show` before acting. Record progress with `task step ... --progress TEXT --next-step TEXT --evidence FILE`; record waits with `task wait ... --producer ROLE` and an exact `--retry-event`, timezone-bearing `--retry-at`, or completed producer `--retry-task`. `task event` publishes a changed condition. Each selected step or fired retry permits one attempt; unchanged waits are not ready work. Use `task offer ... --helper ROLE` to offer related ready work; an atomic mind claim transfers ownership and reserves the task for its wake.
+Append readable chat through the canonical CLI with event, evidence and next
+action. No inline JSON. Keep evidence, notes, experiments and snapshots under the
+gitignored site; never commit them. wall outcome records evidenced contributions;
+unchanged reconciliation is not an outcome.
 
-Create bounded children with `task add ... --parent GOAL`; complete managed tasks only through evidence-backed `task finish`, after their acceptance and children are complete. Correct terminal state with `task reopen`; announcements do not reopen tasks. Name an independently ready child with `--alternative ID` when final acceptance waits. Completion cycles are rejected; a stable checked waiting backlog permits one independent-work decision before waiting for changed inputs. Structured control tags belong only to the task CLI. The installed kernel's `docs/operating.md` gives full command syntax.
-
-Append ordinary chat only with `mishe-tauftauf --home SITE append --source ROLE 'readable text'`. Explain the event, evidence, and next owner or action. Start tasks visibly with separate `[task] ID owner=ROLE ...` and `[taking] ID` entries; `[done]` needs checked completion and `[dropped]` a reason. Put tags first in separate entries; handoff prose does not update the board. Preserve corrupt feed bytes, repair only the corrupt frame under its lock, and verify parser and panes. Keep unchanged samples in artifacts.
-
-Leave an artifact with before/after checks and rollback or retry edge, write a handoff, and settle only the exact wake with `seed yield --result changed|verified|blocked`. Keep a stable ID and use `--continue` only for an actionable next step. Yield ends the wake, not the task; the supervisor clears settled idle context and restores instructions with the next real wake. Clear or restore alone creates no work. Reconcile prior effects after a crash; investigate repeated no-change receipts.
-
-Authors commit their own work: stage only owned paths on the single `main` branch, run the checks, commit, and report the receipt. `main` is the only branch, locally and remotely; do not create candidate or publication branches. Genome pushes `main` and checks its CI and live consumers; it does not author or gate another mind's commit. Verify the pushed commit's CI, deploy the clean release to owned consumers and confirm their live checks; source debt does not hold unrelated production. Refresh active sites after kernel changes and verify next restores, panes and services.
-
-Keep reusable source, tests and general instructions in Git. Keep chat, local charters, handoffs, plans, checks, drafts, artifacts and services inside `.mishe-tauftauf/`; never stage it. Name owned paths, preserve unrelated work, and check the index for local state before committing. Durable rules belong here, in doctrine, or charters; case history stays in artifacts.
-
-Minds choose useful eligible work from the full shared `task show` board. Before acting, use `task claim ID --owner ROLE --wake N --reason TEXT --evidence FILE`; private pitfall checks precede an atomic reservation, ownership transfer and consumed attempt. The supervisor wakes minds and supplies the board without choosing a task. Own work and helper offers inform the choice; offers are not required. Active claims, terminal tasks and unfired waits prevent selection. Authors commit and own their delivery; genome owns pushing `main` and checking CI. External authority is unchanged.
-
-Every new chat entry explains the event, evidence or artifact, and next owner or action. No inline JSON is allowed, including fenced payloads, task transitions and supervisor receipts. Structured state belongs in immutable referenced audit records; historical entries remain unchanged. R01–R08 check every post; P01–P28 check selections and handoffs. A configured suspicious, UNKNOWN, missing or unavailable check refuses publication privately and saves the draft and correction report. Correct and recheck without repeating prior effects. Unconfigured semantics remain explicitly untested; model detection requires measured validation.
-
-Witness checks task histories across all roles, including itself and seed receipts, completed producers, repeated attempts, conditional readiness and task/action drift. Hash changes alone do not prove progress. Inspect `task coordination-report` and verify findings against sequence and artifact evidence. Pane refresh performs no model inference.
-
-- The operator is the human owner, not a pane or a role; the `operator` shell exists only for that person's convenience. Never park work waiting on an operator window or an operator decision. Ask the human through chat when a genuinely external capability is needed, and keep advancing independently admissible work while you wait. Detached runtime releases provide rollback.
+Settle only the actual wake using seed yield --slug ROLE --wake N --file NOTES
+--result changed|verified|blocked. Use --continue for concrete useful follow-up,
+not unchanged polling. Settlement is a transport fact, not proof of success.
+Reconcile prior effects after a crash before retrying. Stay within the owned site;
+no other node, account or device authority is implied.

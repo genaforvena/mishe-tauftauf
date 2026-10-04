@@ -27,17 +27,6 @@ def wake(home, owner):
                             '\nChoose useful work from the shared board and claim it before acting.').sequence
 
 
-def test_supervisor_wakes_choice_without_selecting_or_consuming_task(tmp_path, monkeypatch):
-    sent, proof = ready_site(tmp_path, monkeypatch)
-    result = seed.tick(tmp_path, 'session', 'genome')
-    assert result.startswith('wake ')
-    assert 'TASK TO ADVANCE' not in sent[-1]
-    assert 'task claim' in sent[-1]
-    assert 'repair' in sent[-1]
-    assert task_state.states(Feed(tmp_path).entries())['repair'].status == 'ready'
-    assert not task_state.pending_tasks(Feed(tmp_path).entries())
-
-
 def test_mind_can_claim_another_roles_ready_work_without_helper_offer(tmp_path, monkeypatch):
     _, proof = ready_site(tmp_path, monkeypatch)
     attempt = wake(tmp_path, 'witness')
@@ -118,22 +107,6 @@ def test_failed_claim_append_leaves_owner_and_attempt_unchanged(tmp_path, monkey
     assert Feed(tmp_path).tail_sequence() == before
 
 
-def test_claimed_identity_is_in_handoff_receipt_and_release(tmp_path, monkeypatch):
-    _, proof = ready_site(tmp_path, monkeypatch)
-    attempt = wake(tmp_path, 'witness')
-    task_state.claim(tmp_path, 'repair', 'witness', attempt, 'Check the reproduced repair.', proof)
-    task_state.set_step(tmp_path, 'repair', 'witness', 'Obtain independent review.',
-                        'Implemented and verified the focused repair.', proof)
-    handoff = tmp_path / 'handoff.txt'
-    handoff.write_text('Implemented the scoped repair and verified its focused checks.\n'
-                       'Next: obtain independent review before landing.\n')
-    seed.yield_wake(tmp_path, 'witness', attempt, handoff, result='changed', continue_task=True)
-    entries = Feed(tmp_path).entries()
-    assert not task_state.pending_tasks(entries)
-    work = next(e for e in entries if e.body.startswith('[work]'))
-    assert 'repair' in work.body
-
-
 def test_already_completed_dependency_remains_visible_and_admissible(tmp_path, monkeypatch):
     _, proof = ready_site(tmp_path, monkeypatch)
     task_state.add_task(tmp_path, 'producer', 'genome', 'Produce the repair evidence.',
@@ -145,23 +118,3 @@ def test_already_completed_dependency_remains_visible_and_admissible(tmp_path, m
     assert 'producer' in '\n'.join(task_state.board(Feed(tmp_path).entries()))
     attempt = wake(tmp_path, 'witness')
     task_state.claim(tmp_path, 'repair', 'witness', attempt, 'Verify the completed producer evidence.', proof)
-
-
-def test_claim_evidence_changed_in_final_post_review_refuses_privately(tmp_path, monkeypatch):
-    from mishe_tauftauf import post_check
-    _, proof = ready_site(tmp_path, monkeypatch)
-    attempt = wake(tmp_path, 'witness')
-    original = post_check.require
-    def tamper(home, source, body, context=None, stage='post'):
-        result = original(home,source,body,context=context,stage=stage)
-        if body.startswith('[task-claim]'):
-            proof.write_text('Different evidence arrived during the final admission.')
-        return result
-    monkeypatch.setattr(post_check,'require',tamper)
-    before=Feed(tmp_path).read_bytes()
-    with pytest.raises(post_check.CorrectionRequired) as error:
-        task_state.claim(tmp_path,'repair','witness',attempt,'Perform the scoped check.',proof)
-    assert Feed(tmp_path).read_bytes()==before
-    assert task_state.registry(Feed(tmp_path).entries())['repair'].owner=='genome'
-    assert error.value.report['results'][-1]['id']=='D03'
-    assert 'claim evidence changed' in error.value.report['results'][-1]['reason']

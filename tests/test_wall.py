@@ -148,7 +148,7 @@ def test_expired_trial_can_recover_existing_turn_without_new_wake(tmp_path, monk
     sent = []
     monkeypatch.setattr(seed, "_send", lambda target, text: sent.append(text))
     assert wall.tick(tmp_path, "session", "genome", 300).startswith("wake ")
-    assert "trial window ended" in sent[-1]
+    assert "wake window ended" in sent[-1]
     assert len([e for e in Feed(tmp_path).entries() if e.body.startswith("seed wake ")]) == 1
 
 
@@ -171,7 +171,7 @@ def test_addressed_message_wakes_stable_mind_without_ledger(tmp_path, monkeypatc
     monkeypatch.setattr(seed, "_mind_ready", lambda *a: True)
     monkeypatch.setattr(seed, "_send", lambda target, text: sent.append(text))
     first = int(wall.tick(tmp_path, "session", "genome", 3600).split()[-1])
-    assert "Wall trial supersedes ledger" in sent[-1]
+    assert "Wall coordination is canonical" in sent[-1]
     note = tmp_path / "note"
     note.write_text("Planning done. Waiting for sample.")
     seed.yield_wake(tmp_path, "genome", first, note, result="verified")

@@ -14,7 +14,7 @@ You need:
 - **Git and an owned Git worktree.** The site directory must sit directly inside the worktree root, not inside an arbitrary subdirectory and not at the repository root itself.
 - **tmux.** This supplies the shared terminal session and its panes.
 - **An installed, usable coding-agent CLI**, such as Codex or OMP, with its own authentication and model access already configured. Planting starts real agents that may consume your provider's usage or credits. It checks that a new mind's command exists; it does not supply credentials or prove that a model request will work.
-- **A working user systemd manager** for persistent operation. A fresh [manual trial](#try-it-without-installing-services) can omit this.
+- **A working user systemd manager** for persistent operation. A fresh [manual setup](#try-it-without-installing-services) can omit this.
 - **GitHub CLI (`gh`) and access to the repository's Actions runs** for CI readings and checked linked releases. Without them the CI result is `UNKNOWN`; local panes can still run. A repository without a matching Actions run also remains `UNKNOWN`.
 
 These read-only checks catch common missing prerequisites:
@@ -93,18 +93,18 @@ The upper pane is the current evidence display. The lower pane belongs to the ag
 
 ## 4. Give it one real, bounded task
 
-This command **appends an obligation and can wake `discover`**. It asks for a real local reading, not a source-code change. Run it once; choose a new task ID if you want a separate later trial.
+Send one bounded request to discover through the shared tape:
 
 ```bash
 "$SITE/bin/mishe-tauftauf" --home "$SITE" append --source operator \
-  '[task] hello-world owner=discover source=/proc/loadavg acceptance=fresh-scan-and-live-pane retry=next-scan. Read one real load value, cite the scan artifact, verify the discover top pane, and mark this task done.'
+  '[dm] to=discover Read one real /proc/loadavg value, cite the scan artifact, verify your live pane, and report the checked finding on your wall.'
 ```
 
 Watch the `discover` window. In a second terminal, with the same `SITE` and `SESSION` variables:
 
 ```bash
 "$SITE/bin/mishe-tauftauf" --home "$SITE" seed status --slug discover
-"$SITE/bin/mishe-tauftauf" --home "$SITE" task show --owner discover
+"$SITE/bin/mishe-tauftauf" --home "$SITE" wall show --owner discover
 "$SITE/bin/mishe-tauftauf" --home "$SITE" discover show
 tmux capture-pane -p -t "$SESSION:discover.0"
 tail -f "$SITE/chat.log"
@@ -118,11 +118,11 @@ Look for all of these, not just a successful launcher exit:
 
 1. The expected windows exist and the top-pane `-- pane live ...` timestamp advances. That timestamp proves the renderer is alive, not that its checks passed.
 2. `discover show` reports a fresh scan and a verified `sense.proc.loadavg` sample. The task's artifact points to the actual scan under `SITE/discovery/`, and the live `discover` top pane shows the reading.
-3. The tape shows `[taking]` for the task, a checked result and handoff, a supervisor `[work]` receipt, and `[done]` for the same ID. Read the receipt's evidence rather than treating the tag alone as proof.
+3. The discover wall and tape report the checked finding and evidence; the supervisor records settlement for the actual wake. Read the artifact and live result: settlement alone proves no success.
 4. After settlement and an idle clear, the supervisor records a process rotation. On the next actual wake, the mind receives its charter and handoff and reads the live evidence again. This last step may not happen immediately; it needs another real wake.
 5. In persistent mode, the resident units named in `SITE/health/services.json` are active. The [operating checklist](operating.md#inspect-the-running-plant) covers those checks.
 
-If the task is held, do not manufacture a `[done]` entry. Check the lower pane, readiness, and supervisor first; [recovery](operating.md#recover-a-held-wake-or-clear) explains the distinction between an unsettled wake and a settled mind awaiting clear. A missing reading should remain `UNKNOWN` with an exact retry condition.
+If the wake is held, keep that uncertainty visible. Check the lower pane, readiness, and supervisor first; [recovery](operating.md#recover-a-held-wake-or-clear) explains the distinction between an unsettled wake and a settled mind awaiting clear. A missing reading should remain `UNKNOWN` with an exact retry condition.
 
 ## Plant another owned worktree
 
@@ -138,21 +138,21 @@ A fresh external target defaults to `TARGET/.mishe-tauftauf/` and session `mishe
 
 For a deliberately named site, pass `--home /path/to/project/.chosen-site --session chosen-session`. The home must still be directly inside that Git worktree. The launcher refuses to take over a tmux session or user unit belonging to another site. If multiple recognized resident sites exist, choose explicitly with `--home` and `--session`; do not guess which one is authoritative.
 
-Plant the core persistently **before** the external worktree if you want automatic linked updates. If the launcher reports that the external plant was unregistered because no core plant existed, establish the core and repeat the external plant deliberately. [Linked release rules](operating.md#understand-ci-and-linked-releases) cover the gates and the generated-contract task.
+Plant the core persistently **before** the external worktree if you want automatic linked updates. If the launcher reports that the external plant was unregistered because no core plant existed, establish the core and repeat the external plant deliberately. [Linked release rules](operating.md#understand-ci-and-linked-releases) cover the gates and the generated-contract update.
 
 ## Try it without installing services
 
-For a **new trial site**, add `--no-services` to the launcher command:
+For a **new manually supervised site**, add `--no-services` to the launcher command:
 
 ```bash
 python3 -m coordination.launcher --engine-command 'codex' --no-services
 ```
 
-This still creates the site, starts panes and agents, takes initial discovery and CI readings, and updates an external target's plant contract. It skips installing/enabling the resident user services and the release coordinator, and does not register an external trial for linked updates. Its service manifest is empty.
+This still creates the site, starts panes and agents, takes initial discovery and CI readings, and updates an external target's plant contract. It skips installing/enabling the resident user services and the release coordinator, and does not register an external manual setup for linked updates. Its service manifest is empty.
 
-**It does not start the continuous wake/clear supervisors, CI watcher, or permission-panel follower. It also does not stop or disable services from a previous persistent plant.** Use it for a fresh trial, not as a way to turn off an existing installation.
+**It does not start the continuous wake/clear supervisors, CI watcher, or permission-panel follower. It also does not stop or disable services from a previous persistent plant.** Use it for a fresh manual setup, not as a way to turn off an existing installation.
 
-To exercise the first task manually, set `SITE` and `SESSION` to the trial's actual names, append the task above, then run this supervisor in a separate operator terminal:
+To exercise the first request manually, set `SITE` and `SESSION` to the site's actual names, send the request above, then run this supervisor in a separate operator terminal:
 
 ```bash
 "$SITE/bin/mishe-tauftauf" --home "$SITE" seed run \
@@ -162,13 +162,13 @@ To exercise the first task manually, set `SITE` and `SESSION` to the trial's act
 
 It supervises **only `discover`**: wakes that role, recovers dead panes, and clears a settled mind at a stable idle boundary. Ctrl-c stops this foreground supervisor, not the tmux session or its agents. For other roles, run their supervisors separately rather than assuming this one covers the whole plant. Do not start a second supervisor alongside an existing service for the same role.
 
-A manual trial's initial CI sample becomes stale after five minutes without a watcher. From the core checkout, an explicit refresh writes the new sample and may append CI events or failure tasks:
+A manual setup's initial CI sample becomes stale after five minutes without a watcher. From the core checkout, an explicit refresh writes the new sample and may append CI events or addressed failure messages:
 
 ```bash
 env PYTHONPATH=src python3 -m mishe_tauftauf.ci_watch --home "$SITE"
 ```
 
-The `permissions` display refreshes in its own top pane even in a manual trial; without its follower, dead panel panes are not automatically repaired. `access list` remains available for direct inspection. Move to persistent operation by deliberately repeating the launcher without `--no-services` once you accept the mutations listed above.
+The `permissions` display refreshes in its own top pane even in a manual setup; without its follower, dead panel panes are not automatically repaired. `access list` remains available for direct inspection. Move to persistent operation by deliberately repeating the launcher without `--no-services` once you accept the mutations listed above.
 
 ## Use another agent command
 

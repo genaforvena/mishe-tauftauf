@@ -9,6 +9,10 @@ from mishe_tauftauf.feed import Feed
 
 def supervisor(home, monkeypatch):
     sent = []
+    from mishe_tauftauf import tmux
+    monkeypatch.setattr(tmux, "owns_session", lambda *args: True)
+    monkeypatch.setattr(tmux, "_pane_stopped_or_dead", lambda *args: False)
+    monkeypatch.setattr(tmux, "capture_raw", lambda *args: seed.capture_raw(*args))
     monkeypatch.setattr(seed, "owns_session", lambda *args: True)
     monkeypatch.setattr(seed, "_pane_stopped_or_dead", lambda *args: False)
     monkeypatch.setattr(seed, "capture_raw", lambda *args: "STATE: GREEN\n-- pane live " +
@@ -34,136 +38,40 @@ def choose(home, wake, identity, owner="genome"):
     task_state.claim(home, identity, owner, wake, "Advance this useful checked step.", proof)
 
 
-def test_waited_task_is_not_retaken_by_self_pick_or_continue(tmp_path, monkeypatch):
+def test_canonical_wake_leaves_work_choice_to_mind(tmp_path, monkeypatch):
     sent = supervisor(tmp_path, monkeypatch)
-    Feed(tmp_path).append("operator", "[task] repair owner=genome acceptance=fix")
-    wake = int(seed.tick(tmp_path, "session", "genome").split()[-1])
-    assert "MIND SELECTS" in sent[-1] and "repair" in sent[-1]
-    choose(tmp_path, wake, "repair")
-    with pytest.raises(ValueError, match="next step|retry"):
-        settle(tmp_path, wake, monkeypatch, continue_task=True)
-    path = tmp_path / "proof.md"
-    path.write_text("caller absent")
-    task_state.wait_for(tmp_path, "repair", "genome", "integrate caller", "caller absent", path,
-                        retry_event="caller-ready")
-    settle(tmp_path, wake, monkeypatch)
-    assert "waiting" in seed.tick(tmp_path, "session", "genome")
-    assert len(sent) == 1
-    Feed(tmp_path).append("operator", "[task] other owner=genome acceptance=check")
-    next_wake = int(seed.tick(tmp_path, "session", "genome").split()[-1])
-    assert "other" in sent[-1]
-    choose(tmp_path, next_wake, "other")
-    settle(tmp_path, next_wake, monkeypatch)
-    task_state.signal(tmp_path, "caller-ready", "operator", path, "caller now ready")
-    assert seed.tick(tmp_path, "session", "genome").startswith("wake ")
-    assert "repair" in sent[-1]
+    Feed(tmp_path).append('operator', '[dm] to=genome\nInvestigate the missing evidence and choose a bounded next action.')
+    assert seed.tick(tmp_path, 'session', 'genome').startswith('wake ')
+    assert 'Choose useful work' in Feed(tmp_path).entries()[-1].body
+    assert 'TASK TO ADVANCE' not in sent[-1]
+    assert 'missing evidence' in sent[-1]
+    assert not task_state.pending_tasks(Feed(tmp_path).entries())
 
 
-def test_checked_progress_continues_same_task(tmp_path, monkeypatch):
-    sent = supervisor(tmp_path, monkeypatch)
-    Feed(tmp_path).append("operator", "[task] repair owner=genome acceptance=fix")
-    wake = int(seed.tick(tmp_path, "session", "genome").split()[-1])
-    choose(tmp_path, wake, "repair")
-    path = tmp_path / "proof.md"
-    path.write_text("implemented and checked")
-    task_state.set_step(tmp_path, "repair", "genome", "independent review", "implementation checked", path)
-    settle(tmp_path, wake, monkeypatch, continue_task=True)
-    assert seed.tick(tmp_path, "session", "genome").startswith("wake ")
-    assert "independent review" in sent[-1]
-    receipts = [e for e in Feed(tmp_path).entries() if e.body.startswith("[work]")]
-    assert "task=repair" in receipts[-1].body.splitlines()[0]
-
-
-def test_duplicate_announcement_does_not_resume_waiting_or_terminal_task(tmp_path):
-    Feed(tmp_path).append("operator", "[task] repair owner=genome acceptance=fix")
-    path = tmp_path / "proof.md"
-    path.write_text("caller absent")
-    task_state.wait_for(tmp_path, "repair", "genome", "integrate", "missing", path, retry_event="ready")
-    Feed(tmp_path).append("witness", "[task] repair owner=genome acceptance=fix")
-    assert seed._external_event(tmp_path, "genome") is None
-
-
-def test_waiting_backlog_permits_one_independent_production_opportunity(tmp_path, monkeypatch):
-    sent = supervisor(tmp_path, monkeypatch)
-    Feed(tmp_path).append("operator", "[task] research owner=genome acceptance=registered-results")
-    wake = int(seed.tick(tmp_path, "session", "genome").split()[-1])
-    choose(tmp_path, wake, "research")
-    proof = tmp_path / "proof.md"
-    proof.write_text("Historical GPU accounting unavailable; cached weights and CPU available.")
-    task_state.wait_for(tmp_path, "research", "genome", "registered replication", "GPU accounting absent", proof,
-                        retry_event="gpu-accounted", producer="genome")
-    settle(tmp_path, wake, monkeypatch)
-    opportunity = seed.tick(tmp_path, "session", "genome", self_pick_seconds=0.000001)
-    assert opportunity.startswith("wake ")
-    assert "INDEPENDENT WORK OPPORTUNITY" in sent[-1]
-    assert "TASK TO ADVANCE: research" not in sent[-1]
-    assert "cached" in sent[-1] or "measurement" in sent[-1]
-    settle(tmp_path, int(opportunity.split()[-1]), monkeypatch)
-    # Same waiting inputs cannot turn periodic self-picks into repeated audits.
-    assert "waiting" in seed.tick(tmp_path, "session", "genome", self_pick_seconds=0.000001)
-    assert len(sent) == 2
-    assert task_state.states(Feed(tmp_path).entries())["research"].status == "waiting"
-
-
-def test_failed_opportunity_wake_append_does_not_consume_decision(tmp_path, monkeypatch):
-    sent = supervisor(tmp_path, monkeypatch)
-    Feed(tmp_path).append("operator", "[task] research owner=genome acceptance=results")
-    wake = int(seed.tick(tmp_path, "session", "genome").split()[-1])
-    choose(tmp_path, wake, "research")
-    proof = tmp_path / "proof.md"
-    proof.write_text("Training blocked; CPU measurements admissible.")
-    task_state.wait_for(tmp_path, "research", "genome", "train", "GPU accounting missing", proof,
-                        retry_event="gpu-accounted")
-    settle(tmp_path, wake, monkeypatch)
-    append = Feed.append
-    def fail_wake(self, source, body, **kwargs):
-        if body.startswith("seed wake "):
-            raise RuntimeError("crash before durable wake")
-        return append(self, source, body, **kwargs)
-    monkeypatch.setattr(Feed, "append", fail_wake)
-    with pytest.raises(RuntimeError, match="crash"):
-        seed.tick(tmp_path, "session", "genome", self_pick_seconds=0.000001)
-    monkeypatch.setattr(Feed, "append", append)
-    assert seed.tick(tmp_path, "session", "genome", self_pick_seconds=0.000001).startswith("wake ")
-    assert len(sent) == 2
-
-
-def test_pending_wake_reserves_task_even_before_attempt_record(tmp_path):
-    Feed(tmp_path).append("operator", "[task] repair owner=genome acceptance=fix")
-    path = tmp_path / "proof.md"
-    path.write_text("health can perform this check")
-    task_state.offer(tmp_path, "repair", "genome", ["health"], path)
-    wake = Feed(tmp_path).append("seed", "seed wake health observation=1 task=repair\nDelivery pending.")
-    assert seed._state(tmp_path, "health")[1] == wake.sequence
-    assert task_state.select_task(Feed(tmp_path).entries(), "genome") is None
-    assert task_state.select_task(Feed(tmp_path).entries(), "health") is None
-
-
-def test_helper_cannot_take_next_step_before_owner_yields(tmp_path, monkeypatch):
+def test_continue_requests_new_turn_without_ledger_step(tmp_path, monkeypatch):
     supervisor(tmp_path, monkeypatch)
-    Feed(tmp_path).append("operator", "[task] repair owner=genome acceptance=fix")
-    path = tmp_path / "proof.md"
-    path.write_text("health can check this")
-    task_state.offer(tmp_path, "repair", "genome", ["health"], path)
-    wake = int(seed.tick(tmp_path, "session", "genome").split()[-1])
-    choose(tmp_path, wake, "repair")
-    path.write_text("implementation checked")
-    task_state.set_step(tmp_path, "repair", "genome", "verify", "implemented", path)
-    assert task_state.select_task(Feed(tmp_path).entries(), "health") is None
-    settle(tmp_path, wake, monkeypatch)
-    assert [s.identity for s in task_state.candidates(Feed(tmp_path).entries())] == ["repair"]
+    attempt = int(seed.tick(tmp_path, 'session', 'genome').split()[-1])
+    settle(tmp_path, attempt, monkeypatch, continue_task=True)
+    assert seed.tick(tmp_path, 'session', 'genome', self_pick_seconds=0).startswith('wake ')
+    assert not any(e.body.startswith('[work]') for e in Feed(tmp_path).entries())
 
 
-def test_completed_task_keeps_receipt_identity_and_cannot_continue_empty_work(tmp_path, monkeypatch):
-    supervisor(tmp_path, monkeypatch)
-    Feed(tmp_path).append("operator", "[task] repair owner=genome acceptance=fix")
-    wake = int(seed.tick(tmp_path, "session", "genome").split()[-1])
-    choose(tmp_path, wake, "repair")
-    Feed(tmp_path).append("genome", "[done] repair — checked artifact")
-    with pytest.raises(ValueError, match="next step|retry"):
-        settle(tmp_path, wake, monkeypatch, continue_task=True)
-    settle(tmp_path, wake, monkeypatch)
-    receipt = next(e for e in Feed(tmp_path).entries() if e.body.startswith("[work]"))
-    assert "task=repair" in receipt.body.splitlines()[0]
-    Feed(tmp_path).append("genome", "[done] repair — checked")
-    assert seed._external_event(tmp_path, "genome") is None
+def test_stable_settled_wall_waits_until_addressed_message(tmp_path, monkeypatch):
+    sent = supervisor(tmp_path, monkeypatch)
+    attempt = int(seed.tick(tmp_path, 'session', 'genome').split()[-1])
+    settle(tmp_path, attempt, monkeypatch)
+    assert 'waiting' in seed.tick(tmp_path, 'session', 'genome', self_pick_seconds=0)
+    Feed(tmp_path).append('witness', 'Routine witness status.')
+    assert 'waiting' in seed.tick(tmp_path, 'session', 'genome', self_pick_seconds=0)
+    Feed(tmp_path).append('witness', '[dm] to=genome\nReview fresh resolver evidence.')
+    assert seed.tick(tmp_path, 'session', 'genome', self_pick_seconds=0).startswith('wake ')
+    assert 'fresh resolver evidence' in sent[-1]
+
+
+def test_missing_presentation_lease_stays_unknown_without_send(tmp_path, monkeypatch):
+    sent = supervisor(tmp_path, monkeypatch)
+    from mishe_tauftauf import tmux
+    monkeypatch.setattr(tmux, 'capture_raw', lambda *args: 'STATE: GREEN\n')
+    assert 'UNKNOWN' in seed.tick(tmp_path, 'session', 'genome')
+    assert not sent
+    assert not any(e.body.startswith('seed wake ') for e in Feed(tmp_path).entries())

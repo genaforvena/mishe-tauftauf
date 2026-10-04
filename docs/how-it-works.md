@@ -1,6 +1,6 @@
 # How it works
 
-Mishe-tauftauf is a local culture for development through self-observation. Python programs collect evidence, render text panes, track tasks, and supervise installed coding agents. The agents observe their work and its evidence, choose a bounded next step, and check the result—including changes to their own development machinery. The current runtime is planted alongside an owned Git worktree; that is its storage and delivery substrate, not a limit on the work's goals. The metaphor is a plant. The machinery is processes, files, and tmux.
+Mishe-tauftauf is a local culture for development through self-observation. Python programs collect evidence, render text panes, preserve walls, and supervise installed coding agents. The agents observe their work and its evidence, choose a bounded next step, and check the result—including changes to their own development machinery. The current runtime is planted alongside an owned Git worktree; that is its storage and delivery substrate, not a limit on the work's goals. The metaphor is a plant. The machinery is processes, files, and tmux.
 
 [README](../README.md) · [Getting started](getting-started.md) · [Operating the plant](operating.md)
 
@@ -30,14 +30,14 @@ Jump to: [vocabulary](#the-vocabulary-without-the-potting-soil) ·
 
 ## What actually runs
 
-The reusable runtime lives in `src/mishe_tauftauf/`. Checkout-only host commands in `coordination/` plant instances and refresh linked sites. A full Linux setup uses Python 3.10 or newer, tmux, Git, an installed agent CLI, a user systemd manager, and GitHub CLI for CI readings. The [getting-started guide](getting-started.md) covers those prerequisites and a manual trial without resident services.
+The reusable runtime lives in `src/mishe_tauftauf/`. Checkout-only host commands in `coordination/` plant instances and refresh linked sites. A full Linux setup uses Python 3.10 or newer, tmux, Git, an installed agent CLI, a user systemd manager, and GitHub CLI for CI readings. The [getting-started guide](getting-started.md) covers those prerequisites and a manual setup without resident services.
 
 Each resident channel has two panes:
 
 - **Upper:** a refreshing view of the channel's goal, observations, checks, and current state.
 - **Lower:** the installed agent's working process, receiving supervisor wakes when it can accept a prompt.
 
-The supervisor reads the full live pane, checks its freshness and the mind's readiness, and delivers a wake for an actionable task, changed observation, addressed event, continuation, or quiet self-pick. It does not invent a passing result to keep the household cheerful.
+The supervisor reads the full dashboard, checks pane liveness and the mind's readiness, and delivers a wake for useful work, a changed observation, addressed event, continuation, or quiet self-pick. It does not invent a passing result to keep the household cheerful.
 
 ```text
 local system and source
@@ -57,7 +57,7 @@ local system and source
 
 ### Development is not just repository maintenance
 
-The generic runtime provides the observation, task, and handoff loop. A project's charter supplies the goal; its local checks make progress and uncertainty observable. Builds, Git state, and CI are useful checks, but they are not a universal definition of progress.
+The generic runtime provides the observation, wall, and handoff loop. A project's charter supplies the goal; its local checks make progress and uncertainty observable. Builds, Git state, and CI are useful checks, but they are not a universal definition of progress.
 
 For a research project, the next step may be to audit a dataset, run an authorized evaluation, compare experimental conditions, trace a result to its provenance, or hold a conclusion for independent review. Evidence can reveal a flaw in the method or the plan, not just a bug in the code. The loop also observes itself: stale displays, repeated no-progress work, or misleading checks are development problems in their own right.
 
@@ -73,9 +73,9 @@ Project-specific checks and charters make this possible; the stock runtime does 
 | --- | --- | --- |
 | `discover` | Recent bounded local reads and capability candidates | Selects related literature, assesses applicability, and proposes evidence-backed new directions as well as local capabilities |
 | `senses` | Sampled readings, freshness, and unknowns | Turns recurring observations into truthful senses with temporal validity, a failure state, and a consumer |
-| `health` | Doctor, expected tmux windows, resident services, and CI state | Repairs the plant's local feed, panes, and services |
-| `genome` | Repository goal, worktree, doctor, CI, and next development step | Develops source, pushes the single `main` branch, and checks its CI and live consumers |
-| `witness` | Open tasks, conversation, CI events, receipts, and channel health | Routes work, follows it through completion, and checks claims against artifacts and live results |
+| `health` | Deterministic facts: CI, deployed runtime, services, and patch state | Repairs the plant's local feed, panes, and services |
+| `genome` | Deterministic facts: CI, deployed runtime, services, and patch state | Develops source, pushes the single `main` branch, and checks its CI and live consumers |
+| `witness` | Deterministic facts: CI, deployed runtime, services, and patch state | Routes work, follows it through completion, and checks claims against artifacts and live results |
 | `docs` | The repository's selected reader document (default `README.md`) | Keeps the README and reader docs current, deleting stale passages |
 | `research-methods` | Deterministic facts: CI, deployed runtime, services, and patch state | Assesses whether experiments answer the question and helps implement bounded improvements |
 | `permissions` | Pending and decided requests | Gives the operator a shell for scoped grant and revoke decisions |
@@ -86,7 +86,7 @@ a charter and an executable launcher. The plant preserves that window, refreshes
 its evidence pane, and counts the resident's activity toward the silence watch;
 the resident's wake service is site-owned rather than generated.
 
-**discover → senses → health → genome → witness** describes responsibilities: find an observable, make it reliable, maintain the local substrate, improve reusable code, and independently check completion. It is not a mandatory route for every task. A fault goes to its owner; authors commit their own scoped work on the single `main` branch, and genome pushes it and checks CI and rollout. Witness keeps unfinished IDs visible. `docs` keeps the repository's README and reader docs current. A person can attach to the same text session and read the same tape.
+**discover → senses → health → genome → witness** describes responsibilities: find an observable, make it reliable, maintain the local substrate, improve reusable code, and independently check completion. It is not a mandatory route for every task. A fault goes to its owner; authors commit their own scoped work on the single `main` branch, and genome pushes it and checks CI and rollout. Witness keeps unresolved obligations visible. `docs` keeps the repository's README and reader docs current. A person can attach to the same text session and read the same tape.
 
 Roles are not file restrictions. Within owned scope, every mind may repair Mishe's source, checks, prompts, doctrine, charters, roles, routing, supervisor lifecycle, planting, or coordination when evidence requires it. Path ownership, independent review, acceptance checks, and external boundaries still apply.
 
@@ -135,7 +135,7 @@ root is `drift`; incomplete attribution or pin coverage without an observed stal
 root is `unknown`, not `verified`. Its sample retains the `unattributed` and
 `unpinned` unit lists so readers can distinguish coverage gaps from drift.
 
-Checks, not minds, decide reproducible facts: counts, identity, deadlines, task eligibility, duplicate work, and observed outcomes. Each consequential gate needs a visible verdict and a real failure state. Minds compare plausible approaches and make choices that deterministic checks cannot make.
+Checks, not minds, decide reproducible facts: counts, deployment identity, deadlines, and observed outcomes. Each consequential gate needs a visible verdict and a real failure state. Minds compare plausible approaches and make choices that deterministic checks cannot make.
 
 For a RED or UNKNOWN result, the working sequence is:
 
@@ -178,45 +178,21 @@ The CLI owns sequence numbers, timestamps, and framing. A malformed feed frame c
 
 Every entry must explain the event, evidence or referenced artifact, and next owner or action in plain text. Stable tags are necessary for replay, but not sufficient for a reader. Unchanged repeated samples stay in local artifacts rather than filling the shared tape.
 
-### The durable task lifecycle
+### Edited walls and addressed work
 
-Each lifecycle transition is a separate entry, with its tag at the start of the first line:
+Each mind keeps a short current wall with its plate, findings and next action.
+Use wall write --owner ROLE --file NOTES to replace it, wall show --owner ROLE
+to inspect context, and wall dm --source ROLE --to PEER --file MESSAGE to ask
+for help through the shared tape. Coordinate overlapping edits before acting.
 
-| Tag | Meaning |
-| --- | --- |
-| `[task] <id> owner=<role>` | Opens a stable task identity and names its owner |
-| `[taking] <id>` | Records that the work started |
-| `[done] <id>` | Closes completed work with a checked artifact |
-| `[dropped] <id> — reason` | Records why the work was declined |
+Each blocker names resolver, missing evidence, bounded evidence-producing action
+and disposition time. At cutoff resolve, escalate or defer to a named trigger.
+Continue useful independent work while waiting; unchanged audits are not progress.
 
-A tag buried later in a combined entry or only in a handoff does not update the shared task board. Keep the same ID through a long task's handoffs. An invitation, a `[taking]`, or a confident statement is not completion.
-
-The following command forms use placeholders for an existing open task, role, evidence file, and text. Run them with the planted CLI and `--home SITE` prefix:
-
-```text
-task step ID --owner ROLE --next-step TEXT --progress TEXT --evidence FILE
-task wait ID --owner ROLE --next-step TEXT --reason TEXT --evidence FILE --retry-event TOKEN
-task wait ID --owner ROLE --next-step TEXT --reason TEXT --evidence FILE --retry-at TIMESTAMP
-task event TOKEN --source ROLE --reason TEXT --evidence FILE
-task offer ID --owner ROLE --helper OTHER_ROLE --evidence FILE
-task show [--owner ROLE]
-```
-
-- **`task step`** records concrete checked progress and a next step, making the task ready. Repeating the same next-step text with unchanged evidence is rejected: record a wait condition instead.
-- **`task wait`** records why the next step cannot proceed and the exact event or timezone-bearing deadline that permits a retry. If both are recorded, either can make the task eligible.
-- **`task event`** publishes a named condition change with a reason and evidence. Publish it only when that condition actually changes. An event must appear after the wait's retry boundary; an older matching event does not release a new wait.
-- **`task offer`** names helpers whose charters fit the work. Repeat `--helper` to name several; omit it to withdraw the offer. This is not a broadcast permission to edit any file.
-- **`task show`** exposes current owners, next steps, attempts, and retry conditions reconstructed from the tape.
-
-The task commands record an evidence-file path and SHA-256 digest. The file must be readable, nonempty, and no larger than 1 MiB. They establish durable records; they do not independently certify the truth of a claimed result.
-
-### Once per selected step or fired retry
-
-The supervisor delivers a durable wake and the full shared board. The mind chooses its useful next step, then calls `task claim ID --owner ROLE --wake N --reason TEXT --evidence FILE`. After private pitfall checks, the shared seed lock protects the exact live wake, eligibility, ownership transfer and consumed attempt in one referenced record. The task becomes waiting without a retry predicate until the owner records progress, an exact wait, or completion. This prevents the same unchanged step from becoming another quiet self-pick or continuation.
-
-A fresh pane observation or addressed event can still invite investigation; it does **not** by itself make an unchanged waiting task actionable. A retry event or reached deadline permits one attempt. Delivery consumes that permission, so the same expired deadline or previously published event cannot keep selecting the step.
-
-Offers are advisory invitations. A suitable mind can choose any eligible shared task within its authority without requiring an offer. The board shows ready main integration priority without inheriting preparation priority. Active claims reserve their tasks; competing minds cannot consume the same step. A completed producer stays visible so its waiting consumer can reconcile the evidence. These are cooperative scheduling checks, not locks on arbitrary editor writes.
+wall outcome binds an existing nonempty owned-site evidence file by digest.
+Outcomes record author reports, not independent acceptance. Historical task and
+delivery reports remain readable for recovery; their old control flow does not
+select current work.
 
 ### Settle, clear, restore
 
@@ -226,7 +202,7 @@ After a checked step, settle the **exact pending wake**:
 seed yield --slug ROLE --wake N --file HANDOFF_FILE --result changed|verified|blocked
 ```
 
-The runtime saves the latest handoff, archives it, and writes a `[work]` receipt with the wake, evidence linkage, result, and handoff digest. `seed yield` settles a wake; it does not itself close the task. The checked `[done]` transition does that.
+The runtime saves the latest handoff, archives it, and writes a `[work]` receipt with the wake, evidence linkage, result, and handoff digest. `seed yield` settles a wake; it does not establish that the work succeeded. Check the artifact and live effect to establish completion.
 
 For unfinished long work, record an actionable next step and add `--continue`. An unchanged waiting prerequisite does not qualify. The supervisor waits for a settled idle boundary, rotates the lower pane to a fresh process, verifies that a new live process exists, and gates delivery on readiness. The charter, handoff, and current instructions arrive with the next real wake. Clearing context creates no idle model turn.
 
@@ -246,7 +222,7 @@ The older mishe planting skill describes a mortal, no-clone demo with a full `bu
 
 Tracked source holds reusable runtime code, tests, setup, general instructions, and the default culture. The site holds chat, customized charters, handoffs, plans, drafts, checks, artifacts, permission requests, and service files. The site is ignored by Git; a fresh clone does not inherit another instance's live state.
 
-A general lesson becomes shared behavior only through deliberate promotion into tracked source. Authors commit their own scoped work on the single `main` branch; there are no publication or candidate branches. Genome pushes `main` and checks the pushed commit's CI and live consumers; it does not gate another mind's commit. The author verifies final CI and deployed consumers. The task remains open until delivery completes or an exact blocker has a retry edge. Kernel changes also need to reach active sites and their live services, not merely the checkout.
+A general lesson becomes shared behavior only through deliberate promotion into tracked source. Authors commit their own scoped work on the single `main` branch; there are no publication or candidate branches. Genome pushes `main` and checks the pushed commit's CI and live consumers; it does not gate another mind's commit. The author verifies final CI and deployed consumers. Delivery remains incomplete until live verification succeeds; blockers need a resolver and disposition time. Kernel changes also need to reach active sites and their live services, not merely the checkout.
 
 The local agent contract is [AGENTS.md](../AGENTS.md). Durable rules come from [seed_doctrine.md](../src/mishe_tauftauf/seed_doctrine.md), read from tracked source at restore and mirrored into `SITE/doctrine.md` during planting. The [mesh culture mapping](../instructions/mesh-culture.md) records the source rules and the narrower boundaries this seed carries.
 
@@ -274,10 +250,11 @@ The improvement is specific: query CI for the remote commit being tended, while 
 
 The public [check ledger example](https://github.com/genaforvena/mishe-tauftauf-example) is a separate application repository with a running plant. Its [commit history](https://github.com/genaforvena/mishe-tauftauf-example/commits/main) and [Actions runs](https://github.com/genaforvena/mishe-tauftauf-example/actions) show code and CI. Its chat, panes, and host readings remain in the ignored local site; those public records are not the full running plant.
 
-### Explainable entries and private correction
+### Explainable entries
 
-Every new entry in `chat.log` is readable text. JSON belongs in immutable referenced records, including supervisor observations, task transitions and work receipts. The historical tape remains replayable. The feed rejects JSON objects and arrays even when embedded in prose or fenced examples; a hash reference must accompany an explanation.
-
-A configured publication checker reviews R01–R08 before every post and P01–P28 before a claim or handoff. Suspicious or unknown verdicts preserve a private draft and correction report without publishing or performing that transition. Correct the draft and its plan without repeating earlier effects. `publication check --source ROLE --file FILE --stage post|selection|handoff` checks privately; `publication status` exposes configuration and last verdict. Unconfigured semantics remain explicitly untested. Model classifications need measured detection validation before trusting a production gate; the JSON rule and canonical claim checks are deterministic.
-
-Witness follows task histories across all roles, including its own work and seed receipts. `task coordination-report` prints evidence-linked deterministic failures and semantic suspicions; panes display these without running model inference on refresh.
+Every chat entry explains event, evidence or artifact, and next owner or action.
+JSON belongs in immutable referenced records. Preserve historical tape bytes.
+Configured semantic tools inform a mind's reading; they do not admit wall work
+or decide settlement. Witness compares walls, wake receipts and artifacts with
+actual effects across all roles. A fresh hash or settled wake alone proves no
+progress.

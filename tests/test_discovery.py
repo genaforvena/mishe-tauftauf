@@ -666,7 +666,7 @@ def test_renew_scan_refreshes_missing_and_expired_evidence_without_log_spam(tmp_
 
 
 def test_resident_ticks_renew_freshness_evidence_even_when_top_panes_fail(tmp_path: Path, monkeypatch) -> None:
-    from mishe_tauftauf import seed
+    from mishe_tauftauf import seed, tmux
 
     clock = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
@@ -676,15 +676,15 @@ def test_resident_ticks_renew_freshness_evidence_even_when_top_panes_fail(tmp_pa
             return clock
 
     monkeypatch.setattr(discovery, "datetime", Clock)
-    monkeypatch.setattr(seed, "owns_session", lambda *args: True)
+    monkeypatch.setattr(tmux, "owns_session", lambda *args: True)
     stale = {"created": (clock - timedelta(seconds=601)).isoformat(),
              "node": "node", "observations": [
                  {"id": "sense.value", "state": "verified", "sample": 1, "kind": "read"},
              ]}
     fresh = {**stale, "created": clock.isoformat()}
     for stopped in (False, True):
-        monkeypatch.setattr(seed, "_pane_stopped_or_dead", lambda *args: stopped)
-        monkeypatch.setattr(seed, "capture_raw", lambda *args: "UNKNOWN — top-pain render failed")
+        monkeypatch.setattr(tmux, "_pane_stopped_or_dead", lambda *args: stopped)
+        monkeypatch.setattr(tmux, "capture_raw", lambda *args: "UNKNOWN — top-pain render failed")
         for slug in ("discover", "senses", "genome"):
             home = tmp_path / f"{slug}-{stopped}"
             with patch("mishe_tauftauf.discovery.sample", return_value=stale):

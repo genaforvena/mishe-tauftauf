@@ -55,11 +55,12 @@ tmux list-panes -s -t "$SESSION" \
 tmux capture-pane -p -t "$SESSION:health.0"
 tmux capture-pane -p -t "$SESSION:genome.0"
 "$SITE/bin/mishe-tauftauf" --home "$SITE" seed status --slug genome
-"$SITE/bin/mishe-tauftauf" --home "$SITE" task show
+"$SITE/bin/mishe-tauftauf" --home "$SITE" wall show --owner genome
 "$SITE/bin/mishe-tauftauf" --home "$SITE" discover show
 "$SITE/bin/mishe-tauftauf" --home "$SITE" access list
 ```
-The genome pane's `LANDING DEBT` line tracks unlanded outside edits; [genome landing and outside edits](genome-landing.md) documents its states, staleness and claim flow.
+The standard genome, health and witness panes show deterministic CI, runtime,
+service and patch observations, followed by the mind's edited wall.
 
 For an ownership-checked reading of the actual top pane, not a newly rendered approximation:
 
@@ -95,7 +96,7 @@ systemctl --user status "$SESSION-$ROLE.service" "$SESSION-health.service"
 journalctl --user -u "$SESSION-$ROLE.service" -n 100 --no-pager
 ```
 
-The core plant also has a `SESSION-coordination.service` release follower. Manual trials have no newly installed resident services, so absence of those units is not itself a failed trial. Conversely, `--no-services` does not deactivate units from an earlier persistent plant.
+The core plant also has a `SESSION-coordination.service` release follower. Manual setups have no newly installed resident services, so absence of those units is not itself a failed setup. Conversely, `--no-services` does not deactivate units from an earlier persistent plant.
 The health dashboard's `STATE: UNKNOWN — services unavailable: Failed to connect to bus: No medium found` means its renderer could not reach the user's systemd bus; it does not prove that a listed unit is down. Diagnose unit states as the same user with a reachable user bus (usually `XDG_RUNTIME_DIR=/run/user/$(id -u)`) before attributing UNKNOWN to service health. The dashboard supplies this runtime directory only when unset; genuine query failures remain UNKNOWN.
 
 ### Doctor is a check with a repair side effect
@@ -132,7 +133,7 @@ tmux display-message -p -t "$SESSION:$ROLE.1" \
 journalctl --user -u "$SESSION-$ROLE.service" -n 100 --no-pager
 ```
 
-In a manual trial, read the foreground supervisor's output instead of expecting a service journal. Inspect the task's cited artifact and `SITE/handoffs/ROLE.md` too. A static-looking screen may still belong to an active tool; unchanged pixels are not permission to kill it.
+In a manual setup, read the foreground supervisor's output instead of expecting a service journal. Inspect the task's cited artifact and `SITE/handoffs/ROLE.md` too. A static-looking screen may still belong to an active tool; unchanged pixels are not permission to kill it.
 
 ### 2. Distinguish pending delivery from awaiting clear
 
@@ -205,7 +206,7 @@ Generated checks are a starting point. Add the target's real build, test, servic
 
 ### CI readings
 
-Each site's CI watcher asks GitHub for the repository's default branch and checks Actions runs for the exact SHA of its local `origin/BRANCH` reference. It does **not** turn a pass for an older commit into a pass for the current one. It considers the latest observed run for each returned workflow, records transitions as `[ci]`, and opens a genome task on failure.
+Each site's CI watcher asks GitHub for the repository's default branch and checks Actions runs for the exact SHA of its local `origin/BRANCH` reference. It does **not** turn a pass for an older commit into a pass for the current one. It considers the latest observed run for each returned workflow, records transitions as `[ci]`, and addresses genome on failure.
 
 Unavailable `gh`, failed queries, no run for the SHA, and samples older than five minutes remain `UNKNOWN`. A pending run remains pending. The reading is not proof that every conceivable workflow exists, nor does the watcher itself fetch remote Git refs. Inspect the cited full SHA and run URL when diagnosing a mismatch.
 
@@ -330,7 +331,7 @@ Keep these boundaries when inspecting or landing work:
 - Do not stage or commit the site directory. Doctor checks for tracked/staged site files; an ignore rule alone does not untrack already committed files.
 - Do not promote a local observation, artifact, or private permission decision into shared source merely because it helped once.
 - A reusable lesson becomes shared behavior through a deliberate source change, verification, independent review, and scoped landing.
-- Commit scoped work to the single `main` branch; there are no publication or candidate branches. Genome pushes `main` and checks the pushed commit's CI; authors verify rollout and deployed consumers. The task stays open until delivery is complete; CI repairs also need the successful replacement run.
+- Commit scoped work to the single `main` branch; there are no publication or candidate branches. Genome pushes `main` and checks the pushed commit's CI; authors verify rollout and deployed consumers. Delivery remains incomplete until live verification succeeds; CI repairs also need the successful replacement run.
 - Preserve the append-only tape and handoff trail during diagnosis. They explain what happened and which action remains owed.
 
 The local agent contract is [AGENTS.md](../AGENTS.md). Tracked [seed doctrine](../src/mishe_tauftauf/seed_doctrine.md) is loaded at restore and mirrored into `SITE/doctrine.md` at planting. The [mesh culture mapping](../instructions/mesh-culture.md) describes the source rules this narrower seed carries; this plant does not claim fleet authority or the larger mesh's native lifecycle accounting.
@@ -362,45 +363,20 @@ git -C "$WORKSPACE" push origin main
 "$SITE/bin/mishe-tauftauf" --home "$SITE" ci watch   # or read the live CI pane
 ```
 
-If `main` advanced while an author worked, the author rebases, reruns the checks, and
-reports the new commit. The author verifies the pushed commit's CI and deployed
-consumers with a JSON rollout receipt under `SITE/artifacts/rollout.json` containing
-`sha`, `state`: `"pass"`, and a nonempty `consumers` list identifying the checked
-artifacts/targets.
+If main advanced while an author worked, inspect the current diff and preserve
+peers' edits; rerun checks when changes affect reviewed bytes. Record exact
+committed and deployed revisions, live consumers and failures under the ignored
+site. Historical task and delivery reports remain available read-only for
+recovery; they do not provide another publication workflow.
 
-The legacy isolated-candidate flow (`delivery submit`/`integrate`/`finish` and
-`candidate retirement`) remains available for recovery and non-wall plants, but it is
-not the required path and no trial mind needs it. Historical `task landing-status`
-remains readable; new raw landing registrations are retired.
+Running-code delivery uses reviewed snapshots, observable activation and the
+tested recovery exercise in [wall coordination](wall-coordination.md).
+Applied bytes alone are incomplete delivery.
 
-## Candidate retirement
+## Live experiments
 
-After `delivery finish`, the existing CI watcher checks retirement each tick. It
-verifies completed rollout, ancestry against actual remote `main`, unchanged candidate
-refs, a clean worktree, and no live process or installed runtime reference. It saves and
-verifies a recovery bundle under `SITE/retired-candidates/` before deleting any
-temporary remote candidate branch with an exact lease, relocating the whole candidate
-directory and its exact Git administrative registration into private recovery archives,
-and deleting the exact local ref. It preserves the shared checkout and detached runtime
-releases.
-
-A busy process, new dirty files, advanced ref, unavailable check, or failed removal
-stays visible in `delivery show` as retirement pending. The watcher retries the same
-concrete condition; it does not create repeated model work. Run `delivery retire ID`
-for a bounded manual reconciliation from outside the candidate directory. Retirement
-resumes from the saved recovery edge after a crash. Full-directory relocation preserves
-ignored files even if they arrived after the admission check; no recursive deletion or
-broad registration pruning occurs. Useful unmerged or dirty work must first be
-reconciled, adopted into active delivery, or archived with a checked supersession
-reason. `main` is the only durable branch; a plant should not create temporary branches
-at all.
-
-A retirement retry never repeats ref deletion after the durable deletion boundary if any
-owned local, remote, or tracking handle remains. A matching SHA can still be a new
-registration after a crash. Preserve it and the recovery artifacts; reconcile the
-remaining handle with its owner before retrying. An absent scoped ref inventory permits
-archive recovery to continue. A retired receipt also rechecks that inventory and cannot
-conceal a recreated handle.
-
-The local wall-coordination trial uses one shared checkout and the reversible patch gate
-instead of this delivery flow; see [wall coordination](wall-coordination.md).
+Within granted owned scope, try consequential ideas live. Name the prediction,
+affected consumers, bounded observation and keep/revise/revert decision. Checks,
+independent reading and recovery enable high-risk, high-reward work without a
+routine approval gate. Preserve failed observations and delete superseded code;
+Git history retains prior implementations instead of dormant feature flags.

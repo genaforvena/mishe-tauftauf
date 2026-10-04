@@ -1,6 +1,6 @@
 # Wall coordination
 
-The local trial uses edited walls and addressed chat instead of a task ledger.
+Every plant uses edited walls and addressed chat as its canonical workflow.
 Each wake supplies a short trigger and asks the mind to read its current full
 dashboard. Minds choose work, organize their plate and ask peers for help.
 Planning and investigation are valid turns. System 1 advice is optional for
@@ -99,7 +99,7 @@ dead or muted watcher stays visible. Every pane leads with a `HEADLINE` naming
 the mind state, watcher liveness and delivery age. The watcher preserves a
 pending health wake and waits for a busy mind's input boundary. Quiet planning
 may be healthy; silence is a reason to inspect, not proof of failure. Pausing
-the trial or setting the threshold to zero disables alerts.
+autonomous wakes or setting the threshold to zero disables alerts.
 Headline ages remain visible without producing observation events. Semantic
 mind/watcher status and patch/service changes remain wake triggers. An optional
 `self_pick_seconds` object in the mode file sets each role's periodic review
@@ -206,9 +206,9 @@ outside the patch, reconcile rather than overwrite them.
 The patch lock serializes cooperating writers. It is not isolation against
 another process writing directly to the same files; coordinate such writers.
 
-## Trial window
+## Wake scheduling
 
-`SITE_HOME/coordination-mode.json` selects wall mode and records the stop time
+`SITE_HOME/coordination-mode.json` configures the canonical workflow and records the stop time
 when one is set; a null stop time leaves the window open.
 At the stop time, new wakes stop
 and in-flight work and sensor panes remain available, but nothing re-arms the
@@ -221,13 +221,27 @@ To re-arm, set `"until": null` (or a future ISO-8601 time carrying a
 timezone) in `coordination-mode.json`; running supervisors read the file on their
 next tick and resume normal wake selection with no restart. `"paused": true` is a
 separate stop: it also suppresses new wakes and reads `DISABLED`, silencing alerts
-while sensor panes stay live. Removing the mode file is not a safe rollback by
-itself: use the saved rollback script to restore the original runtime callers and
-instructions together.
+while sensor panes stay live.
 
-Measurements compare wakes, redeliveries, settlements, chat, gate refusals,
+A missing configuration file uses canonical wall defaults; it never restores
+the retired ledger workflow. Historical configuration selecting ledger is
+rejected explicitly. Preserve old records for recovery; use Git and reviewed
+activation/revert procedures for code rollback.
+
+Measurements compare wakes, redeliveries, settlements, chat,
 service restart deltas, evidenced outcome reports, verified delivery times and
 latency, and applied patches lacking recovery verification. Model cost remains
 UNKNOWN until a complete attributed usage source is wired. Read representative work as
 well as counts. Planning is not failure; message volume is not productivity.
-The local baseline and trial report belong under the ignored site.
+Local baselines and experiment reports belong under the ignored site.
+
+## Living experiments
+
+High-risk, high-reward initiatives are welcome within granted owned scope.
+Name a falsifiable prediction, affected consumers, observation interval and
+keep/revise/revert decision. Apply the checked activation and recovery procedure
+above to running code, including independent reading and visible failures.
+These checks enable experimentation; they are not a routine approval gate.
+Keep accepted experiments canonical, revise what needs work and remove
+superseded alternate code paths. Git preserves former implementations without
+stale feature flags. Preserve failed and incomplete records.

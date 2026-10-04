@@ -166,9 +166,9 @@ def test_concurrent_new_author_wait_refuses_the_old_transition_signal(candidate,
         return original_signal(*args, **kwargs)
     monkeypatch.setattr(delivery, "read_ci", lambda *args: ci(head))
     with patch.object(task_state, "signal", side_effect=replace_wait_before_signal):
-        with pytest.raises(CorrectionRequired) as refused:
+        with pytest.raises(ValueError) as refused:
             delivery.check(home, "repair")
-    assert any(r['id'] == 'D03' for r in refused.value.report['results'])
+    assert 'changed' in str(refused.value)
     entries = Feed(home).entries()
     assert not task_state.eligible(task_state.registry(entries)["repair"], entries)
     delivery.check(home, "repair")
@@ -439,7 +439,7 @@ def test_fact_owned_integration_cannot_be_offered_waited_or_finished_with_prose(
         task_state.finish(home, identity, "genome", "claimed integration", review)
 
 
-def test_final_ci_failure_routes_repair_to_source_author(candidate, monkeypatch):
+def test_final_ci_failure_routes_genome_message_without_ledger_task(candidate, monkeypatch):
     from mishe_tauftauf import ci_watch
     home, _, _, _, head, _ = candidate
     submit(candidate)
@@ -447,7 +447,9 @@ def test_final_ci_failure_routes_repair_to_source_author(candidate, monkeypatch)
     delivery.integrate(home, "repair", "genome")
     monkeypatch.setattr(ci_watch, "read", lambda *args: ci(head, "fail"))
     ci_watch.tick(home)
-    assert task_state.registry(Feed(home).entries())["ci-" + head[:12]].owner == "senses"
+    entries = Feed(home).entries()
+    assert any(e.body.startswith("[dm] to=genome") and head in e.body for e in entries)
+    assert "ci-" + head[:12] not in task_state.registry(entries)
 
 
 def test_changed_origin_cannot_supply_final_ci(candidate, monkeypatch, tmp_path):

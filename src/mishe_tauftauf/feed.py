@@ -413,30 +413,14 @@ class Feed:
             record_data = payload(FeedEntry(0, "", source, body, self.home))
             if context is None:
                 context = record_data
-        # Every writer shares publication admission. A refusal preserves its draft
-        # privately and allocates neither a feed sequence nor a task transition.
-        # Inference runs before the feed file's exclusive lock.
-        from .post_check import require
-        from .wall import enabled as wall_enabled
-        wall_mode = wall_enabled(self.home)
-        if not wall_mode and (self.home / "publication-check.json").exists() and (not context or "question_episodes" not in context):
-            from .coordination_checks import episode
-            context = episode(self.home, source, body, context=context)
-        report = None if wall_mode else require(self.home, source, body, context=context)
+        # Walls and chat do not need semantic publication admission. Historical
+        # checker configuration cannot turn authorized work into a model gate.
+        from .wall import settings
+        settings(self.home)
+        from .post_check import require_prose
+        require_prose(self.home, source, body)
         if commit_guard is not None:
-            try:
-                commit_guard()
-            except ValueError as exc:
-                # Preserve the last-admission refusal privately just like model
-                # findings. No sequence or transition has been committed yet.
-                from .post_check import _save, CorrectionRequired
-                if isinstance(report, dict):
-                    refusal = {**report, 'clear':False, 'status':'unknown',
-                        'results':report['results'] + [{'id':'D03','verdict':'unknown','reason':str(exc),'evidence':[]}],
-                        'required_correction':'Reconcile changed commit evidence and resubmit without repeating effects.'}
-                    _save(Path(refusal['report_path']), refusal)
-                    raise CorrectionRequired(refusal) from exc
-                raise
+            commit_guard()
         fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
         try:
             with os.fdopen(fd, "r+b", buffering=0) as handle:

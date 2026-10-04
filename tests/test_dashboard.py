@@ -35,23 +35,24 @@ def test_missing_stale_future_and_corrupt_dashboard_fail_closed(tmp_path):
 
 def test_supervisor_observes_dashboard_instead_of_changing_terminal_history(tmp_path, monkeypatch):
     from subprocess import CompletedProcess
-    from mishe_tauftauf import seed
+    from mishe_tauftauf import seed, tmux
     from mishe_tauftauf.feed import Feed, utc_now
     frame = "STATE: GREEN\nLANDING DEBT: RED outside draft\n"
     dashboard.publish(tmp_path, "genome", frame, True)
-    monkeypatch.setattr(seed, "owns_session", lambda *a: True)
-    monkeypatch.setattr(seed, "_pane_stopped_or_dead", lambda *a: False)
+    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
+    monkeypatch.setattr(tmux, "_pane_stopped_or_dead", lambda *a: False)
     monkeypatch.setattr(seed, "_mind_ready", lambda *a: False)
     monkeypatch.setattr(seed, "_tmux", lambda *a, **kw: CompletedProcess(a, 0, b"0\n"))
     pane = ["old scrolled frame\n"]
-    monkeypatch.setattr(seed, "capture_raw", lambda *a: pane[0] + "-- pane live " + utc_now() +
+    monkeypatch.setattr(tmux, "capture_raw", lambda *a: pane[0] + "-- pane live " + utc_now() +
                         " · refresh 5s · ticks every frame --\n")
     seed.tick(tmp_path, "session", "genome")
     pane[0] = "different wrapped history\n" * 100
     seed.tick(tmp_path, "session", "genome")
     observations = [e for e in Feed(tmp_path).entries() if e.body.startswith("seed observation")]
     assert len(observations) == 1
-    assert "STATE: GREEN" in observations[0].body
+    from mishe_tauftauf.records import payload
+    assert "STATE: GREEN" in payload(observations[0])["snapshot"]
     (tmp_path / "dashboards/genome.json").unlink()
     assert "dashboard missing" in seed.tick(tmp_path, "session", "genome")
 

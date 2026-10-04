@@ -41,14 +41,9 @@ not a hosted service, a sandbox, or a promise that every repair will be correct.
 
 ## Start here
 
-For the local wall-coordination trial, read [Mesh, in view](docs/mesh.md).
-It is an edited introduction with its own live docs pane. The older operating
-guides below describe the ledger runtime; [wall coordination](docs/wall-coordination.md)
-describes the trial.
-Check `SITE_HOME/coordination-mode.json` (the site home directory) to identify
-the active mode. Wall-mode minds use edited walls and addressed chat; they do
-not claim tasks or use the ledger publication gate to settle a turn. A fresh
-plant retains the ledger defaults unless explicitly configured for the local trial.
+Read [Mesh, in view](docs/mesh.md) for the living workflow. Every fresh plant uses
+edited walls, addressed chat, one shared checkout and the single main branch.
+[Wall coordination](docs/wall-coordination.md) covers the commands and recovery.
 
 | You want to… | Read |
 | --- | --- |
@@ -80,7 +75,7 @@ tmux attach -t mishe-seed
 **This starts real agents and enables background user services.** Agent work may
 consume provider credits and change the owned worktree. The site is ignored by
 Git; the code is not. Read the [setup guide](docs/getting-started.md) first if you
-want a manually supervised trial or to plant another project. Planting another
+want a manually supervised setup or to plant another project. Planting another
 worktree also adds or refreshes a marked agent-contract block in its `AGENTS.md`.
 
 The names above are fresh-clone defaults. If the checkout already has a plant,
@@ -148,7 +143,7 @@ responsibilities, not walls around files: any mind can pursue an owned repair,
 while authors commit their own scoped work on the single `main` branch and genome
 pushes it and checks CI. The [coordination guide](docs/wall-coordination.md)
 explains shared source, blocker resolution and verified delivery. The
-[concept guide](docs/how-it-works.md) describes the ledger runtime.
+[concept guide](docs/how-it-works.md) explains the observation and wake loop.
 
 ## Scope, not a force field
 
@@ -206,29 +201,10 @@ for the hosted Jev judge and `python -m mishe_tauftauf.omp_mind` for one-shot OM
 invocations. The latter requires `MISHE_TAUFTAUF_WORKSPACE`; hosted Jev requires
 its TypeSafe credentials. The repository does not include a demo directory.
 
-The optional [Chat Completions judge trial](docs/completions-judge.md) uses an
-explicit provider and model; its read-only shadow runs do not activate a live
-judge or dispatch witness work.
+The optional [Chat Completions adapter](docs/completions-judge.md) uses an
+explicit provider and model; configured diagnostic checks grant no completion or dispatch authority.
 
-Task replay tolerates historical payload-free task-state notes, future state
-fields and stale steps after closure, without admitting those records through
-the current writer or hiding corrupt JSON. Health reports a missing or invalid
-local service manifest as UNKNOWN rather than treating it as no services.
+Historical task and delivery reports remain readable for recovery. Health reports
+a missing or invalid service manifest as UNKNOWN.
 
 **[CC0 1.0](LICENSE)** — take it, fork it, grow your own. Keep the checks honest.
-
-## Ledger-mode reference: task continuity and productive waits
-
-The commands below apply to ledger mode. In the wall trial, keep unfinished work
-on your wall, name the resolver and evidence-producing step for each blocker,
-and set a disposition time. Use addressed messages for handoff and `seed yield`
-for the actual wake. Meaningful contributions can be recorded with `wall outcome`
-and an evidence file; a successful settlement is only a transport receipt.
-
-For long goals, create evidence-bound child work with `task add STEP --owner ROLE --parent GOAL --next-step TEXT --reason TEXT --evidence FILE`. Finish only the checked deliverable with `task finish STEP --owner ROLE --result TEXT --evidence FILE`; the goal remains open. `task reopen` explicitly recovers an incorrectly closed goal. Scheduling and the displayed task board share the same lifecycle.
-
-A blocked final acceptance gate can coexist with productive work. Add an admissible child and use `task wait GOAL ... --producer ROLE --retry-event TOKEN --alternative STEP`. Review readiness can use `--retry-task STEP` to wake once the producer finishes, without repeated model polling. Keep registrations and resource limits intact; changed timestamps or evidence hashes alone do not establish progress. Structured task control must go through the task CLI.
-
-Minds choose from the full shared `task show` board, then reserve one eligible step with `task claim ID --owner ROLE --wake N --reason TEXT --evidence FILE`. The supervisor delivers the wake and board; the atomic claim handles ownership and prevents duplicate attempts. Helper offers and ready main integration priority inform the decision.
-
-Every new `chat.log` entry is readable prose. Structured state moves into immutable audit records referenced by the entry; new inline JSON is refused. [Private publication checks](docs/publication-checks.md) return flagged drafts for correction before a post, claim or handoff is committed. Witness reports task histories and prerequisite failures across all roles with `task coordination-report`; configured semantic checks remain subject to measured model limitations.

@@ -14,9 +14,9 @@ from .checks import run_check
 from . import access, discovery
 from .feed import Feed, FeedError, parse_feed, utc_now
 from .judges import QUESTIONS, classify, controls, document, run_external
-from .observations import FOOTER_LEDGER_LABEL, compose_frame, discover, executable, validate_home, validate_slug
+from .observations import FOOTER_WAKE_LABEL, compose_frame, discover, executable, validate_home, validate_slug
 from .predictions import PredictionError, append_prediction, pending_predictions, replay_predictions
-from .runtime import Coordinator, RuntimeConfig, runtime_status
+from .runtime import Coordinator, RuntimeConfig
 
 
 def default_home() -> Path:
@@ -45,7 +45,16 @@ def _default_session(home: Path) -> str:
     return recorded_session(home) or "mishe-tauftauf"
 
 def initialize(home: Path) -> None:
+    from .wall import settings
+    settings(home)  # Refuse an explicitly retired coordination mode before mutation.
     home.mkdir(parents=True, exist_ok=True)
+    config_path = home / "coordination-mode.json"
+    try:
+        with config_path.open("x", encoding="utf-8") as stream:
+            json.dump({"started":utc_now(), "until":None}, stream)
+            stream.write("\n")
+    except FileExistsError:
+        pass
     for name in ("top-pains", "minds", "observations", "filters", "projectors", "handoffs", "plans"):
         (home / name).mkdir(exist_ok=True)
     if not (home / "feed").exists():
@@ -223,11 +232,13 @@ def cmd_pain_watch(args) -> int:
                 rendered = compose_frame(args.home, args.slug, args.timeout)
                 ok = rendered.ok
                 entries = feed.entries()
-                status = runtime_status(entries, args.slug)
+                from .seed import _state
+                _, pending, settled, cleared, *_ = _state(args.home, args.slug, entries=entries)
+                status = f"pending={pending or 'none'} yield={settled or 'none'} clear={cleared or 'none'}"
                 frame = rendered.body
                 if not frame.endswith("\n"):
                     frame += "\n"
-                frame += f"-- {FOOTER_LEDGER_LABEL}: {status} --\n"
+                frame += f"-- {FOOTER_WAKE_LABEL}: {status} --\n"
             except FeedError as exc:
                 ok = False
                 frame = (
@@ -380,34 +391,10 @@ def cmd_task(args) -> int:
         print(deliveries(args.home))
         print(line(entries))
         return 0
-    if args.task_command == "landing":
-        from .landing import register
-        print(register(args.home, args.id, args.source, args.producer, args.reason, args.evidence).sequence)
-        return 0
-    if args.task_command == "step":
-        entry = task_state.set_step(args.home, args.id, args.owner, args.next_step, args.progress, args.evidence)
-    elif args.task_command == "claim":
-        entry = task_state.claim(args.home, args.id, args.owner, args.wake, args.reason, args.evidence)
-    elif args.task_command == "wait":
-        entry = task_state.wait_for(args.home, args.id, args.owner, args.next_step, args.reason, args.evidence,
-                                    retry_event=args.retry_event, retry_at=args.retry_at,
-                                    retry_task=args.retry_task, producer=args.producer, alternative=args.alternative)
-    elif args.task_command == "add":
-        entry = task_state.add_task(args.home, args.id, args.owner, args.next_step, args.reason, args.evidence,
-                                    parent=args.parent)
-    elif args.task_command == "reopen":
-        entry = task_state.reopen(args.home, args.id, args.owner, args.next_step, args.reason, args.evidence)
-    elif args.task_command == "finish":
-        entry = task_state.finish(args.home, args.id, args.owner, args.result, args.evidence)
-    elif args.task_command == "event":
-        entry = task_state.signal(args.home, args.event, args.source, args.evidence, args.reason)
-    elif args.task_command == "offer":
-        entry = task_state.offer(args.home, args.id, args.owner, args.helper, args.evidence)
-    else:
-        entries = Feed(args.home).entries()
-        print("\n".join(task_state.lines(entries, args.owner) if args.owner else task_state.board(entries)) or "No open tasks.")
-        return 0
-    print(entry.sequence)
+    if args.task_command not in {None, "show"}:
+        raise ValueError("task-ledger mutation is retired; use walls and addressed messages")
+    entries = Feed(args.home).entries()
+    print("\n".join(task_state.lines(entries, args.owner) if args.owner else task_state.board(entries)) or "No historical open tasks.")
     return 0
 
 
@@ -415,23 +402,9 @@ def cmd_delivery(args) -> int:
     import json
     from . import delivery
 
-    action = args.delivery_command
-    if action == "submit":
-        result = delivery.submit(args.home, args.id, args.owner, args.repo, args.base, args.branch, args.review,
-                                 main_only=args.main_only)
-    elif action == "check":
-        result = delivery.check(args.home, args.id)
-    elif action == "integrate":
-        result = delivery.integrate(args.home, args.id, args.source)
-    elif action == "retire":
-        from .retirement import retire
-        result = retire(args.home, args.id)
-    elif action == "finish":
-        result = delivery.finish(args.home, args.id, args.owner, args.evidence)
-    else:
-        print(delivery.line(args.home))
-        return 0
-    print(json.dumps(result, sort_keys=True))
+    if args.delivery_command != "show":
+        raise ValueError("branch delivery mutation is retired; commit scoped work on main and verify runtime recovery")
+    print(delivery.line(args.home))
     return 0
 
 
