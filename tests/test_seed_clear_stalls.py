@@ -51,6 +51,42 @@ def test_stalls_remain_role_scoped_and_accept_full_readable_receipts():
     yield_health = entry(4, "seed yield health wake=2")
     assert seed.clear_stalls([first, second, settled, yield_health, entry(5, "seed clear genome after=1")], now=NOW) == {"health": yield_health}
 
+def test_stale_pend_requires_an_overdue_pending_wake():
+    wake = entry(1, "seed wake genome observation=1", age=601)
+    assert seed.stale_pends([wake], now=NOW) == {"genome": wake}
+    assert seed.stale_pends([entry(1, "seed wake genome observation=1", age=599)], now=NOW) == {}
+
+
+def test_stale_pend_clears_on_matching_yield():
+    wake = entry(1, "seed wake genome observation=1", age=1000)
+    yield_ = entry(2, "seed yield genome wake=1", age=500)
+    assert seed.stale_pends([wake, yield_], now=NOW) == {}
+
+
+def test_stale_pend_ignores_mismatched_yield():
+    wake = entry(1, "seed wake genome observation=1", age=1000)
+    wrong_yield = entry(2, "seed yield genome wake=99", age=500)
+    assert seed.stale_pends([wake, wrong_yield], now=NOW) == {"genome": wake}
+
+
+def test_stale_pend_ignores_non_seed_source():
+    from dataclasses import replace
+    wake = replace(entry(1, "seed wake genome observation=1", age=1000), source="operator")
+    assert seed.stale_pends([wake], now=NOW) == {}
+    assert seed.stale_pends([replace(entry(1, "seed wake genome observation=1", age=1000), source="seed")], now=NOW) == {"genome": entry(1, "seed wake genome observation=1", age=1000)}
+
+
+def test_stale_pends_remain_role_scoped():
+    first = entry(1, "seed wake genome observation=1", age=1000)
+    second = entry(2, "seed wake health observation=2", age=1000)
+    assert seed.stale_pends([first, second], now=NOW) == {"genome": first, "health": second}
+
+
+def test_stale_pend_replaces_on_new_wake():
+    first = entry(1, "seed wake genome observation=1", age=1000)
+    second = entry(2, "seed wake genome observation=2", age=601)
+    assert seed.stale_pends([first, second], now=NOW) == {"genome": second}
+
 
 def prepare_view(tmp_path, monkeypatch):
     from subprocess import CompletedProcess
@@ -75,9 +111,18 @@ def test_live_renderer_exposes_stall_and_recovers_without_writing_tasks(tmp_path
     assert "STATE: RED" in frame
     assert not (home / "chat.log").exists()
     assert not (home / "artifacts").exists()
+
+def test_live_renderer_exposes_stale_pend(tmp_path, monkeypatch):
+    home, view = prepare_view(tmp_path, monkeypatch)
+    receipts = [entry(1, "seed wake genome observation=1", age=10000)]
+    monkeypatch.setattr(view.Feed, "entries", lambda self: receipts)
+    frame = view.render(home)
+    assert "STALE PEND: RED genome wake=1 pending=1 owner=health" in frame
+    assert "STATE: RED" in frame
+    receipts.append(entry(2, "seed yield genome wake=1", age=0))
     receipts.append(entry(3, "seed clear genome after=1", age=0))
     frame = view.render(home)
-    assert "CLEAR STALL: GREEN" in frame
+    assert "STALE PEND: GREEN" in frame
     assert "STATE: GREEN" in frame
 
 
