@@ -137,29 +137,35 @@ def health(home: Path) -> str:
         expected = set(json.loads(expected_path.read_text(encoding="utf-8")))
     except (OSError, ValueError):
         expected = set()
-    try:
-        result = subprocess.run(
-            ["tmux", "list-panes", "-s", "-t", session,
-             "-F", "#{window_name} #{pane_index} #{pane_dead}"],
-            capture_output=True, text=True, timeout=2)
-        pane_states = {}
-        if result.returncode == 0:
-            for row in result.stdout.splitlines():
-                fields = row.split()
-                if len(fields) == 3:
-                    pane_states[(fields[0], fields[1])] = fields[2]
-        actual = {name for name, _ in pane_states}
-    except (OSError, subprocess.TimeoutExpired):
-        actual = set()
-        pane_states = {}
-    missing = sorted(expected - actual)
-    extra = sorted(actual - expected)
-    dead = sorted(f"{name}.0" for name in expected & actual
-                  if pane_states.get((name, "0")) != "0")
-    lines.append("WINDOWS: " + ("PASS " if expected and not missing and not extra and not dead else "RED ") +
-                 ",".join(sorted(actual)) + (" missing=" + ",".join(missing) if missing else "") +
-                 (" dead=" + ",".join(dead) if dead else "") +
-                 (" extra=" + ",".join(extra) if extra else ""))
+    windows_unknown = False
+    if not session:
+        windows_unknown = True
+        missing = extra = dead = []
+        lines.append("WINDOWS: UNKNOWN — session unset")
+    else:
+        try:
+            result = subprocess.run(
+                ["tmux", "list-panes", "-s", "-t", session,
+                 "-F", "#{window_name} #{pane_index} #{pane_dead}"],
+                capture_output=True, text=True, timeout=2)
+            pane_states = {}
+            if result.returncode == 0:
+                for row in result.stdout.splitlines():
+                    fields = row.split()
+                    if len(fields) == 3:
+                        pane_states[(fields[0], fields[1])] = fields[2]
+            actual = {name for name, _ in pane_states}
+        except (OSError, subprocess.TimeoutExpired):
+            actual = set()
+            pane_states = {}
+        missing = sorted(expected - actual)
+        extra = sorted(actual - expected)
+        dead = sorted(f"{name}.0" for name in expected & actual
+                      if pane_states.get((name, "0")) != "0")
+        lines.append("WINDOWS: " + ("PASS " if expected and not missing and not extra and not dead else "RED ") +
+                     ",".join(sorted(actual)) + (" missing=" + ",".join(missing) if missing else "") +
+                     (" dead=" + ",".join(dead) if dead else "") +
+                     (" extra=" + ",".join(extra) if extra else ""))
     services_path = home / "health" / "services.json"
     local_services_unknown = False
     try:
@@ -277,6 +283,9 @@ def health(home: Path) -> str:
     if doctor.returncode or missing or extra or dead or failed_services or linked_failed:
         verdict = "FAIL health internal check"
         lines.append("STATE: RED — internal check needs repair")
+    elif windows_unknown:
+        verdict = "UNKNOWN health session unset"
+        lines.append("STATE: UNKNOWN — session unset")
     elif linked_unknown:
         verdict = "UNKNOWN health linked-site data unavailable"
         lines.append("STATE: UNKNOWN — linked-site service data unavailable")
