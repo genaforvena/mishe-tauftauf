@@ -553,7 +553,12 @@ def start(home: Path, session: str, slug: str, interval: float) -> str:
         _tmux("respawn-pane", "-k", "-t", f"{target}.0", *top_cmd)
     mind_dead = _tmux("display-message", "-p", "-t", f"{target}.1", "#{pane_dead}").stdout.decode().strip() == "1"
     if created or new_window or mind_dead:
+        before = _tmux("display-message", "-p", "-t", f"{target}.1", "#{pane_pid}").stdout.decode().strip()
         _tmux("respawn-pane", "-k", "-t", f"{target}.1", *_mind_launch_argv(home, slug))
+        still_dead = _tmux("display-message", "-p", "-t", f"{target}.1", "#{pane_dead}").stdout.decode().strip() == "1"
+        after = _tmux("display-message", "-p", "-t", f"{target}.1", "#{pane_pid}").stdout.decode().strip()
+        if still_dead or not after or after == before:
+            raise ValueError(f"mind pane {target}.1 did not respawn; reconcile before attributing a model")
         _record_mind_model(home, slug, home / "minds" / slug, "start")
         time.sleep(2.0)
         if _state(home, slug)[1] is not None:

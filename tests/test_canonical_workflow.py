@@ -257,11 +257,15 @@ def test_a_seed_start_records_the_model_at_the_first_respawn(tmp_path, monkeypat
     monkeypatch.setattr(seed, "_send", lambda *a: None)
     monkeypatch.setattr(seed.time, "sleep", lambda *a: None)
     monkeypatch.setattr(seed, "_state", lambda home, slug, **kw: (None, None, None, None, None, None, None, None))
+    pids = iter(["101\n", "202\n"])
     def command(*args, **kwargs):
         if args[0] == "has-session":
             return CompletedProcess(args, 1, b"", b"")
-        out = "$1" if args[-1] == "#{session_id}" else "0"
-        return CompletedProcess(args, 0, out.encode(), b"")
+        if args[-1] == "#{session_id}":
+            return CompletedProcess(args, 0, b"$1\n", b"")
+        if args[-1] == "#{pane_pid}":
+            return CompletedProcess(args, 0, next(pids).encode(), b"")
+        return CompletedProcess(args, 0, b"0\n", b"")
     monkeypatch.setattr(seed, "_tmux", command)
     assert seed.start(home, "session", "genome", 5).startswith("seed genome ready")
     bodies = [e.body.splitlines()[0] for e in Feed(home).entries()
@@ -352,3 +356,69 @@ def test_a_rotation_reconciled_from_the_rotating_phase_still_records(tmp_path, m
     bodies = [e.body.splitlines()[0] for e in Feed(tmp_path).entries()
               if e.source == "mishe-tauftauf" and e.body.startswith("mind model ")]
     assert bodies == [f"mind model top-pain genome launcher={launcher} reason=clear model=vendor/model-a"]
+
+
+def test_a_failed_rotated_journal_save_records_no_model_identity(tmp_path, monkeypatch):
+    """The durable rotated journal must land before the feed claims a new model."""
+    from subprocess import CompletedProcess
+    from mishe_tauftauf import post_check, tmux
+
+    launcher = tmp_path / "minds" / "genome"
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text("#!/bin/sh\nexec omp --model vendor/model-a --cwd /repo\n")
+    wake = Feed(tmp_path).append("seed", "seed wake genome observation=1\nInvestigate.")
+    note = tmp_path / "note.md"
+    note.write_text("Investigated source; wait for changed evidence.")
+    seed.yield_wake(tmp_path, "genome", wake.sequence, note, result="verified")
+    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
+    monkeypatch.setattr(seed, "_mind_idle", lambda *a: True)
+    pids = iter(["101\n", "202\n", "202\n", "202\n", "202\n"])
+    def command(*args, **kwargs):
+        if args[-1] == "#{pane_pid}":
+            return CompletedProcess(args, 0, next(pids).encode(), b"")
+        return CompletedProcess(args, 0, b"0\n", b"")
+    monkeypatch.setattr(seed, "_tmux", command)
+    real_save = post_check._save
+    def save(path, report):
+        if report.get("phase") == "rotated":
+            raise OSError("journal write failed")
+        return real_save(path, report)
+    monkeypatch.setattr(post_check, "_save", save)
+    with pytest.raises(OSError, match="journal write failed"):
+        seed.clear(tmp_path, "session", "genome")
+    bodies = [e.body.splitlines()[0] for e in Feed(tmp_path).entries()
+              if e.source == "mishe-tauftauf" and e.body.startswith("mind model ")]
+    assert bodies == [], "a rotation whose journal did not land is not established"
+
+
+def test_a_seed_start_records_only_a_live_respawned_mind(tmp_path, monkeypatch):
+    """A respawn that leaves a dead mind pane records nothing."""
+    from subprocess import CompletedProcess
+    from mishe_tauftauf import tmux
+
+    home = tmp_path / "site"
+    (home / "top-pains").mkdir(parents=True)
+    probe = home / "top-pains" / "genome"
+    probe.write_text("#!/bin/sh\nexit 0\n")
+    probe.chmod(0o755)
+    launcher = home / "minds" / "genome"
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    launcher.write_text("#!/bin/sh\nexec omp --model vendor/model-a --cwd /repo\n")
+    launcher.chmod(0o755)
+    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
+    monkeypatch.setattr(seed, "_new_session", lambda *a: None)
+    monkeypatch.setattr(seed, "_send", lambda *a: None)
+    monkeypatch.setattr(seed.time, "sleep", lambda *a: None)
+    monkeypatch.setattr(seed, "_state", lambda home, slug, **kw: (None, None, None, None, None, None, None, None))
+    def command(*args, **kwargs):
+        if args[0] == "has-session":
+            return CompletedProcess(args, 1, b"", b"")
+        if args[-1] == "#{pane_dead}":
+            return CompletedProcess(args, 0, b"1\n", b"")
+        return CompletedProcess(args, 0, b"0\n", b"")
+    monkeypatch.setattr(seed, "_tmux", command)
+    with pytest.raises(ValueError, match="mind pane session:genome.1 did not respawn"):
+        seed.start(home, "session", "genome", 5)
+    bodies = [e.body.splitlines()[0] for e in Feed(home).entries()
+              if e.source == "mishe-tauftauf" and e.body.startswith("mind model ")]
+    assert bodies == [], "a mind that is still dead has not started"

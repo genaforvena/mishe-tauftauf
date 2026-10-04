@@ -370,9 +370,9 @@ def clear(home: Path, session: str, role: str) -> str:
             after = live_pid()
             if before == after:
                 raise ValueError("mind process did not rotate")
-            seed._record_mind_model(home, role, home / "minds" / role, "clear")
             journal.update(phase="rotated", after_pid=after)
             _save(path, journal)
+            seed._record_mind_model(home, role, home / "minds" / role, "clear")
         def commit_guard():
             _, current_pending, current_settled, current_cleared, *_ = seed._state(home, role)
             if (current_pending or current_settled != settled or current_cleared == settled
