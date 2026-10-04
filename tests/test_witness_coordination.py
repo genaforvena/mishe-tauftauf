@@ -85,9 +85,9 @@ def test_unconfigured_gate_is_explicitly_untested(tmp_path, monkeypatch):
     assert 'STATE: UNKNOWN' in output
 
 
-def test_new_finding_and_refusal_change_wake_observation_without_filename_churn():
-    from mishe_tauftauf.seed import _observation_text
+def test_witness_dispatch_observes_report_path_and_state_changes():
+    from mishe_tauftauf.wall import observation_text
     base = "COORDINATION: UNKNOWN\nANOMALY: SUSPICIOUS task=repair kind=repeated-attempt id=stable\nPUBLICATION GATE: CONFIGURED\nPUBLICATION RESULT: CLEAR semantic=clear\n  Evidence: private report=first.json\nSTATE: UNKNOWN"
-    assert _observation_text('witness', base) == _observation_text('witness', base.replace('first.json','second.json'))
-    assert _observation_text('witness', base) != _observation_text('witness', base.replace('id=stable','id=new-cause'))
-    assert _observation_text('witness', base) != _observation_text('witness', base.replace('CLEAR semantic=clear','REFUSED source=genome stage=handoff semantic=suspicious'))
+    assert observation_text('witness', base) != observation_text('witness', base.replace('first.json','second.json'))
+    assert observation_text('witness', base) != observation_text('witness', base.replace('id=stable','id=new-cause'))
+    assert observation_text('witness', base) != observation_text('witness', base.replace('CLEAR semantic=clear','REFUSED source=genome stage=handoff semantic=suspicious'))
