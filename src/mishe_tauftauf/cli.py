@@ -426,6 +426,7 @@ def cmd_tmux_mind_run(args) -> int:
             executable_path = home / "minds" / "default"
         env = os.environ.copy()
         env.update({"MISHE_TAUFTAUF_HOME": str(home), "MISHE_TAUFTAUF_SLUG": slug, "MISHE_TAUFTAUF_INVOCATION": args.invocation, "MISHE_TAUFTAUF_WORKSPACE": str(home.parent)})
+        model_identity = _launcher_model(executable_path)
         try:
             process = subprocess.Popen([str(executable_path)], stdin=subprocess.PIPE,
                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
@@ -448,9 +449,31 @@ def cmd_tmux_mind_run(args) -> int:
         if 'byte_count' in locals():
             feed.append_runtime("mishe-tauftauf", f"mind output top-pain {slug} invocation {args.invocation} stdout-bytes={byte_count} stderr-bytes=0")
         feed.append_runtime("mishe-tauftauf", f"mind exited top-pain {slug} for entry {args.sequence} attempt={args.attempt} code={code}")
+        if model_identity:
+            feed.append_runtime("mishe-tauftauf", f"mind model top-pain {slug} invocation {args.invocation} {model_identity}")
         if not any(f"handoff top-pain {slug} invocation {args.invocation}" in entry.body for entry in feed.entries() if entry.source == "mishe-tauftauf"):
             feed.append_runtime("observation/" + slug, f"UNKNOWN — mind invocation {args.invocation} exited without a tied handoff; prior handoff is stale")
         return code
+
+def _launcher_model(path: Path) -> str | None:
+    """Read the model a mind launcher selects, without running it.
+
+    Model identity is otherwise observable only from ``/proc/<pid>/cmdline``; the
+    launcher bytes are the durable record of which model an invocation runs on.
+    Shell comments are skipped so a decoy ``--model`` in a comment cannot mask it.
+    """
+    import re
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        match = re.search(r"(?:^|\s)--model[ \t]+(\S+)", line)
+        if match:
+            return match.group(1)
+    return None
 
 
 def _repair_handoffs(home: Path, entries) -> list[str]:
