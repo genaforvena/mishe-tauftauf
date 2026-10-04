@@ -243,6 +243,46 @@ def test_ensure_reports_only_panel_transitions(tmp_path, monkeypatch):
     assert seed_permission_panel.ensure(home, "probe") == "permissions panel ready in probe"
     assert panes == ["1"]
 
+def test_ensure_reports_recreated_top_pains_helper(tmp_path, monkeypatch):
+    # top-pains/permissions is launcher-class generated state: if it goes missing
+    # while the panel is otherwise healthy, ensure() recreates it and must report
+    # that one-time transition; the next steady call stays silent.
+    from mishe_tauftauf import seed_permission_panel
+
+    home = (tmp_path / "site").resolve()
+    windows: list[str] = []
+    panes: list[str] = []
+    dead = {"0": False, "1": False}
+
+    def fake_tmux(*args, check=True):
+        class R:
+            returncode = 0
+            stdout = b""
+
+        if args[0] == "list-windows":
+            R.stdout = ("\n".join(windows) + "\n").encode()
+        elif args[0] == "new-window":
+            windows.append("permissions")
+        elif args[0] == "list-panes":
+            R.stdout = ("\n".join(panes) + "\n").encode()
+        elif args[0] == "split-window":
+            panes.append("1")
+        elif args[0] == "display-message":
+            R.stdout = b"1\n" if dead[args[-2].rsplit(".", 1)[-1]] else b"0\n"
+        return R()
+
+    monkeypatch.setattr(seed_permission_panel, "_tmux", fake_tmux)
+    monkeypatch.setattr(seed_permission_panel, "owns_session", lambda home, session: True)
+
+    assert seed_permission_panel.ensure(home, "probe") == "permissions panel ready in probe"
+    top = home / "top-pains" / "permissions"
+    assert top.exists()
+    top.unlink()
+
+    assert seed_permission_panel.ensure(home, "probe") == "permissions panel ready in probe"
+    assert top.exists()
+    assert seed_permission_panel.ensure(home, "probe") == ""
+
 
 def _write_cli(home: Path, package_root: Path, body: str | None = None) -> None:
     (home / "bin").mkdir(parents=True, exist_ok=True)

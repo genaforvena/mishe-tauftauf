@@ -51,8 +51,8 @@ def ensure(home: Path, session: str, interval: float = 5) -> str:
 
     The panel is idempotent, so a steady resident loop calling this every
     ``interval`` seconds must not report a constant line: an unchanged panel
-    returns an empty string, and only a created window, a respawned pane or an
-    upgraded launcher is a reportable transition.
+    returns an empty string, and only a created window, a respawned pane or a
+    created or upgraded launcher is a reportable transition.
     """
     home = home.resolve()
     if not owns_session(home, session):
@@ -66,6 +66,7 @@ def ensure(home: Path, session: str, interval: float = 5) -> str:
                        " -m mishe_tauftauf.seed_culture_views --home " + shlex.quote(str(home)) +
                        " --view permissions\n", encoding="utf-8")
         top.chmod(0o755)
+        acted = True
     names = _tmux("list-windows", "-t", session, "-F", "#{window_name}").stdout.decode().splitlines()
     created = "permissions" not in names
     if created:
