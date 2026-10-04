@@ -269,6 +269,12 @@ reads `MATCH` — `DRIFT` names a service still importing another root — and c
 the actual consumer and its live pane. Moving the pin is not a push or a CI
 result; keep source, CI and running code as separate evidence.
 
+The launcher writes the pin before it restarts the covered services, so a
+discovery scan that lands inside that window reports every session unit as stale
+against the new pin — the swap transient, not persistent drift. Re-read the
+`RUNTIME` line and the across-sites sample (`sense.runtime.drift-across-sites`)
+after the launcher returns before treating the units as drifted.
+
 ### Linked health is a separate live check
 
 The core health pane reads each registered site's `health/services.json` and checks those named units on **this host's user systemd manager**. It is read-only with respect to linked services and independent of the recorded applied SHA. It is not remote fleet monitoring.
