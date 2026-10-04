@@ -741,4 +741,5 @@ def test_seed_witness_profile_reads_chat_and_reports_missing_channels(tmp_path: 
     Feed(home).append("witness", "[dm] to=genome\nInvestigate the missing pane evidence.")
     from mishe_tauftauf import wall
     assert "Investigate the missing pane evidence" in wall.context(home, "genome")
-    assert "OPEN TASKS:" not in view.stdout
+    assert "OPEN TASKS: 0" in view.stdout
+    assert (home / "observations" / "witness").read_text().startswith("UNKNOWN witness ")
