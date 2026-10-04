@@ -352,6 +352,7 @@ def clear(home: Path, session: str, role: str) -> str:
                 raise ValueError("clear rotation is uncertain; inspect journal and live process before retry")
             journal.update(phase="rotated", after_pid=current_pid, reconciled_intent=True)
             _save(path, journal)
+            seed._record_mind_model(home, role, home / "minds" / role, "clear")
         if journal:
             if journal.get("session") != session or journal.get("phase") != "rotated":
                 raise ValueError("clear rotation is uncertain; inspect journal and live process before retry")
@@ -366,10 +367,10 @@ def clear(home: Path, session: str, role: str) -> str:
                        "before_pid":before, "launch_command":list(launch_argv[2:])}
             _save(path, journal)
             seed._tmux("respawn-pane", "-k", "-t", target, *launch_argv)
-            seed._record_mind_model(home, role, home / "minds" / role, "clear")
             after = live_pid()
             if before == after:
                 raise ValueError("mind process did not rotate")
+            seed._record_mind_model(home, role, home / "minds" / role, "clear")
             journal.update(phase="rotated", after_pid=after)
             _save(path, journal)
         def commit_guard():

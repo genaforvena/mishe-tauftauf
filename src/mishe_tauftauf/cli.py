@@ -426,8 +426,7 @@ def cmd_tmux_mind_run(args) -> int:
             executable_path = home / "minds" / "default"
         env = os.environ.copy()
         env.update({"MISHE_TAUFTAUF_HOME": str(home), "MISHE_TAUFTAUF_SLUG": slug, "MISHE_TAUFTAUF_INVOCATION": args.invocation, "MISHE_TAUFTAUF_WORKSPACE": str(home.parent)})
-        from .seed import _launcher_model
-        model_identity = _launcher_model(executable_path)
+        from .seed import _record_mind_model
         try:
             process = subprocess.Popen([str(executable_path)], stdin=subprocess.PIPE,
                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
@@ -450,8 +449,7 @@ def cmd_tmux_mind_run(args) -> int:
         if 'byte_count' in locals():
             feed.append_runtime("mishe-tauftauf", f"mind output top-pain {slug} invocation {args.invocation} stdout-bytes={byte_count} stderr-bytes=0")
         feed.append_runtime("mishe-tauftauf", f"mind exited top-pain {slug} for entry {args.sequence} attempt={args.attempt} code={code}")
-        if model_identity:
-            feed.append_runtime("mishe-tauftauf", f"mind model top-pain {slug} invocation {args.invocation} {model_identity}")
+        _record_mind_model(home, slug, executable_path, "run")
         if not any(f"handoff top-pain {slug} invocation {args.invocation}" in entry.body for entry in feed.entries() if entry.source == "mishe-tauftauf"):
             feed.append_runtime("observation/" + slug, f"UNKNOWN — mind invocation {args.invocation} exited without a tied handoff; prior handoff is stale")
         return code
