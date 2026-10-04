@@ -13,15 +13,23 @@ from .runtime_source import python_search_path
 from .tmux import _python_command, _tmux, owns_session
 
 
-def write_launchers(home: Path) -> None:
-    """Upgrade only our generated launcher, preserving operator customizations."""
+def write_launchers(home: Path) -> bool:
+    """Upgrade only our generated launcher, preserving operator customizations.
+
+    Returns True when a launcher was written or upgraded. The generated selector
+    is already correct on every later call, so a steady resident loop must not
+    rewrite it — the rewrite bumped its mtime on every interval — nor report a
+    change it did not make.
+    """
     bin_dir = home / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
+    changed = False
     permit = bin_dir / "permit"
     if not permit.exists():
         permit.write_text("#!/bin/sh\nexec \"$(dirname \"$0\")/mishe-tauftauf\" --home " +
                           shlex.quote(str(home)) + " access \"$@\"\n", encoding="utf-8")
         permit.chmod(0o755)
+        changed = True
     shell = bin_dir / "permissions-shell"
     legacy = ("#!/bin/sh\nexport PATH=" + shlex.quote(str(bin_dir)) + ":\"$PATH\"\n"
               "printf '%s\\n' 'Operator decisions: permit list | permit grant ID | permit revoke ID'\n"
@@ -30,16 +38,26 @@ def write_launchers(home: Path) -> None:
                  "permit menu\n"
                  "printf '%s\\n' 'Permissions: permit (selector) | permit revoke (selector) | permit list'\n"
                  "exec bash --noprofile --norc -i\n")
-    if not shell.exists() or shell.read_text() in {legacy, generated}:
+    current = shell.read_text(encoding="utf-8") if shell.exists() else None
+    if current is None or (current in {legacy, generated} and current != generated):
         shell.write_text(generated, encoding="utf-8")
         shell.chmod(0o755)
+        changed = True
+    return changed
 
 
 def ensure(home: Path, session: str, interval: float = 5) -> str:
+    """Establish the panel, returning a readiness line only when it changed.
+
+    The panel is idempotent, so a steady resident loop calling this every
+    ``interval`` seconds must not report a constant line: an unchanged panel
+    returns an empty string, and only a created window, a respawned pane or an
+    upgraded launcher is a reportable transition.
+    """
     home = home.resolve()
     if not owns_session(home, session):
         raise ValueError(f"session {session} is not owned by {home}")
-    write_launchers(home)
+    acted = write_launchers(home)
     shell = home / "bin" / "permissions-shell"
     top = home / "top-pains" / "permissions"
     if not top.exists():
@@ -76,14 +94,19 @@ def ensure(home: Path, session: str, interval: float = 5) -> str:
               *_python_command("--home", str(home), "pain", "watch", "permissions", "--interval", str(interval)))
     if created or bottom_dead:
         _tmux("respawn-pane", "-k", "-t", f"{target}.1", "env", f"PYTHONPATH={python_path}", str(shell))
-    return f"permissions panel ready in {session}"
+    if acted or created or top_dead or bottom_dead:
+        return f"permissions panel ready in {session}"
+    return ""
 
 
 def run(home: Path, session: str, interval: float = 5) -> None:
+    """Keep the panel established; report only the transitions ``ensure`` names."""
     if interval <= 0:
         raise ValueError("interval must be positive")
     while True:
-        print(ensure(home, session, interval), flush=True)
+        status = ensure(home, session, interval)
+        if status:
+            print(status, flush=True)
         time.sleep(interval)
 
 
@@ -97,7 +120,9 @@ def main() -> None:
     if args.follow:
         run(args.home, args.session, args.interval)
     else:
-        print(ensure(args.home, args.session, args.interval))
+        status = ensure(args.home, args.session, args.interval)
+        if status:
+            print(status)
 
 
 if __name__ == "__main__":

@@ -438,7 +438,9 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
     names = _tmux("list-windows", "-t", session, "-F", "#{window_name}").stdout.decode().splitlines()
     if operator_window not in names:
         _tmux("new-window", "-d", "-t", session, "-n", operator_window, "-c", str(workspace), "sh")
-    print(seed_permission_panel.ensure(home, session), flush=True)
+    status = seed_permission_panel.ensure(home, session)
+    if status:
+        print(status, flush=True)
     if (home / "health/runtime-release.json").exists():
         from .runtime_source import source_for
         source = source_for(home, ROOT)
