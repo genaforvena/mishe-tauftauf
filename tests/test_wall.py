@@ -270,6 +270,23 @@ def test_wall_view_dispatches_witness_and_marks_unproduced_roles(tmp_path, monke
     for role in ("genome", "research-methods"):
         assert "REPORT: NOT PRODUCED" in wall_view.render(tmp_path, role)
 
+def test_compose_frame_omits_legacy_reports_for_reportless_roles(tmp_path, monkeypatch):
+    setup_wall(tmp_path)
+    from mishe_tauftauf import observations, wall
+    from mishe_tauftauf.observations import RenderedPain
+    reports = tmp_path / "observations"
+    reports.mkdir()
+    for role in ("genome", "research-methods"):
+        (reports / role).write_text("STALE LEGACY VERDICT\n")
+        monkeypatch.setattr(
+            observations, "run_renderer",
+            lambda _home, slug, _timeout: RenderedPain(slug, "REPORT: NOT PRODUCED\n", True),
+        )
+        monkeypatch.setattr(wall, "pane", lambda *_args: "")
+        frame = observations.compose_frame(tmp_path, role).body
+        assert "REPORT: NOT PRODUCED" in frame
+        assert "STALE LEGACY VERDICT" not in frame
+
 def test_health_dashboard_uses_user_runtime_and_preserves_bus_unknown(tmp_path, monkeypatch):
     from mishe_tauftauf import wall_view
 

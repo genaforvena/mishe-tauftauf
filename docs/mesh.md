@@ -33,7 +33,8 @@ current or correct.
 
 Rendered `SYSTEM ZERO` check reports retain their verdict text and gain a
 `STALE` marker when the report file is older than 900 seconds or its mtime
-cannot be read.
+cannot be read. Roles without a deterministic report producer show that
+disposition without attaching legacy report files.
 
 Wake scheduling is configured by `SITE_HOME/coordination-mode.json` (the site home
 directory, `.mishe-tauftauf/` in this plant). A stop time suppresses autonomous
