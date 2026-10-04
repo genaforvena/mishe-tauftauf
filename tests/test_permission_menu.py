@@ -201,8 +201,14 @@ def test_new_permissions_bottom_pane_gets_its_own_import_root(tmp_path, monkeypa
 
 def _write_cli(home: Path, package_root: Path, body: str | None = None) -> None:
     (home / "bin").mkdir(parents=True, exist_ok=True)
-    (package_root / "mishe_tauftauf").mkdir(parents=True, exist_ok=True)
-    (package_root / "mishe_tauftauf" / "__init__.py").write_text("", encoding="utf-8")
+    package = package_root / "mishe_tauftauf"
+    package.mkdir(parents=True, exist_ok=True)
+    # test_selector_stays_when_the_cli_matches_its_own_release names this
+    # checkout's own package root, so an unconditional write here truncated the
+    # tracked src/mishe_tauftauf/__init__.py to zero bytes on every run. Only a
+    # root without a package needs the placeholder init.
+    if not (package / "__init__.py").exists():
+        (package / "__init__.py").write_text("", encoding="utf-8")
     (home / "bin" / "mishe-tauftauf").write_text(
         body if body is not None else
         "#!/bin/sh\n"
@@ -225,6 +231,19 @@ def test_cli_package_root_keeps_a_colon_in_the_path(tmp_path):
     _write_cli(home, target)
 
     assert permission_menu._cli_package_root(home) == target
+
+
+def test_write_cli_does_not_truncate_an_existing_package_init(tmp_path):
+    # The helper is also handed this checkout's real package root; it must never
+    # clobber tracked source there.
+    package = tmp_path / "src" / "mishe_tauftauf"
+    package.mkdir(parents=True)
+    init = package / "__init__.py"
+    init.write_text('__version__ = "0.1.0"\n', encoding="utf-8")
+
+    _write_cli(tmp_path / "site", tmp_path / "src")
+
+    assert init.read_text(encoding="utf-8") == '__version__ = "0.1.0"\n'
 
 
 def test_selector_reloads_when_the_site_cli_repins(tmp_path, monkeypatch):
