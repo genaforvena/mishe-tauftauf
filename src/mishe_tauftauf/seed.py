@@ -190,7 +190,7 @@ def _observation_text(slug: str, frame: str) -> str:
         # wake health; byte and inode counts change on nearly every refresh.
         prefixes = ("STATE:", "PLANT STATE:", "HOST HEALTH:", "COVERAGE:",
                     "DOCTOR:", "WINDOWS:", "SERVICE ", "CI:",
-                    "PASS ", "FAIL ", "UNKNOWN ")
+                    "PASS ", "FAIL ", "UNKNOWN ", "STALE ")
         return "\n".join(line for line in frame.splitlines() if line.startswith(prefixes))
     if slug not in {"discover", "senses"}:
         return frame
