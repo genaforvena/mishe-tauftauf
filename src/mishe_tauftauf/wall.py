@@ -352,7 +352,6 @@ def clear(home: Path, session: str, role: str) -> str:
                 raise ValueError("clear rotation is uncertain; inspect journal and live process before retry")
             journal.update(phase="rotated", after_pid=current_pid, reconciled_intent=True)
             _save(path, journal)
-            seed._record_mind_model(home, role, home / "minds" / role, "clear")
         if journal:
             if journal.get("session") != session or journal.get("phase") != "rotated":
                 raise ValueError("clear rotation is uncertain; inspect journal and live process before retry")
@@ -372,7 +371,12 @@ def clear(home: Path, session: str, role: str) -> str:
                 raise ValueError("mind process did not rotate")
             journal.update(phase="rotated", after_pid=after)
             _save(path, journal)
-            seed._record_mind_model(home, role, home / "minds" / role, "clear")
+        # Emit the model record only after the rotation is durable and the live
+        # PID matches the journal, on both the fresh and the recovered path. The
+        # record is idempotent (append_runtime_once dedups exact text), so a retry
+        # from an already-rotated journal repairs a crash between the durable save
+        # and this call instead of committing without the model identity.
+        seed._record_mind_model(home, role, home / "minds" / role, "clear")
         def commit_guard():
             _, current_pending, current_settled, current_cleared, *_ = seed._state(home, role)
             if (current_pending or current_settled != settled or current_cleared == settled
