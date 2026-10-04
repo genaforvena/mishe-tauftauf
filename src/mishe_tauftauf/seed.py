@@ -155,6 +155,16 @@ def clear_stalls(entries, *, now: datetime | None = None, timeout: float = 120):
     return {slug: entry for slug, entry in settled.items()
             if (now - datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))).total_seconds() >= timeout}
 
+
+
+
+def _observation_text(slug: str, frame: str) -> str:
+    if slug not in {"discover", "senses"}:
+        return frame
+    prefixes = ("STATE:", "UNKNOWN ", "UNAVAILABLE command.", "AVAILABLE command.",
+                "PERMISSION REQUESTS:", "REQUEST ") if slug == "discover" else ("STATE:", "UNKNOWN ")
+    return "\n".join(line for line in frame.splitlines() if line.startswith(prefixes))
+
 def stale_pends(entries, *, now: datetime | None = None, timeout: float = 600):
     """Find roles whose pending wake has not yielded within the timeout."""
     now = now or datetime.now(timezone.utc)
@@ -173,15 +183,6 @@ def stale_pends(entries, *, now: datetime | None = None, timeout: float = 600):
                 entries_by_slug.pop(match[1], None)
     return {slug: entries_by_slug[slug] for slug in pending
             if (now - datetime.fromisoformat(entries_by_slug[slug].timestamp.replace("Z", "+00:00"))).total_seconds() >= timeout}
-
-
-
-def _observation_text(slug: str, frame: str) -> str:
-    if slug not in {"discover", "senses"}:
-        return frame
-    prefixes = ("STATE:", "UNKNOWN ", "UNAVAILABLE command.", "AVAILABLE command.",
-                "PERMISSION REQUESTS:", "REQUEST ") if slug == "discover" else ("STATE:", "UNKNOWN ")
-    return "\n".join(line for line in frame.splitlines() if line.startswith(prefixes))
 
 
 def _send(target: str, message: str) -> None:

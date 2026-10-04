@@ -54,7 +54,6 @@ def test_fresh_seed_renders_canonical_view(tmp_path, role):
     seed.init(home, role, "true")
     script = (home / "top-pains" / role).read_text()
     assert "mishe_tauftauf.wall_view" in script
-    assert "landing_debt" not in script
     assert wall.settings(home)["mode"] == "wall"
 
 

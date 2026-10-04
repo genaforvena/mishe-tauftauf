@@ -7,13 +7,13 @@ from mishe_tauftauf import cli, dashboard
 
 def test_watcher_and_mind_share_complete_frame_without_terminal_clipping(tmp_path, monkeypatch, capsys):
     from mishe_tauftauf.observations import RenderedPain
-    body = "LANDING DEBT: RED outside draft\n" + "detail\n" * 80
+    body = "ALERT: RED outside draft\n" + "detail\n" * 80
     monkeypatch.setattr(cli, "compose_frame", lambda *a: RenderedPain("genome", body, True))
     monkeypatch.setattr(cli.time, "sleep", lambda _: (_ for _ in ()).throw(KeyboardInterrupt()))
     assert cli.cmd_pain_watch(Namespace(home=tmp_path, slug="genome", timeout=1, interval=5)) == 0
     displayed = capsys.readouterr().out.removeprefix("\x1b[H\x1b[2J")
     assert dashboard.read(tmp_path, "genome")[0] == displayed
-    assert "LANDING DEBT: RED" in displayed
+    assert "ALERT: RED" in displayed
     assert cli.cmd_pain_read(Namespace(home=tmp_path, slug="genome", launcher="dashboard")) == 0
     assert capsys.readouterr().out == displayed
 
@@ -37,7 +37,7 @@ def test_supervisor_observes_dashboard_instead_of_changing_terminal_history(tmp_
     from subprocess import CompletedProcess
     from mishe_tauftauf import seed, tmux
     from mishe_tauftauf.feed import Feed, utc_now
-    frame = "STATE: GREEN\nLANDING DEBT: RED outside draft\n"
+    frame = "STATE: GREEN\nALERT: RED outside draft\n"
     dashboard.publish(tmp_path, "genome", frame, True)
     monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
     monkeypatch.setattr(tmux, "_pane_stopped_or_dead", lambda *a: False)
