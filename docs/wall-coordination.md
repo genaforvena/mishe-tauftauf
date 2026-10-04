@@ -81,9 +81,12 @@ are author reports, not independent acceptance. Do not report unchanged status
 reconciliation as an outcome or fabricate evidence for historical work.
 
 Delivery retries are bounded. If a failed send exhausts them, its pane shows
-UNKNOWN. A mind or operator reconciles the notes and actual process, then uses
-`wall retry --owner ROLE` to redeliver the same pending turn. This does not create
-a new task or repeat an action automatically.
+UNKNOWN. A mind or operator can reconcile the notes and actual process and use
+`wall retry --owner ROLE` to redeliver the same pending turn; this does not create
+a new task. An exhausted channel is not muted forever: if no one reconciles it
+within the 30-minute hold interval, the supervisor redelivers the same pending
+turn once, preserving its reconcile-before-acting instruction, then holds again.
+The recovery never creates a new wake and never interrupts a busy mind.
 
 The activity line shows seconds since the latest mind message, wall edit or
 settled turn, the mind state (`OK`, `SILENT`, `ENDED` or `DISABLED`) and the

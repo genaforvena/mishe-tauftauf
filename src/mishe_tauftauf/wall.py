@@ -186,7 +186,7 @@ def pane(home: Path, role: str) -> str:
     transport = ""
     if pending and path.exists():
         data = json.loads(path.read_text())
-        if data.get("phase") == "send-failed" or data.get("attempts", 0) >= 2:
+        if data.get("phase") == "send-failed" or (data.get("attempts", 0) >= 2 and data.get("phase") != "delivered"):
             transport = f"\nTRANSPORT: UNKNOWN wake {pending}; reconcile pane/notes, then wall retry --owner {role} to redeliver the same turn\n"
     from .activity import line
     activity = line(home, entries=shared)
@@ -382,6 +382,8 @@ def clear(home: Path, session: str, role: str) -> str:
     return f"clear seed {role} after {settled}"
 
 
+RETRY_HOLD_SECONDS = 1800
+
 def deliver(home: Path, session: str, role: str, wake: int, observation: int | None, trigger: str) -> str:
     """A bounded transport retry, independent of task meaning or receipt review."""
     from . import seed
@@ -389,12 +391,18 @@ def deliver(home: Path, session: str, role: str, wake: int, observation: int | N
     path = home / "checks" / f"wall-send-{role}-{wake}.json"
     data = json.loads(path.read_text()) if path.exists() else {"attempts": 0}
     elapsed = (datetime.now(timezone.utc) - datetime.fromisoformat(data["at"])).total_seconds() if data.get("at") else None
-    if data["attempts"] >= 2:
+    exhausted = data["attempts"] >= 2
+    if exhausted and not (elapsed is not None and elapsed >= RETRY_HOLD_SECONDS):
         return f"held seed {role} wake {wake} delivery retry exhausted; inspect wall and pane"
     if elapsed is not None and elapsed < (600 if data.get("phase") == "delivered" else 60):
         return f"held seed {role} wake {wake} unsettled; reconcile wall before retry"
     if not seed._mind_ready(session, role):
         return f"held seed {role} wake {wake} mind busy"
+    if exhausted:
+        # Bounded recovery: an exhausted counter must not strand the mind forever.
+        # After a long hold, reconcile and redeliver the same wake once; no new
+        # turn is created, and the mind reconciles prior effects before acting.
+        data["attempts"] = 1
     data.update(attempts=data["attempts"] + 1, at=datetime.now(timezone.utc).isoformat(), phase="sending")
     _save(path, data)
     try:

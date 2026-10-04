@@ -293,6 +293,35 @@ def test_exhausted_send_can_be_reconciled_and_retried_without_new_wake(tmp_path,
     assert len([e for e in Feed(tmp_path).entries() if e.body.startswith("seed wake ")]) == 1
 
 
+def test_exhausted_send_recovers_after_bounded_hold_without_new_wake(tmp_path, monkeypatch):
+    from mishe_tauftauf import wall
+    setup_wall(tmp_path)
+    wake = Feed(tmp_path).append("seed", "seed wake genome observation=1\nRead wall.")
+    monkeypatch.setattr(seed, "_mind_ready", lambda *a: True)
+    sent = []
+    monkeypatch.setattr(seed, "_send", lambda target, text: sent.append(text))
+    journal = tmp_path / "checks" / f"wall-send-genome-{wake.sequence}.json"
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    journal.write_text(json.dumps({"at": (datetime.now(timezone.utc)-timedelta(minutes=45)).isoformat(),
+                                   "attempts": 2, "phase": "delivered", "wake": wake.sequence}))
+    assert wall.deliver(tmp_path, "session", "genome", wake.sequence, 1, "trigger").startswith("wake ")
+    assert len(sent) == 1 and "Reconcile any prior effects" in sent[0]
+    assert len([e for e in Feed(tmp_path).entries() if e.body.startswith("seed wake ")]) == 1
+    data = json.loads(journal.read_text())
+    assert data["attempts"] == 2 and data["phase"] == "delivered"
+    # Recovery-armed exhaustion is not presented as a dead channel.
+    assert "TRANSPORT: UNKNOWN" not in wall.pane(tmp_path, "genome")
+    # The recovery is bounded: a fresh exhausted counter stays held, no hot loop.
+    assert "exhausted" in wall.deliver(tmp_path, "session", "genome", wake.sequence, 1, "trigger")
+    assert len(sent) == 1
+    # A busy mind is never interrupted: hold even after the bounded interval.
+    monkeypatch.setattr(seed, "_mind_ready", lambda *a: False)
+    journal.write_text(json.dumps({"at": (datetime.now(timezone.utc)-timedelta(minutes=45)).isoformat(),
+                                   "attempts": 2, "phase": "sending", "wake": wake.sequence}))
+    assert "mind busy" in wall.deliver(tmp_path, "session", "genome", wake.sequence, 1, "trigger")
+    assert len(sent) == 1
+
+
 def test_pane_keeps_shared_chat_visible_when_only_transport_is_recent(tmp_path):
     from mishe_tauftauf import wall
     setup_wall(tmp_path)
