@@ -66,6 +66,17 @@ def _manifest_windows(home: Path) -> list[str]:
         return []
 
 
+def _expected_windows(required: set[str], previous: list[str], live: set[str]) -> list[str]:
+    """Expected windows to record for the health check after a plant.
+
+    The required set plus every previously recorded window still present, so an
+    extra window a site relies on survives a replant. A name that is neither
+    required nor live is dropped: a renamed or closed window must not become a
+    permanent expectation that fails the health check forever.
+    """
+    return sorted(required | (set(previous) & live))
+
+
 def refresh_contract(current: str, contract: str) -> str:
     block = contract.rstrip() + "\n" + CONTRACT_END
     if CONTRACT_START not in current:
@@ -441,10 +452,6 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
     for name in (operator_window, *ROLES, "permissions", *site_declared_roles(home)):
         _tmux("set-window-option", "-t", f"{session}:{name}", "automatic-rename", "off")
     (home / "health").mkdir(exist_ok=True)
-    all_windows = {operator_window, *ROLES, "permissions", *site_declared_roles(home)}
-    all_windows.update(_manifest_windows(home))
-    (home / "health" / "windows.json").write_text(
-        json.dumps(sorted(all_windows)) + "\n", encoding="utf-8")
     write_service_manifest(home, session, persist)
     previous_session = os.environ.get("MISHE_SEED_SESSION")
     os.environ["MISHE_SEED_SESSION"] = session
@@ -463,6 +470,9 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
     required = {operator_window, *ROLES, "permissions", *site_declared_roles(home)}
     if not required <= actual:
         raise RuntimeError(f"missing windows: {sorted(required - actual)}")
+    (home / "health" / "windows.json").write_text(
+        json.dumps(_expected_windows(required, _manifest_windows(home), actual)) + "\n",
+        encoding="utf-8")
     print(f"plant ready: session={session} windows={','.join(sorted(actual))} services={'enabled' if persist else 'skipped'}")
     if contract_changed:
         sha = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"],
