@@ -1,7 +1,10 @@
 import json
+import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
+
+import pytest
 
 from mishe_tauftauf import ci_watch
 from mishe_tauftauf.feed import Feed
@@ -102,3 +105,59 @@ def test_tick_never_runs_obsolete_delivery_scheduler(tmp_path):
         ci_watch.tick(tmp_path)
         maintenance.assert_not_called()
         assert len(Feed(tmp_path).entries()) == 1
+
+
+def test_command_retries_one_transient_transport_failure(monkeypatch):
+    attempts = []
+
+    def flaky(argv, **kwargs):
+        attempts.append(argv)
+        if len(attempts) == 1:
+            raise OSError("connection reset by peer")
+        return subprocess.CompletedProcess(argv, 0, stdout="ok\n", stderr="")
+
+    monkeypatch.setattr(ci_watch.subprocess, "run", flaky)
+    monkeypatch.setattr(ci_watch.time, "sleep", lambda _seconds: None)
+    assert ci_watch._command("gh", "repo", "view") == "ok"
+    assert len(attempts) == 2
+
+
+def test_command_retries_nonzero_gh_transport_exit(monkeypatch):
+    attempts = []
+
+    def flaky(argv, **kwargs):
+        attempts.append(argv)
+        if len(attempts) == 1:
+            return subprocess.CompletedProcess(
+                argv, 1, stdout="", stderr='Post "https://api.github.com/graphql": EOF')
+        return subprocess.CompletedProcess(argv, 0, stdout='{"nameWithOwner": "o/r"}\n', stderr="")
+
+    monkeypatch.setattr(ci_watch.subprocess, "run", flaky)
+    monkeypatch.setattr(ci_watch.time, "sleep", lambda _seconds: None)
+    assert ci_watch._command("gh", "repo", "view") == '{"nameWithOwner": "o/r"}'
+    assert len(attempts) == 2
+
+
+def test_command_gives_up_after_bounded_attempts(monkeypatch):
+    attempts = []
+
+    def dead(argv, **kwargs):
+        attempts.append(argv)
+        raise OSError("network is unreachable")
+
+    monkeypatch.setattr(ci_watch.subprocess, "run", dead)
+    monkeypatch.setattr(ci_watch.time, "sleep", lambda _seconds: None)
+    with pytest.raises(OSError):
+        ci_watch._command("gh", "run", "list")
+    assert len(attempts) == ci_watch._COMMAND_ATTEMPTS
+
+
+def test_read_still_reports_unknown_when_transport_stays_down(tmp_path, monkeypatch):
+    def dead(argv, **kwargs):
+        raise OSError("network is unreachable")
+
+    monkeypatch.setattr(ci_watch.subprocess, "run", dead)
+    monkeypatch.setattr(ci_watch.time, "sleep", lambda _seconds: None)
+    result = ci_watch.read(tmp_path / "site")
+    assert result["state"] == "unknown"
+    assert result["detail"] == "network is unreachable"
