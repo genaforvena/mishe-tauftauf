@@ -312,12 +312,16 @@ def test_review_passes_the_configured_outer_budget_to_the_worker(tmp_path, monke
     def spy(command, encoded, timeout):
         seen["timeout"] = timeout
         request = json.loads(encoded.decode())
+        seen["question"] = request["questions"][0]["question"]
         return json.dumps({"version": 1, "input_hash": request["input_hash"],
                            "results": [{"id": "PATCH", "verdict": "clear", "reason": "ok", "evidence": []}]}).encode()
 
     monkeypatch.setattr(wall_patch, "_worker", spy)
     wall_patch.check(home, "change", [sys.executable, "-c", "pass"])
     assert seen["timeout"] == 480
+    assert "pre-activation review" in seen["question"]
+    assert "delivery_verified" in seen["question"]
+    assert "not yet expected" in seen["question"]
     assert wall_patch.status(home, "change")["phase"] == "reviewed"
 
 
