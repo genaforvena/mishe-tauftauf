@@ -116,8 +116,11 @@ def test_live_renderer_exposes_stall_and_recovers_without_writing_tasks(tmp_path
     assert not (home / "artifacts").exists()
 
 def test_live_renderer_exposes_stale_pend(tmp_path, monkeypatch):
+    from mishe_tauftauf import seed
     home, view = prepare_view(tmp_path, monkeypatch)
     receipts = [entry(1, "seed wake genome observation=1", age=10000)]
+    monkeypatch.setattr(view, "_mind_pane_live", lambda session, role: True)
+    monkeypatch.setattr(seed, "_mind_idle", lambda session, slug: True)
     monkeypatch.setattr(view.Feed, "entries", lambda self: receipts)
     frame = view.render(home)
     assert "STALE PEND: RED genome wake=1 pending=1 owner=health" in frame
