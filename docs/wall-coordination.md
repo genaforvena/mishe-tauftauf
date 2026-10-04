@@ -146,7 +146,10 @@ resident may render its own pane (here `body-research` and `inference-research`
 do). `SOURCE` names the checkout commit and its changed-path count; `DEPLOYED`
 the rendering process's own root and module fingerprint; `RUNTIME` the pin beside
 the roots the seed services actually import, flagging `DRIFT` when they differ —
-the pin and the seed roots are separate and can diverge. When the pin fails that
+the pin and the seed roots are separate and can diverge. The release coordinator
+is a declared exception: it imports its site's checkout so its follower observes
+it, so that one intended root reads `DECLARED` and does not raise the state line;
+any other divergence still reads `DRIFT`. When the pin fails that
 check — a dirty tree, a SHA that no longer matches HEAD, or a path that is not
 a Git worktree —
 `RUNTIME` instead reads `pin=UNKNOWN` with the reason. The line reports the

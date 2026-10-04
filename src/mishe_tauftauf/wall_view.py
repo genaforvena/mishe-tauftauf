@@ -32,30 +32,47 @@ def _import_roots(environment: str) -> list[str]:
     return roots
 
 
-def _runtime_state(home: Path, root: Path, service_roots: list[str] | None = None) -> tuple[str, str]:
+def _runtime_state(home: Path, root: Path,
+                   service_roots: dict[str, list[str]] | None = None) -> tuple[str, str]:
     """The runtime verdict and its line, comparing the pin with the service roots.
 
     The renderer's own root cannot show this drift: the panes and services import
-    their own copies. ``service_roots`` is ``None`` when the environment could not
-    be read, and empty when the manifest lists no service. The verdict is
-    ``MATCH``, ``DRIFT``, ``UNPINNED``, ``UNKNOWN`` or ``NONE``; only ``DRIFT``
-    is running code that differs from the pin, and the state line must not hide
-    it behind GREEN.
+    their own copies. ``service_roots`` maps each listed unit to the import roots
+    it names; ``None`` when the environment could not be read, and empty when the
+    manifest lists no service. A unit is on the pin when its roots equal the pin.
+    The release coordinator is declared to import the development checkout
+    (:func:`runtime_source.declared_checkout_root`), so that intended root reads
+    ``DECLARED``; any other divergence still reads ``DRIFT`` and the state line
+    must not hide it behind GREEN.
     """
     if not (home / "health/runtime-release.json").exists():
         return "UNPINNED", "RUNTIME: pin=UNPINNED"
     try:
-        from .runtime_source import source_for
+        from .runtime_source import declared_checkout_root, source_for
         pinned = str(source_for(home, root).resolve())
     except (OSError, TypeError, ValueError) as exc:
         return "UNKNOWN", f"RUNTIME: pin=UNKNOWN — {exc}"
     if service_roots is None:
         return "UNKNOWN", f"RUNTIME: pin={pinned} services=UNKNOWN"
-    distinct = sorted(set(service_roots))
+    distinct = sorted({item for roots in service_roots.values() for item in roots})
     if not distinct:
         return "NONE", f"RUNTIME: pin={pinned} services=none"
-    state = "MATCH" if distinct == [pinned] else "DRIFT"
-    return state, f"RUNTIME: pin={pinned} services={','.join(distinct)} {state}"
+    line = f"RUNTIME: pin={pinned} services={','.join(distinct)}"
+    declared: list[str] = []
+    undeclared: list[str] = []
+    for unit, roots in sorted(service_roots.items()):
+        if not roots or sorted(set(roots)) == [pinned]:
+            continue
+        expected = declared_checkout_root(home, unit)
+        if expected is not None and sorted(set(roots)) == [str(expected)]:
+            declared.append(f"{unit}={expected}")
+        else:
+            undeclared.append(unit)
+    if undeclared:
+        return "DRIFT", f"{line} DRIFT"
+    if declared:
+        return "DECLARED", f"{line} DECLARED — {','.join(declared)} observes the checkout"
+    return "MATCH", f"{line} MATCH"
 
 
 def deployment_lines(home: Path) -> list[str]:
@@ -83,11 +100,11 @@ def deployment_lines(home: Path) -> list[str]:
     return [source, deployed]
 
 
-def _service_block(home: Path) -> tuple[list[str], list[str] | None, str]:
-    """Service rows, the import roots those units run, and the service-state note.
+def _service_block(home: Path) -> tuple[list[str], dict[str, list[str]] | None, str]:
+    """Service rows, the import roots each unit runs, and the service-state note.
 
-    ``None`` roots means the environment could not be read; an empty list means
-    the manifest lists no service. The note is the STATE line's own verdict; the
+    ``None`` means the environment could not be read; an empty mapping means the
+    manifest lists no service. The note is the STATE line's own verdict; the
     caller folds in the runtime verdict so a drift cannot hide behind GREEN.
     """
     try:
@@ -103,14 +120,16 @@ def _service_block(home: Path) -> tuple[list[str], list[str] | None, str]:
         if result.returncode:
             raise ValueError(result.stderr.strip() or "service read failed")
         healthy = bool(units)
-        roots: list[str] = []
+        roots: dict[str, list[str]] = {}
         rows = []
         for block in result.stdout.strip().split("\n\n"):
             values = dict(row.split("=", 1) for row in block.splitlines() if "=" in row)
             good = values.get("ActiveState") == "active" and values.get("SubState") == "running"
             healthy &= good
             if units:
-                roots.extend(_import_roots(values.get("Environment", "")))
+                unit_roots = _import_roots(values.get("Environment", ""))
+                if unit_roots:
+                    roots[values.get("Id", "unknown")] = unit_roots
             rows.append((values.get("Id", "unknown"), good, values.get("ActiveState"),
                          values.get("SubState"), values.get("NRestarts", "unknown")))
         lines = []

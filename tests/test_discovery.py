@@ -1334,6 +1334,28 @@ def test_drift_across_sites_names_a_unit_running_a_release_its_site_pin_rejects(
     assert row["identity"]["stale"] == {"mishe-other-silence.service": str(stale)}
 
 
+def test_drift_across_sites_declares_the_coordination_checkout_root(
+        tmp_path: Path) -> None:
+    # The release coordinator runs its site's checkout on purpose, so that root
+    # is a declared exception rather than a stale release.
+    pinned_sha: list[str] = []
+    pinned = tmp_path / "releases" / "pinned"
+    _release_tree(pinned, pinned_sha)
+    other = tmp_path / "site-other"
+    _pin(other, pinned, pinned_sha[0], "mishe-other")
+    home = tmp_path / "plant"
+    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
+                             "sha": pinned_sha[0]}])
+    unit = "mishe-other-coordination.service"
+    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
+            patch.object(discovery, "_unit_import_roots",
+                         return_value={unit: str(tmp_path)}), \
+            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
+        row = discovery._runtime_drift_across_sites(home)
+    assert row["state"] == "verified"
+    assert row["identity"]["stale"] == {}
+
+
 def test_drift_across_sites_reads_verified_when_every_unit_matches_its_own_pin(
         tmp_path: Path) -> None:
     # A second site's units are checked against the second site's pin, not the
