@@ -531,9 +531,8 @@ def _runtime_drift(home: Path) -> dict[str, object]:
 def _unit_import_roots(units: list[str]) -> dict[str, str]:
     """The source root each named unit imports, keyed by unit.
 
-    One ``systemctl show`` answers every unit, so a plant's whole service set
-    costs a single call. Units running without a ``PYTHONPATH`` are absent from
-    the result: they make no release claim.
+    Prefer systemd's configured environment; if it does not name PYTHONPATH,
+    inspect the live main process environment so wrapper-exported roots count.
     """
     if not units:
         return {}
@@ -541,7 +540,7 @@ def _unit_import_roots(units: list[str]) -> dict[str, str]:
     environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
     try:
         result = subprocess.run(["systemctl", "--user", "show", *units,
-                                 "-p", "Id,Environment"],
+                                 "-p", "Id,Environment,MainPID"],
                                 capture_output=True, text=True, timeout=5,
                                 env=environment)
     except (OSError, subprocess.SubprocessError):
@@ -549,18 +548,60 @@ def _unit_import_roots(units: list[str]) -> dict[str, str]:
     if result.returncode:
         return {}
     roots: dict[str, str] = {}
+    fallback_roots: dict[str, tuple[int, str]] = {}
     for block in result.stdout.split("\n\n"):
         values = dict(row.split("=", 1) for row in block.splitlines() if "=" in row)
         unit = str(values.get("Id", ""))
-        for item in values.get("Environment", "").split():
-            if not item.startswith("PYTHONPATH="):
+        items = values.get("Environment", "").split()
+        root_items = [item for item in items if item.startswith("PYTHONPATH=")]
+        if not root_items:
+            try:
+                pid = int(values.get("MainPID", "0"))
+                if pid <= 0:
+                    continue
+                proc_environment = Path(f"/proc/{pid}/environ").read_bytes()
+            except (OSError, ValueError):
                 continue
+            root_items = [
+                item.decode(errors="replace") for item in proc_environment.split(b"\0")
+                if item.startswith(b"PYTHONPATH=")
+            ]
+            if root_items:
+                for item in root_items:
+                    for component in item[len("PYTHONPATH="):].split(os.pathsep):
+                        root = _import_root(component)
+                        if root:
+                            fallback_roots[unit] = (pid, root)
+                            break
+                    if unit in fallback_roots:
+                        break
+            continue
+        for item in root_items:
             for component in item[len("PYTHONPATH="):].split(os.pathsep):
                 root = _import_root(component)
                 if root:
                     roots[unit] = root
                     break
-            break
+            if unit in roots:
+                break
+    if fallback_roots:
+        try:
+            current = subprocess.run(
+                ["systemctl", "--user", "show", *fallback_roots, "-p", "Id,MainPID"],
+                capture_output=True, text=True, timeout=5, env=environment)
+        except (OSError, subprocess.SubprocessError):
+            return roots
+        if current.returncode == 0:
+            for block in current.stdout.split("\n\n"):
+                values = dict(row.split("=", 1) for row in block.splitlines() if "=" in row)
+                unit = str(values.get("Id", ""))
+                candidate = fallback_roots.get(unit)
+                try:
+                    pid = int(values.get("MainPID", "0"))
+                except ValueError:
+                    continue
+                if candidate is not None and pid == candidate[0]:
+                    roots[unit] = candidate[1]
     return roots
 
 

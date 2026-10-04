@@ -1468,6 +1468,23 @@ def test_unit_import_roots_deduplicates_a_shared_path_component() -> None:
         roots = discovery._unit_import_roots(["mishe-a-senses.service",
                                               "mishe-a-witness.service"])
     assert roots == {"mishe-a-senses.service": "/releases/aaa"}
+def test_unit_import_roots_reads_wrapper_pythonpath_from_live_process() -> None:
+    stdout = "\n".join([
+        "Id=mishe-a-senses.service",
+        "Environment=PATH=/usr/bin",
+        "MainPID=1234",
+    ])
+    initial = subprocess.CompletedProcess(["systemctl"], 0, stdout, "")
+    recheck = subprocess.CompletedProcess(
+        ["systemctl"], 0, "Id=mishe-a-senses.service\nMainPID=1234", "")
+    with patch.object(discovery.subprocess, "run",
+                      side_effect=[initial, recheck]), \
+            patch.object(Path, "read_bytes",
+                         return_value=b"PATH=/usr/bin\0PYTHONPATH=/releases/wrapper/src\0"):
+        roots = discovery._unit_import_roots(["mishe-a-senses.service"])
+    assert roots == {"mishe-a-senses.service": "/releases/wrapper"}
+
+
 
 
 def tmp_site_with_services() -> Path:
