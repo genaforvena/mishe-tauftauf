@@ -54,7 +54,7 @@ OMP's full mesh lifecycle uses native `session_start` and `session_stop` receipt
 
 This seed implements a smaller local boundary:
 
-1. An exact `seed yield` archives the handoff and writes a `[work]` receipt.
+1. An exact `seed yield` saves the wall and handoff and appends a settled-turn receipt.
 2. The supervisor clears only after a settled idle turn.
 3. The charter and handoff arrive with the next real wake. A durable continuation or fresh observation invites the next step; clear creates no idle model turn.
 
