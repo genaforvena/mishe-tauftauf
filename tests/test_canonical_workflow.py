@@ -422,3 +422,37 @@ def test_a_seed_start_records_only_a_live_respawned_mind(tmp_path, monkeypatch):
     bodies = [e.body.splitlines()[0] for e in Feed(home).entries()
               if e.source == "mishe-tauftauf" and e.body.startswith("mind model ")]
     assert bodies == [], "a mind that is still dead has not started"
+
+
+def test_an_interrupted_rotated_clear_records_the_model_on_retry(tmp_path, monkeypatch):
+    """A crash between the durable rotated save and the record is repaired on retry."""
+    from subprocess import CompletedProcess
+    from mishe_tauftauf import tmux
+
+    launcher = tmp_path / "minds" / "genome"
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text("#!/bin/sh\nexec omp --model vendor/model-a --cwd /repo\n")
+    wake = Feed(tmp_path).append("seed", "seed wake genome observation=1\nInvestigate.")
+    note = tmp_path / "note.md"
+    note.write_text("Investigated source; wait for changed evidence.")
+    seed.yield_wake(tmp_path, "genome", wake.sequence, note, result="verified")
+    (tmp_path / "checks").mkdir()
+    argv = list(seed._mind_launch_argv(tmp_path, "genome")[2:])
+    (tmp_path / "checks" / f"wall-clear-genome-{wake.sequence}.json").write_text(
+        '{"phase":"rotated","session":"session","role":"genome","settled":%d,'
+        '"before_pid":"101","after_pid":"202","launch_command":%s}' % (wake.sequence, json.dumps(argv)))
+    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
+    monkeypatch.setattr(seed, "_mind_idle", lambda *a: True)
+    def command(*args, **kwargs):
+        value = "202\n" if args[-1] == "#{pane_pid}" else "0\n"
+        return CompletedProcess(args, 0, value.encode(), b"")
+    monkeypatch.setattr(seed, "_tmux", command)
+    marker = f"mind model top-pain genome launcher={launcher} reason=clear model=vendor/model-a"
+    assert seed.clear(tmp_path, "session", "genome").startswith("clear seed")
+    bodies = [e.body.splitlines()[0] for e in Feed(tmp_path).entries()
+              if e.source == "mishe-tauftauf" and e.body.startswith("mind model ")]
+    assert bodies == [marker], "the interrupted rotation is recorded when the clear is retried"
+    assert seed.clear(tmp_path, "session", "genome").startswith("held seed")
+    bodies = [e.body.splitlines()[0] for e in Feed(tmp_path).entries()
+              if e.source == "mishe-tauftauf" and e.body.startswith("mind model ")]
+    assert bodies == [marker], "the repaired record is emitted exactly once"
