@@ -155,6 +155,25 @@ def clear_stalls(entries, *, now: datetime | None = None, timeout: float = 120):
     return {slug: entry for slug, entry in settled.items()
             if (now - datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))).total_seconds() >= timeout}
 
+def stale_pends(entries, *, now: datetime | None = None, timeout: float = 600):
+    """Find roles whose pending wake has not yielded within the timeout."""
+    now = now or datetime.now(timezone.utc)
+    pending: dict[str, int] = {}
+    entries_by_slug: dict[str, FeedEntry] = {}
+    for entry in entries:
+        if entry.source != "seed":
+            continue
+        line = _receipt_line(entry.body)
+        if match := WAKE_RE.fullmatch(line):
+            pending[match[1]] = entry.sequence
+            entries_by_slug[match[1]] = entry
+        elif match := YIELD_RE.fullmatch(line):
+            if pending.get(match[1]) == int(match[2]):
+                pending.pop(match[1])
+                entries_by_slug.pop(match[1], None)
+    return {slug: entries_by_slug[slug] for slug in pending
+            if (now - datetime.fromisoformat(entries_by_slug[slug].timestamp.replace("Z", "+00:00"))).total_seconds() >= timeout}
+
 
 
 def _observation_text(slug: str, frame: str) -> str:
