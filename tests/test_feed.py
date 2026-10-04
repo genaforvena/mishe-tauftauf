@@ -229,6 +229,25 @@ class FeedTests(unittest.TestCase):
             self.assertEqual(later.sequence, 3)
             self.assertEqual(len(parse_feed(feed.read_bytes())), 3)
 
+    def test_empty_feed_index_rebuilds_instead_of_breaking_reads_and_appends(self):
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            feed.append("human", "first")
+            feed.append("human", "second")
+            index = Path(directory) / "feed.index.json"
+            self.assertGreater(index.stat().st_size, 0)
+            # An out-of-band reader that merely opens the path, or a rebuild aborted
+            # before its atomic replace, leaves an unreadable checkpoint behind. The
+            # canonical tape is intact, so reads and appends rebuild it instead of
+            # failing closed forever with "corrupt feed index".
+            for seeded, tail, appended in ((b"", 2, 3), (b'{"payload":', 3, 4)):
+                index.unlink()
+                index.write_bytes(seeded)
+                self.assertEqual(Feed(directory).tail_sequence(), tail)
+                self.assertEqual(Feed(directory).entries(start=tail, limit=1)[0].body, "after bad index" if tail == 3 else "second")
+                self.assertEqual(Feed(directory).append("human", "after bad index").sequence, appended)
+            self.assertEqual(len(parse_feed(feed.read_bytes())), 4)
+
     def test_concurrent_once_identity_has_one_frame(self):
         with tempfile.TemporaryDirectory() as directory:
             workers = [multiprocessing.Process(target=once_worker, args=(directory,)) for _ in range(8)]
