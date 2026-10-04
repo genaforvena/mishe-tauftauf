@@ -109,48 +109,19 @@ def test_new_session_reraises_when_no_peer_session_appears(monkeypatch) -> None:
         seed._new_session("mishe-core", "genome", "/workspace")
 
 
-def test_health_observation_ignores_changing_samples_but_keeps_verdicts() -> None:
-    from mishe_tauftauf.seed import _observation_text
-
-    frame = ("GOAL: tend machine health\nDOCTOR: PASS\nSERVICE health.service: active\n"
-             "HOST HEALTH: PASS measured checks\n/: bytes available=100\n"
-             "STATE: GREEN — measured checks pass\n"
-             "COVERAGE: UNKNOWN — memory pressure not yet gated\n"
-             "SYSTEM ZERO\nPASS plant=PASS machine=PASS\n")
-    baseline = _observation_text("health", frame)
-    assert _observation_text("health", frame.replace("available=100", "available=99")) == baseline
-    assert _observation_text("health", frame.replace("HOST HEALTH: PASS", "HOST HEALTH: FAIL")) != baseline
-    assert _observation_text("health", frame.replace("COVERAGE: UNKNOWN", "COVERAGE: VERIFIED")) != baseline
-    assert _observation_text("health", frame.replace("SERVICE health.service: active",
-                                                      "SERVICE health.service: failed")) != baseline
-    stale_frame = frame.replace("SYSTEM ZERO\nPASS", "SYSTEM ZERO\nSTALE — check report exceeds 900 seconds\nPASS")
-    assert _observation_text("health", stale_frame) != baseline
 
 
-def test_witness_observation_ignores_own_chat_counters_but_keeps_signals() -> None:
-    from mishe_tauftauf.seed import _observation_text
+def test_health_and_witness_observation_dispatch_preserves_full_sensor_frame() -> None:
+    from mishe_tauftauf.wall import observation_text
 
-    frame = ("WINDOWS: PASS genome,health,witness\nCI: PASS sha=abc\nOPEN TASKS: 2\n"
-             "task-a owner=genome state=open at=40\n"
-             "task-b owner=health state=taking at=41\n"
-             "GENOME WORK: 1:changed@42\n"
-             "CHAT RATE: RED — seed observation witness: 18 observations\n"
-             "LATEST CHAT.LOG TEXT\nA new sample at 12:00\nSTATE: RED\nCI: FAIL chat text\n"
-             "GOAL: keep work coherent\nSTATE: GREEN\n")
-    baseline = _observation_text("witness", frame)
-    assert _observation_text("witness", frame.replace("18 observations", "19 observations")
-                             .replace("1:changed@42", "2:changed@43")
-                             .replace("12:00", "12:01")
-                             .replace("STATE: RED", "STATE: UNKNOWN")
-                             .replace("CI: FAIL chat text", "CI: PASS chat text")
-                             .replace("state=open at=40", "state=open at=44")) == baseline
-    assert _observation_text("witness", frame.replace("CHAT RATE: RED", "CHAT RATE: GREEN")) != baseline
-    assert _observation_text("witness", frame.replace("CI: PASS", "CI: FAIL")) != baseline
-    assert _observation_text("witness", frame.replace("OPEN TASKS: 2", "OPEN TASKS: 3")) != baseline
-    assert _observation_text("witness", frame.replace("task-a", "task-c")) != baseline
-    assert _observation_text("witness", frame.replace("state=taking", "state=open")) != baseline
-    assert _observation_text("witness", frame.replace("STATE: GREEN", "STATE: RED")) != baseline
-
+    frame = ("STATE: GREEN\nPATCH canonical-workflow: applied\n"
+             "SYSTEM ZERO\nSTALE — check report exceeds 900 seconds\n")
+    for role in ("health", "witness", "genome"):
+        baseline = observation_text(role, frame)
+        assert "PATCH canonical-workflow: applied" in baseline
+        assert "STALE — check report exceeds 900 seconds" in baseline
+        assert observation_text(role, frame.replace("PATCH canonical-workflow: applied",
+                                                    "PATCH canonical-workflow: reverted")) != baseline
 
 def test_omp_idle_prompt_survives_trailing_attachments_and_rejects_spinner(monkeypatch) -> None:
     from subprocess import CompletedProcess
