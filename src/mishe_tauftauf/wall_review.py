@@ -93,22 +93,30 @@ def main():
         "one object per question, each with id, verdict (clear/suspicious/unknown), reason, "
         "and evidence (list using only supplied evidence_references).\nREQUEST\n" + json.dumps(request)
     )
+    from .codex_review import validate_response
     with tempfile.TemporaryDirectory(prefix="mishe-wall-review-") as directory:
         path = Path(directory) / "request.txt"
         path.write_text(prompt)
-        answer = review_answer(reviewer_model(home), directory, path)
-    from .codex_review import validate_response
-    validate_response(request, answer)
+        # Validate inside the single reviewer budget: a bad answer is a failed
+        # attempt to retry, not an unavailable reviewer (which records the whole
+        # patch as review-unavailable and discards the attempt).
+        answer = review_answer(reviewer_model(home), directory, path,
+                               validate=lambda candidate: validate_response(request, candidate))
     print(json.dumps(answer))
 
 
-def review_answer(model: str, directory: Path, path: Path, runner=subprocess.run) -> dict:
-    """Call the reviewer until it answers; an rc=0 empty stdout is not an answer.
+def review_answer(model: str, directory: Path, path: Path, runner=subprocess.run, validate=None) -> dict:
+    """Call the reviewer until it answers; neither an rc=0 empty stdout nor an
+    answer that fails the request's own protocol validation is an answer.
 
     A reviewer can exit 0 with completely empty stdout, which json.loads turned into
-    an unattributable JSONDecodeError. Empty runs are fast on the flaky provider
-    (13-35 s against a 540 s budget), so retry inside the single reviewer budget
-    rather than widening the outer worker deadline. ``runner`` is injectable so the
+    an unattributable JSONDecodeError. It can also return well-formed JSON whose
+    version/input_hash or question coverage does not match the request; validating
+    that only after the retry loop let one bad answer raise out of ``main()`` and
+    record the whole patch as ``review-unavailable``. Both are failed attempts, not
+    an unavailable reviewer, and are fast on the flaky provider (13-35 s against a
+    540 s budget), so retry inside the single reviewer budget rather than widening
+    the outer worker deadline. ``runner`` and ``validate`` are injectable so the
     retry can be tested without a model call.
     """
     home = Path(os.environ["MISHE_SEED_HOME"]) if os.environ.get("MISHE_SEED_HOME") else None
@@ -124,15 +132,25 @@ def review_answer(model: str, directory: Path, path: Path, runner=subprocess.run
         if result.returncode:
             raise RuntimeError(f"patch reader failed: {result.stderr[-1000:]}")
         raw = result.stdout.strip()
-        if raw:
-            break
-        if attempt >= MAX_EMPTY_RETRIES:
-            raise RuntimeError(
-                f"patch reader returned empty output on {attempt} attempts; "
-                f"last stderr was {result.stderr[-400:]!r}")
-    if raw.startswith("```json\n") and raw.endswith("\n```"):
-        raw = raw[8:-4]
-    return json.loads(raw)
+        if not raw:
+            if attempt >= MAX_EMPTY_RETRIES:
+                raise RuntimeError(
+                    f"patch reader returned empty output on {attempt} attempts; "
+                    f"last stderr was {result.stderr[-400:]!r}")
+            continue
+        if raw.startswith("```json\n") and raw.endswith("\n```"):
+            raw = raw[8:-4]
+        try:
+            answer = json.loads(raw)
+            if validate is not None:
+                validate(answer)
+        except ValueError as exc:
+            if attempt >= MAX_EMPTY_RETRIES:
+                raise RuntimeError(
+                    f"patch reader returned an invalid answer on {attempt} attempts; "
+                    f"last error {exc!r}; last stdout {raw[:400]!r}")
+            continue
+        return answer
 
 
 if __name__ == "__main__":

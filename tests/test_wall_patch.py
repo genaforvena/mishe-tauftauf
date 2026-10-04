@@ -400,6 +400,53 @@ def test_review_answer_reports_a_nonzero_reviewer_exit(tmp_path, monkeypatch):
     importlib.reload(wall_review)
 
 
+def test_review_answer_retries_an_answer_that_fails_validation(tmp_path, monkeypatch):
+    # A well-formed answer whose version/input_hash does not match the request used
+    # to raise out of main() and record the whole patch as review-unavailable. It is
+    # a failed attempt and must be retried inside the same budget, not accepted.
+    from mishe_tauftauf import wall_review
+    import importlib
+
+    runs = []
+    bad = '{"version": 1, "input_hash": "wrong", "results": []}'
+    good = '{"version": 1, "input_hash": "right", "results": []}'
+
+    def bad_then_ok(*args, **kwargs):
+        runs.append(1)
+        body = bad if len(runs) < wall_review.MAX_EMPTY_RETRIES else good
+        return type("R", (), {"returncode": 0, "stdout": body, "stderr": ""})()
+
+    def check(answer):
+        if answer.get("input_hash") != "right":
+            raise ValueError("review protocol/input hash mismatch")
+
+    monkeypatch.setenv("MISHE_WALL_REVIEW_TIMEOUT", "120")
+    importlib.reload(wall_review)
+    answer = wall_review.review_answer("model", tmp_path, tmp_path / "req.txt",
+                                       runner=bad_then_ok, validate=check)
+    importlib.reload(wall_review)
+    assert len(runs) == 3, "a mismatched answer must be retried, not accepted"
+    assert answer == json.loads(good)
+
+
+def test_review_answer_names_invalid_answer_when_retries_exhaust(tmp_path, monkeypatch):
+    from mishe_tauftauf import wall_review
+    import importlib
+
+    def reject(answer):
+        raise ValueError("review protocol/input hash mismatch")
+
+    monkeypatch.setenv("MISHE_WALL_REVIEW_TIMEOUT", "120")
+    importlib.reload(wall_review)
+    with pytest.raises(RuntimeError, match="invalid answer"):
+        wall_review.review_answer("model", tmp_path, tmp_path / "req.txt",
+                                  runner=lambda *a, **k:
+                                  type("R", (), {"returncode": 0,
+                                                 "stdout": '{"version": 1}', "stderr": ""})(),
+                                  validate=reject)
+    importlib.reload(wall_review)
+
+
 def test_failed_test_drops_the_stale_review_verdict(tmp_path, monkeypatch):
     # A test failure must not keep a verdict from an earlier review of the same
     # record, or the phase falls while the dashboard still reads the old verdict.
