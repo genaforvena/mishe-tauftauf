@@ -735,9 +735,14 @@ def test_seed_adds_live_channel_to_existing_owned_session(tmp_path: Path) -> Non
             if "-- pane live " in pane:
                 break
             time.sleep(0.1)
-        assert "HEADLINE:" in pane
-        assert "SOURCE:" in pane
         assert "-- pane live " in pane
+        # A short terminal shows the frame tail; the dashboard owns the full frame.
+        dashboard = subprocess.run([sys.executable, "-m", "mishe_tauftauf", "--home", str(home),
+                                    "pain", "read", "genome", "--launcher", "dashboard"],
+                                   capture_output=True, text=True)
+        assert dashboard.returncode == 0, dashboard.stderr
+        assert "HEADLINE:" in dashboard.stdout
+        assert "SOURCE:" in dashboard.stdout
         assert tmux("list-panes", "-t", f"{session}:operator", "-F", "#{pane_index}").stdout.splitlines() == ["0"]
         refused = cli(home, "stop", "--session", session)
         assert refused.returncode == 2
