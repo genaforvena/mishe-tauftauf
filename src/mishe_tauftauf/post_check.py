@@ -16,6 +16,9 @@ import importlib.util
 from .pitfall_questions import VERSION, questions
 
 MAX_BYTES = 2_000_000
+WORKER_STDERR_TAIL = 600
+"""Bytes of a failed worker's stderr kept in the raised error message."""
+
 
 class CorrectionRequired(ValueError):
     def __init__(self, report):
@@ -71,6 +74,24 @@ def _deterministic(body):
     return failures
 
 
+class WorkerFailed(subprocess.CalledProcessError):
+    """A non-zero worker that keeps its stderr tail in the message.
+
+    ``subprocess.CalledProcessError.__str__`` drops ``stderr``, so callers that
+    record ``str(exc)`` rendered every reviewer crash as an opaque
+    "returned non-zero exit status 1" with no cause. The captured tail names the
+    real failure (a provider error, an import crash) without unbounded text.
+    """
+
+    def __init__(self, returncode, cmd, stderr_tail):
+        super().__init__(returncode, cmd)
+        self.stderr_tail = stderr_tail
+
+    def __str__(self):
+        base = super().__str__()
+        return f"{base} stderr tail: {self.stderr_tail!r}" if self.stderr_tail else base
+
+
 def _worker(command, encoded, timeout):
     # Disk-backed input avoids stdin pipe deadlock; output is capped while running.
     with tempfile.TemporaryFile() as incoming:
@@ -78,6 +99,7 @@ def _worker(command, encoded, timeout):
         incoming.seek(0)
         proc = subprocess.Popen(command, stdin=incoming, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False, start_new_session=True)
         output = bytearray()
+        errors = bytearray()
         total = 0
         deadline = time.monotonic() + timeout
         try:
@@ -98,12 +120,17 @@ def _worker(command, encoded, timeout):
                             raise ValueError('worker exceeds combined output byte budget')
                         if key.fileobj is proc.stdout:
                             output.extend(chunk)
+                        else:
+                            errors.extend(chunk)
+                            if len(errors) > WORKER_STDERR_TAIL:
+                                del errors[:-WORKER_STDERR_TAIL]
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise subprocess.TimeoutExpired(command, timeout)
                 code = proc.wait(timeout=remaining)
                 if code:
-                    raise subprocess.CalledProcessError(code, command)
+                    tail = bytes(errors).decode('utf-8', 'replace').strip()
+                    raise WorkerFailed(code, command, tail)
             return bytes(output)
         finally:
             try:
