@@ -61,6 +61,31 @@ def source_for(home: Path, default: Path) -> Path:
         raise ValueError(f"runtime pin invalid: {exc}") from exc
 
 
+COORDINATION_UNIT_SUFFIX = "-coordination.service"
+"""A site unit the release coordinator installs on the development checkout.
+
+``coordination/launcher.py`` writes the core checkout root into this unit's
+``PYTHONPATH`` so the follower observes the development checkout, and
+``coordination/site_sync`` skips the same unit when it verifies that a site's
+services are pinned. The name and its intended root are therefore a declared
+exception, not a drift.
+"""
+
+
+def declared_checkout_root(home: Path, unit: str) -> Path | None:
+    """The development checkout a unit is declared to import, or None.
+
+    The runtime sensors compare each service's import root with the site pin. The
+    release coordinator is the one service the design keeps on the checkout, so
+    its intended root is named here once instead of reading as drift in every
+    sensor. Any other divergence, including a coordinator on a different root, is
+    not declared.
+    """
+    if unit.endswith(COORDINATION_UNIT_SUFFIX):
+        return Path(home).resolve().parent
+    return None
+
+
 def package_for(home: Path | None, default: Path) -> Path:
     """Retain installed-package layout when no repository release pin exists."""
     if home is None or not (home / "health/runtime-release.json").exists():

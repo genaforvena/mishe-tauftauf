@@ -566,12 +566,20 @@ def test_dashboard_flags_runtime_drift_against_the_pin(tmp_path, monkeypatch):
         return lambda h, default: source
 
     monkeypatch.setattr(runtime_source, "source_for", at(pinned))
-    state, line = wall_view._runtime_state(home, running, [str(pinned)])
+    state, line = wall_view._runtime_state(home, running, {"unit.service": [str(pinned)]})
     assert state == "MATCH" and line.endswith("MATCH")
-    state, line = wall_view._runtime_state(home, running, [str(tmp_path / "other")])
+    state, line = wall_view._runtime_state(home, running, {"unit.service": [str(tmp_path / "other")]})
     assert state == "DRIFT" and line.endswith("DRIFT") and str(pinned) in line
+    # The release coordinator is declared on the development checkout, not the pin.
+    state, line = wall_view._runtime_state(
+        home, running, {"session-coordination.service": [str(tmp_path)]})
+    assert state == "DECLARED" and line.endswith("observes the checkout")
+    # Any other root for that unit is still a drift, not a declared exception.
+    state, line = wall_view._runtime_state(
+        home, running, {"session-coordination.service": [str(tmp_path / "other")]})
+    assert state == "DRIFT"
     assert wall_view._runtime_state(home, running)[1].endswith("services=UNKNOWN")
-    assert wall_view._runtime_state(home, running, [])[1].endswith("services=none")
+    assert wall_view._runtime_state(home, running, {})[1].endswith("services=none")
 
     def broken(h, default):
         raise ValueError("runtime pin invalid: missing release")
@@ -614,6 +622,28 @@ def test_dashboard_runtime_drift_downgrades_the_state_line(tmp_path, monkeypatch
     assert "RUNTIME: pin=" in drifted and f"services={other} DRIFT" in drifted
     assert "STATE: RED — runtime drift: service import roots differ from the pinned release" in drifted
     assert "STATE: GREEN" not in drifted
+
+
+def test_dashboard_declares_the_coordination_checkout_exception(tmp_path, monkeypatch):
+    from mishe_tauftauf import runtime_source, wall_view
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health/services.json").write_text(json.dumps(["session-coordination.service"]))
+    (home / "health/runtime-release.json").write_text("{}")
+    monkeypatch.setattr(wall_view, "ci_line", lambda *a: "CI: PASS")
+    monkeypatch.setattr(runtime_source, "source_for", lambda h, default: tmp_path / "release")
+
+    def commands(command, **kwargs):
+        output = ("pinned\n" if "rev-parse" in command else "" if "status" in command else
+                  "Id=session-coordination.service\nActiveState=active\nSubState=running\nNRestarts=0\n"
+                  f"Environment=PYTHONPATH={tmp_path}/src\n")
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    monkeypatch.setattr(wall_view.subprocess, "run", commands)
+    text = wall_view.render(home, "genome")
+    assert f"services={tmp_path} DECLARED" in text
+    assert "STATE: GREEN — listed services running" in text
+    assert "STATE: RED" not in text
 
 
 def test_runtime_drift_state_forces_notification_past_a_hold_filter(tmp_path, monkeypatch):

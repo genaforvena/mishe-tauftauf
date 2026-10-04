@@ -617,6 +617,8 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
     share its prefix, so the registry's session maps any unit to its site —
     including a unit the site's own manifest omits, which is how a stale release
     hides from the service coverage that would otherwise name it.
+    The release coordinator's declared checkout root is not a stale release, so
+    it is skipped rather than reported against the pin.
     """
     registry_path = home / "health" / "linked-sites.json"
     try:
@@ -668,6 +670,7 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
     stale: dict[str, str] = {}
     unpinned: list[str] = []
     unattributed: list[str] = []
+    from .runtime_source import declared_checkout_root
     for unit in active:
         session = next((prefix for prefix in site_by_prefix
                         if unit.startswith(prefix + "-")), None)
@@ -686,6 +689,11 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
             unpinned.append(unit)
             continue
         if Path(root).resolve() != Path(pinned).resolve():
+            declared = declared_checkout_root(Path(site_by_prefix[session]), unit)
+            if declared is not None and Path(root).resolve() == declared.resolve():
+                # The coordinator is declared on its site's checkout, not the pin
+                # (coordination/site_sync.py skips the same unit when verifying).
+                continue
             stale[unit] = root
     parts = [f"sites={len(site_by_prefix)} running={len(active)}"]
     if unattributed:
