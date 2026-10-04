@@ -144,3 +144,41 @@ def test_overdue_clear_stays_a_fault_without_a_live_mind_pane(tmp_path, monkeypa
     assert 'CLEAR STALL: HELD' not in output
     assert 'CLEAR STALL: RED audit wake=1 yield=2 owner=health' in output
     assert 'STATE: RED' in output
+
+
+def test_stale_pend_is_held_not_failed_while_a_live_mind_is_busy(tmp_path, monkeypatch):
+    import mishe_tauftauf.seed as seed
+    import mishe_tauftauf.seed_witness_view as view
+    entries = [entry(1, 'seed', 'seed wake audit observation=1')]
+    wire(tmp_path, monkeypatch, entries)
+    monkeypatch.setattr(view, '_mind_pane_live', lambda session, role: True)
+    monkeypatch.setattr(seed, '_mind_idle', lambda session, slug: False)
+    output = render(tmp_path)
+    assert 'STALE PEND: HELD audit wake=1 pending=1' in output
+    assert 'STALE PEND: RED' not in output
+    assert 'overdue pending wake needs checked supervisor repair' not in output
+
+
+def test_stale_pend_fails_when_the_mind_is_idle(tmp_path, monkeypatch):
+    import mishe_tauftauf.seed as seed
+    import mishe_tauftauf.seed_witness_view as view
+    entries = [entry(1, 'seed', 'seed wake audit observation=1')]
+    wire(tmp_path, monkeypatch, entries)
+    monkeypatch.setattr(view, '_mind_pane_live', lambda session, role: True)
+    monkeypatch.setattr(seed, '_mind_idle', lambda session, slug: True)
+    output = render(tmp_path)
+    assert 'STALE PEND: RED audit wake=1 pending=1 owner=health' in output
+    assert 'STATE: RED' in output
+
+
+def test_stale_pend_stays_a_fault_without_a_live_mind_pane(tmp_path, monkeypatch):
+    import mishe_tauftauf.seed as seed
+    import mishe_tauftauf.seed_witness_view as view
+    entries = [entry(1, 'seed', 'seed wake audit observation=1')]
+    wire(tmp_path, monkeypatch, entries)
+    monkeypatch.setattr(view, '_mind_pane_live', lambda session, role: False)
+    monkeypatch.setattr(seed, '_mind_idle', lambda session, slug: False)
+    output = render(tmp_path)
+    assert 'STALE PEND: HELD' not in output
+    assert 'STALE PEND: RED audit wake=1 pending=1 owner=health' in output
+    assert 'STATE: RED' in output

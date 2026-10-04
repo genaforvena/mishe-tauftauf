@@ -195,12 +195,22 @@ def render(home: Path) -> str:
             pends = stale_pends(entries)
             if not pends:
                 lines.append("STALE PEND: GREEN — no overdue pending wake")
+            faulted = False
             for role, receipt in sorted(pends.items()):
                 wake = int(WAKE_RE.fullmatch(_receipt_line(receipt.body))[2])
                 owner = "witness" if role == "health" else "health"
+                if _mind_not_idle(session, role):
+                    # A live mind mid-turn is still working its delivered wake; the
+                    # supervisor is waiting for it to settle, not failing to run it.
+                    lines.append(f"STALE PEND: HELD {role} wake={wake} pending={receipt.sequence} "
+                                 "mind not idle; turn in progress")
+                    lines.append(f"  Evidence: {Feed(home).path} woken={receipt.timestamp}; "
+                                 "recheck after the mind's turn ends")
+                    continue
                 lines.append(f"STALE PEND: RED {role} wake={wake} pending={receipt.sequence} owner={owner}")
                 lines.append(f"  Evidence: {Feed(home).path} woken={receipt.timestamp}; inspect supervisor and idle prompt before repair")
-            if pends:
+                faulted = True
+            if faulted:
                 verdict = "FAIL witness overdue pending wake needs checked supervisor repair"
         except (ValueError, TypeError, OverflowError) as exc:
             lines.append("STALE PEND: UNKNOWN — receipt timing unavailable: " + str(exc))
