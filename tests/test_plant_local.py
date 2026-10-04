@@ -367,6 +367,39 @@ def test_runtime_only_cli_preserves_dirty_application_and_contract(tmp_path: Pat
                         "seed", "stop", "--session", session], capture_output=True, timeout=15)
 
 
+def test_replant_drops_a_retired_window_name(tmp_path: Path) -> None:
+    # Health wake 24009: a retired operator-window name lingered in
+    # health/windows.json and failed the window check forever. A replant must
+    # drop a name that is neither required nor live, while an extra window the
+    # site still has (scratch) stays expected.
+    import sys
+    import uuid
+
+    workspace = tmp_path / "application"
+    workspace.mkdir()
+    subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
+    home = workspace / ".mishe-tauftauf"
+    session = "mishe-window-prune-test-" + uuid.uuid4().hex[:10]
+    argv = [sys.executable, "-m", "mishe_tauftauf.plant", "--workspace", str(workspace),
+            "--home", str(home), "--session", session, "--engine-command", "cat", "--no-services"]
+    try:
+        first = subprocess.run(argv, capture_output=True, text=True, timeout=45)
+        assert first.returncode == 0, first.stderr
+        manifest = home / "health" / "windows.json"
+        names = set(json.loads(manifest.read_text(encoding="utf-8")))
+        assert "operator" in names
+        subprocess.run(["tmux", "new-window", "-d", "-t", session, "-n", "scratch"], check=True)
+        manifest.write_text(json.dumps(sorted(names | {"codex", "scratch"})) + "\n", encoding="utf-8")
+        second = subprocess.run([*argv, "--runtime-only"], capture_output=True, text=True, timeout=45)
+        assert second.returncode == 0, second.stderr
+        after = set(json.loads(manifest.read_text(encoding="utf-8")))
+        assert "codex" not in after
+        assert "scratch" in after
+    finally:
+        subprocess.run([sys.executable, "-m", "mishe_tauftauf", "--home", str(home),
+                        "seed", "stop", "--session", session], capture_output=True, timeout=15)
+
+
 def test_runtime_refresh_does_not_wait_for_delivery_projection(tmp_path):
     import subprocess
     import sys
@@ -464,6 +497,13 @@ def test_manifest_windows_empty_when_corrupt(tmp_path: Path) -> None:
     (home / "health").mkdir(parents=True)
     (home / "health" / "windows.json").write_text("{not json", encoding="utf-8")
     assert plant._manifest_windows(home) == []
+
+
+def test_expected_windows_drops_a_retired_name_and_keeps_a_live_extra() -> None:
+    required = {"operator", "health", "genome"}
+    previous = ["operator", "codex", "tail", "genome"]
+    live = {"operator", "health", "genome", "tail"}
+    assert plant._expected_windows(required, previous, live) == ["genome", "health", "operator", "tail"]
 
 
 def _fake_systemctl(monkeypatch, fragments: dict[str, Path]) -> list[list[str]]:
