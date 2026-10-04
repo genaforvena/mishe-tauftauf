@@ -211,6 +211,24 @@ class FeedTests(unittest.TestCase):
                 feed.append_runtime_once("mishe-tauftauf", first.body)
             self.assertEqual(len(parse_feed(feed.read_bytes())), 1)
 
+    def test_empty_identity_index_rebuilds_instead_of_breaking_appends(self):
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            first = feed.append_runtime_once("mishe-tauftauf", "wake requested top-pain sensor for entry 1")
+            feed.append("human", "later\n")
+            identity = Path(directory) / "feed.identities.sqlite3"
+            self.assertGreater(identity.stat().st_size, 0)
+            # A reader that merely opens the path (or an aborted rebuild) leaves a
+            # zero-byte file behind. No table exists, so unpatched callers raise
+            # "corrupt feed identity index: no such table: meta" on every append.
+            identity.unlink()
+            identity.write_bytes(b"")
+            replayed = Feed(directory).append_runtime_once("mishe-tauftauf", first.body)
+            self.assertEqual(replayed.sequence, first.sequence)
+            later = Feed(directory).append("human", "after empty index\n")
+            self.assertEqual(later.sequence, 3)
+            self.assertEqual(len(parse_feed(feed.read_bytes())), 3)
+
     def test_concurrent_once_identity_has_one_frame(self):
         with tempfile.TemporaryDirectory() as directory:
             workers = [multiprocessing.Process(target=once_worker, args=(directory,)) for _ in range(8)]

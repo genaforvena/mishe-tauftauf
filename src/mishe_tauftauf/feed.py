@@ -208,6 +208,12 @@ class Feed:
         try:
             if not self.identity_path.exists():
                 self._rebuild_identities(handle, index)
+            # A zero-byte file is a torn or aborted rebuild: the writer that created
+            # it crashed (or a reader merely opened the path) before any table existed.
+            # Recover by rebuilding from the canonical feed instead of failing every append.
+            elif self.identity_path.stat().st_size == 0:
+                self.identity_path.unlink()
+                self._rebuild_identities(handle, index)
             connection = sqlite3.connect(self.identity_path)
             row = connection.execute("SELECT sequence, metadata, malformed FROM meta").fetchone()
             if row is None or not isinstance(row[2], int) or row[2] < 0:
