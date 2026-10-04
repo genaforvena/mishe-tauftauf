@@ -37,3 +37,22 @@ def test_witness_reports_witness_chat_flood_but_exempts_seed_bookkeeping(tmp_pat
     assert "seed: 12 entries" not in view
     assert "seed: 12 observations" not in view
     assert "Trace the wake or sampling feedback loop" in view
+
+
+def test_witness_falls_back_to_recorded_session_when_env_unset(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import mishe_tauftauf.seed_witness_view as view
+
+    monkeypatch.delenv("MISHE_SEED_SESSION", raising=False)
+    (tmp_path / ".seed-raised").write_text("recorded-session 42\n", encoding="utf-8")
+    (tmp_path / "health").mkdir()
+    (tmp_path / "health" / "windows.json").write_text('["witness"]', encoding="utf-8")
+    calls = []
+    monkeypatch.setattr(
+        view.subprocess, "run",
+        lambda argv, **kwargs: calls.append(argv) or SimpleNamespace(returncode=0, stdout="witness\n", stderr=""))
+
+    output = view.render(tmp_path)
+
+    assert "WINDOWS: GREEN" in output, output
+    assert ["tmux", "list-windows", "-t", "recorded-session", "-F", "#{window_name}"] in calls, calls

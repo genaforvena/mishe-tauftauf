@@ -15,6 +15,7 @@ from .ci_watch import line as ci_line
 from .seed_board import open_tasks, repeated_no_change, work_receipts
 from . import task_state
 from .coordination_checks import anomalies
+from .seed import recorded_session
 
 
 def _publication_lines(home):
@@ -87,7 +88,7 @@ def _publication_lines(home):
 
 def render(home: Path) -> str:
     lines = ["DESIRED STATE: planted channels stay live and coordination gaps stay visible"]
-    session = os.environ.get("MISHE_SEED_SESSION", "")
+    session = os.environ.get("MISHE_SEED_SESSION", "") or recorded_session(home) or ""
     try:
         required = set(json.loads((home / "health" / "windows.json").read_text(encoding="utf-8")))
     except (OSError, ValueError):
