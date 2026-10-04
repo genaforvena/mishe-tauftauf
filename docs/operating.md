@@ -269,9 +269,12 @@ a clean Git worktree root or that lacks the runtime package. It writes the pin,
 repoints the site CLI, respawns the upper evidence panes, and reconciles the
 generated and covered services onto the release, leaving lower minds' work and
 the checkout's `AGENTS.md` untouched. Then confirm the dashboards' `RUNTIME` line
-reads `MATCH` — `DRIFT` names a service still importing another root — and check
-the actual consumer and its live pane. Moving the pin is not a push or a CI
-result; keep source, CI and running code as separate evidence.
+reads `MATCH` when every covered service imports the pin, `DECLARED` when the
+only divergence is the release coordinator's intended checkout root (the core
+plant's own reading, which keeps the state line GREEN), and `DRIFT` for any other
+service still importing another root. Check the actual consumer and its live
+pane. Moving the pin is not a push or a CI result; keep source, CI and running
+code as separate evidence.
 
 The launcher writes the pin before it restarts the covered services, so a
 discovery scan that lands inside that window reports every session unit as stale

@@ -141,9 +141,10 @@ pin source (the checkout or an installed release) instead, so patched snapshot b
 stay invisible to them until a replant, and an observe script that shells out to
 `bin/mishe-tauftauf` reads that pin source, not the patched bytes. Every pane
 rendered by the standard role view prints three deployment lines; `docs` shows
-this book and `discover` and `senses` their culture views, while a site-declared
-resident may render its own pane (here `body-research` and `inference-research`
-do). `SOURCE` names the checkout commit and its changed-path count; `DEPLOYED`
+this book, `discover` and `senses` their culture views, and `witness` its
+coordination checks, while a site-declared resident may render its own pane
+(here `body-research` and `inference-research` do). `SOURCE` names the checkout
+commit and its changed-path count; `DEPLOYED`
 the rendering process's own root and module fingerprint; `RUNTIME` the pin beside
 the roots the seed services actually import, flagging `DRIFT` when they differ —
 the pin and the seed roots are separate and can diverge. The release coordinator
