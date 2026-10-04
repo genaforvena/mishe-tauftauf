@@ -199,6 +199,51 @@ def test_new_permissions_bottom_pane_gets_its_own_import_root(tmp_path, monkeypa
                                f"PYTHONPATH={expected}", str(home / "bin" / "permissions-shell")]
 
 
+def test_ensure_reports_only_panel_transitions(tmp_path, monkeypatch):
+    # A resident --follow loop calls ensure() every interval. A steady panel must
+    # not reprint "permissions panel ready" (one identical line every 5 s filled
+    # the journal) nor rewrite its already-correct generated launcher (the
+    # rewrite bumped its mtime every interval).
+    from mishe_tauftauf import seed_permission_panel
+
+    home = (tmp_path / "site").resolve()
+    windows: list[str] = []
+    panes: list[str] = []
+    dead = {"0": False, "1": False}
+
+    def fake_tmux(*args, check=True):
+        class R:
+            returncode = 0
+            stdout = b""
+
+        if args[0] == "list-windows":
+            R.stdout = ("\n".join(windows) + "\n").encode()
+        elif args[0] == "new-window":
+            windows.append("permissions")
+        elif args[0] == "list-panes":
+            R.stdout = ("\n".join(panes) + "\n").encode()
+        elif args[0] == "split-window":
+            panes.append("1")
+        elif args[0] == "display-message":
+            R.stdout = b"1\n" if dead[args[-2].rsplit(".", 1)[-1]] else b"0\n"
+        return R()
+
+    monkeypatch.setattr(seed_permission_panel, "_tmux", fake_tmux)
+    monkeypatch.setattr(seed_permission_panel, "owns_session", lambda home, session: True)
+
+    assert seed_permission_panel.ensure(home, "probe") == "permissions panel ready in probe"
+    shell = home / "bin" / "permissions-shell"
+    stamp = shell.stat().st_mtime_ns
+    assert seed_permission_panel.ensure(home, "probe") == ""
+    assert shell.stat().st_mtime_ns == stamp
+    assert panes == ["1"]
+
+    # A dead pane is still a reportable transition.
+    dead["1"] = True
+    assert seed_permission_panel.ensure(home, "probe") == "permissions panel ready in probe"
+    assert panes == ["1"]
+
+
 def _write_cli(home: Path, package_root: Path, body: str | None = None) -> None:
     (home / "bin").mkdir(parents=True, exist_ok=True)
     package = package_root / "mishe_tauftauf"
