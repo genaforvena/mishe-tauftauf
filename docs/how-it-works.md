@@ -224,6 +224,9 @@ The older mishe planting skill describes a mortal, no-clone demo with a full `bu
 ### Tracked source versus local state
 
 Tracked source holds reusable runtime code, tests, setup, general instructions, and the default culture. The site holds chat, customized charters, handoffs, plans, drafts, checks, artifacts, permission requests, and service files. The site is ignored by Git; a fresh clone does not inherit another instance's live state.
+Charters name their site inputs relative to the site home, so a charter's
+`research/<track>/brief.md` is `SITE_HOME/research/<track>/brief.md` — local
+state, not a tracked checkout path.
 
 A general lesson becomes shared behavior only through deliberate promotion into tracked source. Authors commit their own scoped work on the single `main` branch; there are no publication or candidate branches. Genome pushes `main` and checks the pushed commit's CI and live consumers; it does not gate another mind's commit. The author verifies final CI and deployed consumers. Delivery remains incomplete until live verification succeeds; blockers need a resolver and disposition time. Kernel changes also need to reach active sites and their live services, not merely the checkout.
 
