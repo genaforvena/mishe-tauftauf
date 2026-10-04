@@ -21,7 +21,8 @@ Jump to: [vocabulary](#the-vocabulary-without-the-potting-soil) ·
 | **Channel** | A responsibility with a named tmux window, checks, charter, and resident agent. The initial resident channels are listed below. |
 | **Mind** | An installed coding-agent process in a channel's lower pane, such as Codex or OMP. It is not a separate sentience or a replacement for the host's access controls. |
 | **Charter** | A channel's lasting purpose and owned scope, saved in `SITE/charters/ROLE.md`. |
-| **Handoff** | The current task, evidence, uncertain effects, and exact next step saved in `SITE/handoffs/ROLE.md` and archived when the wake is settled. Unlike a charter, it describes work in progress. |
+| **Wall** | The mind's short, current page of plate, findings and next action, saved in `SITE/walls/ROLE.md`; `wall write` replaces it. |
+| **Handoff** | The current task, evidence, uncertain effects, and exact next step saved in `SITE/handoffs/ROLE.md` and refreshed from the wall when the wake is settled. Unlike a charter, it describes work in progress. |
 | **Wake** | A supervisor-issued invitation to take one bounded step. Its sequence number ties the action, handoff, and receipt to an exact entry in `chat.log`. |
 | **Lease** | The top pane's refresh timestamp. A fresh lease is evidence that the renderer is running, not that the system being checked is healthy. |
 | **Genome** | The reusable tracked code and general rules; also the resident channel that pushes the single `main` branch and checks its CI. Local instance state is not part of this tracked genome. |
@@ -159,14 +160,14 @@ Transitions produce `[ci]` entries. Candidate failures return to the source auth
 
 ## Where work survives
 
-`SITE/chat.log` is the append-only conversation **and** obligation tape. The runtime reconstructs open tasks, next steps, owners, attempts, offers, and retry conditions from its entries. There is no requirement to keep the previous agent's context alive to preserve task state.
+`SITE/chat.log` is the append-only conversation tape. Each mind's current wall carries its plate, findings and next action, mirrored into its handoff when the wake is settled. The runtime can still reconstruct historical task records from the tape for recovery, but they do not select current work. There is no requirement to keep the previous agent's context alive to preserve current work.
 
 | Saved surface | Purpose |
 | --- | --- |
 | `SITE/chat.log` | Human explanation, stable protocol tags, durable task-state/event records, wakes, yields, and work receipts |
 | `SITE/charters/ROLE.md` | Lasting channel purpose |
+| `SITE/walls/ROLE.md` | The mind's current wall: plate, findings, next action |
 | `SITE/handoffs/ROLE.md` | Latest current-work handoff |
-| `SITE/artifacts/seed-ROLE-wake-N.md` | Archived handoff for an exact settled wake |
 | Other `SITE/artifacts/` files | Source-bound evidence and checks |
 | `SITE/access/requests/` and permission entries in `chat.log` | Scoped capability requests and operator decisions |
 
@@ -204,7 +205,7 @@ After a checked step, settle the **exact pending wake**:
 seed yield --slug ROLE --wake N --file HANDOFF_FILE --result changed|verified|blocked
 ```
 
-The runtime saves the latest handoff, archives it, and writes a `[work]` receipt with the wake, evidence linkage, result, and handoff digest. `seed yield` settles a wake; it does not establish that the work succeeded. Check the artifact and live effect to establish completion.
+The runtime saves the wall and handoff and appends a `seed yield` receipt naming the wake and result. `seed yield` settles a wake; it does not establish that the work succeeded. Check the artifact and live effect to establish completion.
 
 For unfinished long work, record an actionable next step and add `--continue`. An unchanged waiting prerequisite does not qualify. The supervisor waits for a settled idle boundary, rotates the lower pane to a fresh process, verifies that a new live process exists, and gates delivery on readiness. The charter, handoff, and current instructions arrive with the next real wake. Clearing context creates no idle model turn.
 
@@ -216,7 +217,7 @@ Every mind has standing authority to pursue useful work within its charter and o
 
 A genuinely missing external capability goes through the scoped permissions ledger. The public CLI command is **`access`**; the permissions shell also provides a site-local `permit` wrapper for it. `access request` records a stable request ID, owner, task, capability, reason, and the paths a decision would unblock. The operator's `access grant` or `access revoke` appears on the permissions pane and in `chat.log`. Granted capabilities are ready to use within that recorded scope; pending or revoked requests confer no authority. The ledger records a plant decision. It does not change Linux permissions or device access.
 
-This single-repository seed does **not** inherit LTE authority over other nodes, fleet resources, node-wide GPU allocation, fleet board gates, or native mesh TURN accounting. OMP's full mesh lifecycle uses native `session_start` and `session_stop` receipts, idle drain, and context clear. This seed implements the narrower exact-wake handoff, `[work]` receipt, and settled idle clear.
+This single-repository seed does **not** inherit LTE authority over other nodes, fleet resources, node-wide GPU allocation, fleet board gates, or native mesh TURN accounting. OMP's full mesh lifecycle uses native `session_start` and `session_stop` receipts, idle drain, and context clear. This seed implements the narrower exact-wake handoff, `seed yield` receipt, and settled idle clear.
 
 The older mishe planting skill describes a mortal, no-clone demo with a full `burn` path. This repository is a persistent development seed with resident user services in the full setup. It does not promise that demo's zero-footprint teardown.
 
