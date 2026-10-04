@@ -129,11 +129,13 @@ growth, throughput, and memory pressure together.
 
 A missing, stale, unavailable, or conflicting reading is `UNKNOWN`. That means the result cannot be established. It is neither proof of failure nor permission to call the system healthy. A fresh lease beside an unknown check gives you a functioning display of uncertainty.
 
-The cross-site runtime-drift reading checks services attributable to linked-site
-sessions and the scanning site's session against their pins. A stale covered
-root is `drift`; incomplete attribution or pin coverage without an observed stale
-root is `unknown`, not `verified`. Its sample retains the `unattributed` and
-`unpinned` unit lists so readers can distinguish coverage gaps from drift.
+A cross-site runtime-drift reading checks services attributable to linked-site
+sessions and the scanning site's session against their pins. It reads configured
+`PYTHONPATH` from systemd, falling back to the live main process environment for
+roots exported by wrapper scripts. A stale covered root is `drift`; incomplete
+attribution or pin coverage without an observed stale root is `unknown`, not
+`verified`. Its sample retains the `unattributed` and `unpinned` unit lists so
+readers can distinguish coverage gaps from drift.
 
 Checks, not minds, decide reproducible facts: counts, deployment identity, deadlines, and observed outcomes. Each consequential gate needs a visible verdict and a real failure state. Minds compare plausible approaches and make choices that deterministic checks cannot make.
 
