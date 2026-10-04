@@ -90,3 +90,57 @@ def test_witness_dispatch_observes_semantic_state_changes():
     base = "COORDINATION: UNKNOWN\nANOMALY: SUSPICIOUS task=repair kind=repeated-attempt id=stable\nPUBLICATION GATE: CONFIGURED\nPUBLICATION RESULT: CLEAR semantic=clear\n  Evidence: private report=first.json\nSTATE: UNKNOWN"
     assert observation_text('witness', base) != observation_text('witness', base.replace('id=stable','id=new-cause'))
     assert observation_text('witness', base) != observation_text('witness', base.replace('CLEAR semantic=clear','REFUSED source=genome stage=handoff semantic=suspicious'))
+
+
+def test_overdue_clear_is_held_not_failed_while_a_live_mind_is_busy(tmp_path, monkeypatch):
+    import mishe_tauftauf.seed as seed
+    import mishe_tauftauf.seed_witness_view as view
+    entries = [entry(1, 'seed', 'seed wake audit observation=1'),
+               entry(2, 'seed', 'seed yield audit wake=1')]
+    wire(tmp_path, monkeypatch, entries)
+    monkeypatch.setattr(view, '_mind_pane_live', lambda session, role: True)
+    monkeypatch.setattr(seed, '_mind_idle', lambda session, slug: False)
+    output = render(tmp_path)
+    assert 'CLEAR STALL: HELD audit wake=1 yield=2' in output
+    assert 'CLEAR STALL: RED' not in output
+    assert 'overdue clear needs checked supervisor repair' not in output
+
+
+def test_overdue_clear_fails_when_the_mind_is_idle(tmp_path, monkeypatch):
+    import mishe_tauftauf.seed as seed
+    import mishe_tauftauf.seed_witness_view as view
+    entries = [entry(1, 'seed', 'seed wake audit observation=1'),
+               entry(2, 'seed', 'seed yield audit wake=1')]
+    wire(tmp_path, monkeypatch, entries)
+    monkeypatch.setattr(view, '_mind_pane_live', lambda session, role: True)
+    monkeypatch.setattr(seed, '_mind_idle', lambda session, slug: True)
+    output = render(tmp_path)
+    assert 'CLEAR STALL: RED audit wake=1 yield=2 owner=health' in output
+    assert 'STATE: RED' in output
+
+
+def test_overdue_clear_stays_a_fault_without_a_session(tmp_path, monkeypatch):
+    import mishe_tauftauf.seed as seed
+    entries = [entry(1, 'seed', 'seed wake audit observation=1'),
+               entry(2, 'seed', 'seed yield audit wake=1')]
+    wire(tmp_path, monkeypatch, entries)
+    monkeypatch.setenv('MISHE_SEED_SESSION', '')
+    monkeypatch.setattr(seed, '_mind_idle',
+                        lambda session, slug: (_ for _ in ()).throw(AssertionError('probe without session')))
+    output = render(tmp_path)
+    assert 'CLEAR STALL: RED audit wake=1 yield=2 owner=health' in output
+    assert 'STATE: RED' in output
+
+
+def test_overdue_clear_stays_a_fault_without_a_live_mind_pane(tmp_path, monkeypatch):
+    import mishe_tauftauf.seed as seed
+    import mishe_tauftauf.seed_witness_view as view
+    entries = [entry(1, 'seed', 'seed wake audit observation=1'),
+               entry(2, 'seed', 'seed yield audit wake=1')]
+    wire(tmp_path, monkeypatch, entries)
+    monkeypatch.setattr(view, '_mind_pane_live', lambda session, role: False)
+    monkeypatch.setattr(seed, '_mind_idle', lambda session, slug: False)
+    output = render(tmp_path)
+    assert 'CLEAR STALL: HELD' not in output
+    assert 'CLEAR STALL: RED audit wake=1 yield=2 owner=health' in output
+    assert 'STATE: RED' in output

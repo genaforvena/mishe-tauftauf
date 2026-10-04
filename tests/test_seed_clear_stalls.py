@@ -103,8 +103,11 @@ def prepare_view(tmp_path, monkeypatch):
 
 
 def test_live_renderer_exposes_stall_and_recovers_without_writing_tasks(tmp_path, monkeypatch):
+    from mishe_tauftauf import seed
     home, view = prepare_view(tmp_path, monkeypatch)
     receipts = [entry(1, "seed wake genome observation=1", age=10000), entry(2, "seed yield genome wake=1", age=10000)]
+    monkeypatch.setattr(view, "_mind_pane_live", lambda session, role: True)
+    monkeypatch.setattr(seed, "_mind_idle", lambda session, slug: True)
     monkeypatch.setattr(view.Feed, "entries", lambda self: receipts)
     frame = view.render(home)
     assert "CLEAR STALL: RED genome wake=1 yield=2 owner=health" in frame
@@ -137,8 +140,11 @@ def test_live_renderer_keeps_unreadable_feed_unknown(tmp_path, monkeypatch):
 
 
 def test_health_stall_routes_to_witness(tmp_path, monkeypatch):
+    from mishe_tauftauf import seed
     home, view = prepare_view(tmp_path, monkeypatch)
     receipts = [entry(1, "seed wake health observation=1", age=10000), entry(2, "seed yield health wake=1", age=10000)]
+    monkeypatch.setattr(view, "_mind_pane_live", lambda session, role: True)
+    monkeypatch.setattr(seed, "_mind_idle", lambda session, slug: True)
     monkeypatch.setattr(view.Feed, "entries", lambda self: receipts)
     frame = view.render(home)
     assert "CLEAR STALL: RED health wake=1 yield=2 owner=witness" in frame
