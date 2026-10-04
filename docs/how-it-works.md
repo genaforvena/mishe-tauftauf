@@ -164,7 +164,7 @@ Transitions produce `[ci]` entries. Candidate failures return to the source auth
 
 | Saved surface | Purpose |
 | --- | --- |
-| `SITE/chat.log` | Human explanation, stable protocol tags, durable task-state/event records, wakes, yields, and work receipts |
+| `SITE/chat.log` | Human explanation, stable protocol tags, durable event records, wakes, yields, and clears |
 | `SITE/charters/ROLE.md` | Lasting channel purpose |
 | `SITE/walls/ROLE.md` | The mind's current wall: plate, findings, next action |
 | `SITE/handoffs/ROLE.md` | Latest current-work handoff |

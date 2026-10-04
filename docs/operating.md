@@ -366,7 +366,7 @@ git -C "$WORKSPACE" rev-parse HEAD   # report this exact commit
 
 # Genome pushes the single branch and checks its CI.
 git -C "$WORKSPACE" push origin main
-"$SITE/bin/mishe-tauftauf" --home "$SITE" ci watch   # or read the live CI pane
+env PYTHONPATH=src python3 -m mishe_tauftauf.ci_watch --home "$SITE"   # or read the live CI pane
 ```
 
 If main advanced while an author worked, inspect the current diff and preserve
