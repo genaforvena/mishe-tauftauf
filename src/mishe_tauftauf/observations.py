@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -12,6 +13,7 @@ from pathlib import Path
 from .feed import Feed
 from .predictions import expectations_text
 
+CHECK_REPORT_MAX_AGE_SECONDS = 900
 SLUG_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\Z")
 FOOTER_WAKE_LABEL = "wake"
 FOOTER_WAKE_RE = re.compile(r"^-- wake: .* --$")
@@ -96,13 +98,18 @@ def run_renderer(home: Path, slug: str, timeout: float = 10.0) -> RenderedPain:
 
 def check_report(home: Path, slug: str) -> str:
     path = home / "observations" / slug
-    if not path.exists():
-        return "SYSTEM ZERO\nUNKNOWN — no check report\n"
     try:
         text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return "SYSTEM ZERO\nUNKNOWN — no check report\n"
     except (OSError, UnicodeError) as exc:
         return f"SYSTEM ZERO\nUNKNOWN — check report unreadable: {exc}\n"
-    return "SYSTEM ZERO\n" + text + ("" if text.endswith("\n") else "\n")
+    try:
+        age = time.time() - path.stat().st_mtime
+    except OSError:
+        age = None
+    marker = "STALE — check report exceeds 900 seconds\n" if age is None or age > CHECK_REPORT_MAX_AGE_SECONDS else ""
+    return "SYSTEM ZERO\n" + marker + text + ("" if text.endswith("\n") else "\n")
 
 
 def _watcher(home: Path) -> str:

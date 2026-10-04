@@ -97,6 +97,42 @@ def test_wall_is_visible_without_hiding_failed_sensor(tmp_path, monkeypatch):
     assert "STATE: RED sensor failed" in rendered.body and "Planning an investigation" in rendered.body
 
 
+
+def test_check_report_marks_stale_by_mtime_without_changing_report(tmp_path, monkeypatch):
+    from mishe_tauftauf import observations
+    path = tmp_path / "observations" / "genome"
+    path.parent.mkdir()
+    path.write_text("PASS pinned sha=old\n")
+    now = 10_000
+    monkeypatch.setattr(observations.time, "time", lambda: now)
+
+    os.utime(path, (now - 900, now - 900))
+    assert observations.check_report(tmp_path, "genome") == "SYSTEM ZERO\nPASS pinned sha=old\n"
+
+    os.utime(path, (now - 901, now - 901))
+    assert observations.check_report(tmp_path, "genome") == (
+        "SYSTEM ZERO\nSTALE — check report exceeds 900 seconds\nPASS pinned sha=old\n"
+    )
+
+
+def test_check_report_missing_mtime_is_stale(tmp_path, monkeypatch):
+    from mishe_tauftauf import observations
+    path = tmp_path / "observations" / "genome"
+    path.parent.mkdir()
+    path.write_text("PASS old\n")
+    from pathlib import Path
+    original_stat = Path.stat
+
+    def failing_stat(self, *args, **kwargs):
+        if self == path:
+            raise OSError("mtime unavailable")
+        return original_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", failing_stat)
+    assert observations.check_report(tmp_path, "genome") == (
+        "SYSTEM ZERO\nSTALE — check report exceeds 900 seconds\nPASS old\n"
+    )
+
 def test_pane_reads_the_shared_feed_once(tmp_path, monkeypatch):
     setup_wall(tmp_path)
     from mishe_tauftauf import wall
