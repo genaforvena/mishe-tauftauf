@@ -203,6 +203,7 @@ its TypeSafe credentials. The repository does not include a demo directory.
 
 The optional [Chat Completions adapter](docs/completions-judge.md) uses an
 explicit provider and model; configured diagnostic checks grant no completion or dispatch authority.
+[Private publication checks](docs/publication-checks.md) preflight drafts with a deterministic prose guard and an optional semantic checker.
 
 Historical task and delivery reports remain readable for recovery. Health reports
 a missing or invalid service manifest as UNKNOWN.
