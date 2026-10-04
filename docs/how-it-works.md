@@ -76,7 +76,7 @@ Project-specific checks and charters make this possible; the stock runtime does 
 | `senses` | Sampled readings, freshness, and unknowns | Turns recurring observations into truthful senses with temporal validity, a failure state, and a consumer |
 | `health` | Deterministic facts: CI, deployed runtime, services, and patch state | Repairs the plant's local feed, panes, and services |
 | `genome` | Deterministic facts: CI, deployed runtime, services, and patch state | Develops source, pushes the single `main` branch, and checks its CI and live consumers |
-| `witness` | Deterministic facts: CI, deployed runtime, services, and patch state | Routes work, follows it through completion, and checks claims against artifacts and live results |
+| `witness` | CI plus coordination checks: planted windows, clear-stall and stale-pend, and open tasks | Routes work, follows it through completion, and checks claims against artifacts and live results |
 | `docs` | The repository's selected reader document (default `README.md`) | Keeps the README and reader docs current, deleting stale passages |
 | `research-methods` | Deterministic facts: CI, deployed runtime, services, and patch state | Assesses whether experiments answer the question and helps implement bounded improvements |
 | `permissions` | Pending and decided requests | Gives the operator a shell for scoped grant and revoke decisions |
