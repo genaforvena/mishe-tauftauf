@@ -259,6 +259,17 @@ def test_docs_pane_reads_edits_and_reports_missing_page(tmp_path):
     page.unlink()
     assert "STATE: UNKNOWN" in render(home, "docs")
 
+
+def test_wall_view_dispatches_witness_and_marks_unproduced_roles(tmp_path, monkeypatch):
+    from mishe_tauftauf import wall_view
+
+    called = []
+    monkeypatch.setattr(wall_view.seed_witness_view, "render", lambda home: called.append(home) or "WITNESS\n")
+    assert wall_view.render(tmp_path, "witness") == "WITNESS\n"
+    assert called == [tmp_path]
+    for role in ("genome", "research-methods"):
+        assert "REPORT: NOT PRODUCED" in wall_view.render(tmp_path, role)
+
 def test_health_dashboard_uses_user_runtime_and_preserves_bus_unknown(tmp_path, monkeypatch):
     from mishe_tauftauf import wall_view
 

@@ -9,7 +9,7 @@ import shlex
 import subprocess
 from pathlib import Path
 
-from . import seed_culture_views
+from . import seed_culture_views, seed_witness_view
 from .ci_watch import line as ci_line
 from .observations import validate_slug
 
@@ -144,10 +144,17 @@ def render(home: Path, role: str) -> str:
             return f"DOCS FILE: {document}\nSTATE: UNKNOWN — page unavailable: {exc}\n"
     if role in {"discover", "senses"}:
         return getattr(seed_culture_views, role)(home)
+    if role == "witness":
+        return seed_witness_view.render(home)
+    no_report = ("REPORT: NOT PRODUCED — this role has no deterministic observation writer; "
+                 "legacy observation files are not refreshed."
+                 if role in {"genome", "research-methods"} else None)
     service_lines, service_roots, service_note = _service_block(home)
     runtime_state, runtime_line = _runtime_state(home, Path(__file__).resolve().parents[2], service_roots)
     lines = ["OBSERVATION — deterministic facts; minds decide the next work", ci_line(home), *deployment_lines(home),
              runtime_line]
+    if no_report:
+        lines.append(no_report)
     for path in sorted((home / "patches").glob("*.json")):
         try:
             record = json.loads(path.read_text())
