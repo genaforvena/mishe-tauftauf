@@ -506,30 +506,6 @@ def _pinned_root(home: Path, default: str) -> tuple[str | None, str | None]:
         return None, f"pin invalid: {exc}"
 
 
-def _runtime_drift(home: Path) -> dict[str, object]:
-    """Compare the pin with the roots the seed services import.
-
-    A service can run a release older or newer than the pin without any pane going
-    dark, and a drop-in can outrank the base unit it amends, so the effective
-    environment is the only honest source. Distinct roots are a drift even when one
-    of them is the pin: the services disagree with each other as well as the record.
-    """
-    pinned, pin_failure = _pinned_root(home, str(Path(home).resolve().parent))
-    roots, failure = _service_import_roots(home)
-    if failure is not None:
-        return {"id": "sense.runtime.drift", "state": "unknown",
-                "sample": f"service roots unreadable: {failure}", "kind": "read"}
-    if pin_failure is not None:
-        return {"id": "sense.runtime.drift", "state": "unknown",
-                "sample": f"service roots={roots} but {pin_failure}", "kind": "read"}
-    distinct = sorted(set(roots))
-    state = "verified" if distinct == [pinned] else "drift"
-    sample = (f"pin={pinned} services={','.join(distinct)} {state}"
-              if distinct else f"pin={pinned} services=none {state}")
-    return {"id": "sense.runtime.drift", "state": state, "sample": sample,
-            "kind": "read", "identity": {"pin": pinned, "services": distinct}}
-
-
 def _unit_import_roots(units: list[str]) -> dict[str, str]:
     """The source root each named unit imports, keyed by unit.
 
@@ -610,11 +586,11 @@ def _unit_import_roots(units: list[str]) -> dict[str, str]:
 def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
     """Compare every running site service with the pin of the site it serves.
 
-    ``sense.runtime.drift`` reads one site's manifest, but every site's services
-    share one systemd user bus and a site's manifest names only its own session.
-    A service of another site therefore runs here invisible to that sensor, and
-    one can carry a release the site's own pin contradicts. A session's units
-    share its prefix, so the registry's session maps any unit to its site —
+    A site's manifest names only its own session, yet every site's services share
+    one systemd user bus. A service of another site therefore runs here invisible
+    to that manifest, and one can carry a release the site's own pin contradicts.
+    A session's units share its prefix, so the registry's session maps any unit
+    to its site —
     including a unit the site's own manifest omits, which is how a stale release
     hides from the service coverage that would otherwise name it.
     The release coordinator's declared checkout root is not a stale release, so
@@ -739,7 +715,7 @@ def _sensor_names(root: str) -> tuple[set[str], str | None]:
 def _sensor_coverage(home: Path, roots: list[str]) -> dict[str, object]:
     """Compare the sensors each imported root can emit with the pin's.
 
-    ``sense.runtime.drift`` compares roots and is blind once they agree, because a
+    Comparing import roots is blind once they agree, because a
     release can carry a source tree that silently drops or adds a sensor. A restart
     into such a release changes what the plant can observe with no other visible
     sign, so the emitted ids are counted per root and compared with the pin's.

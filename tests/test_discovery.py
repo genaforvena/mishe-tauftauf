@@ -1055,54 +1055,6 @@ def test_import_root_drops_a_trailing_src_component() -> None:
     assert discovery._import_root("") is None
 
 
-def test_runtime_drift_reads_the_effective_environment_not_the_base_unit() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    stdout = (
-        _unit_block("stale.service", "/srv/releases/14f85927/src")
-        + "\n" + _unit_block("live.service", "/srv/releases/7ed4b955/src"))
-    with patch("mishe_tauftauf.discovery._service_import_roots",
-               return_value=(["/srv/releases/14f85927", "/srv/releases/7ed4b955"], None)), \
-            patch("mishe_tauftauf.discovery._pinned_root",
-                  return_value=("/srv/releases/7ed4b955", None)):
-        reading = discovery._runtime_drift(home)
-    assert reading["state"] == "drift"
-    assert reading["identity"] == {
-        "pin": "/srv/releases/7ed4b955",
-        "services": ["/srv/releases/14f85927", "/srv/releases/7ed4b955"],
-    }
-    assert reading["sample"] == ("pin=/srv/releases/7ed4b955 "
-                                 "services=/srv/releases/14f85927,/srv/releases/7ed4b955 drift")
-    assert "stdout" not in reading
-
-
-def test_runtime_drift_reports_match_when_every_service_imports_the_pin() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    with patch("mishe_tauftauf.discovery._service_import_roots",
-               return_value=(["/srv/checkout", "/srv/checkout"], None)), \
-            patch("mishe_tauftauf.discovery._pinned_root",
-                  return_value=("/srv/checkout", None)):
-        reading = discovery._runtime_drift(home)
-    assert reading["state"] == "verified"
-    assert reading["sample"] == "pin=/srv/checkout services=/srv/checkout verified"
-
-
-def test_runtime_drift_keeps_a_weak_pin_visible_without_claiming_drift() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    with patch("mishe_tauftauf.discovery._service_import_roots",
-               return_value=(["/srv/checkout"], None)), \
-            patch("mishe_tauftauf.discovery._pinned_root",
-                  return_value=(None, "pin invalid: not a clean worktree")):
-        reading = discovery._runtime_drift(home)
-    assert reading["state"] == "unknown"
-    assert reading["sample"] == "service roots=['/srv/checkout'] but pin invalid: not a clean worktree"
-
-
 def _root_with_sensors(root: Path, identifiers: list[str]) -> Path:
     """Write a release-shaped source root emitting the named sensor ids."""
     (root / "src" / "mishe_tauftauf").mkdir(parents=True, exist_ok=True)
