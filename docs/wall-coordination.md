@@ -134,16 +134,19 @@ HEAD, so the next commit or concurrent edit re-stales it; an installed release i
 Git worktree pinned at its own commit, so it does not move when the checkout does.
 A patch writes reviewed bytes into the snapshot named by
 `coordination-mode.json`'s `runtime` key (`wall_patch` refuses a
-snapshot equal to the shared checkout). The role renderer scripts
+snapshot equal to the shared checkout). The standard role views' renderer scripts
 `SITE_HOME/top-pains/<role>` import that root; a patch's observation must exercise
-one of the snapshot renderers. The site CLI, the minds and the seed services load the
-pin source (the checkout or an installed release) instead, so patched snapshot bytes
-stay invisible to them until a replant, and an observe script that shells out to
-`bin/mishe-tauftauf` reads that pin source, not the patched bytes. Every pane
-rendered by the standard role view prints three deployment lines; `docs` shows
-this book, `discover` and `senses` their culture views, and `witness` its
-coordination checks, while a site-declared resident may render its own pane
-(here `body-research` and `inference-research` do). `SOURCE` names the checkout
+one of those snapshot renderers. Two kinds of pane are outside that contract: the
+`permissions` operator panel renders its own view from the live pin (the same
+source as the `permit` CLI it drives), and a site-declared resident
+(`body-research` and `inference-research` here) renders its own view; neither
+prints a `DEPLOYED` line. The site CLI, the minds and the seed services load the
+pin source (the checkout or an installed release) instead, so patched snapshot
+bytes stay invisible to them until a replant, and an observe script that shells
+out to `bin/mishe-tauftauf` reads that pin source, not the patched bytes. Every
+pane rendered by the standard role view prints three deployment lines; `docs`
+shows this book, `discover` and `senses` their culture views, and `witness` its
+coordination checks. `SOURCE` names the checkout
 commit and its changed-path count; `DEPLOYED`
 the rendering process's own root and module fingerprint; `RUNTIME` the pin beside
 the roots the seed services actually import, flagging `DRIFT` when they differ —
