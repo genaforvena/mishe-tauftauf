@@ -144,7 +144,7 @@ def test_health_linked_service_verdicts(tmp_path: Path, monkeypatch, fault) -> N
     (home / "health").mkdir(parents=True)
     (linked / "health").mkdir(parents=True)
     (home / "health" / "windows.json").write_text('["health"]', encoding="utf-8")
-    (home / "health" / "services.json").write_text("[]", encoding="utf-8")
+    (home / "health" / "services.json").write_text('["core.service"]', encoding="utf-8")
     (home / "health" / "linked-sites.json").write_text(
         json.dumps({"version": 1, "sites": [{"home": str(linked), "session": "example"}]}),
         encoding="utf-8")
@@ -172,6 +172,9 @@ def test_health_linked_service_verdicts(tmp_path: Path, monkeypatch, fault) -> N
         if argv[0] == "tmux":
             return subprocess.CompletedProcess(argv, 0, "health 0 0\n", "")
         if argv[0] == "systemctl":
+            if "show" in argv:
+                return subprocess.CompletedProcess(
+                    argv, 0, "Id=core.service\nActiveState=active\nSubState=running\nNRestarts=0\n", "")
             if fault in {"nul-unit", "surrogate-unit"}:
                 return original_run(argv, **_kwargs)
             if fault == "active":
@@ -327,6 +330,16 @@ def test_health_leaves_units_unknown_and_keeps_the_baseline_when_systemctl_fails
     assert "SERVICE steady.service: unknown/unknown" in rendered
     assert "STATE: RED" in rendered
     assert (home / "health" / "service-restarts.json").read_text() == '{"steady.service": 4}'
+
+
+def test_health_names_an_empty_local_manifest_as_a_cause(tmp_path: Path, monkeypatch) -> None:
+    """An empty manifest is RED in the pane, so the durable report must not read PASS."""
+    home = _service_home(tmp_path, [])
+    _fake_systemctl(monkeypatch, "")
+    rendered = health(home)
+    report = (home / "observations" / "health").read_text(encoding="utf-8")
+    assert report.startswith("FAIL health internal check") and "services-manifest-empty" in report
+    assert "STATE: RED" in rendered
 
 def test_health_reports_unknown_when_session_unset(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "site"
