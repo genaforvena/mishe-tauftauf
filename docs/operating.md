@@ -1,6 +1,6 @@
 # Inspect, recover, and update a plant
 
-[README](../README.md) · [Getting started](getting-started.md) · [How it works](how-it-works.md) · [Wall coordination](wall-coordination.md)
+[README](../README.md) · [Mesh](mesh.md) · [Getting started](getting-started.md) · [How it works](how-it-works.md) · [Wall coordination](wall-coordination.md)
 
 Use this guide after planting. Commands below distinguish inspection from actions that append records, rotate an agent, or refresh installed services. The examples use your site's actual paths, not a universal `.mishe-seed` address.
 

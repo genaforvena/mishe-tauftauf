@@ -1,6 +1,6 @@
 # Wall coordination
 
-[README](../README.md) · [Getting started](getting-started.md) · [How it works](how-it-works.md) · [Operating the plant](operating.md)
+[README](../README.md) · [Mesh](mesh.md) · [Getting started](getting-started.md) · [How it works](how-it-works.md) · [Operating the plant](operating.md)
 
 Every plant uses edited walls and addressed chat as its canonical workflow.
 Each wake supplies a short trigger and asks the mind to read its current full
