@@ -133,6 +133,38 @@ def test_check_report_missing_mtime_is_stale(tmp_path, monkeypatch):
         "SYSTEM ZERO\nSTALE — check report exceeds 900 seconds\nPASS old\n"
     )
 
+
+def test_check_report_future_mtime_is_stale(tmp_path, monkeypatch):
+    """A report mtime ahead of the wall clock is not evidence of freshness."""
+    from mishe_tauftauf import observations
+    path = tmp_path / "observations" / "genome"
+    path.parent.mkdir()
+    path.write_text("PASS pinned sha=old\n")
+    now = 10_000
+    monkeypatch.setattr(observations.time, "time", lambda: now)
+
+    os.utime(path, (now + 60, now + 60))
+    assert observations.check_report(tmp_path, "genome") == (
+        "SYSTEM ZERO\nSTALE — check report timestamp is ahead of the wall clock\nPASS pinned sha=old\n"
+    )
+
+    os.utime(path, (now, now))
+    assert observations.check_report(tmp_path, "genome") == "SYSTEM ZERO\nPASS pinned sha=old\n"
+
+
+def test_watcher_future_heartbeat_is_stale(tmp_path):
+    """A heartbeat timestamp ahead of the wall clock cannot read live."""
+    from mishe_tauftauf import observations
+    checks = tmp_path / "checks"
+    checks.mkdir()
+    heartbeat = checks / "silence-heartbeat.json"
+
+    heartbeat.write_text(json.dumps({"at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()}))
+    assert observations._watcher(tmp_path) == "stale"
+
+    heartbeat.write_text(json.dumps({"at": datetime.now(timezone.utc).isoformat()}))
+    assert observations._watcher(tmp_path) == "live"
+
 def test_pane_reads_the_shared_feed_once(tmp_path, monkeypatch):
     setup_wall(tmp_path)
     from mishe_tauftauf import wall
