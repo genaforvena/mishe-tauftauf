@@ -92,3 +92,14 @@ def test_pending_body_rejects_a_non_seed_entry_with_the_same_sequence(tmp_path):
     note = Feed(tmp_path).append("genome", "An ordinary shared note, not a wake.")
     assert wall._pending_body(tmp_path, note.sequence) == \
         "(no pending wake body; reconcile against the tape)"
+
+def test_pending_body_rejects_a_seed_observation_at_the_same_sequence(tmp_path):
+    from mishe_tauftauf import wall
+    _site(tmp_path)
+    # An observation is also source == "seed" but is not a wake; presenting its
+    # body as owed work would name the wrong obligation (measured on the live
+    # tape, where a stale observation can carry the same sequence as a wake).
+    observation = Feed(tmp_path).append(
+        "seed", "seed observation health\nFresh sensor snapshot saved.")
+    assert wall._pending_body(tmp_path, observation.sequence) == \
+        "(no pending wake body; reconcile against the tape)"
