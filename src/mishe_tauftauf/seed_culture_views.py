@@ -329,6 +329,14 @@ def health(home: Path) -> str:
     elif local_services_unknown:
         verdict = f"UNKNOWN health local service data unavailable at {at}"
         lines.append("STATE: UNKNOWN — local service data unavailable")
+    elif not services:
+        # `plant.write_service_manifest` writes an empty manifest for a site that
+        # installed no services, so the pane's `_service_block` reads it as RED
+        # ("an empty list is not healthy"). Name it in the durable report too, so
+        # a latched pane RED is diagnosable here instead of reading PASS; a
+        # malformed or missing manifest is handled above as UNKNOWN.
+        verdict = f"FAIL health internal check at {at} — services-manifest-empty"
+        lines.append("STATE: RED — internal check needs repair")
     elif not expected:
         verdict = f"UNKNOWN health expected windows unset at {at}"
         lines.append("STATE: UNKNOWN — expected windows unset")
