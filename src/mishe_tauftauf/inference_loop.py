@@ -21,13 +21,18 @@ def snapshot(value):
 def drive_native(session, context: dict, *, obligation: dict, max_turns: int,
                  max_calls: int, dispatch: Callable, record: Callable,
                  phase: Callable, cancelled: Callable, authorized: Callable,
-                 complete: Callable) -> dict:
+                 complete: Callable, resume_from=None) -> dict:
     """Drive native messages without flattening IDs, tool results or terminals.
 
     Capability selection is model-owned. typed argument validation and execution
     remain inside dispatch; tools/results cannot widen caller-granted authority.
     No automatic resubmission after exceptions, interruption or unknown effects.
     Caller bounds callback duration; NativeSession bounds provider lifetime/I/O.
+    resume_from reads a prior caller journal; only an unstopped completed-result
+    boundary may call the provider. Original lifetime budgets/IDs are retained.
+    Caller must restore provider state and reconcile original effect authority;
+    this API neither restores the session nor retries unresolved selections.
+    record must target a new journal, never append to or replace resume_from.
     """
     for value in (max_turns, max_calls):
         if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
@@ -39,9 +44,18 @@ def drive_native(session, context: dict, *, obligation: dict, max_turns: int,
         raise ValueError('duplicate capability names')
     allowed = set(names)
     messages = context['messages']
-    used_ids = set()
-    executed = 0
-    turns = 0
+    recovery = None
+    if resume_from is not None:
+        recovery = read_native_journal(resume_from)
+        if recovery['stopped']:
+            raise NativeJournalError('stopped caller cannot continue')
+        if recovery['budgets'] != {'turns': max_turns, 'calls': max_calls}:
+            raise NativeJournalError('original lifetime budgets required')
+        if recovery['context'] != context or recovery['obligation'] != obligation:
+            raise NativeJournalError('continuation context or obligation changed')
+    used_ids = set(recovery['used_ids']) if recovery else set()
+    executed = recovery['calls'] if recovery else 0
+    turns = recovery['turns'] if recovery else 0
 
     def emit(kind, **fields):
         record(snapshot({'kind': kind, 'obligation': obligation, **fields}))
@@ -49,10 +63,22 @@ def drive_native(session, context: dict, *, obligation: dict, max_turns: int,
     def stop(status):
         result = {'status': status, 'turns': turns, 'calls': executed,
                   'context': snapshot(context)}
+        if recovery and recovery['status'] != 'ready':
+            result['pending_calls'] = snapshot(recovery['pending_calls'])
+            result['used_ids'] = sorted(used_ids)
         emit('stop', status=status, turns=turns, calls=executed)
         return result
 
-    for index in range(max_turns):
+    checkpoint = {
+        'context': context, 'budgets': {'turns': max_turns, 'calls': max_calls},
+        'turns': turns, 'calls': executed, 'used_ids': sorted(used_ids),
+        'pending_calls': recovery['pending_calls'] if recovery else [],
+        'status': recovery['status'] if recovery else 'ready',
+    }
+    emit('checkpoint', state=checkpoint)
+    if recovery and recovery['status'] != 'ready':
+        return stop('unknown')
+    for index in range(turns, max_turns):
         if cancelled():
             return stop('cancelled')
         emit('model_input', turn=index, context=context)
@@ -151,10 +177,10 @@ class NativeJournal:
 def read_native_journal(path):
     """Read/reconstruct a recorded run without opening or creating effect state.
 
-    `ready` means only a completed-result boundary was reconstructed. Provider
-    opaque state, remaining budgets, used IDs, current authority and original
-    effect-store reconciliation remain the caller's responsibilities. Never
-    blindly pass this context back to drive_native with reset budgets/IDs.
+    `ready` means only a completed-result boundary was reconstructed. Original
+    lifetime budgets (None for older histories) and used IDs are returned.
+    drive_native(..., resume_from=path) preserves these; provider opaque state,
+    current authority and original effect-store reconciliation remain caller-owned.
     Pending selections include calls not yet proposed; their effect status is
     UNKNOWN here, not authoritative absence. A recorded stop is an author fact.
     """
@@ -182,10 +208,40 @@ def _reconstruct_native(rows):
     state = 'initial'
     status = 'unknown'
     stopped = False
+    budgets = None
     for row in rows:
         if stopped or row['obligation'] != obligation:
             raise NativeJournalError('record after stop or changed obligation')
         kind = row['kind']
+        if kind == 'checkpoint':
+            if state != 'initial' or context is not None:
+                raise NativeJournalError('checkpoint must be the first record')
+            seed = row['state']
+            budgets = seed['budgets']
+            if (not isinstance(budgets, dict) or set(budgets) != {'turns', 'calls'}
+                    or any(not isinstance(n, int) or isinstance(n, bool) or n <= 0
+                           for n in budgets.values())):
+                raise NativeJournalError('invalid lifetime budgets')
+            turns, calls = seed['turns'], seed['calls']
+            ids = seed['used_ids']
+            if (any(not isinstance(n, int) or isinstance(n, bool) or n < 0
+                    for n in (turns, calls))
+                    or turns > budgets['turns'] or calls > budgets['calls']
+                    or not isinstance(ids, list)
+                    or any(not isinstance(i, str) or not i for i in ids)
+                    or len(set(ids)) != len(ids) or calls > len(ids)):
+                raise NativeJournalError('invalid lifetime counters or IDs')
+            context = snapshot(seed['context'])
+            if not isinstance(context['messages'], list):
+                raise NativeJournalError('messages must be an ordered list')
+            used_ids = set(ids)
+            pending = snapshot(seed['pending_calls'])
+            status = seed['status']
+            if (not isinstance(pending, list) or status not in ('ready', 'unknown')
+                    or (status == 'ready' and pending)):
+                raise NativeJournalError('invalid continuation boundary')
+            state = 'ready' if status == 'ready' else 'unresolved'
+            continue
         if kind == 'stop':
             if row['turns'] != turns or row['calls'] != calls:
                 raise NativeJournalError('stop counters disagree')
@@ -210,6 +266,8 @@ def _reconstruct_native(rows):
         elif kind == 'model_output':
             if state != 'input' or row['turn'] != turns:
                 raise NativeJournalError('unexpected model output')
+            if budgets is not None and turns >= budgets['turns']:
+                raise NativeJournalError('model output exceeds lifetime turn budget')
             response = row['response']
             assistant = snapshot(response['assistant'])
             context['messages'].append(assistant)
@@ -224,6 +282,8 @@ def _reconstruct_native(rows):
                      and len(set(ids)) == len(ids)
                      and not used_ids.intersection(ids)
                      and all(item['name'] in allowed for item in selected))
+            valid = valid and (budgets is None
+                               or calls + len(selected) <= budgets['calls'])
             state = ('selected' if selected else 'answer') if valid else 'invalid'
             pending = selected
             if valid:
@@ -237,6 +297,8 @@ def _reconstruct_native(rows):
             if (state != 'selected' or proposed is None
                     or row['turn'] != turns - 1 or row['call'] != proposed):
                 raise NativeJournalError('result without matching proposal')
+            if budgets is not None and calls >= budgets['calls']:
+                raise NativeJournalError('tool result exceeds lifetime call budget')
             message = row['message']
             outcome = json.loads(message['content'][0]['text'])
             outcome_status = outcome['status']
@@ -259,4 +321,4 @@ def _reconstruct_native(rows):
     return {'obligation': snapshot(obligation), 'context': context,
             'status': status, 'pending_calls': snapshot(pending),
             'used_ids': sorted(used_ids), 'turns': turns, 'calls': calls,
-            'stopped': stopped}
+            'stopped': stopped, 'budgets': budgets}

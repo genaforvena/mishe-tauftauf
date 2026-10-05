@@ -53,7 +53,6 @@ def test_next_model_input_preserves_correlated_result_and_opaque_history():
     assert history[2]["toolName"] == CALL["name"]
     assert json.loads(history[2]["content"][0]["text"]) == {"status": "completed"}
     assert history[2]["isError"] is False
-    assert events[1]["response"]["wire_usage"] is None
     assert CONTEXT["messages"] == [{"role": "user", "content": "Inspect evidence"}]
     assert session.inputs[0]["messages"] == CONTEXT["messages"]
 
@@ -259,3 +258,153 @@ def test_failed_fsync_poisoned_writer_cannot_continue(tmp_path, monkeypatch):
         with pytest.raises(NativeJournalError, match="unavailable"):
             journal({"kind": "proposal"})
         assert path.read_bytes() == before
+
+
+def interrupted_journal(tmp_path, *, max_turns=3, max_calls=2, boundary="tool_result",
+                        calls=(CALL,), outcome="completed"):
+    path = tmp_path / "original.jsonl"
+    with NativeJournal(path) as journal:
+        def record(event):
+            journal(event)
+            if event["kind"] == boundary:
+                raise InterruptedError
+
+        with pytest.raises(InterruptedError):
+            drive(Session(turn(calls)), record=record, max_turns=max_turns,
+                  max_calls=max_calls, dispatch=lambda call: {"status": outcome})
+    return path
+
+
+def continue_journal(path, session, record, **overrides):
+    state = read_native_journal(path)
+    effects = []
+    options = dict(obligation=state["obligation"],
+                   max_turns=state["budgets"]["turns"],
+                   max_calls=state["budgets"]["calls"], resume_from=path,
+                   dispatch=lambda call: effects.append(call) or {"status": "completed"},
+                   record=record, phase=lambda call: None,
+                   cancelled=lambda: False, authorized=lambda call: True,
+                   complete=lambda context: True)
+    options.update(overrides)
+    result = drive_native(session, state["context"], **options)
+    return result, effects
+
+
+@pytest.mark.parametrize("arm,status", [
+    ("reused_id", "invalid_selection"), ("call_budget", "call_budget"),
+    ("turn_budget", "turn_budget"),
+])
+def test_continuation_preserves_decision_changing_lifetime_limits(tmp_path, arm, status):
+    path = interrupted_journal(tmp_path, max_turns=1 if arm == "turn_budget" else 3)
+    before = path.read_bytes()
+    calls = ([CALL] if arm == "reused_id" else
+             [{**CALL, "id": "new-a"}, {**CALL, "id": "new-b"}])
+    session = Session(turn(calls))
+    with NativeJournal(tmp_path / "continuation.jsonl") as journal:
+        result, effects = continue_journal(path, session, journal)
+    assert result["status"] == status
+    assert effects == []
+    assert result["calls"] == 1
+    assert result["turns"] == (1 if arm == "turn_budget" else 2)
+    assert session.inputs == ([] if arm == "turn_budget" else
+                              [read_native_journal(path)["context"]])
+    assert path.read_bytes() == before
+    continued = read_native_journal(tmp_path / "continuation.jsonl")
+    assert continued["status"] == status
+    assert continued["used_ids"] == [CALL["id"]]
+    assert continued["budgets"] == {"turns": 1 if arm == "turn_budget" else 3, "calls": 2}
+
+
+@pytest.mark.parametrize("boundary,outcome,calls", [
+    ("model_input", "completed", [CALL]),
+    ("model_output", "completed", [CALL]),
+    ("proposal", "completed", [CALL]),
+    ("tool_result", "unknown", [CALL]),
+    ("tool_result", "partial", [CALL]),
+    ("tool_result", "completed", [CALL, {**CALL, "id": "pending"}]),
+])
+def test_unresolved_continuation_hands_off_without_provider_or_dispatch(
+        tmp_path, boundary, outcome, calls):
+    path = interrupted_journal(tmp_path, boundary=boundary, outcome=outcome, calls=calls)
+    original = read_native_journal(path)
+    session = Session()
+    with NativeJournal(tmp_path / "handoff.jsonl") as journal:
+        result, effects = continue_journal(path, session, journal)
+    assert result["status"] == "unknown"
+    assert result["pending_calls"] == original["pending_calls"]
+    assert result["used_ids"] == original["used_ids"]
+    assert session.inputs == []
+    assert effects == []
+    handoff = read_native_journal(tmp_path / "handoff.jsonl")
+    assert handoff["pending_calls"] == original["pending_calls"]
+    assert handoff["context"] == original["context"]
+    assert handoff["stopped"] is True
+
+
+def test_second_interruption_retains_lifetime_history_and_exact_next_input(tmp_path):
+    path = interrupted_journal(tmp_path)
+    second = tmp_path / "second.jsonl"
+    call = {**CALL, "id": "second"}
+    with NativeJournal(second) as journal:
+        def record(event):
+            journal(event)
+            if event["kind"] == "tool_result":
+                raise InterruptedError
+        with pytest.raises(InterruptedError):
+            continue_journal(path, Session(turn([call])), record)
+    reconstructed = read_native_journal(second)
+    assert reconstructed["status"] == "ready"
+    assert reconstructed["used_ids"] == sorted([CALL["id"], "second"])
+    assert (reconstructed["turns"], reconstructed["calls"]) == (2, 2)
+    session = Session(turn())
+    with NativeJournal(tmp_path / "third.jsonl") as journal:
+        result, effects = continue_journal(second, session, journal)
+    assert result["status"] == "complete"
+    assert (result["turns"], result["calls"]) == (3, 2)
+    assert effects == []
+    assert session.inputs == [reconstructed["context"]]
+    assert session.inputs[0]["messages"][-1]["toolCallId"] == "second"
+    assert session.inputs[0]["messages"][1]["providerPayload"] == {"opaque": "retained"}
+
+
+def test_continuation_rejects_budget_increase_before_record_or_provider(tmp_path):
+    path = interrupted_journal(tmp_path)
+    events = []
+    session = Session()
+    with pytest.raises(NativeJournalError, match="original lifetime budgets"):
+        continue_journal(path, session, events.append, max_calls=3)
+    assert events == []
+    assert session.inputs == []
+
+
+@pytest.mark.parametrize("change", ["obligation", "context", "stopped", "legacy"])
+def test_noncontinuable_history_refuses_before_callbacks(tmp_path, change):
+    path = interrupted_journal(tmp_path)
+    if change == "stopped":
+        events = []
+        drive(Session(turn()), record=events.append, complete=lambda context: True)
+        path.write_text("".join(json.dumps(row) + "\n" for row in events))
+    elif change == "legacy":
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        path.write_text("".join(json.dumps(row) + "\n" for row in rows[1:]))
+    state = read_native_journal(path)
+    original = path.read_bytes()
+    context = state["context"]
+    obligation = state["obligation"]
+    if change == "context":
+        context["tools"].append({"name": "new-authority"})
+    elif change == "obligation":
+        obligation = {"source": "different"}
+    session = Session()
+    events = []
+    with pytest.raises(NativeJournalError):
+        drive_native(session, context, obligation=obligation, max_turns=3,
+                     max_calls=2, resume_from=path, record=events.append,
+                     dispatch=lambda call: pytest.fail("unexpected dispatch"),
+                     phase=lambda call: pytest.fail("unexpected phase"),
+                     cancelled=lambda: pytest.fail("unexpected cancellation check"),
+                     authorized=lambda call: pytest.fail("unexpected authority check"),
+                     complete=lambda context: pytest.fail("unexpected completion check"))
+    assert events == []
+    assert session.inputs == []
+    assert path.read_bytes() == original

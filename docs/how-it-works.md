@@ -105,13 +105,19 @@ replay mechanism or evidence of a completed live useful-task canary.
 it exclusively creates a new private JSONL file, flushes and fsyncs every event
 before returning, and refuses reuse after a recording failure.
 `read_native_journal` reconstructs the obligation, ordered native context,
-unresolved selections (including calls not yet proposed), used call IDs and
-observed turn/result counts without touching effect state. Torn history,
-changed context and uncorrelated results fail closed without altering evidence.
-A `ready` result marks only a completed-result boundary; it is not permission
-to dispatch or restart with reset budgets/IDs. The caller must restore provider
-state, enforce remaining budgets and reconcile the original effect store under
-current authority. A proposal without a result remains UNKNOWN whether or not
+unresolved selections (including calls not yet proposed), used call IDs,
+observed turn/result counts and recorded lifetime budgets without touching effect
+state. Torn history, changed context and uncorrelated results fail closed without
+altering evidence. `drive_native(..., resume_from=path)` reads that history and
+requires the same obligation, context and original budgets; it carries consumed
+turns/results and used IDs into a new journal. Exhausted turn budgets cannot call
+the provider, and remaining call budgets and reused IDs are checked before
+dispatch. Pending or ambiguous history returns an UNKNOWN handoff without calling
+the provider or executor. Stopped histories and older histories without recorded
+budgets cannot continue through this entrypoint. A `ready` boundary is not dispatch
+authority: the caller must separately restore provider state and reconcile the
+original effect store under current authority. A proposal without a result
+remains UNKNOWN whether or not
 dispatch started. A retained stop is the previous caller's report, not independent
 acceptance. This API covers single-writer local file/process-crash evidence,
 not power-loss durability, automatic recovery or a deployed resident route.
