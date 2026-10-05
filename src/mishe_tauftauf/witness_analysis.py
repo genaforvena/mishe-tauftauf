@@ -125,7 +125,7 @@ def snapshot(home: Path, cutoff: int) -> dict:
             'meaning': 'Suggest an investigation focus, not a defect verdict. The mind must read full evidence and honor its wake and tasks.'}
 
 
-def advise(home: Path, wake: int) -> dict:
+def advise(home: Path, wake: int, *, config_path: Path | None = None) -> dict:
     entries = Feed(home).entries()
     if not any(e.sequence == wake and e.source == 'seed' and WAKE.fullmatch(e.body.splitlines()[0]) for e in entries):
         raise ValueError('not a canonical witness wake')
@@ -133,8 +133,12 @@ def advise(home: Path, wake: int) -> dict:
         path = directory / f'{wake}.json'
         if path.exists():
             return json.loads(path.read_text())
-        config_path = home / 'analysis-advisor.json'
-        if not config_path.exists():
+        if config_path is None:
+            config_path = home / 'analysis-advisor.json'
+            optional = True
+        else:
+            optional = False
+        if optional and not config_path.exists():
             return {'state': 'disabled', 'selection': 'unknown', 'wake': wake}
         started = time.monotonic()
         report = {'wake': wake, 'created_at': datetime.now(timezone.utc).isoformat(),
@@ -206,9 +210,12 @@ def feedback(home: Path, wake: int, used: str, outcome: str, note: str) -> dict:
         return value
 
 
-def status(home: Path) -> str:
-    if not (home / 'analysis-advisor.json').exists():
-        return 'ANALYSIS ADVISOR: disabled (optional)'
+def status(home: Path, *, config_path: Path | None = None) -> str:
+    if config_path is None:
+        if not (home / 'analysis-advisor.json').exists():
+            return 'ANALYSIS ADVISOR: disabled (optional)'
+    elif not config_path.exists():
+        return 'ANALYSIS ADVISOR: UNKNOWN explicit configuration missing'
     try:
         directory = home / 'analysis-advice'
         reports = sorted((p for p in directory.glob('*.json') if p.stem.isdigit()), key=lambda p: int(p.stem))
@@ -232,6 +239,7 @@ def status(home: Path) -> str:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--home', type=Path, required=True)
+    parser.add_argument('--config', type=Path, help='Explicit generation-bound advisor configuration; no site fallback')
     parser.add_argument('--wake', type=int)
     parser.add_argument('--status', action='store_true')
     parser.add_argument('--used', choices=ANALYSES)
@@ -239,7 +247,7 @@ def main():
     parser.add_argument('--note')
     args = parser.parse_args()
     if args.status:
-        print(status(args.home))
+        print(status(args.home, config_path=args.config))
     elif args.wake is None:
         parser.error('--wake is required for advice or feedback')
     elif args.used:
@@ -247,7 +255,7 @@ def main():
             parser.error('feedback requires --outcome and --note')
         print(json.dumps(feedback(args.home, args.wake, args.used, args.outcome, args.note)))
     else:
-        print(json.dumps(advise(args.home, args.wake)))
+        print(json.dumps(advise(args.home, args.wake, config_path=args.config)))
 
 
 if __name__ == '__main__':
