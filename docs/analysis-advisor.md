@@ -61,10 +61,11 @@ python -m mishe_tauftauf.witness_analysis --home SITE --wake NUMBER \
 
 Outcomes are `useful`, `routine`, or `inconclusive`; these are mind-reported claims,
 not independently verified quality labels. Feedback preserves the original advice
-hash and cannot overwrite a previous conflicting outcome. Put the status on the
-existing top pane with `--status`; rendering status does no model work. Keep the
-base renderer's exit/check result. The `ANALYSIS ADVISOR:` line is informational
-and is excluded from the witness observation digest, preventing feedback wakes.
+hash and cannot overwrite a previous conflicting outcome. `--status` renders the
+latest advice on the existing top pane without model work; keep the base renderer's
+exit/check result. The `ANALYSIS ADVISOR:` line is informational, but the witness
+observation digest has no special case for it: a status line on the pane counts as
+a change and can create feedback wakes.
 
 ## Handoff repeat check
 
