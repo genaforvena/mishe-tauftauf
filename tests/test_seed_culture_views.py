@@ -51,6 +51,48 @@ def test_health_detects_dead_top_even_when_bottom_is_alive(tmp_path: Path, monke
     assert report.startswith("FAIL health internal check at ")
     assert "windows-dead=health.0" in report
 
+def test_health_detects_dead_mind_pane_when_renderer_is_alive(tmp_path: Path, monkeypatch) -> None:
+    """A wedged mind pane (.1) must read RED though its renderer lease lives."""
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health" / "windows.json").write_text(json.dumps(["health"]), encoding="utf-8")
+    (home / "health" / "services.json").write_text("[]", encoding="utf-8")
+    (home / "minds").mkdir()
+    (home / "minds" / "health").write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setenv("MISHE_SEED_SESSION", "test-session")
+
+    def run(argv, **_kwargs):
+        if argv[0] == "tmux":
+            return subprocess.CompletedProcess(argv, 0, "health 0 0\nhealth 1 1\n", "")
+        return subprocess.CompletedProcess(argv, 0, "PASS doctor\n", "")
+
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.subprocess.run", run)
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.ci_line", lambda _home: "CI: PASS")
+    rendered = health(home)
+    assert "WINDOWS: RED health dead=health.1" in rendered
+    assert "STATE: RED" in rendered
+    report = (home / "observations" / "health").read_text(encoding="utf-8")
+    assert "windows-dead=health.1" in report
+
+
+def test_health_ignores_a_dead_bottom_pane_without_a_mind_launcher(tmp_path: Path, monkeypatch) -> None:
+    """The permissions panel's bottom shell is not a mind; its death is no fault."""
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health" / "windows.json").write_text(json.dumps(["permissions"]), encoding="utf-8")
+    (home / "health" / "services.json").write_text("[]", encoding="utf-8")
+    monkeypatch.setenv("MISHE_SEED_SESSION", "test-session")
+
+    def run(argv, **_kwargs):
+        if argv[0] == "tmux":
+            return subprocess.CompletedProcess(argv, 0, "permissions 0 0\npermissions 1 1\n", "")
+        return subprocess.CompletedProcess(argv, 0, "PASS doctor\n", "")
+
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.subprocess.run", run)
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.ci_line", lambda _home: "CI: PASS")
+    rendered = health(home)
+    assert "WINDOWS: PASS permissions" in rendered
+
 def test_health_flags_a_frozen_renderer_lease_as_red(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "site"
     (home / "health").mkdir(parents=True)
