@@ -37,13 +37,28 @@ model loading off the supervisor and refreshing top pane. Optional site wrappers
 modules or source-bound script copies with the site's installed runtime imports.
 Record hashes and versions when installing such copies.
 
-The compact input contains the six most recent external entries since the last
-completed witness receipt, with 160-character excerpts, and 240 characters of the
-previous completed handoff. This is a deliberately basic starting point, not a
-validated semantic summary. Full body hashes, source sequence numbers, omission
-counts and the original log path remain in the report. The worker checks its
-actual token budget and never silently truncates it. The mind must read omitted
-sources; initial diagnostic results have not established real-log accuracy.
+The compact input contains the six most recent external entries after the latest
+available Witness author report, with 160-character excerpts and 240 characters
+of that report. Wall-mode context comes from a canonical immutable `wall-outcome`
+record whose role, prose and owned evidence digest match. A newer legacy `[work]`
+entry can supply legacy author-report context; settlement receipts and mutable
+wall/handoff files never reconstruct historical analysis.
+
+`previous_context` records the type, sequence, body hash, immutable reference,
+evidence path/hash, status and omitted characters. Its semantic acceptance is
+always `UNKNOWN`, including outcome kind `accepted`: an author report is not an
+independent verdict or proof of completed analysis. Missing or mismatched outcome
+evidence leaves context `UNKNOWN` without falling back to older prose or excluding
+earlier external entries. Corrupt immutable feed records are rejected by the
+canonical feed reader before selection. `since_context_sequence` names the
+verified context boundary (zero when unavailable). Previous advice and feedback
+files remain unchanged; this schema applies to new reports.
+
+Full source hashes, omission counts and the original log path remain in the report;
+the model receives compact status, provenance sequence, prose and omissions rather
+than hashes. The worker checks its actual token budget and never silently truncates
+it. The mind must read omitted sources; this digest is not a validated semantic
+summary, and diagnostic results have not established real-log accuracy.
 
 ## Feedback and visibility
 
