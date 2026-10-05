@@ -141,10 +141,10 @@ A cross-site runtime-drift reading checks services attributable to linked-site
 sessions and the scanning site's session against their pins. It reads configured
 `PYTHONPATH` from systemd, falling back to the live main process environment and
 then its direct children for roots exported by wrapper scripts. A stale covered
-root is `drift`; incomplete
-attribution or pin coverage without an observed stale root is `unknown`, not
-`verified`. Its sample retains the `unattributed` and `unpinned` unit lists so
-readers can distinguish coverage gaps from drift.
+root is `drift`; incomplete coverage — an unattributed running unit, a unit of a
+site with no pin, or a unit whose import root cannot be discovered — is
+`unknown`, not `verified`. Its sample retains the `unattributed`, `uninspectable`
+and `unpinned` unit lists so readers can distinguish coverage gaps from drift.
 
 Checks, not minds, decide reproducible facts: counts, deployment identity, deadlines, and observed outcomes. Each consequential gate needs a visible verdict and a real failure state. Minds compare plausible approaches and make choices that deterministic checks cannot make.
 
