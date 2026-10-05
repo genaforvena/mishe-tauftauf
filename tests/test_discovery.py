@@ -1402,6 +1402,27 @@ def test_drift_across_sites_is_unknown_when_active_unit_is_unattributed(
     assert row["identity"]["unattributed"] == [unit]
 
 
+def test_drift_across_sites_marks_mapped_unit_without_import_root_unknown(
+        tmp_path: Path) -> None:
+    pinned_sha: list[str] = []
+    pinned = tmp_path / "releases" / "pinned"
+    _release_tree(pinned, pinned_sha)
+    other = tmp_path / "site-other"
+    _pin(other, pinned, pinned_sha[0], "mishe-other")
+    home = tmp_path / "plant"
+    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
+                             "sha": pinned_sha[0]}])
+    unit = "mishe-other-core-self-observer.service"
+    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
+            patch.object(discovery, "_unit_import_roots", return_value={}), \
+            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
+        row = discovery._runtime_drift_across_sites(home)
+    assert row["state"] == "unknown"
+    assert f"uninspectable={unit}" in row["sample"]
+    assert row["identity"]["uninspectable"] == [unit]
+    assert row["identity"]["stale"] == {}
+
+
 def test_active_site_units_reads_the_list_units_table_not_show_properties(
         tmp_path: Path) -> None:
     # ``list-units`` ignores ``-p`` and prints an indented column table, so the

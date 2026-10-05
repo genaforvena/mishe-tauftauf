@@ -644,8 +644,10 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
                 "sample": f"running units unreadable: {failure}", "kind": "read"}
     roots = _unit_import_roots(active)
     stale: dict[str, str] = {}
+    uninspectable: list[str] = []
     unpinned: list[str] = []
     unattributed: list[str] = []
+    parts = [f"sites={len(site_by_prefix)} running={len(active)}"]
     from .runtime_source import declared_checkout_root
     for unit in active:
         session = next((prefix for prefix in site_by_prefix
@@ -657,8 +659,9 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
             continue
         root = roots.get(unit)
         if root is None:
-            # Running without an import path makes no release claim, so it is
-            # not drift; a stopped unit is no claim either.
+            # A mapped, running site's unit with no discoverable import root
+            # cannot be compared with its pin; do not report coverage as clean.
+            uninspectable.append(unit)
             continue
         pinned, pin_failure = pins[session]
         if pin_failure is not None or pinned is None:
@@ -671,19 +674,20 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
                 # (coordination/site_sync.py skips the same unit when verifying).
                 continue
             stale[unit] = root
-    parts = [f"sites={len(site_by_prefix)} running={len(active)}"]
     if unattributed:
         parts.append("unattributed=" + ",".join(unattributed))
+    if uninspectable:
+        parts.append("uninspectable=" + ",".join(uninspectable))
     if unpinned:
         parts.append("unpinned=" + ",".join(unpinned))
     if stale:
         parts.append("stale=" + ",".join(f"{unit}@{Path(root).name}" for unit, root in sorted(stale.items())))
-    state = "drift" if stale else "unknown" if unpinned or unattributed else "verified"
+    state = "drift" if stale else "unknown" if unpinned or unattributed or uninspectable else "verified"
     return {"id": "sense.runtime.drift-across-sites", "state": state,
             "sample": " ".join(parts), "kind": "read",
             "identity": {"sites": sorted(site_by_prefix), "stale": stale,
                          "unpinned": unpinned, "unattributed": unattributed,
-                         "running": active}}
+                         "uninspectable": uninspectable, "running": active}}
 
 
 def _sensor_names(root: str) -> tuple[set[str], str | None]:

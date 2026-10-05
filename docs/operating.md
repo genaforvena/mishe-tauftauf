@@ -310,6 +310,10 @@ against the new pin — the swap transient, not persistent drift. Re-read the
 `RUNTIME` line and the across-sites sample (`sense.runtime.drift-across-sites`)
 after the launcher returns before treating the units as drifted.
 
+The across-sites drift sense also reports `UNKNOWN` with `uninspectable=<unit>`
+when a running session unit's import root cannot be discovered from systemd or
+its main process. No root means the pin comparison is unevidenced, not clean.
+
 ### Linked health is a separate live check
 
 The core health pane reads each registered site's `health/services.json` and checks those named units on **this host's user systemd manager**. It is read-only with respect to linked services and independent of the recorded applied SHA. It is not remote fleet monitoring.
