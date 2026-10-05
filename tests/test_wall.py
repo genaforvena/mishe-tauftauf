@@ -555,6 +555,10 @@ def test_witness_digest_normalizes_only_volatile_evidence_and_chat_text():
     assert observation_text("witness", first) != observation_text("witness", first.replace("CHAT RATE: RED", "CHAT RATE: GREEN"))
     assert observation_text("witness", first) != observation_text("witness", first.replace("id=stable", "id=changed"))
     assert observation_text("witness", first) != observation_text("witness", first.replace("STATE: RED", "STATE: GREEN"))
+    framed = ("HEADLINE: GREEN — mind ok; watcher live\n"
+              "HEADLINE: GREEN — mind ok idle 5s; watcher live; commit 0.1h ago; activation 3.4h ago\n") + first
+    assert observation_text("witness", framed) == observation_text(
+        "witness", framed.replace("idle 5s", "idle 61s").replace("0.1h ago", "0.9h ago"))
 
 
 def test_wall_outcome_requires_evidence_and_cli_records_prose(tmp_path):
