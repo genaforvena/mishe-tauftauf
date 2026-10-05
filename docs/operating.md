@@ -131,7 +131,7 @@ report files.
   --panes --session "$SESSION"
 ```
 
-The pane check waits for live-pane evidence (11 seconds by default). Optional `laya` being unavailable is not a missing dependency for the default plant. Do not add hosted-adapter live flags unless you intend to invoke those services.
+The pane check waits for live-pane evidence (11 seconds by default) and names the failure: a top pane holds as `pane-missing`, `pane-empty` (a renderer process exists but printed no first frame), `pane-fallback` (unreadable pane or no owned lease) or `pane-frozen` (renderer stopped/dead, or its lease did not advance across two windows — a `--pane-wait` shorter than the refresh interval reports healthy panes this way); each built-in resident's lower pane is checked separately as `mind-pane-missing` or `mind-pane-dead`. Optional `laya` being unavailable is not a missing dependency for the default plant. Do not add hosted-adapter live flags unless you intend to invoke those services.
 The optional witness analysis advisor asks a local Laya model which investigation to try; [observable analysis advice](analysis-advisor.md) covers its setup, feedback and handoff repeat check.
 
 If doctor reports site files staged or tracked in Git, resolve that boundary before landing work. If it reports corrupt feed framing, preserve the tape and diagnose the reported entry rather than appending invented receipts or deleting history to turn the pane green.
