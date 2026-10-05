@@ -280,7 +280,10 @@ def health(home: Path) -> str:
             else:
                 lines.append(f"LINKED SITE {label}: PASS")
     lines.append(ci_line(home))
-    if doctor.returncode or missing or extra or dead or failed_services or linked_failed:
+    from .wall_view import pane_lease_lines
+    lease_lines, lease_state = pane_lease_lines(home)
+    lines.extend(lease_lines)
+    if doctor.returncode or missing or extra or dead or failed_services or linked_failed or lease_state == "STALE":
         verdict = "FAIL health internal check"
         lines.append("STATE: RED — internal check needs repair")
     elif windows_unknown:
