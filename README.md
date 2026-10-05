@@ -26,8 +26,9 @@ Attach to the tmux session and you see the same evidence the agents see:
 - **One shared text log.** `chat.log` records who is doing what, what they checked,
   what remains, and where the evidence lives.
 - **Work that survives a fresh context.** A supervisor replaces a settled agent
-  process when it is idle and restores its saved wall, purpose, and unfinished work
-  on the next wake.
+  process when it is idle. The next wake delivers the charter and the owed
+  obligation, and the live pane shows the saved wall, so purpose and unfinished
+  work survive the rotation.
 - **Progress beyond commits.** A project's checks can expose experiment results,
   data provenance, resource limits, and unfinished review—not just builds and CI.
   A successful command need not mean the underlying goal has been achieved.
