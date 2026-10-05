@@ -54,6 +54,49 @@ class FeedTests(unittest.TestCase):
                 self.assertEqual(len(parses), 2, "a new revision must be reparsed")
             self.assertEqual([e.sequence for e in third], [1, 2])
 
+    def test_full_read_extends_the_cached_revision_with_appended_frames(self):
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            for number in range(300):
+                feed.append("human", f"event {number} " + "x" * 200)
+            cached = feed.entries()
+            parsed_sizes = []
+            real_parse = parse_feed
+
+            def measured(data, **kwargs):
+                parsed_sizes.append(len(data))
+                return real_parse(data, **kwargs)
+
+            with patch("mishe_tauftauf.feed.parse_feed", side_effect=measured):
+                feed.append("human", "appended after the cached read")
+                extended = Feed(directory).entries()
+            canonical = parse_feed(feed.read_bytes())
+            self.assertEqual([e.sequence for e in extended], list(range(1, 302)))
+            self.assertEqual([e.body for e in extended], [e.body for e in canonical])
+            self.assertEqual([e.body for e in extended[:300]], [e.body for e in cached])
+            self.assertLess(max(parsed_sizes), 4000,
+                            "an append must extend the cached revision, not replay the tape")
+
+    def test_grown_tape_without_matching_checkpoint_is_reparsed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            for number in range(200):
+                feed.append("human", f"old {number} " + "x" * 100)
+            feed.entries()
+            # An out-of-band rewrite that keeps the length but changes the history,
+            # then grows the tape. The checkpoint no longer describes the file, so
+            # the cached revision must not be spliced onto the new suffix.
+            original = feed.read_bytes()
+            rewritten = original.replace(b"| old ", b"| new ")
+            self.assertIn(b"new 0", rewritten)
+            self.assertEqual(len(rewritten), len(original))
+            feed.path.write_bytes(rewritten + feed_module._encode_entry(
+                201, "2026-10-05T00:00:00.000000Z", "human", "appended\n"))
+            entries = Feed(directory).entries()
+            self.assertEqual([e.sequence for e in entries], list(range(1, 202)))
+            self.assertEqual(entries[0].body, "new 0 " + "x" * 100)
+            self.assertEqual(entries[-1].body, "appended\n")
+
     def test_multiline_final_newline_round_trip(self):
         with tempfile.TemporaryDirectory() as directory:
             feed = Feed(directory)

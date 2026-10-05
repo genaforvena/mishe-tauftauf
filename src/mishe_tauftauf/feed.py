@@ -281,6 +281,17 @@ class Feed:
                 os.unlink(temporary)
 
     def _index(self, handle) -> dict:
+        index, _ = self._load_index(handle)
+        return index
+
+    def _load_index(self, handle) -> tuple[dict, bool]:
+        """Return the checkpoint and whether it already described this exact file.
+
+        A reused checkpoint is the writer's own record that the tape reached its
+        current size through the canonical append that rewrote it. A rebuild means
+        the bytes changed without that record, so growth is not necessarily an
+        append and a cached read must not be extended.
+        """
         if os.stat(self.path).st_ino != os.fstat(handle.fileno()).st_ino:
             raise FeedError("feed path changed while locked")
         try:
@@ -311,7 +322,7 @@ class Feed:
                     index["tail_offset"] < 0 or index["tail_offset"] > index["metadata"][1]):
                     raise ValueError("invalid checkpoints")
                 if index["metadata"] == self._metadata(handle):
-                    return index
+                    return index, True
             except (KeyError, TypeError, ValueError) as exc:
                 raise FeedError(f"corrupt feed index: {exc}") from exc
         handle.seek(0)
@@ -324,7 +335,38 @@ class Feed:
                  "tail_offset": offsets[-1] if offsets else 0,
                  "checkpoints": [[entry.sequence, offsets[n]] for n, entry in enumerate(entries) if n % INDEX_STRIDE == 0]}
         self._save_index(handle, index)
-        return index
+        return index, False
+
+    @staticmethod
+    def _verify_records(entries) -> None:
+        from .records import payload
+        for entry in entries:
+            if any(line.lstrip().startswith("[record]") for line in entry.body.splitlines()):
+                payload(entry)
+
+    def _extend_entries(self, handle, cached, metadata) -> list[FeedEntry] | None:
+        """Continue a cached full read with the frames appended since it was taken.
+
+        A live pane re-reads the whole tape every tick, so replaying the entire
+        history makes its cost grow with the plant. The tape is append-only under
+        the feed lock, so reading only the new suffix keeps that cost proportional
+        to what changed. Return None unless the suffix is a contiguous continuation
+        of the cached revision, so a rewrite or truncation is never read as an
+        append and the caller falls back to a full parse.
+        """
+        previous, entries = cached
+        if not entries or previous[0] != metadata[0] or previous[1] >= metadata[1]:
+            return None
+        handle.seek(previous[1])
+        try:
+            parsed = parse_feed(handle.read(metadata[1] - previous[1]),
+                                start_sequence=entries[-1].sequence + 1, home=self.home)
+        except FeedError:
+            return None
+        if not parsed or parsed[0].sequence != entries[-1].sequence + 1:
+            return None
+        self._verify_records(parsed)
+        return entries + parsed
 
     def entries(self, *, start: int = 1, limit: int | None = None) -> list[FeedEntry]:
         if start < 1 or limit is not None and limit < 0:
@@ -340,15 +382,22 @@ class Feed:
             # LOCK_EX still excludes every reader. Index rebuilds use an atomic
             # replace, so racing readers waste a rebuild but cannot corrupt.
             fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
-            index = self._index(handle)
+            index, checkpoint_reused = self._load_index(handle)
             if start > index["sequence"]:
                 return []
             metadata = tuple(index["metadata"])
             if start == 1 and limit is None:
                 with _ENTRIES_CACHE_LOCK:
                     cached = _ENTRIES_CACHE.get(str(self.path))
-                if cached is not None and cached[0] == metadata:
-                    return list(cached[1])
+                if cached is not None:
+                    if cached[0] == metadata:
+                        return list(cached[1])
+                    if checkpoint_reused:
+                        extended = self._extend_entries(handle, cached, metadata)
+                        if extended is not None:
+                            with _ENTRIES_CACHE_LOCK:
+                                _ENTRIES_CACHE[str(self.path)] = (metadata, extended)
+                            return list(extended)
             checkpoints = index["checkpoints"]
             first_seq, first_offset = max((seq, offset) for seq, offset in checkpoints if seq <= start)
             target = index["sequence"] if limit is None else min(index["sequence"], start + limit - 1)
@@ -356,10 +405,7 @@ class Feed:
             handle.seek(first_offset)
             selected = parse_feed(handle.read(end_offset - first_offset), start_sequence=first_seq, home=self.home)
             result = [entry for entry in selected if start <= entry.sequence <= target]
-            from .records import payload
-            for entry in result:
-                if any(line.lstrip().startswith("[record]") for line in entry.body.splitlines()):
-                    payload(entry)
+            self._verify_records(result)
             if start == 1 and limit is None:
                 with _ENTRIES_CACHE_LOCK:
                     _ENTRIES_CACHE[str(self.path)] = (metadata, list(result))
