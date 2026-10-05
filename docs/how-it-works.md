@@ -101,6 +101,21 @@ Session cleanup, callback time limits and provider transport remain caller
 responsibilities. This checkout API is not a resident activation, a durable
 replay mechanism or evidence of a completed live useful-task canary.
 
+`inference_loop.NativeJournal` is an optional caller-owned `record` callback:
+it exclusively creates a new private JSONL file, flushes and fsyncs every event
+before returning, and refuses reuse after a recording failure.
+`read_native_journal` reconstructs the obligation, ordered native context,
+unresolved selections (including calls not yet proposed), used call IDs and
+observed turn/result counts without touching effect state. Torn history,
+changed context and uncorrelated results fail closed without altering evidence.
+A `ready` result marks only a completed-result boundary; it is not permission
+to dispatch or restart with reset budgets/IDs. The caller must restore provider
+state, enforce remaining budgets and reconcile the original effect store under
+current authority. A proposal without a result remains UNKNOWN whether or not
+dispatch started. A retained stop is the previous caller's report, not independent
+acceptance. This API covers single-writer local file/process-crash evidence,
+not power-loss durability, automatic recovery or a deployed resident route.
+
 `inference_transport.NativeSession` implements a caller-owned sequential IPC
 session for that loop. It opens a worker with a model selector and session ID,
 correlates numbered turns, and retains raw terminal provenance in `NativeTurn`.
