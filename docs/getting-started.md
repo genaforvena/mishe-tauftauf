@@ -148,7 +148,7 @@ For a **new manually supervised site**, add `--no-services` to the launcher comm
 python3 -m coordination.launcher --engine-command 'codex' --no-services
 ```
 
-This still creates the site, starts panes and agents, takes initial discovery and CI readings, and updates an external target's plant contract. It skips installing/enabling the resident user services and the release coordinator, and does not register an external manual setup for linked updates. Its service manifest is empty.
+This still creates the site, starts panes and agents, takes initial discovery and CI readings, and updates an external target's plant contract. It skips installing/enabling the resident user services and the release coordinator, and does not register an external manual setup for linked updates. Its service manifest is empty, so the health pane reads `STATE: RED — service failure or empty manifest` and its `SYSTEM ZERO` report reads `FAIL … services-manifest-empty`; that names the deliberately absent resident services, not a broken manual setup.
 
 **It does not start the continuous wake/clear supervisors, CI watcher, or permission-panel follower. It also does not stop or disable services from a previous persistent plant.** Use it for a fresh manual setup, not as a way to turn off an existing installation.
 
