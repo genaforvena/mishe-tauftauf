@@ -40,6 +40,13 @@ Each resident channel has two panes:
 
 The supervisor reads the full dashboard, checks pane liveness and the mind's readiness, and delivers a wake for useful work, a changed observation, addressed event, continuation, or quiet self-pick. It does not invent a passing result to keep the household cheerful.
 
+The delivered prompt carries the restore instructions, a `WAKE` line naming the
+wake's sequence and sensor record, the wake's own body as an `OBLIGATION` block,
+and the `CHAT TRIGGER` block. The supervisor's wake entries are hidden from the
+chat views a mind is handed, and the wall may still name the turn just settled,
+so the `OBLIGATION` block is what names the currently owed work; a missing or
+bodyless wake yields a bounded fallback rather than a fabricated obligation.
+
 ```text
 local system and source
           ↓
