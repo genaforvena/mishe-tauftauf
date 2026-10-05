@@ -2,7 +2,9 @@ import json
 
 import pytest
 
-from mishe_tauftauf.inference_loop import drive_native
+from mishe_tauftauf.inference_loop import (
+    NativeJournal, NativeJournalError, drive_native, read_native_journal,
+)
 from mishe_tauftauf.inference_worker import WorkerTurn
 
 
@@ -146,3 +148,114 @@ def test_cancellation_after_committed_effect_keeps_it_and_stops_next_call():
     assert effects == [CALL]
     assert result["context"]["messages"][-1]["toolCallId"] == CALL["id"]
     assert any(event["kind"] == "tool_result" for event in events)
+
+
+@pytest.mark.parametrize("boundary", ["model_input", "model_output", "proposal", "tool_result"])
+def test_reconstruction_preserves_interrupted_context_and_uncertainty(tmp_path, boundary):
+    path = tmp_path / "caller.jsonl"
+    effects = []
+    with NativeJournal(path) as journal:
+        def record(event):
+            journal(event)
+            if event["kind"] == boundary:
+                raise InterruptedError(boundary)
+
+        with pytest.raises(InterruptedError):
+            drive(Session(turn([CALL])), record=record,
+                  dispatch=lambda call: effects.append(call) or {"status": "completed"})
+    recovered = read_native_journal(path)
+    assert recovered["obligation"] == {"source": "owned-event"}
+    assert recovered["status"] == ("ready" if boundary == "tool_result" else "unknown")
+    assert recovered["pending_calls"] == ([CALL] if boundary in ("model_output", "proposal") else [])
+    assert effects == ([CALL] if boundary == "tool_result" else [])
+    if boundary == "tool_result":
+        _, baseline, _ = drive(Session(turn([CALL]), turn()))
+        expected = next(row["context"] for row in baseline
+                        if row["kind"] == "model_input" and row["turn"] == 1)
+        assert recovered["context"] == expected
+        assert recovered["used_ids"] == [CALL["id"]]
+        assert (recovered["turns"], recovered["calls"]) == (1, 1)
+    else:
+        assert recovered["calls"] == 0
+
+
+def test_unproposed_second_call_remains_unresolved(tmp_path):
+    second = {**CALL, "id": "second|native"}
+    path = tmp_path / "caller.jsonl"
+    with NativeJournal(path) as journal:
+        def record(event):
+            journal(event)
+            if event["kind"] == "tool_result":
+                raise InterruptedError
+
+        with pytest.raises(InterruptedError):
+            drive(Session(turn([CALL, second])), record=record)
+    recovered = read_native_journal(path)
+    assert recovered["status"] == "unknown"
+    assert recovered["pending_calls"] == [second]
+    assert recovered["used_ids"] == sorted([CALL["id"], second["id"]])
+
+
+def test_lost_dispatch_result_never_becomes_absence(tmp_path):
+    path = tmp_path / "caller.jsonl"
+    effects = []
+    def dispatch(call):
+        effects.append(call)
+        raise InterruptedError("receipt lost")
+
+    with NativeJournal(path) as journal, pytest.raises(InterruptedError):
+        drive(Session(turn([CALL])), record=journal, dispatch=dispatch)
+    recovered = read_native_journal(path)
+    assert effects == [CALL]
+    assert recovered["status"] == "unknown"
+    assert recovered["pending_calls"] == [CALL]
+    assert recovered["calls"] == 0
+
+
+@pytest.mark.parametrize("mutation", ["torn", "wrong_id", "changed_context", "after_stop", "changed_obligation"])
+def test_damaged_history_cannot_authorize_continuation(tmp_path, mutation):
+    _, events, _ = drive(Session(turn([CALL]), turn()), complete=lambda ctx: True)
+    if mutation == "wrong_id":
+        next(row for row in events if row["kind"] == "tool_result")["message"]["toolCallId"] = "wrong"
+    elif mutation == "changed_context":
+        next(row for row in events if row["kind"] == "model_input" and row["turn"] == 1)["context"]["messages"].pop()
+    elif mutation == "after_stop":
+        events.append(events[0])
+    elif mutation == "changed_obligation":
+        events[1]["obligation"] = {"source": "different-event"}
+    path = tmp_path / "caller.jsonl"
+    path.write_text("".join(json.dumps(row) + "\n" for row in events)
+                    + ('{"kind":' if mutation == "torn" else ""))
+    before = path.read_bytes()
+    with pytest.raises(NativeJournalError):
+        read_native_journal(path)
+    assert path.read_bytes() == before
+
+
+def test_exclusive_writer_does_not_overwrite_existing_history(tmp_path):
+    path = tmp_path / "caller.jsonl"
+    with NativeJournal(path) as journal:
+        drive(Session(turn()), record=journal, complete=lambda ctx: True)
+        before = path.read_bytes()
+        with pytest.raises(FileExistsError):
+            NativeJournal(path)
+        assert path.read_bytes() == before
+    recovered = read_native_journal(path)
+    assert recovered["stopped"] is True
+    assert recovered["status"] == "complete"
+    assert recovered["context"]["messages"][-1] == turn().assistant
+
+
+def test_failed_fsync_poisoned_writer_cannot_continue(tmp_path, monkeypatch):
+    path = tmp_path / "caller.jsonl"
+    def fail(fd):
+        raise OSError("fsync failed")
+
+    with NativeJournal(path) as journal:
+        monkeypatch.setattr("mishe_tauftauf.inference_loop.os.fsync", fail)
+        with pytest.raises(OSError, match="fsync failed"):
+            drive(Session(turn([CALL])), record=journal)
+        before = path.read_bytes()
+        with pytest.raises(NativeJournalError, match="unavailable"):
+            journal({"kind": "proposal"})
+        assert path.read_bytes() == before
