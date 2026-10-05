@@ -9,6 +9,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
+import pytest
 
 from mishe_tauftauf.discovery import _cpu_busy, latest, renew_scan, scan, scan_age
 from mishe_tauftauf import discovery
@@ -83,7 +84,7 @@ def test_discovery_notices_existing_cpu_class_crossings_not_numeric_drift(tmp_pa
     snapshots = [
         {"created": f"2026-01-01T00:00:0{second}Z", "node": "node", "observations": [
             {"id": "sense.proc.cpu-busy", "state": "verified", "sample": cpu, "kind": "read"},
-            {"id": "sense.journal.kernel-error-rate", "state": "verified",
+            {"id": "sense.journal.kernel-error-count", "state": "verified",
              "sample": f"last-10min kernel-error-count={count}", "kind": "read"},
         ]}
         for second, cpu, count in [
@@ -543,41 +544,100 @@ def _completed(stdout: str, returncode: int = 0) -> subprocess.CompletedProcess:
 
 
 
-def test_journal_error_window_counts_only_complete_successful_output() -> None:
-    lines = ("uvcvideo 1-6:1.1: Failed to resubmit video URB (-1).\n"
-             "spa.alsa: busy\n")
-    with patch("mishe_tauftauf.discovery._journal_command", return_value=lines.encode()):
-        assert discovery._journal_error_window() == {
-            "state": "verified",
-            "sample": "last-10min kernel-error-count=1 endpoints=uvcvideo 1-6:1.1"}
+_JOURNAL_BOOT = "a" * 32
+_JOURNAL_NOW = datetime(2026, 10, 5, 12, tzinfo=timezone.utc)
+_JOURNAL_UPPER = 1791201600000000
 
 
-def test_journal_error_window_distinguishes_empty_success_from_failed_fallback() -> None:
-    with patch("mishe_tauftauf.discovery._journal_command", return_value=b""):
-        assert discovery._journal_error_window() == {
-            "state": "verified", "sample": "last-10min kernel-error-count=0"}
-    with patch("mishe_tauftauf.discovery._journal_command",
-               side_effect=[None, b""]):
-        assert discovery._journal_error_window() == {
-            "state": "verified", "sample": "last-400-errors kernel-error-count=0"}
-    with patch("mishe_tauftauf.discovery._journal_command",
-               side_effect=[None, None]):
-        assert discovery._journal_error_window() == {}
+def _journal_fixture(monkeypatch, output, boots=None):
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return _JOURNAL_NOW
+
+    monkeypatch.setattr(discovery, "datetime", Clock)
+    monkeypatch.setattr(discovery, "_journal_boot",
+                        lambda: next(boots) if boots is not None else _JOURNAL_BOOT)
+    monkeypatch.setattr(discovery, "_journal_command", lambda cmd: output)
+    return discovery._journal_error_window()
 
 
-def test_journal_error_window_falls_back_after_primary_failure_and_checks_both_reads() -> None:
-    calls = []
-    def run(cmd):
-        calls.append(cmd)
-        return None if "--since" in cmd else (
-            b"uvcvideo 1-6:1.1: Failed to resubmit video URB (-1).\n")
-    with patch("mishe_tauftauf.discovery._journal_command", side_effect=run):
-        reading = discovery._journal_error_window()
-    assert reading == {
-        "state": "verified",
-        "sample": "last-400-errors kernel-error-count=1 endpoints=uvcvideo 1-6:1.1"}
-    assert len(calls) == 2
-    assert "-n" in calls[1] and "400" in calls[1]
+def _journal_record(**fields):
+    return {"__CURSOR": "cursor1", "__REALTIME_TIMESTAMP": str(_JOURNAL_UPPER),
+            "_BOOT_ID": _JOURNAL_BOOT, "_TRANSPORT": "kernel", "PRIORITY": "3",
+            **fields}
+
+
+def _journal_bytes(*records):
+    return b"".join((json.dumps(record) + "\n").encode() for record in records)
+
+
+@pytest.mark.parametrize("message", [None, "unrelated error", "Failed to resubmit video URB",
+                                     "first line\nsecond line", [0, 255]])
+def test_journal_count_ignores_message_shape(monkeypatch, message):
+    row = _journal_record()
+    if message is not None:
+        row["MESSAGE"] = message
+    result = _journal_fixture(monkeypatch, _journal_bytes(row))
+    assert result["state"] == "verified"
+    assert result["count"] == 1
+
+
+@pytest.mark.parametrize("offset,verified", [
+    (-600000001, False), (-600000000, True), (0, True), (1, False)])
+def test_journal_window_validates_exact_microsecond_boundaries(monkeypatch, offset, verified):
+    row = _journal_record(__REALTIME_TIMESTAMP=str(_JOURNAL_UPPER + offset))
+    result = _journal_fixture(monkeypatch, _journal_bytes(row))
+    assert result["state"] == ("verified" if verified else "unknown")
+    if verified:
+        assert result["count"] == 1
+
+
+@pytest.mark.parametrize("fields", [
+    {"_TRANSPORT": "syslog"}, {"_BOOT_ID": "b" * 32}, {"PRIORITY": "4"},
+    {"PRIORITY": ["3"]}, {"__CURSOR": ""}, {"__CURSOR": ["x"]},
+    {"__REALTIME_TIMESTAMP": ["1"]}, {"__REALTIME_TIMESTAMP": "-1"},
+    {"_TRANSPORT": ["kernel"]}, {"_BOOT_ID": [_JOURNAL_BOOT]}])
+def test_journal_invalid_scope_or_identity_is_unknown(monkeypatch, fields):
+    result = _journal_fixture(monkeypatch, _journal_bytes(_journal_record(**fields)))
+    assert result["state"] == "unknown"
+    assert "count" not in result
+
+
+@pytest.mark.parametrize("field", list(_journal_record()))
+def test_journal_missing_metadata_is_unknown(monkeypatch, field):
+    row = _journal_record()
+    del row[field]
+    assert _journal_fixture(monkeypatch, _journal_bytes(row))["state"] == "unknown"
+
+
+@pytest.mark.parametrize("output", [None, b"{\n", b"[]\n", b"\xff\n",
+                                   _journal_bytes(_journal_record(), _journal_record())])
+def test_journal_failed_or_invalid_acquisition_never_verifies_zero(monkeypatch, output):
+    result = _journal_fixture(monkeypatch, output)
+    assert result["state"] == "unknown"
+    assert "count" not in result
+
+
+def test_journal_empty_complete_window_and_distinct_entries(monkeypatch):
+    result = _journal_fixture(monkeypatch, b"")
+    assert result["state"] == "verified"
+    assert result["count"] == 0
+    result = _journal_fixture(monkeypatch, _journal_bytes(
+        _journal_record(), _journal_record(__CURSOR="cursor2", PRIORITY="0")))
+    assert result["count"] == 2
+
+
+@pytest.mark.parametrize("boots", [[None], [_JOURNAL_BOOT, "b" * 32],
+                                   [_JOURNAL_BOOT, None]])
+def test_journal_boot_loss_or_change_invalidates_even_empty_output(monkeypatch, boots):
+    assert _journal_fixture(monkeypatch, b"", iter(boots))["state"] == "unknown"
+
+
+def test_journal_monotonic_regression_invalidates_output(monkeypatch):
+    clock = iter([20, 19])
+    monkeypatch.setattr(discovery.time, "monotonic_ns", lambda: next(clock))
+    assert _journal_fixture(monkeypatch, b"")["state"] == "unknown"
 
 
 def test_journal_command_rejects_incomplete_and_over_cap_output() -> None:
@@ -611,24 +671,6 @@ def test_journal_cleanup_wait_uses_only_remaining_deadline() -> None:
     assert child.wait_timeout == 0.25
 
 
-def test_sample_emits_journal_sense_even_when_the_journal_is_unreachable() -> None:
-    """No silent drop: an unreachable window reads unknown, and the pane can show it."""
-    with patch("mishe_tauftauf.discovery._journal_error_window", return_value={}):
-        observed = {row["id"]: row for row in discovery.sample(Path("/nonexistent-site"))["observations"]}
-    row = observed["sense.journal.kernel-error-rate"]
-    assert row["state"] == "unknown"
-    assert row["sample"] == "journal error window unavailable"
-    assert row["kind"] == "read"
-
-
-def test_sample_emits_journal_sense_with_the_live_count() -> None:
-    with patch("mishe_tauftauf.discovery._journal_error_window",
-               return_value={"state": "verified",
-                             "sample": "last-10min kernel-error-count=2 endpoints=uvcvideo 1-6:1.1"}):
-        observed = {row["id"]: row for row in discovery.sample(Path("/nonexistent-site"))["observations"]}
-    row = observed["sense.journal.kernel-error-rate"]
-    assert row["state"] == "verified"
-    assert row["kind"] == "read"
 
 
 def test_renew_scan_refreshes_missing_and_expired_evidence_without_log_spam(tmp_path: Path, monkeypatch) -> None:
