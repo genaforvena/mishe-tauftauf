@@ -283,23 +283,42 @@ def health(home: Path) -> str:
     from .wall_view import pane_lease_lines
     lease_lines, lease_state = pane_lease_lines(home)
     lines.extend(lease_lines)
-    if doctor.returncode or missing or extra or dead or failed_services or linked_failed or lease_state == "STALE":
-        verdict = "FAIL health internal check"
+    causes: list[str] = []
+    if doctor.returncode:
+        causes.append("doctor")
+    if missing:
+        causes.append("windows-missing=" + ",".join(missing))
+    if extra:
+        causes.append("windows-extra=" + ",".join(extra))
+    if dead:
+        causes.append("windows-dead=" + ",".join(dead))
+    if failed_services:
+        causes.append("services=" + ",".join(failed_services))
+    if linked_failed:
+        causes.append("linked-sites=" + ",".join(linked_failed))
+    if lease_state == "STALE":
+        causes.append("pane-lease")
+    # The report is the pane's SYSTEM ZERO line and the only durable record of a
+    # check that runs at most every 600s. Name the failing predicate and the
+    # compute time so a latched RED is diagnosable after the transient is gone.
+    at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if causes:
+        verdict = f"FAIL health internal check at {at} — " + "; ".join(causes)
         lines.append("STATE: RED — internal check needs repair")
     elif windows_unknown:
-        verdict = "UNKNOWN health session unset"
+        verdict = f"UNKNOWN health session unset at {at}"
         lines.append("STATE: UNKNOWN — session unset")
     elif linked_unknown:
-        verdict = "UNKNOWN health linked-site data unavailable"
+        verdict = f"UNKNOWN health linked-site data unavailable at {at}"
         lines.append("STATE: UNKNOWN — linked-site service data unavailable")
     elif local_services_unknown:
-        verdict = "UNKNOWN health local service data unavailable"
+        verdict = f"UNKNOWN health local service data unavailable at {at}"
         lines.append("STATE: UNKNOWN — local service data unavailable")
     elif not expected:
-        verdict = "UNKNOWN health expected windows unset"
+        verdict = f"UNKNOWN health expected windows unset at {at}"
         lines.append("STATE: UNKNOWN — expected windows unset")
     else:
-        verdict = "PASS health internal checks"
+        verdict = f"PASS health internal checks at {at}"
         lines.append("STATE: GREEN — internal checks pass")
     _report(home, "health", verdict)
     return "\n".join(lines) + "\n"

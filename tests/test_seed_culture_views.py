@@ -47,7 +47,9 @@ def test_health_detects_dead_top_even_when_bottom_is_alive(tmp_path: Path, monke
     rendered = health(home)
     assert "WINDOWS: RED health dead=health.0" in rendered
     assert "STATE: RED" in rendered
-    assert (home / "observations" / "health").read_text(encoding="utf-8") == "FAIL health internal check\n"
+    report = (home / "observations" / "health").read_text(encoding="utf-8")
+    assert report.startswith("FAIL health internal check at ")
+    assert "windows-dead=health.0" in report
 
 def test_health_flags_a_frozen_renderer_lease_as_red(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "site"
@@ -75,7 +77,9 @@ def test_health_flags_a_frozen_renderer_lease_as_red(tmp_path: Path, monkeypatch
     rendered = health(home)
     assert "PANE LEASE: RED stale=health(" in rendered
     assert "STATE: RED" in rendered
-    assert (home / "observations" / "health").read_text(encoding="utf-8") == "FAIL health internal check\n"
+    report = (home / "observations" / "health").read_text(encoding="utf-8")
+    assert report.startswith("FAIL health internal check at ")
+    assert "pane-lease" in report
 
 
 def test_health_reports_linked_site_inactive_service_as_red(tmp_path: Path, monkeypatch) -> None:
@@ -126,8 +130,8 @@ def test_health_reports_missing_linked_site_services_as_unknown(tmp_path: Path, 
     rendered = health(home)
     assert "LINKED SITE gone: UNKNOWN" in rendered
     assert "STATE: UNKNOWN — linked-site service data unavailable" in rendered
-    assert (home / "observations" / "health").read_text(encoding="utf-8") == (
-        "UNKNOWN health linked-site data unavailable\n")
+    assert (home / "observations" / "health").read_text(encoding="utf-8").startswith(
+        "UNKNOWN health linked-site data unavailable at ")
 
 
 @pytest.mark.parametrize("fault", [
@@ -266,8 +270,8 @@ def test_health_reports_invalid_local_services_manifest_as_unknown(
     rendered = health(home)
     assert "SERVICES: UNKNOWN — local manifest unavailable or malformed" in rendered
     assert "STATE: UNKNOWN — local service data unavailable" in rendered
-    assert (home / "observations" / "health").read_text(encoding="utf-8") == (
-        "UNKNOWN health local service data unavailable\n")
+    assert (home / "observations" / "health").read_text(encoding="utf-8").startswith(
+        "UNKNOWN health local service data unavailable at ")
 
 
 def _service_home(tmp_path: Path, units: list[str]) -> Path:
@@ -341,4 +345,5 @@ def test_health_reports_unknown_when_session_unset(tmp_path: Path, monkeypatch) 
     rendered = health(home)
     assert "WINDOWS: UNKNOWN — session unset" in rendered
     assert "STATE: UNKNOWN — session unset" in rendered
-    assert (home / "observations" / "health").read_text(encoding="utf-8") == "UNKNOWN health session unset\n"
+    assert (home / "observations" / "health").read_text(encoding="utf-8").startswith(
+        "UNKNOWN health session unset at ")
