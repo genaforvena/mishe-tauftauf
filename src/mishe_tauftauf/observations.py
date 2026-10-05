@@ -119,7 +119,15 @@ def check_report(home: Path, slug: str) -> str:
         age = time.time() - path.stat().st_mtime
     except OSError:
         age = None
-    marker = "STALE — check report exceeds 900 seconds\n" if age is None or age > CHECK_REPORT_MAX_AGE_SECONDS else ""
+    if age is None or age > CHECK_REPORT_MAX_AGE_SECONDS:
+        marker = "STALE — check report exceeds 900 seconds\n"
+    elif age < 0:
+        # A backward clock step (NTP correction, VM restore, suspend/resume)
+        # leaves the mtime ahead of the wall clock; a future timestamp is not
+        # evidence of freshness, so fail closed like an unreadable mtime.
+        marker = "STALE — check report timestamp is ahead of the wall clock\n"
+    else:
+        marker = ""
     return "SYSTEM ZERO\n" + marker + text + ("" if text.endswith("\n") else "\n")
 
 
@@ -131,7 +139,8 @@ def _watcher(home: Path) -> str:
         at = datetime.fromisoformat(json.loads(path.read_text())["at"])
     except (OSError, ValueError, KeyError, TypeError):
         return "unreadable"
-    return "stale" if (datetime.now(timezone.utc) - at).total_seconds() > 30 else "live"
+    age = (datetime.now(timezone.utc) - at).total_seconds()
+    return "stale" if age < 0 or age > 30 else "live"
 
 
 def headline(home: Path) -> str:
