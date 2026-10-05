@@ -139,8 +139,9 @@ A missing, stale, unavailable, or conflicting reading is `UNKNOWN`. That means t
 
 A cross-site runtime-drift reading checks services attributable to linked-site
 sessions and the scanning site's session against their pins. It reads configured
-`PYTHONPATH` from systemd, falling back to the live main process environment for
-roots exported by wrapper scripts. A stale covered root is `drift`; incomplete
+`PYTHONPATH` from systemd, falling back to the live main process environment and
+then its direct children for roots exported by wrapper scripts. A stale covered
+root is `drift`; incomplete
 attribution or pin coverage without an observed stale root is `unknown`, not
 `verified`. Its sample retains the `unattributed` and `unpinned` unit lists so
 readers can distinguish coverage gaps from drift.

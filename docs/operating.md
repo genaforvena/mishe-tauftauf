@@ -311,8 +311,9 @@ against the new pin — the swap transient, not persistent drift. Re-read the
 after the launcher returns before treating the units as drifted.
 
 The across-sites drift sense also reports `UNKNOWN` with `uninspectable=<unit>`
-when a running session unit's import root cannot be discovered from systemd or
-its main process. No root means the pin comparison is unevidenced, not clean.
+when a running session unit's import root cannot be discovered from systemd,
+its main process, or the main process's direct children. No root means the pin
+comparison is unevidenced, not clean.
 
 ### Linked health is a separate live check
 
