@@ -321,6 +321,23 @@ def test_health_dashboard_uses_user_runtime_and_preserves_bus_unknown(tmp_path, 
     assert "STATE: UNKNOWN — services unavailable: Failed to connect to bus: No medium found" in unavailable
 
 
+def test_empty_service_manifest_prints_no_phantom_service_row(tmp_path, monkeypatch):
+    from mishe_tauftauf import wall_view
+
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health" / "services.json").write_text(json.dumps([]), encoding="utf-8")
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("systemctl show called for an empty manifest")
+
+    monkeypatch.setattr(wall_view.subprocess, "run", unexpected)
+    lines, roots, note = wall_view._service_block(home)
+    assert lines == []
+    assert roots == {}
+    assert note == "RED — service failure or empty manifest"
+
+
 def test_health_dashboard_flags_a_frozen_renderer_lease(tmp_path, monkeypatch):
     from mishe_tauftauf import wall_view
 
