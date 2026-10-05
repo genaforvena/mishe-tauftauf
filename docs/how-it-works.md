@@ -85,6 +85,22 @@ Provider authentication/configuration, durable operation identity and recovery,
 and resident activation are separate integrations. This boundary does not
 establish configured-model parity, safe replay, or live internal-loop delivery.
 
+`inference_loop.drive_native` supplies bounded multi-turn orchestration over a
+caller-owned session. It preserves native assistant fields and exact tool-call
+IDs in the next model input. The caller must synchronously persist each input,
+output, proposal and result through `record`; recording failures propagate and
+stop the loop. A phase observer runs before the final cancellation and authority
+eligibility checks. The executor still owns durable intent, current authority
+after persistence, operation identity, exclusion and reconciliation.
+
+Unknown or partial effects stop without retry. Repeated call IDs, ungranted
+capabilities and over-budget selections cannot dispatch; final prose alone
+cannot complete an obligation without the caller's independent completion
+check. Turn-budget exhaustion retains the context and last observed result.
+Session cleanup, callback time limits and provider transport remain caller
+responsibilities. This checkout API is not a resident activation, a durable
+replay mechanism or evidence of a completed live useful-task canary.
+
 ### Development is not just repository maintenance
 
 The generic runtime provides the observation, wall, and handoff loop. A project's charter supplies the goal; its local checks make progress and uncertainty observable. Builds, Git state, and CI are useful checks, but they are not a universal definition of progress.
