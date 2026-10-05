@@ -408,6 +408,21 @@ def clear(home: Path, session: str, role: str) -> str:
 
 
 RETRY_HOLD_SECONDS = 1800
+def _pending_body(home: Path, wake: int) -> str:
+    """The wake receipt's own body, minus its receipt line.
+
+    `seed._state` answers *whether* a turn is owed, and `deliver` announces only
+    its sequence. Seed-sourced entries are filtered out of every other surface a
+    mind is handed, so without this lookup the obligation layer cannot name its
+    own work. A missing or already-settled wake yields no claim rather than a
+    stale one.
+    """
+    entry = next((e for e in Feed(home).entries() if e.sequence == wake), None)
+    if entry is None or entry.source != "seed":
+        return "(no pending wake body; reconcile against the tape)"
+    lines = entry.body.splitlines()
+    return "\n".join(lines[1:]).strip() or "(pending wake carries no body)"
+
 
 def deliver(home: Path, session: str, role: str, wake: int, observation: int | None, trigger: str) -> str:
     """A bounded transport retry, independent of task meaning or receipt review."""
@@ -431,9 +446,17 @@ def deliver(home: Path, session: str, role: str, wake: int, observation: int | N
     data.update(attempts=data["attempts"] + 1, at=datetime.now(timezone.utc).isoformat(), phase="sending")
     _save(path, data)
     try:
+        # The obligation layer is authoritative for which work is owed, but the
+        # receipt line carries only a sequence number. Without this body the only
+        # task a woken mind can read is the wall's or handoff's, which may name a
+        # turn already settled (measured: wake 28366 on this site). Seed entries
+        # are excluded from every other surface the mind is handed, so the body
+        # does not arrive twice.
+        obligation = _pending_body(home, wake)
         seed._send(f"{session}:{role}.1", restore(home, role, session) +
             f"\nWAKE {wake} for {role}; sensor record {observation}. Read the current dashboard.\n"
-            "Reconcile any prior effects before acting; this may restore an existing turn.\nCHAT TRIGGER\n" + trigger)
+            "Reconcile any prior effects before acting; this may restore an existing turn.\n"
+            f"OBLIGATION\n{obligation}\nCHAT TRIGGER\n" + trigger)
         data["phase"] = "delivered"
     except Exception as exc:
         data.update(phase="send-failed", error=str(exc))
