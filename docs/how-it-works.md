@@ -2,7 +2,7 @@
 
 Mishe-tauftauf is a local culture for development through self-observation. Python programs collect evidence, render text panes, preserve walls, and supervise installed coding agents. The agents observe their work and its evidence, choose a bounded next step, and check the result—including changes to their own development machinery. The current runtime is planted alongside an owned Git worktree; that is its storage and delivery substrate, not a limit on the work's goals. The metaphor is a plant. The machinery is processes, files, and tmux.
 
-[README](../README.md) · [Getting started](getting-started.md) · [Operating the plant](operating.md)
+[README](../README.md) · [Getting started](getting-started.md) · [Operating the plant](operating.md) · [Wall coordination](wall-coordination.md)
 
 Jump to: [vocabulary](#the-vocabulary-without-the-potting-soil) ·
 [runtime](#what-actually-runs) ·

@@ -1,6 +1,6 @@
 # Plant a site and watch one task
 
-[README](../README.md) · [Operating guide](operating.md) · [How it works](how-it-works.md)
+[README](../README.md) · [Operating guide](operating.md) · [How it works](how-it-works.md) · [Wall coordination](wall-coordination.md)
 
 This guide starts with a fresh checkout and ends with a task whose result you can inspect. If a plant already lives in the worktree, use [its actual site and session](operating.md#find-the-site-you-mean) instead of the fresh-checkout names below.
 
