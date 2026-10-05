@@ -171,7 +171,7 @@ def render(home: Path) -> str:
             stalls = clear_stalls(entries)
             if not stalls:
                 lines.append("CLEAR STALL: GREEN — no overdue settled wake")
-            faulted = False
+            faulted: list[str] = []
             for role, receipt in sorted(stalls.items()):
                 wake = int(YIELD_RE.fullmatch(_receipt_line(receipt.body))[2])
                 owner = "witness" if role == "health" else "health"
@@ -184,9 +184,9 @@ def render(home: Path) -> str:
                     continue
                 lines.append(f"CLEAR STALL: RED {role} wake={wake} yield={receipt.sequence} owner={owner}")
                 lines.append(f"  Evidence: {Feed(home).path} settled={receipt.timestamp}; inspect supervisor and idle prompt before repair")
-                faulted = True
+                faulted.append(role)
             if faulted:
-                verdict = "FAIL witness overdue clear needs checked supervisor repair"
+                verdict = f"FAIL witness overdue clear {','.join(faulted)} needs checked supervisor repair"
         except (ValueError, TypeError, OverflowError) as exc:
             lines.append(f"CLEAR STALL: UNKNOWN — receipt timing unavailable: {exc}")
             verdict = "UNKNOWN witness clear-stall receipt evidence"
@@ -195,7 +195,7 @@ def render(home: Path) -> str:
             pends = stale_pends(entries)
             if not pends:
                 lines.append("STALE PEND: GREEN — no overdue pending wake")
-            faulted = False
+            faulted: list[str] = []
             for role, receipt in sorted(pends.items()):
                 wake = int(WAKE_RE.fullmatch(_receipt_line(receipt.body))[2])
                 owner = "witness" if role == "health" else "health"
@@ -209,9 +209,9 @@ def render(home: Path) -> str:
                     continue
                 lines.append(f"STALE PEND: RED {role} wake={wake} pending={receipt.sequence} owner={owner}")
                 lines.append(f"  Evidence: {Feed(home).path} woken={receipt.timestamp}; inspect supervisor and idle prompt before repair")
-                faulted = True
+                faulted.append(role)
             if faulted:
-                verdict = "FAIL witness overdue pending wake needs checked supervisor repair"
+                verdict = f"FAIL witness overdue pending wake {','.join(faulted)} needs checked supervisor repair"
         except (ValueError, TypeError, OverflowError) as exc:
             lines.append("STALE PEND: UNKNOWN — receipt timing unavailable: " + str(exc))
             verdict = "UNKNOWN witness stale-pend receipt evidence"
