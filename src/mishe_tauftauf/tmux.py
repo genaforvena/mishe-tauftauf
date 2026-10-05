@@ -165,6 +165,14 @@ def check_pane(home: Path, session: str, slug: str, wait: float = 11.0) -> tuple
     # them exactly, because a live pane's own text may quote the same words.
     if first == f"UNKNOWN — top-pain {slug} pane missing\n":
         return False, f"HOLD pane-missing: {slug}"
+    # A live renderer can have a process before it prints its first frame. Treat
+    # the empty sentinel like the lease path below: observe two bounded windows
+    # before declaring a fault.
+    for _ in range(2):
+        if first != f"UNKNOWN — top-pain {slug} pane empty\n":
+            break
+        time.sleep(wait)
+        first = capture_raw(session, slug)
     if first == f"UNKNOWN — top-pain {slug} pane empty\n":
         return False, f"HOLD pane-empty: {slug}"
     if first.startswith("UNKNOWN — top-pain"):
