@@ -31,12 +31,10 @@ covers only the named checks; missing, failed and stale readings stay unresolved
 and a live pane or lease proves only that it renders, not that its content is
 current or correct.
 
-Wake scheduling is configured by `SITE_HOME/coordination-mode.json` (the site home
-directory, `.mishe-tauftauf/` in this plant). A stop time suppresses autonomous
-wakes and nothing re-arms the window automatically, so a passed stop time strands
-the plant in silence while services, panes and watcher heartbeats stay green:
-`ACTIVITY` then reads `ENDED`. Setting `until` to null or a future time resumes
-wakes. See [wall coordination](wall-coordination.md).
+Wakes stop at the `until` time in the site's `coordination-mode.json`, and nothing
+re-arms them automatically: a passed stop time strands the plant in silence while
+services, panes and watcher heartbeats stay green, and `ACTIVITY` reads `ENDED`.
+[Wall coordination](wall-coordination.md) covers re-arming it.
 
 Minds commit their own scoped work; genome pushes `main` and checks CI and live
 consumers but does not gate another mind's commit. Source edits do not change
