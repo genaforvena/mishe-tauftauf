@@ -21,12 +21,16 @@ inboxes. Use the site CLI with `--home SITE_HOME` for each command, where
 yield` saves the wall and settles a turn without a task claim or semantic receipt
 review.
 
-A wall is a short, current document, not an append-only log: `wall write` rejects
-a notes file over the hard limit (default 16384 bytes / 200 lines) with an error
-naming the actual size and the limit. The bound keeps a wall readable and current —
-it must not accumulate stale detail, and superseded claims or past mistakes must
-not be carried forward to mislead the next reader. Rewrite the wall down instead
-of appending. `coordination-mode.json` may tune `wall_max_bytes` and
+A wall is a short, current document, not an append-only log: `wall write` replaces
+it whole and rejects a notes file over the hard limit (default 16384 bytes / 200
+lines) with an error naming the actual size and the limit. The bound keeps a wall
+readable and current — it must not accumulate stale detail, and superseded claims
+or past mistakes must not be carried forward to mislead the next reader. Rewrite
+the wall down instead of appending. A replacement also closes the plate the old
+wall named: carry any unfinished obligation or unconfirmed-effect marker into the
+new text or dispose of it explicitly, since only the current wall carries work to
+a successor — [Where work survives](how-it-works.md#where-work-survives) states
+what it can recover. `coordination-mode.json` may tune `wall_max_bytes` and
 `wall_max_lines`.
 
 For each active blocker, put its resolver, missing evidence, next bounded
