@@ -295,7 +295,9 @@ the checkout's `AGENTS.md` untouched. Then confirm the dashboards' `RUNTIME` lin
 reads `MATCH` when every covered service imports the pin, `DECLARED` when the
 only divergence is the release coordinator's intended checkout root (the core
 plant's own reading, which keeps the state line GREEN), and `DRIFT` for any other
-service still importing another root. Check the actual consumer and its live
+service still importing another root. A missing or invalid `health/services.json`
+leaves the service roots unread, so the line reports `services=UNKNOWN`, not
+`MATCH`, `DECLARED` or `DRIFT`. Check the actual consumer and its live
 pane. Moving the pin is not a push or a CI result; keep source, CI and running
 code as separate evidence.
 
