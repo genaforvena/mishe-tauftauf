@@ -113,6 +113,27 @@ def test_explicit_revert_returns_failure_when_consumer_restart_fails(tmp_path, m
     assert wall_patch.status(home, "change")["phase"] == "revert-failed"
 
 
+def test_successful_revert_clears_stale_rollback_failure(tmp_path, monkeypatch):
+    # A failed revert leaves `rollback_failure`; a later successful revert must
+    # not keep the old failure beside a healthy reverted record. The verified
+    # health-pane-lease-freshness record carried exactly that stale marker after
+    # its final verify revert.
+    home, source, deployed = layout(tmp_path)
+    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
+    source.write_text("after\n")
+    monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": True})
+    wall_patch.check(home, "change", [sys.executable, "-c", "pass"])
+    wall_patch.apply(home, "change", [sys.executable, "-c", "pass"], [sys.executable, "-c", "pass"])
+    with pytest.raises(ValueError, match="revert activation failed"):
+        wall_patch.revert(home, "change", [sys.executable, "-c", "raise SystemExit(1)"])
+    failed = wall_patch.status(home, "change")
+    assert failed["phase"] == "revert-failed" and failed["rollback_failure"]
+    wall_patch.revert(home, "change", [sys.executable, "-c", "pass"])
+    recovered = wall_patch.status(home, "change")
+    assert recovered["phase"] == "reverted"
+    assert "rollback_failure" not in recovered
+
+
 def test_failed_activation_of_new_runtime_file_removes_it_and_preserves_source(tmp_path, monkeypatch):
     home, source, deployed = layout(tmp_path)
     name = "src/mishe_tauftauf/added.py"

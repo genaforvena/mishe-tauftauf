@@ -242,6 +242,10 @@ def _revert(home, identity, record, activate):
         record["phase"] = "reverted" if record["revert_activation"]["code"] == 0 else "reverted-activation-failed"
         if record["revert_activation"]["code"]:
             raise ValueError("revert activation failed; scoped bytes restored but consumer state UNKNOWN")
+        # A later successful revert supersedes an earlier failed one; leaving the
+        # stale marker makes an applied, verified record (e.g. a final verify
+        # revert) carry a failure that no longer applies.
+        record.pop("rollback_failure", None)
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         record.update(phase="revert-failed", rollback_failure=str(exc))
         raise
