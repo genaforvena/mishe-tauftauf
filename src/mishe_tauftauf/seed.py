@@ -99,6 +99,7 @@ def _state(home: Path, slug: str, *, entries=None) -> tuple[str | None, int | No
     if entries is None:
         entries = Feed(home).entries()
     digest = None
+    unresolved_observation = None
     last_observation = None
     last_woken_observation = None
     last_wake_at = None
@@ -112,7 +113,8 @@ def _state(home: Path, slug: str, *, entries=None) -> tuple[str | None, int | No
         line = _receipt_line(entry.body)
         if match := OBS_RE.fullmatch(line):
             if match.group(1) == slug:
-                digest = match.group(2) or record_payload(entry)["digest"]
+                digest = match.group(2)
+                unresolved_observation = None if digest else entry
                 last_observation = entry.sequence
         elif match := WAKE_RE.fullmatch(line):
             if match.group(1) == slug:
@@ -127,6 +129,10 @@ def _state(home: Path, slug: str, *, entries=None) -> tuple[str | None, int | No
         elif match := CLEAR_RE.fullmatch(line):
             if match.group(1) == slug:
                 last_clear = int(match.group(2))
+    # Only the final observation's digest is returned; resolve its immutable
+    # record once instead of reading one record per historical observation.
+    if digest is None and unresolved_observation is not None:
+        digest = record_payload(unresolved_observation)["digest"]
     return digest, pending, last_yield, last_clear, last_observation, last_woken_observation, last_wake_at, continue_yield
 
 
