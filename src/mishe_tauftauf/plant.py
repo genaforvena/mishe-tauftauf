@@ -371,15 +371,18 @@ def _refresh_permissions_bottom_pane(home: Path, session: str, source: Path) -> 
 
     The bottom pane is only respawned by ``ensure`` when created or dead,
     so it keeps the tmux server's stale ``PYTHONPATH`` across pin advances.
-    Respawn only when no foreground command is running, preserving active
-    decisions in the permissions store.
+    The pane is idle whenever one of its own shells is in the foreground: the
+    generated ``permissions-shell`` runs the selector menu (``sh``) and
+    ``exec``s ``bash`` after the operator quits. Respawn then, preserving
+    active decisions in the permissions store; skip while any other command
+    runs.
     """
     perm_target = f"{session}:permissions"
     perm_panes = _tmux("list-panes", "-t", perm_target, "-F", "#{pane_index}").stdout.decode().splitlines()
     if "1" in perm_panes:
         current_cmd = _tmux("display-message", "-p", "-t", f"{perm_target}.1",
                             "#{pane_current_command}").stdout.decode().strip()
-        if current_cmd == "bash":
+        if current_cmd in {"bash", "sh"}:
             shell = home / "bin" / "permissions-shell"
             _tmux("respawn-pane", "-k", "-t", f"{perm_target}.1", "env",
                   f"PYTHONPATH={source / 'src'}", str(shell))

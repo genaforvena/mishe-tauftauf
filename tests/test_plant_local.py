@@ -673,6 +673,36 @@ def test_refresh_permissions_bottom_pane_respawns_when_idle(tmp_path: Path, monk
                           f"PYTHONPATH={source / 'src'}", str(home / "bin" / "permissions-shell"))
 
 
+def test_refresh_permissions_bottom_pane_respawns_at_selector_menu(tmp_path: Path, monkeypatch) -> None:
+    # The selector menu is the pane's normal idle state: permissions-shell runs
+    # it as `sh` and only execs `bash` after the operator quits. The guard must
+    # treat that shell as idle or a pin advance never refreshes the selector.
+    home = tmp_path / "site"
+    (home / "bin").mkdir(parents=True)
+    (home / "bin" / "permissions-shell").write_text("#!/bin/sh\n", encoding="utf-8")
+    source = tmp_path / "release"
+    (source / "src").mkdir(parents=True)
+
+    calls = []
+    def fake_tmux(*args, check=True):
+        calls.append(args)
+        if args[0] == "list-panes":
+            class R: stdout = b"0\n1\n"
+            return R()
+        if args[0] == "display-message":
+            class R: stdout = b"sh\n"
+            return R()
+        class R: returncode = 0; stdout = b""
+        return R()
+
+    monkeypatch.setattr(plant, "_tmux", fake_tmux)
+    plant._refresh_permissions_bottom_pane(home, "test", source)
+
+    respawn = [c for c in calls if c[0] == "respawn-pane"]
+    assert len(respawn) == 1
+    assert respawn[0] == ("respawn-pane", "-k", "-t", "test:permissions.1", "env",
+                          f"PYTHONPATH={source / 'src'}", str(home / "bin" / "permissions-shell"))
+
 def test_refresh_permissions_bottom_pane_skips_when_busy(tmp_path: Path, monkeypatch) -> None:
     # A foreground command in the permissions pane means the operator is
     # actively using it; respawning would destroy their work.
