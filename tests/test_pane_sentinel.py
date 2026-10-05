@@ -48,6 +48,14 @@ class PaneSentinelTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("pane-empty", line)
 
+    def test_empty_pane_retries_until_first_frame(self):
+        empty = "UNKNOWN — top-pain sensor pane empty\n"
+        body = "BODY\n"
+        ok, line = self._check([empty, body + self.LEASE.format(1) + "\n",
+                                body + self.LEASE.format(2) + "\n"])
+        self.assertTrue(ok, line)
+        self.assertIn("pane-live", line)
+
 
 if __name__ == "__main__":
     unittest.main()
