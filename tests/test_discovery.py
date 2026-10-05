@@ -589,6 +589,28 @@ def test_journal_command_rejects_incomplete_and_over_cap_output() -> None:
             [sys.executable, "-c", "import sys; sys.stdout.write('12345')"]) is None
 
 
+def test_journal_cleanup_wait_uses_only_remaining_deadline() -> None:
+    class Child:
+        killed = False
+        wait_timeout = None
+
+        def poll(self):
+            return None
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout=None):
+            self.wait_timeout = timeout
+            raise subprocess.TimeoutExpired(["journalctl"], timeout)
+
+    child = Child()
+    with patch("mishe_tauftauf.discovery.time.monotonic", return_value=10.0):
+        discovery._kill_journal_process(child, 10.25)
+    assert child.killed
+    assert child.wait_timeout == 0.25
+
+
 def test_sample_emits_journal_sense_even_when_the_journal_is_unreachable() -> None:
     """No silent drop: an unreachable window reads unknown, and the pane can show it."""
     with patch("mishe_tauftauf.discovery._journal_error_window", return_value={}):
