@@ -379,6 +379,7 @@ def _kill_journal_process(process: subprocess.Popen, deadline: float) -> None:
         pass
 
 
+def _journal_command(cmd: list[str], timeout: float = 10) -> bytes | None:
     """Return complete bounded stdout, or None when acquisition is incomplete."""
     deadline = time.monotonic() + timeout
     process = None
