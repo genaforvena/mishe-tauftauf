@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from mishe_tauftauf import plant
@@ -749,3 +750,45 @@ def test_refresh_permissions_bottom_pane_skips_when_missing(tmp_path: Path, monk
     plant._refresh_permissions_bottom_pane(home, "test", source)
 
     assert calls == [("list-panes", "-t", "test:permissions", "-F", "#{pane_index}")]
+
+def test_plant_reconciles_services_before_discovery_scan(tmp_path: Path, monkeypatch) -> None:
+    """A discovery.scan failure must not leave services unreconciled.
+
+    Health wake 34119/34142: select_source writes the pin, then plant() calls
+    discovery.scan(). When scan raised (unbound _journal_command), reconcile_services
+    never ran and the pin/services mismatch read DRIFT. The fix moves
+    reconcile_services before the scan so a scan failure can't cause drift.
+    """
+    home = tmp_path / "site"
+    home.mkdir()
+    (home / "charters").mkdir()
+    (home / "top-pains").mkdir()
+    (home / "health").mkdir()
+
+    call_order: list[str] = []
+
+    monkeypatch.setattr(plant.seed, "_require_worktree", lambda h: None)
+    monkeypatch.setattr(plant.seed, "init", lambda h, slug, engine_command: None)
+    monkeypatch.setattr(plant.seed, "start", lambda h, session, slug, timeout: "")
+    monkeypatch.setattr(plant, "owns_session", lambda h, session: True)
+    monkeypatch.setattr(plant, "ensure_engine_for_new_minds", lambda h, engine_command: None)
+    monkeypatch.setattr(plant.seed_permission_panel, "ensure", lambda h, session: None)
+    monkeypatch.setattr(plant, "_tmux",
+                        lambda *a, **k: SimpleNamespace(stdout=SimpleNamespace(decode=lambda: "")))
+    monkeypatch.setattr(plant, "write_service_manifest", lambda h, session, persist: [])
+
+    def mock_reconcile(h, session, persist, python):
+        call_order.append("reconcile_services")
+    monkeypatch.setattr(plant, "reconcile_services", mock_reconcile)
+
+    def mock_scan(h):
+        call_order.append("discovery.scan")
+        raise RuntimeError("scan failed (simulated)")
+    monkeypatch.setattr(plant.discovery, "scan", mock_scan)
+    monkeypatch.setattr(plant.subprocess, "run",
+                        lambda *a, **k: SimpleNamespace(returncode=0, stdout=b""))
+
+    with pytest.raises(RuntimeError, match="scan failed"):
+        plant.plant(home, "core", "python3", "operator", True, runtime_only=True)
+
+    assert call_order == ["reconcile_services", "discovery.scan"]
