@@ -101,6 +101,12 @@ journalctl --user -u "$SESSION-$ROLE.service" -n 100 --no-pager
 
 The core plant also has a `SESSION-coordination.service` release follower. Manual setups have no newly installed resident services, so absence of those units is not itself a failed setup. Conversely, `--no-services` does not deactivate units from an earlier persistent plant.
 The health dashboard's `STATE: UNKNOWN — services unavailable: Failed to connect to bus: No medium found` means its renderer could not reach the user's systemd bus; it does not prove that a listed unit is down. Diagnose unit states as the same user with a reachable user bus (usually `XDG_RUNTIME_DIR=/run/user/$(id -u)`) before attributing UNKNOWN to service health. The dashboard supplies this runtime directory only when unset; genuine query failures remain UNKNOWN.
+Rendered `SYSTEM ZERO` check reports retain their verdict text and gain a
+`STALE` marker when the report file is older than 900 seconds or its mtime
+cannot be read. A failing health report names the check that failed and when
+it was computed, so a latched RED stays diagnosable. Roles without a
+deterministic report producer show that disposition without attaching legacy
+report files.
 
 ### Doctor is a check with a repair side effect
 
