@@ -561,6 +561,22 @@ def test_witness_digest_normalizes_only_volatile_evidence_and_chat_text():
         "witness", framed.replace("idle 5s", "idle 61s").replace("0.1h ago", "0.9h ago"))
 
 
+def test_witness_digest_excludes_advisor_status_lines():
+    from mishe_tauftauf.wall import observation_text
+    frame = (
+        "HEADLINE: GREEN — mind ok\n"
+        "ANALYSIS ADVISOR: READY wake=1 suggested=investigate seconds=2 artifact=/tmp/1.json\n"
+        "STATE: GREEN\n"
+    )
+    changed_advice = frame.replace(
+        "READY wake=1 suggested=investigate seconds=2 artifact=/tmp/1.json",
+        "UNKNOWN wake=2 suggested=wait seconds=9 artifact=/tmp/2.json",
+    )
+    assert observation_text("witness", frame) == observation_text("witness", changed_advice)
+    assert observation_text("witness", frame) != observation_text(
+        "witness", frame.replace("STATE: GREEN", "STATE: RED"))
+
+
 def test_wall_outcome_requires_evidence_and_cli_records_prose(tmp_path):
     from mishe_tauftauf import wall
     from mishe_tauftauf.cli import main

@@ -68,6 +68,8 @@ def observation_text(role: str, sensor: str) -> str:
                     in_chat = False
                 else:
                     continue
+            if line.startswith("ANALYSIS ADVISOR:"):
+                continue
             line = re.sub(r"((?:Active )?[Ee]vidence: private report=)\S+", r"\1<private evidence path>", line)
             line = re.sub(r"(?<=Evidence: )/(?:\S+)", "<private evidence path>", line)
             normalized.append(line)
