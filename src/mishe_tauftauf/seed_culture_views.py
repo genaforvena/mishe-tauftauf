@@ -167,8 +167,18 @@ def health(home: Path) -> str:
             pane_states = {}
         missing = sorted(expected - actual)
         extra = sorted(actual - expected)
-        dead = sorted(f"{name}.0" for name in expected & actual
-                      if pane_states.get((name, "0")) != "0")
+        dead = [f"{name}.0" for name in expected & actual
+                if pane_states.get((name, "0")) != "0"]
+        # A chartered mind's bottom pane can die at status 127 while its
+        # renderer (.0) stays live: `remain-on-exit` keeps the corpse visible, so
+        # the renderer lease cannot see it. `doctor --panes` checks this, but
+        # nothing runs that periodically, and one busy peer masks a wedged mind
+        # on the global activity line. Detect it from the pane snapshot already
+        # taken, for windows that ship a mind launcher.
+        dead += [f"{name}.1" for name in expected & actual
+                 if (home / "minds" / name).is_file()
+                 and pane_states.get((name, "1"), "0") != "0"]
+        dead = sorted(dead)
         lines.append("WINDOWS: " + ("PASS " if expected and not missing and not extra and not dead else "RED ") +
                      ",".join(sorted(actual)) + (" missing=" + ",".join(missing) if missing else "") +
                      (" dead=" + ",".join(dead) if dead else "") +
