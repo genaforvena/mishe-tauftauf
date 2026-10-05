@@ -101,6 +101,21 @@ Session cleanup, callback time limits and provider transport remain caller
 responsibilities. This checkout API is not a resident activation, a durable
 replay mechanism or evidence of a completed live useful-task canary.
 
+`inference_transport.NativeSession` implements a caller-owned sequential IPC
+session for that loop. It opens a worker with a model selector and session ID,
+correlates numbered turns, and retains raw terminal provenance in `NativeTurn`.
+A lifetime deadline and cumulative stdout/stderr limit apply across exchanges.
+Concurrent calls are refused. Failed exchanges kill and reap the isolated
+process group and prohibit reuse; they never retry an effect.
+
+Use the session as a context manager. Normal disposal requires both a `closed`
+receipt and a clean worker exit; a successful earlier turn cannot certify
+successful cleanup. Cancellation and time/output limits also apply during
+disposal. Deadline checks occur during API calls, not in an idle watchdog.
+The caller still supplies the provider worker, current authority, durable
+effects and recovery. This transport does not activate a resident or establish
+credential/account parity.
+
 ### Development is not just repository maintenance
 
 The generic runtime provides the observation, wall, and handoff loop. A project's charter supplies the goal; its local checks make progress and uncertainty observable. Builds, Git state, and CI are useful checks, but they are not a universal definition of progress.

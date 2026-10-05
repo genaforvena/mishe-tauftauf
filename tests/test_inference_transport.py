@@ -1,0 +1,104 @@
+import sys
+
+import pytest
+
+from mishe_tauftauf.inference_transport import NativeSession
+from mishe_tauftauf.inference_worker import WorkerError
+
+
+FRAME = {"terminal": "done", "assistant": {"role": "assistant",
+         "stopReason": "toolUse", "content": [{"type": "toolCall",
+         "id": "call_native|fc_native", "name": "inspect", "arguments": {}}]},
+         "wire_usage": None, "wire_terminal": {"correlated": True}}
+
+
+def command(tmp_path, *, turn=None, close=None):
+    script = tmp_path / "worker.py"
+    script.write_text(
+        "import json,sys,time\n"
+        "def emit(value): print(json.dumps(value), flush=True)\n"
+        "request=json.loads(sys.stdin.readline())\n"
+        "emit({'type':'ready'})\n"
+        "for line in sys.stdin:\n"
+        " request=json.loads(line)\n"
+        " if request['type']=='turn':\n"
+        + "  " + (turn or f"emit({{'type':'turn','id':request['id'],'frame':{FRAME!r}}})") + "\n"
+        " elif request['type']=='close':\n"
+        + "  " + (close or "emit({'type':'closed'}); sys.exit(0)") + "\n"
+    )
+    return [sys.executable, str(script)]
+
+
+def assert_reaped(session):
+    assert session.closed and session.process.poll() is not None
+    assert all(stream.closed for stream in
+               (session.process.stdin, session.process.stdout, session.process.stderr))
+    with pytest.raises(WorkerError, match="closed"):
+        session.turn({})
+
+
+def test_sequential_native_turns_and_clean_disposal(tmp_path):
+    with NativeSession(command(tmp_path), "fixture/model", "session", timeout=3) as session:
+        first = session.turn({"messages": []})
+        second = session.turn({"messages": [first.assistant]})
+        assert first.assistant == second.assistant == FRAME["assistant"]
+        assert first.wire_usage is None
+        assert first.wire_terminal == {"correlated": True}
+        assert session.next_id == 3
+    assert session.process.returncode == 0
+    assert_reaped(session)
+
+
+@pytest.mark.parametrize("close,match", [
+    ("emit({'type':'closed'}); sys.exit(7)", "failed after disposal"),
+    ("sys.exit(0)", "exited|EOF"),
+    ("emit({'type':'error'})", "disposal receipt"),
+    ("emit({'type':'closed'}); time.sleep(30)", "time limit"),
+])
+def test_disposal_failure_invalidates_successful_turn(tmp_path, close, match):
+    session = NativeSession(command(tmp_path, close=close), "fixture/model", "session", timeout=.5)
+    assert session.turn({}).assistant == FRAME["assistant"]
+    with pytest.raises(WorkerError, match=match):
+        session.close()
+    assert_reaped(session)
+
+
+@pytest.mark.parametrize("turn,match", [
+    ("emit({'type':'turn','id':True,'frame':{}})", "mismatched"),
+    ("emit({'type':'turn','id':99,'frame':{}})", "mismatched"),
+    ("print('{',flush=True)", "malformed"),
+    ("sys.stdout.close(); sys.exit(0)", "exited|EOF"),
+    ("print('x'*4096,file=sys.stderr,flush=True)", "output limit"),
+    ("time.sleep(30)", "time limit"),
+])
+def test_failed_exchange_reaps_and_refuses_reuse(tmp_path, turn, match):
+    session = NativeSession(command(tmp_path, turn=turn), "fixture/model", "session",
+                            timeout=.5, max_output=1024)
+    with pytest.raises(WorkerError, match=match):
+        session.turn({})
+    assert_reaped(session)
+
+
+def test_current_cancellation_reaps_before_next_turn(tmp_path):
+    cancelled = False
+    session = NativeSession(command(tmp_path), "fixture/model", "session",
+                            timeout=3, cancelled=lambda: cancelled)
+    session.turn({})
+    cancelled = True
+    with pytest.raises(WorkerError, match="cancelled"):
+        session.turn({})
+    assert_reaped(session)
+
+
+def test_concurrent_call_refused_without_killing_owner(tmp_path):
+    with NativeSession(command(tmp_path), "fixture/model", "session", timeout=3) as session:
+        session.lock.acquire()
+        try:
+            with pytest.raises(WorkerError, match="concurrent"):
+                session.turn({})
+            with pytest.raises(WorkerError, match="concurrent"):
+                session.close()
+        finally:
+            session.lock.release()
+        assert session.turn({}).assistant == FRAME["assistant"]
+    assert_reaped(session)
