@@ -458,6 +458,7 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
         _tmux("set-window-option", "-t", f"{session}:{name}", "automatic-rename", "off")
     (home / "health").mkdir(exist_ok=True)
     write_service_manifest(home, session, persist)
+    reconcile_services(home, session, persist, sys.executable)
     previous_session = os.environ.get("MISHE_SEED_SESSION")
     os.environ["MISHE_SEED_SESSION"] = session
     try:
@@ -470,7 +471,6 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
             os.environ.pop("MISHE_SEED_SESSION", None)
         else:
             os.environ["MISHE_SEED_SESSION"] = previous_session
-    reconcile_services(home, session, persist, sys.executable)
     actual = set(_tmux("list-windows", "-t", session, "-F", "#{window_name}").stdout.decode().splitlines())
     required = {operator_window, *ROLES, "permissions", *site_declared_roles(home)}
     if not required <= actual:
