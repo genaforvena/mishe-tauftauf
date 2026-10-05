@@ -78,8 +78,19 @@ def run_renderer(home: Path, slug: str, timeout: float = 10.0) -> RenderedPain:
     path = home / "top-pains" / slug
     if not executable(path):
         return _unknown(slug, "missing-or-not-executable")
+    # Headless renderers need the same site session as resident panes, unless
+    # their caller deliberately supplied a session value.
     try:
-        result = subprocess.run([str(path)], stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout)
+        env = os.environ.copy()
+        if not env.get("MISHE_SEED_SESSION"):
+            try:
+                session = (home / ".seed-raised").read_text(encoding="utf-8").split()[0]
+            except (OSError, UnicodeError, IndexError):
+                session = None
+            if session:
+                env["MISHE_SEED_SESSION"] = session
+        result = subprocess.run([str(path)], stdin=subprocess.DEVNULL, capture_output=True,
+                                timeout=timeout, env=env)
     except subprocess.TimeoutExpired:
         return _unknown(slug, f"timeout-after-{timeout:g}s")
     except OSError as exc:
