@@ -33,7 +33,7 @@ current or correct.
 
 Wakes stop at the `until` time in the site's `coordination-mode.json` (a null
 time leaves the window open), and nothing re-arms them automatically: a passed
-stop time strands the plant in silence while services, panes and watcher
+stop time suppresses new wakes while services, panes and watcher
 heartbeats stay green, and `ACTIVITY` reads `ENDED`.
 [Wall coordination](wall-coordination.md) covers re-arming it.
 
