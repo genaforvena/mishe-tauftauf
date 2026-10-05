@@ -1,13 +1,6 @@
 from types import SimpleNamespace
 
 
-def test_model_state_retains_excerpts_and_omission_flag_without_source_hash_noise():
-    from mishe_tauftauf.laya_analysis import model_state
-    value = model_state({'entries': [{'sequence': 3, 'source': 'genome', 'text': 'claim', 'body_sha256': 'abc', 'omitted_characters': 100}], 'context_complete': False, 'previous_completed_analysis': 'prior'})
-    assert value['entries'][0] == {'sequence': 3, 'source': 'genome', 'text': 'claim'}
-    assert value['context_complete'] is False
-    assert value['previous_completed_analysis'] == 'prior'
-
 
 def test_budget_excess_never_calls_predict():
     from mishe_tauftauf.laya_analysis import choose

@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from mishe_tauftauf.feed import Feed
+from mishe_tauftauf.records import REFERENCE_RE, payload
 
 QUESTION = 'Which witness analysis would be most useful now?'
 ANALYSES = {
@@ -55,11 +56,56 @@ def _write(path, value):
             os.unlink(name)
 
 
+def _previous_context(home: Path, entries) -> dict | None:
+    previous = next((e for e in reversed(entries) if
+                     (e.source == 'seed' and e.body.startswith('[work] channel=witness ')) or
+                     (e.source == 'witness' and e.body.startswith('Wall outcome '))), None)
+    if previous is None:
+        return None
+    context = {'sequence': previous.sequence, 'source': previous.source,
+               'body_sha256': _hash(previous.body.encode()),
+               'type': 'legacy-work' if previous.source == 'seed' else 'wall-outcome',
+               'status': 'UNKNOWN', 'semantic_acceptance': 'UNKNOWN',
+               'text': '', 'omitted_characters': 0}
+    if previous.source == 'seed':
+        text = previous.body.split('HANDOFF:\n', 1)[-1]
+        context.update(status='legacy-author-report', text=text[:240],
+                       omitted_characters=max(0, len(text) - 240))
+        return context
+    try:
+        references = [line for line in previous.body.splitlines() if line.startswith('[record]')]
+        if len(references) != 1 or not REFERENCE_RE.fullmatch(references[0]):
+            raise ValueError('missing or invalid immutable outcome reference')
+        context['reference'] = references[0]
+        data = payload(previous)
+        text = data['text']
+        kind = data['kind']
+        if (data['role'] != 'witness' or
+                kind not in {'accepted', 'blocker-resolved', 'blocker-retired', 'hypothesis-changed'} or
+                not isinstance(text, str) or not text.strip() or
+                previous.body != f'Wall outcome {kind} by witness\n{text}\n{references[0]}'):
+            raise ValueError('outcome prose or role does not match immutable record')
+        evidence = data['evidence']
+        path = Path(evidence['path']).resolve()
+        context.update(kind=kind, evidence=evidence)
+        if not path.is_relative_to(home.resolve()) or not path.is_file():
+            raise ValueError('outcome evidence missing or outside owned site')
+        raw = path.read_bytes()
+        if not raw or _hash(raw) != evidence['sha256']:
+            raise ValueError('outcome evidence checksum mismatch')
+        context.update(status='verified-author-report', text=text[:240],
+                       omitted_characters=max(0, len(text) - 240))
+    except (OSError, ValueError, TypeError, KeyError, RecursionError) as exc:
+        context['error'] = str(exc)
+    return context
+
+
 def snapshot(home: Path, cutoff: int) -> dict:
     entries = [e for e in Feed(home).entries() if e.sequence <= cutoff]
-    previous = next((e for e in reversed(entries) if e.source == 'seed' and
-                     e.body.startswith('[work] channel=witness ')), None)
-    since = previous.sequence if previous else 0
+    previous = _previous_context(home, entries)
+    # Invalid current evidence must not silently resurrect an older analysis
+    # or remove earlier external context.
+    since = previous['sequence'] if previous and previous['status'] != 'UNKNOWN' else 0
     candidates = [e for e in entries if e.sequence > since and
                   e.source not in {'seed', 'witness', 'mind/witness'}]
     excerpts = []
@@ -71,12 +117,8 @@ def snapshot(home: Path, cutoff: int) -> dict:
         excerpts.append({'sequence': entry.sequence, 'source': entry.source,
                          'text': excerpt, 'body_sha256': _hash(entry.body.encode()),
                          'omitted_characters': len(entry.body) - len(excerpt)})
-    full_handoff = previous.body.split('HANDOFF:\n', 1)[-1] if previous else ''
-    handoff = full_handoff[:240]
     return {'chat_log': str((home / 'chat.log').resolve()), 'through_sequence': cutoff,
-            'since_work_sequence': since, 'previous_completed_analysis': handoff,
-            'previous_work_body_sha256': _hash(previous.body.encode()) if previous else None,
-            'previous_analysis_omitted_characters': max(0, len(full_handoff) - len(handoff)),
+            'since_context_sequence': since, 'previous_context': previous,
             'entries': excerpts, 'omitted_entries': max(0, len(candidates) - len(excerpts)),
             'context_complete': not previous and len(candidates) == len(excerpts) and
                 all(e['omitted_characters'] == 0 for e in excerpts),

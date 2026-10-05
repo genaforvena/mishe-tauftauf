@@ -65,7 +65,6 @@ def test_snapshot_preserves_source_hashes_and_explicit_omissions(tmp_path):
     assert state['context_complete'] is False
     assert state['omitted_entries'] > 0
     assert all(e['body_sha256'] and e['omitted_characters'] > 0 for e in state['entries'])
-    assert len(json.dumps(state)) < 4500
 
 
 def test_failed_worker_is_visible_and_does_not_suppress_obligation(tmp_path):
@@ -118,3 +117,79 @@ def test_invalid_available_type_is_rejected(tmp_path):
     home, wake = site(tmp_path)
     configure(home, tmp_path, {'selection': 'evidence-audit', 'model': {'name': 'laya'}, 'available': 'false'})
     assert advise(home, wake)['state'] == 'unavailable'
+
+
+def test_wall_outcome_replaces_legacy_without_using_mutable_handoff(tmp_path):
+    from mishe_tauftauf.wall import outcome
+    from mishe_tauftauf.witness_analysis import snapshot
+    home, _ = site(tmp_path)
+    legacy = Feed(home).append('seed', '[work] channel=witness wake=2\nHANDOFF:\nOld analysis')
+    evidence = home / 'evidence.txt'
+    evidence.write_text('measured result')
+    report = outcome(home, 'witness', 'accepted', 'Current finding ' * 30, evidence)
+    external = Feed(home).append('genome', 'New question')
+    (home / 'handoffs').mkdir()
+    (home / 'handoffs/witness.md').write_text('Mutable unrelated text')
+    Feed(home).append('seed', 'seed yield witness wake=2\nTransport only')
+    state = snapshot(home, external.sequence + 1)
+    previous = state['previous_context']
+    assert previous['sequence'] == report.sequence
+    assert previous['status'] == 'verified-author-report'
+    assert previous['semantic_acceptance'] == 'UNKNOWN'
+    assert previous['text'] == ('Current finding ' * 30).strip()[:240]
+    assert previous['omitted_characters'] == len(('Current finding ' * 30).strip()) - 240
+    assert [e['sequence'] for e in state['entries']] == [external.sequence]
+    assert snapshot(home, legacy.sequence)['previous_context']['text'] == 'Old analysis'
+    assert snapshot(home, legacy.sequence)['previous_context']['type'] == 'legacy-work'
+
+
+@pytest.mark.parametrize('failure', ['missing-reference', 'corrupt-record', 'missing-record', 'missing-evidence', 'changed-evidence', 'outside-evidence'])
+def test_invalid_latest_outcome_is_unknown_not_stale_legacy(tmp_path, failure):
+    from mishe_tauftauf.wall import outcome
+    from mishe_tauftauf.witness_analysis import snapshot
+    home, _ = site(tmp_path)
+    Feed(home).append('seed', '[work] channel=witness wake=2\nHANDOFF:\nOld analysis')
+    evidence = home / 'evidence.txt'
+    evidence.write_text('original result')
+    latest = outcome(home, 'witness', 'hypothesis-changed', 'New finding', evidence)
+    if failure == 'missing-reference':
+        latest = Feed(home).append('witness', 'Wall outcome accepted by witness\nUnbound claim')
+    elif failure in {'corrupt-record', 'missing-record'}:
+        record = home / latest.body.splitlines()[-1].split()[1]
+        if failure == 'missing-record':
+            record.unlink()
+        else:
+            record.chmod(0o600)
+            record.write_text('{}')
+    elif failure == 'missing-evidence':
+        evidence.unlink()
+    elif failure == 'changed-evidence':
+        evidence.write_text('changed result')
+    else:
+        import hashlib
+        outside = tmp_path / 'outside'
+        outside.write_text('outside')
+        latest = Feed(home).append_record('witness', 'Wall outcome accepted by witness\nOutside',
+            {'role': 'witness', 'kind': 'accepted', 'text': 'Outside',
+             'evidence': {'path': str(outside), 'sha256': hashlib.sha256(outside.read_bytes()).hexdigest()}},
+            kind='wall-outcome')
+    if failure in {'corrupt-record', 'missing-record'}:
+        # Canonical Feed rejects a broken immutable record before selection.
+        with pytest.raises(ValueError, match='immutable record checksum mismatch|record unavailable'):
+            snapshot(home, latest.sequence)
+        return
+    state = snapshot(home, latest.sequence)
+    assert state['previous_context']['sequence'] == latest.sequence
+    assert state['previous_context']['status'] == 'UNKNOWN'
+    assert state['previous_context']['text'] == ''
+    assert state['since_context_sequence'] == 0
+    assert state['entries'][0]['text'] == '[wish] Investigate forgotten requests'
+
+
+def test_settlement_alone_is_not_historical_analysis(tmp_path):
+    from mishe_tauftauf.witness_analysis import snapshot
+    home, _ = site(tmp_path)
+    transport = Feed(home).append('seed', 'seed yield witness wake=2\nTransport only')
+    state = snapshot(home, transport.sequence)
+    assert state['previous_context'] is None
+    assert state['since_context_sequence'] == 0

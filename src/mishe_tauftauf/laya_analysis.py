@@ -13,9 +13,13 @@ WEIGHTS_SHA256 = '4fa56de72383a9d3efa9cfa78955733c81b9fc8067a587ca4beb82c78107a2
 
 
 def model_state(state):
-    return {'meaning': 'Suggest investigation focus only. Read full log for verdicts; obligations still apply.',
+    previous = state.get('previous_context')
+    return {'meaning': 'Suggest focus only. Prior context is an author report, not independent acceptance. Read full evidence.',
             'context_complete': state.get('context_complete', False),
-            'previous_completed_analysis': state.get('previous_completed_analysis', ''),
+            'previous_context': ({k: previous[k] for k in
+                                  ('sequence', 'type', 'status', 'semantic_acceptance', 'text',
+                                   'omitted_characters') if k in previous} if previous else None),
+            'omitted_entries': state.get('omitted_entries', 0),
             'entries': [{k: entry[k] for k in ('sequence', 'source', 'text')} for entry in state.get('entries', [])]}
 
 
