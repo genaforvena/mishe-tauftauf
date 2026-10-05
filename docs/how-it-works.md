@@ -22,7 +22,7 @@ Jump to: [vocabulary](#the-vocabulary-without-the-potting-soil) ·
 | **Mind** | An installed coding-agent process in a channel's lower pane, such as Codex or OMP. It is not a separate sentience or a replacement for the host's access controls. |
 | **Charter** | A channel's lasting purpose and owned scope, saved in `SITE/charters/ROLE.md`. |
 | **Wall** | The mind's short, current page of plate, findings and next action, saved in `SITE/walls/ROLE.md`; `wall write` replaces it. |
-| **Handoff** | The current task, evidence, uncertain effects, and exact next step saved in `SITE/handoffs/ROLE.md`. `seed yield` writes it from the same text as the wall, so it mirrors the wall rather than carrying separate content. The live seed route delivers the wall, not the handoff; the ledger dispatch path `mishe-tauftauf run` still embeds it as `CURRENT HANDOFF`. |
+| **Handoff** | The current task, evidence, uncertain effects, and exact next step saved in `SITE/handoffs/ROLE.md`. `seed yield` writes it from the same text as the wall, so it mirrors the wall rather than carrying separate content, and the live seed route delivers the wall, not the handoff. |
 | **Wake** | A supervisor-issued invitation to take one bounded step. Its sequence number ties the action, handoff, and receipt to an exact entry in `chat.log`. |
 | **Lease** | The top pane's refresh timestamp. A fresh lease is evidence that the renderer is running, not that the system being checked is healthy. |
 | **Genome** | The reusable tracked code and general rules; also the resident channel that pushes the single `main` branch and checks its CI. Local instance state is not part of this tracked genome. |
