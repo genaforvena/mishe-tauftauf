@@ -90,7 +90,7 @@ through a real task, its live pane, its artifact, and its completion record.
 ```text
 observe → choose one bounded step → act → check the live result
    ↑                                           ↓
-next wake ← fresh context ← handoff + artifact + shared log
+next wake ← fresh context ← wall + artifact + shared log
 ```
 
 Scripts decide reproducible facts; agents choose what to do about them. Checks
