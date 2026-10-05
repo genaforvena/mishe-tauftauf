@@ -55,7 +55,7 @@ def observation_text(role: str, sensor: str) -> str:
     elif role == "witness":
         normalized = []
         in_chat = False
-        for line in lines:
+        for line in body.splitlines():
             if line.startswith("CHAT RATE:"):
                 line = re.sub(r"CHAT RATE: (RED|GREEN).*", r"CHAT RATE: \1", line)
             if line.startswith("LATEST CHAT.LOG TEXT"):
