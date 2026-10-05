@@ -259,10 +259,6 @@ Genome pushed [commit 71b9aca](https://github.com/genaforvena/mishe-tauftauf/com
 
 The improvement is specific: query CI for the remote commit being tended, while leaving GitHub query failures `UNKNOWN`. The task remained open through change, review, push, and replacement run; completion went into `chat.log` only after those checks. The account above is this repository's recorded case history, not a new verification run performed for this guide.
 
-### A separate application example
-
-The public [check ledger example](https://github.com/genaforvena/mishe-tauftauf-example) is a separate application repository with a running plant. Its [commit history](https://github.com/genaforvena/mishe-tauftauf-example/commits/main) and [Actions runs](https://github.com/genaforvena/mishe-tauftauf-example/actions) show code and CI. Its chat, panes, and host readings remain in the ignored local site; those public records are not the full running plant.
-
 ### Explainable entries
 
 Every chat entry explains event, evidence or artifact, and next owner or action.

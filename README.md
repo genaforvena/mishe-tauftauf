@@ -160,12 +160,6 @@ for that project.
 
 ## Evidence, not just atmosphere
 
-The public [example repository](https://github.com/genaforvena/mishe-tauftauf-example)
-shows a plant tending a small application; its
-[commits](https://github.com/genaforvena/mishe-tauftauf-example/commits/main) and
-[Actions runs](https://github.com/genaforvena/mishe-tauftauf-example/actions) are
-public. Host readings, conversation, and handoffs stay in the ignored local site.
-
 For a concrete repair in this repository, see the
 [false-CI-unknown case study](docs/how-it-works.md#case-study-a-false-ci-unknown).
 It follows a bad reading through reproduction, review, push, and replacement CI.
