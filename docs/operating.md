@@ -72,6 +72,18 @@ For an ownership-checked reading of the actual top pane, not a newly rendered ap
   --launcher tmux --session "$SESSION"
 ```
 
+A supervisor's `pain watch` publishes the exact frame it renders to
+`SITE/dashboards/ROLE.json`. That frame is what the pane shows, what the mind is
+told to read, and the sensor text the supervisor digests for change detection.
+Read it directly, rather than re-rendering or scraping the pane:
+
+```bash
+"$SITE/bin/mishe-tauftauf" --home "$SITE" pain read health --launcher dashboard
+```
+
+It fails `UNKNOWN` when the frame is missing, older than 30 seconds, corrupt, or
+recorded for another site, so a stale or foreign frame is not read as current.
+
 Read the tape in full or follow new entries:
 
 ```bash
