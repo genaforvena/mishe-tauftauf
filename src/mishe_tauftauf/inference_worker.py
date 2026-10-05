@@ -76,7 +76,7 @@ def _decode(payload: bytes) -> WorkerTurn:
 def run_worker(command: Sequence[str], request: Mapping[str, Any], *,
                cancelled: Callable[[], bool], timeout: float = 60,
                max_output: int = 4 * 1024 * 1024) -> WorkerTurn:
-    """Bound total runtime/output and reap the experiment-owned process group.
+    """Bound runtime/output, terminate the group and reap the direct worker.
 
     Nonzero exit, EOF without a completion, malformed output and cancellation
     are failures even if stdout contains a successful-looking frame.

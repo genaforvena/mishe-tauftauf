@@ -70,8 +70,8 @@ boundary, not a resident launcher or a complete internal model loop. A worker
 reads one JSON request on stdin, then emits one JSON object containing
 `terminal`, the native `assistant` message, and optional `wire_usage` after
 the provider stream terminates. Diagnostics belong on stderr. Total runtime
-and combined stdout/stderr are bounded; the isolated worker process group is
-reaped on success and failure.
+and combined stdout/stderr are bounded; the isolated process group is terminated
+and the direct worker is reaped on success and failure.
 
 Only a `done` terminal with assistant `stopReason=toolUse` can reach the caller's
 executor. Cancellation is checked again immediately before each call; it
@@ -105,8 +105,8 @@ replay mechanism or evidence of a completed live useful-task canary.
 session for that loop. It opens a worker with a model selector and session ID,
 correlates numbered turns, and retains raw terminal provenance in `NativeTurn`.
 A lifetime deadline and cumulative stdout/stderr limit apply across exchanges.
-Concurrent calls are refused. Failed exchanges kill and reap the isolated
-process group and prohibit reuse; they never retry an effect.
+Concurrent calls are refused. Failed exchanges terminate the isolated process
+group, reap the direct worker and prohibit reuse; they never retry an effect.
 
 Use the session as a context manager. Normal disposal requires both a `closed`
 receipt and a clean worker exit; a successful earlier turn cannot certify
