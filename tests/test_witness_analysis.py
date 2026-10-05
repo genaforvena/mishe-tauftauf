@@ -26,6 +26,21 @@ def configure(home, tmp_path, response=None):
     return calls
 
 
+def test_explicit_missing_config_never_falls_back_to_site_worker(tmp_path):
+    from mishe_tauftauf.witness_analysis import advise, status
+    home, wake = site(tmp_path)
+    calls = configure(home, tmp_path)
+    missing = tmp_path / 'missing.json'
+    report = advise(home, wake, config_path=missing)
+    assert report['state'] == 'unavailable'
+    assert report['selection'] == 'unknown'
+    assert 'error' in report
+    assert not calls.exists()
+    assert 'UNKNOWN' in status(home, config_path=missing)
+    assert advise(home, wake) == report
+    assert not calls.exists()
+
+
 def test_real_wake_advice_is_cached_and_feedback_preserves_original(tmp_path):
     from mishe_tauftauf.witness_analysis import advise, feedback, status
     home, wake = site(tmp_path)

@@ -37,6 +37,16 @@ model loading off the supervisor and refreshing top pane. Optional site wrappers
 modules or source-bound script copies with the site's installed runtime imports.
 Record hashes and versions when installing such copies.
 
+For a source-bound generation, pass `--config /absolute/generation/advisor.json`.
+Bind both the caller's module root and the configuration's worker command to
+that same immutable generation. This leaves the site's legacy configuration
+unchanged for already imported callers. An explicit missing or unreadable
+configuration produces unavailable/unknown advice, never a fallback to the
+site configuration. `--status --config PATH` reports a missing explicit file as
+UNKNOWN. Without `--config`, the optional site configuration remains the default.
+Per-wake caching still wins over configuration changes, including explicit paths;
+feedback continues to reference that wake's original report.
+
 The compact input contains the six most recent external entries after the latest
 available Witness author report, with 160-character excerpts and 240 characters
 of that report. Wall-mode context comes from a canonical immutable `wall-outcome`
