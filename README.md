@@ -201,7 +201,4 @@ or dispatch authority. [Private publication checks](docs/publication-checks.md)
 preflight drafts with a deterministic prose guard and an optional semantic
 checker.
 
-Historical task and delivery reports remain readable for recovery. Health reports
-a missing or invalid service manifest as UNKNOWN.
-
 **[CC0 1.0](LICENSE)** — take it, fork it, grow your own. Keep the checks honest.
