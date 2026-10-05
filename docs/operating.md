@@ -60,8 +60,10 @@ tmux capture-pane -p -t "$SESSION:genome.0"
 "$SITE/bin/mishe-tauftauf" --home "$SITE" discover show
 "$SITE/bin/mishe-tauftauf" --home "$SITE" access list
 ```
-The standard genome, health and witness panes show deterministic CI, runtime,
-service and patch observations, followed by the mind's edited wall.
+The standard genome and health panes show deterministic CI, runtime, service and
+patch observations; the witness pane shows CI plus its coordination checks:
+planted windows, clear-stall and stale-pend, and open tasks. Each is followed by
+the mind's edited wall.
 
 Genome inspects unlanded outside edits with `git status --short` and reviews each path's diff before adopting, reconciling or retiring it. Preserve unrelated edits and coordinate with existing owners; delivery follows the single-`main` authoring, CI and live-consumer checks above.
 
