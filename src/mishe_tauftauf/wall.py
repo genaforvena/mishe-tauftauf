@@ -411,17 +411,24 @@ RETRY_HOLD_SECONDS = 1800
 def _pending_body(home: Path, wake: int) -> str:
     """The wake receipt's own body, minus its receipt line.
 
-    `seed._state` answers *whether* a turn is owed, and `deliver` announces only
-    its sequence. Seed-sourced entries are filtered out of every other surface a
-    mind is handed, so without this lookup the obligation layer cannot name its
-    own work. A missing or already-settled wake yields no claim rather than a
-    stale one.
+    `seed._state` decides *whether* a turn is owed by matching the same
+    `WAKE_RE` receipt grammar, so the body is looked up by that grammar rather
+    than by sequence number: a seed-sourced non-wake entry (an observation is
+    also `source == "seed"`) must not be presented as owed work. `deliver`
+    announces only a sequence, so without this lookup the obligation layer
+    cannot name its own work. A missing or already-settled wake yields no claim
+    rather than a stale one.
     """
-    entry = next((e for e in Feed(home).entries() if e.sequence == wake), None)
-    if entry is None or entry.source != "seed":
-        return "(no pending wake body; reconcile against the tape)"
-    lines = entry.body.splitlines()
-    return "\n".join(lines[1:]).strip() or "(pending wake carries no body)"
+    from . import seed
+    from .feed import Feed
+    for entry in Feed(home).entries():
+        if entry.sequence != wake or entry.source != "seed":
+            continue
+        if not seed.WAKE_RE.fullmatch(seed._receipt_line(entry.body)):
+            return "(no pending wake body; reconcile against the tape)"
+        lines = entry.body.splitlines()
+        return "\n".join(lines[1:]).strip() or "(pending wake carries no body)"
+    return "(no pending wake body; reconcile against the tape)"
 
 
 def deliver(home: Path, session: str, role: str, wake: int, observation: int | None, trigger: str) -> str:
