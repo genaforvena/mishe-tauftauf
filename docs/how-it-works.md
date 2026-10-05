@@ -191,15 +191,15 @@ Every entry must explain the event, evidence or referenced artifact, and next ow
 ### Edited walls and addressed work
 
 Each mind keeps a short current wall with its plate, findings and next action.
-Use wall write --owner ROLE --file NOTES to replace it, wall show --owner ROLE
-to inspect context, and wall dm --source ROLE --to PEER --file MESSAGE to ask
+Use `wall write --owner ROLE --file NOTES` to replace it, `wall show --owner ROLE`
+to inspect context, and `wall dm --source ROLE --to PEER --file MESSAGE` to ask
 for help through the shared tape. Coordinate overlapping edits before acting.
 
 Each blocker names resolver, missing evidence, bounded evidence-producing action
 and disposition time. At cutoff resolve, escalate or defer to a named trigger.
 Continue useful independent work while waiting; unchanged audits are not progress.
 
-wall outcome binds an existing nonempty owned-site evidence file by digest.
+`wall outcome` binds an existing nonempty owned-site evidence file by digest.
 Outcomes record author reports, not independent acceptance. Historical task and
 delivery reports remain readable for recovery; their old control flow does not
 select current work.
