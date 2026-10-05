@@ -368,9 +368,19 @@ def _top_cpu_processes(session: str | None = None,
     return sorted(processes.values(), key=_rate_key, reverse=True)[:rows]
 _JOURNAL_OUTPUT_CAP = 1024 * 1024
 
+def _kill_journal_process(process: subprocess.Popen, deadline: float) -> None:
+    """Kill a failed journal command without waiting past its acquisition deadline."""
+    if process.poll() is not None:
+        return
+    process.kill()
+    try:
+        process.wait(timeout=max(0.0, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
+        pass
 
-def _journal_command(cmd: list[str], timeout: float = 10) -> bytes | None:
+
     """Return complete bounded stdout, or None when acquisition is incomplete."""
+    deadline = time.monotonic() + timeout
     process = None
     try:
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
@@ -378,7 +388,6 @@ def _journal_command(cmd: list[str], timeout: float = 10) -> bytes | None:
         with selectors.DefaultSelector() as selector:
             selector.register(process.stdout, selectors.EVENT_READ)
             output = bytearray()
-            deadline = time.monotonic() + timeout
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -391,8 +400,7 @@ def _journal_command(cmd: list[str], timeout: float = 10) -> bytes | None:
                     break
                 output.extend(chunk)
                 if len(output) > _JOURNAL_OUTPUT_CAP:
-                    process.kill()
-                    process.wait()
+                    _kill_journal_process(process, deadline)
                     return None
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -403,9 +411,8 @@ def _journal_command(cmd: list[str], timeout: float = 10) -> bytes | None:
             return None
         return bytes(output)
     except (OSError, subprocess.TimeoutExpired):
-        if process is not None and process.poll() is None:
-            process.kill()
-            process.wait()
+        if process is not None:
+            _kill_journal_process(process, deadline)
         return None
 
 
