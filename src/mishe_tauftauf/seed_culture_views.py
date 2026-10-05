@@ -23,11 +23,19 @@ def _report(home: Path, slug: str, verdict: str) -> None:
 
 
 def _snapshot_age(snapshot: dict[str, object]) -> float | None:
+    """Age of a scan in seconds, or None when it cannot establish freshness.
+
+    A timestamp ahead of the wall clock is not evidence of recency: a backward
+    clock step (NTP correction, VM restore, suspend/resume) would otherwise keep
+    a stale scan reading ``recent`` until real time catches up. Treat a negative
+    age like an unavailable timestamp so the panes fail closed to UNKNOWN.
+    """
     try:
         created = datetime.fromisoformat(str(snapshot["created"]).replace("Z", "+00:00"))
-        return (datetime.now(timezone.utc) - created).total_seconds()
     except (ValueError, KeyError):
         return None
+    age = (datetime.now(timezone.utc) - created).total_seconds()
+    return age if age >= 0 else None
 
 
 def discover(home: Path) -> str:

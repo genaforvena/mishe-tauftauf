@@ -29,6 +29,27 @@ def test_views_show_real_scan_and_scoped_request_without_clock_churn(tmp_path: P
     decide(home, "keyboard-count", "granted")
     assert "keyboard-count GRANTED" in permissions(home)
 
+def test_future_dated_scan_cannot_render_recent(tmp_path: Path) -> None:
+    """A scan timestamp ahead of the wall clock fails closed, never GREEN."""
+    from datetime import datetime, timedelta, timezone
+
+    home = tmp_path / "site"
+    future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(
+        timespec="seconds").replace("+00:00", "Z")
+    snapshot = {"created": future, "node": "node", "observations": [
+        {"id": "sense.proc.loadavg", "state": "verified", "sample": "1.23", "kind": "read"}]}
+    (home / "discovery").mkdir(parents=True)
+    (home / "discovery" / "latest.json").write_text(json.dumps(snapshot), encoding="utf-8")
+
+    rendered = discover(home)
+    assert "freshness=stale" in rendered
+    assert "STATE: UNKNOWN — scan stale; renew the read" in rendered
+    assert (home / "observations" / "discover").read_text(encoding="utf-8") == "UNKNOWN discover scan stale\n"
+
+    sense = senses(home)
+    assert "freshness=stale" in sense
+    assert "STATE: UNKNOWN" in sense
+
 
 def test_health_detects_dead_top_even_when_bottom_is_alive(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "site"
