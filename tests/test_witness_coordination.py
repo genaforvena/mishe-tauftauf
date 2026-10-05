@@ -117,6 +117,8 @@ def test_overdue_clear_fails_when_the_mind_is_idle(tmp_path, monkeypatch):
     output = render(tmp_path)
     assert 'CLEAR STALL: RED audit wake=1 yield=2 owner=health' in output
     assert 'STATE: RED' in output
+    verdict = (tmp_path / 'observations' / 'witness').read_text()
+    assert 'FAIL witness overdue clear audit needs checked supervisor repair' in verdict
 
 
 def test_overdue_clear_stays_a_fault_without_a_session(tmp_path, monkeypatch):
@@ -169,6 +171,8 @@ def test_stale_pend_fails_when_the_mind_is_idle(tmp_path, monkeypatch):
     output = render(tmp_path)
     assert 'STALE PEND: RED audit wake=1 pending=1 owner=health' in output
     assert 'STATE: RED' in output
+    verdict = (tmp_path / 'observations' / 'witness').read_text()
+    assert 'FAIL witness overdue pending wake audit needs checked supervisor repair' in verdict
 
 
 def test_stale_pend_stays_a_fault_without_a_live_mind_pane(tmp_path, monkeypatch):
