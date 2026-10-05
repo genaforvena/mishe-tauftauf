@@ -63,6 +63,28 @@ local system and source
                          next bounded step
 ```
 
+### Internal inference worker boundary
+
+`inference_worker.run_worker` provides a checkout-level, one-turn subprocess
+boundary, not a resident launcher or a complete internal model loop. A worker
+reads one JSON request on stdin, then emits one JSON object containing
+`terminal`, the native `assistant` message, and optional `wire_usage` after
+the provider stream terminates. Diagnostics belong on stderr. Total runtime
+and combined stdout/stderr are bounded; the isolated worker process group is
+reaped on success and failure.
+
+Only a `done` terminal with assistant `stopReason=toolUse` can reach the caller's
+executor. Cancellation is checked again immediately before each call; it
+cannot retract an already committed effect. Nonzero exit, missing or malformed
+IPC completion, duplicate call IDs and invalid tool arguments fail closed.
+Failed or incomplete native proposals remain history, not effect authority.
+Native call IDs and opaque assistant fields are retained unchanged; absent
+wire usage is UNKNOWN even when the provider synthesizes zero counters.
+
+Provider authentication/configuration, durable operation identity and recovery,
+and resident activation are separate integrations. This boundary does not
+establish configured-model parity, safe replay, or live internal-loop delivery.
+
 ### Development is not just repository maintenance
 
 The generic runtime provides the observation, wall, and handoff loop. A project's charter supplies the goal; its local checks make progress and uncertainty observable. Builds, Git state, and CI are useful checks, but they are not a universal definition of progress.
