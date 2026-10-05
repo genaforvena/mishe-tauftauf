@@ -10,15 +10,13 @@ import re
 import shutil
 import selectors
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .feed import Feed
 
 COMMANDS = ("rg", "git", "tmux", "python3", "systemctl", "journalctl", "ps", "df",
             "lsusb", "lspci", "sensors", "upower", "evtest")
-
-KERNEL_FAULT = "Failed to resubmit video URB"
 
 SENSOR_ID = re.compile(r"^sense\.[a-z0-9]+(?:\.[a-z0-9-]+)+$")
 
@@ -417,27 +415,73 @@ def _journal_command(cmd: list[str], timeout: float = 10) -> bytes | None:
         return None
 
 
-def _journal_error_window(past_minutes: int = 10, limit: int = 400) -> dict:
-    """Count a bounded, complete journal window without treating partial output as evidence."""
-    coverage = f"last-{past_minutes}min"
-    output = _journal_command(
-        ["journalctl", "-b", "-p", "err", "--since", f"-{past_minutes}min",
-         "-o", "cat", "--no-pager"])
+def _journal_boot() -> str | None:
+    value = _read(Path("/proc/sys/kernel/random/boot_id"), 128)
+    if value is None:
+        return None
+    value = value.strip().lower().replace("-", "")
+    return value if re.fullmatch(r"[0-9a-f]{32}", value) else None
+
+
+def _journal_error_window(past_minutes: int = 10) -> dict:
+    """Count visible kernel entries in one fixed window; never infer fault or rate."""
+    started = time.monotonic_ns()
+    boot = _journal_boot()
+    until = datetime.now(timezone.utc)
+    since = until - timedelta(minutes=past_minutes)
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+    def microseconds(value: datetime) -> int:
+        delta = value - epoch
+        return (delta.days * 86400 + delta.seconds) * 1000000 + delta.microseconds
+
+    lower, upper = microseconds(since), microseconds(until)
+    coverage = {"since": since.isoformat(), "until": until.isoformat(),
+                "boot_id": boot, "acquisition_started_ns": started}
+    unknown = {"state": "unknown", "sample": "journal kernel window unavailable",
+               "coverage": coverage}
+    if boot is None:
+        unknown["reason"] = "boot identity unavailable"
+        return unknown
+    output = _journal_command([
+        "journalctl", f"--boot={boot}", "-k", "-p", "err",
+        "--since", since.strftime("%Y-%m-%d %H:%M:%S.%f UTC"),
+        "--until", until.strftime("%Y-%m-%d %H:%M:%S.%f UTC"),
+        "-o", "json", "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,_BOOT_ID,_TRANSPORT,PRIORITY",
+        "--no-pager", "--quiet"])
+    after = _journal_boot()
+    finished = time.monotonic_ns()
+    coverage["acquisition_finished_ns"] = finished
+    if after != boot or finished < started:
+        unknown["reason"] = "acquisition epoch changed"
+        return unknown
     if output is None:
-        output = _journal_command(
-            ["journalctl", "-b", "-p", "err", "-n", str(limit),
-             "-o", "cat", "--no-pager"])
-        coverage = f"last-{limit}-errors"
-    if output is None:
-        return {}
-    window = output.decode("utf-8", errors="replace").splitlines()
-    faults = [line for line in window if KERNEL_FAULT in line]
-    if not faults:
-        return {"state": "verified",
-                "sample": f"{coverage} kernel-error-count=0"}
-    endpoints = sorted({line.split(": Failed", 1)[0].strip() for line in faults})
+        unknown["reason"] = "incomplete or failed acquisition"
+        return unknown
+    cursors: set[str] = set()
+    try:
+        for line in output.decode("utf-8").splitlines():
+            record = json.loads(line)
+            if not isinstance(record, dict):
+                raise ValueError("record is not an object")
+            cursor = record.get("__CURSOR")
+            timestamp = record.get("__REALTIME_TIMESTAMP")
+            priority = record.get("PRIORITY")
+            if (not isinstance(cursor, str) or not cursor or cursor in cursors
+                    or record.get("_BOOT_ID") != boot
+                    or record.get("_TRANSPORT") != "kernel"
+                    or not isinstance(priority, str) or priority not in {"0", "1", "2", "3"}
+                    or not isinstance(timestamp, str)
+                    or not re.fullmatch(r"[0-9]+", timestamp)
+                    or not lower <= int(timestamp) <= upper):
+                raise ValueError("invalid entry metadata")
+            cursors.add(cursor)
+    except (UnicodeError, ValueError, TypeError):
+        unknown["reason"] = "invalid journal entry metadata"
+        return unknown
     return {"state": "verified",
-            "sample": f"{coverage} kernel-error-count={len(faults)} endpoints={','.join(endpoints)}"}
+            "sample": f"last-{past_minutes}min kernel-error-count={len(cursors)}",
+            "count": len(cursors), "coverage": coverage}
 
 
 
@@ -861,12 +905,8 @@ def sample(home: Path) -> dict[str, object]:
         found = shutil.which(command)
         observed.append({"id": f"command.{command}", "state": "available" if found else "unavailable",
                          "sample": found or "not on PATH", "kind": "declaration"})
-    journal = _journal_error_window()
-    if journal:
-        observed.append({"id": "sense.journal.kernel-error-rate", "kind": "read", **journal})
-    else:
-        observed.append({"id": "sense.journal.kernel-error-rate", "kind": "read",
-                         "state": "unknown", "sample": "journal error window unavailable"})
+    observed.append({"id": "sense.journal.kernel-error-count", "kind": "read",
+                     **_journal_error_window()})
 
     loadavg = _read(Path("/proc/loadavg"), 256)
     observed.append({"id": "sense.proc.loadavg", "state": "verified" if loadavg else "unknown",
