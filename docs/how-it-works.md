@@ -164,7 +164,7 @@ A renderer self-test does not prove that its caller or visible viewport works. U
 
 The CI watcher queries GitHub Actions for the full SHA of the GitHub default branch's local remote-tracking ref, `origin/<default-branch>`. It selects the latest observed run for each workflow in that exact-commit result. A failed run is failure; an in-progress run is pending; all selected runs must succeed for pass. No matching run, unavailable GitHub CLI, a query error, or a stale reading is `UNKNOWN`, not a pass borrowed from an older commit.
 
-Transitions produce `[ci]` entries. Candidate failures return to the source author; an unassigned main failure opens a genome repair task. The repair task stays open through code change, independent review, push, and a successful replacement run for the pushed SHA. A local test success is not remote delivery.
+Transitions produce `[ci]` entries. The source author owns repair; a failure addresses genome as the unassigned-incident fallback, who reads the current sensor and decides the repair. That repair stays open through code change, independent review, push, and a successful replacement run for the pushed SHA. A local test success is not remote delivery.
 
 ## Where work survives
 
