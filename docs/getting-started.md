@@ -119,7 +119,7 @@ Look for all of these, not just a successful launcher exit:
 1. The expected windows exist and the top-pane `-- pane live ...` timestamp advances. That timestamp proves the renderer is alive, not that its checks passed.
 2. `discover show` reports a fresh scan and a verified `sense.proc.loadavg` sample. The task's artifact points to the actual scan under `SITE/discovery/`, and the live `discover` top pane shows the reading.
 3. The discover wall and tape report the checked finding and evidence; the supervisor records settlement for the actual wake. Read the artifact and live result: settlement alone proves no success.
-4. After settlement and an idle clear, the supervisor records a process rotation. On the next actual wake, the mind receives its charter and handoff and reads the live evidence again. This last step may not happen immediately; it needs another real wake.
+4. After settlement and an idle clear, the supervisor records a process rotation. On the next actual wake, the mind receives its charter and reads the live evidence again; its wall carries the next step, and the handoff is not delivered. This last step may not happen immediately; it needs another real wake.
 5. In persistent mode, the resident units named in `SITE/health/services.json` are active. The [operating checklist](operating.md#inspect-the-running-plant) covers those checks.
 
 If the wake is held, keep that uncertainty visible. Check the lower pane, readiness, and supervisor first; [recovery](operating.md#recover-a-held-wake-or-clear) explains the distinction between an unsettled wake and a settled mind awaiting clear. A missing reading should remain `UNKNOWN` with an exact retry condition.

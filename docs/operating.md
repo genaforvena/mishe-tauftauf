@@ -195,14 +195,14 @@ Then reread its journal and `seed status`. Do not use broad process-kill command
 
 ### 4. Retry a settled clear normally
 
-Only after verifying a settled wake, a present handoff, and a stable idle mind:
+Only after verifying a settled wake and a stable idle mind:
 
 ```bash
 "$SITE/bin/mishe-tauftauf" --home "$SITE" seed clear \
   --session "$SESSION" --slug "$ROLE"
 ```
 
-This **rotates the idle agent process in its existing lower pane**. It preserves the handoff and records the clear; the next real wake carries the charter and handoff into the fresh process. It refuses an unsettled wake, a missing handoff, a dead pane, or an unstable/busy mind. Treat a refusal as diagnostic evidence, not an obstacle to bypass.
+This **rotates the idle agent process in its existing lower pane**. It preserves the handoff on disk and records the clear; the next real wake carries the charter into the fresh process, and the wall carries the next step. It refuses an unsettled wake, a dead pane, or an unstable/busy mind. Treat a refusal as diagnostic evidence, not an obstacle to bypass.
 
 Success is a `clear seed ROLE after ...` receipt, a changed live lower-pane PID, and a later readiness-checked wake that restores the task's next step. The top pane should continue refreshing throughout.
 

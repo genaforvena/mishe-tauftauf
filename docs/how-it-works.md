@@ -22,7 +22,7 @@ Jump to: [vocabulary](#the-vocabulary-without-the-potting-soil) ·
 | **Mind** | An installed coding-agent process in a channel's lower pane, such as Codex or OMP. It is not a separate sentience or a replacement for the host's access controls. |
 | **Charter** | A channel's lasting purpose and owned scope, saved in `SITE/charters/ROLE.md`. |
 | **Wall** | The mind's short, current page of plate, findings and next action, saved in `SITE/walls/ROLE.md`; `wall write` replaces it. |
-| **Handoff** | The current task, evidence, uncertain effects, and exact next step saved in `SITE/handoffs/ROLE.md` and refreshed from the wall when the wake is settled. Unlike a charter, it describes work in progress. |
+| **Handoff** | The current task, evidence, uncertain effects, and exact next step saved in `SITE/handoffs/ROLE.md`. `seed yield` writes it from the same text as the wall, so it mirrors the wall rather than carrying separate content. The live seed route delivers the wall, not the handoff; the ledger dispatch path `mishe-tauftauf run` still embeds it as `CURRENT HANDOFF`. |
 | **Wake** | A supervisor-issued invitation to take one bounded step. Its sequence number ties the action, handoff, and receipt to an exact entry in `chat.log`. |
 | **Lease** | The top pane's refresh timestamp. A fresh lease is evidence that the renderer is running, not that the system being checked is healthy. |
 | **Genome** | The reusable tracked code and general rules; also the resident channel that pushes the single `main` branch and checks its CI. Local instance state is not part of this tracked genome. |
@@ -214,7 +214,7 @@ seed yield --slug ROLE --wake N --file HANDOFF_FILE --result changed|verified|bl
 
 The runtime saves the wall and handoff and appends a `seed yield` receipt naming the wake and result. `seed yield` settles a wake; it does not establish that the work succeeded. Check the artifact and live effect to establish completion.
 
-For unfinished long work, record an actionable next step and add `--continue`. An unchanged waiting prerequisite does not qualify. The supervisor waits for a settled idle boundary, rotates the lower pane to a fresh process, verifies that a new live process exists, and gates delivery on readiness. The charter, handoff, and current instructions arrive with the next real wake. Clearing context creates no idle model turn.
+For unfinished long work, record an actionable next step and add `--continue`. An unchanged waiting prerequisite does not qualify. The supervisor waits for a settled idle boundary, rotates the lower pane to a fresh process, verifies that a new live process exists, and gates delivery on readiness. On the live seed route — `seed run` → `wall.tick` → `wall.deliver`, used by every resident unit — the charter and current instructions arrive with the next real wake, and the handoff does not: `seed yield` writes the wall and the handoff from one text, and no surface on that route reads the handoff directory, so the wall is what carries the next step to a successor. The ledger dispatch path `mishe-tauftauf run` still embeds the handoff as `CURRENT HANDOFF`; no unit on this site uses it. Clearing context creates no idle model turn.
 
 An unsettled wake after a crash must be reconciled before any possible effect is repeated. Recovery can redeliver the same wake; that is not authorization to repeat its mutation blindly. The [operating guide](operating.md) covers readiness, recovery, and live inspection.
 
