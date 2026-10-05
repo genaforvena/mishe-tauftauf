@@ -541,71 +541,52 @@ def _completed(stdout: str, returncode: int = 0) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="")
 
 
-def test_journal_error_window_count_equals_the_grep_count() -> None:
-    """Acceptance: the reported count equals the grep count for the same window."""
-    lines = ["uvcvideo 1-6:1.1: Failed to resubmit video URB (-1)."] * 3 + ["spa.alsa: busy"] * 4
-    with patch("mishe_tauftauf.discovery.subprocess.run",
-               return_value=_completed("\n".join(lines))):
+
+
+def test_journal_error_window_counts_only_complete_successful_output() -> None:
+    lines = ("uvcvideo 1-6:1.1: Failed to resubmit video URB (-1).\n"
+             "spa.alsa: busy\n")
+    with patch("mishe_tauftauf.discovery._journal_command", return_value=lines.encode()):
         assert discovery._journal_error_window() == {
             "state": "verified",
-            "sample": "last-10min kernel-error-count=3 endpoints=uvcvideo 1-6:1.1"}
+            "sample": "last-10min kernel-error-count=1 endpoints=uvcvideo 1-6:1.1"}
 
 
-def test_journal_error_window_reports_every_contributing_endpoint_not_one_device() -> None:
-    """Amendment: show all contributing endpoints so one idle device is the whole signal."""
-    lines = ["uvcvideo 1-6:1.1: Failed to resubmit video URB (-1).",
-             "uvcvideo 1-7:1.0: Failed to resubmit video URB (-1).",
-             "uvcvideo 1-6:1.1: Failed to resubmit video URB (-1)."]
-    with patch("mishe_tauftauf.discovery.subprocess.run",
-               return_value=_completed("\n".join(lines))):
-        reading = discovery._journal_error_window()
-    assert reading["sample"] == ("last-10min kernel-error-count=3 "
-                                 "endpoints=uvcvideo 1-6:1.1,uvcvideo 1-7:1.0")
-
-
-def test_journal_error_window_reports_zero_without_inventing_a_rate() -> None:
-    lines = ["spa.alsa: capture open failed", "pw.node: suspended -> error"]
-    with patch("mishe_tauftauf.discovery.subprocess.run",
-               return_value=_completed("\n".join(lines))):
+def test_journal_error_window_distinguishes_empty_success_from_failed_fallback() -> None:
+    with patch("mishe_tauftauf.discovery._journal_command", return_value=b""):
         assert discovery._journal_error_window() == {
             "state": "verified", "sample": "last-10min kernel-error-count=0"}
+    with patch("mishe_tauftauf.discovery._journal_command",
+               side_effect=[None, b""]):
+        assert discovery._journal_error_window() == {
+            "state": "verified", "sample": "last-400-errors kernel-error-count=0"}
+    with patch("mishe_tauftauf.discovery._journal_command",
+               side_effect=[None, None]):
+        assert discovery._journal_error_window() == {}
 
 
-def test_journal_error_window_is_a_neutral_reading_not_a_health_verdict() -> None:
-    """Amendment: the reading counts idle-camera status noise; it never reads as degradation."""
-    with patch("mishe_tauftauf.discovery.subprocess.run",
-               return_value=_completed("uvcvideo 1-6:1.1: Failed to resubmit video URB (-1).")):
-        reading = discovery._journal_error_window()
-    assert reading["state"] == "verified"
-    sample = reading["sample"]
-    # A consumer sees the contributing endpoint and a count, not a machine-health verdict.
-    assert sample == "last-10min kernel-error-count=1 endpoints=uvcvideo 1-6:1.1"
-
-
-def test_journal_error_window_falls_back_to_a_bounded_tail_never_a_full_boot() -> None:
+def test_journal_error_window_falls_back_after_primary_failure_and_checks_both_reads() -> None:
     calls = []
-
-    def run(cmd, *a, **kw):
-        if "--since" in cmd:
-            calls.append(cmd)
-            return _completed("", returncode=1)
+    def run(cmd):
         calls.append(cmd)
-        assert "-n" in cmd and "400" in cmd, "fallback must be a bounded tail"
-        return _completed("uvcvideo 1-6:1.1: Failed to resubmit video URB (-1).")
-
-    with patch("mishe_tauftauf.discovery.subprocess.run", side_effect=run):
+        return None if "--since" in cmd else (
+            b"uvcvideo 1-6:1.1: Failed to resubmit video URB (-1).\n")
+    with patch("mishe_tauftauf.discovery._journal_command", side_effect=run):
         reading = discovery._journal_error_window()
-    assert reading["sample"] == "last-400-errors kernel-error-count=1 endpoints=uvcvideo 1-6:1.1"
-    assert sum(1 for c in calls if "--since" in c) == 1
-    assert sum(1 for c in calls if "-n" in c) == 1
+    assert reading == {
+        "state": "verified",
+        "sample": "last-400-errors kernel-error-count=1 endpoints=uvcvideo 1-6:1.1"}
+    assert len(calls) == 2
+    assert "-n" in calls[1] and "400" in calls[1]
 
 
-def test_journal_error_window_stays_unknown_when_no_bounded_source_answers() -> None:
-    with patch("mishe_tauftauf.discovery.subprocess.run", side_effect=OSError):
-        assert discovery._journal_error_window() == {}
-    with patch("mishe_tauftauf.discovery.subprocess.run",
-               side_effect=subprocess.TimeoutExpired(cmd=[], timeout=10)):
-        assert discovery._journal_error_window() == {}
+def test_journal_command_rejects_incomplete_and_over_cap_output() -> None:
+    import sys
+    with patch("mishe_tauftauf.discovery._JOURNAL_OUTPUT_CAP", 4):
+        assert discovery._journal_command([sys.executable, "-c", "print('x')"]) == b"x\n"
+        assert discovery._journal_command([sys.executable, "-c", "print('x', end='')"]) is None
+        assert discovery._journal_command(
+            [sys.executable, "-c", "import sys; sys.stdout.write('12345')"]) is None
 
 
 def test_sample_emits_journal_sense_even_when_the_journal_is_unreachable() -> None:
@@ -1476,6 +1457,99 @@ def test_unit_import_roots_reads_wrapper_pythonpath_from_live_process() -> None:
                       side_effect=[initial, recheck]), \
             patch.object(Path, "read_bytes",
                          return_value=b"PATH=/usr/bin\0PYTHONPATH=/releases/wrapper/src\0"):
+        roots = discovery._unit_import_roots(["mishe-a-senses.service"])
+    assert roots == {"mishe-a-senses.service": "/releases/wrapper"}
+
+def test_unit_import_roots_reads_wrapper_pythonpath_from_child_process() -> None:
+    stdout = "\n".join([
+        "Id=mishe-a-senses.service",
+        "Environment=PATH=/usr/bin",
+        "MainPID=1234",
+        ])
+    initial = subprocess.CompletedProcess(["systemctl"], 0, stdout, "")
+    recheck = subprocess.CompletedProcess(
+        ["systemctl"], 0, "Id=mishe-a-senses.service\nMainPID=1234", "")
+    ps_result = subprocess.CompletedProcess(["ps"], 0, "5678", "")
+
+    def mock_read_bytes(self):
+        if "1234" in str(self):
+            return b"PATH=/usr/bin\0"
+        if "5678" in str(self):
+            return b"PATH=/usr/bin\0PYTHONPATH=/releases/wrapper/src\0"
+        return b""
+
+    with patch.object(discovery.subprocess, "run",
+                      side_effect=[initial, ps_result, recheck]), \
+            patch.object(Path, "read_bytes", mock_read_bytes):
+        roots = discovery._unit_import_roots(["mishe-a-senses.service"])
+    assert roots == {"mishe-a-senses.service": "/releases/wrapper"}
+
+
+def test_unit_import_roots_child_without_pythonpath_remains_uninspectable() -> None:
+    stdout = "\n".join([
+        "Id=mishe-a-senses.service",
+        "Environment=PATH=/usr/bin",
+        "MainPID=1234",
+        ])
+    initial = subprocess.CompletedProcess(["systemctl"], 0, stdout, "")
+    recheck = subprocess.CompletedProcess(
+        ["systemctl"], 0, "Id=mishe-a-senses.service\nMainPID=1234", "")
+    ps_result = subprocess.CompletedProcess(["ps"], 0, "5678", "")
+
+    with patch.object(discovery.subprocess, "run",
+                      side_effect=[initial, ps_result, recheck]), \
+            patch.object(Path, "read_bytes", return_value=b"PATH=/usr/bin\0"):
+        roots = discovery._unit_import_roots(["mishe-a-senses.service"])
+    assert roots == {}
+
+
+def test_unit_import_roots_skips_children_when_main_has_pythonpath() -> None:
+    stdout = "\n".join([
+        "Id=mishe-a-senses.service",
+        "Environment=PATH=/usr/bin",
+        "MainPID=1234",
+        ])
+    initial = subprocess.CompletedProcess(["systemctl"], 0, stdout, "")
+    recheck = subprocess.CompletedProcess(
+        ["systemctl"], 0, "Id=mishe-a-senses.service\nMainPID=1234", "")
+
+    def mock_run(cmd, **kwargs):
+        if cmd[0] == "ps":
+            raise AssertionError("ps should not be called when main has PYTHONPATH")
+        if "Id,Environment,MainPID" in cmd:
+            return initial
+        return recheck
+
+    with patch.object(discovery.subprocess, "run", side_effect=mock_run), \
+            patch.object(Path, "read_bytes",
+                         return_value=b"PATH=/usr/bin\0PYTHONPATH=/releases/main/src\0"):
+        roots = discovery._unit_import_roots(["mishe-a-senses.service"])
+    assert roots == {"mishe-a-senses.service": "/releases/main"}
+
+
+def test_unit_import_roots_checks_multiple_children() -> None:
+    stdout = "\n".join([
+        "Id=mishe-a-senses.service",
+        "Environment=PATH=/usr/bin",
+        "MainPID=1234",
+        ])
+    initial = subprocess.CompletedProcess(["systemctl"], 0, stdout, "")
+    recheck = subprocess.CompletedProcess(
+        ["systemctl"], 0, "Id=mishe-a-senses.service\nMainPID=1234", "")
+    ps_result = subprocess.CompletedProcess(["ps"], 0, "5678\n9012", "")
+
+    def mock_read_bytes(self):
+        if "1234" in str(self):
+            return b"PATH=/usr/bin\0"
+        if "5678" in str(self):
+            return b"PATH=/usr/bin\0"
+        if "9012" in str(self):
+            return b"PATH=/usr/bin\0PYTHONPATH=/releases/wrapper/src\0"
+        return b""
+
+    with patch.object(discovery.subprocess, "run",
+                      side_effect=[initial, ps_result, recheck]), \
+            patch.object(Path, "read_bytes", mock_read_bytes):
         roots = discovery._unit_import_roots(["mishe-a-senses.service"])
     assert roots == {"mishe-a-senses.service": "/releases/wrapper"}
 
