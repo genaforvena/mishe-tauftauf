@@ -5,8 +5,10 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shlex
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import seed_culture_views, seed_witness_view
@@ -30,6 +32,78 @@ def _import_roots(environment: str) -> list[str]:
             path = Path(component)
             roots.append(str(path.parent if path.name == "src" else path))
     return roots
+
+
+LEASE_AGE_RE = re.compile(
+    r"^-- pane live (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z) · refresh ([0-9.]+)s · ticks every frame --$")
+
+
+def pane_lease_lines(home: Path) -> tuple[list[str], str]:
+    """Name top-pane renderer leases that stopped advancing.
+
+    A window can exist, be alive and pass a name/dead check while its renderer is
+    frozen; only the footer lease timestamp shows it stopped. Read each resident
+    renderer's lease without waiting and compare its age with the pane's own
+    advertised refresh. A window with no renderer script (the operator shell, the
+    log tail) carries no lease and is not a fault; a renderer whose lease is
+    missing or unreadable is UNKNOWN, never silently GREEN.
+    """
+    session = os.environ.get("MISHE_SEED_SESSION", "")
+    if not session:
+        return [], "UNKNOWN"
+    try:
+        expected = json.loads((home / "health" / "windows.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return [], "UNKNOWN"
+    if not isinstance(expected, list):
+        return [], "UNKNOWN"
+    renderers = sorted(window for window in expected
+                       if isinstance(window, str) and (home / "top-pains" / window).is_file())
+    if not renderers:
+        return [], "UNKNOWN"
+    stale: list[str] = []
+    missing: list[str] = []
+    unreadable = False
+    advancing = 0
+    for window in renderers:
+        try:
+            captured = subprocess.run(
+                ["tmux", "capture-pane", "-p", "-t", f"{session}:{window}.0", "-S", "-5"],
+                capture_output=True, text=True, timeout=2)
+        except (OSError, subprocess.TimeoutExpired):
+            unreadable = True
+            continue
+        lease = None
+        if captured.returncode == 0:
+            for line in reversed(captured.stdout.splitlines()):
+                match = LEASE_AGE_RE.fullmatch(line)
+                if match:
+                    lease = match
+                    break
+        if lease is None:
+            missing.append(window)
+            continue
+        try:
+            stamp = datetime.fromisoformat(lease.group(1).replace("Z", "+00:00"))
+            refresh = float(lease.group(2))
+        except ValueError:
+            missing.append(window)
+            continue
+        age = (datetime.now(timezone.utc) - stamp).total_seconds()
+        limit = max(120.0, 6 * refresh)
+        if age > limit:
+            stale.append(f"{window}(age={age:.0f}s>limit={limit:.0f}s)")
+        else:
+            advancing += 1
+    if stale:
+        return [f"PANE LEASE: RED stale={','.join(stale)}"], "STALE"
+    if missing or unreadable or not advancing:
+        detail = ",".join(part for part in (
+            ("no-lease=" + ",".join(missing)) if missing else "",
+            "tmux-unreadable" if unreadable else "",
+            "none-readable" if not missing and not unreadable else "") if part)
+        return [f"PANE LEASE: UNKNOWN {detail}"], "UNKNOWN"
+    return [f"PANE LEASE: GREEN {advancing} renderers advancing"], "GREEN"
 
 
 def _runtime_state(home: Path, root: Path,
@@ -183,8 +257,14 @@ def render(home: Path, role: str) -> str:
         except (OSError, ValueError, KeyError) as exc:
             lines.append(f"UNKNOWN patch {path.stem}: {exc}")
     lines.extend(service_lines)
+    lease_state = None
+    if role == "health":
+        lease_lines, lease_state = pane_lease_lines(home)
+        lines.extend(lease_lines)
     if runtime_state == "DRIFT" and service_note.startswith("GREEN"):
         service_note = "RED — runtime drift: service import roots differ from the pinned release"
+    if lease_state == "STALE" and service_note.startswith("GREEN"):
+        service_note = "RED — a top-pane renderer lease stopped advancing"
     lines.append("STATE: " + service_note)
     return "\n".join(lines) + "\n"
 

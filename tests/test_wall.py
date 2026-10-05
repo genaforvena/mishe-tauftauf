@@ -321,6 +321,48 @@ def test_health_dashboard_uses_user_runtime_and_preserves_bus_unknown(tmp_path, 
     assert "STATE: UNKNOWN — services unavailable: Failed to connect to bus: No medium found" in unavailable
 
 
+def test_health_dashboard_flags_a_frozen_renderer_lease(tmp_path, monkeypatch):
+    from mishe_tauftauf import wall_view
+
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health" / "windows.json").write_text(json.dumps(["health"]), encoding="utf-8")
+    (home / "health" / "services.json").write_text(json.dumps(["health.service"]), encoding="utf-8")
+    (home / "top-pains").mkdir()
+    (home / "top-pains" / "health").write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setenv("MISHE_SEED_SESSION", "sess")
+    capture = {"stdout": ""}
+
+    def run(argv, **_kwargs):
+        if argv[0] == "tmux" and "capture-pane" in argv:
+            return subprocess.CompletedProcess(argv, 0, capture["stdout"], "")
+        if argv[0] == "systemctl":
+            return subprocess.CompletedProcess(
+                argv, 0, "Id=health.service\nActiveState=active\nSubState=running\nNRestarts=0\n", "")
+        return subprocess.CompletedProcess(argv, 1, "", "")
+
+    def footer(age_seconds):
+        stamp = (datetime.now(timezone.utc) - timedelta(seconds=age_seconds)).isoformat().replace("+00:00", "Z")
+        return f"-- pane live {stamp} · refresh 5s · ticks every frame --\n"
+
+    monkeypatch.setattr(wall_view.subprocess, "run", run)
+    monkeypatch.setattr(wall_view, "ci_line", lambda _home: "CI: PASS")
+
+    capture["stdout"] = footer(4.0)
+    fresh = wall_view.render(home, "health")
+    assert "PANE LEASE: GREEN 1 renderers advancing" in fresh
+    assert "STATE: GREEN — listed services running" in fresh
+
+    capture["stdout"] = footer(600.0)
+    frozen = wall_view.render(home, "health")
+    assert "PANE LEASE: RED stale=health(" in frozen
+    assert "STATE: RED — a top-pane renderer lease stopped advancing" in frozen
+
+    capture["stdout"] = "no footer here\n"
+    unknown = wall_view.render(home, "health")
+    assert "PANE LEASE: UNKNOWN no-lease=health" in unknown
+
+
 def test_tmux_send_failure_stays_visible_without_killing_supervisor(tmp_path, monkeypatch):
     from mishe_tauftauf import wall
     from mishe_tauftauf.tmux import TmuxError
