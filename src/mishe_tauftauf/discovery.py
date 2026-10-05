@@ -8,6 +8,7 @@ import os
 import time
 import re
 import shutil
+import selectors
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -365,39 +366,70 @@ def _top_cpu_processes(session: str | None = None,
             continue
         info["rate"] = 100.0 * (later - start) / _CLOCK_TICK / sample_seconds
     return sorted(processes.values(), key=_rate_key, reverse=True)[:rows]
-def _journal_error_window(past_minutes: int = 10, limit: int = 400) -> dict:
-    """Read the journal's own error class over a bounded window.
+_JOURNAL_OUTPUT_CAP = 1024 * 1024
 
-    Returns a neutral count of one well-known kernel-driver message, never a
-    degradation verdict: on this host the uvcvideo resubmit rate is idle-camera
-    status noise and is inversely related to camera use (discover wake 116), so
-    the sample names every contributing endpoint instead of implying health.
-    A full-boot scan is unbounded and is never attempted.
-    """
-    coverage = f"last-{past_minutes}min"
+
+def _journal_command(cmd: list[str], timeout: float = 10) -> bytes | None:
+    """Return complete bounded stdout, or None when acquisition is incomplete."""
+    process = None
     try:
-        primary = subprocess.run(
-            ["journalctl", "-b", "-p", "err", "--since", f"-{past_minutes}min",
-             "-o", "cat", "--no-pager"],
-            capture_output=True, text=True, timeout=10)
-        if primary.returncode != 0:
-            primary = subprocess.run(
-                ["journalctl", "-b", "-p", "err", "-n", str(limit),
-                 "-o", "cat", "--no-pager"],
-                capture_output=True, text=True, timeout=10)
-            coverage = f"last-{limit}-errors"
-        window = primary.stdout.splitlines()
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        assert process.stdout is not None
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            output = bytearray()
+            deadline = time.monotonic() + timeout
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(cmd, timeout)
+                if not selector.select(remaining):
+                    raise subprocess.TimeoutExpired(cmd, timeout)
+                chunk = os.read(process.stdout.fileno(),
+                                min(65536, _JOURNAL_OUTPUT_CAP + 1 - len(output)))
+                if not chunk:
+                    break
+                output.extend(chunk)
+                if len(output) > _JOURNAL_OUTPUT_CAP:
+                    process.kill()
+                    process.wait()
+                    return None
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        if process.wait(timeout=remaining) != 0:
+            return None
+        if output and not output.endswith(b"\n"):
+            return None
+        return bytes(output)
     except (OSError, subprocess.TimeoutExpired):
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait()
+        return None
+
+
+def _journal_error_window(past_minutes: int = 10, limit: int = 400) -> dict:
+    """Count a bounded, complete journal window without treating partial output as evidence."""
+    coverage = f"last-{past_minutes}min"
+    output = _journal_command(
+        ["journalctl", "-b", "-p", "err", "--since", f"-{past_minutes}min",
+         "-o", "cat", "--no-pager"])
+    if output is None:
+        output = _journal_command(
+            ["journalctl", "-b", "-p", "err", "-n", str(limit),
+             "-o", "cat", "--no-pager"])
+        coverage = f"last-{limit}-errors"
+    if output is None:
         return {}
+    window = output.decode("utf-8", errors="replace").splitlines()
     faults = [line for line in window if KERNEL_FAULT in line]
     if not faults:
-        return {"state": "verified" if window else "unknown",
-                "sample": (f"{coverage} kernel-error-count=0"
-                           if window else "journal error window unavailable")}
+        return {"state": "verified",
+                "sample": f"{coverage} kernel-error-count=0"}
     endpoints = sorted({line.split(": Failed", 1)[0].strip() for line in faults})
-    names = ",".join(endpoints)
     return {"state": "verified",
-            "sample": f"{coverage} kernel-error-count={len(faults)} endpoints={names}"}
+            "sample": f"{coverage} kernel-error-count={len(faults)} endpoints={','.join(endpoints)}"}
 
 
 
@@ -506,11 +538,24 @@ def _pinned_root(home: Path, default: str) -> tuple[str | None, str | None]:
         return None, f"pin invalid: {exc}"
 
 
+def _child_pids(pid: int) -> list[int]:
+    """Direct children of `pid`, or empty when they cannot be listed."""
+    try:
+        result = subprocess.run(["ps", "--ppid", str(pid), "-o", "pid=", "--no-headers"],
+                                capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode:
+        return []
+    return [int(line) for line in result.stdout.split() if line.strip().isdigit()]
+
+
 def _unit_import_roots(units: list[str]) -> dict[str, str]:
     """The source root each named unit imports, keyed by unit.
 
     Prefer systemd's configured environment; if it does not name PYTHONPATH,
-    inspect the live main process environment so wrapper-exported roots count.
+    inspect the live main process environment, then its direct children, so
+    wrapper-exported roots count.
     """
     if not units:
         return {}
@@ -551,6 +596,29 @@ def _unit_import_roots(units: list[str]) -> dict[str, str]:
                         if root:
                             fallback_roots[unit] = (pid, root)
                             break
+                    if unit in fallback_roots:
+                        break
+            else:
+                # A wrapper script exports PYTHONPATH to its children, not itself.
+                # Check direct children for a wrapper-exported root.
+                for child_pid in _child_pids(pid):
+                    try:
+                        child_environment = Path(f"/proc/{child_pid}/environ").read_bytes()
+                    except OSError:
+                        continue
+                    child_items = [
+                        item.decode(errors="replace") for item in child_environment.split(b"\0")
+                        if item.startswith(b"PYTHONPATH=")
+                    ]
+                    if child_items:
+                        for item in child_items:
+                            for component in item[len("PYTHONPATH="):].split(os.pathsep):
+                                root = _import_root(component)
+                                if root:
+                                    fallback_roots[unit] = (pid, root)
+                                    break
+                            if unit in fallback_roots:
+                                break
                     if unit in fallback_roots:
                         break
             continue
