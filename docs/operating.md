@@ -75,6 +75,9 @@ For an ownership-checked reading of the actual top pane, not a newly rendered ap
 A supervisor's `pain watch` publishes the exact frame it renders to
 `SITE/dashboards/ROLE.json`. That frame is what the pane shows, what the mind is
 told to read, and the sensor text the supervisor digests for change detection.
+Headless `pain read` rendering preserves a caller's nonempty `MISHE_SEED_SESSION`;
+when absent or empty, it uses the session recorded in `SITE/.seed-raised` when
+available. Without a readable recorded session it leaves the variable unset.
 Read it directly, rather than re-rendering or scraping the pane:
 
 ```bash
