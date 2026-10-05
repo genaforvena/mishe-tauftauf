@@ -304,11 +304,14 @@ leaves the service roots unread, so the line reports `services=UNKNOWN`, not
 pane. Moving the pin is not a push or a CI result; keep source, CI and running
 code as separate evidence.
 
-The launcher writes the pin before it restarts the covered services, so a
-discovery scan that lands inside that window reports every session unit as stale
-against the new pin — the swap transient, not persistent drift. Re-read the
-`RUNTIME` line and the across-sites sample (`sense.runtime.drift-across-sites`)
-after the launcher returns before treating the units as drifted.
+The launcher writes the pin, then reconciles the covered services onto it,
+before it runs its own discovery scan, so the launcher's own post-return reading
+is the reconciled state, not the swap transient. A scan that samples during the
+pin-write→reconcile window — a concurrent renewal or an explicit scan — can still
+report every session unit stale against the new pin: the swap transient, not
+persistent drift. Re-read the `RUNTIME` line and the across-sites sample
+(`sense.runtime.drift-across-sites`) after the launcher returns, and treat a
+stale reading as drift only when it was not sampled during that window.
 
 The across-sites drift sense also reports `UNKNOWN` with `uninspectable=<unit>`
 when a running session unit's import root cannot be discovered from systemd,
