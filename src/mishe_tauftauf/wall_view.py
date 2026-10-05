@@ -185,6 +185,11 @@ def _service_block(home: Path) -> tuple[list[str], dict[str, list[str]] | None, 
         units = json.loads((home / "health/services.json").read_text())
         if not isinstance(units, list) or any(not isinstance(u, str) or not u.endswith(".service") or u.startswith("-") or "/" in u or any(c.isspace() for c in u) for u in units):
             raise ValueError("invalid service manifest")
+        if not units:
+            # A site that installs no services gets an empty manifest. Asking
+            # `systemctl show` with no unit arguments would print the manager's
+            # own properties, which the row parser turns into a phantom unit.
+            return [], {}, "RED — service failure or empty manifest"
         env = os.environ.copy()
         env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
         result = subprocess.run(
@@ -193,17 +198,16 @@ def _service_block(home: Path) -> tuple[list[str], dict[str, list[str]] | None, 
             capture_output=True, text=True, timeout=5, env=env)
         if result.returncode:
             raise ValueError(result.stderr.strip() or "service read failed")
-        healthy = bool(units)
+        healthy = True
         roots: dict[str, list[str]] = {}
         rows = []
         for block in result.stdout.strip().split("\n\n"):
             values = dict(row.split("=", 1) for row in block.splitlines() if "=" in row)
             good = values.get("ActiveState") == "active" and values.get("SubState") == "running"
             healthy &= good
-            if units:
-                unit_roots = _import_roots(values.get("Environment", ""))
-                if unit_roots:
-                    roots[values.get("Id", "unknown")] = unit_roots
+            unit_roots = _import_roots(values.get("Environment", ""))
+            if unit_roots:
+                roots[values.get("Id", "unknown")] = unit_roots
             rows.append((values.get("Id", "unknown"), good, values.get("ActiveState"),
                          values.get("SubState"), values.get("NRestarts", "unknown")))
         lines = []
