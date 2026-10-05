@@ -90,26 +90,30 @@ def senses(home: Path) -> str:
     _report(home, "senses", verdict)
     return "\n".join(lines) + "\n"
 
-def _service_readings(units: list[str], env: dict[str, str]) -> dict[str, tuple[str, str, int | None]]:
+def _service_readings(units: list[str], env: dict[str, str]) -> tuple[dict[str, tuple[str, str, int | None]], dict[str, list[str]]]:
     """One coherent systemctl sample for every listed unit, keyed by unit name.
 
     Per-unit ``is-active`` loops sample different instants, so a unit that crashes
     and is auto-restarted between two calls reads healthy each time: the restart
     window and the durable ``NRestarts`` counter never reach the pane. A failed
     read yields no readings, leaving every unit unknown rather than fabricating a
-    healthy state.
+    healthy state. The same sample carries each unit's import roots so the caller
+    can compare them with the pin without a second probe.
     """
     if not units:
-        return {}
+        return {}, {}
     try:
         result = subprocess.run(
-            ["systemctl", "--user", "show", *units, "-p", "Id,ActiveState,SubState,NRestarts"],
+            ["systemctl", "--user", "show", *units,
+             "-p", "Id,ActiveState,SubState,NRestarts,Environment"],
             capture_output=True, text=True, timeout=5, env=env)
     except (OSError, subprocess.TimeoutExpired):
-        return {}
+        return {}, {}
     if result.returncode:
-        return {}
+        return {}, {}
+    from .wall_view import _import_roots
     readings: dict[str, tuple[str, str, int | None]] = {}
+    roots: dict[str, list[str]] = {}
     for block in result.stdout.strip().split("\n\n"):
         values = dict(row.split("=", 1) for row in block.splitlines() if "=" in row)
         name = values.get("Id")
@@ -118,7 +122,10 @@ def _service_readings(units: list[str], env: dict[str, str]) -> dict[str, tuple[
         count = values.get("NRestarts", "")
         readings[name] = (values.get("ActiveState", "unknown"), values.get("SubState", "unknown"),
                           int(count) if count.isdigit() else None)
-    return readings
+        unit_roots = _import_roots(values.get("Environment", ""))
+        if unit_roots:
+            roots[name] = unit_roots
+    return readings, roots
 
 
 
@@ -190,7 +197,7 @@ def health(home: Path) -> str:
             previous_restarts = {}
     except (OSError, ValueError):
         previous_restarts = {}
-    readings = _service_readings(services, env)
+    readings, service_roots = _service_readings(services, env)
     failed_services = []
     current_restarts: dict[str, int] = {}
     for unit in services:
@@ -294,6 +301,14 @@ def health(home: Path) -> str:
         causes.append("windows-dead=" + ",".join(dead))
     if failed_services:
         causes.append("services=" + ",".join(failed_services))
+    # Fold the runtime import-root check in, so a latched RED from the pane's
+    # STATE line is also named in the durable report. The pane's own RUNTIME
+    # line reads DRIFT when a covered service imports another root; an invalid
+    # or absent pin reads UNKNOWN/UNPINNED and is not itself a fault.
+    from .wall_view import _runtime_state
+    runtime_state, _ = _runtime_state(home, Path(__file__).resolve().parents[2], service_roots)
+    if runtime_state == "DRIFT":
+        causes.append("runtime-drift")
     if linked_failed:
         causes.append("linked-sites=" + ",".join(linked_failed))
     if lease_state == "STALE":

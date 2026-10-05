@@ -347,3 +347,26 @@ def test_health_reports_unknown_when_session_unset(tmp_path: Path, monkeypatch) 
     assert "STATE: UNKNOWN — session unset" in rendered
     assert (home / "observations" / "health").read_text(encoding="utf-8").startswith(
         "UNKNOWN health session unset at ")
+
+
+def test_health_names_runtime_import_root_drift_as_a_cause(tmp_path: Path, monkeypatch) -> None:
+    """A covered unit importing another root must be named in the durable report."""
+    from mishe_tauftauf import runtime_source
+    home = _service_home(tmp_path, ["steady.service"])
+    (home / "health" / "runtime-release.json").write_text("{}", encoding="utf-8")
+    pinned = tmp_path / "pinned"
+    other = tmp_path / "other"
+    _fake_systemctl(monkeypatch, "Id=steady.service\nActiveState=active\n"
+                                 "SubState=running\nNRestarts=0\n"
+                                 f"Environment=PYTHONPATH={other}/src\n")
+    monkeypatch.setattr(runtime_source, "source_for", lambda h, default: pinned)
+    rendered = health(home)
+    report = (home / "observations" / "health").read_text(encoding="utf-8")
+    assert report.startswith("FAIL health internal check") and "runtime-drift" in report
+    assert "STATE: RED" in rendered
+    # A unit whose import root equals the pin is not drift.
+    _fake_systemctl(monkeypatch, "Id=steady.service\nActiveState=active\n"
+                                 "SubState=running\nNRestarts=0\n"
+                                 f"Environment=PYTHONPATH={pinned}/src\n")
+    health(home)
+    assert "runtime-drift" not in (home / "observations" / "health").read_text(encoding="utf-8")
