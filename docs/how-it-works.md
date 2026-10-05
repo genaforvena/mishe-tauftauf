@@ -116,6 +116,22 @@ The caller still supplies the provider worker, current authority, durable
 effects and recovery. This transport does not activate a resident or establish
 credential/account parity.
 
+The wheel includes the native TypeScript worker, session and auth bootstrap.
+`inference_native.native_worker_command(bun=..., node_modules=...,
+staging_parent=...)` stages those sources in a temporary owned directory with
+an adjacent link to caller-provisioned dependencies. Nest `NativeSession` inside
+that context so the worker is closed and reaped before staging is removed.
+The command disables Bun auto-install and `.env` loading; no dependencies or
+credentials are bundled. The caller supplies trusted, pinned, unchanged runtime
+paths (measured with Bun 1.4.2 and OMP packages 18.4.4), and supplies the session
+environment and working directory explicitly. `NODE_PATH` is not sufficient.
+Bootstrap uses OMP's read-only settings, effective account policy, broker-aware
+auth discovery and exact model lookup. It closes returned auth after provider
+session disposal. Failure before auth discovery returns remains a dependency
+cleanup gap; fatal process containment is not proof of resource cleanup.
+Installed-wheel synthetic continuation is not real account/model parity or
+resident adoption. Preserve the existing harness route until a reviewed canary.
+
 ### Development is not just repository maintenance
 
 The generic runtime provides the observation, wall, and handoff loop. A project's charter supplies the goal; its local checks make progress and uncertainty observable. Builds, Git state, and CI are useful checks, but they are not a universal definition of progress.
