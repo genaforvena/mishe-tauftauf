@@ -252,9 +252,13 @@ The core deployment report describes CI freshness and recorded applied releases.
 
 ### Advance the core plant's own runtime pin
 
-The core plant's minds, panes and services import the release named in
+The core plant's minds and services import the release named in
 `SITE/health/runtime-release.json`, not the shared checkout, so a committed
-kernel change becomes running code only when that pin moves. Point the core at a
+kernel change becomes running code only when that pin moves. The evidence panes
+render from the root their own `top-pains/<role>` scripts import — the pin, the
+checkout when unpinned, or a separate runtime snapshot a wall-mode site names in
+`coordination-mode.json` — so a respawn does not repoint a pane whose script
+selects another root ([wall coordination](wall-coordination.md)). Point the core at a
 clean detached worktree of the exact commit — the release coordinator creates
 these under `SITE/releases/<sha>` — with the launcher:
 
