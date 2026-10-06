@@ -482,6 +482,15 @@ class EffectLedger:
                 call["native_call"] = dict(intent.native_call)
             try:
                 result = executor(call)
+            except (StoreUnavailable, JournalCorrupt, ChangedContentReuse):
+                raise
+            except ValueError as exc:
+                # A caller serialization error is not a capability effect. It
+                # leaves no outcome, but it must reach the caller rather than
+                # be reported as though the capability had failed.
+                raise StoreUnavailable(
+                    f"the recorded result of {intent.operation_id} is not canonical: "
+                    f"{exc}") from exc
             except Exception:
                 # An executor exception does not establish that no effect
                 # happened, so no outcome is recorded: the start record is the
@@ -492,7 +501,7 @@ class EffectLedger:
                     reconciliation_ref=self._intent_ref(intent.operation_id))
             outcome = EffectOutcome(operation_id=intent.operation_id,
                                     status="completed", result=result,
-                                    native_call=intent.native_call)
+                                    executions=1, native_call=intent.native_call)
             self._append(self.outcomes_path, outcome.to_record())
             return outcome
 
@@ -571,3 +580,135 @@ def _same_binding(recorded: EffectIntent, intent: EffectIntent) -> bool:
             and recorded.arguments == intent.arguments
             and recorded.authority == intent.authority
             and recorded.request_digest == intent.request_digest)
+
+def effect_outcome_for(outcome: EffectOutcome) -> dict[str, Any]:
+    """The loop's `dispatch` reply: an explicit status the loop never retries.
+
+    The ledger records `completed` or `unknown` for a dispatch; `unknown` is the
+    only answer this boundary can give for an ambiguous effect, so the loop
+    stops rather than retrying.
+    """
+    return {"status": outcome.status, "result": snapshot_json(outcome.result),
+            "operation_id": outcome.operation_id, "failure": outcome.failure,
+            "reconciliation_ref": outcome.reconciliation_ref,
+            "executions": outcome.executions}
+
+
+def snapshot_json(value: Any) -> Any:
+    """Canonical, crash-safe copy of a capability result for journal and reply.
+
+    Non-finite floats and noncanonical objects have no stable serialization, so
+    they are refused rather than lossily normalized into a durable record.
+    """
+    return json.loads(json.dumps(_canonicalizable(value), ensure_ascii=False,
+                                 allow_nan=False))
+
+
+class EffectBoundary:
+    """`drive_native`'s `dispatch` callback bound to one original store.
+
+    `drive_native` calls `dispatch(call)` with the provider's call shape; this
+    class is the deterministic mapping from that shape to the durable operation
+    a fresh process can reconcile. It holds the caller's obligation identity so
+    the digest binds the exact source event, and snapshots the request so a
+    mutated caller object cannot change what was committed.
+
+    The caller supplies the capability executor at construction. It receives the
+    ledger's call — durable identity plus the provider's type/id/name and the
+    full native call — and returns the capability's observed result. This class
+    never calls a provider or a capability itself. A noncanonical or
+    unserializable result raises before any outcome is written, so a caller
+    error cannot leave a durable record of content the store cannot re-read.
+
+    `operation_id` is generated from the provider's call id when the caller does
+    not supply one, so a provider-issued id names its own effect. Reuse of that
+    id with changed content, arguments or authority raises `ChangedContentReuse`
+    before any effect. A same-id second dispatch returns the recorded outcome or
+    an explicit `unknown`, never a second execution.
+    """
+
+    def __init__(self, store_dir: Path, *, writer_id: str, obligation: Mapping[str, Any],
+                 execute: Callable[[dict[str, Any]], Any], authority: str,
+                 capability_version: str = "v1",
+                 budget: Mapping[str, Any] | None = None,
+                 operation_prefix: str = "effect") -> None:
+        if not authority:
+            raise ValueError("authority is required")
+        self.ledger = EffectLedger(store_dir, writer_id=writer_id)
+        self.execute = execute
+        self.obligation = _snapshot(obligation)
+        self.authority = authority
+        self.capability_version = capability_version
+        self.budget = _snapshot(budget) if budget is not None else None
+        self.operation_prefix = operation_prefix
+
+    def _operation_id(self, call: Mapping[str, Any]) -> str:
+        caller_id = call.get("operation_id")
+        if isinstance(caller_id, str) and caller_id:
+            if not _OPERATION_ID_RE.match(caller_id):
+                raise ValueError(
+                    f"operation_id {caller_id!r} must match [A-Za-z0-9_.:-]+")
+            return caller_id
+        native_id = call.get("id")
+        if not isinstance(native_id, str) or not native_id:
+            raise ValueError("a native call id is required to name the operation")
+        # A provider id may carry characters the journal cannot address. Plain
+        # substitution would collapse distinct ids into one name, so a short
+        # digest of the original makes the derived id collision-free while the
+        # readable prefix keeps it greppable in the store. The intent's
+        # native_call record still carries the provider id verbatim.
+        safe = re.sub(r"[^A-Za-z0-9_.:-]", "-", native_id[:64]).strip("-") or "call"
+        digest = hashlib.sha256(native_id.encode("utf-8")).hexdigest()[:12]
+        return f"{self.operation_prefix}-{safe}-{digest}"
+
+    def __call__(self, call: Mapping[str, Any]) -> dict[str, Any]:
+        """Bind, start and record one capability call, then reply for the loop.
+
+        Never retries: a second call with the same id returns the durable state
+        or an explicit `unknown`, and the capability runs at most once per id.
+        """
+        native_call = _snapshot(call)
+        if not isinstance(native_call, Mapping):
+            raise ValueError("native call must be an object")
+        operation_id = self._operation_id(native_call)
+        capability = native_call.get("name")
+        if not isinstance(capability, str) or not capability:
+            raise ValueError("a native call name is required")
+        arguments = native_call.get("arguments")
+        if not isinstance(arguments, Mapping):
+            raise ValueError("native call arguments must be an object")
+        intent = self.ledger.allocate(capability, self.capability_version,
+                                      _snapshot(arguments), authority=self.authority,
+                                      request={"obligation": self.obligation,
+                                               "call": native_call},
+                                      operation_id=operation_id,
+                                      native_call=native_call, budget=self.budget)
+        return effect_outcome_for(self.ledger.dispatch(intent, self._runner))
+
+    def _runner(self, ledger_call: dict[str, Any]) -> Any:
+        # The caller rechecks current authority against its own state; the
+        # persisted authority is a binding, not a fresh grant.
+        return snapshot_json(self.execute(ledger_call))
+
+    def reconcile(self, operation_id: str) -> dict[str, Any]:
+        """Read durable state for one operation without executing anything."""
+        return effect_outcome_for(self.ledger.reconcile(operation_id))
+
+    def status(self, operation_id: str) -> dict[str, Any] | None:
+        """The durable state a fresh process reads, or None if never allocated."""
+        outcome = self.ledger.status(operation_id)
+        return None if outcome is None else effect_outcome_for(outcome)
+
+    def open_intents(self) -> Sequence[EffectIntent]:
+        return self.ledger.open_intents()
+
+    def recover(self, call: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Reply for a call whose receipt may have been lost, without executing.
+
+        `None` means the operation was never allocated, so the caller has no
+        durable state to reconcile and may allocate it. Any other reply is the
+        durable state and must not be retried: a `started-without-outcome`
+        failure is an unknown effect, not permission to run the capability again.
+        """
+        return self.status(self._operation_id(call))
+
