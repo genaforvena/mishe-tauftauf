@@ -108,30 +108,33 @@ def test_failed_exchange_reaps_and_refuses_reuse(tmp_path, turn, match):
 
 
 
-def test_completion_written_immediately_before_a_nonzero_exit_is_not_refused(tmp_path):
-    # A worker that emits its completion and exits nonzero in the same tick
-    # races the receipt against the exit. Either ordering is defensible: the
-    # turn may complete, or it may be attributed to a process that died right
-    # after. Discarding the buffered line as a bare exit is not, because a
-    # caller reconciling the turn would lose the completion it needs.
+
+def test_completion_written_before_a_nonzero_exit_is_kept_not_refused(tmp_path):
+    # A worker that writes its completion and exits nonzero in the same tick can
+    # have the line land during the post-EOF drain rather than before it. That
+    # line is the turn's receipt, so it must be parsed and returned; raising the
+    # bare exit first would discard a completion the caller needs to reconcile.
     session = NativeSession(command(tmp_path, turn=(
         "emit({'type':'turn','id':request['id'],'frame':" + repr(FRAME) + "}); __import__('os')._exit(7)"
     )), "fixture/model", "session", timeout=3)
-    try:
-        turn = session.turn({})
-    except WorkerError as caught:
-        # The exit outran the receipt: the turn is attributed to a process that
-        # died right after emitting it, never refused as a bare exit.
-        assert "native session exited 7" not in str(caught), caught
-    else:
-        # The receipt won, so the turn completes and the caller owns the
-        # failure: a worker exiting 7 after a valid receipt is a disposal
-        # failure, never a successful turn.
-        assert turn.terminal == "done"
-        assert turn.assistant == FRAME["assistant"]
-        with pytest.raises(WorkerError, match="exited 7"):
-            session.close()
+    turn = session.turn({})
+    assert turn.terminal == "done"
+    assert turn.assistant == FRAME["assistant"]
     assert not session.pending
+    # The turn completed, so the exit is still the caller's to classify.
+    with pytest.raises(WorkerError, match="exited 7"):
+        session.close()
+    assert_reaped(session)
+
+
+def test_worker_exiting_without_writing_anything_is_still_refused(tmp_path):
+    # The drain keeps only a line that actually arrived. A worker that exits
+    # having written nothing must still surface the bare exit, otherwise this
+    # would wait forever for a receipt that never comes.
+    session = NativeSession(command(tmp_path, turn="__import__('os')._exit(7)"),
+                            "fixture/model", "session", timeout=3)
+    with pytest.raises(WorkerError, match="exited 7"):
+        session.turn({})
     assert_reaped(session)
 
 def test_current_cancellation_reaps_before_next_turn(tmp_path):

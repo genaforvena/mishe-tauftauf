@@ -128,7 +128,11 @@ class NativeSession:
                     self.selector.unregister(self.process.stdin)
                 while self.selector.get_map() or self.process.poll() is None:
                     self._pump(memoryview(b''))
-                raise WorkerError(f'native session exited {self.process.returncode}: ' + self.errors.decode(errors='replace'))
+                # A completion the worker wrote before dying arrives during that
+                # drain. Keeping it here is what lets the caller reconcile the
+                # turn; raising first would discard it as a bare exit.
+                if b'\n' not in self.pending:
+                    raise WorkerError(f'native session exited {self.process.returncode}: ' + self.errors.decode(errors='replace'))
         line, _, rest = self.pending.partition(b'\n')
         self.pending[:] = rest
         if rest:
