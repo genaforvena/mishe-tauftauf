@@ -21,7 +21,7 @@ from .feed import Feed
 from .records import payload as record_payload
 from . import discovery
 from .observations import executable, strip_owned_chrome, validate_home, validate_slug
-from .tmux import OWNED_OPTION, _pane_stopped_or_dead, _python_command, _tmux, capture_raw, lease_value, owns_session
+from .tmux import OWNED_OPTION, _pane_stopped_or_dead, _python_command, _tmux, await_owned, capture_raw, lease_value, owns_session
 
 
 RENEWAL_SLUGS = frozenset({"discover", "senses"})
@@ -522,7 +522,7 @@ def start(home: Path, session: str, slug: str, interval: float) -> str:
         _tmux("set-option", "-t", session, OWNED_OPTION, str(home.resolve()))
         identity = _tmux("display-message", "-p", "-t", session, "#{session_id}").stdout.decode().strip()
         (home / ".seed-raised").write_text(f"{session} {identity}\n", encoding="utf-8")
-    elif not owns_session(home, session):
+    elif not await_owned(home, session):
         raise ValueError(f"session {session} is not owned by {home}")
     target = f"{session}:{slug}"
     names = _tmux("list-windows", "-t", session, "-F", "#{window_name}").stdout.decode().splitlines()

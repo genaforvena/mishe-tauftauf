@@ -272,6 +272,51 @@ def test_a_seed_start_records_the_model_at_the_first_respawn(tmp_path, monkeypat
     assert bodies == [f"mind model top-pain genome launcher={launcher} reason=start model=vendor/model-a"]
 
 
+def test_seed_start_waits_for_a_concurrent_raise_to_record_its_owner(tmp_path, monkeypatch):
+    """Boot race: a peer creates the session, then records the owning home.
+
+    A second supervisor that observes the session between those two steps must
+    wait for the owner, not report the still-unowned session as foreign. On the
+    host's default.target start this window crash-looped permissions,
+    research-methods and senses once each before their systemd restart.
+    """
+    from subprocess import CompletedProcess
+    from mishe_tauftauf import tmux
+
+    home = tmp_path / "site"
+    (home / "top-pains").mkdir(parents=True)
+    probe = home / "top-pains" / "genome"
+    probe.write_text("#!/bin/sh\nexit 0\n")
+    probe.chmod(0o755)
+    launcher = home / "minds" / "genome"
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    launcher.write_text("#!/bin/sh\nexec omp --model vendor/model-a --cwd /repo\n")
+    launcher.chmod(0o755)
+    owners = iter(["", str(home.resolve())])
+
+    def owner_tmux(*args, **kwargs):
+        if args[0] == "show-option":
+            return CompletedProcess(args, 0, (next(owners, str(home.resolve())) + "\n").encode())
+        return CompletedProcess(args, 0, b"")
+
+    monkeypatch.setattr(tmux, "_tmux", owner_tmux)
+    monkeypatch.setattr(tmux.time, "sleep", lambda *a: None)
+    monkeypatch.setattr(seed, "_send", lambda *a: None)
+    monkeypatch.setattr(seed.time, "sleep", lambda *a: None)
+    monkeypatch.setattr(seed, "_state", lambda home, slug, **kw: (None, None, None, None, None, None, None, None))
+    pids = iter(["101\n", "202\n"])
+
+    def command(*args, **kwargs):
+        if args[0] == "has-session":
+            return CompletedProcess(args, 0, b"$1\n", b"")
+        if args[-1] == "#{pane_pid}":
+            return CompletedProcess(args, 0, next(pids).encode(), b"")
+        return CompletedProcess(args, 0, b"0\n", b"")
+
+    monkeypatch.setattr(seed, "_tmux", command)
+    assert seed.start(home, "session", "genome", 5).startswith("seed genome ready")
+
+
 def test_a_failed_respawn_records_no_model_identity(tmp_path, monkeypatch):
     """A respawn that never happened must not be attributed a model."""
     from subprocess import CompletedProcess
