@@ -562,6 +562,13 @@ def cmd_doctor(args) -> int:
                 # legacy one-shot surfaces) is an informational observation, not
                 # a RED failure that no service can clear.
                 print(f"INFO pane-surface: {slug} has a renderer but no configured resident window")
+    if args.sweep_orphans:
+        from .tmux import sweep_orphan_test_sessions
+        killed = sweep_orphan_test_sessions()
+        if killed:
+            print(f"PASS swept orphaned test sessions: {', '.join(killed)}")
+        else:
+            print("PASS no orphaned test sessions")
     if shutil.which("tmux"):
         print("PASS optional tmux available")
     else:
@@ -751,7 +758,7 @@ def parser() -> argparse.ArgumentParser:
     p = discover_cmd.add_parser("show"); p.set_defaults(func=cmd_discover)
     p = sub.add_parser("feed"); p.set_defaults(func=cmd_feed)
     p = sub.add_parser("dispatch-receipt"); p.add_argument("slug"); p.add_argument("entry", type=int); p.add_argument("outcome", choices=("delivered", "refused")); p.add_argument("--request-id"); p.add_argument("--generation", type=int); p.set_defaults(func=cmd_dispatch_receipt)
-    p = sub.add_parser("doctor"); p.add_argument("--panes", action="store_true"); p.add_argument("--session"); p.add_argument("--pane-wait", type=float, default=11.0); p.add_argument("--live-laya", action="store_true"); p.add_argument("--live-jev", action="store_true"); p.add_argument("--verbose", action="store_true"); p.set_defaults(func=cmd_doctor)
+    p = sub.add_parser("doctor"); p.add_argument("--panes", action="store_true"); p.add_argument("--session"); p.add_argument("--pane-wait", type=float, default=11.0); p.add_argument("--live-laya", action="store_true"); p.add_argument("--live-jev", action="store_true"); p.add_argument("--verbose", action="store_true"); p.add_argument("--sweep-orphans", action="store_true"); p.set_defaults(func=cmd_doctor)
     p = sub.add_parser("check"); p.add_argument("slug"); p.add_argument("program", nargs=argparse.REMAINDER); p.set_defaults(func=cmd_check)
     p = sub.add_parser("predict"); p.add_argument("slug"); p.add_argument("file", nargs="?"); p.add_argument("--replaces", type=int); p.set_defaults(func=cmd_predict)
     p = sub.add_parser("handoff"); p.add_argument("slug"); p.add_argument("file", nargs="?"); p.set_defaults(func=cmd_handoff)

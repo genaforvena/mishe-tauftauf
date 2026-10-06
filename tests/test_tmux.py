@@ -297,6 +297,120 @@ class OwnershipWaitTests(unittest.TestCase):
                 mock.patch.object(tmux_module.time, "sleep", lambda *a: None):
             self.assertFalse(tmux_module.await_owned(home, "session", timeout=0.0))
 
+class OrphanSweepTests(unittest.TestCase):
+    def test_list_sessions_returns_session_names(self):
+        from mishe_tauftauf import tmux as tmux_module
+
+        def result(returncode, stdout):
+            return subprocess.CompletedProcess([], returncode, stdout.encode(), b"")
+
+        with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_tmux", return_value=result(0, "alpha\nbeta\n")):
+            self.assertEqual(tmux_module.list_sessions(), ["alpha", "beta"])
+
+    def test_list_sessions_returns_empty_when_tmux_missing(self):
+        from mishe_tauftauf import tmux as tmux_module
+
+        with mock.patch.object(tmux_module.shutil, "which", return_value=None):
+            self.assertEqual(tmux_module.list_sessions(), [])
+
+    def test_list_sessions_returns_empty_on_tmux_error(self):
+        from mishe_tauftauf import tmux as tmux_module
+
+        def result(returncode, stdout):
+            return subprocess.CompletedProcess([], returncode, stdout.encode(), b"")
+
+        with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_tmux", return_value=result(1, "")):
+            self.assertEqual(tmux_module.list_sessions(), [])
+
+    def test_sweep_kills_session_with_dead_pid(self):
+        from mishe_tauftauf import tmux as tmux_module
+
+        def result(returncode, stdout):
+            return subprocess.CompletedProcess([], returncode, stdout.encode(), b"")
+
+        calls = []
+        def fake_tmux(*args, **kwargs):
+            calls.append(args)
+            if args[0] == "list-sessions":
+                return result(0, "mishe-tauftauf-test-999999\n")
+            return result(0, "")
+
+        with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux), \
+                mock.patch.object(tmux_module.os, "kill", side_effect=ProcessLookupError):
+            killed = tmux_module.sweep_orphan_test_sessions()
+        self.assertEqual(killed, ["mishe-tauftauf-test-999999"])
+        self.assertIn(("kill-session", "-t", "mishe-tauftauf-test-999999"), calls)
+
+    def test_sweep_leaves_session_with_live_pid(self):
+        from mishe_tauftauf import tmux as tmux_module
+
+        def result(returncode, stdout):
+            return subprocess.CompletedProcess([], returncode, stdout.encode(), b"")
+
+        def fake_tmux(*args, **kwargs):
+            if args[0] == "list-sessions":
+                return result(0, "mishe-tauftauf-test-12345\n")
+            return result(0, "")
+
+        with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux), \
+                mock.patch.object(tmux_module.os, "kill", return_value=None):
+            killed = tmux_module.sweep_orphan_test_sessions()
+        self.assertEqual(killed, [])
+
+    def test_sweep_ignores_non_test_sessions(self):
+        from mishe_tauftauf import tmux as tmux_module
+
+        def result(returncode, stdout):
+            return subprocess.CompletedProcess([], returncode, stdout.encode(), b"")
+
+        def fake_tmux(*args, **kwargs):
+            if args[0] == "list-sessions":
+                return result(0, "mishe-self-development-current\nmishe-tauftauf\n")
+            return result(0, "")
+
+        with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux), \
+                mock.patch.object(tmux_module.os, "kill", side_effect=ProcessLookupError):
+            killed = tmux_module.sweep_orphan_test_sessions()
+        self.assertEqual(killed, [])
+
+    def test_sweep_skips_non_numeric_suffix(self):
+        from mishe_tauftauf import tmux as tmux_module
+
+        def result(returncode, stdout):
+            return subprocess.CompletedProcess([], returncode, stdout.encode(), b"")
+
+        def fake_tmux(*args, **kwargs):
+            if args[0] == "list-sessions":
+                return result(0, "mishe-tauftauf-test-abc\n")
+            return result(0, "")
+
+        with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux):
+            killed = tmux_module.sweep_orphan_test_sessions()
+        self.assertEqual(killed, [])
+
+    def test_sweep_handles_permission_error(self):
+        from mishe_tauftauf import tmux as tmux_module
+
+        def result(returncode, stdout):
+            return subprocess.CompletedProcess([], returncode, stdout.encode(), b"")
+
+        def fake_tmux(*args, **kwargs):
+            if args[0] == "list-sessions":
+                return result(0, "mishe-tauftauf-test-1\n")
+            return result(0, "")
+
+        with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux), \
+                mock.patch.object(tmux_module.os, "kill", side_effect=PermissionError):
+            killed = tmux_module.sweep_orphan_test_sessions()
+        self.assertEqual(killed, [])
+
 
 class MindPaneTests(unittest.TestCase):
     def test_check_mind_pane_reports_missing_dead_and_live(self):
