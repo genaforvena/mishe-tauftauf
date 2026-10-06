@@ -458,6 +458,9 @@ def _journal_error_window(past_minutes: int = 10) -> dict:
 
     Entries are grouped by reporting source so a repeating driver message cannot
     be read as a fault count.
+
+    Kernel entries carry no unit ownership: the host journal is shared, so a
+    class names the reporting source (a device driver), not a plant unit.
     """
     started = time.monotonic_ns()
     boot = _journal_boot()
@@ -575,6 +578,18 @@ def _unit_restart_context(units: list[str]) -> dict[str, dict]:
                              "active": str(values.get("ActiveState", "unknown"))}
     return context
 
+
+def _is_plant_unit(name: str) -> bool:
+    """Whether a failed unit belongs to this plant rather than a foreign consumer.
+
+    The plant's own units are its ``mishe-*`` services and the
+    ``tmux-spawn-*.scope`` cgroups its tmux server creates for quick-exit
+    panes. Anything else on the shared host journal — another node's test
+    units, system cron — is a foreign consumer's activity.
+    """
+    return name.startswith("mishe-") or name.startswith("tmux-spawn-")
+
+
 def _journal_unit_failure_window(past_minutes: int = 10) -> dict:
     """Count systemd unit failures in one fixed window; never infer fault or rate.
 
@@ -587,6 +602,11 @@ def _journal_unit_failure_window(past_minutes: int = 10) -> dict:
     message because the sender's ``_SYSTEMD_UNIT`` may differ. Counts are raw,
     grouped by unit and class, and cover only the window; the window matches the
     scan renewal threshold, so consecutive scans cover the boot without a gap.
+
+    The count covers plant-owned units only. The host journal is shared with
+    other nodes' test harnesses, so a foreign transient must not read as a
+    plant failure: units that are not the plant's are disclosed as
+    ``foreign=name:count`` and excluded from the count.
 
     Restart context (``NRestarts``, ``ActiveState``) is read for each failed
     unit so a recovered one-off reads differently from a crash-loop: a unit
@@ -630,6 +650,7 @@ def _journal_unit_failure_window(past_minutes: int = 10) -> dict:
     cursors: set[str] = set()
     units: dict[str, int] = {}
     classes: dict[str, int] = {}
+    per_unit_classes: dict[str, dict[str, int]] = {}
     try:
         for line in output.decode("utf-8").splitlines():
             record = json.loads(line)
@@ -651,19 +672,31 @@ def _journal_unit_failure_window(past_minutes: int = 10) -> dict:
             match = UNIT_FAILURE.match(message)
             if match is None:
                 continue
-            units[match.group(1)] = units.get(match.group(1), 0) + 1
-            classes[match.group(2)] = classes.get(match.group(2), 0) + 1
+            unit, unit_class = match.group(1), match.group(2)
+            units[unit] = units.get(unit, 0) + 1
+            unit_classes = per_unit_classes.setdefault(unit, {})
+            unit_classes[unit_class] = unit_classes.get(unit_class, 0) + 1
     except (UnicodeError, ValueError, TypeError):
         unknown["reason"] = "invalid journal entry metadata"
         return unknown
-    total = sum(units.values())
-    restart_context = _unit_restart_context(sorted(units))
+    plant_units = {unit: count for unit, count in units.items() if _is_plant_unit(unit)}
+    foreign_units = {unit: count for unit, count in units.items() if not _is_plant_unit(unit)}
+    classes = {}
+    for unit in plant_units:
+        for name, count in per_unit_classes.get(unit, {}).items():
+            classes[name] = classes.get(name, 0) + count
+    total = sum(plant_units.values())
+    restart_context = _unit_restart_context(sorted(plant_units))
     parts = [f"last-{past_minutes}min unit-failure-count={total}"]
     parts.extend(f"{name}={count}" for name, count in sorted(classes.items()))
+    if foreign_units:
+        parts.append("foreign=" + ",".join(
+            f"{unit}:{count}" for unit, count in sorted(foreign_units.items())))
     parts.extend(f"{unit}:restarts={ctx['restarts']},active={ctx['active']}"
                  for unit, ctx in sorted(restart_context.items()))
     return {"state": "verified", "sample": " ".join(parts),
-            "count": total, "units": units, "classes": classes,
+            "count": total, "units": plant_units, "classes": classes,
+            "foreign_units": foreign_units,
             "unit_context": restart_context, "coverage": coverage}
 
 
@@ -684,6 +717,26 @@ def _omp_log_path(pid: int) -> Path | None:
     return matches[-1] if matches else None
 
 
+def _provider_error_class(record: dict) -> str:
+    """The class of a provider error record: its HTTP status when named.
+
+    ``errorStatus`` is the direct field; the message carries ``[500]`` or a
+    leading status when the record omits it. Anything else (a closed socket, a
+    deadline without a status) reads ``unknown`` rather than being guessed.
+    """
+    status = record.get("errorStatus")
+    if isinstance(status, int):
+        return str(status)
+    if isinstance(status, str) and re.fullmatch(r"\d{3}", status):
+        return status
+    message = record.get("errorMessage")
+    if isinstance(message, str):
+        match = re.search(r"\[(\d{3})\]|(?:\A|\s)(\d{3})\b", message)
+        if match:
+            return match.group(1) or match.group(2)
+    return "unknown"
+
+
 def _omp_continue_chain(pid: int, now: datetime) -> dict | None:
     """Open continue chain for one pane pid from its omp session log.
 
@@ -695,12 +748,19 @@ def _omp_continue_chain(pid: int, now: datetime) -> dict | None:
     unexpected stops from escaping; a class allowlist would also fail silently
     as omp adds classes. ``sources`` carries the per-source breakdown. Returns
     None when no log exists for the pid.
+
+    ``cause`` names the dominant class of ``agent turn ended with provider
+    error`` record in the chain (``provider-error:<status>``, the HTTP status
+    when the record or its message names one), or ``none`` when the chain holds
+    no provider error — so a retry loop against a failing upstream reads
+    differently from a hung pane.
     """
     log_path = _omp_log_path(pid)
     if log_path is None:
         return None
     continues: list[datetime] = []
     sources: dict[str, int] = {}
+    error_classes: dict[str, int] = {}
     try:
         text = log_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -725,15 +785,23 @@ def _omp_continue_chain(pid: int, now: datetime) -> dict | None:
             source = record.get("source")
             key = source if isinstance(source, str) and source else "unknown"
             sources[key] = sources.get(key, 0) + 1
+        elif message == "agent turn ended with provider error":
+            error_class = _provider_error_class(record)
+            error_classes[error_class] = error_classes.get(error_class, 0) + 1
         elif (message == "agent_end maintenance routing"
                 and record.get("stopReason") == "stop"):
             continues = []
             sources = {}
+            error_classes = {}
     if not continues:
-        return {"chain": 0, "span_minutes": 0.0, "sources": {}}
+        return {"chain": 0, "span_minutes": 0.0, "sources": {}, "cause": "none"}
     span = (now - continues[0]).total_seconds() / 60.0
+    cause = "none"
+    if error_classes:
+        dominant = sorted(error_classes.items(), key=lambda item: (-item[1], item[0]))[0][0]
+        cause = f"provider-error:{dominant}"
     return {"chain": len(continues), "span_minutes": round(span, 1),
-            "sources": sources}
+            "sources": sources, "cause": cause}
 
 
 def _mind_wedge_suspects() -> dict:
@@ -785,7 +853,8 @@ def _mind_wedge_suspects() -> dict:
             f"{s['window']}(pid={s['pid']},chain={s['chain']},"
             f"span={s['span_minutes']}min,src="
             + ",".join(f"{name}:{count}"
-                       for name, count in sorted(s["sources"].items())) + ")"
+                       for name, count in sorted(s["sources"].items()))
+            + f",cause={s['cause']})"
             for s in suspects)
     else:
         sample = "suspects=0"
@@ -1493,6 +1562,12 @@ TOP_PAIN_ENTRY = re.compile(r"-m\s+mishe_tauftauf\.([A-Za-z_][A-Za-z0-9_]*)")
 TOP_PAIN_PATH = re.compile(r"""PYTHONPATH=("[^"]*"|'[^']*'|[^\s'\";]+)""")
 TOP_PAIN_HOME = re.compile(r"^\s*home=([^\s'\";]+)", re.MULTILINE)
 TOP_PAIN_VAR = re.compile(r"\$\{home\}|\$home(?![A-Za-z0-9_])")
+SITE_SCRIPT_PATH = re.compile(r"""\bsite\s*/\s*f?["']([A-Za-z0-9_.-]+\.py)["']""")
+"""A Top Pain's reference to a script in its own site home."""
+
+SITE_SCRIPT_IMPORT = re.compile(r"^\s*from\s+([A-Za-z_][A-Za-z0-9_]*)\s+import\s",
+                                re.MULTILINE)
+"""A ``from X import`` line whose target may be a site-home script."""
 
 PANE_ROLE = re.compile(r"\bpain watch ([A-Za-z0-9_-]+)")
 """The role name a pane watcher runs, extracted from its start command."""
@@ -1725,10 +1800,32 @@ def _module_digests(package: Path, entry: str) -> dict[str, str | None]:
     return digests
 
 
+def _site_script_chain(text: str, home: Path) -> list[tuple[str, str]]:
+    """Site-home scripts a Top Pain runs that themselves import package code.
+
+    Follows one level of site-home script execution: ``site / "X.py"`` in a
+    subprocess call and ``from X import`` where ``X.py`` exists in the site
+    home. A script that imports ``mishe_tauftauf.*`` makes the Top Pain a
+    package executor even though it names no ``-m mishe_tauftauf.X`` entry, so
+    the module is reported and its closure hashed against the pin.
+    """
+    names = {match.group(1) for match in SITE_SCRIPT_PATH.finditer(text)}
+    names.update(match.group(1) + ".py" for match in SITE_SCRIPT_IMPORT.finditer(text))
+    chain: list[tuple[str, str]] = []
+    for name in sorted(names):
+        try:
+            source = (home / name).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        chain.extend((name, module) for module in sorted(_package_imports(source)))
+    return chain
+
+
 def _renderer_coverage(home: Path) -> dict[str, object]:
     """Compare every pane renderer's import closure with the pin's.
 
     A renderer that exports its own PYTHONPATH renders from a root the service
+
     comparison never sees, so a stale snapshot there shows old logic in a pane
     while the dashboard still read verified. A renderer that inherits its root
     from the pane watcher's environment is resolved from the watcher process's
@@ -1742,6 +1839,14 @@ def _renderer_coverage(home: Path) -> dict[str, object]:
     renderer's effective root: an inherited renderer that resolved shows the
     root the pane environment supplied, so a reader can tell one that resolved
     to the pin from one that resolved to a different root that happens to match.
+
+    An uncovered Top Pain can still execute package code through a site-home
+    script (``site / "X.py"`` or ``from X import``). One level of that chain is
+    followed: a script importing ``mishe_tauftauf.*`` is reported as
+    ``indirect_package``, and its closure is hashed against the pin from the
+    root the pane environment resolves. A root other than the pin is drift and
+    an unresolvable one is unknown, so the indirect path never reads verified
+    on environment inheritance alone.
     """
     pairs, uncovered, failure = _top_pain_roots(home)
     if failure is not None:
@@ -1810,6 +1915,54 @@ def _renderer_coverage(home: Path) -> dict[str, object]:
                            if local.get(name) != reference.get(name))
         if differing:
             drift.append({"root": effective_root, "entry": entry, "modules": differing})
+    script_unknown: list[str] = []
+    indirect: list[str] = []
+    for role in sorted(uncovered):
+        try:
+            text = (home / "top-pains" / role).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            script_unknown.append(role)
+            continue
+        chain = _site_script_chain(text, home)
+        if not chain:
+            continue
+        # The disclosure is a static fact about the script text: this Top Pain
+        # executes package code through a site-home script.
+        for _script, module in chain:
+            indirect.append(f"{role}:mishe_tauftauf.{module}")
+        # The script runs with the watcher's environment and the site home
+        # first on its path, so a package dir there shadows every root.
+        effective_root: str | None = None
+        if (home / "mishe_tauftauf").is_dir():
+            effective_root = str(home)
+        else:
+            pane = pane_info.get(role)
+            if pane is not None:
+                for component in (*_pane_pythonpath(pane[2]), *_command_pythonpath(pane[0])):
+                    candidate = _import_root(component)
+                    if candidate:
+                        effective_root = candidate
+                        break
+        if effective_root is None:
+            # No pane runs this renderer, so the bytes its script imports are
+            # unread rather than the pin's.
+            script_unknown.append(role)
+            continue
+        package_path = Path(effective_root) / "src" / "mishe_tauftauf"
+        for _script, module in chain:
+            if module not in references:
+                references[module] = _module_digests(pinned, module)
+            local = _module_digests(package_path, module)
+            reference = references[module]
+            differing = sorted(name for name in set(local) | set(reference)
+                               if local.get(name) != reference.get(name))
+            # A root other than the pin is drift even when the closure matches:
+            # the renderer executes bytes the pin does not govern.
+            if differing or Path(effective_root).resolve() != Path(pin).resolve():
+                drift.append({"root": effective_root, "entry": module,
+                              "modules": differing if differing else [module]})
+            identity_renderers.append(f"{effective_root}:mishe_tauftauf.{module}:script-chain")
+
     parts = [f"renderers={len(pairs)}"]
     if inherited_unknown:
         parts.append("inherited_unknown=" + ",".join(sorted(inherited_unknown)))
@@ -1817,18 +1970,24 @@ def _renderer_coverage(home: Path) -> dict[str, object]:
         parts.append("conditional_unknown=" + ",".join(sorted(conditional_unknown)))
     if export_unknown:
         parts.append("export_unknown=" + ",".join(sorted(export_unknown)))
+    if script_unknown:
+        parts.append("script_unknown=" + ",".join(sorted(script_unknown)))
     if uncovered:
         parts.append("uncovered=" + ",".join(sorted(uncovered)))
+    if indirect:
+        parts.append("indirect_package=" + ",".join(sorted(indirect)))
     if drift:
         parts.append("drift=" + " ".join(
             f"{item['entry']}=" + ",".join(item["modules"]) for item in drift))
-    unresolved = inherited_unknown or conditional_unknown or export_unknown
+    unresolved = (inherited_unknown or conditional_unknown or export_unknown
+                  or script_unknown)
     state = "unknown" if unresolved else ("drift" if drift else "verified")
     return {"id": "sense.runtime.renderer-coverage",
             "state": state,
             "sample": " ".join(parts), "kind": "read",
             "identity": {"renderers": identity_renderers,
-                         "drift": drift, "uncovered": sorted(uncovered), "pin": pin}}
+                         "drift": drift, "uncovered": sorted(uncovered),
+                         "indirect_package": sorted(indirect), "pin": pin}}
 
 def _format_age(delta: timedelta) -> str:
     """Human age for a commit waiting on a pin advance, e.g. ``1h20m``."""
@@ -1917,6 +2076,129 @@ def _runtime_pin_lag(home: Path, now: datetime | None = None) -> dict[str, objec
         return {"id": "sense.runtime.pin-lag", "state": "unknown",
                 "sample": f"git error: {exc}", "kind": "read"}
 
+
+def _repo_branch_inventory(home: Path) -> dict[str, object]:
+    """Report the checkout's branch inventory against the main-only regime.
+
+    The requirement is ``main`` as the sole branch kept in local Git and on
+    GitHub. The reading covers local heads, the remote's heads, and registered
+    worktrees. A worktree at a commit ``main`` cannot reach is non-main: one
+    under ``.mishe-tauftauf/releases/`` is drift (releases are pinned from
+    pushed ``main`` SHAs), one under ``.mishe-tauftauf/worktrees/`` is the
+    sanctioned preservation area and is reported, and one elsewhere is drift —
+    unique commits belong on ``main`` or in the preservation area. Uncommitted
+    bytes in a non-release worktree are reported as ``dirty``. State is
+    ``unknown`` when the workspace is not a git repo or the remote cannot be
+    read.
+    """
+    checkout_root = Path(home).resolve().parent
+    unknown = {"id": "sense.repo.branch-inventory", "state": "unknown", "kind": "read"}
+
+    def run(*args: str, timeout: float = 10) -> subprocess.CompletedProcess | None:
+        try:
+            return subprocess.run(["git", *args], capture_output=True, text=True,
+                                  timeout=timeout, cwd=checkout_root)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+
+    def unread(sample: str) -> dict[str, object]:
+        return {**unknown, "sample": sample}
+
+    probe = run("rev-parse", "--git-dir")
+    if probe is None or probe.returncode != 0:
+        return unread("not a git repo")
+    local = run("for-each-ref", "--format=%(refname:short)", "refs/heads/")
+    if local is None or local.returncode != 0:
+        return unread("local refs unreadable")
+    local_names = sorted(set(local.stdout.split()))
+    extra = [name for name in local_names if name != "main"]
+    remote = run("ls-remote", "--heads", "origin")
+    if remote is None or remote.returncode != 0:
+        return unread("remote heads unreadable")
+    remote_names = sorted({line.split("\t", 1)[1][len("refs/heads/"):]
+                           for line in remote.stdout.splitlines()
+                           if "\t" in line
+                           and line.split("\t", 1)[1].startswith("refs/heads/")})
+    extra_remote = [name for name in remote_names if name != "main"]
+    listing = run("worktree", "list", "--porcelain")
+    if listing is None or listing.returncode != 0:
+        return unread("worktree list unreadable")
+    main_result = run("rev-parse", "main")
+    if main_result is None or main_result.returncode != 0:
+        return unread("main ref unreadable")
+    main_sha = main_result.stdout.strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", main_sha):
+        return unread("main ref unreadable")
+    entries: list[tuple[str, str]] = []
+    for block in listing.stdout.split("\n\n"):
+        path = head = None
+        for line in block.splitlines():
+            if line.startswith("worktree "):
+                path = line[len("worktree "):]
+            elif line.startswith("HEAD "):
+                head = line[len("HEAD "):].strip()
+        if path is not None and head is not None and re.fullmatch(r"[0-9a-f]{40}", head):
+            entries.append((path, head))
+    site = Path(home).resolve()
+    releases_area = site / "releases"
+    sanctioned_area = site / "worktrees"
+
+    def display(path: str) -> str:
+        try:
+            return str(Path(path).relative_to(site))
+        except ValueError:
+            return path
+
+    nonmain_names: list[str] = []
+    drift_names: list[str] = []
+    for path, head in entries:
+        if head == main_sha:
+            continue
+        count = run("rev-list", "--count", f"main..{head}")
+        if count is None or count.returncode != 0:
+            return unread(f"reachability unreadable: {display(path)}")
+        ahead = count.stdout.strip()
+        if not ahead.isdigit() or int(ahead) == 0:
+            continue
+        nonmain_names.append(display(path))
+        root = Path(path)
+        if releases_area in root.parents:
+            # Releases are pinned from pushed main SHAs: a non-main commit there
+            # is a delivery anomaly.
+            drift_names.append(display(path))
+        elif sanctioned_area not in root.parents:
+            # Unique commits belong on main or in the preservation area.
+            drift_names.append(display(path))
+    dirty_names: list[str] = []
+    for path, _head in entries:
+        if releases_area in Path(path).parents:
+            continue  # pinned release snapshots: their bytes are the pin's business
+        status = run("-C", path, "status", "--porcelain")
+        if status is None or status.returncode != 0:
+            return unread(f"worktree status unreadable: {display(path)}")
+        if status.stdout.strip():
+            dirty_names.append(display(path))
+    parts = [f"local={len(local_names)}"]
+    parts.append("extra=" + (",".join(extra) if extra else "none"))
+    parts.append(f"remote={len(remote_names)}")
+    parts.append("extra_remote=" + (",".join(extra_remote) if extra_remote else "none"))
+    parts.append(f"worktrees={len(entries)}")
+    parts.append(f"nonmain={len(nonmain_names)}")
+    parts.append(f"dirty={len(dirty_names)}")
+    parts.append("nonmain_names=" + (",".join(nonmain_names[:3]) if nonmain_names else "none"))
+    if len(nonmain_names) > 3:
+        parts.append(f"nonmain_more=+{len(nonmain_names) - 3}")
+    parts.append("dirty_names=" + (",".join(dirty_names[:3]) if dirty_names else "none"))
+    if len(dirty_names) > 3:
+        parts.append(f"dirty_more=+{len(dirty_names) - 3}")
+    state = "drift" if extra or extra_remote or drift_names else "verified"
+    return {"id": "sense.repo.branch-inventory",
+            "state": state, "sample": " ".join(parts), "kind": "read",
+            "local": local_names, "extra": extra, "remote": remote_names,
+            "extra_remote": extra_remote, "worktrees": len(entries),
+            "nonmain": len(nonmain_names), "dirty": len(dirty_names),
+            "nonmain_names": nonmain_names, "dirty_names": dirty_names,
+            "drift": drift_names}
 
 DM_TO_RE = re.compile(r"^\[dm\] to=([A-Za-z0-9_.-]+)")
 RECORD_REF_RE = re.compile(r"\[record\] records/([0-9a-f]{64})\.json sha256=[0-9a-f]{64}")
@@ -2110,6 +2392,10 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     flagged). State is ``drift`` when any checked outcome violates,
     ``verified`` when none do, ``unknown`` when the tape or record store is
     unreadable or no post-clause outcome exists.
+
+    The under-artifacts test resolves the stored path first, so a ``..``
+    segment cannot pass it lexically. D counts distinct stored path strings:
+    two names for one inode (hardlink aliasing) both read clean.
     """
     tape_path = home / "chat.log"
     if not tape_path.exists():
@@ -2167,11 +2453,14 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
         digest = evidence.get("sha256")
         classes: list[str] = []
         file_path = Path(path) if isinstance(path, str) else None
-        if file_path is None or not file_path.is_relative_to(artifacts_root):
+        # Resolve before the test: a stored ``artifacts/../walls/x.md`` passes
+        # is_relative_to lexically while its canonical path is outside artifacts.
+        resolved = file_path.resolve() if file_path is not None else None
+        if resolved is None or not resolved.is_relative_to(artifacts_root):
             classes.append("A")
         try:
-            current = (hashlib.sha256(file_path.read_bytes()).hexdigest()
-                       if file_path is not None else None)
+            current = (hashlib.sha256(resolved.read_bytes()).hexdigest()
+                       if resolved is not None else None)
             if current != digest:
                 classes.append("B")
         except OSError:
@@ -2405,6 +2694,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_renderer_coverage(home))
     observed.append(_runtime_drift_across_sites(home))
     observed.append(_runtime_pin_lag(home))
+    observed.append(_repo_branch_inventory(home))
     observed.append(_coord_dm_disposition_age(home))
     return {"created": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
             "node": os.uname().nodename, "observations": observed}

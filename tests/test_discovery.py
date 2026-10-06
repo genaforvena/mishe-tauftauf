@@ -773,27 +773,30 @@ def _unit_failure_fixture(monkeypatch, output, boots=None, restart_context=None)
     return discovery._journal_unit_failure_window()
 
 
-def test_unit_failure_counts_and_groups_by_unit_and_class(monkeypatch):
+def test_unit_failure_counts_and_groups_plant_units_and_discloses_foreign(monkeypatch):
     result = _unit_failure_fixture(monkeypatch, _journal_bytes(
-        _unit_failure_record(),
+        _unit_failure_record(MESSAGE="mishe-cleaner-recovered.service: Failed with result 'oom-kill'."),
         _unit_failure_record(__CURSOR="cursor2",
-                             MESSAGE="mesh-heavy-1.scope: Failed with result 'oom-kill'."),
+                             MESSAGE="tmux-spawn-9f2c1.scope: Failed with result 'oom-kill'."),
         _unit_failure_record(__CURSOR="cursor3",
                              MESSAGE="mesh-pull-t1.service: Failed with result 'exit-code'.")))
     assert result["state"] == "verified"
-    assert result["count"] == 3
-    assert result["classes"] == {"oom-kill": 2, "exit-code": 1}
-    assert result["units"] == {"cron.service": 1, "mesh-heavy-1.scope": 1,
-                               "mesh-pull-t1.service": 1}
-    assert result["sample"] == "last-10min unit-failure-count=3 exit-code=1 oom-kill=2"
+    # The foreign test transient is disclosed, not counted as a plant failure.
+    assert result["count"] == 2
+    assert result["classes"] == {"oom-kill": 2}
+    assert result["units"] == {"mishe-cleaner-recovered.service": 1,
+                               "tmux-spawn-9f2c1.scope": 1}
+    assert result["foreign_units"] == {"mesh-pull-t1.service": 1}
+    assert result["sample"] == ("last-10min unit-failure-count=2 oom-kill=2 "
+                                "foreign=mesh-pull-t1.service:1")
 
 
-def test_unit_failure_counts_a_unit_name_containing_a_colon(monkeypatch):
+def test_unit_failure_counts_a_plant_unit_name_containing_a_colon(monkeypatch):
     # systemd.unit(5) allows ':' in a unit name prefix.
     result = _unit_failure_fixture(monkeypatch, _journal_bytes(
-        _unit_failure_record(MESSAGE="foo:bar.service: Failed with result 'exit-code'.")))
+        _unit_failure_record(MESSAGE="mishe-foo:bar.service: Failed with result 'exit-code'.")))
     assert result["state"] == "verified"
-    assert result["units"] == {"foo:bar.service": 1}
+    assert result["units"] == {"mishe-foo:bar.service": 1}
     assert result["classes"] == {"exit-code": 1}
 
 
@@ -987,7 +990,7 @@ def test_wedge_chain_3_span_30min_is_suspect(monkeypatch, tmp_path):
     _wedge_clock(monkeypatch)
     result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
     assert result == {"chain": 3, "span_minutes": 30.0,
-                      "sources": {"automatic-retry": 3}}
+                      "sources": {"automatic-retry": 3}, "cause": "none"}
 
 
 def test_wedge_chain_below_3_is_not_suspect(monkeypatch, tmp_path):
@@ -1000,7 +1003,7 @@ def test_wedge_chain_below_3_is_not_suspect(monkeypatch, tmp_path):
     _wedge_clock(monkeypatch)
     result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
     assert result == {"chain": 2, "span_minutes": 10.0,
-                      "sources": {"automatic-retry": 2}}
+                      "sources": {"automatic-retry": 2}, "cause": "none"}
 
 
 def test_wedge_span_below_15min_is_not_suspect(monkeypatch, tmp_path):
@@ -1014,7 +1017,7 @@ def test_wedge_span_below_15min_is_not_suspect(monkeypatch, tmp_path):
     _wedge_clock(monkeypatch)
     result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
     assert result == {"chain": 3, "span_minutes": 10.0,
-                      "sources": {"automatic-retry": 3}}
+                      "sources": {"automatic-retry": 3}, "cause": "none"}
 
 
 def test_wedge_chain_resets_on_success(monkeypatch, tmp_path):
@@ -1026,7 +1029,7 @@ def test_wedge_chain_resets_on_success(monkeypatch, tmp_path):
     monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
     _wedge_clock(monkeypatch)
     result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
-    assert result == {"chain": 0, "span_minutes": 0.0, "sources": {}}
+    assert result == {"chain": 0, "span_minutes": 0.0, "sources": {}, "cause": "none"}
 
 
 def test_wedge_no_log_returns_none(monkeypatch):
@@ -1040,7 +1043,7 @@ def test_wedge_empty_log_is_chain_zero(monkeypatch, tmp_path):
     monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
     _wedge_clock(monkeypatch)
     result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
-    assert result == {"chain": 0, "span_minutes": 0.0, "sources": {}}
+    assert result == {"chain": 0, "span_minutes": 0.0, "sources": {}, "cause": "none"}
 
 
 def test_wedge_sense_flags_wedged_mind(monkeypatch, tmp_path):
@@ -1067,7 +1070,7 @@ def test_wedge_sense_flags_wedged_mind(monkeypatch, tmp_path):
     assert result["suspects"][0]["span_minutes"] == 30.0
     assert result["suspects"][0]["sources"] == {"automatic-retry": 3}
     assert ("research-methods(pid=12345,chain=3,span=30.0min,"
-            "src=automatic-retry:3)") in result["sample"]
+            "src=automatic-retry:3,cause=none)") in result["sample"]
     assert "panes=2 with_log=1" in result["sample"]
 
 
@@ -1129,7 +1132,8 @@ def test_wedge_chain_counts_all_continue_sources(monkeypatch, tmp_path):
     assert result == {"chain": 3, "span_minutes": 30.0,
                       "sources": {"automatic-retry": 1,
                                   "stream-stall-continue": 1,
-                                  "todo-reminder": 1}}
+                                  "todo-reminder": 1},
+                      "cause": "none"}
 
 
 def test_wedge_chain_only_success_resets(monkeypatch, tmp_path):
@@ -1144,7 +1148,7 @@ def test_wedge_chain_only_success_resets(monkeypatch, tmp_path):
     _wedge_clock(monkeypatch)
     result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
     assert result == {"chain": 2, "span_minutes": 60.0,
-                      "sources": {"automatic-retry": 2}}
+                      "sources": {"automatic-retry": 2}, "cause": "none"}
 
 
 def test_wedge_chain_records_sourceless_continue(monkeypatch, tmp_path):
@@ -1161,7 +1165,88 @@ def test_wedge_chain_records_sourceless_continue(monkeypatch, tmp_path):
     _wedge_clock(monkeypatch)
     result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
     assert result == {"chain": 3, "span_minutes": 60.0,
-                      "sources": {"unknown": 3}}
+                      "sources": {"unknown": 3}, "cause": "none"}
+
+
+def _provider_error(timestamp: str, status: int | None = None,
+                    message: str = "Upstream request failed.") -> str:
+    fields = {"level": "warn", "provider": "opencode-go",
+              "model": "longcat-2.5-preview-free", "errorMessage": message}
+    if status is not None:
+        fields["errorStatus"] = status
+    return _omp_log_line(timestamp, "agent turn ended with provider error", **fields)
+
+
+def test_wedge_chain_cause_names_the_dominant_provider_error_class(monkeypatch, tmp_path):
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _provider_error("2026-10-06T13:25:00+00:00", 500),
+        _retry("2026-10-06T13:30:00+00:00", 1),
+        _provider_error("2026-10-06T13:35:00+00:00", 500),
+        _retry("2026-10-06T13:40:00+00:00", 2),
+        _provider_error("2026-10-06T13:45:00+00:00", None,
+                        "The socket connection was closed unexpectedly."),
+        _retry("2026-10-06T13:50:00+00:00", 3),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
+    _wedge_clock(monkeypatch)
+    result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
+    assert result["cause"] == "provider-error:500"
+
+
+def test_wedge_chain_cause_reads_the_status_from_the_message(monkeypatch, tmp_path):
+    # errorStatus is absent: the [500] in the message names the class.
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _provider_error("2026-10-06T13:25:00+00:00", None,
+                        "Streaming response failed: [500] DEADLINE_EXCEEDED"),
+        _retry("2026-10-06T13:30:00+00:00", 1),
+        _retry("2026-10-06T13:40:00+00:00", 2),
+        _retry("2026-10-06T13:50:00+00:00", 3),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
+    _wedge_clock(monkeypatch)
+    result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
+    assert result["cause"] == "provider-error:500"
+
+
+def test_wedge_chain_cause_reads_unknown_when_no_status_is_named(monkeypatch, tmp_path):
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _provider_error("2026-10-06T13:25:00+00:00", None,
+                        "The socket connection was closed unexpectedly."),
+        _retry("2026-10-06T13:30:00+00:00", 1),
+        _retry("2026-10-06T13:40:00+00:00", 2),
+        _retry("2026-10-06T13:50:00+00:00", 3),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
+    _wedge_clock(monkeypatch)
+    result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
+    assert result["cause"] == "provider-error:unknown"
+
+
+def test_wedge_sense_sample_carries_the_cause(monkeypatch, tmp_path):
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _provider_error("2026-10-06T13:25:00+00:00", 500),
+        _retry("2026-10-06T13:30:00+00:00", 1),
+        _provider_error("2026-10-06T13:35:00+00:00", 500),
+        _retry("2026-10-06T13:40:00+00:00", 2),
+        _provider_error("2026-10-06T13:45:00+00:00", 500),
+        _retry("2026-10-06T13:50:00+00:00", 3),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path",
+                        lambda pid: log if pid == 12345 else None)
+    _wedge_clock(monkeypatch)
+
+    class FakeResult:
+        returncode = 0
+        stdout = "health|12345\nbody-research|67890"
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
+    result = discovery._mind_wedge_suspects()
+    assert result["suspects"][0]["cause"] == "provider-error:500"
+    assert ("health(pid=12345,chain=3,span=30.0min,"
+            "src=automatic-retry:3,cause=provider-error:500)") in result["sample"]
 
 
 def _write_patch(home: Path, name: str, record: object) -> None:
@@ -1682,6 +1767,30 @@ def test_evidence_binding_flags_outside_artifacts(tmp_path):
     assert result["state"] == "drift"
     assert result["all_bad"] == 1
     assert "alice.md(A)" in result["sample"]
+
+
+def test_evidence_binding_resolves_a_dot_dot_path_before_the_artifacts_test(tmp_path):
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "walls").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    evidence = home / "walls" / "discover.md"
+    evidence.write_text("wall file\n")
+    digest = _write_evidenced_outcome(home, "alice", evidence)
+    # The stored path reaches the file through artifacts/ but canonicalizes
+    # outside it: the writer's non-resolved form must not pass the test.
+    record_path = home / "records" / f"{digest}.json"
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    record["payload"]["evidence"]["path"] = \
+        str(home / "artifacts" / ".." / "walls" / "discover.md")
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "alice",
+         f"[record] records/{digest}.json sha256={digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    assert result["state"] == "drift"
+    assert "discover.md(A)" in result["sample"]
 
 
 def test_evidence_binding_flags_reused_path(tmp_path):
@@ -2589,6 +2698,164 @@ def test_renderer_coverage_keeps_an_unreadable_pin_unknown() -> None:
     assert reading["state"] == "unknown"
     assert reading["sample"] == "pin unreadable: pin invalid: not a clean worktree"
 
+def _site_script(home: Path, name: str, source: str) -> None:
+    (home / name).write_text(source, encoding="utf-8")
+
+
+def test_site_script_chain_follows_one_level_of_site_scripts(tmp_path) -> None:
+    from mishe_tauftauf import discovery
+
+    (tmp_path / "plan_state.py").write_text(
+        "from mishe_tauftauf.feed import Feed\n", encoding="utf-8")
+    chain = discovery._site_script_chain(
+        "from pathlib import Path\n"
+        "from plan_state import main\n"
+        "subprocess.run([sys.executable, str(site / 'auto_intake.py')])\n", tmp_path)
+    # pathlib.py and auto_intake.py do not exist in the site home: only the
+    # site script that does is followed, one level deep.
+    assert chain == [("plan_state.py", "feed")]
+
+
+def test_renderer_coverage_reports_indirect_package_from_a_site_script() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    pin = _renderer_root(Path("/tmp") / f"scriptchain-pin-{os.getpid()}",
+                          {"feed": "VALUE = 1\n", "wall_view": "VALUE = 1\n"})
+    _top_pain(home, "senses",
+              f"export PYTHONPATH={pin}/src\nexec python -m mishe_tauftauf.wall_view\n")
+    _top_pain(home, "self-development",
+              "import sys\nfrom pathlib import Path\n"
+              "site = Path(__file__).resolve().parents[1]\n"
+              "sys.path.insert(0, str(site))\n"
+              "from plan_state import main\n"
+              "raise SystemExit(main())\n")
+    _site_script(home, "plan_state.py", "from mishe_tauftauf.feed import Feed\n")
+    pane = {"self-development": (f"env PYTHONPATH={pin}/src python -m mishe_tauftauf pain watch self-development",
+                                str(home), "")}
+    try:
+        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
+                patch("mishe_tauftauf.discovery._pane_info", return_value=pane):
+            reading = discovery._renderer_coverage(home)
+    finally:
+        shutil.rmtree(pin)
+    assert reading["state"] == "verified"
+    assert "uncovered=self-development" in reading["sample"]
+    assert "indirect_package=self-development:mishe_tauftauf.feed" in reading["sample"]
+    assert reading["identity"]["indirect_package"] == ["self-development:mishe_tauftauf.feed"]
+    assert f"{pin}:mishe_tauftauf.feed:script-chain" in reading["identity"]["renderers"]
+
+
+def test_renderer_coverage_indirect_package_clears_when_the_script_is_removed() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    pin = _renderer_root(Path("/tmp") / f"scriptchain-gone-{os.getpid()}",
+                          {"wall_view": "VALUE = 1\n"})
+    _top_pain(home, "senses",
+              f"export PYTHONPATH={pin}/src\nexec python -m mishe_tauftauf.wall_view\n")
+    _top_pain(home, "self-development",
+              "import sys\n"
+              "sys.path.insert(0, str(Path(__file__).resolve().parents[1]))\n"
+              "from plan_state import main\n"
+              "raise SystemExit(main())\n")
+    pane = {"self-development": (f"env PYTHONPATH={pin}/src python -m mishe_tauftauf pain watch self-development",
+                                str(home), "")}
+    try:
+        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
+                patch("mishe_tauftauf.discovery._pane_info", return_value=pane):
+            reading = discovery._renderer_coverage(home)
+    finally:
+        shutil.rmtree(pin)
+    assert reading["state"] == "verified"
+    assert "indirect_package" not in reading["sample"]
+    assert reading["identity"]["indirect_package"] == []
+
+
+def test_renderer_coverage_flags_a_script_closure_that_differs_from_the_pin() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    pin = _renderer_root(Path("/tmp") / f"scriptchain-drift-pin-{os.getpid()}",
+                          {"feed": "VALUE = 1\n", "wall_view": "VALUE = 1\n"})
+    renderer = _renderer_root(Path("/tmp") / f"scriptchain-drift-live-{os.getpid()}",
+                              {"feed": "VALUE = 2\n", "wall_view": "VALUE = 1\n"})
+    _top_pain(home, "senses",
+              f"export PYTHONPATH={pin}/src\nexec python -m mishe_tauftauf.wall_view\n")
+    _top_pain(home, "core-suite",
+              "import subprocess, sys\n"
+              "from pathlib import Path\n"
+              "site = Path(__file__).resolve().parents[1]\n"
+              "subprocess.run([sys.executable, str(site / 'continuity_state.py')])\n")
+    _site_script(home, "continuity_state.py", "from mishe_tauftauf.feed import Feed\n")
+    pane = {"core-suite": (f"env PYTHONPATH={renderer}/src python -m mishe_tauftauf pain watch core-suite",
+                           str(home), "")}
+    try:
+        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
+                patch("mishe_tauftauf.discovery._pane_info", return_value=pane):
+            reading = discovery._renderer_coverage(home)
+    finally:
+        shutil.rmtree(pin)
+        shutil.rmtree(renderer)
+    assert reading["state"] == "drift"
+    assert "indirect_package=core-suite:mishe_tauftauf.feed" in reading["sample"]
+    assert "drift=feed=feed" in reading["sample"]
+    assert reading["identity"]["drift"] == [
+        {"root": str(renderer), "entry": "feed", "modules": ["feed"]}]
+
+
+def test_renderer_coverage_flags_a_script_resolving_to_a_foreign_root() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    pin = _renderer_root(Path("/tmp") / f"scriptchain-foreign-pin-{os.getpid()}",
+                          {"feed": "VALUE = 1\n", "wall_view": "VALUE = 1\n"})
+    other = _renderer_root(Path("/tmp") / f"scriptchain-foreign-live-{os.getpid()}",
+                           {"feed": "VALUE = 1\n", "wall_view": "VALUE = 1\n"})
+    _top_pain(home, "senses",
+              f"export PYTHONPATH={pin}/src\nexec python -m mishe_tauftauf.wall_view\n")
+    _top_pain(home, "self-development",
+              "from pathlib import Path\n"
+              "from plan_state import main\n"
+              "raise SystemExit(main())\n")
+    _site_script(home, "plan_state.py", "from mishe_tauftauf.feed import Feed\n")
+    pane = {"self-development": (f"env PYTHONPATH={other}/src python -m mishe_tauftauf pain watch self-development",
+                                str(home), "")}
+    try:
+        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
+                patch("mishe_tauftauf.discovery._pane_info", return_value=pane):
+            reading = discovery._renderer_coverage(home)
+    finally:
+        shutil.rmtree(pin)
+        shutil.rmtree(other)
+    # Identical bytes, but the renderer executes a root the pin does not govern.
+    assert reading["state"] == "drift"
+    assert reading["identity"]["drift"] == [
+        {"root": str(other), "entry": "feed", "modules": ["feed"]}]
+
+
+def test_renderer_coverage_script_chain_is_unknown_without_a_pane_environment() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    pin = _renderer_root(Path("/tmp") / f"scriptchain-nopane-{os.getpid()}",
+                          {"feed": "VALUE = 1\n", "wall_view": "VALUE = 1\n"})
+    _top_pain(home, "senses",
+              f"export PYTHONPATH={pin}/src\nexec python -m mishe_tauftauf.wall_view\n")
+    _top_pain(home, "self-development",
+              "from plan_state import main\n"
+              "raise SystemExit(main())\n")
+    _site_script(home, "plan_state.py", "from mishe_tauftauf.feed import Feed\n")
+    try:
+        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
+                patch("mishe_tauftauf.discovery._pane_info", return_value={}):
+            reading = discovery._renderer_coverage(home)
+    finally:
+        shutil.rmtree(pin)
+    assert reading["state"] == "unknown"
+    assert "script_unknown=self-development" in reading["sample"]
+
+
 def test_pane_info_reads_role_names_from_start_commands() -> None:
     from mishe_tauftauf import discovery
     stdout = (
@@ -2716,6 +2983,178 @@ def test_renderer_coverage_ignores_cwd_without_package() -> None:
         shutil.rmtree(cwd)
     assert reading["state"] == "verified"
     assert reading["sample"] == "renderers=1"
+
+
+def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", *args], cwd=root, capture_output=True,
+                          text=True, timeout=15)
+
+
+def _init_repo(root: Path) -> str:
+    root.mkdir(parents=True, exist_ok=True)
+    assert _git(root, "init", "--initial-branch=main").returncode == 0
+    _git(root, "config", "user.email", "test@example.com")
+    git_config = _git(root, "config", "user.name", "test")
+    assert git_config.returncode == 0
+    (root / "file.txt").write_text("one\n", encoding="utf-8")
+    # The site home is plant-local, as .mishe-* is in the real checkout.
+    (root / ".gitignore").write_text("site/\n", encoding="utf-8")
+    _git(root, "add", "file.txt", ".gitignore")
+    assert _git(root, "commit", "-m", "one").returncode == 0
+    return _git(root, "rev-parse", "HEAD").stdout.strip()
+
+
+def _pushable_origin(root: Path, tmp_path: Path) -> None:
+    origin = tmp_path / "origin.git"
+    assert _git(root, "init", "--bare", str(origin)).returncode == 0
+    _git(root, "remote", "add", "origin", str(origin))
+    assert _git(root, "push", "origin", "main").returncode == 0
+
+
+def _dangling_commit(root: Path) -> str:
+    """A commit main cannot reach, on no branch."""
+    assert _git(root, "checkout", "--detach", "main").returncode == 0
+    (root / "side.txt").write_text("side\n", encoding="utf-8")
+    _git(root, "add", "side.txt")
+    assert _git(root, "commit", "-m", "side").returncode == 0
+    sha = _git(root, "rev-parse", "HEAD").stdout.strip()
+    assert _git(root, "checkout", "main").returncode == 0
+    return sha
+
+
+def _inventory_home(root: Path) -> Path:
+    home = root / "site"
+    home.mkdir(parents=True, exist_ok=True)
+    return home
+
+
+def test_branch_inventory_verified_when_main_is_the_sole_branch(tmp_path):
+    from mishe_tauftauf import discovery
+
+    root = tmp_path / "checkout"
+    _init_repo(root)
+    _pushable_origin(root, tmp_path)
+    reading = discovery._repo_branch_inventory(_inventory_home(root))
+    assert reading["state"] == "verified"
+    assert reading["sample"] == ("local=1 extra=none remote=1 extra_remote=none "
+                                 "worktrees=1 nonmain=0 dirty=0 "
+                                 "nonmain_names=none dirty_names=none")
+
+
+def test_branch_inventory_drift_on_an_extra_local_branch(tmp_path):
+    from mishe_tauftauf import discovery
+
+    root = tmp_path / "checkout"
+    _init_repo(root)
+    _git(root, "branch", "revert-check")
+    _pushable_origin(root, tmp_path)
+    reading = discovery._repo_branch_inventory(_inventory_home(root))
+    assert reading["state"] == "drift"
+    assert reading["extra"] == ["revert-check"]
+    assert "extra=revert-check" in reading["sample"]
+
+
+def test_branch_inventory_drift_on_an_extra_remote_ref(tmp_path):
+    from mishe_tauftauf import discovery
+
+    root = tmp_path / "checkout"
+    _init_repo(root)
+    _pushable_origin(root, tmp_path)
+    assert _git(root, "push", "origin", "main:refs/heads/feature-x").returncode == 0
+    reading = discovery._repo_branch_inventory(_inventory_home(root))
+    assert reading["state"] == "drift"
+    assert reading["extra_remote"] == ["feature-x"]
+    assert "extra_remote=feature-x" in reading["sample"]
+
+
+def test_branch_inventory_drift_on_a_release_worktree_at_a_non_main_commit(tmp_path):
+    from mishe_tauftauf import discovery
+
+    root = tmp_path / "checkout"
+    _init_repo(root)
+    side = _dangling_commit(root)
+    _pushable_origin(root, tmp_path)
+    release = root / "site" / "releases" / side[:7]
+    release.parent.mkdir(parents=True, exist_ok=True)
+    assert _git(root, "worktree", "add", "--detach", str(release), side).returncode == 0
+    reading = discovery._repo_branch_inventory(_inventory_home(root))
+    # Releases are pinned from pushed main SHAs: a non-main commit there is a
+    # delivery anomaly.
+    assert reading["state"] == "drift"
+    assert reading["nonmain"] == 1
+    assert reading["nonmain_names"] == [f"releases/{side[:7]}"]
+    assert reading["drift"] == [f"releases/{side[:7]}"]
+
+
+def test_branch_inventory_reports_a_sanctioned_nonmain_worktree(tmp_path):
+    from mishe_tauftauf import discovery
+
+    root = tmp_path / "checkout"
+    _init_repo(root)
+    side = _dangling_commit(root)
+    _pushable_origin(root, tmp_path)
+    sanctioned = root / "site" / "worktrees" / "cgroup-current"
+    sanctioned.parent.mkdir(parents=True, exist_ok=True)
+    assert _git(root, "worktree", "add", "--detach", str(sanctioned), side).returncode == 0
+    reading = discovery._repo_branch_inventory(_inventory_home(root))
+    # The preservation area holds unique commits by design: reported, not drift.
+    assert reading["state"] == "verified"
+    assert reading["nonmain"] == 1
+    assert reading["nonmain_names"] == ["worktrees/cgroup-current"]
+    assert reading["drift"] == []
+
+
+def test_branch_inventory_drift_on_an_external_nonmain_worktree(tmp_path):
+    from mishe_tauftauf import discovery
+
+    root = tmp_path / "checkout"
+    _init_repo(root)
+    side = _dangling_commit(root)
+    _pushable_origin(root, tmp_path)
+    external = root / "external" / "draft"
+    external.parent.mkdir(parents=True, exist_ok=True)
+    assert _git(root, "worktree", "add", "--detach", str(external), side).returncode == 0
+    reading = discovery._repo_branch_inventory(_inventory_home(root))
+    # Unique commits belong on main or in the preservation area.
+    assert reading["state"] == "drift"
+    assert reading["drift"] == [str(external)]
+
+
+def test_branch_inventory_reports_dirty_worktree_bytes(tmp_path):
+    from mishe_tauftauf import discovery
+
+    root = tmp_path / "checkout"
+    _init_repo(root)
+    _pushable_origin(root, tmp_path)
+    draft = root / "site" / "worktrees" / "draft"
+    draft.parent.mkdir(parents=True, exist_ok=True)
+    assert _git(root, "worktree", "add", "--detach", str(draft)).returncode == 0
+    (draft / "draft.txt").write_text("uncommitted\n", encoding="utf-8")
+    reading = discovery._repo_branch_inventory(_inventory_home(root))
+    assert reading["state"] == "verified"
+    assert reading["dirty"] == 1
+    assert reading["dirty_names"] == ["worktrees/draft"]
+
+
+def test_branch_inventory_unknown_when_not_a_git_repo(tmp_path):
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir(parents=True)
+    reading = discovery._repo_branch_inventory(home)
+    assert reading["state"] == "unknown"
+    assert reading["sample"] == "not a git repo"
+
+
+def test_branch_inventory_unknown_when_the_remote_is_unreadable(tmp_path):
+    from mishe_tauftauf import discovery
+
+    root = tmp_path / "checkout"
+    _init_repo(root)
+    _git(root, "remote", "add", "origin", str(tmp_path / "missing-origin.git"))
+    reading = discovery._repo_branch_inventory(_inventory_home(root))
+    assert reading["state"] == "unknown"
+    assert reading["sample"] == "remote heads unreadable"
 
 
 def test_top_pain_roots_marks_a_conditional_export_unresolved() -> None:
