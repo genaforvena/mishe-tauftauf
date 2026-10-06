@@ -1111,3 +1111,33 @@ def test_snapshot_json_refuses_noncanonical_values():
         snapshot_json({"bad": object()})
     with pytest.raises(ValueError):
         snapshot_json({"inf": float("inf")})
+
+
+def test_a_capability_that_dies_in_the_dispatch_window_is_attributable(tmp_path):
+    """The crash window `drive_native` crosses is already attributable.
+
+    `drive_native` records its `proposal` and then calls dispatch, so a
+    capability that dies in that gap is the case the boundary must survive. It
+    does not propagate and does not leave an anonymous pending call: the intent
+    is durable under the id derived from the provider call, no outcome is
+    written and the capability never ran. A successor reaches the operation by
+    name, reads unknown, and refuses to run it again.
+    """
+    store = tmp_path / "effects"
+    died = boundary(tmp_path, lambda call: (_ for _ in ()).throw(
+        InterruptedError("crash before the effect persisted")))
+    reply = died(NATIVE_CALL)
+    assert reply["status"] == "unknown"
+    assert reply["executions"] == 0, "a dead capability cannot have executed"
+    assert reply["operation_id"] and (store / "intents.jsonl").read_text().strip(), \
+        "the crash left no durable intent to reconcile"
+
+    fresh = boundary(tmp_path, lambda call: {"ok": True})
+    open_ids = [intent.operation_id for intent in fresh.open_intents()]
+    assert open_ids == [reply["operation_id"]]
+    # recover derives the id from the call alone, so it needs no dispatch-time
+    # state and is available before the proposal is even written.
+    assert fresh.recover(NATIVE_CALL)["operation_id"] == reply["operation_id"]
+    again = fresh(NATIVE_CALL)
+    assert again["status"] == "unknown"
+    assert again["executions"] == 0, "unknown is not permission to retry"
