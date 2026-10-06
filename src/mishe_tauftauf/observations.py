@@ -166,7 +166,18 @@ def headline(home: Path) -> str:
     return f"HEADLINE: {level} — " + "; ".join(facts) + "\n"
 
 
-def compose_frame(home: Path, slug: str, timeout: float = 10.0) -> RenderedPain:
+# Role-aware renderer budgets (seconds). The witness renderer is the heaviest
+# by an order of magnitude (~4-7s under load vs ~0.1s for other roles), so it
+# needs a larger budget to avoid false UNKNOWN/RED under load/IO pressure.
+_RENDERER_TIMEOUTS = {
+    "witness": 20.0,
+}
+_DEFAULT_RENDERER_TIMEOUT = 10.0
+
+
+def compose_frame(home: Path, slug: str, timeout: float | None = None) -> RenderedPain:
+    if timeout is None:
+        timeout = _RENDERER_TIMEOUTS.get(slug, _DEFAULT_RENDERER_TIMEOUT)
     rendered = run_renderer(home, slug, timeout)
     from . import wall
     wall.settings(home)
