@@ -41,7 +41,7 @@ def test_default_feed_never_runs_semantic_publication_gate(tmp_path, monkeypatch
 
 def test_default_frame_shows_wall_and_sensor_failure(tmp_path, monkeypatch):
     wall.write(tmp_path, "health", "Diagnosing the failed reading.")
-    monkeypatch.setattr(observations, "run_renderer", lambda *a: observations.RenderedPain("health", "STATE: RED failure\n", False))
+    monkeypatch.setattr(observations, "run_renderer", lambda *a, **k: observations.RenderedPain("health", "STATE: RED failure\n", False))
     frame = observations.compose_frame(tmp_path, "health")
     assert not frame.ok
     assert "Diagnosing the failed reading." in frame.body and "RENDERER: RED" in frame.body

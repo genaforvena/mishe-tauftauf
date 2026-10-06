@@ -73,28 +73,34 @@ def _unknown(slug: str, reason: str) -> RenderedPain:
     return RenderedPain(slug, f"UNKNOWN — top-pain {slug} renderer {reason}\n", False, reason)
 
 
-def run_renderer(home: Path, slug: str, timeout: float = 10.0) -> RenderedPain:
+def run_renderer(home: Path, slug: str, timeout: float = 10.0,
+                 retries: int = 0, retry_backoff: float = 0.0) -> RenderedPain:
     validate_slug(slug)
     path = home / "top-pains" / slug
     if not executable(path):
         return _unknown(slug, "missing-or-not-executable")
     # Headless renderers need the same site session as resident panes, unless
     # their caller deliberately supplied a session value.
-    try:
-        env = os.environ.copy()
-        if not env.get("MISHE_SEED_SESSION"):
-            try:
-                session = (home / ".seed-raised").read_text(encoding="utf-8").split()[0]
-            except (OSError, UnicodeError, IndexError):
-                session = None
-            if session:
-                env["MISHE_SEED_SESSION"] = session
-        result = subprocess.run([str(path)], stdin=subprocess.DEVNULL, capture_output=True,
-                                timeout=timeout, env=env)
-    except subprocess.TimeoutExpired:
-        return _unknown(slug, f"timeout-after-{timeout:g}s")
-    except OSError as exc:
-        return _unknown(slug, f"launch-failed: {exc}")
+    env = os.environ.copy()
+    if not env.get("MISHE_SEED_SESSION"):
+        try:
+            session = (home / ".seed-raised").read_text(encoding="utf-8").split()[0]
+        except (OSError, UnicodeError, IndexError):
+            session = None
+        if session:
+            env["MISHE_SEED_SESSION"] = session
+    for attempt in range(retries + 1):
+        try:
+            result = subprocess.run([str(path)], stdin=subprocess.DEVNULL, capture_output=True,
+                                    timeout=timeout, env=env)
+            break
+        except subprocess.TimeoutExpired:
+            if attempt < retries:
+                time.sleep(retry_backoff)
+                continue
+            return _unknown(slug, f"timeout-after-{timeout:g}s")
+        except OSError as exc:
+            return _unknown(slug, f"launch-failed: {exc}")
     if result.returncode != 0:
         detail = result.stderr.decode("utf-8", "replace").strip()
         return _unknown(slug, f"exit-{result.returncode}" + (f": {detail}" if detail else ""))
@@ -169,16 +175,20 @@ def headline(home: Path) -> str:
 # Role-aware renderer budgets (seconds). The witness renderer is the heaviest
 # by an order of magnitude (~4-7s under load vs ~0.1s for other roles), so it
 # needs a larger budget to avoid false UNKNOWN/RED under load/IO pressure.
+# compose_frame retries once on timeout to absorb transient load spikes.
 _RENDERER_TIMEOUTS = {
     "witness": 20.0,
 }
 _DEFAULT_RENDERER_TIMEOUT = 10.0
+_RENDERER_RETRIES = 1
+_RENDERER_RETRY_BACKOFF = 2.0
 
 
 def compose_frame(home: Path, slug: str, timeout: float | None = None) -> RenderedPain:
     if timeout is None:
         timeout = _RENDERER_TIMEOUTS.get(slug, _DEFAULT_RENDERER_TIMEOUT)
-    rendered = run_renderer(home, slug, timeout)
+    rendered = run_renderer(home, slug, timeout,
+                            retries=_RENDERER_RETRIES, retry_backoff=_RENDERER_RETRY_BACKOFF)
     from . import wall
     wall.settings(home)
     failure = f"\nRENDERER: RED {rendered.reason or 'command failed'}\n" if not rendered.ok else ""
