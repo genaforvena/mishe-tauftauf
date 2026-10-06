@@ -520,6 +520,7 @@ class EffectLedger:
                         f"operation_id {operation_id} is bound to different content")
                 upgraded = replace(recorded, request_digest=digest,
                                    native_call=snapshot_request["call"],
+                                   writer_id=self.writer_id,
                                    reservation=False)
                 self._replace_intent(upgraded)
                 return upgraded
@@ -837,7 +838,10 @@ class EffectBoundary:
     reserved it, until `__call__` dispatches it or the caller explicitly drops
     it. `drop_reserved` retires a reservation that was never dispatched; it
     never clears a start or an outcome, and it is the only way a reserved id
-    becomes reusable without `ChangedContentReuse`.
+    becomes reusable without `ChangedContentReuse`. A caller reserving under
+    one writer may dispatch the reservation under another: the upgrade rebinds
+    the intent to the dispatching writer, so `dispatch`'s one-writer check sees
+    the same writer that is about to hold the lock.
     """
 
     def __init__(self, store_dir: Path, *, writer_id: str, obligation: Mapping[str, Any],
@@ -874,16 +878,34 @@ class EffectBoundary:
         digest = hashlib.sha256(native_id.encode("utf-8")).hexdigest()[:12]
         return f"{self.operation_prefix}-{safe}-{digest}"
 
-    def __call__(self, call: Mapping[str, Any]) -> dict[str, Any]:
+    def __call__(self, call: Mapping[str, Any], *,
+                 claim_for: str | None = None) -> dict[str, Any]:
         """Bind, start and record one capability call, then reply for the loop.
 
         Never retries: a second call with the same id returns the durable state
         or an explicit `unknown`, and the capability runs at most once per id.
+
+        `claim_for` names an existing reservation this call fulfils: the
+        operation runs under the caller's id rather than one derived from the
+        provider's call. The reservation's bound capability, arguments,
+        authority and capability version must all match, or the call is
+        `ChangedContentReuse` before any effect — exactly as a mismatched
+        dispatch of a reserved id is. `drive_native` passes the provider's call
+        untouched, so this is the only route by which a caller-named id reaches
+        the loop.
         """
         native_call = _snapshot(call)
         if not isinstance(native_call, Mapping):
             raise ValueError("native call must be an object")
-        operation_id = self._operation_id(native_call)
+        if claim_for is not None:
+            if not _OPERATION_ID_RE.match(claim_for):
+                raise ValueError(
+                    f"claim_for {claim_for!r} must match [A-Za-z0-9_.:-]+")
+            if not self._has_intent(claim_for):
+                raise ValueError(
+                    f"claim_for {claim_for!r} names no operation in this store")
+        operation_id = claim_for if claim_for is not None else self._operation_id(
+            native_call)
         capability = native_call.get("name")
         if not isinstance(capability, str) or not capability:
             raise ValueError("a native call name is required")
@@ -903,6 +925,10 @@ class EffectBoundary:
         # The caller rechecks current authority against its own state; the
         # persisted authority is a binding, not a fresh grant.
         return snapshot_json(self.execute(ledger_call))
+
+    def _has_intent(self, operation_id: str) -> bool:
+        with self.ledger._locked():
+            return operation_id in self.ledger._read_intents()
 
     def reconcile(self, operation_id: str) -> dict[str, Any]:
         """Read durable state for one operation without executing anything."""
