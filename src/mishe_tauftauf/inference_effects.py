@@ -106,6 +106,19 @@ class JournalCorrupt(RuntimeError):
     """
 
 
+class CallIdConflict(JournalCorrupt):
+    """Two intents hold one provider call id, so no record names the operation.
+
+    The recovery and unclaimed-dispatch routes resolve an operation id by the
+    provider call id alone, because `drive_native` forwards the provider's call
+    untouched and a provider does not echo the caller's id. That lookup needs
+    exactly one record per call id: `allocate` keeps the store to one by
+    rejecting a second intent under a call id another intent already holds, and
+    the resolve path itself never allocates. If a store still holds two, neither
+    is picked and the lookup fails closed instead.
+    """
+
+
 @dataclass(frozen=True)
 class EffectIntent:
     """A dispatch allocated before it acts. Durable from the moment it exists."""
@@ -231,6 +244,14 @@ def _mapping(value: Any, name: str) -> Mapping[str, Any] | None:
     if not isinstance(value, Mapping):
         raise JournalCorrupt(f"{name} record is not an object")
     return dict(value)
+
+
+def _call_id(native_call: Mapping[str, Any] | None) -> str | None:
+    """The provider's call id, the key that joins a retry to its bound operation."""
+    if not isinstance(native_call, Mapping):
+        return None
+    call_id = native_call.get("id")
+    return call_id if isinstance(call_id, str) and call_id else None
 
 
 def _require(record: Mapping[str, Any], record_type: str,
@@ -541,6 +562,11 @@ class EffectLedger:
             if operation_id in self._read_outcomes():
                 raise AlreadyExecuted(
                     f"operation_id {operation_id} already has an outcome record")
+            conflict = self._conflicts_with(call, exclude=operation_id)
+            if conflict is not None:
+                raise CallIdConflict(
+                    f"provider call id {_call_id(call)!r} is already bound to "
+                    f"operation {conflict}; one provider call names one operation")
             intent = EffectIntent(operation_id=operation_id, capability=capability,
                                   capability_version=capability_version,
                                   arguments=normalized, request_digest=digest,
@@ -595,6 +621,14 @@ class EffectLedger:
                 if recorded.request_digest != expected:
                     raise ChangedContentReuse(
                         f"operation_id {operation_id} is bound to different content")
+                conflict = self._conflicts_with(snapshot_request["call"],
+                                                exclude=operation_id)
+                if conflict is not None:
+                    raise CallIdConflict(
+                        f"provider call id "
+                        f"{_call_id(snapshot_request['call'])!r} is already "
+                        f"bound to operation {conflict}; one provider call "
+                        f"names one operation")
                 upgraded = replace(recorded, request_digest=digest,
                                    native_call=snapshot_request["call"],
                                    writer_id=self.writer_id,
@@ -864,6 +898,22 @@ class EffectLedger:
     def _intent_ref(self, operation_id: str) -> str:
         return f"{self.intents_path}::{operation_id}"
 
+    def _conflicts_with(self, native_call: Mapping[str, Any] | None, *,
+                        exclude: str) -> str | None:
+        """The operation id already bound to this provider call, if any.
+
+        Called under the store lock by `allocate` only, so the answer is still
+        current when the append runs. `exclude` skips the operation being
+        allocated, which matters for a `bind_dispatch` rebind of a reservation
+        whose own intent already carries this call id.
+        """
+        call_id = _call_id(native_call)
+        if call_id is None:
+            return None
+        hits = [operation_id for operation_id, intent in self._read_intents().items()
+                if operation_id != exclude and _call_id(intent.native_call) == call_id]
+        return hits[0] if hits else None
+
 
 def _same_binding(recorded: EffectIntent, intent: EffectIntent) -> bool:
     """The durable record and the intent being dispatched must be one operation."""
@@ -978,6 +1028,10 @@ class EffectBoundary:
         runs a second time while the first start record still names another id.
 
         The caller's explicit `operation_id` always wins, as in `_operation_id`.
+        One provider call id names at most one operation: `allocate` refuses a
+        second intent under a call id another intent already holds, so this
+        lookup has one answer or none. A store that holds two has a broken
+        invariant and neither record is named — `CallIdConflict`, not a guess.
         """
         caller_id = call.get("operation_id")
         if isinstance(caller_id, str) and caller_id:
@@ -986,18 +1040,31 @@ class EffectBoundary:
                     f"operation_id {caller_id!r} must match [A-Za-z0-9_.:-]+")
             return caller_id
         with self.ledger._locked():
-            # At most one intent can hold a given provider call id: a claimed id
-            # is rebound in place by `bind_dispatch` rather than appended as a
-            # second record, and a derived id is allocated only when no claimed
-            # record exists.
-            for operation_id, intent in self.ledger._read_intents().items():
-                if intent.native_call is not None and (
-                        intent.native_call.get("id") == call.get("id")):
-                    return operation_id
-            for operation_id, outcome in self.ledger._read_outcomes().items():
-                if outcome.native_call is not None and (
-                        outcome.native_call.get("id") == call.get("id")):
-                    return operation_id
+            call_id = _call_id(call)
+            if call_id is not None:
+                # `allocate` keeps one intent per provider call id, so this
+                # lookup names the one record that holds it. Two intents under
+                # one id means the invariant broke, and choosing either would
+                # name an operation for a provider call that binds both: fail
+                # closed and let the caller see the store it has to repair.
+                intents = [operation_id for operation_id, intent
+                           in self.ledger._read_intents().items()
+                           if _call_id(intent.native_call) == call_id]
+                if len(intents) > 1:
+                    raise CallIdConflict(
+                        f"provider call id {call_id!r} is bound to operations "
+                        f"{sorted(intents)}; resolve cannot name one of them")
+                outcomes = [operation_id for operation_id, outcome
+                            in self.ledger._read_outcomes().items()
+                            if _call_id(outcome.native_call) == call_id]
+                if len(outcomes) > 1:
+                    raise CallIdConflict(
+                        f"provider call id {call_id!r} has outcomes "
+                        f"{sorted(outcomes)}; resolve cannot name one of them")
+                if intents:
+                    return intents[0]
+                if outcomes:
+                    return outcomes[0]
         return self._operation_id(call)
 
     def __call__(self, call: Mapping[str, Any], *,

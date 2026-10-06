@@ -19,6 +19,7 @@ import pytest
 
 from mishe_tauftauf.inference_effects import (
     AlreadyExecuted,
+    CallIdConflict,
     ChangedContentReuse,
     ConcurrentClaim,
     DispatchClaim,
@@ -241,35 +242,57 @@ def test_status_unknown_for_unallocated_operation(tmp_path):
 def test_request_digest_binds_content_authority_and_call_identity(tmp_path):
     led = ledger(tmp_path)
     base = {"obligation": "ob-1"}
-    a = allocate(led, operation_id="op-1", request=base)
-    b = allocate(led, operation_id="op-2", request={"obligation": "ob-2"})
-    c = allocate(led, operation_id="op-3", request=base, native_call={
-        "type": "toolCall", "id": "call-8", "name": "record_marker",
-        "arguments": {"text": "a"}})
+    call = {"type": "toolCall", "id": "call-7", "name": "record_marker",
+            "arguments": {"text": "a"}}
+    a = allocate(led, operation_id="op-1", request=base, native_call=call)
+    b = allocate(led, operation_id="op-2", request={"obligation": "ob-2"},
+                 native_call={**call, "id": "call-7b"})
     assert a.request_digest != b.request_digest
-    assert a.request_digest != c.request_digest
-    same = allocate(led, operation_id="op-4", request=base)
-    assert same.request_digest == a.request_digest
+    # One provider call id names one operation, so a second operation under the
+    # same call id is refused before any binding rather than digesting apart.
+    with pytest.raises(CallIdConflict):
+        allocate(led, operation_id="op-3", request=base, native_call=call)
+    # The digest itself still binds the call identity, independent of the store.
+    other_call = request_digest(base, "marker_root:append-one-line",
+                                capability="record_marker",
+                                capability_version="v1",
+                                native_call={**call, "id": "call-8"})
+    assert a.request_digest != other_call
+    assert request_digest(base, "other-authority", capability="record_marker",
+                          capability_version="v1",
+                          native_call=call) != a.request_digest
+    same = request_digest(base, "marker_root:append-one-line",
+                          arguments={"text": "a"}, capability="record_marker",
+                          capability_version="v1", native_call=call)
+    assert same == a.request_digest
 
 def test_request_digest_binds_the_capability_version(tmp_path):
     led = ledger(tmp_path)
     base = {"obligation": "ob-1"}
-    a = allocate(led, operation_id="op-1", request=base)
-    same = allocate(led, operation_id="op-2", request=base)
-    assert same.request_digest == a.request_digest
-    # A same-id rebind under a different capability version is different content,
-    # not the same operation replayed at another version.
-    other = led.allocate("record_marker", "v2", {"text": "a"},
-                         authority="marker_root:append-one-line",
-                         request=base, operation_id="op-3")
-    assert other.request_digest != a.request_digest
+    call = {"type": "toolCall", "id": "call-7", "name": "record_marker",
+            "arguments": {"text": "a"}}
+    a = allocate(led, operation_id="op-1", request=base, native_call=call)
+    same = request_digest(base, "marker_root:append-one-line",
+                          arguments={"text": "a"}, capability="record_marker",
+                          capability_version="v1", native_call=call)
+    assert same == a.request_digest
+    # A rebind under a different capability version is different content, not the
+    # same operation replayed at another version. The store refuses it as
+    # `ChangedContentReuse`; the digest says why before any write.
+    other = request_digest(base, "marker_root:append-one-line",
+                           capability="record_marker", capability_version="v2",
+                           native_call=call)
+    assert other != a.request_digest
     # An empty version is bound like any other value, so the digest never
     # silently treats an unset version as interchangeable with a set one.
     explicit = request_digest(base, "marker_root:append-one-line",
-                              capability="record_marker", capability_version="v1")
+                              capability="record_marker", capability_version="v1",
+                              native_call=call)
     defaulted = request_digest(base, "marker_root:append-one-line",
-                               capability="record_marker")
+                               capability="record_marker", native_call=call)
     assert explicit != defaulted
+
+
 
 
 def test_arguments_are_snapshotted_so_mutation_cannot_change_the_binding(tmp_path):
@@ -281,10 +304,14 @@ def test_arguments_are_snapshotted_so_mutation_cannot_change_the_binding(tmp_pat
     args["text"] = "mutated"
     args["nested"]["deep"].append(3)
     assert intent.arguments == {"nested": {"deep": [1, 2]}, "text": "a"}
-    again = allocate(led, operation_id="op-2",
-                     arguments={"text": "a", "nested": {"deep": [1, 2]}},
-                     native_call=native)
-    assert again.request_digest == intent.request_digest
+    # The bound digest is stable because the arguments were snapshotted, and a
+    # second operation under another call id reaches the same digest from
+    # identical content: mutation cannot change what was committed.
+    again = request_digest({"obligation": "ob-1"}, "marker_root:append-one-line",
+                           arguments={"text": "a", "nested": {"deep": [1, 2]}},
+                           capability="record_marker", capability_version="v1",
+                           native_call=native)
+    assert again == intent.request_digest
 
 
 def test_noncanonical_values_are_rejected(tmp_path):
@@ -1255,3 +1282,114 @@ def test_a_lost_receipt_is_not_re_executed_without_the_claim(tmp_path):
     starts = [json.loads(line)["operation_id"] for line in
               (store / "starts.jsonl").read_text().splitlines()]
     assert starts == ["report-37233-v1"]
+
+
+def test_one_provider_call_id_binds_at_most_one_operation(tmp_path):
+    """A second operation under a call id another intent holds is refused.
+
+    `_resolve_operation_id` names an operation by the provider call id alone,
+    because `drive_native` forwards the provider's call untouched and a provider
+    does not echo the caller's id. That lookup has one answer or none, and it
+    only stays that way if no second record can hold the id: a caller reserving
+    a second id for the same provider call would leave two records for one call,
+    and a later retry would resolve to whichever the dict order happened to keep.
+    """
+    store = tmp_path / "effects"
+    dispatch = boundary(tmp_path, lambda call: {"ok": True})
+    dispatch.reserve("report-first", capability="inspect",
+                     arguments={"path": "owned-evidence"},
+                     native_call={"type": "toolCall", "id": "call-provider",
+                                  "name": "inspect"})
+    # A second caller id for the same provider call: refused before any write.
+    with pytest.raises(CallIdConflict):
+        dispatch.reserve("report-second", capability="inspect",
+                         arguments={"path": "owned-evidence"},
+                         native_call={"type": "toolCall", "id": "call-provider",
+                                      "name": "inspect"})
+    intents = [json.loads(line)["operation_id"] for line in
+               (store / "intents.jsonl").read_text().splitlines()]
+    assert intents == ["report-first"], "a second intent was written"
+    # The id the first reservation took is still usable, and the store is
+    # unchanged: the second reservation bound nothing.
+    reply = dispatch({"type": "toolCall", "id": "call-provider",
+                      "name": "inspect", "arguments": {"path": "owned-evidence"}},
+                     claim_for="report-first")
+    assert reply["status"] == "completed"
+
+
+def test_an_ambiguous_call_id_is_not_resolved_by_guessing(tmp_path):
+    """Two records under one provider call id fail closed, resolve picks neither.
+
+    `allocate` keeps the store to one intent per call id, but the resolve path
+    cannot assume a store it did not write: a caller appending by hand, a store
+    written by an older boundary or a repair in flight can all leave two. Either
+    record could be the operation the retry is bound to, so naming one would
+    silently attach the other's effect to the caller's id. `CallIdConflict` is
+    the honest answer, and it reaches the caller rather than becoming an unknown
+    outcome the loop might read as permission to dispatch.
+    """
+    store = tmp_path / "effects"
+    store.mkdir()
+    (store / "intents.jsonl").write_text(
+        '{"record_type": "intent", "operation_id": "report-a", '
+        '"capability": "inspect", "capability_version": "v1", '
+        '"arguments": {"path": "owned"}, "request_digest": "d-a", '
+        '"authority": "a", "writer_id": "loop-1", "budget": null, '
+        '"native_call": {"type": "toolCall", "id": "call-provider", '
+        '"name": "inspect"}}\n'
+        '{"record_type": "intent", "operation_id": "report-b", '
+        '"capability": "inspect", "capability_version": "v1", '
+        '"arguments": {"path": "owned"}, "request_digest": "d-b", '
+        '"authority": "a", "writer_id": "loop-1", "budget": null, '
+        '"native_call": {"type": "toolCall", "id": "call-provider", '
+        '"name": "inspect"}}\n')
+    dispatch = boundary(tmp_path, lambda call: {"ok": True})
+    call = {"type": "toolCall", "id": "call-provider", "name": "inspect",
+            "arguments": {"path": "owned"}}
+    with pytest.raises(CallIdConflict):
+        dispatch.recover(call)
+    with pytest.raises(CallIdConflict):
+        dispatch(call)
+    starts = store / "starts.jsonl"
+    assert not starts.read_text().strip(), "nothing started while ambiguous"
+
+
+def test_a_claim_cannot_rebind_a_call_id_another_operation_holds(tmp_path):
+    """A reservation upgrade that takes a used provider call id is refused.
+
+    `bind_dispatch` upgrades a reservation in place rather than going through
+    `allocate`, so the conflict check `allocate` makes is not the one it runs.
+    A caller may reserve an id with no provider call and then claim it with a
+    call that belongs to an operation already in the store — the upgrade would
+    rewrite the reservation to carry that call id and leave two intents for one
+    provider call, and the next retry would resolve to whichever record the dict
+    order kept. The claim must fail before the rewrite, as the reservation did.
+    """
+    store = tmp_path / "effects"
+    runs = []
+    dispatch = boundary(tmp_path, lambda call: runs.append(call["operation_id"])
+                        or {"ok": True})
+    call = {"type": "toolCall", "id": "call-provider", "name": "inspect",
+            "arguments": {"path": "owned-evidence"}}
+    first = dispatch(call)
+    assert first["status"] == "completed"
+    assert runs == [first["operation_id"]]
+
+    # A reserved id that has no provider call of its own.
+    dispatch.reserve("report-second", capability="inspect",
+                     arguments={"path": "owned-evidence"})
+    # Claiming it with the first operation's call id must not rebind it.
+    with pytest.raises(CallIdConflict):
+        dispatch(call, claim_for="report-second")
+    assert runs == [first["operation_id"]], "the capability ran under a second id"
+    # The reservation is untouched: still unclaimed, still reusable under its
+    # own call.
+    rows = [json.loads(line) for line in
+            (store / "intents.jsonl").read_text().splitlines()]
+    reserved = next(row for row in rows if row["operation_id"] == "report-second")
+    assert reserved["native_call"] is None, "the reservation was rewritten"
+    assert reserved["reservation"] is True
+    reply = dispatch({"type": "toolCall", "id": "call-second", "name": "inspect",
+                      "arguments": {"path": "owned-evidence"}},
+                     claim_for="report-second")
+    assert (reply["status"], reply["operation_id"]) == ("completed", "report-second")

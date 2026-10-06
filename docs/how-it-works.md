@@ -126,7 +126,12 @@ intent with no start record, no execution and no outcome, so every reader still
 reads `unreconciled-intent`. A later dispatch of the same id upgrades the
 binding to the real call when the bound capability, version, arguments and
 authority all match, and refuses a changed binding as `ChangedContentReuse`
-before any effect; `drive_native` passes the provider's call through untouched
+before any effect. One provider call id binds at most one operation, so a
+second reservation or dispatch under a call id another record already holds is
+refused as `CallIdConflict` before any write, including the reservation upgrade
+that would otherwise take a call id an operation already discharged: the resolve
+lookup that names an operation by its provider call alone has one answer or
+none. `drive_native` passes the provider's call through untouched
 and a provider does not echo the caller's id, so `__call__(call,
 claim_for=operation_id)` is the route that names it; and after a crash the retry
 arrives without the claim, so the unclaimed route resolves the operation id a
