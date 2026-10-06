@@ -456,7 +456,7 @@ def test_generic_top_pain_ci_line_survives_shell_quoting(tmp_path: Path) -> None
 
 def test_seed_resident_channel_observes_repairs_and_restores(tmp_path: Path) -> None:
     home = seeded_home(tmp_path)
-    session = f"mishe-seed-test-{uuid.uuid4().hex[:10]}"
+    session = f"mishe-tauftauf-test-{os.getpid()}-{uuid.uuid4().hex[:10]}"
     fixture = tmp_path / "health.txt"
     fixture.write_text("RED\n")
     mind_log = tmp_path / "mind.log"
@@ -609,7 +609,7 @@ def test_seed_resident_channel_observes_repairs_and_restores(tmp_path: Path) -> 
 
 def test_seed_follow_drives_a_checked_repair_without_a_judge(tmp_path: Path) -> None:
     home = seeded_home(tmp_path)
-    session = f"mishe-seed-test-{uuid.uuid4().hex[:10]}"
+    session = f"mishe-tauftauf-test-{os.getpid()}-{uuid.uuid4().hex[:10]}"
     fixture = tmp_path / "health.txt"
     fixture.write_text("RED\n")
     trace = tmp_path / "mind-trace.txt"
@@ -689,7 +689,7 @@ def test_seed_run_holds_on_checker_outage_instead_of_exiting(monkeypatch, capsys
 
 def test_seed_adds_live_channel_to_existing_owned_session(tmp_path: Path) -> None:
     home = seeded_home(tmp_path)
-    session = f"mishe-seed-test-{uuid.uuid4().hex[:10]}"
+    session = f"mishe-tauftauf-test-{os.getpid()}-{uuid.uuid4().hex[:10]}"
     trace = tmp_path / "resident.txt"
     assert cli(home, "init", "--slug", "genome").returncode == 0
     mind = home / "minds" / "genome"
