@@ -1239,7 +1239,10 @@ def _renderer_coverage(home: Path) -> dict[str, object]:
     is drift. A conditional export or an unresolvable inherited root is unknown
     rather than guessed. The pane's cwd is checked for a ``mishe_tauftauf/``
     package that would shadow the PYTHONPATH root, since ``python -m`` inserts
-    the cwd before PYTHONPATH in ``sys.path``.
+    the cwd before PYTHONPATH in ``sys.path``. The identity records each
+    renderer's effective root: an inherited renderer that resolved shows the
+    root the pane environment supplied, so a reader can tell one that resolved
+    to the pin from one that resolved to a different root that happens to match.
     """
     pairs, uncovered, failure = _top_pain_roots(home)
     if failure is not None:
@@ -1259,6 +1262,7 @@ def _renderer_coverage(home: Path) -> dict[str, object]:
     conditional_unknown: list[str] = []
     export_unknown: list[str] = []
     pane_info = _pane_info()
+    identity_renderers: list[str] = []
     for root, entry, source, role in pairs:
         effective_root = root
         package_path = Path(root) / "src" / "mishe_tauftauf"
@@ -1267,11 +1271,13 @@ def _renderer_coverage(home: Path) -> dict[str, object]:
             # The text names a root the watcher's environment may override, and
             # no reading here can decide which fired: report it unread.
             conditional_unknown.append(role)
+            identity_renderers.append(f"{root}:{entry}:{source}")
             continue
         if source == "unresolvable":
             # The export names no usable root, so the renderer's effective
             # root is unread rather than the pin.
             export_unknown.append(role)
+            identity_renderers.append(f"{root}:{entry}:{source}")
             continue
         if source == "inherited":
             resolved = False
@@ -1285,6 +1291,7 @@ def _renderer_coverage(home: Path) -> dict[str, object]:
                         break
             if not resolved:
                 inherited_unknown.append(role)
+                identity_renderers.append(f"{root}:{entry}:{source}")
                 continue
         # Check the pane's cwd for a shadowing package
         if pane is not None:
@@ -1293,6 +1300,7 @@ def _renderer_coverage(home: Path) -> dict[str, object]:
             if cwd_package.is_dir():
                 effective_root = current_path
                 package_path = cwd_package
+        identity_renderers.append(f"{effective_root}:{entry}:{source}")
         if entry not in references:
             references[entry] = _module_digests(pinned, entry)
         local = _module_digests(package_path, entry)
@@ -1320,7 +1328,7 @@ def _renderer_coverage(home: Path) -> dict[str, object]:
     return {"id": "sense.runtime.renderer-coverage",
             "state": state,
             "sample": " ".join(parts), "kind": "read",
-            "identity": {"renderers": [f"{root}:{entry}:{source}" for root, entry, source, _ in pairs],
+            "identity": {"renderers": identity_renderers,
                          "drift": drift, "uncovered": sorted(uncovered), "pin": pin}}
 
 def sample(home: Path) -> dict[str, object]:

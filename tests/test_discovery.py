@@ -1590,7 +1590,28 @@ def test_renderer_coverage_resolves_inherited_renderer_from_pane() -> None:
         shutil.rmtree(renderer)
     assert reading["state"] == "verified"
     assert reading["sample"] == "renderers=1"
-    assert reading["identity"]["renderers"] == [":seed_culture_views:inherited"]
+    assert reading["identity"]["renderers"] == [f"{renderer}:seed_culture_views:inherited"]
+
+def test_renderer_coverage_identity_shows_effective_root_for_inherited_renderer() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    modules = {"wall_view": "VALUE = 1\n"}
+    pin = _renderer_root(Path("/tmp") / f"renderer-eff-pin-{os.getpid()}", dict(modules))
+    live = _renderer_root(Path("/tmp") / f"renderer-eff-live-{os.getpid()}", dict(modules))
+    _top_pain(home, "permissions",
+              "exec python -m mishe_tauftauf.seed_culture_views --view permissions\n")
+    pane = {"permissions": (f"env PYTHONPATH={live}/src python -m mishe_tauftauf pain watch permissions", str(home), "")}
+    try:
+        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
+                patch("mishe_tauftauf.discovery._pane_info", return_value=pane):
+            reading = discovery._renderer_coverage(home)
+    finally:
+        shutil.rmtree(pin)
+        shutil.rmtree(live)
+    assert reading["state"] == "verified"
+    assert reading["identity"]["renderers"] == [f"{live}:seed_culture_views:inherited"]
+    assert reading["identity"]["renderers"] != [f"{pin}:seed_culture_views:inherited"]
 
 
 def test_renderer_coverage_reports_unknown_for_unresolvable_inherited_renderer() -> None:
