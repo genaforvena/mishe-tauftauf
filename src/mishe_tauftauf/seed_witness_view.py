@@ -19,7 +19,14 @@ from .seed import recorded_session
 
 
 def _publication_lines(home):
-    """Observe saved private verdicts; never invoke inference from a pane."""
+    """Observe saved private verdicts; never invoke inference from a pane.
+
+    The standing result is the newest publication-gate review. The deterministic
+    prose guard's per-draft reports are not a publication gate and are ignored:
+    the guard writes no record when a corrected draft passes, so presenting its
+    refusal here would latch it as a standing REFUSED.
+    """
+
     lines, uncertain = [], False
     timeout_seconds = 30
     config = home / 'publication-check.json'
@@ -63,6 +70,14 @@ def _publication_lines(home):
                                       if abandoned else 'PENDING — private review in progress; last completed result retained'))
                         lines.append(f'  Active evidence: private report={latest}')
                         uncertain = uncertain or abandoned
+                    continue
+                if candidate.get('stage') == 'prose':
+                    # The deterministic prose guard is not a publication gate
+                    # (its own report says so) and writes no record when a
+                    # corrected draft passes, so presenting its per-draft
+                    # refusal as the standing result would latch it forever.
+                    # The guard still refuses the append and keeps the private
+                    # report for the author.
                     continue
                 if status not in {'clear', 'suspicious', 'unknown'}:
                     raise ValueError('private review has an invalid status')

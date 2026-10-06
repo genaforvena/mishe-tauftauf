@@ -19,6 +19,13 @@ def work(seq, name, **kwargs):
     return FeedEntry(seq, "2026-09-30T00:00:00Z", "seed", "[work] channel=witness wake=1 observation=2 result=verified continue=0\n" + json.dumps(data))
 
 
+def bare_work(seq, name):
+    # No reason/progress/retry fields: the signatures cannot distinguish these
+    # attempts, so they reach the SUSPICIOUS repeated-attempt branch.
+    data = dict(task=name, channel="witness", result="verified")
+    return FeedEntry(seq, "now", "seed", "[work] channel=witness wake=1 observation=2 result=verified continue=0\n" + json.dumps(data))
+
+
 def test_closed_producer_is_visible():
     entries = [task(1,"producer"), FeedEntry(2,"now","senses","[done] producer checked"), task(3,"consumer"), state(4,"consumer",status="waiting",retry_task="producer")]
     assert project(entries)["tasks"]["producer"]["status"] == "done"
@@ -108,6 +115,16 @@ def test_checked_done_retires_suspicious_repetition_but_preserves_history():
     entries.append(FeedEntry(5, 'now', 'senses', '[task-close] a\n' + json.dumps(data)))
     assert not any(f['kind'] == 'repeated-attempt-review' for f in anomalies(entries))
     assert len(project(entries)['receipts']['a']) == 3
+
+
+def test_frozen_waiting_repetition_is_not_an_attempt_review():
+    entries = [task(1, "a"), state(2, "a", status="waiting", retry_event="never-fires"),
+               bare_work(3, "a"), bare_work(4, "a"), bare_work(5, "a")]
+    assert not any(f["kind"] == "repeated-attempt-review" for f in anomalies(entries))
+    # Once the predicate fires after the task's own state, the same historical
+    # receipts are an actionable review prompt again.
+    entries.append(FeedEntry(6, "now", "seed", "[task-event] never-fires"))
+    assert any(f["kind"] == "repeated-attempt-review" for f in anomalies(entries))
 
 
 def test_current_evidence_integrity_and_cause_identity_are_supplied(tmp_path, monkeypatch):
