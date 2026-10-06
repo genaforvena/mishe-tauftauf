@@ -105,11 +105,24 @@ def test_offer_does_not_steal_active_or_waiting_task_and_own_work_first(tmp_path
     assert task_state.select_task(Feed(tmp_path).entries(), "health").identity == "own-health-work"
 
 
-def test_progress_steps_do_not_trip_repeat_detector(tmp_path):
+def settlement(home, channel, observation, result="verified"):
+    wake = Feed(home).append("seed", f"seed wake {channel} observation={observation}\n"
+                                     "Read your wall, addressed messages and live sensors.").sequence
+    Feed(home).append("seed", f"seed yield {channel} wake={wake}\n"
+                              f"Turn settled ({result}); wall and handoff at walls/{channel}.md.")
+
+
+def test_repeat_detector_fires_on_unchanged_current_settlements(tmp_path):
     from mishe_tauftauf.seed_board import repeated_no_change
-    for wake, step in [(1, "diagnose"), (2, "implement"), (3, "review")]:
-        Feed(tmp_path).append("seed", f"[work] channel=genome wake={wake} observation=1 result=verified "
-                             f"continue=1 task=repair task_step={step} artifact=checked")
+    for _ in range(3):
+        settlement(tmp_path, "genome", observation=42)
+    assert len(repeated_no_change(Feed(tmp_path).entries(), "genome")) == 3
+
+
+def test_repeat_detector_ignores_changed_observation(tmp_path):
+    from mishe_tauftauf.seed_board import repeated_no_change
+    for observation in (1, 2, 3):
+        settlement(tmp_path, "genome", observation=observation)
     assert repeated_no_change(Feed(tmp_path).entries(), "genome") == []
 
 
@@ -199,12 +212,12 @@ def test_completion_dependency_cycles_rejected_before_append(tmp_path):
     assert Feed(tmp_path).read_bytes() == before
 
 
-def test_repeat_detector_uses_outcome_across_observation_and_artifact_changes(tmp_path):
+def test_repeat_detector_ignores_changed_result(tmp_path):
     from mishe_tauftauf.seed_board import repeated_no_change
-    for wake in (1, 2, 3):
-        Feed(tmp_path).append("seed", f"[work] channel=genome wake={wake} observation={wake} result=verified "
-                             f"continue=0 task=research task_step=artifact-{wake} task_outcome=unchanged-budget")
-    assert len(repeated_no_change(Feed(tmp_path).entries(), "genome")) == 3
+    settlement(tmp_path, "genome", observation=42, result="verified")
+    settlement(tmp_path, "genome", observation=42, result="verified")
+    settlement(tmp_path, "genome", observation=42, result="changed")
+    assert repeated_no_change(Feed(tmp_path).entries(), "genome") == []
 
 
 def test_structured_writer_rejects_malformed_control_before_persisting(tmp_path):

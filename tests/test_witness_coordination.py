@@ -32,6 +32,20 @@ def test_witness_displays_own_and_seed_task_receipt_history(tmp_path, monkeypatc
     assert '4 seed:' in output
 
 
+def test_genome_work_names_current_settlements_not_retired_receipts(tmp_path, monkeypatch):
+    entries = [entry(1, 'seed', '[work] channel=genome wake=9875 observation=9862 result=changed continue=0')]
+    seq = 2
+    for observation in (7, 8, 9):
+        entries.append(entry(seq, 'seed', f'seed wake genome observation={observation}\nRead your wall.'))
+        entries.append(entry(seq + 1, 'seed', f'seed yield genome wake={seq}\nTurn settled (verified); wall and handoff.'))
+        entries.append(entry(seq + 2, 'seed', f'seed clear genome after={seq}\nIdle mind rotated.'))
+        seq += 3
+    wire(tmp_path, monkeypatch, entries)
+    output = render(tmp_path)
+    genome_work = next(line for line in output.splitlines() if line.startswith('GENOME WORK:'))
+    assert genome_work == 'GENOME WORK: 2:verified@7, 5:verified@8, 8:verified@9'
+
+
 def test_conditional_ready_is_suspicion_with_unknown_health(tmp_path, monkeypatch):
     state = asdict(TaskState('audit', 'witness', 2, next_step='When producer reports ownership, inspect latency.'))
     entries = [entry(1,'witness','[task] audit owner=witness acceptance=checked'), entry(2,'witness','[task-state] audit\n'+json.dumps(state))]
