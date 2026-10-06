@@ -402,6 +402,9 @@ and disposition time. At cutoff resolve, escalate or defer to a named trigger.
 Continue useful independent work while waiting; unchanged audits are not progress.
 
 `wall outcome` binds an existing nonempty owned-site evidence file by digest.
+Write that file once, keep it under `artifacts/`, and never reuse it for a second
+outcome; [wall coordination](wall-coordination.md) states the rule and its
+failure modes.
 Outcomes record author reports, not independent acceptance. Historical task and
 delivery reports remain readable for recovery; their old control flow does not
 select current work.
