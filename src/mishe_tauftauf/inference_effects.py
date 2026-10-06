@@ -11,7 +11,8 @@ process to reconcile; it is never silently retried. This module does not claim
 power-loss durability, exactly-once semantics, or general concurrent safety.
 `os.fsync` is an actual code-level operation here, not a mount choice; flush-only
 would not be crash-durable. A torn or malformed journal line is preserved and
-fails closed rather than being treated as an absent record.
+fails closed rather than being treated as an absent record. Corruption
+diagnostics remain importable on the supported Python 3.10 baseline.
 
 The store is three append-only JSONL journals — intents, dispatch starts,
 outcomes — plus one stable lock file; no new durability mechanism. One writer at
@@ -326,9 +327,10 @@ class EffectLedger:
         if not data.endswith(b"\n"):
             # A record that lost its terminator means the store was truncated
             # mid-write. No claim may be read from a partial line.
+            fragment = data[data.rfind(b"\\n") + 1:]
             raise JournalCorrupt(
                 f"truncated line in {path}: "
-                f"{data[data.rfind(b'\\n') + 1:]!r}")
+                f"{fragment!r}")
         text = data.decode("utf-8", errors="replace")
         for line in text.splitlines():
             line_text = line.strip()
