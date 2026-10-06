@@ -154,12 +154,12 @@ source as the `permit` CLI it drives), and a site-declared resident
 prints a `DEPLOYED` line. The site CLI, the minds and the seed services load the
 pin source (the checkout or an installed release) instead, so patched snapshot
 bytes stay invisible to them until a replant, and an observe script that shells
-out to `bin/mishe-tauftauf` reads that pin source, not the patched bytes. Every
-pane rendered by the standard role view prints three deployment lines; `docs`
-shows this book, `discover` and `senses` their culture views, and `witness` its
-coordination checks. `SOURCE` names the checkout
-commit and its changed-path count; `DEPLOYED`
-the rendering process's own root and module fingerprint; `RUNTIME` the pin beside
+out to `bin/mishe-tauftauf` reads that pin source, not the patched bytes. The
+`health`, `genome` and `research-methods` panes print three deployment lines;
+`docs` shows this book, `discover` and `senses` their culture views, and
+`witness` its coordination checks; those four print none. `SOURCE` names the
+checkout commit and its changed-path count; `DEPLOYED` the rendering process's
+own root and module fingerprint; `RUNTIME` the pin beside
 the roots the seed services actually import, flagging `DRIFT` when they differ —
 the pin and the seed roots are separate and can diverge. The release coordinator
 is a declared exception: it imports its site's checkout so its follower observes
