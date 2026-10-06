@@ -2224,6 +2224,12 @@ DM_DISPOSITION_MATURITY_SECONDS = 30 * 60
 """A DM younger than this is right-censored: it has not had the full window to
 be dispositioned, so it is excluded from the stall estimate."""
 WALL_OUTCOME_RE = re.compile(r"^Wall outcome \S+ by ([A-Za-z0-9_.-]+)")
+SETTLE_RESULT_WINDOW = 100
+"""Trailing settlements one result-mix sample covers."""
+SETTLE_INCIDENT_GAP_SECONDS = 60 * 60
+"""Blocked settlements closer than this belong to one incident."""
+SEED_YIELD_RE = re.compile(r"^seed yield (\S+) wake=(\d+)")
+TURN_SETTLED_RE = re.compile(r"Turn settled \(([^)]+)\);")
 
 
 def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[str, object]:
@@ -2386,6 +2392,71 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
             "dispositioned": dispositioned, "open": open_count, "stall": stall_n,
             "p50_minutes": round(p50), "p90_minutes": round(p90),
             "oldest_open": oldest}
+
+
+def _seed_settle_result_mix(home: Path) -> dict[str, object]:
+    """Report the mix of settlement results over the tape's own receipts.
+
+    Each settlement appends one ``seed`` entry whose body names the yield
+    (``seed yield <role> wake=<n>``) and the result (``Turn settled
+    (<result>)``). The reading counts the trailing ``SETTLE_RESULT_WINDOW``
+    settlements by result, clusters the window's ``blocked`` receipts into
+    incidents at the disclosed ``SETTLE_INCIDENT_GAP_SECONDS`` gap, and counts
+    the settlements after the most recent ``blocked`` receipt on the whole tape
+    (``since_last=none`` when none is recorded). A result outside the known
+    three is counted as ``other``; a yield with no settled line is not a
+    settlement. The window is a count, not a duration, so the sample is current
+    as of the scan.
+
+    State is ``verified`` when the window holds no ``blocked`` receipt and
+    ``drift`` when one does: a blocked settlement is the signal the mix moved
+    off the all-clean reading, and it is what makes the rate visible rather
+    than inferred from chat. State is ``unknown`` when the tape is absent or
+    unreadable, so a source change cannot pass as a clean bill.
+    """
+    tape_path = home / "chat.log"
+    if not tape_path.exists():
+        return {"id": "sense.seed.settle-result-mix", "state": "unknown",
+                "sample": "chat tape unavailable", "kind": "read"}
+    try:
+        entries = parse_feed(tape_path.read_bytes(), home=home)
+    except (OSError, ValueError) as exc:
+        return {"id": "sense.seed.settle-result-mix", "state": "unknown",
+                "sample": f"chat tape unreadable: {exc}", "kind": "read"}
+    settlements: list[tuple[datetime, str]] = []
+    for entry in entries:
+        if entry.source != "seed" or SEED_YIELD_RE.match(entry.body) is None:
+            continue
+        settled = TURN_SETTLED_RE.search(entry.body)
+        if settled is None:
+            continue
+        ts = datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))
+        settlements.append((ts, settled.group(1)))
+    window = settlements[-SETTLE_RESULT_WINDOW:]
+    counts = {"verified": 0, "changed": 0, "blocked": 0, "other": 0}
+    for _ts, result in window:
+        counts[result if result in counts else "other"] += 1
+    blocked_times = sorted(ts for ts, result in window if result == "blocked")
+    incidents = 0
+    previous: datetime | None = None
+    for ts in blocked_times:
+        if previous is None or (ts - previous).total_seconds() > SETTLE_INCIDENT_GAP_SECONDS:
+            incidents += 1
+        previous = ts
+    last_blocked = next((index for index in range(len(settlements) - 1, -1, -1)
+                         if settlements[index][1] == "blocked"), None)
+    since_last = None if last_blocked is None else len(settlements) - 1 - last_blocked
+    sample = (f"n={len(window)} verified={counts['verified']} "
+              f"changed={counts['changed']} blocked={counts['blocked']} "
+              f"other={counts['other']} incidents={incidents} "
+              f"since_last={'none' if since_last is None else since_last}")
+    return {"id": "sense.seed.settle-result-mix",
+            "state": "drift" if blocked_times else "verified",
+            "sample": sample, "kind": "read", "window": len(window),
+            "verified": counts["verified"], "changed": counts["changed"],
+            "blocked": counts["blocked"], "other": counts["other"],
+            "incidents": incidents, "since_last": since_last,
+            "incident_gap_seconds": SETTLE_INCIDENT_GAP_SECONDS}
 
 
 EVIDENCE_BINDING_CLAUSE_TIME = datetime(2026, 10, 6, 16, 22, 11, tzinfo=timezone.utc)
@@ -2712,6 +2783,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_runtime_pin_lag(home))
     observed.append(_repo_branch_inventory(home))
     observed.append(_coord_dm_disposition_age(home))
+    observed.append(_seed_settle_result_mix(home))
     return {"created": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
             "node": os.uname().nodename, "observations": observed}
 
