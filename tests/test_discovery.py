@@ -1459,16 +1459,24 @@ def test_dm_disposition_age_replied_outcome_and_open(tmp_path):
     result = discovery._coord_dm_disposition_age(home, now=_dm_now())
     assert result["state"] == "verified"
     assert result["dms"] == 4
-    assert result["dispositioned"] == 3
-    assert result["open"] == 1
-    assert result["p50_minutes"] == 25
-    assert result["p90_minutes"] == 29
-    assert result["oldest_open"] == "dave:4h00m"
-    assert result["sample"] == ("dms=4 dispositioned=3 open=1 "
-                                "p50=25m p90=29m oldest_open=dave:4h00m")
+    # alice->bob is credited by the reply edge; alice->carol by the wall join.
+    # bob->alice is open: alice's later DMs go to carol and dave, not bob.
+    assert result["reply_edge"] == 1
+    assert result["seq_credit"] == 0
+    assert result["credit_only"] == 0
+    assert result["wall_only"] == 1
+    assert result["dispositioned"] == 2
+    assert result["open"] == 2
+    assert result["stall"] == 2
+    assert result["p50_minutes"] == 18
+    assert result["p90_minutes"] == 28
+    assert result["oldest_open"] == "alice:5h25m"
+    assert result["sample"] == ("dms=4 reply_edge=1 seq_credit=0 credit_only=0 "
+                                "wall_only=1 dispositioned=2 open=2 stall=2 "
+                                "p50=18m p90=28m oldest_open=alice:5h25m")
 
 
-def test_dm_disposition_age_reply_to_third_party_dispositions(tmp_path):
+def test_dm_disposition_age_reply_to_third_party_does_not_disposition(tmp_path):
     home = tmp_path / "site"
     home.mkdir(parents=True, exist_ok=True)
     (home / "records").mkdir(parents=True, exist_ok=True)
@@ -1481,8 +1489,11 @@ def test_dm_disposition_age_reply_to_third_party_dispositions(tmp_path):
     result = discovery._coord_dm_disposition_age(home, now=_dm_now())
     assert result["state"] == "verified"
     assert result["dms"] == 2
-    assert result["dispositioned"] == 1
-    assert result["open"] == 1
+    assert result["reply_edge"] == 0
+    assert result["dispositioned"] == 0
+    assert result["open"] == 2
+    assert result["stall"] == 2
+    assert result["oldest_open"] == "bob:5h30m"
 
 
 def test_dm_disposition_age_missing_tape(tmp_path):
@@ -1518,7 +1529,8 @@ def test_dm_disposition_age_empty_window(tmp_path):
     assert result["dms"] == 0
     assert result["dispositioned"] == 0
     assert result["open"] == 0
-    assert result["sample"] == "dms=0 dispositioned=0 open=0"
+    assert result["sample"] == ("dms=0 reply_edge=0 seq_credit=0 credit_only=0 "
+                                "wall_only=0 dispositioned=0 open=0 stall=0")
 
 def test_dm_disposition_age_uses_earliest_outcome(tmp_path):
     home = tmp_path / "site"
@@ -1544,6 +1556,199 @@ def test_dm_disposition_age_uses_earliest_outcome(tmp_path):
     assert result["open"] == 0
     # The earliest outcome (12:30) dispositions the DM, not the later (13:00).
     assert result["p50_minutes"] == 30
+
+
+def test_dm_disposition_age_seq_citation_dispositions(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "records").mkdir(parents=True, exist_ok=True)
+    entries = [
+        (1, "2026-10-06T12:30:00Z", "alice", "[dm] to=bob\n# hi bob\n"),
+        (2, "2026-10-06T13:00:00Z", "bob",
+         "Wall outcome accepted by bob\n# bob — wake 2\n\nRead DM 1. Acked.\n"),
+    ]
+    (home / "chat.log").write_bytes(
+        b"".join(_tape_entry(seq, ts, src, body) for seq, ts, src, body in entries))
+    result = discovery._coord_dm_disposition_age(home, now=_dm_now())
+    assert result["state"] == "verified"
+    assert result["dms"] == 1
+    # The outcome body cites the DM's seq token: credited without a reply.
+    assert result["reply_edge"] == 0
+    assert result["seq_credit"] == 1
+    assert result["credit_only"] == 1
+    assert result["wall_only"] == 0
+    assert result["dispositioned"] == 1
+    assert result["open"] == 0
+    assert result["p50_minutes"] == 30
+
+
+def test_dm_disposition_age_stall_gate_excludes_young_open(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "records").mkdir(parents=True, exist_ok=True)
+    entries = [
+        (1, "2026-10-06T17:45:00Z", "alice", "[dm] to=bob\n# hi bob\n"),
+        (2, "2026-10-06T17:00:00Z", "carol", "[dm] to=dave\n# hi dave\n"),
+    ]
+    (home / "chat.log").write_bytes(
+        b"".join(_tape_entry(seq, ts, src, body) for seq, ts, src, body in entries))
+    result = discovery._coord_dm_disposition_age(home, now=_dm_now())
+    assert result["state"] == "verified"
+    assert result["dms"] == 2
+    assert result["open"] == 2
+    # The 17:45 DM is 15m old: right-censored, open but not a stall.
+    assert result["stall"] == 1
+    assert result["oldest_open"] == "dave:1h00m"
+
+
+def _write_evidenced_outcome(home: Path, role: str, evidence: Path,
+                             digest: str | None = None) -> str:
+    (home / "records").mkdir(parents=True, exist_ok=True)
+    if digest is None:
+        digest = hashlib.sha256(evidence.read_bytes()).hexdigest()
+    payload = {"version": 1, "kind": "wall-outcome",
+               "payload": {"role": role, "kind": "accepted", "text": "outcome",
+                           "evidence": {"path": str(evidence),
+                                        "sha256": digest}}}
+    data = json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=False, allow_nan=False).encode("utf-8")
+    record_digest = hashlib.sha256(data).hexdigest()
+    (home / "records" / f"{record_digest}.json").write_bytes(data)
+    return record_digest
+
+
+def _binding_tape(home: Path, citations: list[tuple[int, str, str, str]]) -> None:
+    (home / "chat.log").write_bytes(
+        b"".join(_tape_entry(seq, ts, src, body) for seq, ts, src, body in citations))
+
+
+def test_evidence_binding_clean_store(tmp_path):
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    evidence_a = home / "artifacts" / "wake-a.md"
+    evidence_a.write_text("write-once A\n")
+    evidence_b = home / "artifacts" / "wake-b.md"
+    evidence_b.write_text("write-once B\n")
+    digest_a = _write_evidenced_outcome(home, "alice", evidence_a)
+    digest_b = _write_evidenced_outcome(home, "bob", evidence_b)
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "alice",
+         f"[record] records/{digest_a}.json sha256={digest_a}\n"),
+        (2, "2026-10-06T17:30:00Z", "bob",
+         f"[record] records/{digest_b}.json sha256={digest_b}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    assert result["state"] == "verified"
+    assert result["bound"] == 2
+    assert result["latest_roles"] == 2
+    assert result["latest_bad"] == 0
+    assert result["all_bad"] == 0
+    assert result["sample"] == "bound=2 latest_roles=2 latest_bad=0 all_bad=0"
+
+
+def test_evidence_binding_flags_mutated_evidence(tmp_path):
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    evidence = home / "artifacts" / "wake-a.md"
+    evidence.write_text("original bytes\n")
+    digest = _write_evidenced_outcome(home, "alice", evidence)
+    evidence.write_text("edited after record\n")
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "alice",
+         f"[record] records/{digest}.json sha256={digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    assert result["state"] == "drift"
+    assert result["all_bad"] == 1
+    assert result["latest_bad"] == 1
+    assert "wake-a.md(B)" in result["sample"]
+
+
+def test_evidence_binding_flags_outside_artifacts(tmp_path):
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    evidence = home / "walls" / "alice.md"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text("wall file\n")
+    digest = _write_evidenced_outcome(home, "alice", evidence)
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "alice",
+         f"[record] records/{digest}.json sha256={digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    assert result["state"] == "drift"
+    assert result["all_bad"] == 1
+    assert "alice.md(A)" in result["sample"]
+
+
+def test_evidence_binding_flags_reused_path(tmp_path):
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    evidence = home / "artifacts" / "shared.md"
+    evidence.write_text("shared evidence\n")
+    digest_a = _write_evidenced_outcome(home, "alice", evidence)
+    digest_b = _write_evidenced_outcome(home, "bob", evidence)
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "alice",
+         f"[record] records/{digest_a}.json sha256={digest_a}\n"),
+        (2, "2026-10-06T17:30:00Z", "bob",
+         f"[record] records/{digest_b}.json sha256={digest_b}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    assert result["state"] == "drift"
+    # Both outcomes cite one path: each violates the never-reused requirement.
+    assert result["all_bad"] == 2
+    assert result["latest_bad"] == 2
+    assert "shared.md(D)" in result["sample"]
+
+
+def test_evidence_binding_latest_window_clean_while_all_has_history(tmp_path):
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    stale = home / "artifacts" / "stale.md"
+    stale.write_text("original\n")
+    stale_digest = _write_evidenced_outcome(home, "bob", stale)
+    stale.write_text("edited after record\n")
+    fresh = home / "artifacts" / "fresh.md"
+    fresh.write_text("write-once\n")
+    fresh_digest = _write_evidenced_outcome(home, "bob", fresh)
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "bob",
+         f"[record] records/{stale_digest}.json sha256={stale_digest}\n"),
+        (2, "2026-10-06T17:30:00Z", "bob",
+         f"[record] records/{fresh_digest}.json sha256={fresh_digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    # The standing audit keeps the repaired violation flagged (drift), while
+    # the latest outcome per role is clean.
+    assert result["state"] == "drift"
+    assert result["all_bad"] == 1
+    assert result["latest_bad"] == 0
+    assert result["latest_roles"] == 1
+
+
+def test_evidence_binding_missing_tape(tmp_path):
+    result = discovery._ledger_evidence_binding(tmp_path / "site")
+    assert result["state"] == "unknown"
+    assert result["sample"] == "chat tape unavailable"
+
+
+def test_evidence_binding_no_post_clause_outcomes(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "records").mkdir(parents=True)
+    _binding_tape(home, [
+        (1, "2026-10-06T15:00:00Z", "alice",
+         f"[record] records/{'a' * 64}.json sha256={'a' * 64}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    assert result["state"] == "unknown"
+    assert result["sample"] == "no post-clause outcomes"
 
 
 
