@@ -67,3 +67,20 @@ def test_prose_guard_refusal_is_not_a_standing_publication_result(tmp_path):
     lines, uncertain = _publication_lines(tmp_path)
     assert any('PUBLICATION RESULT: REFUSED source=witness stage=post' in line for line in lines)
     assert uncertain
+
+
+def test_retired_selection_refusal_is_not_a_standing_publication_result(tmp_path):
+    reports = prepare(tmp_path)
+    # The ledger claim path that produced stage=selection reviews is retired, so
+    # its refusal can never be superseded and must not latch as the result.
+    (reports / 'selection.json').write_text(json.dumps({'status': 'unknown', 'semantic_status': 'unknown', 'stage': 'selection', 'source': 'body-research', 'results': []}))
+    os.utime(reports / 'selection.json', (time.time(), time.time()))
+    lines, uncertain = _publication_lines(tmp_path)
+    assert not any('stage=selection' in line for line in lines)
+    # A newer retired-caller refusal must not hide an older live-caller refusal.
+    gate = reports / 'gate.json'
+    gate.write_text(json.dumps({'status': 'suspicious', 'semantic_status': 'suspicious', 'stage': 'post', 'source': 'witness', 'results': [{'id': 'R06', 'verdict': 'suspicious'}]}))
+    os.utime(gate, (time.time() - 10, time.time() - 10))
+    lines, uncertain = _publication_lines(tmp_path)
+    assert any('PUBLICATION RESULT: REFUSED source=witness stage=post' in line for line in lines)
+    assert uncertain

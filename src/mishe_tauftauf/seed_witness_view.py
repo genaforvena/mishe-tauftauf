@@ -17,14 +17,23 @@ from . import task_state
 from .coordination_checks import anomalies
 from .seed import recorded_session
 
+# Stages whose refusals cannot be superseded by a live caller, so they must not
+# latch as the witness pane's standing publication result (docs/publication-checks.md):
+# `prose` is the deterministic guard, not a publication gate, and writes a record
+# only on failure; `selection` came from the ledger claim path, retired in the
+# canonical wall route.
+_NON_STANDING_STAGES = frozenset({'prose', 'selection'})
+
 
 def _publication_lines(home):
     """Observe saved private verdicts; never invoke inference from a pane.
 
-    The standing result is the newest publication-gate review. The deterministic
-    prose guard's per-draft reports are not a publication gate and are ignored:
-    the guard writes no record when a corrected draft passes, so presenting its
-    refusal here would latch it as a standing REFUSED.
+    The standing result is the newest publication-gate review from a stage a live
+    caller can still supersede. Reports from stages whose refusal can never be
+    superseded are evidence, not a standing result: the deterministic prose guard
+    writes no record when a corrected draft passes, and the ledger claim path that
+    produced `selection` reviews is retired (docs/publication-checks.md), so
+    either refusal would latch here forever.
     """
 
     lines, uncertain = [], False
@@ -71,13 +80,13 @@ def _publication_lines(home):
                         lines.append(f'  Active evidence: private report={latest}')
                         uncertain = uncertain or abandoned
                     continue
-                if candidate.get('stage') == 'prose':
-                    # The deterministic prose guard is not a publication gate
-                    # (its own report says so) and writes no record when a
-                    # corrected draft passes, so presenting its per-draft
-                    # refusal as the standing result would latch it forever.
-                    # The guard still refuses the append and keeps the private
-                    # report for the author.
+                if candidate.get('stage') in _NON_STANDING_STAGES:
+                    # A refusal can only stand while a live caller can supersede
+                    # it. The prose guard writes a record only on failure and the
+                    # ledger claim path is retired, so neither refusal can ever be
+                    # replaced; presenting one as the standing result would latch
+                    # it forever. Each path still refuses its own draft and keeps
+                    # its private report for the author.
                     continue
                 if status not in {'clear', 'suspicious', 'unknown'}:
                     raise ValueError('private review has an invalid status')
