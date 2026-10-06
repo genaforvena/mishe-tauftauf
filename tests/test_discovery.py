@@ -708,7 +708,7 @@ def _unit_failure_record(**fields):
             "MESSAGE": "cron.service: Failed with result 'oom-kill'.", **fields}
 
 
-def _unit_failure_fixture(monkeypatch, output, boots=None):
+def _unit_failure_fixture(monkeypatch, output, boots=None, restart_context=None):
     class Clock(datetime):
         @classmethod
         def now(cls, tz=None):
@@ -718,6 +718,8 @@ def _unit_failure_fixture(monkeypatch, output, boots=None):
     monkeypatch.setattr(discovery, "_journal_boot",
                         lambda: next(boots) if boots is not None else _JOURNAL_BOOT)
     monkeypatch.setattr(discovery, "_journal_command", lambda cmd: output)
+    monkeypatch.setattr(discovery, "_unit_restart_context",
+                        lambda units: restart_context or {})
     return discovery._journal_unit_failure_window()
 
 
@@ -793,6 +795,60 @@ def test_unit_failure_window_validates_exact_boundaries(monkeypatch, offset, ver
     result = _unit_failure_fixture(monkeypatch, _journal_bytes(
         _unit_failure_record(__REALTIME_TIMESTAMP=str(_JOURNAL_UPPER + offset))))
     assert result["state"] == ("verified" if verified else "unknown")
+
+def test_unit_failure_includes_restart_context_in_sample(monkeypatch):
+    result = _unit_failure_fixture(monkeypatch, _journal_bytes(
+        _unit_failure_record(MESSAGE="mesh-cleaner.service: Failed with result 'exit-code'.")),
+        restart_context={"mesh-cleaner.service": {"restarts": 1, "active": "running"}})
+    assert result["state"] == "verified"
+    assert result["unit_context"] == {"mesh-cleaner.service": {"restarts": 1, "active": "running"}}
+    assert "mesh-cleaner.service:restarts=1,active=running" in result["sample"]
+
+
+def test_unit_failure_omits_restart_context_when_unavailable(monkeypatch):
+    result = _unit_failure_fixture(monkeypatch, _journal_bytes(
+        _unit_failure_record(MESSAGE="mesh-cleaner.service: Failed with result 'exit-code'.")))
+    assert result["state"] == "verified"
+    assert result["unit_context"] == {}
+    assert "restarts=" not in result["sample"]
+
+
+def test_unit_restart_context_queries_systemctl(monkeypatch):
+    calls = []
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class Result:
+            returncode = 0
+            stdout = "Id=mesh-cleaner.service\nNRestarts=1\nActiveState=running\n\n"
+        return Result()
+    monkeypatch.setattr(discovery.subprocess, "run", fake_run)
+    result = discovery._unit_restart_context(["mesh-cleaner.service"])
+    assert result == {"mesh-cleaner.service": {"restarts": 1, "active": "running"}}
+    assert calls[0][:3] == ["systemctl", "--user", "show"]
+
+
+def test_unit_restart_context_falls_back_to_system_scope(monkeypatch):
+    calls = []
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class Result:
+            returncode = 1 if "--user" in cmd else 0
+            stdout = "" if "--user" in cmd else "Id=cron.service\nNRestarts=0\nActiveState=failed\n\n"
+        return Result()
+    monkeypatch.setattr(discovery.subprocess, "run", fake_run)
+    result = discovery._unit_restart_context(["cron.service"])
+    assert result == {"cron.service": {"restarts": 0, "active": "failed"}}
+    assert len(calls) == 2
+    assert "--user" in calls[0]
+    assert "--user" not in calls[1]
+
+
+def test_unit_restart_context_returns_empty_when_systemctl_unavailable(monkeypatch):
+    def fake_run(cmd, **kwargs):
+        raise OSError("no systemctl")
+    monkeypatch.setattr(discovery.subprocess, "run", fake_run)
+    result = discovery._unit_restart_context(["mesh-cleaner.service"])
+    assert result == {}
 
 
 def _omp_log_line(timestamp: str, message: str, **fields) -> str:
