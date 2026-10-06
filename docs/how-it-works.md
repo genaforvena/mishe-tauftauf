@@ -268,6 +268,12 @@ publication, and notification failures separately from `latest.json`: a failed
 acquisition or pre-commit publication retains the previous sample; a failed
 notification retains the newly committed sample but cannot claim completed
 delivery. Historical scan artifacts are preserved.
+Every receipt also records its `producer`: the package root and commit that ran
+the scan. The panes' `SCAN` line and the tape's `Producer` line name it against
+the site pin (`pin@<sha>`, `checkout@<sha>`, `other@<sha>`, or `unknown`), so a
+scan produced by unreviewed checkout code is visible rather than read as the
+pinned sample.
+
 
 Acquisition freshness does not refresh cached or imported source evidence.
 Journal counts retain their original fixed `since`/`until` bounds, count, boot,

@@ -16,6 +16,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from .feed import Feed
+from .runtime_source import source_for
 from .scan_freshness import age_bounds, classify_age, endpoint
 
 COMMANDS = ("rg", "git", "tmux", "python3", "systemctl", "journalctl", "ps", "df",
@@ -2005,9 +2006,9 @@ def _producer() -> str:
     """Identify the code that produced a scan: package root + git commit.
 
     A checkout run and a pin-run resolve to different package roots, so the
-    field distinguishes them even when their readings are identical.  The git
-    commit names the exact source tree; ``unknown`` means the root is not a
-    git work tree (e.g. a release directory).
+    field distinguishes them even when their readings are identical. The git
+    commit names the exact source tree; ``unknown`` means the root is not a git
+    work tree at all (an exported tree rather than a checkout or release).
     """
     package_root = Path(__file__).resolve().parent
     checkout_root = package_root.parent.parent
@@ -2022,6 +2023,39 @@ def _producer() -> str:
         sha = "unknown"
     return f"{package_root}@{sha}"
 
+
+def producer_label(home: Path, producer: object) -> str:
+    """Name a scan's recorded producer against this site's pin.
+
+    The producer field names the package root and commit that ran ``scan()``,
+    but the readings alone do not say whether that code is the pin the services
+    import or an unreviewed checkout run, so ``latest.json`` (last writer wins)
+    could otherwise present either as the live fact. The label is
+    ``<origin>@<sha>``, where the origin is ``pin`` when the root is the pinned
+    package, ``checkout`` when it is the shared checkout beside the site, and
+    ``other`` for any other root; an unreadable pin leaves the origin
+    ``unknown``. A receipt that recorded no producer at all is ``unknown``. It
+    names the provenance; it does not itself change the reading's freshness.
+    """
+    if not isinstance(producer, str) or "@" not in producer:
+        return "unknown"
+    root, _, sha = producer.rpartition("@")
+    origin = "unknown"
+    if (home / "health/runtime-release.json").exists():
+        try:
+            # The fallback is unreachable: the pin file exists, so a missing
+            # one never reaches here.
+            pinned = str(source_for(home, home) / "src" / "mishe_tauftauf")
+        except ValueError:
+            pinned = None
+        if pinned is not None:
+            if root == pinned:
+                origin = "pin"
+            elif root == str(Path(home).resolve().parent / "src" / "mishe_tauftauf"):
+                origin = "checkout"
+            else:
+                origin = "other"
+    return f"{origin}@{sha[:12] or 'unknown'}"
 
 
 def scan(home: Path) -> Path:
@@ -2129,6 +2163,7 @@ def _notify_scan(home: Path, snapshot: dict[str, object],
     change_text = ("Initial baseline." if previous is None else
                    "Material changes: " + "; ".join(change_details) + ".")
     lines = [f"[discovery] Read-only scan at {snapshot['created']} on {snapshot['node']}.",
+             f"Producer: {producer_label(home, snapshot.get('producer'))}.",
              change_text,
              f"Available commands ({len(available)}): {', '.join(available) or 'none'}.",
              f"Unavailable commands ({len(unavailable)}): {', '.join(unavailable) or 'none'}.",

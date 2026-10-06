@@ -14,6 +14,7 @@ import pytest
 from mishe_tauftauf.discovery import _cpu_busy, latest, renew_scan, scan, scan_age
 from mishe_tauftauf import discovery
 from mishe_tauftauf.feed import Feed
+from mishe_tauftauf.seed_culture_views import discover
 
 
 def test_scan_writes_real_bounded_local_evidence(tmp_path: Path) -> None:
@@ -87,6 +88,39 @@ def test_scan_includes_producer_provenance(tmp_path: Path) -> None:
 
     # latest.json carries the same producer.
     assert latest(home)["producer"] == producer
+
+
+def test_producer_label_names_the_root_against_the_pin(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health" / "runtime-release.json").write_text(
+        json.dumps({"version": 1, "source": str(tmp_path / "releases" / "abc"),
+                    "sha": "a" * 40, "session": "s"}), encoding="utf-8")
+    monkeypatch.setattr(discovery, "source_for", lambda _home, _default: tmp_path / "releases" / "abc")
+
+    pinned = tmp_path / "releases" / "abc" / "src" / "mishe_tauftauf"
+    assert discovery.producer_label(home, f"{pinned}@{'a' * 40}") == "pin@aaaaaaaaaaaa"
+    checkout = tmp_path / "src" / "mishe_tauftauf"
+    assert discovery.producer_label(home, f"{checkout}@{'b' * 40}") == "checkout@bbbbbbbbbbbb"
+    assert discovery.producer_label(home, f"/elsewhere/src/mishe_tauftauf@{'c' * 40}") == "other@cccccccccccc"
+    # No recorded producer and an unreadable pin both stay unevidenced, not "other".
+    assert discovery.producer_label(home, None) == "unknown"
+    assert discovery.producer_label(home, "no-separator") == "unknown"
+    monkeypatch.setattr(discovery, "source_for",
+                        lambda _home, _default: (_ for _ in ()).throw(ValueError("bad pin")))
+    assert discovery.producer_label(home, f"{pinned}@{'a' * 40}") == "unknown@aaaaaaaaaaaa"
+
+
+def test_scan_line_and_tape_name_the_producer(tmp_path: Path) -> None:
+    home = tmp_path / "site"
+    artifact = scan(home)
+    sha = json.loads(artifact.read_text())["producer"].rsplit("@", 1)[1][:12]
+    # A tmp home declares no pin, so the root cannot be named against one.
+    view = discover(home)
+    line = next(item for item in view.splitlines() if item.startswith("SCAN: "))
+    assert line.endswith(f" producer=unknown@{sha}")
+    body = Feed(home).entries()[-1].body
+    assert f"Producer: unknown@{sha}." in body.splitlines()
 
 
 def test_discovery_notices_existing_cpu_class_crossings_not_numeric_drift(tmp_path: Path) -> None:
