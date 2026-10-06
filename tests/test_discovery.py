@@ -2441,6 +2441,7 @@ def test_drift_across_sites_falls_back_to_seed_raised_for_own_session(
     with patch.object(discovery, "_active_site_units", return_value=(units, None)), \
             patch.object(discovery, "_unit_import_roots",
                          return_value={units[0]: str(own_pin)}), \
+            patch.object(discovery, "_foreign_checkout_consumers", return_value={}), \
             patch.dict(os.environ, {}, clear=True):
         row = discovery._runtime_drift_across_sites(home)
     assert row["state"] == "unknown"
@@ -2488,11 +2489,149 @@ def test_drift_across_sites_is_unknown_when_active_unit_is_unattributed(
     unit = "mishe-unlisted-senses.service"
     with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
             patch.object(discovery, "_unit_import_roots", return_value={}), \
+            patch.object(discovery, "_foreign_checkout_consumers", return_value={}), \
             patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
         row = discovery._runtime_drift_across_sites(home)
     assert row["state"] == "unknown"
     assert row["identity"]["stale"] == {}
     assert row["identity"]["unattributed"] == [unit]
+
+
+def test_drift_across_sites_names_a_foreign_unit_declared_on_the_checkout(
+        tmp_path: Path) -> None:
+    # A foreign unit that carries no PYTHONPATH and has no live child at scan
+    # time still declares the coupling in its own ExecStart text; the reading
+    # names the consumer and the checkout instead of an anonymous coverage gap.
+    pinned_sha: list[str] = []
+    other_pin = tmp_path / "releases" / "other"
+    _release_tree(other_pin, pinned_sha)
+    other = tmp_path / "site-other"
+    _pin(other, other_pin, pinned_sha[0], "mishe-other")
+    home = tmp_path / "plant"
+    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
+                             "sha": pinned_sha[0]}])
+    unit = "mishe-cleaner-recovered.service"
+    checkout = tmp_path.resolve()
+    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
+            patch.object(discovery, "_unit_import_roots", return_value={}), \
+            patch.object(discovery, "_foreign_checkout_consumers",
+                         return_value={unit: str(checkout)}), \
+            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
+        row = discovery._runtime_drift_across_sites(home)
+    assert row["state"] == "unknown"
+    assert f"foreign={unit}@{checkout.name}" in row["sample"]
+    assert row["identity"]["foreign"] == {unit: str(checkout)}
+    assert row["identity"]["unattributed"] == []
+
+
+def test_drift_across_sites_names_a_foreign_unit_importing_the_checkout(
+        tmp_path: Path) -> None:
+    # The coupling is observed directly when the unit's own environment names a
+    # path inside the checkout, without waiting for a short-lived child.
+    pinned_sha: list[str] = []
+    other_pin = tmp_path / "releases" / "other"
+    _release_tree(other_pin, pinned_sha)
+    other = tmp_path / "site-other"
+    _pin(other, other_pin, pinned_sha[0], "mishe-other")
+    home = tmp_path / "plant"
+    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
+                             "sha": pinned_sha[0]}])
+    unit = "mishe-unlisted.service"
+    checkout = tmp_path.resolve()
+    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
+            patch.object(discovery, "_unit_import_roots",
+                         return_value={unit: str(checkout / "src")}), \
+            patch.object(discovery, "_foreign_checkout_consumers", return_value={}), \
+            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
+        row = discovery._runtime_drift_across_sites(home)
+    assert row["state"] == "unknown"
+    assert f"foreign={unit}@{checkout.name}" in row["sample"]
+    assert row["identity"]["foreign"] == {unit: str(checkout / "src")}
+    assert row["identity"]["unattributed"] == []
+
+
+def test_drift_across_sites_keeps_a_foreign_unit_off_the_checkout_unattributed(
+        tmp_path: Path) -> None:
+    # A foreign unit whose import root is another release, and whose ExecStart
+    # names no plant path, is a coverage gap rather than a coupling.
+    pinned_sha: list[str] = []
+    other_pin = tmp_path / "releases" / "other"
+    _release_tree(other_pin, pinned_sha)
+    other = tmp_path / "site-other"
+    _pin(other, other_pin, pinned_sha[0], "mishe-other")
+    home = tmp_path / "plant"
+    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
+                             "sha": pinned_sha[0]}])
+    unit = "mishe-unlisted.service"
+    outside = tmp_path.parent / "other-release"
+    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
+            patch.object(discovery, "_unit_import_roots",
+                         return_value={unit: str(outside)}), \
+            patch.object(discovery, "_foreign_checkout_consumers", return_value={}), \
+            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
+        row = discovery._runtime_drift_across_sites(home)
+    assert row["state"] == "unknown"
+    assert row["identity"]["unattributed"] == [unit]
+    assert row["identity"]["foreign"] == {}
+
+
+def test_drift_across_sites_still_latches_drift_with_a_foreign_consumer(
+        tmp_path: Path) -> None:
+    # A named foreign consumer is not drift, but it must not mask a stale release
+    # on a mapped site: the drift state wins.
+    pinned_sha: list[str] = []
+    stale_sha: list[str] = []
+    pinned = tmp_path / "releases" / "pinned"
+    stale = tmp_path / "releases" / "stale"
+    _release_tree(pinned, pinned_sha)
+    _release_tree(stale, stale_sha)
+    other = tmp_path / "site-other"
+    _pin(other, pinned, pinned_sha[0], "mishe-other")
+    home = tmp_path / "plant"
+    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
+                             "sha": pinned_sha[0]}])
+    mapped = "mishe-other-silence.service"
+    foreign_unit = "mishe-cleaner-recovered.service"
+    checkout = tmp_path.resolve()
+    with patch.object(discovery, "_active_site_units",
+                      return_value=([mapped, foreign_unit], None)), \
+            patch.object(discovery, "_unit_import_roots",
+                         return_value={mapped: str(stale)}), \
+            patch.object(discovery, "_foreign_checkout_consumers",
+                         return_value={foreign_unit: str(checkout)}), \
+            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
+        row = discovery._runtime_drift_across_sites(home)
+    assert row["state"] == "drift"
+    assert f"stale={mapped}@{stale.name}" in row["sample"]
+    assert f"foreign={foreign_unit}@{checkout.name}" in row["sample"]
+
+
+def test_names_checkout_matches_path_and_home_relative_forms() -> None:
+    root = Path("/home/someone/mishe-tauftauf")
+    assert discovery._names_checkout('CORE = Path.home() / "mishe-tauftauf"', root)
+    assert discovery._names_checkout("PYTHONPATH=/home/someone/mishe-tauftauf/src", root)
+    assert discovery._names_checkout("cd ~/mishe-tauftauf && exec", root)
+    assert discovery._names_checkout("HOME=${HOME}/mishe-tauftauf", root)
+    assert not discovery._names_checkout("a launcher for an unrelated service", root)
+    assert not discovery._names_checkout("/home/someone/mishe-tauftauf-extra", root)
+
+
+def test_imports_checkout_covers_the_root_and_its_subpaths(tmp_path: Path) -> None:
+    checkout = tmp_path.resolve()
+    assert discovery._imports_checkout(str(checkout), checkout)
+    assert discovery._imports_checkout(str(checkout / "src"), checkout)
+    assert not discovery._imports_checkout(str(tmp_path.parent / "elsewhere"), checkout)
+
+
+def test_exec_start_files_reads_the_wrapper_argument(tmp_path: Path) -> None:
+    script = tmp_path / "run-cleaner"
+    script.write_text("#!/bin/sh\nexec true\n", encoding="utf-8")
+    value = ("{ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 "
+             f"{script} follow ; ignore_errors=no ; start_time=[n/a] ; "
+             "stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }")
+    files = discovery._exec_start_files(value)
+    assert script in files
+    assert tmp_path / "absent" not in files
 
 
 def test_drift_across_sites_marks_mapped_unit_without_import_root_unknown(
