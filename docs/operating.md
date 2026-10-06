@@ -344,6 +344,10 @@ The across-sites drift sense also reports `UNKNOWN` with `uninspectable=<unit>`
 when a running session unit's import root cannot be discovered from systemd,
 its main process, or the main process's direct children. No root means the pin
 comparison is unevidenced, not clean.
+The same `UNKNOWN` reading names a foreign consumer of the checkout as
+`foreign=<unit>@<checkout>` when the unit's import root or its `ExecStart` script
+names the plant, so a live consumer of the moving source is visible rather than
+counted as an anonymous gap.
 The scanning site's own units are read even when the registry lists no other
 sites, so a unit its manifest omits is still compared with its own pin rather
 than left unnamed. An empty site list is therefore not itself `UNKNOWN` as long
@@ -510,3 +514,5 @@ affected consumers, bounded observation and keep/revise/revert decision. Checks,
 independent reading and recovery enable high-risk, high-reward work without a
 routine approval gate. Preserve failed observations and delete superseded code;
 Git history retains prior implementations instead of dormant feature flags.
+
+<!-- HEALTH-SENTINEL 41260 1791303492 -->

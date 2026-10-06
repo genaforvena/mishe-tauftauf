@@ -81,6 +81,11 @@ obligation is waiting; an unresolved recovery does not justify a blocked wake.
 
 `wall outcome --owner ROLE --kind KIND --file NOTES --evidence FILE` records
 a contribution with an existing nonempty evidence file inside the owned site.
+The evidence file must be written once and never edited — do not cite a wall
+(`wall write` replaces it whole), a `progress.md`, `chat.log`, or a shared
+results JSON, since any later edit invalidates the bound digest and drops the
+outcome from the trial's evidenced-outcome count. Cite a per-outcome artifact
+under `artifacts/`.
 Kinds are `accepted`, `blocker-resolved`, `blocker-retired`, and
 `hypothesis-changed`. The immutable reference binds the evidence digest. These
 are author reports, not independent acceptance. Do not report unchanged status

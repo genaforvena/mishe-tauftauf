@@ -315,6 +315,12 @@ site with no pin, or a unit whose import root cannot be discovered — is
 `unknown`, not `verified`. Its sample retains the `unattributed`, `uninspectable`
 and `unpinned` unit lists so readers can distinguish coverage gaps from drift.
 
+A unit no session names that imports this plant's checkout — observed in its
+environment or declared in the script its `ExecStart` runs — is named
+`foreign=<unit>@<checkout>` instead of left anonymous, and stays `unknown`,
+never `verified`, because a foreign consumer of the moving source is a live
+coupling rather than a coverage gap.
+
 The kernel journal sense counts readable priority `err` or higher kernel entries
 in a fixed ten-minute UTC window, not message lines, independent faults or a
 rate. Its coverage records endpoints, boot identity and monotonic acquisition
