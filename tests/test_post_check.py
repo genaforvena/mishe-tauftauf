@@ -6,9 +6,9 @@ from mishe_tauftauf import post_check
 
 def test_private_rejection(tmp_path):
     with pytest.raises(post_check.CorrectionRequired) as caught:
-        post_check.require(tmp_path, 'mind', '{"state": "done"}')
+        post_check.require(tmp_path, 'mind', '{"status":"done","counts":[1,2,3],"nested":{"a":1}}')
     report = json.loads(caught.value.report_path.read_text())
-    assert report['body'] == '{"state": "done"}'
+    assert report['body'] == '{"status":"done","counts":[1,2,3],"nested":{"a":1}}'
     assert not (tmp_path / 'chat.log').exists()
     assert report['status'] == 'suspicious'
 
@@ -18,14 +18,36 @@ def test_unconfigured_semantics_explicitly_untested(tmp_path):
     assert report['semantic_status'] == 'untested'
 
 
-def test_json_embedded_in_explained_or_multiline_posts_is_always_refused(tmp_path):
-    for body in ('Here is the state: {"status":"done"}.',
-                 'Example state for audit:\n```json\n{"status":"done"}\n```',
-                 'Task state:\n{\n  "status": "done"\n}',
-                 'The reported counts are [1, 2, 3].',
-                 'Audit example:\n```json\n{\n  "status": "done"\n}\n```'):
+def test_substantial_json_embedded_in_explained_or_multiline_posts_is_refused(tmp_path):
+    for body in ('Here is the state: {"status":"done","counts":[1,2,3],"nested":{"a":1}}.',
+                 'Audit example:\n```json\n{\n  "status": "done",\n  "counts": [1, 2, 3],\n  "nested": {"a": 1}\n}\n```'):
         with pytest.raises(post_check.CorrectionRequired):
             post_check.require(tmp_path, 'mind', body)
+
+def test_trivial_json_literals_are_prose_not_state_dumps():
+    # D01 refuses substantial structured state, not the trivial literals that
+    # are natural in readable prose (coordinates, pid lists, one-key dicts).
+    # Measured: 24 prose-stage D01 refusals in 6h across 8 roles, all trivial.
+    from mishe_tauftauf import post_check
+    trivials = (
+        '[]', '[1,1,1]', '[64512,8525073]', '{"target": ".mishe-tauftauf/artifacts/x"}',
+        '{}', '["type"]', '{"sites": []}', '["v1"]', '[0,1]', '{"text":"a"}',
+        'The counts are [1, 2, 3].', 'no drift: []', 'version list ["v1"]',
+        'pids [64512, 8525073] leaked', 'config {"sites": []}', 'triple [1, 1, 1]',
+    )
+    for body in trivials:
+        assert not any(row['id'] == 'D01' for row in post_check._deterministic(body)), body
+    dumps = (
+        '{"status":"done","counts":[1,2,3],"nested":{"a":1}}',
+        'Here is the state: {"status":"done","counts":[1,2,3],"nested":{"a":1}}.',
+        '{"sense.proc.cpu-busy":"short-window=0.1s busy=99.4%","sense.proc.loadavg":"19.03 13.24","sense.proc.memory-available":"22991064 kB","sense.disk.free":"171813003264"}',
+        'Audit example:\n```json\n{\n  "status": "done",\n  "counts": [1, 2, 3],\n  "nested": {"a": 1}\n}\n```',
+        '{"a":{"b":1}}',
+        '[[1],[2]]',
+        '[{"a":1}]',
+    )
+    for body in dumps:
+        assert any(row['id'] == 'D01' for row in post_check._deterministic(body)), body
 
 
 def test_checker_code_change_invalidates_previous_clearance(tmp_path):
@@ -80,7 +102,7 @@ def test_skipped_questions_refused(tmp_path):
 
 def test_corrected_draft_rechecked(tmp_path):
     with pytest.raises(post_check.CorrectionRequired):
-        post_check.require(tmp_path, 'mind', '{"done":true}')
+        post_check.require(tmp_path, 'mind', '{"status":"done","counts":[1,2,3],"nested":{"a":1}}')
     report = post_check.require(tmp_path, 'mind', 'The candidate tests passed; Genome will review the test artifact next.')
     assert report['clear']
     assert len(list((tmp_path/'post-checks').glob('*.json'))) == 2

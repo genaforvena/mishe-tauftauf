@@ -50,21 +50,43 @@ def _save(path, report):
             os.unlink(name)
 
 
+def _is_structured_state(value):
+    """True when a decoded JSON value is substantial state, not a prose literal.
+
+    Trivial literals — empty or small flat lists, one-key dicts, coordinates,
+    pid lists — are natural in readable prose and are not refused. Structured
+    state has breadth (many keys/elements), depth (a non-empty dict or list
+    nested inside), or both, and belongs in referenced evidence rather than
+    the shared text surface.
+    """
+    if isinstance(value, dict):
+        if len(value) >= 3:
+            return True
+        return any(isinstance(v, (dict, list)) and v for v in value.values())
+    if isinstance(value, list):
+        if len(value) >= 4:
+            return True
+        return any(isinstance(v, (dict, list)) and v for v in value)
+    return False
+
+
 def _deterministic(body):
     failures = []
     decoder = json.JSONDecoder()
     # Decode at every possible object/list start, including prose and fences.
-    # No presentation wrapper authorizes JSON on the shared text surface.
-    # A `[` right after an identifier character or a closing bracket is source
-    # syntax (argv[0], rows[i - 1]), not the start of a JSON literal, so it
-    # cannot begin structured data. This keeps embedded Python and shell text
-    # like tracebacks from being refused as state dumps.
+    # No presentation wrapper authorizes structured state on the shared text
+    # surface. A `[` right after an identifier character or a closing bracket
+    # is source syntax (argv[0], rows[i - 1]), not the start of a JSON literal,
+    # so it cannot begin structured data. This keeps embedded Python and shell
+    # text like tracebacks from being refused as state dumps. Trivial literals
+    # (empty/small flat lists, one-key dicts) are prose, not state; only
+    # substantial structured state — breadth, depth or nesting — is refused.
     for match in re.finditer(r'(?<![\w\]])[\[{]', body):
         try:
             value, length = decoder.raw_decode(body[match.start():])
         except (ValueError, TypeError):
             continue
-        if isinstance(value, (dict, list)):
+        if isinstance(value, (dict, list)) and _is_structured_state(value):
             failures.append({'id': 'D01', 'verdict': 'suspicious', 'reason': 'Structured JSON belongs in referenced evidence.', 'offending_text': body[match.start():match.start()+length], 'evidence': []})
             break
     text = re.sub(r'\b[0-9a-fA-F]{32,64}\b', '', body)
