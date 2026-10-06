@@ -154,6 +154,16 @@ completed-result history and reconcile original effects before continuation;
 the transport neither selects nor authenticates a journal. Error/incomplete
 responses retain diagnostics but do not establish a recovery checkpoint.
 
+`inference_loop.recover_native(path, open_session=..., ...)` selects the logical
+checkpoint, exact completed results and original budgets from that caller journal,
+then opens a fresh session through `open_session(checkpoint=...)`. The factory must
+return a context manager. Pending or ambiguous histories and exhausted turn budgets
+never open a session; missing checkpoints refuse before the factory. Continuation
+seeds retain the checkpoint across interruption before the next model input.
+There is no caller-supplied checkpoint or result override. Journal ownership and
+current original-effect authority remain caller obligations; this does not
+authenticate edited journal bytes or establish live resident recovery.
+
 The wheel includes the native TypeScript worker, session and auth bootstrap.
 `inference_native.native_worker_command(bun=..., node_modules=...,
 staging_parent=...)` stages those sources in a temporary owned directory with

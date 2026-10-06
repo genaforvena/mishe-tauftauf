@@ -74,6 +74,7 @@ def drive_native(session, context: dict, *, obligation: dict, max_turns: int,
         'turns': turns, 'calls': executed, 'used_ids': sorted(used_ids),
         'pending_calls': recovery['pending_calls'] if recovery else [],
         'status': recovery['status'] if recovery else 'ready',
+        'provider_checkpoint': recovery['provider_checkpoint'] if recovery else None,
     }
     emit('checkpoint', state=checkpoint)
     if recovery and recovery['status'] != 'ready':
@@ -135,6 +136,37 @@ def drive_native(session, context: dict, *, obligation: dict, max_turns: int,
             if outcome['status'] != 'completed':
                 return stop('unknown')
     return stop('turn_budget')
+
+
+def recover_native(path, *, open_session: Callable, dispatch: Callable,
+                   record: Callable, phase: Callable, cancelled: Callable,
+                   authorized: Callable, complete: Callable) -> dict:
+    """Continue journal-owned completed results through a fresh native session.
+
+    open_session(checkpoint=...) must return a context manager for a fresh session.
+    Selection uses only the recorded model response, results and lifetime budgets;
+    no caller-supplied result or checkpoint can replace them. The journal remains
+    caller-owned evidence, not authenticated effect authority. dispatch retains
+    its original store/current-authority obligations. record targets a new file.
+    Unresolved histories never construct a session or redispatch pending calls.
+    """
+    recovery = read_native_journal(path)
+    if recovery['stopped'] or recovery['budgets'] is None:
+        raise NativeJournalError('unstopped lifetime-budgeted journal required')
+    options = dict(obligation=recovery['obligation'],
+                   max_turns=recovery['budgets']['turns'],
+                   max_calls=recovery['budgets']['calls'], resume_from=path,
+                   dispatch=dispatch, record=record, phase=phase,
+                   cancelled=cancelled, authorized=authorized, complete=complete)
+    context = recovery['context']
+    if (recovery['status'] != 'ready'
+            or recovery['turns'] >= recovery['budgets']['turns']):
+        return drive_native(None, context, **options)
+    checkpoint = recovery['provider_checkpoint']
+    if not isinstance(checkpoint, dict) or not checkpoint:
+        raise NativeJournalError('UNKNOWN: missing recorded provider checkpoint')
+    with open_session(checkpoint=snapshot(checkpoint)) as session:
+        return drive_native(session, context, **options)
 
 
 class NativeJournalError(ValueError):
@@ -209,6 +241,7 @@ def _reconstruct_native(rows):
     status = 'unknown'
     stopped = False
     budgets = None
+    provider_checkpoint = None
     for row in rows:
         if stopped or row['obligation'] != obligation:
             raise NativeJournalError('record after stop or changed obligation')
@@ -232,6 +265,7 @@ def _reconstruct_native(rows):
                     or len(set(ids)) != len(ids) or calls > len(ids)):
                 raise NativeJournalError('invalid lifetime counters or IDs')
             context = snapshot(seed['context'])
+            provider_checkpoint = snapshot(seed.get('provider_checkpoint'))
             if not isinstance(context['messages'], list):
                 raise NativeJournalError('messages must be an ordered list')
             used_ids = set(ids)
@@ -269,6 +303,7 @@ def _reconstruct_native(rows):
             if budgets is not None and turns >= budgets['turns']:
                 raise NativeJournalError('model output exceeds lifetime turn budget')
             response = row['response']
+            provider_checkpoint = snapshot(response.get('checkpoint'))
             assistant = snapshot(response['assistant'])
             context['messages'].append(assistant)
             turns += 1
@@ -321,4 +356,5 @@ def _reconstruct_native(rows):
     return {'obligation': snapshot(obligation), 'context': context,
             'status': status, 'pending_calls': snapshot(pending),
             'used_ids': sorted(used_ids), 'turns': turns, 'calls': calls,
-            'stopped': stopped, 'budgets': budgets}
+            'stopped': stopped, 'budgets': budgets,
+            'provider_checkpoint': provider_checkpoint}
