@@ -758,7 +758,11 @@ def _unit_failure_record(**fields):
             "MESSAGE": "cron.service: Failed with result 'oom-kill'.", **fields}
 
 
-def _unit_failure_fixture(monkeypatch, output, boots=None, restart_context=None):
+_PLANT_SESSION = "mishe-self-development-current"
+
+
+def _unit_failure_fixture(monkeypatch, output, boots=None, restart_context=None,
+                          session=_PLANT_SESSION):
     class Clock(datetime):
         @classmethod
         def now(cls, tz=None):
@@ -770,34 +774,56 @@ def _unit_failure_fixture(monkeypatch, output, boots=None, restart_context=None)
     monkeypatch.setattr(discovery, "_journal_command", lambda cmd: output)
     monkeypatch.setattr(discovery, "_unit_restart_context",
                         lambda units: restart_context or {})
-    return discovery._journal_unit_failure_window()
+    if session is None:
+        monkeypatch.delenv("MISHE_SEED_SESSION", raising=False)
+    else:
+        monkeypatch.setenv("MISHE_SEED_SESSION", session)
+    return discovery._journal_unit_failure_window(Path("/nonexistent"))
 
 
-def test_unit_failure_counts_and_groups_plant_units_and_discloses_foreign(monkeypatch):
+def test_unit_failure_counts_plant_units_and_discloses_foreign(monkeypatch):
     result = _unit_failure_fixture(monkeypatch, _journal_bytes(
-        _unit_failure_record(MESSAGE="mishe-cleaner-recovered.service: Failed with result 'oom-kill'."),
+        _unit_failure_record(
+            MESSAGE=f"{_PLANT_SESSION}-discover.service: Failed with result 'oom-kill'."),
         _unit_failure_record(__CURSOR="cursor2",
                              MESSAGE="tmux-spawn-9f2c1.scope: Failed with result 'oom-kill'."),
         _unit_failure_record(__CURSOR="cursor3",
+                             MESSAGE="mishe-cleaner-recovered.service: Failed with result 'oom-kill'."),
+        _unit_failure_record(__CURSOR="cursor4",
                              MESSAGE="mesh-pull-t1.service: Failed with result 'exit-code'.")))
     assert result["state"] == "verified"
-    # The foreign test transient is disclosed, not counted as a plant failure.
+    # A foreign service that shares the ``mishe-`` prefix, and another node's
+    # test transient, are disclosed, not counted as this plant's failures.
     assert result["count"] == 2
     assert result["classes"] == {"oom-kill": 2}
-    assert result["units"] == {"mishe-cleaner-recovered.service": 1,
+    assert result["units"] == {f"{_PLANT_SESSION}-discover.service": 1,
                                "tmux-spawn-9f2c1.scope": 1}
-    assert result["foreign_units"] == {"mesh-pull-t1.service": 1}
+    assert result["foreign_units"] == {"mishe-cleaner-recovered.service": 1,
+                                       "mesh-pull-t1.service": 1}
     assert result["sample"] == ("last-10min unit-failure-count=2 oom-kill=2 "
-                                "foreign=mesh-pull-t1.service:1")
+                                "foreign=mesh-pull-t1.service:1,mishe-cleaner-recovered.service:1")
 
 
 def test_unit_failure_counts_a_plant_unit_name_containing_a_colon(monkeypatch):
     # systemd.unit(5) allows ':' in a unit name prefix.
+    unit = f"{_PLANT_SESSION}-foo:bar.service"
     result = _unit_failure_fixture(monkeypatch, _journal_bytes(
-        _unit_failure_record(MESSAGE="mishe-foo:bar.service: Failed with result 'exit-code'.")))
+        _unit_failure_record(MESSAGE=f"{unit}: Failed with result 'exit-code'.")))
     assert result["state"] == "verified"
-    assert result["units"] == {"mishe-foo:bar.service": 1}
+    assert result["units"] == {unit: 1}
     assert result["classes"] == {"exit-code": 1}
+
+
+def test_unit_failure_unknown_when_the_plant_session_is_unavailable(monkeypatch):
+    # Without a session there is no way to tell this plant's units from another
+    # site's or a foreign service's, so the reading stays unknown.
+    result = _unit_failure_fixture(monkeypatch, _journal_bytes(
+        _unit_failure_record(
+            MESSAGE=f"{_PLANT_SESSION}-discover.service: Failed with result 'exit-code'.")),
+        session=None)
+    assert result["state"] == "unknown"
+    assert result["reason"] == "plant session unavailable"
+    assert "count" not in result
 
 
 def test_unit_failure_ignores_records_that_are_not_unit_failures(monkeypatch):

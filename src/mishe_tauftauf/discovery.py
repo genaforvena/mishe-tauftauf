@@ -579,18 +579,31 @@ def _unit_restart_context(units: list[str]) -> dict[str, dict]:
     return context
 
 
-def _is_plant_unit(name: str) -> bool:
+def _plant_session(home: Path) -> str | None:
+    """The session this site raised: the environment override, else its receipt."""
+    session = os.environ.get("MISHE_SEED_SESSION")
+    if session:
+        return session
+    try:
+        return (Path(home) / ".seed-raised").read_text(encoding="utf-8").split()[0]
+    except (OSError, IndexError):
+        return None
+
+
+def _is_plant_unit(name: str, session: str) -> bool:
     """Whether a failed unit belongs to this plant rather than a foreign consumer.
 
-    The plant's own units are its ``mishe-*`` services and the
-    ``tmux-spawn-*.scope`` cgroups its tmux server creates for quick-exit
-    panes. Anything else on the shared host journal — another node's test
-    units, system cron — is a foreign consumer's activity.
+    A plant's units share the session prefix its ``.seed-raised`` receipt
+    records; every site on the shared user bus names its units the same way, and
+    unrelated consumers also carry a ``mishe-`` prefix, so a bare prefix counts
+    another site's or a foreign service's failure as this plant's. The plant's
+    tmux server creates ``tmux-spawn-*.scope`` cgroups for its panes; those
+    carry no session prefix.
     """
-    return name.startswith("mishe-") or name.startswith("tmux-spawn-")
+    return name.startswith(session + "-") or name.startswith("tmux-spawn-")
 
 
-def _journal_unit_failure_window(past_minutes: int = 10) -> dict:
+def _journal_unit_failure_window(home: Path, past_minutes: int = 10) -> dict:
     """Count systemd unit failures in one fixed window; never infer fault or rate.
 
     A unit that fails leaves ``Failed with result '<class>'`` in the journal,
@@ -604,9 +617,11 @@ def _journal_unit_failure_window(past_minutes: int = 10) -> dict:
     scan renewal threshold, so consecutive scans cover the boot without a gap.
 
     The count covers plant-owned units only. The host journal is shared with
-    other nodes' test harnesses, so a foreign transient must not read as a
-    plant failure: units that are not the plant's are disclosed as
-    ``foreign=name:count`` and excluded from the count.
+    other nodes' test harnesses and other sites on the same user bus, so a
+    foreign transient must not read as a plant failure: a unit outside this
+    plant's session prefix is disclosed as ``foreign=name:count`` and excluded
+    from the count. When the plant's session cannot be read the reading is
+    ``unknown`` rather than attributing an unowned unit to the plant.
 
     Restart context (``NRestarts``, ``ActiveState``) is read for each failed
     unit so a recovered one-off reads differently from a crash-loop: a unit
@@ -629,6 +644,10 @@ def _journal_unit_failure_window(past_minutes: int = 10) -> dict:
                 "boot_id": boot, "acquisition_started_ns": started}
     unknown = {"state": "unknown", "sample": "journal unit-failure window unavailable",
                "coverage": coverage}
+    session = _plant_session(home)
+    if session is None:
+        unknown["reason"] = "plant session unavailable"
+        return unknown
     if boot is None:
         unknown["reason"] = "boot identity unavailable"
         return unknown
@@ -679,8 +698,10 @@ def _journal_unit_failure_window(past_minutes: int = 10) -> dict:
     except (UnicodeError, ValueError, TypeError):
         unknown["reason"] = "invalid journal entry metadata"
         return unknown
-    plant_units = {unit: count for unit, count in units.items() if _is_plant_unit(unit)}
-    foreign_units = {unit: count for unit, count in units.items() if not _is_plant_unit(unit)}
+    plant_units = {unit: count for unit, count in units.items()
+                   if _is_plant_unit(unit, session)}
+    foreign_units = {unit: count for unit, count in units.items()
+                     if not _is_plant_unit(unit, session)}
     classes = {}
     for unit in plant_units:
         for name, count in per_unit_classes.get(unit, {}).items():
@@ -1378,12 +1399,7 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
         map_site(site["home"], session)
     # The registry lists the *other* sites this one coordinates, so the scanning
     # site is absent from it; its own units share its bus and need its pin too.
-    own_session = os.environ.get("MISHE_SEED_SESSION")
-    if not own_session:
-        try:
-            own_session = (home / ".seed-raised").read_text(encoding="utf-8").split()[0]
-        except (OSError, IndexError):
-            own_session = None
+    own_session = _plant_session(home)
     if own_session and own_session not in site_by_prefix:
         map_site(str(Path(home).resolve()), own_session)
     if not site_by_prefix:
@@ -2503,7 +2519,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append({"id": "sense.journal.kernel-error-count", "kind": "read",
                      **_journal_error_window()})
     observed.append({"id": "sense.journal.unit-failure-count", "kind": "read",
-                     **_journal_unit_failure_window()})
+                     **_journal_unit_failure_window(home)})
     observed.append(_mind_wedge_suspects())
     observed.append(_ledger_delivery_invariant(home))
     observed.append(_ledger_dv_binding(home))
