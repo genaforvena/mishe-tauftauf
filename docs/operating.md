@@ -123,9 +123,12 @@ Rendered `SYSTEM ZERO` check reports retain their verdict text and gain a
 `STALE` marker when the report file is older than 900 seconds, its mtime is
 ahead of the wall clock (a backward clock step is not freshness), or its mtime
 cannot be read. A failing health report names the check that failed and when
-it was computed, so a latched RED stays diagnosable. Roles without a
-deterministic report producer show that disposition without attaching legacy
-report files.
+it was computed, so a latched RED stays diagnosable: its window predicates
+compare live windows with `health/windows.json` (`windows-missing`,
+`windows-extra`) and flag a dead renderer or a chartered mind's lower pane
+(`windows-dead`), which can wedge while its renderer lease stays green. Roles
+without a deterministic report producer show that disposition without attaching
+legacy report files.
 
 ### Doctor is a check with a repair side effect
 
