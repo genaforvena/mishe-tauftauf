@@ -18,6 +18,7 @@ from mishe_tauftauf.inference_worker import WorkerError, WorkerTurn, _decode
 @dataclass(frozen=True)
 class NativeTurn(WorkerTurn):
     wire_terminal: Any = None
+    checkpoint: Any = None
 
 
 class NativeSession:
@@ -29,7 +30,8 @@ class NativeSession:
     """
 
     def __init__(self, command, selector, session_id, *, cancelled=lambda: False,
-                 timeout=60, max_output=4 * 1024 * 1024, env=None, cwd=None):
+                 timeout=60, max_output=4 * 1024 * 1024, env=None, cwd=None,
+                 checkpoint=None):
         if (not math.isfinite(timeout) or timeout <= 0 or
                 type(max_output) is not int or max_output <= 0):
             raise ValueError('finite positive timeout and positive integer output bound required')
@@ -44,6 +46,7 @@ class NativeSession:
         self.lock = threading.Lock()
         self.closed = False
         self.next_id = 1
+        self.checkpoint = checkpoint
         self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE, start_new_session=True,
                                         env=env, cwd=cwd)
@@ -121,16 +124,29 @@ class NativeSession:
         try:
             if self.closed:
                 raise WorkerError('native session closed')
-            frame = self._exchange({'type': 'turn', 'id': self.next_id, 'context': context})
+            request = {'type': 'turn', 'id': self.next_id, 'context': context}
+            if self.checkpoint is not None:
+                request['checkpoint'] = self.checkpoint
+            frame = self._exchange(request)
             if self.process.poll() is not None:
                 raise WorkerError('native session exited during turn')
             if frame.get('type') != 'turn' or type(frame.get('id')) is not int or frame['id'] != self.next_id:
                 raise WorkerError('mismatched native turn receipt')
             completion = frame.get('frame')
             decoded = _decode(json.dumps(completion).encode())
+            checkpoint = completion.get('checkpoint')
+            # Error/incomplete frames remain diagnostic history, never recovery
+            # evidence. Only a correlated completed response can checkpoint.
+            wire = completion.get('wire_terminal')
+            if (decoded.terminal == 'done' and isinstance(wire, dict)
+                    and wire.get('correlated') is True
+                    and wire.get('event') == 'response.completed'
+                    and not isinstance(checkpoint, dict)):
+                raise WorkerError('UNKNOWN: missing native logical checkpoint')
+            self.checkpoint = None
             self.next_id += 1
             return NativeTurn(decoded.terminal, decoded.assistant, decoded.wire_usage,
-                              completion.get('wire_terminal'))
+                              completion.get('wire_terminal'), checkpoint)
         except BaseException:
             self._reap()
             raise

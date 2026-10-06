@@ -1,12 +1,13 @@
 import {streamSimple} from '@oh-my-pi/pi-ai/stream';
 import type {Context, ProviderSessionState} from '@oh-my-pi/pi-ai/types';
 import {withNativeModel} from './native-bootstrap.ts';
+import {restoreCheckpoint, exportCheckpoint, isContinuation} from './native-checkpoint.ts';
 
 // One owned subprocess lifetime. Bootstrap rejection is fatal to its caller;
 // never reacquire/retry in that process (pre-return auth acquisition gap).
 export async function withNativeSession<T>(selector: string, sessionId: string,
- consume: (session: {turn: (context: Context, signal?: AbortSignal) => Promise<unknown>}) => Promise<T>): Promise<T> {
- if (typeof sessionId !== 'string' || !sessionId.trim()) throw new Error('stable sessionId required');
+ consume: (session: {turn: (context: Context, signal?: AbortSignal, checkpoint?: unknown) => Promise<unknown>}) => Promise<T>): Promise<T> {
+ if (typeof sessionId !== 'string' || !sessionId.trim() || sessionId !== sessionId.trim()) throw new Error('normalized stable sessionId required');
  return withNativeModel(selector, async ({registry, model}) => {
   const state = new Map<string, ProviderSessionState>();
   let closed = false;
@@ -22,6 +23,7 @@ export async function withNativeSession<T>(selector: string, sessionId: string,
    sessionId: sessionId,
    reasoning: 'medium',
    providerSessionState: state,
+   preferWebsockets: false, // Checkpoints cover exact full-history SSE only.
    signal: controller.signal,
    // Reset for each native payload opening, not each lower-level HTTP retry.
    onPayload: () => { wireUsage = null; createdId = null; wireTerminal = null; },
@@ -58,14 +60,18 @@ export async function withNativeSession<T>(selector: string, sessionId: string,
    throw new Error('wire terminal response ID mismatch');
   }
   const correlated = Boolean(responseId && assistant.responseId === responseId);
-  return {terminal, assistant, wire_usage: correlated ? wireUsage : null,
+  const checkpoint = terminal === 'done' && correlated && observed?.event === 'response.completed'
+   ? exportCheckpoint(state, selector, sessionId, {...context,messages:[...context.messages,assistant]}) : null;
+  return {terminal, assistant, checkpoint, wire_usage: correlated ? wireUsage : null,
    wire_terminal: observed && {...observed, created_response_id: createdId,
     assistant_response_id: assistant.responseId ?? null, correlated, stop_reason: assistant.stopReason}};
   }
-  const session = {async turn(context: Context, signal?: AbortSignal): Promise<unknown> {
+  const session = {async turn(context: Context, signal?: AbortSignal, checkpoint?: unknown): Promise<unknown> {
    if (closed || poisoned) throw new Error('native session unavailable');
    if (active) throw new Error('concurrent native turn prohibited');
    if (!context || !Array.isArray(context.messages)) throw new Error('native context messages required');
+   if (checkpoint !== undefined) restoreCheckpoint(state, selector, sessionId, context, checkpoint);
+   else if (!state.size && isContinuation(context)) throw new Error('UNKNOWN: continuation requires logical checkpoint');
    const abort = () => {poisoned = true; controller.abort(signal?.reason);};
    if (signal?.aborted) {abort(); throw new Error('native turn cancelled');}
    signal?.addEventListener('abort', abort, {once:true});
