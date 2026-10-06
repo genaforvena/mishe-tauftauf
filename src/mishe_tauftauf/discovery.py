@@ -1046,6 +1046,113 @@ def _unit_import_roots(units: list[str]) -> dict[str, str]:
     return roots
 
 
+EXEC_START_SCRIPT_LIMIT = 128 * 1024
+"""Largest ExecStart script read when checking a foreign unit for a coupling."""
+
+
+def _names_checkout(text: str, root: Path) -> bool:
+    """Whether text names the checkout at root as a path or a quoted literal.
+
+    A foreign launcher declares the coupling in its own text: an absolute
+    ``<root>`` or ``<root>/src``, a home-relative ``~/<name>``/``$HOME/<name>``,
+    or the name as a literal (``Path.home() / "mishe-tauftauf"``). The name is
+    matched as a whole path component so a longer name sharing the prefix does
+    not read as this checkout.
+    """
+    if not root.name:
+        return False
+    pattern = re.compile(
+        r"(?:^|[\s\"'=:(,~/{$])" + re.escape(root.name) + r"(?=$|[\s\"'/.,:;)}])")
+    return pattern.search(text) is not None
+
+
+def _imports_checkout(root: str, checkout: Path) -> bool:
+    """Whether an import root resolves to the checkout or a path inside it."""
+    try:
+        candidate = Path(root).resolve()
+    except OSError:
+        return False
+    return candidate == checkout or checkout in candidate.parents
+
+
+def _exec_start_files(value: str) -> list[Path]:
+    """Existing files named as arguments by a ``systemctl show -p ExecStart`` value.
+
+    systemd prints one ``{ path=… ; argv[]=… ; … }`` record per command. A wrapper
+    is usually the argv element after the interpreter, but a direct ``path=``
+    names one too, so both are candidates. Only existing files are returned; the
+    interpreter is filtered later as a binary.
+    """
+    candidates: list[str] = []
+    for match in re.finditer(r"path=(\S+)|argv\[\]=([^;]*)", value):
+        if match.group(1) is not None:
+            candidates.append(match.group(1))
+        else:
+            candidates.extend(match.group(2).split())
+    files: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not candidate.startswith("/") or candidate in seen:
+            continue
+        seen.add(candidate)
+        path = Path(candidate)
+        try:
+            if path.is_file():
+                files.append(path)
+        except OSError:
+            continue
+    return files
+
+
+def _unit_names_checkout(unit: str, root: Path) -> bool:
+    """Whether a unit's ExecStart names this plant's checkout.
+
+    A foreign launcher that runs ``-m mishe_tauftauf`` with
+    ``PYTHONPATH=<checkout>/src`` names the checkout in its own text, so the
+    coupling is declared there even when no live process carries the variable at
+    scan time. The command line itself is checked for an inline reference and
+    each named script is read; an ELF program is skipped, since the interpreter
+    is a candidate but its bytes cannot declare a coupling.
+    """
+    environment = os.environ.copy()
+    environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    try:
+        result = subprocess.run(["systemctl", "--user", "show", unit, "-p", "ExecStart"],
+                                capture_output=True, text=True, timeout=5, env=environment)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if result.returncode:
+        return False
+    value = ""
+    for row in result.stdout.splitlines():
+        if row.startswith("ExecStart="):
+            value = row[len("ExecStart="):]
+            break
+    if _names_checkout(value, root):
+        return True
+    for path in _exec_start_files(value):
+        try:
+            with path.open("rb") as handle:
+                if handle.read(4).startswith(b"\x7fELF"):
+                    continue
+                handle.seek(0)
+                raw = handle.read(EXEC_START_SCRIPT_LIMIT)
+        except OSError:
+            continue
+        if _names_checkout(raw.decode("utf-8", "replace"), root):
+            return True
+    return False
+
+
+def _foreign_checkout_consumers(units: list[str], root: Path) -> dict[str, str]:
+    """Unattributed units whose ExecStart names this plant's checkout, by unit."""
+    consumers: dict[str, str] = {}
+    for unit in units:
+        if _unit_names_checkout(unit, root):
+            consumers[unit] = str(root)
+    return consumers
+
+
 def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
     """Compare every running site service with the pin of the site it serves.
 
@@ -1057,9 +1164,13 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
     stale release hides from the service coverage that would otherwise name it.
     The scanning site is mapped from its own session whether or not the registry
     lists other sites, so its manifest-omitted units stay read even when it
-    coordinates none. The release coordinator's declared checkout root is not a
-    stale release, so it is skipped rather than reported against the pin; only a
-    registry whose site list is unreadable is unknown.
+    coordinates none. A unit no session names is foreign to every site; when it
+    consumes this plant's checkout — observed in its import root or declared in
+    the script its ``ExecStart`` runs — the sample names the coupling as
+    ``foreign=<unit>@<checkout>`` and stays ``unknown`` rather than hiding it in
+    an anonymous coverage gap. The release coordinator's declared checkout root
+    is not a stale release, so it is skipped rather than reported against the
+    pin; only a registry whose site list is unreadable is unknown.
     """
     registry_path = home / "health" / "linked-sites.json"
     try:
@@ -1107,20 +1218,35 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
     if failure is not None:
         return {"id": "sense.runtime.drift-across-sites", "state": "unknown",
                 "sample": f"running units unreadable: {failure}", "kind": "read"}
+    from .runtime_source import declared_checkout_root
+    checkout_root = Path(home).resolve().parent
+    session_of = {unit: next((prefix for prefix in site_by_prefix
+                              if unit.startswith(prefix + "-")), None)
+                  for unit in active}
+    # A unit no session names is foreign to every site. One that consumes this
+    # plant's checkout is a live coupling rather than an anonymous coverage gap:
+    # its own ExecStart declares the checkout even when no live process carries
+    # the variable at scan time, so the reading names the consumer.
+    foreign = _foreign_checkout_consumers(
+        [unit for unit, session in session_of.items() if session is None], checkout_root)
     roots = _unit_import_roots(active)
     stale: dict[str, str] = {}
     uninspectable: list[str] = []
     unpinned: list[str] = []
     unattributed: list[str] = []
     parts = [f"sites={len(site_by_prefix)} running={len(active)}"]
-    from .runtime_source import declared_checkout_root
     for unit in active:
-        session = next((prefix for prefix in site_by_prefix
-                        if unit.startswith(prefix + "-")), None)
+        session = session_of[unit]
         if session is None:
-            # A site service the registry does not name is a coverage gap of its
-            # own, not a release claim this sensor can judge.
-            unattributed.append(unit)
+            # The import root is read even for an unattributed unit, because a
+            # live PYTHONPATH naming the checkout is the coupling observed
+            # directly; a unit that neither imports nor names the checkout is a
+            # coverage gap this sensor cannot judge.
+            root = roots.get(unit)
+            if root is not None and _imports_checkout(root, checkout_root):
+                foreign[unit] = root
+            elif unit not in foreign:
+                unattributed.append(unit)
             continue
         root = roots.get(unit)
         if root is None:
@@ -1139,6 +1265,9 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
                 # (coordination/site_sync.py skips the same unit when verifying).
                 continue
             stale[unit] = root
+    if foreign:
+        parts.append("foreign=" + ",".join(
+            f"{unit}@{checkout_root.name}" for unit in sorted(foreign)))
     if unattributed:
         parts.append("unattributed=" + ",".join(unattributed))
     if uninspectable:
@@ -1147,11 +1276,12 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
         parts.append("unpinned=" + ",".join(unpinned))
     if stale:
         parts.append("stale=" + ",".join(f"{unit}@{Path(root).name}" for unit, root in sorted(stale.items())))
-    state = "drift" if stale else "unknown" if unpinned or unattributed or uninspectable else "verified"
+    state = "drift" if stale else "unknown" if unpinned or unattributed or uninspectable or foreign else "verified"
     return {"id": "sense.runtime.drift-across-sites", "state": state,
             "sample": " ".join(parts), "kind": "read",
             "identity": {"sites": sorted(site_by_prefix), "stale": stale,
                          "unpinned": unpinned, "unattributed": unattributed,
+                         "foreign": foreign,
                          "uninspectable": uninspectable, "running": active}}
 
 
