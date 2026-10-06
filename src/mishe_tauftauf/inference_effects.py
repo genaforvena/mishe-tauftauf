@@ -34,6 +34,13 @@ from pathlib import Path
 from typing import Any, Literal
 
 _EFFECT_STATUSES = ("completed", "partial", "unknown")
+_NOT_PRODUCED_STATUSES = ("partial",)
+# The boundary's only durable writers are `dispatch` and `reserve`, and neither
+# can emit `partial`: an effect is recorded once, as `completed`, or left with no
+# outcome at all, which reads back as `unknown`. The status stays in the alphabet
+# because `read_native_journal` replays outcomes a caller wrote, and a caller that
+# reports a partial effect must still parse rather than corrupt the journal. It is
+# reserved for the caller, not an unimplemented branch of this boundary.
 _OPERATION_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
 _RESERVATION_MARKER = "reserved"
 
@@ -147,7 +154,7 @@ class EffectIntent:
 class EffectOutcome:
     """What the world holds for one operation ID, as a fresh process would read it."""
     operation_id: str
-    status: Literal["completed", "partial", "unknown"]
+    status: Literal["completed", "partial", "unknown"]  # see _NOT_PRODUCED_STATUSES
     result: Any = None
     failure: str | None = None
     reconciliation_ref: str | None = None
@@ -703,9 +710,12 @@ class EffectLedger:
     def status(self, operation_id: str) -> EffectOutcome | None:
         """The outcome a fresh process would read, or None if never allocated.
 
-        `None` is the not-started state: only states that survived a process
-        boundary are recorded. Missing, corrupt or replaced stores are not proof
-        of no effect.
+        `None` is the not-started state, as a value rather than a status string:
+        only states that survived a process boundary are recorded, so absence is
+        the only way this boundary can express it. `read_native_journal` reports
+        a not-started call as a status string instead, from the caller's own
+        accounting. Missing, corrupt or replaced stores are not proof of no
+        effect.
         """
         with self._locked():
             outcome = self._read_outcomes().get(operation_id)
@@ -727,9 +737,11 @@ class EffectLedger:
     def open_intents(self) -> Sequence[EffectIntent]:
         """Every intent a fresh process still has to reconcile.
 
-        A completed outcome closes the intent. A partial or unknown one does not:
-        the effect may be durable but uncommitted, so the intent stays open for
-        the caller to decide whether to reconcile or repair.
+        A completed outcome closes the intent. An unknown one does not: the
+        effect may have happened while no outcome survived, so the intent stays
+        open for the caller to decide whether to reconcile or repair. (`partial`
+        parses, but this boundary never writes it — see
+        `_NOT_PRODUCED_STATUSES`.)
         """
         with self._locked():
             outcomes = self._read_outcomes()
