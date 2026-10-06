@@ -612,6 +612,115 @@ def _journal_unit_failure_window(past_minutes: int = 10) -> dict:
             "coverage": coverage}
 
 
+WEDGE_CHAIN_THRESHOLD = 3
+"""Open automatic-retry chain length at or above which a mind is suspect."""
+
+WEDGE_SPAN_THRESHOLD_MINUTES = 15.0
+"""Minutes an open retry chain must span before a mind is suspect."""
+
+
+def _omp_log_path(pid: int) -> Path | None:
+    """The omp session log for one pane pid, or None when absent."""
+    logs_dir = Path.home() / ".omp" / "logs"
+    if not logs_dir.is_dir():
+        return None
+    matches = sorted(logs_dir.glob(f"omp.*.{pid}.log"),
+                     key=lambda p: p.stat().st_mtime)
+    return matches[-1] if matches else None
+
+
+def _omp_retry_chain(pid: int, now: datetime) -> dict | None:
+    """Open automatic-retry chain for one pane pid from its omp session log.
+
+    The chain is the count of ``agent.continue scheduled`` events with
+    ``source=automatic-retry`` since the last ``agent_end maintenance routing``
+    with ``stopReason="stop"``. The span is minutes from the first retry in
+    the open chain to *now*. Returns None when no log exists for the pid.
+    """
+    log_path = _omp_log_path(pid)
+    if log_path is None:
+        return None
+    retries: list[datetime] = []
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        try:
+            record = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(record, dict):
+            continue
+        message = record.get("message")
+        timestamp = record.get("timestamp")
+        if not isinstance(message, str) or not isinstance(timestamp, str):
+            continue
+        try:
+            ts = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if (message == "agent.continue scheduled"
+                and record.get("source") == "automatic-retry"):
+            retries.append(ts)
+        elif (message == "agent_end maintenance routing"
+                and record.get("stopReason") == "stop"):
+            retries = []
+    if not retries:
+        return {"chain": 0, "span_minutes": 0.0}
+    span = (now - retries[0]).total_seconds() / 60.0
+    return {"chain": len(retries), "span_minutes": round(span, 1)}
+
+
+def _mind_wedge_suspects() -> dict:
+    """Flag minds whose open omp automatic-retry chain indicates a wedge.
+
+    Rule R: SUSPECT when the open chain is >= 3 and spans >= 15 min with no
+    successful turn completion between. The signal reads omp's session log
+    (``~/.omp/logs/omp.<date>.<pid>.log``); a format or path change silently
+    disables it, so a missing log is UNKNOWN, not a clean bill.
+    """
+    now = datetime.now(timezone.utc)
+    try:
+        result = subprocess.run(
+            ["tmux", "list-panes", "-a", "-F", "#{window_name}|#{pane_pid}"],
+            capture_output=True, text=True, timeout=5
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {"id": "sense.mind.wedge-suspect", "state": "unknown",
+                "sample": "tmux pane enumeration unavailable", "suspects": [],
+                "kind": "read"}
+    if result.returncode != 0:
+        return {"id": "sense.mind.wedge-suspect", "state": "unknown",
+                "sample": "tmux pane enumeration failed", "suspects": [],
+                "kind": "read"}
+    suspects = []
+    for line in result.stdout.splitlines():
+        parts = line.split("|", 1)
+        if len(parts) != 2:
+            continue
+        window_name, pid_str = parts
+        try:
+            pid = int(pid_str)
+        except ValueError:
+            continue
+        chain = _omp_retry_chain(pid, now)
+        if chain is None:
+            continue
+        if (chain["chain"] >= WEDGE_CHAIN_THRESHOLD
+                and chain["span_minutes"] >= WEDGE_SPAN_THRESHOLD_MINUTES):
+            suspects.append({"window": window_name, "pid": pid, **chain})
+    if suspects:
+        sample = "suspects=" + " ".join(
+            f"{s['window']}(pid={s['pid']},chain={s['chain']},"
+            f"span={s['span_minutes']}min)"
+            for s in suspects)
+    else:
+        sample = "suspects=0"
+    return {"id": "sense.mind.wedge-suspect", "state": "verified",
+            "sample": sample, "suspects": suspects, "kind": "read"}
+
+
 def _import_root(path: str) -> str | None:
     """The source root a PYTHONPATH entry imports, or None when it names none.
 
@@ -1380,6 +1489,7 @@ def sample(home: Path) -> dict[str, object]:
                      **_journal_error_window()})
     observed.append({"id": "sense.journal.unit-failure-count", "kind": "read",
                      **_journal_unit_failure_window()})
+    observed.append(_mind_wedge_suspects())
 
     loadavg = _read(Path("/proc/loadavg"), 256)
     observed.append({"id": "sense.proc.loadavg", "state": "verified" if loadavg else "unknown",
