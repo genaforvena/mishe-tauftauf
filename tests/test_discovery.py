@@ -1712,6 +1712,116 @@ def test_dm_disposition_age_stall_gate_excludes_young_open(tmp_path):
     assert result["oldest_open"] == "dave:1h00m"
 
 
+def _settle_tape(home: Path, settlements: list[tuple[str, str, str]]) -> None:
+    """Write one seed settle receipt per (timestamp, role, result)."""
+    entries = []
+    for seq, (ts, role, result) in enumerate(settlements, start=1):
+        body = (f"seed yield {role} wake={seq}\n"
+                f"Turn settled ({result}); wall and handoff at walls/{role}.md and "
+                f"handoffs/{role}.md. This is a transport receipt, not proof of patch "
+                f"acceptance.\n")
+        entries.append(_tape_entry(seq, ts, "seed", body))
+    (home / "chat.log").write_bytes(b"".join(entries))
+
+
+def test_settle_result_mix_counts_and_drifts_on_blocked(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir(parents=True, exist_ok=True)
+    _settle_tape(home, [
+        ("2026-10-06T10:00:00Z", "a", "verified"),
+        ("2026-10-06T10:10:00Z", "b", "changed"),
+        ("2026-10-06T10:20:00Z", "c", "blocked"),
+        ("2026-10-06T10:30:00Z", "d", "verified"),
+        ("2026-10-06T10:40:00Z", "e", "changed"),
+    ])
+    result = discovery._seed_settle_result_mix(home)
+    assert result["state"] == "drift"
+    assert result["window"] == 5
+    assert (result["verified"], result["changed"], result["blocked"],
+            result["other"], result["incidents"]) == (2, 2, 1, 0, 1)
+    assert result["since_last"] == 2
+    assert result["sample"] == ("n=5 verified=2 changed=2 blocked=1 other=0 "
+                                "incidents=1 since_last=2")
+
+
+def test_settle_result_mix_clean_window_is_verified(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir(parents=True, exist_ok=True)
+    _settle_tape(home, [
+        ("2026-10-06T10:00:00Z", "a", "verified"),
+        ("2026-10-06T10:10:00Z", "b", "changed"),
+    ])
+    result = discovery._seed_settle_result_mix(home)
+    assert result["state"] == "verified"
+    assert result["blocked"] == 0
+    assert result["incidents"] == 0
+    assert result["since_last"] is None
+    assert result["sample"] == ("n=2 verified=1 changed=1 blocked=0 other=0 "
+                                "incidents=0 since_last=none")
+
+
+def test_settle_result_mix_clusters_blocked_within_the_gap(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir(parents=True, exist_ok=True)
+    _settle_tape(home, [
+        ("2026-10-06T10:00:00Z", "a", "blocked"),
+        ("2026-10-06T10:30:00Z", "b", "blocked"),
+        ("2026-10-06T12:00:00Z", "c", "blocked"),
+    ])
+    result = discovery._seed_settle_result_mix(home)
+    assert result["state"] == "drift"
+    assert result["blocked"] == 3
+    assert result["incidents"] == 2
+
+
+def test_settle_result_mix_blocked_outside_window_does_not_drift(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir(parents=True, exist_ok=True)
+    base = datetime(2026, 10, 6, 9, 0, tzinfo=timezone.utc)
+    settlements = [(base.isoformat().replace("+00:00", "Z"), "a", "blocked")]
+    settlements += [((base + timedelta(minutes=10 * (index + 1)))
+                     .isoformat().replace("+00:00", "Z"), "b", "verified")
+                    for index in range(100)]
+    _settle_tape(home, settlements)
+    result = discovery._seed_settle_result_mix(home)
+    assert result["state"] == "verified"
+    assert result["window"] == 100
+    assert result["blocked"] == 0
+    assert result["since_last"] == 100
+
+
+def test_settle_result_mix_ignores_unpaired_and_unknown_results(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir(parents=True, exist_ok=True)
+    entries = [
+        _tape_entry(1, "2026-10-06T10:00:00Z", "seed",
+                    "seed yield a wake=1\nTurn settled (verified); wall and handoff at "
+                    "walls/a.md.\n"),
+        _tape_entry(2, "2026-10-06T10:10:00Z", "seed", "seed yield b wake=2\n"),
+        _tape_entry(3, "2026-10-06T10:20:00Z", "senses",
+                    "seed yield c wake=3\nTurn settled (blocked); wall and handoff at "
+                    "walls/c.md.\n"),
+        _tape_entry(4, "2026-10-06T10:30:00Z", "seed",
+                    "seed yield d wake=4\nTurn settled (unspecified); wall and handoff at "
+                    "walls/d.md.\n"),
+    ]
+    (home / "chat.log").write_bytes(b"".join(entries))
+    result = discovery._seed_settle_result_mix(home)
+    # The unpaired yield and the non-seed source are not settlements; the
+    # unnamed result lands in ``other`` rather than inventing a class.
+    assert result["window"] == 2
+    assert result["verified"] == 1
+    assert result["other"] == 1
+    assert result["blocked"] == 0
+    assert result["state"] == "verified"
+
+
+def test_settle_result_mix_missing_tape(tmp_path):
+    result = discovery._seed_settle_result_mix(tmp_path / "site")
+    assert result["state"] == "unknown"
+    assert result["sample"] == "chat tape unavailable"
+
+
 def _write_evidenced_outcome(home: Path, role: str, evidence: Path,
                              digest: str | None = None) -> str:
     (home / "records").mkdir(parents=True, exist_ok=True)
