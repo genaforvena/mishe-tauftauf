@@ -38,7 +38,7 @@ cat "$SITE/health/windows.json"
 cat "$SITE/health/services.json"
 ```
 
-`.seed-raised` records the session name and tmux session identity. If the session is absent, use the known site's marker and launch output; a missing session is a fault to diagnose, not permission to adopt another one. The runtime refuses a session whose `@mishe-tauftauf-home` ownership marker does not match the resolved site path.
+`.seed-raised` records the session name and tmux session identity. If the session is absent, use the known site's marker and launch output; a missing session is a fault to diagnose, not permission to adopt another one. The runtime refuses a session whose `@mishe-tauftauf-home` ownership marker does not match the resolved site path. A session that exists without a marker yet is not foreign: a concurrent raise creates the session before recording its owner, so the runtime waits up to 15 seconds for the owner to appear and refuses at once only when a different home is recorded or the wait expires.
 `health/windows.json` is reconciled during planting: required role windows are always expected, previously recorded extra windows remain expected only while live, and retired names are dropped. Replant after renaming or closing an extra window so the health check no longer treats it as required.
 
 The launcher automatically searches for resident markers in `.mishe-seed` and `.mishe-tauftauf`, reuses a sole resident site, and reads its recorded session. Multiple candidates require explicit `--home` and `--session`. A custom-named site should always be addressed explicitly when replanting; it is not part of that automatic search.
