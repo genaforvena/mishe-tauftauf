@@ -910,6 +910,113 @@ def test_boundary_a_reserved_id_is_not_free_for_a_changed_native_call(tmp_path):
     assert dispatch.status("report-37233-v1")["failure"] == "unreconciled-intent"
 
 
+def test_boundary_claim_for_runs_a_reserved_id_from_a_provider_call(tmp_path):
+    """A provider call can claim a caller-reserved id without carrying it.
+
+    `drive_native` forwards the provider's call untouched, so the only route by
+    which a caller-named identity reaches the loop is an explicit claim. The
+    reserved id is upgraded and runs once under the caller's name; a derived id
+    is never created, so nothing is left unreconciled.
+    """
+    seen = []
+    dispatch = boundary(tmp_path, lambda call: seen.append(call) or {"ok": True})
+    dispatch.reserve("report-37233-v1", capability="publish-owned-report",
+                     arguments={"target": "owned-evidence"})
+    call = {"type": "toolCall", "id": "call-provider", "name": "publish-owned-report",
+            "arguments": {"target": "owned-evidence"}}
+    reply = dispatch(call, claim_for="report-37233-v1")
+    assert (reply["status"], reply["operation_id"]) == ("completed", "report-37233-v1")
+    assert len(seen) == 1
+    assert seen[0]["operation_id"] == "report-37233-v1"
+    assert seen[0]["native_call"]["id"] == "call-provider"
+    # No second, derived operation was left behind.
+    assert dispatch.open_intents() == []
+    assert dispatch.status("report-37233-v1")["status"] == "completed"
+    # The claimed id is now subject to the same at-most-once rule.
+    with pytest.raises(AlreadyExecuted):
+        dispatch(call, claim_for="report-37233-v1")
+    assert len(seen) == 1
+    fresh = boundary(tmp_path, lambda call: pytest.fail("unexpected execution"),
+                     writer_id="loop-2")
+    # A fresh process reconciles by the caller's id, which is what was claimed.
+    assert fresh.status("report-37233-v1")["status"] == "completed"
+
+
+def test_boundary_claim_for_refuses_changed_content_before_any_effect(tmp_path):
+    """A claim binds the reservation's content, so a mismatch never executes."""
+    seen = []
+    dispatch = boundary(tmp_path, lambda call: seen.append(call) or {"ok": True})
+    dispatch.reserve("report-37233-v1", capability="publish-owned-report",
+                     arguments={"target": "owned-evidence"})
+    wrong_args = {"type": "toolCall", "id": "call-1", "name": "publish-owned-report",
+                  "arguments": {"target": "other-evidence"}}
+    with pytest.raises(ChangedContentReuse):
+        dispatch(wrong_args, claim_for="report-37233-v1")
+    wrong_capability = {"type": "toolCall", "id": "call-2", "name": "inspect",
+                        "arguments": {"target": "owned-evidence"}}
+    with pytest.raises(ChangedContentReuse):
+        dispatch(wrong_capability, claim_for="report-37233-v1")
+    assert seen == []
+    assert dispatch.status("report-37233-v1")["failure"] == "unreconciled-intent"
+
+
+def test_boundary_claim_for_a_changed_capability_version_is_refused(tmp_path):
+    """A claim at another version never starts an effect.
+
+    The version is bound in the digest, so a boundary pinned to `v2` claiming a
+    `v1` reservation is changed content, refused before any effect. The
+    reservation is left untouched at its own version.
+    """
+    seen = []
+    dispatch = boundary(tmp_path, lambda call: seen.append(call) or {"ok": True})
+    dispatch.reserve("report-37233-v1", capability="publish-owned-report",
+                     arguments={"target": "owned-evidence"})
+    call = {"type": "toolCall", "id": "call-3", "name": "publish-owned-report",
+            "arguments": {"target": "owned-evidence"}}
+    with pytest.raises(ChangedContentReuse):
+        boundary(tmp_path, lambda call: seen.append(call) or {"ok": True},
+                 capability_version="v2")(call, claim_for="report-37233-v1")
+    assert seen == []
+    intent = dispatch.open_intents()[0]
+    assert (intent.capability_version, intent.reservation) == ("v1", True)
+
+
+def test_boundary_claim_for_requires_a_real_reservation(tmp_path):
+    """A claim on an absent or already-dispatched id is refused before any effect."""
+    seen = []
+    dispatch = boundary(tmp_path, lambda call: seen.append(call) or {"ok": True})
+    call = {"type": "toolCall", "id": "call-4", "name": "inspect",
+            "arguments": {"path": "owned-evidence"}}
+    # Nothing was ever reserved under this id.
+    with pytest.raises(ValueError):
+        dispatch(call, claim_for="report-never-reserved-v1")
+    # Claiming an id that already completed is a duplicate dispatch: refused
+    # as `AlreadyExecuted`, never a second execution.
+    first = dispatch(call)
+    assert first["status"] == "completed"
+    with pytest.raises(AlreadyExecuted):
+        dispatch(call, claim_for=first["operation_id"])
+    with pytest.raises(ValueError):
+        dispatch(call, claim_for="bad id!")
+    assert len(seen) == 1
+    assert dispatch.open_intents() == []
+
+
+def test_boundary_claim_for_survives_a_process_restart(tmp_path):
+    """A reservation is claimable by a fresh process that never saw the reserve."""
+    store = tmp_path / "effects"
+    dispatch = boundary(tmp_path, lambda call: {"ok": True})
+    dispatch.reserve("report-37233-v1", capability="publish-owned-report",
+                     arguments={"target": "owned-evidence"})
+    call = {"type": "toolCall", "id": "call-5", "name": "publish-owned-report",
+            "arguments": {"target": "owned-evidence"}}
+    fresh = boundary(tmp_path, lambda call: {"ok": True}, writer_id="loop-2")
+    reply = fresh(call, claim_for="report-37233-v1")
+    assert reply["status"] == "completed"
+    assert (store / "starts.jsonl").read_text().strip()
+    assert fresh.open_intents() == []
+
+
 def test_boundary_drop_reserved_retires_a_never_dispatched_reservation(tmp_path):
     store = tmp_path / "effects"
     dispatch = boundary(tmp_path, lambda call: {"ok": True})
