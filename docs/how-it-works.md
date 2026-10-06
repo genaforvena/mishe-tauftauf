@@ -116,10 +116,14 @@ power loss.
 `reserve(operation_id, capability, arguments)` binds that same durable identity
 before any effect and before the provider has issued a call id: it allocates the
 intent with no start record, no execution and no outcome, so every reader still
-reads `unreconciled-intent`. A later dispatch of the same id through
-`__call__` upgrades the binding to the real call when the bound capability,
-version, arguments and authority all match, and refuses a changed binding as
-`ChangedContentReuse` before any effect. `drop_reserved` retires a reservation
+reads `unreconciled-intent`. A later dispatch of the same id upgrades the
+binding to the real call when the bound capability, version, arguments and
+authority all match, and refuses a changed binding as `ChangedContentReuse`
+before any effect; `drive_native` passes the provider's call through untouched
+and a provider does not echo the caller's id, so `__call__(call,
+claim_for=operation_id)` is the route that names it. A `claim_for` naming no
+operation in the store is a `ValueError`, and one whose id already has an
+outcome is `AlreadyExecuted`. `drop_reserved` retires a reservation
 that was provably never dispatched; it never removes a start record or an
 outcome, and an unknown id is simply not reserved, not an error. This is the
 surface for an operation identity fixed by an upstream contract — a reserved
