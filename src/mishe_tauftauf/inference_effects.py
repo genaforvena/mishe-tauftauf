@@ -35,6 +35,24 @@ from typing import Any, Literal
 
 _EFFECT_STATUSES = ("completed", "partial", "unknown")
 _OPERATION_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
+_RESERVATION_MARKER = "reserved"
+
+
+def _reservation_digest(arguments: Mapping[str, Any], *, authority: str,
+                        capability: str, capability_version: str,
+                        native_call: Mapping[str, Any] | None,
+                        budget: Mapping[str, Any] | None = None) -> str:
+    """The digest of a reservation, which binds content without a provider call.
+
+    The request carries the marker instead of the provider's call, because a
+    reservation is made before any call id exists. The digest still binds the
+    real capability, arguments, authority and version, so a reservation and a
+    later dispatch of the same id to different content still conflict as
+    `ChangedContentReuse`.
+    """
+    return request_digest({"reservation": _RESERVATION_MARKER}, authority,
+                          arguments=arguments, capability=capability,
+                          budget=budget, native_call=native_call)
 
 
 class ChangedContentReuse(RuntimeError):
@@ -92,30 +110,36 @@ class EffectIntent:
     writer_id: str
     budget: Mapping[str, Any] | None
     native_call: Mapping[str, Any] | None = None
+    reservation: bool = False
 
     def to_record(self) -> dict[str, Any]:
-        return {"record_type": "intent", "operation_id": self.operation_id,
-                "capability": self.capability,
-                "capability_version": self.capability_version,
-                "arguments": _snapshot(self.arguments),
-                "request_digest": self.request_digest,
-                "authority": self.authority,
-                "writer_id": self.writer_id,
-                "budget": _snapshot(self.budget) if self.budget is not None else None,
-                "native_call": _snapshot(self.native_call)
-                if self.native_call is not None else None}
+        record = {"record_type": "intent", "operation_id": self.operation_id,
+                  "capability": self.capability,
+                  "capability_version": self.capability_version,
+                  "arguments": _snapshot(self.arguments),
+                  "request_digest": self.request_digest,
+                  "authority": self.authority,
+                  "writer_id": self.writer_id,
+                  "budget": _snapshot(self.budget) if self.budget is not None else None,
+                  "native_call": _snapshot(self.native_call)
+                  if self.native_call is not None else None}
+        if self.reservation:
+            record["reservation"] = True
+        return record
 
     @classmethod
     def from_record(cls, record: Mapping[str, Any]) -> "EffectIntent":
         _require(record, "intent", ("operation_id", "capability", "capability_version",
-                                    "arguments", "request_digest", "authority", "writer_id"))
+                                    "arguments", "request_digest", "authority",
+                                    "writer_id"))
         return cls(operation_id=record["operation_id"], capability=record["capability"],
                    capability_version=record["capability_version"],
-                   arguments=_mapping(record["arguments"], "arguments"),
+                   arguments=_mapping(record.get("arguments"), "arguments"),
                    request_digest=record["request_digest"],
                    authority=record["authority"], writer_id=record["writer_id"],
                    budget=_mapping(record.get("budget"), "budget"),
-                   native_call=_mapping(record.get("native_call"), "native_call"))
+                   native_call=_mapping(record.get("native_call"), "native_call"),
+                   reservation=bool(record.get("reservation")))
 
 
 @dataclass(frozen=True)
@@ -380,7 +404,9 @@ class EffectLedger:
                  arguments: Mapping[str, Any], *, authority: str,
                  request: Mapping[str, Any], operation_id: str,
                  native_call: Mapping[str, Any] | None = None,
-                 budget: Mapping[str, Any] | None = None) -> EffectIntent:
+                 budget: Mapping[str, Any] | None = None,
+                 digest: str | None = None,
+                 reservation: bool = False) -> EffectIntent:
         """Bind an operation ID to content and authority before any effect.
 
         `operation_id` is the caller's durable identity for this operation,
@@ -392,6 +418,12 @@ class EffectLedger:
         `native_call` carries the provider's call opaque: its `id` must survive
         byte-for-byte into the next native tool result, so the ledger stores it
         beside the operation it belongs to.
+
+        `digest` overrides the content binding when the caller has already
+        computed it; `reserve` uses this so a reservation and the dispatch that
+        later claims the same id bind identical content. `reservation` marks an
+        intent bound with no provider call and no effect, which `drop_reserved`
+        may retire.
         """
         if not capability or not capability_version:
             raise ValueError("capability and capability_version are required")
@@ -404,8 +436,10 @@ class EffectLedger:
             raise ValueError("arguments must be an object")
         snapshot = _snapshot(request)
         call = _snapshot(native_call) if native_call is not None else None
-        digest = request_digest(snapshot, authority, arguments=normalized,
-                                capability=capability, budget=budget, native_call=call)
+        if digest is None:
+            digest = request_digest(snapshot, authority, arguments=normalized,
+                                    capability=capability, budget=budget,
+                                    native_call=call)
         with self._locked():
             intents = self._read_intents()
             existing = intents.get(operation_id)
@@ -424,9 +458,62 @@ class EffectLedger:
                                   capability_version=capability_version,
                                   arguments=normalized, request_digest=digest,
                                   authority=authority, writer_id=self.writer_id,
-                                  budget=budget, native_call=call)
+                                  budget=budget, native_call=call,
+                                  reservation=bool(reservation))
             self._append(self.intents_path, intent.to_record())
             return intent
+
+    def bind_dispatch(self, capability: str, capability_version: str,
+                      arguments: Mapping[str, Any], *, authority: str,
+                      obligation: Mapping[str, Any], call: Mapping[str, Any],
+                      operation_id: str,
+                      budget: Mapping[str, Any] | None) -> EffectIntent:
+        """Bind the dispatch request, upgrading a matching reservation if any.
+
+        A reserved id is bound to capability, arguments, authority and version
+        with no provider call. When the arriving dispatch binds the same values
+        the reservation is upgraded in place: its intent is rewritten to carry
+        the dispatch request and the provider call, clearing its reservation
+        marker, so `dispatch` then binds it as the recorded intent and starts it
+        once. An id that already has an outcome raises `AlreadyExecuted`, and a
+        dispatch that binds different values is `ChangedContentReuse` before any
+        effect, exactly as a repeated dispatch is.
+
+        The caller's request snapshot is taken here so a mutated caller object
+        cannot change what the digest commits to.
+        """
+        snapshot_request = {"obligation": _snapshot(obligation), "call": _snapshot(call)}
+        with self._locked():
+            recorded = self._read_intents().get(operation_id)
+            digest = request_digest(snapshot_request, authority,
+                                    arguments=arguments, capability=capability,
+                                    budget=budget, native_call=snapshot_request["call"])
+            if recorded is None:
+                return self.allocate(capability, capability_version, arguments,
+                                     authority=authority, request=snapshot_request,
+                                     operation_id=operation_id,
+                                     native_call=snapshot_request["call"],
+                                     budget=budget)
+            if operation_id in self._read_outcomes():
+                raise AlreadyExecuted(
+                    f"operation_id {operation_id} already has an outcome record")
+            if recorded.reservation:
+                expected = _reservation_digest(
+                    arguments, authority=authority, capability=capability,
+                    capability_version=capability_version,
+                    native_call=None, budget=budget)
+                if recorded.request_digest != expected:
+                    raise ChangedContentReuse(
+                        f"operation_id {operation_id} is bound to different content")
+                upgraded = replace(recorded, request_digest=digest,
+                                   native_call=snapshot_request["call"],
+                                   reservation=False)
+                self._replace_intent(upgraded)
+                return upgraded
+            if recorded.request_digest != digest:
+                raise ChangedContentReuse(
+                    f"operation_id {operation_id} is bound to different content")
+            return recorded
 
     def dispatch(self, intent: EffectIntent,
                  executor: Callable[[dict[str, Any]], Any]) -> EffectOutcome:
@@ -567,6 +654,109 @@ class EffectLedger:
                                     EffectOutcome(operation_id, "unknown")).status
                     != "completed"]
 
+    def reserve(self, capability: str, capability_version: str,
+                arguments: Mapping[str, Any], *, authority: str,
+                operation_id: str, native_call: Mapping[str, Any] | None = None,
+                budget: Mapping[str, Any] | None = None) -> EffectIntent:
+        """Bind an operation identity to content and authority with no effect.
+
+        `allocate` is the same write made by the dispatch path; this entry point
+        only names the caller-visible intent. A caller that must fix an
+        operation id before the provider has issued a call id (an upstream
+        contract, a reserved report identity) can make that identity durable
+        here, then either dispatch it through `dispatch` or retire it with
+        `drop_reserved`.
+
+        Same rules as `allocate`: a same-id request with a different binding
+        raises `ChangedContentReuse` before any write, and an id that already has
+        an outcome raises `AlreadyExecuted`. A reservation is an intent with no
+        start record, so every reader still reads `unreconciled-intent`.
+        """
+        return self._reserve(capability, capability_version, arguments,
+                             authority=authority, operation_id=operation_id,
+                             native_call=native_call, budget=budget)
+
+    def _reserve(self, capability: str, capability_version: str,
+                 arguments: Mapping[str, Any], *, authority: str,
+                 operation_id: str, native_call: Mapping[str, Any] | None,
+                 budget: Mapping[str, Any] | None) -> EffectIntent:
+        normalized = _snapshot(arguments)
+        if not isinstance(normalized, Mapping):
+            raise ValueError("arguments must be an object")
+        call = _snapshot(native_call) if native_call is not None else None
+        snapshot_budget = _snapshot(budget) if budget is not None else None
+        digest = _reservation_digest(normalized, authority=authority,
+                                     capability=capability,
+                                     capability_version=capability_version,
+                                     native_call=None, budget=snapshot_budget)
+        intent = self.allocate(capability, capability_version, normalized,
+                               authority=authority, request={"reservation":
+                                                             _RESERVATION_MARKER},
+                               operation_id=operation_id, native_call=call,
+                               budget=snapshot_budget, digest=digest,
+                               reservation=True)
+        return intent
+
+    def drop_reserved(self, operation_id: str) -> bool:
+        """Retire a reservation that was never dispatched.
+
+        Returns True when an intent was removed, False when the id had no
+        unreconciled reservation (never allocated, already dropped) and raises
+        `JournalCorrupt` when the store is unreadable. A started or completed
+        operation is not a reservation: the start record and the outcome stay,
+        because removing them would erase the durable witness of an effect that
+        may have happened. Use this only for an identity that was provably never
+        dispatched.
+        """
+        with self._locked():
+            if operation_id in self._read_starts():
+                return False
+            intents = self._read_intents()
+            intent = intents.get(operation_id)
+            if intent is None or not intent.reservation:
+                return False
+            if operation_id in self._read_outcomes():
+                return False
+            self._rewrite_without(self.intents_path, operation_id)
+            return True
+
+    def _rewrite_without(self, path: Path, operation_id: str) -> None:
+        """Rewrite one journal without a retired id, under the store lock.
+
+        A retired reservation is the only record this store ever removes, and it
+        is safe only because no start or outcome can reference it. The rewrite
+        is written to a sibling file and `os.replace`d so a crash leaves either
+        the old journal or the new one, never a partial mix.
+        """
+        rows = [row for row in self._read(path) if row.get("operation_id") != operation_id]
+        tmp = path.with_name(path.name + ".tmp")
+        with tmp.open("w", encoding="utf-8", newline="\n") as handle:
+            for row in rows:
+                handle.write(json.dumps(row, ensure_ascii=False,
+                                        separators=(",", ":")) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+
+    def _replace_intent(self, intent: EffectIntent) -> None:
+        """Rewrite one intent record under the store lock.
+
+        The only caller is the reservation upgrade, which happens before any
+        start record and before any effect, so the rewrite cannot orphan an
+        outcome. A crash leaves the old intent or the new one, never a mix; the
+        old binding still names the same operation, authority and arguments.
+        """
+        rows = [row if row.get("operation_id") != intent.operation_id
+                else intent.to_record() for row in self._read(self.intents_path)]
+        tmp = self.intents_path.with_name(self.intents_path.name + ".tmp")
+        with tmp.open("w", encoding="utf-8", newline="\n") as handle:
+            for row in rows:
+                handle.write(json.dumps(row, ensure_ascii=False,
+                                        separators=(",", ":")) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, self.intents_path)
+
     # -- helpers -----------------------------------------------------------
 
     def _intent_ref(self, operation_id: str) -> str:
@@ -625,6 +815,16 @@ class EffectBoundary:
     id with changed content, arguments or authority raises `ChangedContentReuse`
     before any effect. A same-id second dispatch returns the recorded outcome or
     an explicit `unknown`, never a second execution.
+
+    A caller who must name an operation before the provider has issued a call id
+    (a reserved report identity, an id fixed by an upstream contract) uses
+    `reserve` instead: it binds the same durable identity to exact capability,
+    arguments and authority with no start record and no execution. A reserved
+    intent is `unreconciled-intent` to every reader, including the writer that
+    reserved it, until `__call__` dispatches it or the caller explicitly drops
+    it. `drop_reserved` retires a reservation that was never dispatched; it
+    never clears a start or an outcome, and it is the only way a reserved id
+    becomes reusable without `ChangedContentReuse`.
     """
 
     def __init__(self, store_dir: Path, *, writer_id: str, obligation: Mapping[str, Any],
@@ -677,13 +877,14 @@ class EffectBoundary:
         arguments = native_call.get("arguments")
         if not isinstance(arguments, Mapping):
             raise ValueError("native call arguments must be an object")
-        intent = self.ledger.allocate(capability, self.capability_version,
-                                      _snapshot(arguments), authority=self.authority,
-                                      request={"obligation": self.obligation,
-                                               "call": native_call},
-                                      operation_id=operation_id,
-                                      native_call=native_call, budget=self.budget)
-        return effect_outcome_for(self.ledger.dispatch(intent, self._runner))
+        bound = self.ledger.bind_dispatch(capability, self.capability_version,
+                                          _snapshot(arguments),
+                                          authority=self.authority,
+                                          obligation=self.obligation,
+                                          call=native_call,
+                                          operation_id=operation_id,
+                                          budget=self.budget)
+        return effect_outcome_for(self.ledger.dispatch(bound, self._runner))
 
     def _runner(self, ledger_call: dict[str, Any]) -> Any:
         # The caller rechecks current authority against its own state; the
@@ -701,6 +902,28 @@ class EffectBoundary:
 
     def open_intents(self) -> Sequence[EffectIntent]:
         return self.ledger.open_intents()
+
+    def reserve(self, operation_id: str, *, capability: str,
+                arguments: Mapping[str, Any],
+                native_call: Mapping[str, Any] | None = None) -> EffectIntent:
+        """Bind an operation id before any effect, with no start record.
+
+        The capability is not executed and no start record is written: the id is
+        durable as an `unreconciled-intent` bound by this boundary authority
+        and capability version. Use this when the identity must exist before a
+        provider call id does, then either dispatch the same id through
+        `__call__` or retire it with `drop_reserved`.
+        """
+        return self.ledger.reserve(capability, self.capability_version,
+                                   _snapshot(arguments), authority=self.authority,
+                                   operation_id=operation_id,
+                                   native_call=_snapshot(native_call)
+                                   if native_call is not None else None,
+                                   budget=self.budget)
+
+    def drop_reserved(self, operation_id: str) -> bool:
+        """Retire a reservation this boundary made and never dispatched."""
+        return self.ledger.drop_reserved(operation_id)
 
     def recover(self, call: Mapping[str, Any]) -> dict[str, Any] | None:
         """Reply for a call whose receipt may have been lost, without executing.

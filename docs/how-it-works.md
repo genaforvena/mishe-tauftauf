@@ -113,6 +113,19 @@ outcome or an explicit `unknown`, never a second execution. The scope is a
 single local store and single writer per process; process-crash recovery, not
 power loss.
 
+`reserve(operation_id, capability, arguments)` binds that same durable identity
+before any effect and before the provider has issued a call id: it allocates the
+intent with no start record, no execution and no outcome, so every reader still
+reads `unreconciled-intent`. A later dispatch of the same id through
+`__call__` upgrades the binding to the real call when the bound capability,
+version, arguments and authority all match, and refuses a changed binding as
+`ChangedContentReuse` before any effect. `drop_reserved` retires a reservation
+that was provably never dispatched; it never removes a start record or an
+outcome, and an unknown id is simply not reserved, not an error. This is the
+surface for an operation identity fixed by an upstream contract — a reserved
+report identity, a frozen artifact reference — that must exist before the
+provider call that fulfils it.
+
 `inference_loop.NativeJournal` is an optional caller-owned `record` callback:
 it exclusively creates a new private JSONL file, flushes and fsyncs every event
 before returning, and refuses reuse after a recording failure.
