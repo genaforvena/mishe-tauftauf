@@ -63,11 +63,19 @@ class NativeSession:
             raise
 
     def _check(self):
-        if self.cancelled():
-            raise WorkerError('cancelled during native session')
         remaining = self.deadline - time.monotonic()
-        if remaining <= 0:
-            raise WorkerError('native session total time limit exceeded')
+        reason = None
+        if self.cancelled():
+            reason = 'cancelled during native session'
+        elif remaining <= 0:
+            reason = 'native session total time limit exceeded'
+        if reason is not None:
+            # Already buffered diagnostics must not extend the deadline to drain.
+            if self.errors:
+                tail = self.errors[-4096:].decode(errors='replace')
+                marker = '[truncated] ' if len(self.errors) > 4096 else ''
+                reason += ': stderr: ' + marker + tail
+            raise WorkerError(reason)
         return min(remaining, .05)
 
     def _pump(self, data):
@@ -102,10 +110,16 @@ class NativeSession:
         self.selector.register(self.process.stdin, selectors.EVENT_WRITE, 'input')
         while data or b'\n' not in self.pending:
             data = self._pump(data)
-            if self.process.poll() is not None and (data or b'\n' not in self.pending):
+            ended = self.process.poll() is not None
+            eof = self.process.stdout not in [key.fileobj for key in self.selector.get_map().values()]
+            if b'\n' not in self.pending and (ended or eof):
+                # stdout EOF can precede stderr delivery and process exit.
+                # Drain refusal evidence under the original lifetime deadline.
+                if self.process.stdin in [key.fileobj for key in self.selector.get_map().values()]:
+                    self.selector.unregister(self.process.stdin)
+                while self.selector.get_map() or self.process.poll() is None:
+                    self._pump(memoryview(b''))
                 raise WorkerError(f'native session exited {self.process.returncode}: ' + self.errors.decode(errors='replace'))
-            if b'\n' not in self.pending and self.process.stdout not in [key.fileobj for key in self.selector.get_map().values()]:
-                raise WorkerError('native session output EOF')
         line, _, rest = self.pending.partition(b'\n')
         self.pending[:] = rest
         if rest:

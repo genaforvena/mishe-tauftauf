@@ -128,6 +128,11 @@ correlates numbered turns, and retains raw terminal provenance in `NativeTurn`.
 A lifetime deadline and cumulative stdout/stderr limit apply across exchanges.
 Concurrent calls are refused. Failed exchanges terminate the isolated process
 group, reap the direct worker and prohibit reuse; they never retry an effect.
+If stdout closes before a receipt, the transport drains remaining refusal
+diagnostics and waits for worker exit only within the original lifetime deadline.
+Timeout and cancellation retain their primary cause and append at most the final
+4096 already-buffered stderr bytes, with a truncation marker when needed; they
+do not extend the deadline to collect more output.
 
 Use the session as a context manager. Normal disposal requires both a `closed`
 receipt and a clean worker exit; a successful earlier turn cannot certify

@@ -102,3 +102,35 @@ def test_concurrent_call_refused_without_killing_owner(tmp_path):
             session.lock.release()
         assert session.turn({}).assistant == FRAME["assistant"]
     assert_reaped(session)
+
+
+@pytest.mark.parametrize("mode", ["exit", "timeout", "cancelled", "truncated"])
+def test_refusal_stderr_survives_stdout_eof_and_deadline(tmp_path, mode):
+    turn = (
+        "__import__('os').close(1); time.sleep(.05); "
+        f"sys.stderr.write({'x' * 5000 if mode == 'truncated' else ''!r} + "
+        "'UNKNOWN: refused checkpoint\\n'); sys.stderr.flush(); "
+        + ("sys.exit(9)" if mode == "exit" else "time.sleep(30)")
+    )
+    holder = {}
+    session = NativeSession(
+        command(tmp_path, turn=turn), "fixture/model", "session", timeout=.5,
+        cancelled=lambda: mode == "cancelled" and bool(
+            holder.get("session") and holder["session"].errors),
+    )
+    holder["session"] = session
+    deadline = session.deadline
+    with pytest.raises(WorkerError) as caught:
+        session.turn({})
+    message = str(caught.value)
+    assert "UNKNOWN: refused checkpoint" in message
+    if mode == "exit":
+        assert message.startswith("native session exited 9:")
+    elif mode == "cancelled":
+        assert message.startswith("cancelled during native session: stderr:")
+    else:
+        assert message.startswith("native session total time limit exceeded: stderr:")
+    if mode == "truncated":
+        assert "[truncated]" in message and len(message) < 4200
+    assert session.deadline == deadline
+    assert_reaped(session)
