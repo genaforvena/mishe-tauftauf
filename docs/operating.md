@@ -106,6 +106,7 @@ Ctrl-c stops `tail`, not the plant. The live panels may summarize only recent en
 - The advancing `-- pane live ...` footer proves the renderer is alive. Compare captures a few seconds apart; an advancing lease does not erase a failed check.
 - The health pane's `PANE LEASE:` line reads each resident renderer's footer lease and turns RED when one is older than `max(120 s, 6 × refresh)`; a frozen lease also makes the health verdict RED with cause `pane-lease`, while a missing or unreadable lease is UNKNOWN. A window with no renderer script (the operator shell, the log tail) carries no lease and is not a fault.
 - `pane_dead=0` proves a process is alive, not that an agent is ready for a prompt or making progress.
+- The `sense.mind.wedge-suspect` reading names a mind whose open omp automatic-retry chain is at least 3 attempts and at least 15 minutes with no successful turn completion between (`suspects=<window>(pid=…,chain=…,span=…min)`, or `suspects=0`). It parses omp's session log under `~/.omp/logs/`; a pane with no such log is not assessed, and a failed pane enumeration is `UNKNOWN`. A named suspect is a prompt to inspect that pane, not proof of a wedge.
 
 `seed status` reports tape identities: `pending` is an unsettled wake; `yield` is the last settled wake; `clear` is the settled wake whose process has been rotated; `continue` records a continuation request. They are entry/wake identities, not durations. `none` means no such recorded event.
 
