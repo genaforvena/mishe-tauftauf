@@ -394,6 +394,11 @@ pin module is `UNKNOWN`, not a clean bill.
 The journal unit-failure-count sense (`sense.journal.unit-failure-count`) reads
 the system journal for `Failed with result '<class>'` messages from systemd,
 grouping raw counts by failed unit and class over a fixed 600-second window.
+For each failed unit the sample also carries restart context,
+`<unit>:restarts=N,active=<state>`, so a unit that exits nonzero by design and
+recovers (`active=running`) reads differently from a crash-loop
+(`active=failed`); the context is supplementary and omitted when `systemctl`
+is unavailable.
 The kernel-error-count sense (`-k -p err`) never sees these records because
 they are logged at warning priority, not as kernel messages. The kernel sense
 groups its entries by each message's reporting source (the text before the
