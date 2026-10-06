@@ -25,16 +25,22 @@ class NativeSession:
     """One owner, sequential turns, lifetime deadline and combined output bound.
 
     A failed exchange kills/reaps this session; callers must reconcile effects
-    before any new session. close() requires the disposal receipt AND clean exit.
-    Earlier turns cannot prove that a later close will succeed.
+    before any new session. close() requires the disposal receipt AND a clean
+    exit, where the exit wait is bounded by close_grace, not the lifetime
+    deadline: a receipt already names the outcome, so a lingering worker is a
+    disposal failure and never a reclassified timeout. Earlier turns cannot
+    prove that a later close will succeed.
     """
 
     def __init__(self, command, selector, session_id, *, cancelled=lambda: False,
                  timeout=60, max_output=4 * 1024 * 1024, env=None, cwd=None,
-                 checkpoint=None):
+                 checkpoint=None, close_grace=1.0):
+        self.close_grace = close_grace
         if (not math.isfinite(timeout) or timeout <= 0 or
+                not math.isfinite(close_grace) or close_grace <= 0 or
                 type(max_output) is not int or max_output <= 0):
-            raise ValueError('finite positive timeout and positive integer output bound required')
+            raise ValueError('finite positive timeout, finite positive close grace '
+                             'and positive integer output bound required')
         if cancelled():
             raise WorkerError('cancelled before session start')
         self.cancelled = cancelled
@@ -78,8 +84,10 @@ class NativeSession:
             raise WorkerError(reason)
         return min(remaining, .05)
 
-    def _pump(self, data):
-        for key, _ in self.selector.select(self._check()):
+    def _pump(self, data, timeout=None, *, check=True):
+        if timeout is None:
+            timeout = self._check()
+        for key, _ in self.selector.select(timeout):
             stream = key.fileobj
             if key.data == 'input':
                 try:
@@ -98,7 +106,8 @@ class NativeSession:
                 if self.output_size > self.max_output:
                     raise WorkerError('native session output limit exceeded')
                 (self.pending if key.data == 'output' else self.errors).extend(chunk)
-        self._check()
+        if check:
+            self._check()
         return data
 
     def _exchange(self, request):
@@ -175,11 +184,22 @@ class NativeSession:
                 return
             if self._exchange({'type': 'close'}) != {'type': 'closed'}:
                 raise WorkerError('expected disposal receipt')
+            # The lifetime deadline bounds the receipt exchange, not the post-receipt
+            # exit wait. A receipt already won, so a lingering worker must not
+            # reclassify disposal as a timeout: reap once the grace bound elapses.
             self.process.stdin.close()
+            drain = time.monotonic() + self.close_grace
             while self.selector.get_map() or self.process.poll() is None:
-                self._pump(memoryview(b''))
-            if self.process.returncode != 0 or self.pending:
-                raise WorkerError('native session failed after disposal receipt: ' + self.errors.decode(errors='replace'))
+                if self.cancelled() or time.monotonic() >= drain:
+                    break
+                self._pump(memoryview(b''), timeout=min(drain - time.monotonic(), .05), check=False)
+            # A receipt already named the outcome. Cancellation is not a disposal
+            # failure and a worker that left with status 0 disposed cleanly;
+            # anything still alive or nonzero after the grace bound is a
+            # disposal failure, never a reclassified timeout.
+            if not self.cancelled() and (self.process.poll() is None or self.process.returncode != 0 or self.pending):
+                raise WorkerError('native session failed after disposal receipt: '
+                                  + self.errors.decode(errors='replace'))
         finally:
             self._reap()
             self.lock.release()
