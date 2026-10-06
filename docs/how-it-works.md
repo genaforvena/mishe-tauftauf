@@ -101,6 +101,17 @@ Session cleanup, callback time limits and provider transport remain caller
 responsibilities. This checkout API is not a resident activation, a durable
 replay mechanism or evidence of a completed live useful-task canary.
 
+`inference_effects.EffectBoundary` is the optional caller-owned binding for that
+`dispatch` callback. Constructed with one store directory, a `writer_id`, the
+obligation identity, the bound authority and the caller's capability executor,
+it maps the provider's call shape onto a durable, reconcilable operation: it
+allocates the intent before any effect, persists the start record before the
+executor runs, and appends the outcome afterwards. The reply it returns is the
+loop's expected status shape, so `completed` continues and `unknown` stops
+without retry. A second dispatch of the same operation id is refused, never
+re-executed. The scope is a single local store and single writer per process;
+process-crash recovery, not power loss.
+
 `inference_loop.NativeJournal` is an optional caller-owned `record` callback:
 it exclusively creates a new private JSONL file, flushes and fsyncs every event
 before returning, and refuses reuse after a recording failure.

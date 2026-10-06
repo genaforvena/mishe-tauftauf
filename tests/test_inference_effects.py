@@ -22,12 +22,15 @@ from mishe_tauftauf.inference_effects import (
     ChangedContentReuse,
     ConcurrentClaim,
     DispatchClaim,
+    EffectBoundary,
     EffectIntent,
     EffectLedger,
     JournalCorrupt,
     StoreUnavailable,
     canonical_request,
+    effect_outcome_for,
     request_digest,
+    snapshot_json,
 )
 
 STORE = Path(__file__).resolve().parent.parent / "src"
@@ -480,3 +483,286 @@ def test_completed_operation_survives_restart_and_is_returned_as_recorded(tmp_pa
     assert fresh.status("op-1").result == {"recorded": True, "seq": 12}
     assert fresh.reconcile("op-1").result == {"recorded": True, "seq": 12}
     assert fresh.open_intents() == []
+
+
+# -- loop-boundary surface -------------------------------------------------
+
+NATIVE_CALL = {"type": "toolCall", "id": "call_native|fc_native", "name": "inspect",
+               "arguments": {"path": "owned-evidence"}}
+
+
+def boundary(tmp_path, execute, **kwargs):
+    options = dict(writer_id="loop-1", obligation={"source": "owned-event"},
+                   authority="marker_root:read-owned-evidence")
+    options.update(kwargs)
+    return EffectBoundary(tmp_path / "effects", execute=execute, **options)
+
+
+def test_boundary_replies_in_the_shape_drive_native_accepts(tmp_path):
+    """The loop requires exactly one of four statuses, or it raises."""
+    seen = []
+    reply = boundary(tmp_path, lambda call: seen.append(call) or {"ok": True})(NATIVE_CALL)
+    assert set(reply) == {"status", "result", "operation_id", "failure",
+                          "reconciliation_ref", "executions"}
+    assert reply["status"] == "completed"
+    assert reply["result"] == {"ok": True}
+    assert reply["operation_id"] == "effect-call_native-fc_native-d3129ff9ce3f"
+    assert reply["failure"] is None
+    assert reply["executions"] == 1
+    assert seen, "the capability actually ran"
+    assert seen[0]["type"] == "toolCall"
+    assert seen[0]["id"] == "call_native|fc_native"
+    assert seen[0]["name"] == "inspect"
+    assert seen[0]["native_call"] == NATIVE_CALL
+    assert seen[0]["capability"] == "inspect"
+    assert seen[0]["arguments"] == {"path": "owned-evidence"}
+    assert seen[0]["authority"] == "marker_root:read-owned-evidence"
+    assert seen[0]["operation_id"] == "effect-call_native-fc_native-d3129ff9ce3f"
+
+
+def test_boundary_and_drive_native_end_to_end(tmp_path):
+    """The boundary is drive_native's dispatch callback: exactly one execution."""
+    from mishe_tauftauf.inference_loop import NativeJournal, drive_native
+    from mishe_tauftauf.inference_worker import WorkerTurn
+
+    calls = []
+    context = {"messages": [{"role": "user", "content": "Inspect evidence"}],
+               "tools": [{"name": "inspect"}]}
+    first = {"type": "toolCall", "id": "call_native|fc_native", "name": "inspect",
+             "arguments": {"path": "owned-evidence"}}
+    second = {"type": "toolCall", "id": "call_two|fc_native", "name": "inspect",
+              "arguments": {"path": "owned-evidence"}}
+    emitted = []
+
+    class ToolSession:
+        def __init__(self):
+            self.inputs = []
+
+        def turn(self, context):
+            self.inputs.append(context)
+            # A distinct second call id reaches turn_budget at the loop bound
+            # rather than completing, so no third model turn is needed.
+            return WorkerTurn("done", {"role": "assistant",
+                                       "content": [first] if len(self.inputs) < 2
+                                       else [second],
+                                       "stopReason": "toolUse",
+                                       "providerPayload": {"opaque": "retained"}},
+                              None)
+
+    def record(event):
+        emitted.append(event["kind"])
+        journal(event)
+
+    with NativeJournal(tmp_path / "caller.jsonl") as journal:
+        result = drive_native(ToolSession(), context, obligation={"source":
+                               "owned-event"}, max_turns=2, max_calls=2,
+                              dispatch=boundary(tmp_path,
+                                                lambda call: calls.append(call)
+                                                or {"lines": 1}),
+                              record=record, phase=lambda call: None,
+                              cancelled=lambda: False,
+                              authorized=lambda call: True,
+                              complete=lambda context: True)
+    assert result["status"] == "turn_budget"
+    assert result["calls"] == 2
+    assert len(calls) == 2, "each distinct provider call ran exactly once"
+    assert emitted[:1] == ["checkpoint"]
+    assert emitted.count("proposal") == 2
+    assert emitted.count("tool_result") == 2
+    assert [c["operation_id"] for c in calls] == [
+        "effect-call_native-fc_native-d3129ff9ce3f",
+        "effect-call_two-fc_native-342800ae9ac1"]
+    assert calls[-1]["native_call"]["id"] == second["id"]
+    # The durable store holds both effects, and neither is open.
+    fresh = boundary(tmp_path, lambda call: pytest.fail("unexpected execution"),
+                     writer_id="loop-2")
+    assert fresh.status("effect-call_native-fc_native-d3129ff9ce3f")["status"] == (
+        "completed")
+    assert fresh.status("effect-call_two-fc_native-342800ae9ac1")["status"] == (
+        "completed")
+    assert fresh.open_intents() == []
+
+
+def test_boundary_never_executes_a_completed_operation_again(tmp_path):
+    """A repeated dispatch is refused, never re-executed."""
+    runs = []
+    dispatch = boundary(tmp_path, lambda call: runs.append(1) or {"ok": True})
+    first = dispatch(NATIVE_CALL)
+    assert first["status"] == "completed"
+    with pytest.raises(AlreadyExecuted):
+        dispatch(NATIVE_CALL)
+    assert len(runs) == 1
+    # A fresh process reads the one recorded outcome.
+    fresh = boundary(tmp_path, lambda call: pytest.fail("unexpected execution"),
+                     writer_id="loop-2")
+    assert fresh.recover(NATIVE_CALL) == first
+
+
+def test_boundary_changed_arguments_are_rejected_before_any_effect(tmp_path):
+    runs = []
+    dispatch = boundary(tmp_path, lambda call: runs.append(1) or {"ok": True})
+    first = dispatch(NATIVE_CALL)
+    assert first["status"] == "completed"
+    # The same id with different arguments would execute a different operation
+    # under one durable name; the store refuses it before any new effect.
+    changed = {**NATIVE_CALL, "arguments": {"path": "other-evidence"}}
+    with pytest.raises(AlreadyExecuted):
+        dispatch(changed)
+    assert len(runs) == 1
+
+
+def test_boundary_changed_authority_is_refused_after_completion(tmp_path):
+    """Authority is part of the digest, so a completed binding is not rebindable."""
+    one = boundary(tmp_path, lambda call: {"where": "one"})
+    named = {**NATIVE_CALL, "operation_id": "inspect-evidence-v1"}
+    assert one(named)["status"] == "completed"
+    two = boundary(tmp_path, lambda call: {"where": "two"},
+                   authority="marker_root:read-anywhere")
+    # An outcome already exists for this id, so the store refuses any reuse,
+    # whatever the new authority: the completed effect is not rebindable.
+    with pytest.raises(AlreadyExecuted):
+        two(named)
+    assert one.status("inspect-evidence-v1")["result"] == {"where": "one"}
+
+
+def test_boundary_binds_arguments_at_call_time_not_use_time(tmp_path):
+    dispatch = boundary(tmp_path, lambda call: {"ok": True})
+    mutable = {"path": "owned-evidence"}
+    call = {"type": "toolCall", "id": "call-mut", "name": "inspect",
+            "arguments": mutable}
+    first = dispatch(call)
+    assert (tmp_path / "effects" / "intents.jsonl").read_text()
+    # The recorded digest cannot be altered by mutating the caller's dict.
+    second = boundary(tmp_path, lambda call: {"ok": True}, writer_id="loop-2")
+    again = second.recover(call)
+    assert again["operation_id"] == first["operation_id"]
+    assert again["status"] == "completed"
+    assert again["result"] == {"ok": True}
+
+
+def test_boundary_noncanonical_result_raises_before_the_outcome_is_written(tmp_path):
+    store = tmp_path / "effects"
+    dispatch = boundary(tmp_path, lambda call: {"bad": object()})
+    with pytest.raises(StoreUnavailable):
+        dispatch(NATIVE_CALL)
+    assert (store / "outcomes.jsonl").read_text().strip() == ""
+    assert (store / "starts.jsonl").read_text().strip() != ""
+    assert dispatch.recover(NATIVE_CALL)["status"] == "unknown"
+
+
+def test_boundary_start_without_outcome_is_unknown_to_a_successor(tmp_path):
+    """A real process is killed mid-execution; no successor reruns it."""
+    store = tmp_path / "effects"
+    script = tmp_path / "child.py"
+    script.write_text(textwrap.dedent(
+        """
+        import json, sys, time
+        from pathlib import Path
+        sys.path.insert(0, %r)
+        from mishe_tauftauf.inference_effects import EffectBoundary
+        NATIVE_CALL = {"type": "toolCall", "id": "call_native|fc_native",
+                       "name": "inspect", "arguments": {"path": "owned-evidence"}}
+        started = []
+        boundary = EffectBoundary(Path(%r), writer_id="loop-1",
+                                  execute=lambda call: (
+                                      print(json.dumps({"started": True}), flush=True),
+                                      time.sleep(600))[1],
+                                  obligation={"source": "owned-event"},
+                                  authority="marker_root:read-owned-evidence")
+        started.append(boundary(NATIVE_CALL))
+        print(json.dumps({"outcome": started[0]["status"]}), flush=True)
+        time.sleep(600)
+        """
+        % (str(STORE), str(store))))
+    child = subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True)
+    try:
+        line = child.stdout.readline()
+        if not line:
+            raise AssertionError(
+                f"child produced no receipt; stderr:\n{child.stderr.read()}")
+        assert json.loads(line) == {"started": True}
+    finally:
+        child.kill()
+        child.wait(timeout=10)
+    successor = boundary(tmp_path, lambda call: pytest.fail("redispatched"),
+                         writer_id="loop-2")
+    state = successor.recover(NATIVE_CALL)
+    assert state["status"] == "unknown"
+    assert state["failure"] == "started-without-outcome"
+    assert (store / "starts.jsonl").read_text().strip() != ""
+    assert (store / "outcomes.jsonl").read_text().strip() == ""
+
+
+def test_boundary_recover_reports_a_call_that_never_arrived(tmp_path):
+    dispatch = boundary(tmp_path, lambda call: {"ok": True})
+    assert dispatch.recover(NATIVE_CALL) is None
+    assert dispatch.status("effect-never-issued") is None
+    assert dispatch.reconcile("effect-never-issued")["status"] == "unknown"
+
+
+def test_boundary_an_operation_id_can_be_caller_named(tmp_path):
+    seen = []
+    call = {"type": "toolCall", "id": "call-77", "name": "inspect",
+            "arguments": {"path": "owned-evidence"},
+            "operation_id": "report-37233-v1"}
+    reply = boundary(tmp_path, lambda call: seen.append(call) or {"ok": True})(call)
+    assert reply["operation_id"] == "report-37233-v1"
+    assert seen[0]["operation_id"] == "report-37233-v1"
+    assert (tmp_path / "effects" / "intents.jsonl").read_text().strip()
+
+
+def test_boundary_rejects_a_call_without_an_identity(tmp_path):
+    dispatch = boundary(tmp_path, lambda call: {"ok": True})
+    with pytest.raises(ValueError):
+        dispatch({"type": "toolCall", "name": "inspect", "arguments": {}})
+    with pytest.raises(ValueError):
+        dispatch({"type": "toolCall", "id": "no|name", "arguments": {}})
+    with pytest.raises(ValueError):
+        dispatch({"type": "toolCall", "id": "no-args", "name": "inspect"})
+
+
+def test_boundary_requires_authority(tmp_path):
+    with pytest.raises(ValueError):
+        EffectBoundary(tmp_path / "effects", execute=lambda call: None,
+                       writer_id="loop-1", obligation={"source": "owned-event"},
+                       authority="")
+
+
+def test_boundary_provider_ids_outside_the_journal_alphabet_are_stable(tmp_path):
+    seen = []
+    odd = {"type": "toolCall", "id": "a b/c?", "name": "inspect",
+           "arguments": {"path": "owned-evidence"}}
+    dispatch = boundary(tmp_path, lambda call: seen.append(call) or {"ok": True})
+    reply = dispatch(odd)
+    assert reply["operation_id"] == "effect-a-b-c-817d7883382b"
+    # The derived id is collision-free and the original id is retained verbatim.
+    fresh = boundary(tmp_path, lambda call: pytest.fail("unexpected execution"),
+                     writer_id="loop-2")
+    again = fresh.recover(odd)
+    assert again["operation_id"] == "effect-a-b-c-817d7883382b"
+    assert again["status"] == "completed"
+    assert len(seen) == 1
+    assert seen[0]["native_call"]["id"] == "a b/c?"
+
+
+def test_effect_outcome_for_keeps_the_durable_states(tmp_path):
+    led = ledger(tmp_path)
+    intent = allocate(led)
+    led.dispatch(intent, lambda call: {"recorded": True, "seq": 12})
+    reply = effect_outcome_for(led.reconcile("op-1"))
+    assert reply == {"status": "completed", "result": {"recorded": True, "seq": 12},
+                     "operation_id": "op-1", "failure": None,
+                     "reconciliation_ref": None, "executions": 1}
+    assert effect_outcome_for(
+        led.reconcile("never")) == {"status": "unknown", "result": None,
+                                    "operation_id": "never", "failure": "no-intent",
+                                    "reconciliation_ref": None, "executions": 0}
+
+
+def test_snapshot_json_refuses_noncanonical_values():
+    assert snapshot_json({"a": [1, 2]}) == {"a": [1, 2]}
+    with pytest.raises(ValueError):
+        snapshot_json({"bad": object()})
+    with pytest.raises(ValueError):
+        snapshot_json({"inf": float("inf")})
