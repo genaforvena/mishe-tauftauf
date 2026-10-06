@@ -565,7 +565,7 @@ def _journal_unit_failure_window(past_minutes: int = 10) -> dict:
         "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,_BOOT_ID,SYSLOG_IDENTIFIER,MESSAGE",
         "--since", since.strftime("%Y-%m-%d %H:%M:%S.%f UTC"),
         "--until", until.strftime("%Y-%m-%d %H:%M:%S.%f UTC"),
-        "--no-pager", "--quiet", "SYSLOG_IDENTIFIER=systemd"])
+        "--no-pager", "--quiet", "-p", "warning", "SYSLOG_IDENTIFIER=systemd"])
     after = _journal_boot()
     finished = time.monotonic_ns()
     coverage["acquisition_finished_ns"] = finished
