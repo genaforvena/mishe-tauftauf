@@ -534,8 +534,11 @@ def _unit_restart_context(units: list[str]) -> dict[str, dict]:
 
     A unit that exits nonzero by design and recovers reads differently from
     one crash-looping: ``restarts=N active=running`` vs ``active=failed``.
-    User scope first, then system scope for units not found there. Returns
-    an empty dict when systemctl is unavailable or no unit is found.
+    User scope first, then system scope for units not loaded there. Returns
+    an empty dict when systemctl is unavailable. Only units with
+    ``LoadState=loaded`` are accepted — ``systemctl --user show`` reports
+    system-scope units as ``inactive`` (not ``not-found``), so ``LoadState``
+    is required to distinguish them.
     """
     if not units:
         return {}
@@ -548,7 +551,7 @@ def _unit_restart_context(units: list[str]) -> dict[str, dict]:
             break
         try:
             result = subprocess.run(["systemctl", *scope, "show", *remaining,
-                                     "-p", "Id,NRestarts,ActiveState"],
+                                     "-p", "Id,NRestarts,ActiveState,LoadState"],
                                     capture_output=True, text=True, timeout=5,
                                     env=environment)
         except (OSError, subprocess.SubprocessError):
@@ -559,6 +562,8 @@ def _unit_restart_context(units: list[str]) -> dict[str, dict]:
             values = dict(row.split("=", 1) for row in block.splitlines() if "=" in row)
             unit = str(values.get("Id", ""))
             if not unit or unit in context:
+                continue
+            if values.get("LoadState") != "loaded":
                 continue
             try:
                 restarts = int(values.get("NRestarts", "0"))

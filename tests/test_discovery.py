@@ -819,7 +819,7 @@ def test_unit_restart_context_queries_systemctl(monkeypatch):
         calls.append(cmd)
         class Result:
             returncode = 0
-            stdout = "Id=mesh-cleaner.service\nNRestarts=1\nActiveState=running\n\n"
+            stdout = "Id=mesh-cleaner.service\nNRestarts=1\nActiveState=running\nLoadState=loaded\n\n"
         return Result()
     monkeypatch.setattr(discovery.subprocess, "run", fake_run)
     result = discovery._unit_restart_context(["mesh-cleaner.service"])
@@ -832,22 +832,66 @@ def test_unit_restart_context_falls_back_to_system_scope(monkeypatch):
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         class Result:
-            returncode = 1 if "--user" in cmd else 0
-            stdout = "" if "--user" in cmd else "Id=cron.service\nNRestarts=0\nActiveState=failed\n\n"
+            returncode = 0
+            if "--user" in cmd:
+                stdout = ("Id=cron.service\nNRestarts=0\nActiveState=inactive\n"
+                          "LoadState=not-found\n\n")
+            else:
+                stdout = ("Id=cron.service\nNRestarts=0\nActiveState=active\n"
+                          "LoadState=loaded\n\n")
         return Result()
     monkeypatch.setattr(discovery.subprocess, "run", fake_run)
     result = discovery._unit_restart_context(["cron.service"])
-    assert result == {"cron.service": {"restarts": 0, "active": "failed"}}
+    assert result == {"cron.service": {"restarts": 0, "active": "active"}}
     assert len(calls) == 2
     assert "--user" in calls[0]
     assert "--user" not in calls[1]
 
 
-def test_unit_restart_context_returns_empty_when_systemctl_unavailable(monkeypatch):
+def test_unit_restart_context_returns_empty_on_timeout(monkeypatch):
     def fake_run(cmd, **kwargs):
-        raise OSError("no systemctl")
+        raise subprocess.TimeoutExpired(cmd, 5)
     monkeypatch.setattr(discovery.subprocess, "run", fake_run)
     result = discovery._unit_restart_context(["mesh-cleaner.service"])
+    assert result == {}
+
+
+def test_unit_restart_context_skips_nonzero_returncode(monkeypatch):
+    def fake_run(cmd, **kwargs):
+        class Result:
+            returncode = 1
+            stdout = ""
+        return Result()
+    monkeypatch.setattr(discovery.subprocess, "run", fake_run)
+    result = discovery._unit_restart_context(["mesh-cleaner.service"])
+    assert result == {}
+
+
+def test_unit_restart_context_handles_invalid_nrestarts(monkeypatch):
+    def fake_run(cmd, **kwargs):
+        class Result:
+            returncode = 0
+            stdout = ("Id=mesh-cleaner.service\nNRestarts=abc\nActiveState=active\n"
+                      "LoadState=loaded\n\n")
+        return Result()
+    monkeypatch.setattr(discovery.subprocess, "run", fake_run)
+    result = discovery._unit_restart_context(["mesh-cleaner.service"])
+    assert result == {"mesh-cleaner.service": {"restarts": 0, "active": "active"}}
+
+
+def test_unit_restart_context_skips_block_without_id(monkeypatch):
+    def fake_run(cmd, **kwargs):
+        class Result:
+            returncode = 0
+            stdout = "NRestarts=0\nActiveState=active\nLoadState=loaded\n\n"
+        return Result()
+    monkeypatch.setattr(discovery.subprocess, "run", fake_run)
+    result = discovery._unit_restart_context(["mesh-cleaner.service"])
+    assert result == {}
+
+
+def test_unit_restart_context_empty_units_returns_empty():
+    result = discovery._unit_restart_context([])
     assert result == {}
 
 
