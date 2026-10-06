@@ -335,9 +335,12 @@ still read verified. The renderer coverage sense
 (`sense.runtime.renderer-coverage`) reads each Top Pain's exported root and
 entry module, hashes that module's package import closure in the renderer root
 and in the pin, and reports `drift` naming every module that differs or is
-missing on either side. A renderer that inherits the pin is already covered by
-the service comparison and is not listed; `unavailable` means no renderer
-exports its own root.
+missing on either side. A renderer that does not export `PYTHONPATH` inherits
+its root from the pane watcher's environment; the sense resolves that root from
+the pane's start command and reports `unknown` naming the role when it cannot.
+The pane's cwd is checked for a `mishe_tauftauf/` package that would shadow the
+`PYTHONPATH` root, since `python -m` inserts the cwd before `PYTHONPATH` in
+`sys.path`. `unavailable` means no renderer runs a package module at all.
 
 ### Linked health is a separate live check
 

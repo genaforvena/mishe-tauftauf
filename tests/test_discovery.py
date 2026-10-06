@@ -1284,7 +1284,7 @@ def test_top_pain_roots_expands_the_scripts_home_variable() -> None:
               "exec python -m mishe_tauftauf.wall_view --home \"$home\" --role senses\n")
     roots, failure = discovery._top_pain_roots(home)
     assert failure is None
-    assert roots == [("/srv/site/artifacts/trial/runtime", "wall_view")]
+    assert roots == [("/srv/site/artifacts/trial/runtime", "wall_view", "exported", "senses")]
 
 
 def test_top_pain_roots_reads_every_entry_a_script_names() -> None:
@@ -1297,10 +1297,11 @@ def test_top_pain_roots_reads_every_entry_a_script_names() -> None:
               "exec python -m mishe_tauftauf.wall_view --role health\n")
     roots, failure = discovery._top_pain_roots(home)
     assert failure is None
-    assert roots == [("/srv/snapshot", "seed_culture_views"), ("/srv/snapshot", "wall_view")]
+    assert roots == [("/srv/snapshot", "seed_culture_views", "exported", "health"),
+                     ("/srv/snapshot", "wall_view", "exported", "health")]
 
 
-def test_top_pain_roots_skips_a_renderer_that_inherits_the_pin() -> None:
+def test_top_pain_roots_returns_an_inherited_renderer_with_marker() -> None:
     from mishe_tauftauf import discovery
 
     home = tmp_site_with_services()
@@ -1308,7 +1309,7 @@ def test_top_pain_roots_skips_a_renderer_that_inherits_the_pin() -> None:
               "exec python -m mishe_tauftauf.seed_culture_views --view permissions\n")
     roots, failure = discovery._top_pain_roots(home)
     assert failure is None
-    assert roots == []
+    assert roots == [("", "seed_culture_views", "inherited", "permissions")]
 
 
 def test_top_pain_roots_reports_an_unresolvable_import_root() -> None:
@@ -1331,7 +1332,7 @@ def test_top_pain_roots_reads_a_quoted_pythonpath() -> None:
               "exec python -m mishe_tauftauf.wall_view\n")
     roots, failure = discovery._top_pain_roots(home)
     assert failure is None
-    assert roots == [("/srv/snapshot", "wall_view")]
+    assert roots == [("/srv/snapshot", "wall_view", "exported", "senses")]
 
 
 def test_top_pain_roots_leaves_a_longer_variable_unresolved() -> None:
@@ -1370,7 +1371,8 @@ def test_renderer_coverage_names_a_renderer_root_stale_against_the_pin() -> None
     _top_pain(home, "senses",
               f"export PYTHONPATH={renderer}/src\nexec python -m mishe_tauftauf.wall_view\n")
     try:
-        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)):
+        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
+                patch("mishe_tauftauf.discovery._pane_info", return_value={}):
             reading = discovery._renderer_coverage(home)
     finally:
         shutil.rmtree(pin)
@@ -1392,7 +1394,8 @@ def test_renderer_coverage_names_a_module_the_renderer_root_lacks() -> None:
     _top_pain(home, "senses",
               f"export PYTHONPATH={renderer}/src\nexec python -m mishe_tauftauf.wall_view\n")
     try:
-        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)):
+        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
+                patch("mishe_tauftauf.discovery._pane_info", return_value={}):
             reading = discovery._renderer_coverage(home)
     finally:
         shutil.rmtree(pin)
@@ -1412,7 +1415,8 @@ def test_renderer_coverage_reports_verified_when_the_renderer_matches_the_pin() 
     _top_pain(home, "senses",
               f"export PYTHONPATH={renderer}/src\nexec python -m mishe_tauftauf.wall_view\n")
     try:
-        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)):
+        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
+                patch("mishe_tauftauf.discovery._pane_info", return_value={}):
             reading = discovery._renderer_coverage(home)
     finally:
         shutil.rmtree(pin)
@@ -1446,6 +1450,113 @@ def test_renderer_coverage_keeps_an_unreadable_pin_unknown() -> None:
         shutil.rmtree(renderer)
     assert reading["state"] == "unknown"
     assert reading["sample"] == "pin unreadable: pin invalid: not a clean worktree"
+
+def test_pane_info_reads_role_names_from_start_commands() -> None:
+    from mishe_tauftauf import discovery
+    stdout = (
+        "%0|env PYTHONPATH=/srv/pin/src python -m mishe_tauftauf pain watch senses --interval 5|/srv/site\n"
+        "%1|env PYTHONPATH=/srv/pin/src python -m mishe_tauftauf pain watch health --interval 5|/srv/site\n"
+        "%2||/srv/site\n"
+    )
+    with patch("mishe_tauftauf.discovery.subprocess.run", return_value=_completed(stdout)):
+        info = discovery._pane_info()
+    assert info == {
+        "senses": ("env PYTHONPATH=/srv/pin/src python -m mishe_tauftauf pain watch senses --interval 5", "/srv/site"),
+        "health": ("env PYTHONPATH=/srv/pin/src python -m mishe_tauftauf pain watch health --interval 5", "/srv/site"),
+    }
+
+
+def test_pane_info_returns_empty_when_tmux_fails() -> None:
+    from mishe_tauftauf import discovery
+    with patch("mishe_tauftauf.discovery.subprocess.run", return_value=_completed("", returncode=1)):
+        assert discovery._pane_info() == {}
+
+
+def test_renderer_coverage_resolves_inherited_renderer_from_pane() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    modules = {"wall_view": "VALUE = 1\n"}
+    pin = _renderer_root(Path("/tmp") / f"renderer-inherit-pin-{os.getpid()}", dict(modules))
+    renderer = _renderer_root(Path("/tmp") / f"renderer-inherit-live-{os.getpid()}", dict(modules))
+    _top_pain(home, "permissions",
+              "exec python -m mishe_tauftauf.seed_culture_views --view permissions\n")
+    pane = {("permissions"): (f"env PYTHONPATH={renderer}/src python -m mishe_tauftauf pain watch permissions", str(home))}
+    try:
+        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
+                patch("mishe_tauftauf.discovery._pane_info", return_value=pane):
+            reading = discovery._renderer_coverage(home)
+    finally:
+        shutil.rmtree(pin)
+        shutil.rmtree(renderer)
+    assert reading["state"] == "verified"
+    assert reading["sample"] == "renderers=1"
+    assert reading["identity"]["renderers"] == [":seed_culture_views:inherited"]
+
+
+def test_renderer_coverage_reports_unknown_for_unresolvable_inherited_renderer() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    _top_pain(home, "permissions",
+              "exec python -m mishe_tauftauf.seed_culture_views --view permissions\n")
+    with patch("mishe_tauftauf.discovery._pinned_root", return_value=("/srv/pin", None)), \
+            patch("mishe_tauftauf.discovery._pane_info", return_value={}):
+        reading = discovery._renderer_coverage(home)
+    assert reading["state"] == "unknown"
+    assert "inherited_unknown=permissions" in reading["sample"]
+
+
+def test_renderer_coverage_detects_cwd_shadowing() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    pin = _renderer_root(Path("/tmp") / f"renderer-shadow-pin-{os.getpid()}",
+                         {"wall_view": "VALUE = 1\n"})
+    renderer = _renderer_root(Path("/tmp") / f"renderer-shadow-live-{os.getpid()}",
+                              {"wall_view": "VALUE = 1\n"})
+    cwd = Path("/tmp") / f"renderer-shadow-cwd-{os.getpid()}"
+    cwd_package = cwd / "mishe_tauftauf"
+    cwd_package.mkdir(parents=True)
+    (cwd_package / "wall_view.py").write_text("VALUE = 2\n", encoding="utf-8")
+    _top_pain(home, "senses",
+              f"export PYTHONPATH={renderer}/src\nexec python -m mishe_tauftauf.wall_view\n")
+    pane = {"senses": (f"env PYTHONPATH={renderer}/src python -m mishe_tauftauf pain watch senses", str(cwd))}
+    try:
+        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
+                patch("mishe_tauftauf.discovery._pane_info", return_value=pane):
+            reading = discovery._renderer_coverage(home)
+    finally:
+        shutil.rmtree(pin)
+        shutil.rmtree(renderer)
+        shutil.rmtree(cwd)
+    assert reading["state"] == "drift"
+    assert reading["identity"]["drift"] == [
+        {"root": str(cwd), "entry": "wall_view", "modules": ["wall_view"]}]
+
+
+def test_renderer_coverage_ignores_cwd_without_package() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    modules = {"wall_view": "VALUE = 1\n"}
+    pin = _renderer_root(Path("/tmp") / f"renderer-noshadow-pin-{os.getpid()}", dict(modules))
+    renderer = _renderer_root(Path("/tmp") / f"renderer-noshadow-live-{os.getpid()}", dict(modules))
+    cwd = Path("/tmp") / f"renderer-noshadow-cwd-{os.getpid()}"
+    cwd.mkdir(parents=True)
+    _top_pain(home, "senses",
+              f"export PYTHONPATH={renderer}/src\nexec python -m mishe_tauftauf.wall_view\n")
+    pane = {"senses": (f"env PYTHONPATH={renderer}/src python -m mishe_tauftauf pain watch senses", str(cwd))}
+    try:
+        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
+                patch("mishe_tauftauf.discovery._pane_info", return_value=pane):
+            reading = discovery._renderer_coverage(home)
+    finally:
+        shutil.rmtree(pin)
+        shutil.rmtree(renderer)
+        shutil.rmtree(cwd)
+    assert reading["state"] == "verified"
+    assert reading["sample"] == "renderers=1"
 
 
 def test_service_import_roots_parses_and_deduplicates_pythonpath() -> None:
