@@ -35,7 +35,7 @@ try {
    if (!request || typeof request !== 'object') throw new Error('request object required');
    if (request.type === 'close') {closed = true; break;}
    if (request.type !== 'turn' || request.id !== next) throw new Error('sequential turn ID required');
-   const frame = await session.turn(request.context);
+   const frame = await session.turn(request.context, undefined, request.checkpoint);
    emit({type:'turn',id:next,frame});
    next++;
   }

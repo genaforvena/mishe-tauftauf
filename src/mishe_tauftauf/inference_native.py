@@ -28,7 +28,8 @@ def native_worker_command(
     source = files("mishe_tauftauf").joinpath("native")
     with TemporaryDirectory(prefix="mishe-native-", dir=staging_parent) as tmp:
         stage = Path(tmp)
-        for name in ("native-loop-worker.ts", "native-session.ts", "native-bootstrap.ts"):
+        for name in ("native-loop-worker.ts", "native-session.ts", "native-bootstrap.ts",
+                     "native-checkpoint.ts"):
             (stage / name).write_bytes(source.joinpath(name).read_bytes())
         (stage / "node_modules").symlink_to(node_modules, target_is_directory=True)
         yield [str(bun), "--no-install", "--no-env-file", str(stage / "native-loop-worker.ts")]
