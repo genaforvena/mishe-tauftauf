@@ -909,6 +909,38 @@ TOP_PAIN_PATH = re.compile(r"""PYTHONPATH=("[^"]*"|'[^']*'|[^\s'\";]+)""")
 TOP_PAIN_HOME = re.compile(r"^\s*home=([^\s'\";]+)", re.MULTILINE)
 TOP_PAIN_VAR = re.compile(r"\$\{home\}|\$home(?![A-Za-z0-9_])")
 
+PANE_ROLE = re.compile(r"\bpain watch ([A-Za-z0-9_-]+)")
+"""The role name a pane watcher runs, extracted from its start command."""
+
+
+def _pane_info() -> dict[str, tuple[str, str]]:
+    """Map each pane's role name to its (start_command, current_path).
+
+    Reads ``tmux list-panes -a`` once; returns empty when tmux is unavailable
+    or no session is running. The role name is the token after ``pain watch``
+    in the pane's start command, matching the Top Pain script name.
+    """
+    try:
+        result = subprocess.run(
+            ["tmux", "list-panes", "-a", "-F",
+             "#{pane_id}|#{pane_start_command}|#{pane_current_path}"],
+            capture_output=True, text=True, timeout=5
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    if result.returncode != 0:
+        return {}
+    info: dict[str, tuple[str, str]] = {}
+    for line in result.stdout.splitlines():
+        parts = line.split("|", 2)
+        if len(parts) != 3:
+            continue
+        _, start_command, current_path = parts
+        match = PANE_ROLE.search(start_command)
+        if match:
+            info[match.group(1)] = (start_command, current_path)
+    return info
+
 
 def _shell_home(value: str, script: str) -> str | None:
     """Expand a Top Pain's ``$home`` reference, or None when it stays unknown.
@@ -923,20 +955,22 @@ def _shell_home(value: str, script: str) -> str | None:
     return None if "$" in value else value
 
 
-def _top_pain_roots(home: Path) -> tuple[list[tuple[str, str]], str | None]:
-    """The (import root, entry module) each pane renderer runs, with a reason.
+def _top_pain_roots(home: Path) -> tuple[list[tuple[str, str, str, str]], str | None]:
+    """The (import root, entry module, source, role) each pane renderer runs.
 
     A Top Pain may export PYTHONPATH itself, which overrides the pin its pane
     watcher runs under, so its renderer imports a root no service manifest
-    names. Only renderers that both export a root and name a package entry are
-    returned: one that inherits the pin is already covered by the service
-    comparison, and one that runs no package module has no closure to read.
+    names. A renderer that does not export PYTHONPATH inherits its root from
+    the pane watcher's environment; it is returned with an empty root and the
+    source "inherited" so the caller can resolve the effective root. One that
+    runs no package module has no closure to read. The role is the Top Pain
+    script filename, matching the pane watcher's role name.
     """
     directory = home / "top-pains"
     if not directory.is_dir():
         return [], None
-    found: list[tuple[str, str]] = []
-    seen: set[tuple[str, str]] = set()
+    found: list[tuple[str, str, str, str]] = []
+    seen: set[tuple[str, str, str, str]] = set()
     for path in sorted(directory.iterdir()):
         if not path.is_file():
             continue
@@ -945,8 +979,14 @@ def _top_pain_roots(home: Path) -> tuple[list[tuple[str, str]], str | None]:
         except (OSError, UnicodeDecodeError):
             return [], f"top-pain {path.name} unreadable"
         entry = [match.group(1) for match in TOP_PAIN_ENTRY.finditer(text)]
+        if not entry:
+            continue
         declared = TOP_PAIN_PATH.search(text)
-        if not entry or declared is None:
+        if declared is None:
+            for module in entry:
+                if ("", module, "inherited", path.name) not in seen:
+                    seen.add(("", module, "inherited", path.name))
+                    found.append(("", module, "inherited", path.name))
             continue
         value = declared.group(1)
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
@@ -959,9 +999,9 @@ def _top_pain_roots(home: Path) -> tuple[list[tuple[str, str]], str | None]:
             if not root:
                 continue
             for module in entry:
-                if (root, module) not in seen:
-                    seen.add((root, module))
-                    found.append((root, module))
+                if (root, module, "exported", path.name) not in seen:
+                    seen.add((root, module, "exported", path.name))
+                    found.append((root, module, "exported", path.name))
     return found, None
 
 
@@ -1016,13 +1056,17 @@ def _module_digests(package: Path, entry: str) -> dict[str, str | None]:
 
 
 def _renderer_coverage(home: Path) -> dict[str, object]:
-    """Compare every self-rooted pane renderer's import closure with the pin's.
+    """Compare every pane renderer's import closure with the pin's.
 
     A renderer that exports its own PYTHONPATH renders from a root the service
     comparison never sees, so a stale snapshot there shows old logic in a pane
-    while the dashboard still reads verified. Each renderer's package closure is
-    hashed in its own root and in the pin; a module that differs, is missing
-    from the renderer root, or is missing from the pin is drift.
+    while the dashboard still read verified. A renderer that inherits its root
+    from the pane watcher's environment is resolved from the pane's start
+    command. Each renderer's package closure is hashed in its effective root
+    and in the pin; a module that differs, is missing from the renderer root,
+    or is missing from the pin is drift. The pane's cwd is checked for a
+    ``mishe_tauftauf/`` package that would shadow the PYTHONPATH root, since
+    ``python -m`` inserts the cwd before PYTHONPATH in ``sys.path``.
     """
     pairs, failure = _top_pain_roots(home)
     if failure is not None:
@@ -1038,25 +1082,60 @@ def _renderer_coverage(home: Path) -> dict[str, object]:
     pinned = Path(pin) / "src" / "mishe_tauftauf"
     references: dict[str, dict[str, str | None]] = {}
     drift: list[dict[str, object]] = []
-    for root, entry in pairs:
+    inherited_unknown: list[str] = []
+    pane_info = _pane_info()
+    for root, entry, source, role in pairs:
+        effective_root = root
+        package_path = Path(root) / "src" / "mishe_tauftauf"
+        if source == "inherited":
+            pane = pane_info.get(role)
+            resolved = False
+            if pane is not None:
+                start_command, _ = pane
+                declared = TOP_PAIN_PATH.search(start_command)
+                if declared is not None:
+                    value = declared.group(1)
+                    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                        value = value[1:-1]
+                    for component in value.split(os.pathsep):
+                        candidate = _import_root(component)
+                        if candidate:
+                            effective_root = candidate
+                            package_path = Path(candidate) / "src" / "mishe_tauftauf"
+                            resolved = True
+                            break
+            if not resolved:
+                inherited_unknown.append(role)
+                continue
+        # Check the pane's cwd for a shadowing package
+        pane = pane_info.get(role)
+        if pane is not None:
+            _, current_path = pane
+            cwd_package = Path(current_path) / "mishe_tauftauf"
+            if cwd_package.is_dir():
+                effective_root = current_path
+                package_path = cwd_package
         if entry not in references:
             references[entry] = _module_digests(pinned, entry)
-        local = _module_digests(Path(root) / "src" / "mishe_tauftauf", entry)
+        local = _module_digests(package_path, entry)
         # Compare the union: a module the pin's closure reaches but the
         # renderer's does not is drift too, and only the local walk would miss it.
         reference = references[entry]
         differing = sorted(name for name in set(local) | set(reference)
                            if local.get(name) != reference.get(name))
         if differing:
-            drift.append({"root": root, "entry": entry, "modules": differing})
+            drift.append({"root": effective_root, "entry": entry, "modules": differing})
     parts = [f"renderers={len(pairs)}"]
+    if inherited_unknown:
+        parts.append("inherited_unknown=" + ",".join(sorted(inherited_unknown)))
     if drift:
         parts.append("drift=" + " ".join(
             f"{item['entry']}=" + ",".join(item["modules"]) for item in drift))
+    state = "unknown" if inherited_unknown else ("drift" if drift else "verified")
     return {"id": "sense.runtime.renderer-coverage",
-            "state": "drift" if drift else "verified",
+            "state": state,
             "sample": " ".join(parts), "kind": "read",
-            "identity": {"renderers": [f"{root}:{entry}" for root, entry in pairs],
+            "identity": {"renderers": [f"{root}:{entry}:{source}" for root, entry, source, _ in pairs],
                          "drift": drift, "pin": pin}}
 
 def sample(home: Path) -> dict[str, object]:
