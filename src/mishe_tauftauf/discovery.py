@@ -1021,11 +1021,14 @@ def _top_pain_roots(home: Path) -> tuple[list[tuple[str, str, str, str]], list[s
     watcher runs under, so its renderer imports a root no service manifest
     names. An export that is conditional or built from the inherited
     ``$PYTHONPATH`` does not name the effective root, so it is returned with
-    the source "conditional". A renderer that does not export PYTHONPATH
-    inherits its root from the pane watcher's environment; it is returned with
-    an empty root and the source "inherited" so the caller can resolve the
-    effective root. Only an executable Top Pain can render, so a file without
-    the executable bit is ignored. The second value lists executable Top Pains
+    the source "conditional". An export that names no usable root at all (an
+    empty ``PYTHONPATH`` or a bare separator) is returned with the source
+    "unresolvable": the script still runs a package module, but its effective
+    root is unread. A renderer that does not export PYTHONPATH inherits its
+    root from the pane watcher's environment; it is returned with an empty
+    root and the source "inherited" so the caller can resolve the effective
+    root. Only an executable Top Pain can render, so a file without the
+    executable bit is ignored. The second value lists executable Top Pains
     that run no package module, so the sense shows its scope rather than only
     the renderers it covers. The role is the Top Pain script filename, matching
     the pane watcher's role name.
@@ -1066,14 +1069,24 @@ def _top_pain_roots(home: Path) -> tuple[list[tuple[str, str, str, str]], list[s
         value = _shell_home(value, text)
         if value is None:
             return [], [], f"top-pain {path.name} import root unresolvable"
+        resolved = False
         for component in value.split(os.pathsep):
             root = _import_root(component)
             if not root:
                 continue
+            resolved = True
             for module in entry:
                 if (root, module, "exported", path.name) not in seen:
                     seen.add((root, module, "exported", path.name))
                     found.append((root, module, "exported", path.name))
+        if not resolved:
+            # The export names no root the renderer can import from, yet the
+            # script runs a package module. Report the role unread so it is
+            # neither counted as covered nor dropped from the sense's scope.
+            for module in entry:
+                if ("", module, "unresolvable", path.name) not in seen:
+                    seen.add(("", module, "unresolvable", path.name))
+                    found.append(("", module, "unresolvable", path.name))
     return found, uncovered, None
 
 
@@ -1148,7 +1161,7 @@ def _renderer_coverage(home: Path) -> dict[str, object]:
                 "sample": failure, "kind": "read"}
     if not pairs:
         return {"id": "sense.runtime.renderer-coverage", "state": "unavailable",
-                "sample": "no renderer exports its own import root", "kind": "read"}
+                "sample": "no Top Pain runs a package module", "kind": "read"}
     pin, pin_failure = _pinned_root(home, str(Path(home).resolve().parent))
     if pin is None:
         return {"id": "sense.runtime.renderer-coverage", "state": "unknown",
@@ -1158,6 +1171,7 @@ def _renderer_coverage(home: Path) -> dict[str, object]:
     drift: list[dict[str, object]] = []
     inherited_unknown: list[str] = []
     conditional_unknown: list[str] = []
+    export_unknown: list[str] = []
     pane_info = _pane_info()
     for root, entry, source, role in pairs:
         effective_root = root
@@ -1167,6 +1181,11 @@ def _renderer_coverage(home: Path) -> dict[str, object]:
             # The text names a root the watcher's environment may override, and
             # no reading here can decide which fired: report it unread.
             conditional_unknown.append(role)
+            continue
+        if source == "unresolvable":
+            # The export names no usable root, so the renderer's effective
+            # root is unread rather than the pin.
+            export_unknown.append(role)
             continue
         if source == "inherited":
             resolved = False
@@ -1203,12 +1222,14 @@ def _renderer_coverage(home: Path) -> dict[str, object]:
         parts.append("inherited_unknown=" + ",".join(sorted(inherited_unknown)))
     if conditional_unknown:
         parts.append("conditional_unknown=" + ",".join(sorted(conditional_unknown)))
+    if export_unknown:
+        parts.append("export_unknown=" + ",".join(sorted(export_unknown)))
     if uncovered:
         parts.append("uncovered=" + ",".join(sorted(uncovered)))
     if drift:
         parts.append("drift=" + " ".join(
             f"{item['entry']}=" + ",".join(item["modules"]) for item in drift))
-    unresolved = inherited_unknown or conditional_unknown
+    unresolved = inherited_unknown or conditional_unknown or export_unknown
     state = "unknown" if unresolved else ("drift" if drift else "verified")
     return {"id": "sense.runtime.renderer-coverage",
             "state": state,

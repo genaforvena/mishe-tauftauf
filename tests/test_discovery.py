@@ -1431,13 +1431,13 @@ def test_renderer_coverage_reports_verified_when_the_renderer_matches_the_pin() 
     assert reading["sample"] == "renderers=1"
 
 
-def test_renderer_coverage_is_unavailable_without_a_self_rooted_renderer() -> None:
+def test_renderer_coverage_is_unavailable_without_a_package_renderer() -> None:
     from mishe_tauftauf import discovery
 
     home = tmp_site_with_services()
     reading = discovery._renderer_coverage(home)
     assert reading["state"] == "unavailable"
-    assert reading["sample"] == "no renderer exports its own import root"
+    assert reading["sample"] == "no Top Pain runs a package module"
 
 
 def test_renderer_coverage_keeps_an_unreadable_pin_unknown() -> None:
@@ -1615,6 +1615,30 @@ def test_top_pain_roots_names_a_renderer_with_no_package_entry() -> None:
     assert uncovered == ["observability"]
 
 
+def test_top_pain_roots_marks_an_export_naming_no_root_unresolved() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    _top_pain(home, "senses",
+              'export PYTHONPATH=""\nexec python -m mishe_tauftauf.wall_view\n')
+    roots, uncovered, failure = discovery._top_pain_roots(home)
+    assert failure is None
+    assert uncovered == []
+    assert roots == [("", "wall_view", "unresolvable", "senses")]
+
+
+def test_top_pain_roots_marks_a_bare_separator_export_unresolved() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    _top_pain(home, "senses",
+              'export PYTHONPATH=":"\nexec python -m mishe_tauftauf.wall_view\n')
+    roots, uncovered, failure = discovery._top_pain_roots(home)
+    assert failure is None
+    assert uncovered == []
+    assert roots == [("", "wall_view", "unresolvable", "senses")]
+
+
 def test_top_pain_roots_ignores_a_file_that_cannot_render() -> None:
     from mishe_tauftauf import discovery
 
@@ -1661,6 +1685,20 @@ def test_renderer_coverage_reports_a_conditional_export_unknown() -> None:
         reading = discovery._renderer_coverage(home)
     assert reading["state"] == "unknown"
     assert reading["sample"] == "renderers=1 conditional_unknown=senses"
+
+
+def test_renderer_coverage_reports_an_export_naming_no_root_unknown() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    _top_pain(home, "senses",
+              'export PYTHONPATH=""\nexec python -m mishe_tauftauf.wall_view\n')
+    with patch("mishe_tauftauf.discovery._pinned_root", return_value=("/srv/pin", None)), \
+            patch("mishe_tauftauf.discovery._pane_info", return_value={}):
+        reading = discovery._renderer_coverage(home)
+    assert reading["state"] == "unknown"
+    assert reading["sample"] == "renderers=1 export_unknown=senses"
+    assert reading["identity"]["renderers"] == [":wall_view:unresolvable"]
 
 
 def test_renderer_coverage_prefers_the_pane_environment_over_the_command() -> None:
