@@ -198,6 +198,12 @@ class DispatchClaim:
                    started_at=float(record.get("started_at") or 0.0))
 
 
+_RECORD_TYPES = {"intent": EffectIntent, "start": DispatchClaim,
+                 "outcome": EffectOutcome}
+_JOURNAL_TYPES = {"intents.jsonl": "intent", "starts.jsonl": "start",
+                  "outcomes.jsonl": "outcome"}
+
+
 def _snapshot(value: Any) -> Any:
     """Return a copy whose later mutation cannot change what was dispatched.
 
@@ -299,6 +305,13 @@ class EffectLedger:
     provenance: it identifies who wrote a record, and does not bar a successor
     from reconciling, because a successor still cannot replay a started
     operation.
+
+    Journals are parsed incrementally. Every read is validated against the
+    file's current inode, size and mtime: an append reuses the already-parsed
+    prefix and parses only the new lines, and an inode change (a rewrite by
+    `drop_reserved` or the reservation upgrade, which replace the file) or any
+    mtime change drops the cache, so a read after a rewrite re-parses the whole
+    file and cannot observe a stale prefix.
     """
 
     def __init__(self, store_dir: Path, *, writer_id: str) -> None:
@@ -312,6 +325,7 @@ class EffectLedger:
         self.outcomes_path = self.store_dir / "outcomes.jsonl"
         self.lock_path = self.store_dir / ".ledger.lock"
         self._lock_depth = 0
+        self._parsed: dict[str, tuple[Any, ...]] = {}
         for path in (self.intents_path, self.starts_path, self.outcomes_path):
             if not path.exists():
                 path.touch()
@@ -343,11 +357,31 @@ class EffectLedger:
                     fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     def _append(self, path: Path, record: Mapping[str, Any]) -> None:
-        line = json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(line)
+        encoded = json.dumps(record, ensure_ascii=False,
+                             separators=(",", ":")).encode("utf-8") + b"\n"
+        with path.open("ab") as handle:
+            handle.write(encoded)
             handle.flush()
             os.fsync(handle.fileno())
+        # An append only writes after the last parsed byte offset, so the parsed
+        # prefix stays valid and the cache can grow by this one record. The
+        # stored inode, size and mtime are refreshed from the closed file, so a
+        # later read sees the append instead of treating the file as changed and
+        # reparsing it. An inode change (a rewrite via os.replace) is not
+        # possible through this method; `_journal` detects one from elsewhere.
+        entry = self._parsed.get(str(path))
+        if entry is None or entry[1] != os.stat(path).st_size - len(encoded):
+            return
+        record_type = _JOURNAL_TYPES[path.name]
+        parsed = dict(entry[3])
+        typed = _RECORD_TYPES[record_type].from_record(record)
+        if typed.operation_id in parsed:
+            raise JournalCorrupt(
+                f"duplicate {record_type} for {typed.operation_id}")
+        parsed[typed.operation_id] = typed
+        stat = path.stat()
+        self._parsed[str(path)] = (stat.st_ino, stat.st_size, stat.st_mtime_ns,
+                                   parsed, stat.st_mtime_ns, 1)
 
     def _read(self, path: Path) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
@@ -357,7 +391,7 @@ class EffectLedger:
         if not data.endswith(b"\n"):
             # A record that lost its terminator means the store was truncated
             # mid-write. No claim may be read from a partial line. The split is
-            # on the real newline byte, not the JSON "\\n" escape that a
+            # on the real newline byte, not the JSON escape that a
             # canonical record may legitimately contain inside a value.
             fragment = data[data.rfind(b"\n") + 1:]
             raise JournalCorrupt(
@@ -377,34 +411,70 @@ class EffectLedger:
             rows.append(record)
         return rows
 
+    def _parse_lines(self, text: str) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for line in text.splitlines():
+            line_text = line.strip()
+            if not line_text:
+                continue
+            try:
+                record = json.loads(line_text)
+            except ValueError as exc:
+                raise JournalCorrupt(f"unreadable line: {exc}") from exc
+            if not isinstance(record, dict):
+                raise JournalCorrupt("non-object line")
+            rows.append(record)
+        return rows
+
+    def _journal(self, path: Path, record_type: str) -> dict[str, Any]:
+        """One parsed journal, appending only the lines added since the last read.
+
+        Journals grow by append, so a read reuses the parsed prefix and parses
+        only the tail. Reuse is gated on the file's inode, size and mtime: a
+        rewrite via `os.replace` (retiring a reservation or upgrading a
+        reservation into a dispatch) changes the inode, and any other writer
+        changes the mtime; either drops the cache to a full reparse, so a read
+        can never observe a stale prefix. A line missing its final newline is a
+        truncated write and fails closed as before.
+        """
+        key = str(path)
+        stat = path.stat()
+        cached = self._parsed.get(key)
+        data = path.read_bytes()
+        if not data:
+            self._parsed[key] = (stat.st_ino, 0, stat.st_mtime_ns, {}, stat.st_mtime_ns, 0)
+            return {}
+        records: dict[str, Any] = {}
+        offset = 0
+        if cached is not None and cached[0] == stat.st_ino and cached[2] == stat.st_mtime_ns \
+                and cached[1] <= len(data) and cached[4] == stat.st_mtime_ns:
+            records = dict(cached[3])
+            offset = cached[1]
+        tail = data[offset:]
+        if tail and not tail.endswith(b"\n"):
+            fragment = tail[tail.rfind(b"\n") + 1:]
+            raise JournalCorrupt(f"truncated line in {path}: {fragment!r}")
+        if tail:
+            for row in self._parse_lines(tail.decode("utf-8", errors="replace")):
+                typed = _RECORD_TYPES[record_type].from_record(row)
+                if typed.operation_id in records:
+                    raise JournalCorrupt(
+                        f"duplicate {record_type} for {typed.operation_id}")
+                records[typed.operation_id] = typed
+        self._parsed[key] = (stat.st_ino, len(data), stat.st_mtime_ns, records,
+                             stat.st_mtime_ns, 0)
+        return records
+
     def _read_intents(self) -> dict[str, EffectIntent]:
-        by_id: dict[str, EffectIntent] = {}
-        for record in self._read(self.intents_path):
-            intent = EffectIntent.from_record(record)
-            if intent.operation_id in by_id:
-                raise JournalCorrupt(f"duplicate intent for {intent.operation_id}")
-            by_id[intent.operation_id] = intent
-        return by_id
+        return self._journal(self.intents_path, "intent")
 
     def _read_starts(self) -> dict[str, DispatchClaim]:
-        by_id: dict[str, DispatchClaim] = {}
-        for record in self._read(self.starts_path):
-            claim = DispatchClaim.from_record(record)
-            if claim.operation_id in by_id:
-                raise JournalCorrupt(f"duplicate start for {claim.operation_id}")
-            by_id[claim.operation_id] = claim
-        return by_id
+        return self._journal(self.starts_path, "start")
 
     def _read_outcomes(self) -> dict[str, EffectOutcome]:
-        by_id: dict[str, EffectOutcome] = {}
-        counts: dict[str, int] = {}
-        for record in self._read(self.outcomes_path):
-            outcome = EffectOutcome.from_record(record)
-            counts[outcome.operation_id] = counts.get(outcome.operation_id, 0) + 1
-            by_id[outcome.operation_id] = outcome
-        for operation_id, count in counts.items():
-            by_id[operation_id] = replace(by_id[operation_id], executions=count)
-        return by_id
+        # Each stored outcome already carries the executions count it was
+        # written with, so the journal value is authoritative.
+        return self._journal(self.outcomes_path, "outcome")
 
     # -- public surface ----------------------------------------------------
 
@@ -751,6 +821,9 @@ class EffectLedger:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(tmp, path)
+        # The rewrite swapped the inode, so the parsed prefix cannot be reused:
+        # the next read reparses the whole file.
+        self._parsed.pop(str(path), None)
 
     def _replace_intent(self, intent: EffectIntent) -> None:
         """Rewrite one intent record under the store lock.
@@ -770,6 +843,9 @@ class EffectLedger:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(tmp, self.intents_path)
+        # The rewrite swapped the inode, so the parsed prefix cannot be reused:
+        # the next read reparses the whole file.
+        self._parsed.pop(str(self.intents_path), None)
 
     # -- helpers -----------------------------------------------------------
 
