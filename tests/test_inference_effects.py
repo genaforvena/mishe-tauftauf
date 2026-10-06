@@ -450,6 +450,43 @@ def test_a_truncated_or_malformed_journal_fails_closed(tmp_path):
     assert "operat" in outcomes.read_text()
 
 
+def test_a_torn_line_is_reported_by_its_real_partial_record(tmp_path):
+    """A torn write is named by the bytes that lost their terminator.
+
+    A canonical record may contain the JSON escape `\\n` inside a string value,
+    so the diagnostic must split on the real newline byte. Searching for the
+    escape instead reports every record since an escaped newline as one
+    fragment, hiding the partial record it exists to name. The operation is
+    reserved, not completed, so its status is read from the intents journal
+    the tear is written into rather than short-circuited by an outcome.
+    """
+    led = ledger(tmp_path)
+    led.reserve("record_marker", "v1", {"text": "first\\nsecond"},
+                authority="marker_root:append-one-line",
+                operation_id="op-1")
+    intents = led.store_dir / "intents.jsonl"
+    # The first record is complete and terminated; the second lost its tail.
+    torn = intents.read_bytes() + b'{"record_type": "intent", "operation_id": "op-2"'
+    intents.write_bytes(torn)
+    with pytest.raises(JournalCorrupt) as excinfo:
+        ledger(tmp_path).status("op-1")
+    message = str(excinfo.value)
+    assert message.endswith(repr(b'{"record_type": "intent", "operation_id": "op-2"'))
+    # The intact record is not dragged into the diagnostic.
+    assert "first\\nsecond" not in message
+    # The evidence is preserved untouched.
+    assert torn == intents.read_bytes()
+
+
+def test_an_escaped_newline_in_a_value_is_not_a_torn_line(tmp_path):
+    """A canonical record containing `\\n` reads back cleanly."""
+    led = ledger(tmp_path)
+    allocate(led, arguments={"text": "a\\nb"})
+    fresh = ledger(tmp_path)
+    assert fresh.status("op-1").status == "unknown"
+    assert fresh._read_intents()["op-1"].arguments == {"text": "a\\nb"}
+
+
 def test_a_duplicated_record_fails_closed(tmp_path):
     led = ledger(tmp_path)
     allocate(led)

@@ -350,8 +350,10 @@ class EffectLedger:
             return rows
         if not data.endswith(b"\n"):
             # A record that lost its terminator means the store was truncated
-            # mid-write. No claim may be read from a partial line.
-            fragment = data[data.rfind(b"\\n") + 1:]
+            # mid-write. No claim may be read from a partial line. The split is
+            # on the real newline byte, not the JSON "\\n" escape that a
+            # canonical record may legitimately contain inside a value.
+            fragment = data[data.rfind(b"\n") + 1:]
             raise JournalCorrupt(
                 f"truncated line in {path}: "
                 f"{fragment!r}")
