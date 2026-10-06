@@ -109,5 +109,9 @@ def test_a_python_subscript_is_not_structured_json() -> None:
                  "The retry reads rows[0] then data[2] before bailing out.",
                  "state[\"sha\"] matched, so the hold was cleared."):
         assert post_check._deterministic(body) == []
-    for body in ('Here is the state: {"status":"done"}.', "The reported counts are [1, 2, 3]."):
+    # Trivial literals are prose, not state; substantial structured state is refused.
+    for body in ('The counts are [1, 2, 3].', 'version list ["v1"]', 'config {"sites": []}'):
+        assert not any(row["id"] == "D01" for row in post_check._deterministic(body))
+    for body in ('Here is the state: {"status":"done","counts":[1,2,3],"nested":{"a":1}}.',
+                 'The report is [{"a":1},{"b":2}].'):
         assert any(row["id"] == "D01" for row in post_check._deterministic(body))

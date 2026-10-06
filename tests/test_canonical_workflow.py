@@ -70,7 +70,7 @@ def test_default_ci_routes_a_message_without_delivery_scheduler(tmp_path, monkey
 def test_chat_keeps_structured_state_in_referenced_records(tmp_path):
     from mishe_tauftauf.post_check import CorrectionRequired
     with pytest.raises(CorrectionRequired):
-        Feed(tmp_path).append("genome", '{"claim":"delivered"}')
+        Feed(tmp_path).append("genome", '{"status":"done","counts":[1,2,3],"nested":{"a":1}}')
     assert Feed(tmp_path).tail_sequence() == 0
 
 

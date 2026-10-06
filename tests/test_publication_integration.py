@@ -21,7 +21,7 @@ def checker(home, bad_stage='post', bad_word='[reject]'):
 
 def test_raw_json_is_refused_through_public_feed_boundary(tmp_path):
     with pytest.raises(CorrectionRequired):
-        Feed(tmp_path).append('genome', '{"status": "done"}')
+        Feed(tmp_path).append('genome', '{"status":"done","counts":[1,2,3],"nested":{"a":1}}')
     assert Feed(tmp_path).tail_sequence() == 0
 
 
