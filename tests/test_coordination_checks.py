@@ -155,3 +155,14 @@ def test_transaction_is_narrow_and_prepared_guards_are_not_effect_proofs(tmp_pat
     assert "admitted_handoff_text" in episodes["R06"]
     assert "transaction" not in episodes["R01"] and "admitted_handoff_text" not in episodes["P01"]
     assert result["proposed"]["transaction"] == transaction
+
+def test_shared_payload_map_equals_unshared_projection_on_a_mixed_tape(tmp_path):
+    from mishe_tauftauf.feed import Feed
+    feed = Feed(tmp_path)
+    feed.append_record('witness', 'Checked evidence.', {'checked': True})
+    feed.append('seed', 'Legacy note.\n{"legacy": true}')
+    feed.append('witness', 'Plain note.')
+    sink = {}
+    entries = feed.entries(payloads=sink)
+    assert sink == {1: {'checked': True}}
+    assert project(entries, payloads=sink) == project(entries)

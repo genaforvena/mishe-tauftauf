@@ -194,8 +194,9 @@ def render(home: Path) -> str:
     lines.append(ci)
     if ci.startswith("CI: FAIL") and verdict.startswith("PASS"):
         verdict = "FAIL witness CI failure needs genome follow-through"
+    payloads = {}
     try:
-        entries = Feed(home).entries()
+        entries = Feed(home).entries(payloads=payloads)
         feed_error = None
     except (OSError, ValueError) as exc:
         feed_error = str(exc)
@@ -268,7 +269,7 @@ def render(home: Path) -> str:
     except ValueError as exc:
         verdict = f"UNKNOWN witness task state: {exc}"
         lines.append(verdict)
-    findings = anomalies(entries)
+    findings = anomalies(entries, payloads=payloads)
     if feed_error:
         findings.append(dict(id='feed-unreadable', task=None, kind='invalid-context', severity='UNKNOWN',
                              message='Canonical feed unavailable: ' + feed_error, sequences=[], evidence=[str(Feed(home).path)]))
