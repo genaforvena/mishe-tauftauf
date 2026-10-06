@@ -1014,6 +1014,97 @@ def test_wedge_chain_records_sourceless_continue(monkeypatch, tmp_path):
                       "sources": {"unknown": 3}}
 
 
+def _write_patch(home: Path, name: str, record: object) -> None:
+    store = home / "patches"
+    store.mkdir(parents=True, exist_ok=True)
+    (store / name).write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+
+def test_ledger_invariant_clean_store(tmp_path):
+    home = tmp_path / "site"
+    _write_patch(home, "a.json", {"phase": "applied", "delivery_verified": True})
+    _write_patch(home, "b.json", {"phase": "reverted", "delivery_verified": False})
+    _write_patch(home, "c.json", {"phase": "review-refused", "delivery_verified": False})
+    _write_patch(home, "d.json", {"phase": "reviewed"})
+    result = discovery._ledger_delivery_invariant(home)
+    assert result["state"] == "verified"
+    assert result["sample"] == "violations=0 records=4 bool_dv=3"
+    assert result["violations"] == {}
+    assert result["records"] == 4
+    assert result["bool_dv"] == 3
+
+
+def test_ledger_invariant_flags_phase_outside_set(tmp_path):
+    home = tmp_path / "site"
+    _write_patch(home, "a.json", {"phase": "applied", "delivery_verified": True})
+    _write_patch(home, "b.json", {"phase": "reviewed", "delivery_verified": True})
+    _write_patch(home, "c.json", {"phase": "prepared", "delivery_verified": False})
+    result = discovery._ledger_delivery_invariant(home)
+    assert result["state"] == "verified"
+    assert result["sample"] == "violations=prepared:1 reviewed:1 records=3 bool_dv=3"
+    assert result["violations"] == {"reviewed": 1, "prepared": 1}
+
+
+def test_ledger_invariant_aggregates_same_phase(tmp_path):
+    home = tmp_path / "site"
+    _write_patch(home, "a.json", {"phase": "reviewed", "delivery_verified": True})
+    _write_patch(home, "b.json", {"phase": "reviewed", "delivery_verified": False})
+    result = discovery._ledger_delivery_invariant(home)
+    assert result["sample"] == "violations=reviewed:2 records=2 bool_dv=2"
+    assert result["violations"] == {"reviewed": 2}
+
+
+def test_ledger_invariant_missing_store_is_unknown(tmp_path):
+    result = discovery._ledger_delivery_invariant(tmp_path / "site")
+    assert result["state"] == "unknown"
+    assert result["sample"] == "patch store unavailable"
+    assert result["records"] == 0
+    assert result["bool_dv"] == 0
+
+
+def test_ledger_invariant_empty_store_is_unknown(tmp_path):
+    (tmp_path / "site" / "patches").mkdir(parents=True)
+    result = discovery._ledger_delivery_invariant(tmp_path / "site")
+    assert result["state"] == "unknown"
+    assert result["sample"] == "records=0 bool_dv=0"
+
+
+def test_ledger_invariant_unreadable_record_is_unknown(tmp_path):
+    home = tmp_path / "site"
+    _write_patch(home, "a.json", {"phase": "applied", "delivery_verified": True})
+    (home / "patches" / "broken.json").write_text("not json\n", encoding="utf-8")
+    result = discovery._ledger_delivery_invariant(home)
+    assert result["state"] == "unknown"
+    assert result["sample"] == "records=1 bool_dv=1 unreadable=broken.json"
+
+
+def test_ledger_invariant_non_boolean_dv_ignored(tmp_path):
+    home = tmp_path / "site"
+    _write_patch(home, "a.json", {"phase": "reviewed", "delivery_verified": "yes"})
+    _write_patch(home, "b.json", {"phase": "reviewed", "delivery_verified": None})
+    result = discovery._ledger_delivery_invariant(home)
+    assert result["state"] == "verified"
+    assert result["sample"] == "violations=0 records=2 bool_dv=0"
+
+
+def test_ledger_invariant_review_refused_dv_accepted(tmp_path):
+    home = tmp_path / "site"
+    _write_patch(home, "culture-audit-repair.json",
+                 {"phase": "review-refused", "delivery_verified": False})
+    result = discovery._ledger_delivery_invariant(home)
+    assert result["state"] == "verified"
+    assert result["sample"] == "violations=0 records=1 bool_dv=1"
+
+
+def test_ledger_invariant_missing_phase_counts_as_unknown(tmp_path):
+    home = tmp_path / "site"
+    _write_patch(home, "a.json", {"delivery_verified": True})
+    result = discovery._ledger_delivery_invariant(home)
+    assert result["state"] == "verified"
+    assert result["sample"] == "violations=unknown:1 records=1 bool_dv=1"
+    assert result["violations"] == {"unknown": 1}
+
+
 
 
 def _scan_endpoint(ns: int) -> dict:
