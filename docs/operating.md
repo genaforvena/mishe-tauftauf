@@ -376,6 +376,14 @@ pane's cwd is checked for a
 `mishe_tauftauf/` package that would shadow the `PYTHONPATH` root, since
 `python -m` inserts the cwd before `PYTHONPATH` in `sys.path`. `unavailable`
 means no renderer runs a package module at all.
+The covered services' imported roots are also compared with the pin's sensor
+set by `sense.runtime.sensor-coverage`: it parses each root's `discovery.py`
+for the `sense.*` ids that root can emit and names `missing=` or `added=` per
+root against the pin, so a release that silently drops or adds a reading —
+changing what the plant can observe — cannot pass merely because its import
+root still matches. A root that cannot be parsed adds `unreadable=<root>` and
+reads `drift`; no imported root, an all-unreadable root set, or an unreadable
+pin module is `UNKNOWN`, not a clean bill.
 
 The journal unit-failure-count sense (`sense.journal.unit-failure-count`) reads
 the system journal for `Failed with result '<class>'` messages from systemd,
