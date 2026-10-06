@@ -140,6 +140,12 @@ legacy report files.
   --panes --session "$SESSION"
 ```
 
+Pass `--sweep-orphans` to also kill leaked test tmux sessions. Tests create
+sessions named `mishe-tauftauf-test-{pid}` in the shared tmux server; a
+hard-killed pytest leaks the session because its cleanup never runs. The sweep
+embeds the creating pid in the session name and kills the session when that pid
+is dead.
+
 The pane check samples the pane in bounded windows (11 seconds each by default, set by `--pane-wait`; an empty pane is retried before it holds) and names the failure: a top pane holds as `pane-missing`, `pane-empty` (a renderer process exists but printed no first frame), `pane-fallback` (unreadable pane or no owned lease) or `pane-frozen` (renderer stopped/dead, or its lease did not advance across two windows — a `--pane-wait` shorter than the refresh interval reports healthy panes this way); each built-in resident's lower pane is checked separately as `mind-pane-missing` or `mind-pane-dead`. Optional `laya` being unavailable is not a missing dependency for the default plant. Do not add hosted-adapter live flags unless you intend to invoke those services.
 The optional witness analysis advisor asks a local Laya model which investigation to try; [observable analysis advice](analysis-advisor.md) covers its setup, feedback and handoff repeat check.
 
@@ -342,7 +348,11 @@ its root from the pane watcher's environment; the sense reads that root from
 the watcher process's live environment (falling back to the pane's start
 command) and reports `unknown` naming the role when it cannot. An export that
 is conditional or built from the inherited `$PYTHONPATH` may not decide the
-root, so it is `unknown` too, named `conditional_unknown`. An export that names
+root, so it is `unknown` too, named `conditional_unknown`. The identity records
+each renderer's effective root, so an inherited renderer that resolved shows
+the root the pane environment supplied, letting a reader distinguish one that
+resolved to the pin from one that resolved to a different root that happens to
+match. An export that names
 no usable root at all (an empty `PYTHONPATH` or a bare separator) leaves the
 renderer's effective root unread, so it is `unknown` too, named
 `export_unknown`. Renderers that run no package module are named `uncovered`,
@@ -351,6 +361,13 @@ pane's cwd is checked for a
 `mishe_tauftauf/` package that would shadow the `PYTHONPATH` root, since
 `python -m` inserts the cwd before `PYTHONPATH` in `sys.path`. `unavailable`
 means no renderer runs a package module at all.
+
+The journal unit-failure-count sense (`sense.journal.unit-failure-count`) reads
+the system journal for `Failed with result '<class>'` messages from systemd,
+grouping raw counts by failed unit and class over a fixed 600-second window.
+The kernel-error-count sense (`-k -p err`) never sees these records because
+they are logged at warning priority, not as kernel messages. The window matches
+the scan renewal threshold, so consecutive scans cover the boot without a gap.
 
 ### Linked health is a separate live check
 
