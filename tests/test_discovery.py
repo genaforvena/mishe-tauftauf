@@ -1708,6 +1708,51 @@ def test_sensor_coverage_names_a_sensor_a_service_added_that_the_pin_lacks() -> 
     assert reading["state"] == "drift"
     assert reading["sample"] == f"{live.name}=2 {live.name} added=sense.tmux.windows"
 
+def test_sensor_coverage_exempts_the_declared_checkout_leading_the_pin() -> None:
+    from mishe_tauftauf import discovery
+
+    checkout = _root_with_sensors(Path("/tmp") / f"sensor-checkout-{os.getpid()}", [
+        "sense.runtime.drift", "sense.tmux.windows"])
+    home = checkout / "site"
+    home.mkdir()
+    pin = _root_with_sensors(Path("/tmp") / f"sensor-declared-pin-{os.getpid()}", [
+        "sense.runtime.drift"])
+    try:
+        with patch("mishe_tauftauf.discovery._pinned_root",
+                   return_value=(str(pin), None)):
+            reading = discovery._sensor_coverage(home, [str(checkout)])
+    finally:
+        shutil.rmtree(checkout)
+        shutil.rmtree(pin)
+    # The coordinator is declared to import the development checkout, which may
+    # lead the pin by a commit; an extra sensor there is expected, not drift.
+    assert reading["state"] == "verified"
+    assert reading["sample"] == f"{checkout.name}=2"
+    assert reading["identity"]["extra"] == {}
+
+
+def test_sensor_coverage_still_flags_a_sensor_the_declared_checkout_dropped() -> None:
+    from mishe_tauftauf import discovery
+
+    checkout = _root_with_sensors(Path("/tmp") / f"sensor-checkout-drop-{os.getpid()}", [
+        "sense.runtime.drift"])
+    home = checkout / "site"
+    home.mkdir()
+    pin = _root_with_sensors(Path("/tmp") / f"sensor-declared-pin-drop-{os.getpid()}", [
+        "sense.runtime.drift", "sense.proc.top-cpu"])
+    try:
+        with patch("mishe_tauftauf.discovery._pinned_root",
+                   return_value=(str(pin), None)):
+            reading = discovery._sensor_coverage(home, [str(checkout)])
+    finally:
+        shutil.rmtree(checkout)
+        shutil.rmtree(pin)
+    # The exemption is one-directional: a sensor the checkout drops is the
+    # 2026-10-04 frontier regression and must still read drift.
+    assert reading["state"] == "drift"
+    assert reading["sample"] == f"{checkout.name}=1 {checkout.name} missing=sense.proc.top-cpu"
+    assert reading["identity"]["missing"] == {str(checkout): ["sense.proc.top-cpu"]}
+
 
 
 def _top_pain(home: Path, slug: str, body: str) -> None:
