@@ -701,6 +701,121 @@ def test_boundary_recover_reports_a_call_that_never_arrived(tmp_path):
     assert dispatch.reconcile("effect-never-issued")["status"] == "unknown"
 
 
+
+def test_boundary_reserve_binds_an_identity_before_any_effect(tmp_path):
+    """A reserved operation is durable with no start record and no execution."""
+    store = tmp_path / "effects"
+    dispatch = boundary(tmp_path, lambda call: {"ok": True})
+    reserved = dispatch.reserve("report-37233-v1", capability="publish-owned-report",
+                                arguments={"target": "owned-evidence"})
+    assert reserved.operation_id == "report-37233-v1"
+    assert reserved.capability == "publish-owned-report"
+    assert reserved.arguments == {"target": "owned-evidence"}
+    # A reservation wrote an intent and nothing else.
+    assert (store / "intents.jsonl").read_text().strip()
+    assert (store / "starts.jsonl").read_text().strip() == ""
+    assert (store / "outcomes.jsonl").read_text().strip() == ""
+    # No capability has run: this state is unknown, not completed.
+    state = dispatch.status("report-37233-v1")
+    assert state["status"] == "unknown"
+    assert state["failure"] == "unreconciled-intent"
+    assert dispatch.recover({"id": "none"}) is None
+
+
+def test_boundary_reserve_then_dispatch_executes_once(tmp_path):
+    """A reserved id dispatches through the native call and runs at most once."""
+    seen = []
+    dispatch = boundary(tmp_path, lambda call: seen.append(call) or {"ok": True})
+    dispatch.reserve("report-37233-v1", capability="publish-owned-report",
+                     arguments={"target": "owned-evidence"})
+    call = {"type": "toolCall", "id": "call-11", "name": "publish-owned-report",
+            "arguments": {"target": "owned-evidence"},
+            "operation_id": "report-37233-v1"}
+    reply = dispatch(call)
+    assert reply["status"] == "completed"
+    assert reply["operation_id"] == "report-37233-v1"
+    assert len(seen) == 1
+    assert seen[0]["operation_id"] == "report-37233-v1"
+    # A same-id repeat after completion is refused, not re-executed.
+    with pytest.raises(AlreadyExecuted):
+        dispatch(call)
+    assert len(seen) == 1
+
+
+def test_boundary_reserve_rejects_changed_content_before_any_effect(tmp_path):
+    dispatch = boundary(tmp_path, lambda call: {"ok": True})
+    dispatch.reserve("report-37233-v1", capability="publish-owned-report",
+                     arguments={"target": "owned-evidence"})
+    with pytest.raises(ChangedContentReuse):
+        dispatch.reserve("report-37233-v1", capability="publish-owned-report",
+                         arguments={"target": "other-evidence"})
+    with pytest.raises(ChangedContentReuse):
+        dispatch.reserve("report-37233-v1", capability="inspect",
+                         arguments={"target": "owned-evidence"})
+    assert dispatch.open_intents()[0].operation_id == "report-37233-v1"
+
+
+def test_boundary_reserve_is_durable_across_a_process_restart(tmp_path):
+    """A fresh process reads a reservation as unknown and can then dispatch it."""
+    store = tmp_path / "effects"
+    dispatch = boundary(tmp_path, lambda call: {"ok": True})
+    dispatch.reserve("report-37233-v1", capability="publish-owned-report",
+                     arguments={"target": "owned-evidence"})
+    fresh = boundary(tmp_path, lambda call: {"ok": True}, writer_id="loop-2")
+    state = fresh.status("report-37233-v1")
+    assert (state["status"], state["failure"]) == ("unknown", "unreconciled-intent")
+    assert fresh.open_intents()[0].native_call is None
+    # The reservation survives, so the id is not free for changed content.
+    with pytest.raises(ChangedContentReuse):
+        fresh.reserve("report-37233-v1", capability="publish-owned-report",
+                      arguments={"target": "other-evidence"})
+    assert fresh.open_intents()[0].writer_id == "loop-1"
+
+
+def test_boundary_a_reserved_id_is_not_free_for_a_changed_native_call(tmp_path):
+    """Dispatching a reserved id with other arguments never starts an effect."""
+    seen = []
+    dispatch = boundary(tmp_path, lambda call: seen.append(call) or {"ok": True})
+    dispatch.reserve("report-37233-v1", capability="publish-owned-report",
+                     arguments={"target": "owned-evidence"})
+    foreign = {"type": "toolCall", "id": "call-9", "name": "publish-owned-report",
+               "arguments": {"target": "other-evidence"},
+               "operation_id": "report-37233-v1"}
+    with pytest.raises(ChangedContentReuse):
+        dispatch(foreign)
+    assert seen == []
+    assert dispatch.status("report-37233-v1")["failure"] == "unreconciled-intent"
+
+
+def test_boundary_drop_reserved_retires_a_never_dispatched_reservation(tmp_path):
+    store = tmp_path / "effects"
+    dispatch = boundary(tmp_path, lambda call: {"ok": True})
+    dispatch.reserve("report-37233-v1", capability="publish-owned-report",
+                     arguments={"target": "owned-evidence"})
+    assert dispatch.drop_reserved("report-37233-v1") is True
+    assert dispatch.status("report-37233-v1") is None
+    # The retired id is free again.
+    again = dispatch.reserve("report-37233-v1", capability="publish-owned-report",
+                             arguments={"target": "reused-evidence"})
+    assert again.arguments == {"target": "reused-evidence"}
+    # A reservation that was never dispatched drops again the same way.
+    assert dispatch.drop_reserved("report-37233-v1") is True
+    assert dispatch.status("report-37233-v1") is None
+    assert (store / "starts.jsonl").read_text().strip() == ""
+    assert (store / "outcomes.jsonl").read_text().strip() == ""
+
+
+def test_boundary_drop_reserved_refuses_a_started_or_completed_operation(tmp_path):
+    dispatch = boundary(tmp_path, lambda call: {"ok": True})
+    reply = dispatch(NATIVE_CALL)
+    # A completed operation is not a reservation and cannot be retired.
+    assert dispatch.drop_reserved(reply["operation_id"]) is False
+    assert dispatch.status(reply["operation_id"])["status"] == "completed"
+    # An unknown id is simply not reserved.
+    assert dispatch.drop_reserved("report-37233-v1") is False
+    assert dispatch.status("report-37233-v1") is None
+
+
 def test_boundary_an_operation_id_can_be_caller_named(tmp_path):
     seen = []
     call = {"type": "toolCall", "id": "call-77", "name": "inspect",
