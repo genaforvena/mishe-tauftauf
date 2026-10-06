@@ -565,15 +565,53 @@ def _journal_bytes(*records):
     return b"".join((json.dumps(record) + "\n").encode() for record in records)
 
 
-@pytest.mark.parametrize("message", [None, "unrelated error", "Failed to resubmit video URB",
-                                     "first line\nsecond line", [0, 255]])
-def test_journal_count_ignores_message_shape(monkeypatch, message):
+@pytest.mark.parametrize("message,expected", [
+    (None, "unattributed"), ([0, 255], "unattributed"),
+    ("unrelated error", "unrelated error"),
+    ("Failed to resubmit video URB", "Failed to resubmit video URB"),
+    ("first line\nsecond line", "first line")])
+def test_journal_count_is_cursor_based_and_message_only_shapes_the_class(
+        monkeypatch, message, expected):
+    # A malformed message must not break the read or the count; it only decides
+    # which class the entry is attributed to.
     row = _journal_record()
     if message is not None:
         row["MESSAGE"] = message
     result = _journal_fixture(monkeypatch, _journal_bytes(row))
     assert result["state"] == "verified"
     assert result["count"] == 1
+    assert result["classes"] == {expected: 1}
+
+
+def test_journal_groups_by_reporting_source_before_the_first_colon(monkeypatch):
+    # A repeating driver message and a real fault in one window must be readable
+    # apart, since the count alone is dominated by the driver.
+    result = _journal_fixture(monkeypatch, _journal_bytes(
+        _journal_record(__CURSOR="c1", MESSAGE="uvcvideo 1-6:1.1: Failed to resubmit video URB (-1)."),
+        _journal_record(__CURSOR="c2", MESSAGE="uvcvideo 1-6:1.1: Failed to resubmit video URB (-1)."),
+        _journal_record(__CURSOR="c3", MESSAGE="Memory cgroup out of memory: Killed process 101894 (mesh-capcheck)."),
+        _journal_record(__CURSOR="c4", MESSAGE="Out of memory: Killed process 1 (python)."),
+        _journal_record(__CURSOR="c5", MESSAGE="usb 1-6: 3:1: cannot get freq at ep 0x84")))
+    assert result["state"] == "verified"
+    assert result["count"] == 5
+    assert result["classes"] == {"uvcvideo 1-6:1.1": 2, "Memory cgroup out of memory": 1,
+                                 "Out of memory": 1, "usb 1-6": 1}
+    assert sum(result["classes"].values()) == result["count"]
+    # Largest first, so the dominant class leads the line a reader scans.
+    assert result["sample"] == ("last-10min kernel-error-count=5 uvcvideo 1-6:1.1=2 "
+                                "Memory cgroup out of memory=1 Out of memory=1 usb 1-6=1")
+
+
+def test_journal_sample_names_the_largest_classes_and_folds_the_tail(monkeypatch):
+    limit = discovery.KERNEL_SOURCE_LIMIT
+    rows = [_journal_record(__CURSOR=f"c{index}", MESSAGE=f"source{index}: failed")
+            for index in range(limit + 2)]
+    result = _journal_fixture(monkeypatch, _journal_bytes(*rows))
+    assert result["count"] == limit + 2
+    assert len(result["classes"]) == limit + 2
+    assert f"source{limit - 1}=1" in result["sample"]
+    assert f"source{limit}=1" not in result["sample"]
+    assert "other=2" in result["sample"]
 
 
 @pytest.mark.parametrize("offset,verified", [
