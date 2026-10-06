@@ -795,6 +795,155 @@ def test_unit_failure_window_validates_exact_boundaries(monkeypatch, offset, ver
     assert result["state"] == ("verified" if verified else "unknown")
 
 
+def _omp_log_line(timestamp: str, message: str, **fields) -> str:
+    record = {"timestamp": timestamp, "level": "debug", "pid": 1, "message": message}
+    record.update(fields)
+    return json.dumps(record)
+
+
+def _write_omp_log(path: Path, lines: list[str]) -> None:
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+_WEDGE_NOW = datetime(2026, 10, 6, 14, 0, 0, tzinfo=timezone.utc)
+
+
+def _wedge_clock(monkeypatch):
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return _WEDGE_NOW
+    monkeypatch.setattr(discovery, "datetime", Clock)
+
+
+def _retry(timestamp: str, token: int) -> str:
+    return _omp_log_line(timestamp, "agent.continue scheduled",
+                         source="automatic-retry", schedulerToken=token)
+
+
+def _success(timestamp: str) -> str:
+    return _omp_log_line(timestamp, "agent_end maintenance routing",
+                         stopReason="stop")
+
+
+def test_wedge_chain_3_span_30min_is_suspect(monkeypatch, tmp_path):
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _retry("2026-10-06T13:30:00+00:00", 1),
+        _retry("2026-10-06T13:40:00+00:00", 2),
+        _retry("2026-10-06T13:50:00+00:00", 3),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
+    _wedge_clock(monkeypatch)
+    result = discovery._omp_retry_chain(12345, _WEDGE_NOW)
+    assert result == {"chain": 3, "span_minutes": 30.0}
+
+
+def test_wedge_chain_below_3_is_not_suspect(monkeypatch, tmp_path):
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _retry("2026-10-06T13:50:00+00:00", 1),
+        _retry("2026-10-06T13:55:00+00:00", 2),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
+    _wedge_clock(monkeypatch)
+    result = discovery._omp_retry_chain(12345, _WEDGE_NOW)
+    assert result == {"chain": 2, "span_minutes": 10.0}
+
+
+def test_wedge_span_below_15min_is_not_suspect(monkeypatch, tmp_path):
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _retry("2026-10-06T13:50:00+00:00", 1),
+        _retry("2026-10-06T13:55:00+00:00", 2),
+        _retry("2026-10-06T13:58:00+00:00", 3),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
+    _wedge_clock(monkeypatch)
+    result = discovery._omp_retry_chain(12345, _WEDGE_NOW)
+    assert result == {"chain": 3, "span_minutes": 10.0}
+
+
+def test_wedge_chain_resets_on_success(monkeypatch, tmp_path):
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _retry("2026-10-06T13:00:00+00:00", 1),
+        _success("2026-10-06T13:30:00+00:00"),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
+    _wedge_clock(monkeypatch)
+    result = discovery._omp_retry_chain(12345, _WEDGE_NOW)
+    assert result == {"chain": 0, "span_minutes": 0.0}
+
+
+def test_wedge_no_log_returns_none(monkeypatch):
+    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: None)
+    assert discovery._omp_retry_chain(12345, _WEDGE_NOW) is None
+
+
+def test_wedge_empty_log_is_chain_zero(monkeypatch, tmp_path):
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [])
+    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
+    _wedge_clock(monkeypatch)
+    result = discovery._omp_retry_chain(12345, _WEDGE_NOW)
+    assert result == {"chain": 0, "span_minutes": 0.0}
+
+
+def test_wedge_sense_flags_wedged_mind(monkeypatch, tmp_path):
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _retry("2026-10-06T13:30:00+00:00", 1),
+        _retry("2026-10-06T13:40:00+00:00", 2),
+        _retry("2026-10-06T13:50:00+00:00", 3),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path",
+                        lambda pid: log if pid == 12345 else None)
+    _wedge_clock(monkeypatch)
+
+    class FakeResult:
+        returncode = 0
+        stdout = "research-methods|12345\nbody-research|67890"
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
+    result = discovery._mind_wedge_suspects()
+    assert result["state"] == "verified"
+    assert len(result["suspects"]) == 1
+    assert result["suspects"][0]["window"] == "research-methods"
+    assert result["suspects"][0]["pid"] == 12345
+    assert result["suspects"][0]["chain"] == 3
+    assert result["suspects"][0]["span_minutes"] == 30.0
+    assert "research-methods(pid=12345,chain=3,span=30.0min)" in result["sample"]
+
+
+def test_wedge_sense_no_suspects(monkeypatch, tmp_path):
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _retry("2026-10-06T13:50:00+00:00", 1),
+        _success("2026-10-06T13:55:00+00:00"),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path",
+                        lambda pid: log if pid == 12345 else None)
+    _wedge_clock(monkeypatch)
+
+    class FakeResult:
+        returncode = 0
+        stdout = "research-methods|12345\nbody-research|67890"
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
+    result = discovery._mind_wedge_suspects()
+    assert result["state"] == "verified"
+    assert result["suspects"] == []
+    assert result["sample"] == "suspects=0"
+
+
+def test_wedge_sense_tmux_failure_is_unknown(monkeypatch):
+    _wedge_clock(monkeypatch)
+    monkeypatch.setattr(discovery.subprocess, "run",
+                        lambda *a, **kw: type("R", (), {"returncode": 1, "stdout": ""})())
+    result = discovery._mind_wedge_suspects()
+    assert result["state"] == "unknown"
+    assert result["suspects"] == []
+
+
 
 
 def _scan_endpoint(ns: int) -> dict:
