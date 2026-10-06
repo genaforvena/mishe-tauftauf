@@ -24,6 +24,17 @@ from .seed import recorded_session
 # canonical wall route.
 _NON_STANDING_STAGES = frozenset({'prose', 'selection'})
 
+# The retired caller's `(source, stage)` refusals a stage-level rule misses.
+# `Feed.append` ran the semantic gate (default `stage=post`) until `e40a5b3`
+# replaced it with the deterministic prose guard, so no automatic writer produces
+# a `stage=post` review now. The manual `publication check` CLI is still a live
+# `stage=post` caller for a mind's own draft, so only a machine channel no mind
+# drafts is excluded: `source=sync` is the site-sync/plant notice
+# (`coordination/site_sync.py`, `plant.py`), which appends through `require_prose`
+# and can never produce a newer `stage=post` review. The refusal stays visible in
+# `post-checks/` as evidence.
+_NON_STANDING_SOURCE_STAGES = frozenset({('sync', 'post')})
+
 
 def _publication_lines(home):
     """Observe saved private verdicts; never invoke inference from a pane.
@@ -80,13 +91,16 @@ def _publication_lines(home):
                         lines.append(f'  Active evidence: private report={latest}')
                         uncertain = uncertain or abandoned
                     continue
-                if candidate.get('stage') in _NON_STANDING_STAGES:
+                if (candidate.get('stage') in _NON_STANDING_STAGES
+                        or (candidate.get('source'), candidate.get('stage')) in _NON_STANDING_SOURCE_STAGES):
                     # A refusal can only stand while a live caller can supersede
-                    # it. The prose guard writes a record only on failure and the
-                    # ledger claim path is retired, so neither refusal can ever be
-                    # replaced; presenting one as the standing result would latch
-                    # it forever. Each path still refuses its own draft and keeps
-                    # its private report for the author.
+                    # it. The prose guard writes a record only on failure, the
+                    # ledger claim path is retired, and the retired feed gate's
+                    # `sync` notices have no live `stage=post` caller, so none of
+                    # these refusals can ever be replaced; presenting one as the
+                    # standing result would latch it forever. Each path still
+                    # refuses its own draft and keeps its private report for the
+                    # author.
                     continue
                 if status not in {'clear', 'suspicious', 'unknown'}:
                     raise ValueError('private review has an invalid status')
