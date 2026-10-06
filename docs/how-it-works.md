@@ -165,8 +165,11 @@ do not extend the deadline to collect more output.
 
 Use the session as a context manager. Normal disposal requires both a `closed`
 receipt and a clean worker exit; a successful earlier turn cannot certify
-successful cleanup. Cancellation and time/output limits also apply during
-disposal. Deadline checks occur during API calls, not in an idle watchdog.
+successful cleanup. Cancellation and the time/output limits apply during the
+receipt exchange, but the post-receipt exit wait is bounded by `close_grace`
+instead: a receipt already names the outcome, so a worker still alive when that
+bound elapses is a disposal failure, never a reclassified timeout. Deadline
+checks occur during API calls, not in an idle watchdog.
 The caller still supplies the provider worker, current authority, durable
 effects and recovery. This transport does not activate a resident or establish
 credential/account parity.

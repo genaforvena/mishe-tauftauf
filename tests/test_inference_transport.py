@@ -53,7 +53,8 @@ def test_sequential_native_turns_and_clean_disposal(tmp_path):
     ("emit({'type':'closed'}); sys.exit(7)", "failed after disposal"),
     ("sys.exit(0)", "exited|EOF"),
     ("emit({'type':'error'})", "disposal receipt"),
-    ("emit({'type':'closed'}); time.sleep(30)", "time limit"),
+    ("time.sleep(30)", "time limit"),
+    ("emit({'type':'closed'}); time.sleep(30)", "failed after disposal"),
 ])
 def test_disposal_failure_invalidates_successful_turn(tmp_path, close, match):
     session = NativeSession(command(tmp_path, close=close), "fixture/model", "session", timeout=.5)
@@ -62,6 +63,33 @@ def test_disposal_failure_invalidates_successful_turn(tmp_path, close, match):
         session.close()
     assert_reaped(session)
 
+
+def test_slow_exit_after_disposal_receipt_does_not_reclassify_as_timeout(tmp_path):
+    # The lifetime deadline bounds the receipt exchange, not the post-receipt
+    # exit wait. A worker that emits its disposal receipt and then lingers must
+    # still be reported as "failed after disposal receipt", not as a timeout.
+    session = NativeSession(command(tmp_path, close=(
+        "emit({'type':'closed'})\n"
+        "time.sleep(3)\n"
+        "sys.exit(7)"
+    )), "fixture/model", "session", timeout=.5)
+    assert session.turn({}).assistant == FRAME["assistant"]
+    with pytest.raises(WorkerError, match="failed after disposal"):
+        session.close()
+    assert_reaped(session)
+
+
+def test_slow_clean_exit_after_disposal_receipt_is_not_a_disposal_failure(tmp_path):
+    # A worker that still leaves with status 0 within the grace bound disposed
+    # cleanly: the grace bound reaps, not reports, so close() must stay quiet.
+    session = NativeSession(command(tmp_path, close=(
+        "emit({'type':'closed'})\n"
+        "time.sleep(.5)\n"
+        "sys.exit(0)"
+    )), "fixture/model", "session", timeout=5, close_grace=2)
+    assert session.turn({}).assistant == FRAME["assistant"]
+    session.close()
+    assert_reaped(session)
 
 @pytest.mark.parametrize("turn,match", [
     ("emit({'type':'turn','id':True,'frame':{}})", "mismatched"),
