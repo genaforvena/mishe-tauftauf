@@ -169,6 +169,51 @@ def test_delivery_requires_successful_revert_observation_and_reapply(tmp_path, m
     assert deployed.read_text() == "after\n"
 
 
+def test_verified_delivery_clears_a_stale_apply_failure(tmp_path, monkeypatch):
+    # An earlier failed apply leaves apply_failure on the record; a later
+    # successful verify must clear it so the ledger cannot read as verified and
+    # broken at once.
+    home, source, deployed = layout(tmp_path)
+    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
+    source.write_text("after\n")
+    monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": True})
+    command = [sys.executable, "-c", "pass"]
+    observe = [sys.executable, "-c", f"from pathlib import Path; assert Path({str(deployed)!r}).read_text() == 'after\\n'"]
+    reverted = [sys.executable, "-c", f"from pathlib import Path; assert Path({str(deployed)!r}).read_text() == 'before\\n'"]
+    wall_patch.check(home, "change", command, activate=command, observe=observe, revert_observe=reverted)
+    original = wall_patch.run
+    def failed_observe(home_, identity, label, cmd):
+        if label == "observe":
+            return {"code": 1, "output": "boom"}
+        return original(home_, identity, label, cmd)
+    monkeypatch.setattr(wall_patch, "run", failed_observe)
+    with pytest.raises(ValueError, match="observation"):
+        wall_patch.apply(home, "change", command, observe)
+    assert wall_patch.status(home, "change")["apply_failure"]
+    monkeypatch.setattr(wall_patch, "run", original)
+    wall_patch.check(home, "change", command, activate=command, observe=observe, revert_observe=reverted)
+    wall_patch.apply(home, "change", command, observe)
+    wall_patch.verify(home, "change")
+    record = wall_patch.status(home, "change")
+    assert record["delivery_verified"] is True
+    assert "apply_failure" not in record and "failure" not in record
+
+
+def test_aborted_check_leaves_no_delivery_verdict(tmp_path, monkeypatch):
+    # A review-unavailable attempt never produced a delivery verdict, so the
+    # ledger must not carry delivery_verified=False as if delivery had failed.
+    home, source, deployed = layout(tmp_path)
+    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
+    source.write_text("after\n")
+    def unavailable(*a):
+        raise ValueError("reviewer down")
+    monkeypatch.setattr(wall_patch, "review", unavailable)
+    with pytest.raises(ValueError, match="reviewer down"):
+        wall_patch.check(home, "change", [sys.executable, "-c", "pass"])
+    record = wall_patch.status(home, "change")
+    assert record["phase"] == "review-unavailable"
+    assert "delivery_verified" not in record
+
 def test_delivery_does_not_certify_failed_revert_observation(tmp_path, monkeypatch):
     home, source, deployed = layout(tmp_path)
     wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])

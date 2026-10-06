@@ -174,7 +174,10 @@ def review(home, record):
 def check(home, identity, command, *, activate=None, observe=None, revert_observe=None):
     with lock(home):
         record = status(home, identity)
-        record["delivery_verified"] = False
+        # A check produces no delivery verdict of its own: leave the field unset
+        # so an aborted attempt is not read as a genuine non-delivery. _apply and
+        # _revert write False only once bytes actually move.
+        record.pop("delivery_verified", None)
         record.pop("verification", None)
         # A fresh check supersedes an earlier failure; otherwise a review- or
         # test-unavailable attempt leaves `failure` set and a later successful
@@ -334,6 +337,11 @@ def verify(home, identity):
             record["phase"] = "reviewed"
             _save(location(home, identity), record)
             _apply(home, identity, record, plan["activate"], plan["observe"])
+            # A successful exercise supersedes an earlier failed apply: leaving
+            # its failure strings would render a verified patch as still broken
+            # (wall_view prints record["failure"] for any record that has it).
+            record.pop("apply_failure", None)
+            record.pop("failure", None)
             record["verification"] = {"at": datetime.now(timezone.utc).isoformat(),
                                       "patch_hash": patch_hash(record),
                                       "plan_hash": hashlib.sha256(json.dumps(plan, sort_keys=True).encode()).hexdigest()}
