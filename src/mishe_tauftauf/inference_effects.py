@@ -906,13 +906,30 @@ class EffectLedger:
         current when the append runs. `exclude` skips the operation being
         allocated, which matters for a `bind_dispatch` rebind of a reservation
         whose own intent already carries this call id.
+
+        Both journals are scanned. `dispatch` writes the provider call id onto
+        the outcome as well as the intent, so an intent alone is not the whole
+        binding: a store this boundary did not write can hold an outcome that
+        names a provider call whose intent record is gone. Scanning the intents
+        only would find nothing and let a second operation execute for a call
+        that already produced an effect. An intent that has an outcome is not a
+        double answer — the two journals agree on the same id — but two hits
+        that disagree are a broken store, so they are reported as a conflict
+        rather than chosen between.
         """
         call_id = _call_id(native_call)
         if call_id is None:
             return None
-        hits = [operation_id for operation_id, intent in self._read_intents().items()
-                if operation_id != exclude and _call_id(intent.native_call) == call_id]
-        return hits[0] if hits else None
+        hits = {operation_id for operation_id, intent in self._read_intents().items()
+                if operation_id != exclude and _call_id(intent.native_call) == call_id}
+        hits.update(operation_id for operation_id, outcome
+                    in self._read_outcomes().items()
+                    if operation_id != exclude and _call_id(outcome.native_call) == call_id)
+        if len(hits) > 1:
+            raise CallIdConflict(
+                f"provider call id {call_id!r} is bound to operations "
+                f"{sorted(hits)}; one provider call names one operation")
+        return next(iter(hits), None)
 
 
 def _same_binding(recorded: EffectIntent, intent: EffectIntent) -> bool:
