@@ -28,11 +28,11 @@ _NON_STANDING_STAGES = frozenset({'prose', 'selection'})
 # `Feed.append` ran the semantic gate (default `stage=post`) until `e40a5b3`
 # replaced it with the deterministic prose guard, so no automatic writer produces
 # a `stage=post` review now. The manual `publication check` CLI is still a live
-# `stage=post` caller for a mind's own draft, so only a machine channel no mind
-# drafts is excluded: `source=sync` is the site-sync/plant notice
+# `stage=post` caller, but only for a mind's own draft, so the machine channel no
+# mind drafts is excluded: `source=sync` is the site-sync/plant notice
 # (`coordination/site_sync.py`, `plant.py`), which appends through `require_prose`
-# and can never produce a newer `stage=post` review. The refusal stays visible in
-# `post-checks/` as evidence.
+# and never checks a draft. The refusal stays visible in `post-checks/` as
+# evidence.
 _NON_STANDING_SOURCE_STAGES = frozenset({('sync', 'post')})
 
 
@@ -40,11 +40,12 @@ def _publication_lines(home):
     """Observe saved private verdicts; never invoke inference from a pane.
 
     The standing result is the newest publication-gate review from a stage a live
-    caller can still supersede. Reports from stages whose refusal can never be
-    superseded are evidence, not a standing result: the deterministic prose guard
-    writes no record when a corrected draft passes, and the ledger claim path that
-    produced `selection` reviews is retired (docs/publication-checks.md), so
-    either refusal would latch here forever.
+    caller can still supersede. Reports whose refusal can never be superseded are
+    evidence, not a standing result: the deterministic prose guard writes no
+    record when a corrected draft passes; the ledger claim path that produced
+    `selection` reviews is retired; and the retired feed gate's `source=sync`
+    `stage=post` reviews have no live automatic caller (docs/publication-checks.md).
+    Any of them would otherwise latch here forever.
     """
 
     lines, uncertain = [], False

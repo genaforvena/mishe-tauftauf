@@ -95,6 +95,7 @@ def test_retired_sync_notice_refusal_is_not_a_standing_publication_result(tmp_pa
     (reports / 'sync.json').write_text(json.dumps({'status': 'unknown', 'semantic_status': 'unknown', 'stage': 'post', 'source': 'sync', 'results': []}))
     os.utime(reports / 'sync.json', (time.time(), time.time()))
     lines, uncertain = _publication_lines(tmp_path)
+    assert any('PUBLICATION RESULT: UNTESTED' in line for line in lines)
     assert not any('source=sync' in line for line in lines)
     # A newer retired-caller refusal must not hide an older live-caller refusal.
     gate = reports / 'gate.json'
