@@ -1922,17 +1922,27 @@ DM_TO_RE = re.compile(r"^\[dm\] to=([A-Za-z0-9_.-]+)")
 RECORD_REF_RE = re.compile(r"\[record\] records/([0-9a-f]{64})\.json sha256=[0-9a-f]{64}")
 DM_DISPOSITION_WINDOW_SECONDS = 6 * 3600
 """Hours of DM history one disposition sample covers."""
+DM_DISPOSITION_MATURITY_SECONDS = 30 * 60
+"""A DM younger than this is right-censored: it has not had the full window to
+be dispositioned, so it is excluded from the stall estimate."""
+WALL_OUTCOME_RE = re.compile(r"^Wall outcome \S+ by ([A-Za-z0-9_.-]+)")
 
 
 def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[str, object]:
     """Measure how long addressed DMs wait for a disposition.
 
-    A DM is dispositioned when the target replies by DM or records a wall
-    outcome after it; the join separates real stalls from correlated silence
-    (a mind busy on wall work, not ignoring the message). The window is the
-    last 6 hours. State is ``verified`` when the tape and outcome store are
-    readable; ``unknown`` when either is missing or unreadable, so a source
-    change cannot pass as a clean bill.
+    A DM is dispositioned when the target replies by DM to the sender
+    (``reply_edge``), records a wall outcome whose body cites the DM's seq
+    token (``seq_credit``), or records any later wall outcome (``wall_join``,
+    credited at its first tape citation). The decomposition makes the
+    construct visible: ``credit_only`` counts DMs the seq rule credits beyond
+    a reply edge; ``wall_only`` counts DMs the wall join credits beyond a
+    reply edge. ``open`` counts DMs with no credit at all; ``stall`` is the
+    age-gated ``open`` — only DMs at least ``DM_DISPOSITION_MATURITY_SECONDS``
+    old — so a DM recorded minutes before the window end is not read as a
+    stall. The window is the last 6 hours. State is ``verified`` when the
+    tape and outcome store are readable; ``unknown`` when either is missing
+    or unreadable, so a source change cannot pass as a clean bill.
     """
     if now is None:
         now = datetime.now(timezone.utc)
@@ -1946,17 +1956,41 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
         return {"id": "sense.coord.dm-disposition-age", "state": "unknown",
                 "sample": f"chat tape unreadable: {exc}", "kind": "read"}
     ref_time: dict[str, datetime] = {}
+    outcome_entries: list[tuple[datetime, str, str]] = []
+    all_dms: list[tuple[datetime, str, str, int]] = []
     for entry in entries:
-        match = RECORD_REF_RE.search(entry.body)
-        if match:
-            ref_time.setdefault(match.group(1), datetime.fromisoformat(
-                entry.timestamp.replace("Z", "+00:00")))
+        ts = datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))
+        dm_match = DM_TO_RE.match(entry.body)
+        if dm_match:
+            all_dms.append((ts, entry.source, dm_match.group(1), entry.sequence))
+        ref_match = RECORD_REF_RE.search(entry.body)
+        if ref_match:
+            ref_time.setdefault(ref_match.group(1), ts)
+        if entry.body.startswith("Wall outcome "):
+            out_match = WALL_OUTCOME_RE.match(entry.body)
+            if out_match:
+                outcome_entries.append((ts, out_match.group(1), entry.body))
     records_dir = home / "records"
     if not records_dir.is_dir():
         return {"id": "sense.coord.dm-disposition-age", "state": "unknown",
                 "sample": "outcome store unavailable", "kind": "read"}
+    window_start = now - timedelta(seconds=DM_DISPOSITION_WINDOW_SECONDS)
+    dms = [dm for dm in all_dms if dm[0] >= window_start]
+    pair_dms: dict[tuple[str, str], list[datetime]] = {}
+    for ts, source, target, _seq in all_dms:
+        pair_dms.setdefault((source, target), []).append(ts)
+    for times in pair_dms.values():
+        times.sort()
+    if not dms:
+        return {"id": "sense.coord.dm-disposition-age", "state": "verified",
+                "sample": ("dms=0 reply_edge=0 seq_credit=0 credit_only=0 "
+                           "wall_only=0 dispositioned=0 open=0 stall=0"),
+                "kind": "read", "dms": 0, "reply_edge": 0, "seq_credit": 0,
+                "credit_only": 0, "wall_only": 0, "dispositioned": 0, "open": 0,
+                "stall": 0}
     outcomes: list[tuple[datetime, str]] = []
-    for path in sorted(records_dir.glob("*.json")):
+    for sha, ots in ref_time.items():
+        path = records_dir / f"{sha}.json"
         try:
             record = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -1969,46 +2003,60 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
         role = payload.get("role")
         if not isinstance(role, str):
             continue
-        if path.stem in ref_time:
-            outcomes.append((ref_time[path.stem], role))
+        outcomes.append((ots, role))
     outcomes.sort()
-    window_start = now - timedelta(seconds=DM_DISPOSITION_WINDOW_SECONDS)
-    dms: list[tuple[datetime, str, str]] = []
-    source_dms: dict[str, list[datetime]] = {}
-    for entry in entries:
-        match = DM_TO_RE.match(entry.body)
-        if not match:
-            continue
-        ts = datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))
-        source_dms.setdefault(entry.source, []).append(ts)
-        if ts >= window_start:
-            dms.append((ts, entry.source, match.group(1)))
-    for times in source_dms.values():
-        times.sort()
-    if not dms:
-        return {"id": "sense.coord.dm-disposition-age", "state": "verified",
-                "sample": "dms=0 dispositioned=0 open=0", "kind": "read",
-                "dms": 0, "dispositioned": 0, "open": 0}
-    dispositioned = 0
+    seq_by_role: dict[str, tuple[list[datetime], list[str]]] = {}
+    for ots, orole, obody in sorted(outcome_entries):
+        role_times, role_bodies = seq_by_role.setdefault(orole, ([], []))
+        role_times.append(ots)
+        role_bodies.append(obody)
+    wall_by_role: dict[str, list[datetime]] = {}
+    for ots, orole in outcomes:
+        wall_by_role.setdefault(orole, []).append(ots)
+    reply_n = seq_n = credit_only_n = wall_only_n = dispositioned = stall_n = 0
     ages: list[float] = []
     open_ages: list[tuple[float, str]] = []
-    for ts, _source, target in dms:
+    for ts, sender, target, seq in dms:
         disp_time = None
-        times = source_dms.get(target)
+        has_reply = has_seq = has_wall = False
+        times = pair_dms.get((target, sender))
         if times:
             idx = bisect.bisect_right(times, ts)
             if idx < len(times):
+                has_reply = True
                 disp_time = times[idx]
-        if disp_time is None:
-            for ots, orole in outcomes:
-                if orole == target and ots > ts:
-                    disp_time = ots
+        seq_re = re.compile(rf"(?<!\d){seq}(?!\d)")
+        role_times, role_bodies = seq_by_role.get(target, ([], []))
+        if role_times:
+            idx = bisect.bisect_right(role_times, ts)
+            for i in range(idx, len(role_times)):
+                if seq_re.search(role_bodies[i]):
+                    has_seq = True
+                    if disp_time is None or role_times[i] < disp_time:
+                        disp_time = role_times[i]
                     break
+        wall_times = wall_by_role.get(target)
+        if wall_times:
+            idx = bisect.bisect_right(wall_times, ts)
+            if idx < len(wall_times):
+                has_wall = True
+                if disp_time is None or wall_times[idx] < disp_time:
+                    disp_time = wall_times[idx]
+        if has_reply:
+            reply_n += 1
+        if has_seq:
+            seq_n += 1
+        if has_seq and not has_reply:
+            credit_only_n += 1
+        if has_wall and not has_reply:
+            wall_only_n += 1
         if disp_time is not None:
             dispositioned += 1
             ages.append((disp_time - ts).total_seconds())
         else:
             open_ages.append(((now - ts).total_seconds(), target))
+            if now - ts >= timedelta(seconds=DM_DISPOSITION_MATURITY_SECONDS):
+                stall_n += 1
     open_count = len(dms) - dispositioned
     ages.sort()
     open_ages.sort()
@@ -2027,15 +2075,134 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
     if open_ages:
         oldest_age, oldest_role = open_ages[-1]
         oldest = f"{oldest_role}:{_format_age(timedelta(seconds=oldest_age))}"
-    sample = (f"dms={len(dms)} dispositioned={dispositioned} open={open_count} "
+    sample = (f"dms={len(dms)} reply_edge={reply_n} seq_credit={seq_n} "
+              f"credit_only={credit_only_n} wall_only={wall_only_n} "
+              f"dispositioned={dispositioned} open={open_count} stall={stall_n} "
               f"p50={p50:.0f}m p90={p90:.0f}m")
     if oldest:
         sample += f" oldest_open={oldest}"
     return {"id": "sense.coord.dm-disposition-age", "state": "verified",
             "sample": sample, "kind": "read",
-            "dms": len(dms), "dispositioned": dispositioned, "open": open_count,
+            "dms": len(dms), "reply_edge": reply_n, "seq_credit": seq_n,
+            "credit_only": credit_only_n, "wall_only": wall_only_n,
+            "dispositioned": dispositioned, "open": open_count, "stall": stall_n,
             "p50_minutes": round(p50), "p90_minutes": round(p90),
             "oldest_open": oldest}
+
+
+EVIDENCE_BINDING_CLAUSE_TIME = datetime(2026, 10, 6, 16, 22, 11, tzinfo=timezone.utc)
+"""The write-once outcome clause (docs/wall-coordination.md) landed in 3c22087;
+outcomes recorded earlier are not bound by it."""
+
+
+def _ledger_evidence_binding(home: Path) -> dict[str, object]:
+    """Check that post-clause wall outcomes bind write-once evidence.
+
+    A ``wall-outcome`` record binds its per-outcome evidence file with
+    ``payload.evidence.{path,sha256}`` at record time. The clause
+    (``docs/wall-coordination.md``) prescribes three independent
+    requirements: the path is under ``artifacts/`` (A), the file is unedited
+    — the bound digest still matches the current bytes (B) — and the path is
+    cited by no other outcome (D). The sense re-hashes every tape-referenced
+    post-clause outcome's evidence and reports two windows: the latest
+    outcome per role (live compliance) and the whole post-clause set
+    (standing audit — the store is append-only, so a repaired violation stays
+    flagged). State is ``drift`` when any checked outcome violates,
+    ``verified`` when none do, ``unknown`` when the tape or record store is
+    unreadable or no post-clause outcome exists.
+    """
+    tape_path = home / "chat.log"
+    if not tape_path.exists():
+        return {"id": "sense.ledger.evidence-binding", "state": "unknown",
+                "sample": "chat tape unavailable", "kind": "read"}
+    try:
+        entries = parse_feed(tape_path.read_bytes(), home=home)
+    except (OSError, ValueError) as exc:
+        return {"id": "sense.ledger.evidence-binding", "state": "unknown",
+                "sample": f"chat tape unreadable: {exc}", "kind": "read"}
+    ref_time: dict[str, datetime] = {}
+    for entry in entries:
+        match = RECORD_REF_RE.search(entry.body)
+        if match:
+            ref_time.setdefault(match.group(1), datetime.fromisoformat(
+                entry.timestamp.replace("Z", "+00:00")))
+    records_dir = home / "records"
+    if not records_dir.is_dir():
+        return {"id": "sense.ledger.evidence-binding", "state": "unknown",
+                "sample": "outcome store unavailable", "kind": "read"}
+    post = {sha: ts for sha, ts in ref_time.items()
+            if ts >= EVIDENCE_BINDING_CLAUSE_TIME}
+    if not post:
+        return {"id": "sense.ledger.evidence-binding", "state": "unknown",
+                "sample": "no post-clause outcomes", "kind": "read"}
+    loaded: list[tuple[datetime, str, dict]] = []
+    for sha, ts in post.items():
+        path = records_dir / f"{sha}.json"
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(record, dict) or record.get("kind") != "wall-outcome":
+            continue
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        role = payload.get("role")
+        evidence = payload.get("evidence")
+        if not isinstance(role, str) or not isinstance(evidence, dict):
+            continue
+        loaded.append((ts, role, evidence))
+    if not loaded:
+        return {"id": "sense.ledger.evidence-binding", "state": "unknown",
+                "sample": "no readable post-clause outcomes", "kind": "read"}
+    artifacts_root = home.resolve() / "artifacts"
+    path_counts: dict[str, int] = {}
+    for _ts, _role, evidence in loaded:
+        path = evidence.get("path")
+        if isinstance(path, str):
+            path_counts[path] = path_counts.get(path, 0) + 1
+    checked: list[tuple[datetime, str, str, str]] = []
+    for ts, role, evidence in loaded:
+        path = evidence.get("path")
+        digest = evidence.get("sha256")
+        classes: list[str] = []
+        file_path = Path(path) if isinstance(path, str) else None
+        if file_path is None or not file_path.is_relative_to(artifacts_root):
+            classes.append("A")
+        try:
+            current = (hashlib.sha256(file_path.read_bytes()).hexdigest()
+                       if file_path is not None else None)
+            if current != digest:
+                classes.append("B")
+        except OSError:
+            classes.append("B")
+        if path_counts.get(path, 0) > 1:
+            classes.append("D")
+        name = file_path.name if file_path is not None else str(path)
+        checked.append((ts, role, name, "".join(classes)))
+    checked.sort()
+    violations = [row for row in checked if row[3]]
+    latest: dict[str, tuple[datetime, str]] = {}
+    for ts, role, _name, classes in checked:
+        current = latest.get(role)
+        if current is None or ts > current[0]:
+            latest[role] = (ts, classes)
+    latest_bad = sum(1 for _, classes in latest.values() if classes)
+    parts = [f"bound={len(checked)} latest_roles={len(latest)} "
+             f"latest_bad={latest_bad} all_bad={len(violations)}"]
+    if violations:
+        parts.append("violating=" + " ".join(
+            f"{role}@{ts.strftime('%Y-%m-%dT%H:%M:%SZ')}:{name}({classes})"
+            for ts, role, name, classes in violations[-3:][::-1]))
+        if len(violations) > 3:
+            parts.append(f"+{len(violations) - 3}more")
+    return {"id": "sense.ledger.evidence-binding",
+            "state": "drift" if violations else "verified",
+            "sample": " ".join(parts), "kind": "read",
+            "bound": len(checked), "latest_roles": len(latest),
+            "latest_bad": latest_bad, "all_bad": len(violations),
+            "violations": [f"{role}@{ts.strftime('%Y-%m-%dT%H:%M:%SZ')}:{name}({classes})"
+                           for ts, role, name, classes in violations]}
 
 def sample(home: Path) -> dict[str, object]:
     """Take bounded reads; never open input event streams or record key content."""
@@ -2051,6 +2218,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_mind_wedge_suspects())
     observed.append(_ledger_delivery_invariant(home))
     observed.append(_ledger_dv_binding(home))
+    observed.append(_ledger_evidence_binding(home))
 
     loadavg = _read(Path("/proc/loadavg"), 256)
     observed.append({"id": "sense.proc.loadavg", "state": "verified" if loadavg else "unknown",
