@@ -72,7 +72,10 @@ def _observation_reading(item: dict[str, object], freshness: str) -> tuple[str, 
     identity = str(item.get("id", "unknown"))
     sample = str(item.get("sample", "unknown"))
     if identity.startswith("sense.journal."):
-        valid = identity == "sense.journal.kernel-error-count" and _journal_bounds_valid(item)
+        # Any journal sense carries the same bounds contract: a count over a
+        # named boot and window. Trust the contract rather than a fixed id
+        # list, so a new journal sense is not silently downgraded to UNKNOWN.
+        valid = _journal_bounds_valid(item)
         if not valid and state != "unavailable":
             state = "unknown"
         coverage = item.get("coverage")

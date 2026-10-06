@@ -664,6 +664,99 @@ def test_journal_cleanup_wait_uses_only_remaining_deadline() -> None:
     assert child.wait_timeout == 0.25
 
 
+def _unit_failure_record(**fields):
+    return {"__CURSOR": "cursor1", "__REALTIME_TIMESTAMP": str(_JOURNAL_UPPER),
+            "_BOOT_ID": _JOURNAL_BOOT, "SYSLOG_IDENTIFIER": "systemd",
+            "MESSAGE": "cron.service: Failed with result 'oom-kill'.", **fields}
+
+
+def _unit_failure_fixture(monkeypatch, output, boots=None):
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return _JOURNAL_NOW
+
+    monkeypatch.setattr(discovery, "datetime", Clock)
+    monkeypatch.setattr(discovery, "_journal_boot",
+                        lambda: next(boots) if boots is not None else _JOURNAL_BOOT)
+    monkeypatch.setattr(discovery, "_journal_command", lambda cmd: output)
+    return discovery._journal_unit_failure_window()
+
+
+def test_unit_failure_counts_and_groups_by_unit_and_class(monkeypatch):
+    result = _unit_failure_fixture(monkeypatch, _journal_bytes(
+        _unit_failure_record(),
+        _unit_failure_record(__CURSOR="cursor2",
+                             MESSAGE="mesh-heavy-1.scope: Failed with result 'oom-kill'."),
+        _unit_failure_record(__CURSOR="cursor3",
+                             MESSAGE="mesh-pull-t1.service: Failed with result 'exit-code'.")))
+    assert result["state"] == "verified"
+    assert result["count"] == 3
+    assert result["classes"] == {"oom-kill": 2, "exit-code": 1}
+    assert result["units"] == {"cron.service": 1, "mesh-heavy-1.scope": 1,
+                               "mesh-pull-t1.service": 1}
+    assert result["sample"] == "last-10min unit-failure-count=3 exit-code=1 oom-kill=2"
+
+
+def test_unit_failure_counts_a_unit_name_containing_a_colon(monkeypatch):
+    # systemd.unit(5) allows ':' in a unit name prefix.
+    result = _unit_failure_fixture(monkeypatch, _journal_bytes(
+        _unit_failure_record(MESSAGE="foo:bar.service: Failed with result 'exit-code'.")))
+    assert result["state"] == "verified"
+    assert result["units"] == {"foo:bar.service": 1}
+    assert result["classes"] == {"exit-code": 1}
+
+
+def test_unit_failure_ignores_records_that_are_not_unit_failures(monkeypatch):
+    result = _unit_failure_fixture(monkeypatch, _journal_bytes(
+        _unit_failure_record(MESSAGE="Started Daily apt download activities."),
+        _unit_failure_record(__CURSOR="cursor2", MESSAGE="Failed to start Foo.")))
+    assert result["state"] == "verified"
+    assert result["count"] == 0
+    assert result["sample"] == "last-10min unit-failure-count=0"
+
+
+def test_unit_failure_empty_complete_window_verifies_zero(monkeypatch):
+    result = _unit_failure_fixture(monkeypatch, b"")
+    assert result["state"] == "verified"
+    assert result["count"] == 0
+
+
+@pytest.mark.parametrize("fields", [
+    {"_BOOT_ID": "b" * 32}, {"SYSLOG_IDENTIFIER": "kernel"}, {"__CURSOR": ""},
+    {"__CURSOR": ["x"]}, {"__REALTIME_TIMESTAMP": ["1"]},
+    {"__REALTIME_TIMESTAMP": "-1"}, {"SYSLOG_IDENTIFIER": ["systemd"]}])
+def test_unit_failure_invalid_scope_or_identity_is_unknown(monkeypatch, fields):
+    result = _unit_failure_fixture(monkeypatch, _journal_bytes(
+        _unit_failure_record(**fields)))
+    assert result["state"] == "unknown"
+    assert "count" not in result
+
+
+def test_unit_failure_duplicate_cursor_is_unknown(monkeypatch):
+    result = _unit_failure_fixture(monkeypatch, _journal_bytes(
+        _unit_failure_record(), _unit_failure_record()))
+    assert result["state"] == "unknown"
+
+
+def test_unit_failure_boot_loss_or_change_invalidates(monkeypatch):
+    assert _unit_failure_fixture(monkeypatch, b"", iter([None]))["state"] == "unknown"
+    assert _unit_failure_fixture(
+        monkeypatch, b"", iter([_JOURNAL_BOOT, "b" * 32]))["state"] == "unknown"
+
+
+def test_unit_failure_incomplete_output_is_unknown(monkeypatch):
+    assert _unit_failure_fixture(monkeypatch, None)["state"] == "unknown"
+
+
+@pytest.mark.parametrize("offset,verified", [
+    (-600000001, False), (-600000000, True), (0, True), (1, False)])
+def test_unit_failure_window_validates_exact_boundaries(monkeypatch, offset, verified):
+    result = _unit_failure_fixture(monkeypatch, _journal_bytes(
+        _unit_failure_record(__REALTIME_TIMESTAMP=str(_JOURNAL_UPPER + offset))))
+    assert result["state"] == ("verified" if verified else "unknown")
+
+
 
 
 def _scan_endpoint(ns: int) -> dict:
