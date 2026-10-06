@@ -786,10 +786,19 @@ def _ledger_delivery_invariant(home: Path) -> dict:
     disposition without re-deriving. Coverage tier: ``records=N bool_dv=M``
     ends the sample, and an unreadable or empty store reads UNKNOWN rather
     than a clean bill, so a store-path or format change cannot pass as the
-    invariant holding.
+    invariant holding. The UNKNOWN branch still carries violations found in
+    the readable records (the sample gains a trailing ``violations=``
+    segment): a collapse co-occurring with a torn record must not be
+    dropped just because coverage is incomplete.
     """
     records, unreadable = _patch_records(home)
     bool_dv = [r for r in records if isinstance(r.get("delivery_verified"), bool)]
+    violations: dict[str, int] = {}
+    for record in bool_dv:
+        phase = record.get("phase")
+        key = phase if isinstance(phase, str) else "unknown"
+        if key not in LEDGER_DV_PHASES:
+            violations[key] = violations.get(key, 0) + 1
     if not records or unreadable:
         if not (home / "patches").is_dir():
             sample = "patch store unavailable"
@@ -799,15 +808,12 @@ def _ledger_delivery_invariant(home: Path) -> dict:
                       + ("…" if len(unreadable) > 3 else ""))
         else:
             sample = f"records=0 bool_dv=0"
+        if violations:
+            sample += (" violations=" + " ".join(
+                f"{phase}:{count}" for phase, count in sorted(violations.items())))
         return {"id": "sense.ledger.delivery-invariant", "state": "unknown",
                 "sample": sample, "records": len(records),
-                "bool_dv": len(bool_dv), "violations": {}, "kind": "read"}
-    violations: dict[str, int] = {}
-    for record in bool_dv:
-        phase = record.get("phase")
-        key = phase if isinstance(phase, str) else "unknown"
-        if key not in LEDGER_DV_PHASES:
-            violations[key] = violations.get(key, 0) + 1
+                "bool_dv": len(bool_dv), "violations": violations, "kind": "read"}
     if violations:
         sample = ("violations=" + " ".join(
             f"{phase}:{count}" for phase, count in sorted(violations.items())))
