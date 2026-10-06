@@ -113,6 +113,13 @@ outcome or an explicit `unknown`, never a second execution. The scope is a
 single local store and single writer per process; process-crash recovery, not
 power loss.
 
+Two statuses the loop accepts are not branches of this boundary. `partial` parses
+from the journal but nothing here writes it — an effect is recorded once as
+`completed` or left with no outcome at all, which reads back as `unknown` — so it
+is the caller's report shape, kept parseable for a caller-written outcome.
+`not-started` is the caller's accounting of a call it never dispatched; here that
+state is `None` from `status`/`recover`, not an outcome the store holds.
+
 `reserve(operation_id, capability, arguments)` binds that same durable identity
 before any effect and before the provider has issued a call id: it allocates the
 intent with no start record, no execution and no outcome, so every reader still

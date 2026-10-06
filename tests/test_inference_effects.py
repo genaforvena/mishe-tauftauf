@@ -1141,3 +1141,40 @@ def test_a_capability_that_dies_in_the_dispatch_window_is_attributable(tmp_path)
     again = fresh(NATIVE_CALL)
     assert again["status"] == "unknown"
     assert again["executions"] == 0, "unknown is not permission to retry"
+
+
+def test_the_boundary_has_no_status_branch_it_cannot_reach(tmp_path):
+    """Every status the boundary accepts is one it can actually reach.
+
+    `partial` parses and `not-started` is a loop status, but neither is a branch
+    of this boundary: an effect is written once as `completed`, or left with no
+    outcome at all, which every reader reports as `unknown`. `partial` stays in
+    the alphabet because the journal replays outcomes a caller wrote, not only
+    this boundary's own. A regression that invents a producer for it would be a
+    new state the loop and `read_native_journal` have not agreed to handle.
+    """
+    from mishe_tauftauf.inference_effects import _EFFECT_STATUSES
+
+    store = tmp_path / "effects"
+    fresh = lambda execute: boundary(tmp_path, execute)
+    # Each step uses its own id: one execution per id is the boundary's contract,
+    # so a second dispatch of a completed id is `AlreadyExecuted`, not a new state.
+    crashed_call = {**NATIVE_CALL, "id": "call_native|crash_window"}
+    completed = fresh(lambda call: {"ok": True})(NATIVE_CALL)
+    assert completed["status"] == "completed"
+    crashed = fresh(lambda call: (_ for _ in ()).throw(OSError("died")))(crashed_call)
+    assert crashed["status"] == "unknown"
+    reserved = fresh(lambda call: {"ok": True}).reserve(
+        "op-reserved", capability="inspect", arguments={"path": "owned-evidence"})
+    assert reserved.reservation is True
+    assert fresh(lambda call: {"ok": True}).status("op-reserved")["status"] == "unknown"
+    assert fresh(lambda call: {"ok": True}).recover(NATIVE_CALL)["status"] == "completed"
+    assert fresh(lambda call: {"ok": True}).recover(crashed_call)["status"] == "unknown"
+
+    statuses = sorted({json.loads(line)["status"] for line in
+                       (store / "outcomes.jsonl").read_text().splitlines()})
+    assert statuses == ["completed"], statuses
+    # The reader of a caller-written outcome still has to parse it.
+    assert "partial" in _EFFECT_STATUSES
+    # `not-started` is the caller's accounting, not an outcome this store holds.
+    assert "not-started" not in _EFFECT_STATUSES
