@@ -174,7 +174,7 @@ The `permissions` display refreshes in its own top pane even in a manual setup; 
 
 The launcher accepts a shell-quoted command string, for example `--engine-command 'omp --model YOUR_MODEL'`; substitute the arguments your installed agent actually supports. Existing `SITE/minds/ROLE` launchers are preserved, so changing this flag on a repeat plant does not replace them.
 
-Codex and OMP have built-in idle-prompt recognition. Another agent needs an executable readiness probe at `SITE/checks/mind-ready/ROLE` for each supervised role. The probe must exit zero **only when the role's lower pane can accept a complete prompt**, not merely when the process exists. It receives:
+Codex, OMP, and OpenCode have built-in idle-prompt recognition. Another agent needs an executable readiness probe at `SITE/checks/mind-ready/ROLE` for each supervised role. The probe must exit zero **only when the role's lower pane can accept a complete prompt**, not merely when the process exists. It receives:
 
 - `MISHE_SEED_SESSION`: the tmux session;
 - `MISHE_SEED_ROLE`: the channel name;

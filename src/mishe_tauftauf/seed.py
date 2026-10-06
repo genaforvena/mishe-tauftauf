@@ -49,6 +49,26 @@ def _omp_idle_mode(pane: str) -> str | None:
         elif _OMP_NORMAL_PROMPT_RE.match(line):
             mode = "normal"
     return mode
+
+
+_OPENCODE_SPNR = tuple("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+
+
+def _opencode_idle(pane: str) -> bool:
+    """True only at OpenCode's empty-input idle prompt.
+
+    Observed on opencode 2.0.12: the input box shows an `Ask anything`
+    placeholder when idle. Any spinner line means the agent is working;
+    a missing placeholder (typed text, dialog, or approval prompt) holds
+    delivery rather than risking a paste into the wrong surface.
+    """
+    idle = False
+    for line in pane.splitlines():
+        if line.lstrip().startswith(_OPENCODE_SPNR):
+            return False
+        if "Ask anything" in line:
+            idle = True
+    return idle
 # The pre-baseline plant copied this exact doctrine into each site. Recognize it
 # during the first upgrade so an untouched copy is not replayed as local policy.
 LEGACY_INSTRUCTION_HASHES = {
@@ -272,7 +292,7 @@ def _mind_ready(session: str, slug: str) -> bool:
     if command.returncode:
         return False
     engine = command.stdout.decode().strip()
-    if engine not in {"omp", "codex"}:
+    if engine not in {"omp", "codex", "opencode"}:
         owned = _tmux("show-option", "-qv", "-t", session, OWNED_OPTION, check=False)
         if owned.returncode:
             return False
@@ -294,6 +314,8 @@ def _mind_ready(session: str, slug: str) -> bool:
                                         "• Thinking", "• Executing")) for line in lines):
             return False
         return any(line.lstrip().startswith("› ") for line in lines)
+    if engine == "opencode":
+        return _opencode_idle("\n".join(lines))
     return _omp_idle_mode("\n".join(lines)) is not None
 
 

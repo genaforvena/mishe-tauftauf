@@ -226,6 +226,31 @@ def test_codex_mind_requires_its_idle_prompt(monkeypatch) -> None:
     assert not seed._mind_ready("session", "genome")
 
 
+def test_opencode_mind_requires_empty_idle_prompt(monkeypatch) -> None:
+    from subprocess import CompletedProcess
+
+    from mishe_tauftauf import seed
+
+    idle = ("│\n│  Ask anything… \"Fix a TODO in the codebase\"\n│\n"
+            "│  Build · Muse Spark 1.3 Free OpenCode Zen\n"
+            "/tmp/opencode                             shift+tab agents  ctrl+p commands\n")
+
+    def fake_tmux(pane):
+        return lambda *args, **kwargs: CompletedProcess(
+            args, 0, ("opencode\n" if args[0] == "display-message" else pane).encode())
+
+    monkeypatch.setattr(seed, "_tmux", fake_tmux(idle))
+    assert seed._mind_ready("session", "genome")
+
+    # Working spinner: same footer, but the agent is busy.
+    monkeypatch.setattr(seed, "_tmux", fake_tmux(idle + "⠋ Writing command…\n"))
+    assert not seed._mind_ready("session", "genome")
+
+    # Typed-but-unsubmitted input replaces the placeholder: hold delivery.
+    monkeypatch.setattr(seed, "_tmux", fake_tmux(idle.replace("Ask anything…", "draft wake text")))
+    assert not seed._mind_ready("session", "genome")
+
+
 def test_redelivered_wake_includes_restored_charter_and_handoff(tmp_path: Path, monkeypatch) -> None:
     from datetime import datetime, timedelta, timezone
 
