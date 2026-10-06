@@ -91,7 +91,7 @@ def test_wall_is_visible_without_hiding_failed_sensor(tmp_path, monkeypatch):
     setup_wall(tmp_path)
     from mishe_tauftauf import wall
     wall.write(tmp_path, "health", "Planning an investigation; no repair yet.")
-    monkeypatch.setattr(observations, "run_renderer", lambda *a: observations.RenderedPain("health", "STATE: RED sensor failed\n", False))
+    monkeypatch.setattr(observations, "run_renderer", lambda *a, **k: observations.RenderedPain("health", "STATE: RED sensor failed\n", False))
     rendered = observations.compose_frame(tmp_path, "health")
     assert not rendered.ok
     assert "STATE: RED sensor failed" in rendered.body and "Planning an investigation" in rendered.body
@@ -312,7 +312,7 @@ def test_compose_frame_omits_legacy_reports_for_reportless_roles(tmp_path, monke
         (reports / role).write_text("STALE LEGACY VERDICT\n")
         monkeypatch.setattr(
             observations, "run_renderer",
-            lambda _home, slug, _timeout: RenderedPain(slug, "REPORT: NOT PRODUCED\n", True),
+            lambda _home, slug, _timeout, **k: RenderedPain(slug, "REPORT: NOT PRODUCED\n", True),
         )
         monkeypatch.setattr(wall, "pane", lambda *_args: "")
         frame = observations.compose_frame(tmp_path, role).body
@@ -529,7 +529,7 @@ def test_pane_frame_leads_with_headline(tmp_path, monkeypatch):
     (tmp_path/"checks"/"silence-heartbeat.json").write_text(json.dumps(
         {"at":datetime.now(timezone.utc).isoformat(),"state":"ENDED"}))
     monkeypatch.setattr(observations,"run_renderer",
-                        lambda *a: observations.RenderedPain("genome","BODY\n",True))
+                        lambda *a, **k: observations.RenderedPain("genome","BODY\n",True))
     body=observations.compose_frame(tmp_path,"genome").body
     assert body.startswith("HEADLINE: RED — mind ended")
     assert "commit 17.5h ago" in body and "BODY" in body
