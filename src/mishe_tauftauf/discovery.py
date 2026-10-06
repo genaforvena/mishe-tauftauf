@@ -783,13 +783,14 @@ def _ledger_delivery_invariant(home: Path) -> dict:
     and a genuine collapse both read as "outside the set", and the "is a
     delivery outcome" judgment is not fully mechanical. The sample names the
     offending phase (``violations=<phase>:<count>``) so a mind can
-    disposition without re-deriving. Coverage tier: ``records=N bool_dv=M``
-    ends the sample, and an unreadable or empty store reads UNKNOWN rather
-    than a clean bill, so a store-path or format change cannot pass as the
-    invariant holding. The UNKNOWN branch still carries violations found in
-    the readable records (the sample gains a trailing ``violations=``
-    segment): a collapse co-occurring with a torn record must not be
-    dropped just because coverage is incomplete.
+    disposition without re-deriving. The verified sample ends with the
+    coverage tier ``records=N bool_dv=M``; an empty, missing or unreadable
+    store reads UNKNOWN rather than a clean bill, so a store-path or format
+    change cannot pass as the invariant holding, with an unreadable store
+    appending ``unreadable=<file>`` after the tier. The UNKNOWN branch still
+    carries violations found in the readable records (a trailing
+    ``violations=<phase>:<count>`` segment): a collapse co-occurring with a
+    torn record must not be dropped just because coverage is incomplete.
     """
     records, unreadable = _patch_records(home)
     bool_dv = [r for r in records if isinstance(r.get("delivery_verified"), bool)]
@@ -1189,6 +1190,12 @@ def _sensor_coverage(home: Path, roots: list[str]) -> dict[str, object]:
     sign, so the emitted ids are counted per root and compared with the pin's.
     The pin is the reference rather than the previous sample: after the restart
     being caught, ``latest.json`` already lists the reduced set and would hide it.
+
+    The coordinator's declared checkout root is exempt from the added direction
+    only: it is declared to import the development checkout, which may lead the
+    pin by a commit, so an extra sensor there is expected rather than drift. A
+    sensor the checkout drops is still drift — the comparison caught exactly
+    that regression on 2026-10-04.
     """
     if not roots:
         return {"id": "sense.runtime.sensor-coverage", "state": "unknown",
@@ -1212,10 +1219,13 @@ def _sensor_coverage(home: Path, roots: list[str]) -> dict[str, object]:
         baseline = set() if pin_module_failure is not None else names
         if pin_module_failure is not None:
             pin_failure = pin_failure or pin_module_failure
+    declared = Path(home).resolve().parent
     missing = {root: sorted(baseline - set(names))
                for root, names in per_root.items() if baseline - set(names)}
     extra = {root: sorted(set(names) - baseline)
-             for root, names in per_root.items() if set(names) - baseline}
+             for root, names in per_root.items()
+             if set(names) - baseline
+             and Path(root).resolve() != declared}
     state = "verified"
     parts = [", ".join(f"{Path(root).name}={len(names)}" for root, names in per_root.items())]
     if baseline:
