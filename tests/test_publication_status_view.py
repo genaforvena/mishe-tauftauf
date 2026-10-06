@@ -51,3 +51,19 @@ def test_pending_review_does_not_hide_latest_refusal(tmp_path):
     assert uncertain
     assert any('PUBLICATION RESULT: REFUSED source=witness stage=post' in line for line in lines)
     assert any('R06' in line for line in lines)
+
+
+def test_prose_guard_refusal_is_not_a_standing_publication_result(tmp_path):
+    reports = prepare(tmp_path)
+    (reports / 'prose.json').write_text(json.dumps({'status': 'suspicious', 'semantic_status': 'not a publication gate', 'stage': 'prose', 'source': 'genome', 'results': [{'id': 'D01', 'verdict': 'suspicious'}]}))
+    os.utime(reports / 'prose.json', (time.time(), time.time()))
+    lines, uncertain = _publication_lines(tmp_path)
+    assert not any('REFUSED' in line for line in lines)
+    assert not any('stage=prose' in line for line in lines)
+    # A newer prose report must not hide an older publication-gate refusal.
+    gate = reports / 'gate.json'
+    gate.write_text(json.dumps({'status': 'suspicious', 'semantic_status': 'suspicious', 'stage': 'post', 'source': 'witness', 'results': [{'id': 'R06', 'verdict': 'suspicious'}]}))
+    os.utime(gate, (time.time() - 10, time.time() - 10))
+    lines, uncertain = _publication_lines(tmp_path)
+    assert any('PUBLICATION RESULT: REFUSED source=witness stage=post' in line for line in lines)
+    assert uncertain

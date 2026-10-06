@@ -13,7 +13,7 @@ import re
 
 from .feed import Feed
 from .records import payload
-from .task_state import registry
+from .task_state import TaskState, eligible, registry
 
 
 def _data(entry):
@@ -122,6 +122,14 @@ def anomalies(entries):
                     and re.fullmatch(r'[0-9a-f]{64}', current.get('evidence_sha256', ''))):
                 # A checked terminal outcome retires this semantic candidate;
                 # all historical receipts remain available to private analysis.
+                continue
+            # Consecutive attempts must belong to the task's current state, and
+            # the task must be attemptable now. Historical receipts under a
+            # superseded state, and a frozen wait whose retry predicate cannot
+            # fire, are not a standing review prompt: latching SUSPICIOUS would
+            # only degrade the pane with no board path to clear it.
+            if not (current and eligible(TaskState(**current), entries)
+                    and all(event['sequence'] > current['sequence'] for event in recent)):
                 continue
             findings.append(_finding(identity, 'repeated-attempt-review', 'SUSPICIOUS', 'Three task attempts need semantic review of actual progress and prerequisites; hashes and observation labels alone cannot decide usefulness.', [event['sequence'] for event in recent], [item.get('archive', '') for item in data]))
     return findings

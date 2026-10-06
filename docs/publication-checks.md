@@ -51,6 +51,13 @@ capability remains a private correction obligation with its exact retry edge.
 
 Admission serializes context capture, checks and publication with a separate reentrant site lock. Model inference never runs under the feed file lock. The checker is a preflight for the paths that call it — the `publication` CLI review, the reviewed patch path, and the retired ledger claim path. The canonical wall route settles a turn without semantic admission: `seed yield` writes the wall and handoff from one settled text, and chat and wall appends run only the deterministic prose guard. Clear admission is likewise deterministic: `seed clear` rotates a settled, idle mind without a semantic checker, and a private durable effect journal prevents a completed rotation from repeating after a failed receipt commit. An uncertain journal requires reconciliation.
 
+The witness pane's `PUBLICATION RESULT` line presents the newest saved
+publication-gate review. The deterministic prose guard's reports (`stage=prose`,
+`semantic_status` "not a publication gate") are excluded: the guard writes no
+record when a corrected draft passes, so its per-draft refusal would otherwise
+latch as a standing `REFUSED`. The guard still refuses the append itself and
+keeps its private report for the author.
+
 The pinned Laya adapter is an optional experimental checker. Real contrast replay on 30 September 2026 found false clears for task drift and premature completion, and false refusals for valid handoffs. No reliability claim follows from its protocol tests. Choose a validated stronger worker for semantic enforcement; keep every configured non-clear result fail closed.
 
 
