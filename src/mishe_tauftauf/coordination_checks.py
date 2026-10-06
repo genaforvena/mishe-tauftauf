@@ -25,7 +25,7 @@ def _data(entry):
     return {}
 
 
-def project(entries):
+def project(entries, payloads: dict | None = None):
     """Keep terminal producers, all-role receipts, and parse errors visible."""
     errors, events, receipts = [], [], {}
     try:
@@ -35,11 +35,14 @@ def project(entries):
         errors.append({'sequence': None, 'message': str(exc)})
     by_sequence = {}
     for entry in entries:
-        try:
-            data = _data(entry)
-        except (ValueError, TypeError, KeyError, OSError) as exc:
-            errors.append({'sequence': entry.sequence, 'message': str(exc)})
-            data = {}
+        if payloads is not None and entry.sequence in payloads:
+            data = payloads[entry.sequence]
+        else:
+            try:
+                data = _data(entry)
+            except (ValueError, TypeError, KeyError, OSError) as exc:
+                errors.append({'sequence': entry.sequence, 'message': str(exc)})
+                data = {}
         event = dict(sequence=entry.sequence, source=entry.source, body=entry.body, payload=data)
         events.append(event)
         by_sequence[entry.sequence] = event
@@ -68,8 +71,8 @@ def _finding(task, kind, severity, message, sequences, evidence=None):
                 sequences=sorted(set(s for s in sequences if s is not None)), evidence=evidence or [])
 
 
-def anomalies(entries):
-    view = project(entries)
+def anomalies(entries, payloads: dict | None = None):
+    view = project(entries, payloads)
     findings = [_finding(None, 'invalid-context', 'UNKNOWN', error['message'], [error['sequence']]) for error in view['errors']]
     tasks = view['tasks']
     for identity, state in tasks.items():

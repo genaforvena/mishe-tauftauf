@@ -352,11 +352,13 @@ class Feed:
         return index, False
 
     @staticmethod
-    def _verify_records(entries) -> None:
+    def _verify_records(entries, sink: dict | None = None) -> None:
         from .records import payload
         for entry in entries:
             if any(line.lstrip().startswith("[record]") for line in entry.body.splitlines()):
-                payload(entry)
+                data = payload(entry)
+                if sink is not None:
+                    sink[entry.sequence] = data
 
     def _extend_entries(self, handle, cached, metadata) -> list[FeedEntry] | None:
         """Continue a cached full read with the frames appended since it was taken.
@@ -382,7 +384,8 @@ class Feed:
         self._verify_records(parsed)
         return entries + parsed
 
-    def entries(self, *, start: int = 1, limit: int | None = None) -> list[FeedEntry]:
+    def entries(self, *, start: int = 1, limit: int | None = None,
+                payloads: dict | None = None) -> list[FeedEntry]:
         if start < 1 or limit is not None and limit < 0:
             raise ValueError("start must be positive and limit nonnegative")
         if not self.path.exists():
@@ -419,7 +422,10 @@ class Feed:
             handle.seek(first_offset)
             selected = parse_feed(handle.read(end_offset - first_offset), start_sequence=first_seq, home=self.home)
             result = [entry for entry in selected if start <= entry.sequence <= target]
-            self._verify_records(result)
+            # Fill the sink only on a full verify pass; a cache hit leaves it
+            # empty so the caller's projection falls back to per-entry
+            # resolution, exactly as before.
+            self._verify_records(result, payloads)
             if start == 1 and limit is None:
                 with _ENTRIES_CACHE_LOCK:
                     _ENTRIES_CACHE[str(self.path)] = (metadata, list(result))

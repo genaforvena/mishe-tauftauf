@@ -11,7 +11,7 @@ def wire(tmp_path, monkeypatch, entries):
     import mishe_tauftauf.seed_witness_view as view
     monkeypatch.setenv('MISHE_SEED_SESSION', 'test')
     monkeypatch.setattr(view.subprocess, 'run', lambda *a, **kw: SimpleNamespace(returncode=0, stdout='', stderr=''))
-    monkeypatch.setattr(Feed, 'entries', lambda self: entries)
+    monkeypatch.setattr(Feed, 'entries', lambda self, **kwargs: entries)
 
 
 def entry(seq, source, body):
@@ -84,7 +84,7 @@ def test_private_gate_refusal_visible_without_draft_or_inference(tmp_path, monke
 
 def test_unreadable_feed_keeps_coordination_unknown(tmp_path, monkeypatch):
     wire(tmp_path, monkeypatch, [])
-    monkeypatch.setattr(Feed, 'entries', lambda self: (_ for _ in ()).throw(ValueError('broken canonical frame')))
+    monkeypatch.setattr(Feed, 'entries', lambda self, **kwargs: (_ for _ in ()).throw(ValueError('broken canonical frame')))
     output = render(tmp_path)
     assert 'COORDINATION: UNKNOWN' in output
     assert 'broken canonical frame' in output
@@ -200,3 +200,15 @@ def test_stale_pend_stays_a_fault_without_a_live_mind_pane(tmp_path, monkeypatch
     assert 'STALE PEND: HELD' not in output
     assert 'STALE PEND: RED audit wake=1 pending=1 owner=health' in output
     assert 'STATE: RED' in output
+
+def test_render_output_is_identical_with_and_without_the_shared_payload_map(tmp_path, monkeypatch):
+    import mishe_tauftauf.seed_witness_view as view
+    monkeypatch.setenv('MISHE_SEED_SESSION', 'test')
+    monkeypatch.setattr(view.subprocess, 'run', lambda *a, **kw: SimpleNamespace(returncode=0, stdout='', stderr=''))
+    Feed(tmp_path).append_record('witness', 'Checked evidence.', {'checked': True})
+    Feed(tmp_path).append('seed', '[work] channel=witness wake=1 observation=2 result=verified continue=0')
+    with_map = view.render(tmp_path)
+    real_anomalies = view.anomalies
+    monkeypatch.setattr(view, 'anomalies', lambda entries, **kwargs: real_anomalies(entries))
+    without_map = view.render(tmp_path)
+    assert with_map == without_map

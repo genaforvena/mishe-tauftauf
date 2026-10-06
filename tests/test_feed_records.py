@@ -128,3 +128,47 @@ def test_record_size_and_existing_corruption_rejected(tmp_path):
 def test_home_does_not_affect_entry_equality(tmp_path):
     a = FeedEntry(1, "time", "seed", "Checked.")
     assert replace(a, home=tmp_path) == a
+
+def test_entries_fills_the_caller_payload_sink_and_keeps_the_return_type(tmp_path):
+    feed = Feed(tmp_path)
+    feed.append_record('witness', 'Checked evidence.', {'checked': True})
+    feed.append('seed', '[work] channel=witness wake=1 observation=2 result=verified continue=0')
+    feed.append('witness', 'Legacy note.\n{"legacy": true}')
+    sink = {}
+    entries = feed.entries(payloads=sink)
+    assert [entry.sequence for entry in entries] == [1, 2, 3]
+    assert sink == {1: {'checked': True}}
+
+
+def test_entries_sink_still_fails_closed_on_a_corrupt_record(tmp_path):
+    feed = Feed(tmp_path)
+    feed.append_record('witness', 'Checked evidence.', {'checked': True})
+    record = next((tmp_path / 'records').glob('*.json'))
+    record.chmod(0o600)
+    record.write_text(json.dumps({'version': 1, 'kind': 'event', 'payload': {'checked': False}}),
+                       encoding='utf-8')
+    with pytest.raises(ValueError, match='checksum'):
+        feed.entries(payloads={})
+
+
+def test_entries_sink_stays_empty_on_a_cache_hit(tmp_path, monkeypatch):
+    from mishe_tauftauf import records
+    feed = Feed(tmp_path)
+    feed.append_record('witness', 'Checked evidence.', {'checked': True})
+    calls = []
+    real_payload = records.payload
+
+    def counting(entry):
+        calls.append(entry.sequence)
+        return real_payload(entry)
+
+    monkeypatch.setattr(records, 'payload', counting)
+    first_sink = {}
+    first = feed.entries(payloads=first_sink)
+    assert first_sink == {1: {'checked': True}}
+    calls.clear()
+    second_sink = {}
+    second = feed.entries(payloads=second_sink)
+    assert second == first
+    assert second_sink == {}
+    assert calls == []
