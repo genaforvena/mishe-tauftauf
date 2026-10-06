@@ -331,6 +331,30 @@ def test_journal_keeps_original_fixed_window_and_full_metadata(
     assert "STATE: GREEN" in rendered
 
 
+def _unit_failure() -> dict:
+    return {"id": "sense.journal.unit-failure-count", "state": "verified", "kind": "read",
+            "sample": "last-10min unit-failure-count=2 resources=2", "count": 2,
+            "units": {"tmux-spawn-1.scope": 1, "tmux-spawn-2.scope": 1},
+            "classes": {"resources": 2},
+            "coverage": {"since": "2023-11-14T22:03:20.123456+00:00",
+                         "until": "2023-11-14T22:13:20.123456+00:00",
+                         "boot_id": "12345678123456781234567812345678",
+                         "acquisition_started_ns": 10_000_000_100,
+                         "acquisition_finished_ns": 11_000_000_000}}
+
+
+@pytest.mark.parametrize("pane", [discover, senses])
+def test_unit_failure_journal_sense_verifies_with_valid_bounds(
+        tmp_path: Path, current_endpoint, pane) -> None:
+    home = tmp_path / "site"
+    _write_scan(home, [_unit_failure()])
+    rendered = pane(home)
+    assert "VERIFIED sense.journal.unit-failure-count" in rendered
+    assert "historical sample=last-10min unit-failure-count=2 resources=2" in rendered
+    assert "source_bounds=valid" in rendered
+    assert "STATE: GREEN" in rendered
+
+
 @pytest.mark.parametrize("pane", [discover, senses])
 @pytest.mark.parametrize("identity", ["sense.journal.kernel-error-count", "sense.journal.kernel-error-rate"])
 def test_legacy_journal_preserves_count_but_cannot_establish_current_trust(

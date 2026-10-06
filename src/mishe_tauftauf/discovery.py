@@ -488,6 +488,92 @@ def _journal_error_window(past_minutes: int = 10) -> dict:
 
 
 
+UNIT_FAILURE = re.compile(r"^(.+?): Failed with result '([^']+)'\.$")
+
+
+def _journal_unit_failure_window(past_minutes: int = 10) -> dict:
+    """Count systemd unit failures in one fixed window; never infer fault or rate.
+
+    A unit that fails leaves ``Failed with result '<class>'`` in the journal,
+    naming the failed unit and the class. ``systemctl show -p Result`` does not:
+    a restart overwrites the result, and ``NRestarts`` counts only automatic
+    restarts. The records are not kernel messages and are logged at warning
+    priority, so ``-k -p err`` never sees them; the selector is the systemd
+    identifier plus this message pattern, and the failed unit is read from the
+    message because the sender's ``_SYSTEMD_UNIT`` may differ. Counts are raw,
+    grouped by unit and class, and cover only the window; the window matches the
+    scan renewal threshold, so consecutive scans cover the boot without a gap.
+    """
+    started = time.monotonic_ns()
+    boot = _journal_boot()
+    until = datetime.now(timezone.utc)
+    since = until - timedelta(minutes=past_minutes)
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+    def microseconds(value: datetime) -> int:
+        delta = value - epoch
+        return (delta.days * 86400 + delta.seconds) * 1000000 + delta.microseconds
+
+    lower, upper = microseconds(since), microseconds(until)
+    coverage = {"since": since.isoformat(), "until": until.isoformat(),
+                "boot_id": boot, "acquisition_started_ns": started}
+    unknown = {"state": "unknown", "sample": "journal unit-failure window unavailable",
+               "coverage": coverage}
+    if boot is None:
+        unknown["reason"] = "boot identity unavailable"
+        return unknown
+    output = _journal_command([
+        "journalctl", f"--boot={boot}", "-o", "json",
+        "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,_BOOT_ID,SYSLOG_IDENTIFIER,MESSAGE",
+        "--since", since.strftime("%Y-%m-%d %H:%M:%S.%f UTC"),
+        "--until", until.strftime("%Y-%m-%d %H:%M:%S.%f UTC"),
+        "--no-pager", "--quiet", "SYSLOG_IDENTIFIER=systemd"])
+    after = _journal_boot()
+    finished = time.monotonic_ns()
+    coverage["acquisition_finished_ns"] = finished
+    if after != boot or finished < started:
+        unknown["reason"] = "acquisition epoch changed"
+        return unknown
+    if output is None:
+        unknown["reason"] = "incomplete or failed acquisition"
+        return unknown
+    cursors: set[str] = set()
+    units: dict[str, int] = {}
+    classes: dict[str, int] = {}
+    try:
+        for line in output.decode("utf-8").splitlines():
+            record = json.loads(line)
+            if not isinstance(record, dict):
+                raise ValueError("record is not an object")
+            cursor = record.get("__CURSOR")
+            timestamp = record.get("__REALTIME_TIMESTAMP")
+            if (not isinstance(cursor, str) or not cursor or cursor in cursors
+                    or record.get("_BOOT_ID") != boot
+                    or record.get("SYSLOG_IDENTIFIER") != "systemd"
+                    or not isinstance(timestamp, str)
+                    or not re.fullmatch(r"[0-9]+", timestamp)
+                    or not lower <= int(timestamp) <= upper):
+                raise ValueError("invalid entry metadata")
+            cursors.add(cursor)
+            message = record.get("MESSAGE")
+            if not isinstance(message, str):
+                continue
+            match = UNIT_FAILURE.match(message)
+            if match is None:
+                continue
+            units[match.group(1)] = units.get(match.group(1), 0) + 1
+            classes[match.group(2)] = classes.get(match.group(2), 0) + 1
+    except (UnicodeError, ValueError, TypeError):
+        unknown["reason"] = "invalid journal entry metadata"
+        return unknown
+    total = sum(units.values())
+    parts = [f"last-{past_minutes}min unit-failure-count={total}"]
+    parts.extend(f"{name}={count}" for name, count in sorted(classes.items()))
+    return {"state": "verified", "sample": " ".join(parts),
+            "count": total, "units": units, "classes": classes,
+            "coverage": coverage}
+
+
 def _import_root(path: str) -> str | None:
     """The source root a PYTHONPATH entry imports, or None when it names none.
 
@@ -1246,6 +1332,8 @@ def sample(home: Path) -> dict[str, object]:
                          "sample": found or "not on PATH", "kind": "declaration"})
     observed.append({"id": "sense.journal.kernel-error-count", "kind": "read",
                      **_journal_error_window()})
+    observed.append({"id": "sense.journal.unit-failure-count", "kind": "read",
+                     **_journal_unit_failure_window()})
 
     loadavg = _read(Path("/proc/loadavg"), 256)
     observed.append({"id": "sense.proc.loadavg", "state": "verified" if loadavg else "unknown",
