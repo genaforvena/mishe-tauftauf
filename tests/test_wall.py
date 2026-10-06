@@ -661,6 +661,9 @@ def test_delivery_dashboard_separates_source_and_runtime_and_marks_incomplete(tm
     assert "DEPLOYED: root=" in text and "sha256=" in text
     assert "PATCH change: applied delivery=incomplete" in text
     (home / "patches/change.json").write_text(json.dumps({"phase": "applied", "delivery_verified": True}))
+    assert "PATCH change: applied delivery=incomplete" in wall_view.render(home, "genome")
+    (home / "patches/change.json").write_text(json.dumps({
+        "phase": "applied", "delivery_verified": True, "verification": {"at": "2026-10-01T00:00:00+00:00"}}))
     assert "PATCH change: applied delivery=verified" in wall_view.render(home, "genome")
 
 
