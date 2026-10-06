@@ -229,10 +229,10 @@ def health(home: Path) -> str:
         expected = set(json.loads(expected_path.read_text(encoding="utf-8")))
     except (OSError, ValueError):
         expected = set()
-    windows_unknown = False
+    windows_unknown = ""
+    missing = extra = dead = []
     if not session:
-        windows_unknown = True
-        missing = extra = dead = []
+        windows_unknown = "session unset"
         lines.append("WINDOWS: UNKNOWN — session unset")
     else:
         try:
@@ -240,34 +240,40 @@ def health(home: Path) -> str:
                 ["tmux", "list-panes", "-s", "-t", session,
                  "-F", "#{window_name} #{pane_index} #{pane_dead}"],
                 capture_output=True, text=True, timeout=2)
-            pane_states = {}
-            if result.returncode == 0:
-                for row in result.stdout.splitlines():
-                    fields = row.split()
-                    if len(fields) == 3:
-                        pane_states[(fields[0], fields[1])] = fields[2]
-            actual = {name for name, _ in pane_states}
+            read_ok = result.returncode == 0
         except (OSError, subprocess.TimeoutExpired):
-            actual = set()
+            read_ok = False
+        if not read_ok:
+            # A failed tmux read is no observation: name the read failure
+            # (UNKNOWN) instead of claiming every window is missing (RED). A
+            # genuinely dead server still reads RED through the DOCTOR check.
+            windows_unknown = "pane read failed"
+            lines.append("WINDOWS: UNKNOWN — pane read failed")
+        else:
             pane_states = {}
-        missing = sorted(expected - actual)
-        extra = sorted(actual - expected)
-        dead = [f"{name}.0" for name in expected & actual
-                if pane_states.get((name, "0")) != "0"]
-        # A chartered mind's bottom pane can die at status 127 while its
-        # renderer (.0) stays live: `remain-on-exit` keeps the corpse visible, so
-        # the renderer lease cannot see it. `doctor --panes` checks this, but
-        # nothing runs that periodically, and one busy peer masks a wedged mind
-        # on the global activity line. Detect it from the pane snapshot already
-        # taken, for windows that ship a mind launcher.
-        dead += [f"{name}.1" for name in expected & actual
-                 if (home / "minds" / name).is_file()
-                 and pane_states.get((name, "1"), "0") != "0"]
-        dead = sorted(dead)
-        lines.append("WINDOWS: " + ("PASS " if expected and not missing and not extra and not dead else "RED ") +
-                     ",".join(sorted(actual)) + (" missing=" + ",".join(missing) if missing else "") +
-                     (" dead=" + ",".join(dead) if dead else "") +
-                     (" extra=" + ",".join(extra) if extra else ""))
+            for row in result.stdout.splitlines():
+                fields = row.split()
+                if len(fields) == 3:
+                    pane_states[(fields[0], fields[1])] = fields[2]
+            actual = {name for name, _ in pane_states}
+            missing = sorted(expected - actual)
+            extra = sorted(actual - expected)
+            dead = [f"{name}.0" for name in expected & actual
+                    if pane_states.get((name, "0")) != "0"]
+            # A chartered mind's bottom pane can die at status 127 while its
+            # renderer (.0) stays live: `remain-on-exit` keeps the corpse visible, so
+            # the renderer lease cannot see it. `doctor --panes` checks this, but
+            # nothing runs that periodically, and one busy peer masks a wedged mind
+            # on the global activity line. Detect it from the pane snapshot already
+            # taken, for windows that ship a mind launcher.
+            dead += [f"{name}.1" for name in expected & actual
+                     if (home / "minds" / name).is_file()
+                     and pane_states.get((name, "1"), "0") != "0"]
+            dead = sorted(dead)
+            lines.append("WINDOWS: " + ("PASS " if expected and not missing and not extra and not dead else "RED ") +
+                         ",".join(sorted(actual)) + (" missing=" + ",".join(missing) if missing else "") +
+                         (" dead=" + ",".join(dead) if dead else "") +
+                         (" extra=" + ",".join(extra) if extra else ""))
     services_path = home / "health" / "services.json"
     local_services_unknown = False
     try:
@@ -416,8 +422,8 @@ def health(home: Path) -> str:
         verdict = f"FAIL health internal check at {at} — " + "; ".join(causes)
         lines.append("STATE: RED — internal check needs repair")
     elif windows_unknown:
-        verdict = f"UNKNOWN health session unset at {at}"
-        lines.append("STATE: UNKNOWN — session unset")
+        verdict = f"UNKNOWN health {windows_unknown} at {at}"
+        lines.append(f"STATE: UNKNOWN — {windows_unknown}")
     elif linked_unknown:
         verdict = f"UNKNOWN health linked-site data unavailable at {at}"
         lines.append("STATE: UNKNOWN — linked-site service data unavailable")
