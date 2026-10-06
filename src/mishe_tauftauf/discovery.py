@@ -713,11 +713,13 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
     one systemd user bus. A service of another site therefore runs here invisible
     to that manifest, and one can carry a release the site's own pin contradicts.
     A session's units share its prefix, so the registry's session maps any unit
-    to its site —
-    including a unit the site's own manifest omits, which is how a stale release
-    hides from the service coverage that would otherwise name it.
-    The release coordinator's declared checkout root is not a stale release, so
-    it is skipped rather than reported against the pin.
+    to its site — including a unit the site's own manifest omits, which is how a
+    stale release hides from the service coverage that would otherwise name it.
+    The scanning site is mapped from its own session whether or not the registry
+    lists other sites, so its manifest-omitted units stay read even when it
+    coordinates none. The release coordinator's declared checkout root is not a
+    stale release, so it is skipped rather than reported against the pin; only a
+    registry whose site list is unreadable is unknown.
     """
     registry_path = home / "health" / "linked-sites.json"
     try:
@@ -729,9 +731,9 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
         return {"id": "sense.runtime.drift-across-sites", "state": "unknown",
                 "sample": "linked-site registry unreadable", "kind": "read"}
     sites = registry.get("sites") if isinstance(registry, dict) else None
-    if not isinstance(sites, list) or not sites:
+    if not isinstance(sites, list):
         return {"id": "sense.runtime.drift-across-sites", "state": "unknown",
-                "sample": "linked-site registry lists no sites", "kind": "read"}
+                "sample": "linked-site registry has no site list", "kind": "read"}
     site_by_prefix: dict[str, str] = {}
     pins: dict[str, tuple[str | None, str | None]] = {}
 

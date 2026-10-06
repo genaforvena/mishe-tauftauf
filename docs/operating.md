@@ -323,6 +323,9 @@ The across-sites drift sense also reports `UNKNOWN` with `uninspectable=<unit>`
 when a running session unit's import root cannot be discovered from systemd,
 its main process, or the main process's direct children. No root means the pin
 comparison is unevidenced, not clean.
+The scanning site's own units are read even when the registry lists no other
+sites, so a unit its manifest omits is still compared with its own pin rather
+than left unnamed; only a registry whose site list is unreadable is `UNKNOWN`.
 
 The service comparison covers only the roots the listed services import. A pane
 renderer that exports its own `PYTHONPATH` runs from a root no manifest names,
