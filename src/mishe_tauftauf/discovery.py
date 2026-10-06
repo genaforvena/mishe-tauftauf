@@ -529,6 +529,45 @@ def _journal_error_window(past_minutes: int = 10) -> dict:
 UNIT_FAILURE = re.compile(r"^(.+?): Failed with result '([^']+)'\.$")
 
 
+def _unit_restart_context(units: list[str]) -> dict[str, dict]:
+    """Restart context for failed units: NRestarts and ActiveState.
+
+    A unit that exits nonzero by design and recovers reads differently from
+    one crash-looping: ``restarts=N active=running`` vs ``active=failed``.
+    User scope first, then system scope for units not found there. Returns
+    an empty dict when systemctl is unavailable or no unit is found.
+    """
+    if not units:
+        return {}
+    context: dict[str, dict] = {}
+    environment = os.environ.copy()
+    environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    for scope in (["--user"], []):
+        remaining = [u for u in units if u not in context]
+        if not remaining:
+            break
+        try:
+            result = subprocess.run(["systemctl", *scope, "show", *remaining,
+                                     "-p", "Id,NRestarts,ActiveState"],
+                                    capture_output=True, text=True, timeout=5,
+                                    env=environment)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if result.returncode:
+            continue
+        for block in result.stdout.split("\n\n"):
+            values = dict(row.split("=", 1) for row in block.splitlines() if "=" in row)
+            unit = str(values.get("Id", ""))
+            if not unit or unit in context:
+                continue
+            try:
+                restarts = int(values.get("NRestarts", "0"))
+            except ValueError:
+                restarts = 0
+            context[unit] = {"restarts": restarts,
+                             "active": str(values.get("ActiveState", "unknown"))}
+    return context
+
 def _journal_unit_failure_window(past_minutes: int = 10) -> dict:
     """Count systemd unit failures in one fixed window; never infer fault or rate.
 
@@ -541,6 +580,12 @@ def _journal_unit_failure_window(past_minutes: int = 10) -> dict:
     message because the sender's ``_SYSTEMD_UNIT`` may differ. Counts are raw,
     grouped by unit and class, and cover only the window; the window matches the
     scan renewal threshold, so consecutive scans cover the boot without a gap.
+
+    Restart context (``NRestarts``, ``ActiveState``) is read for each failed
+    unit so a recovered one-off reads differently from a crash-loop: a unit
+    that exits nonzero by design and recovers shows ``active=running``, while
+    a crash-loop shows ``active=failed``. The context is supplementary —
+    when systemctl is unavailable the sample omits it.
     """
     started = time.monotonic_ns()
     boot = _journal_boot()
@@ -605,11 +650,14 @@ def _journal_unit_failure_window(past_minutes: int = 10) -> dict:
         unknown["reason"] = "invalid journal entry metadata"
         return unknown
     total = sum(units.values())
+    restart_context = _unit_restart_context(sorted(units))
     parts = [f"last-{past_minutes}min unit-failure-count={total}"]
     parts.extend(f"{name}={count}" for name, count in sorted(classes.items()))
+    parts.extend(f"{unit}:restarts={ctx['restarts']},active={ctx['active']}"
+                 for unit, ctx in sorted(restart_context.items()))
     return {"state": "verified", "sample": " ".join(parts),
             "count": total, "units": units, "classes": classes,
-            "coverage": coverage}
+            "unit_context": restart_context, "coverage": coverage}
 
 
 WEDGE_CHAIN_THRESHOLD = 3
