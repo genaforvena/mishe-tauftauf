@@ -107,6 +107,33 @@ def test_failed_exchange_reaps_and_refuses_reuse(tmp_path, turn, match):
     assert_reaped(session)
 
 
+
+def test_completion_written_immediately_before_a_nonzero_exit_is_not_refused(tmp_path):
+    # A worker that emits its completion and exits nonzero in the same tick
+    # races the receipt against the exit. Either ordering is defensible: the
+    # turn may complete, or it may be attributed to a process that died right
+    # after. Discarding the buffered line as a bare exit is not, because a
+    # caller reconciling the turn would lose the completion it needs.
+    session = NativeSession(command(tmp_path, turn=(
+        "emit({'type':'turn','id':request['id'],'frame':" + repr(FRAME) + "}); __import__('os')._exit(7)"
+    )), "fixture/model", "session", timeout=3)
+    try:
+        turn = session.turn({})
+    except WorkerError as caught:
+        # The exit outran the receipt: the turn is attributed to a process that
+        # died right after emitting it, never refused as a bare exit.
+        assert "native session exited 7" not in str(caught.value), caught.value
+    else:
+        # The receipt won, so the turn completes and the caller owns the
+        # failure: a worker exiting 7 after a valid receipt is a disposal
+        # failure, never a successful turn.
+        assert turn.terminal == "done"
+        assert turn.assistant == FRAME["assistant"]
+        with pytest.raises(WorkerError, match="exited 7"):
+            session.close()
+    assert not session.pending
+    assert_reaped(session)
+
 def test_current_cancellation_reaps_before_next_turn(tmp_path):
     cancelled = False
     session = NativeSession(command(tmp_path), "fixture/model", "session",
