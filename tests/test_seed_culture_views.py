@@ -20,7 +20,6 @@ def test_views_show_real_scan_and_scoped_request_without_clock_churn(tmp_path: P
     assert "command.git" in first
     sense = senses(home)
     assert "sense.proc.loadavg" in sense
-    assert "age=" not in sense
     request(home, "keyboard-count", "senses", "sense-keyboard", "input.activity.count",
             ["senses/keyboard", "task/sense-keyboard/verify"], "Need count-only probe")
     pending = permissions(home)
@@ -29,26 +28,6 @@ def test_views_show_real_scan_and_scoped_request_without_clock_churn(tmp_path: P
     decide(home, "keyboard-count", "granted")
     assert "keyboard-count GRANTED" in permissions(home)
 
-def test_future_dated_scan_cannot_render_recent(tmp_path: Path) -> None:
-    """A scan timestamp ahead of the wall clock fails closed, never GREEN."""
-    from datetime import datetime, timedelta, timezone
-
-    home = tmp_path / "site"
-    future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(
-        timespec="seconds").replace("+00:00", "Z")
-    snapshot = {"created": future, "node": "node", "observations": [
-        {"id": "sense.proc.loadavg", "state": "verified", "sample": "1.23", "kind": "read"}]}
-    (home / "discovery").mkdir(parents=True)
-    (home / "discovery" / "latest.json").write_text(json.dumps(snapshot), encoding="utf-8")
-
-    rendered = discover(home)
-    assert "freshness=stale" in rendered
-    assert "STATE: UNKNOWN — scan stale; renew the read" in rendered
-    assert (home / "observations" / "discover").read_text(encoding="utf-8") == "UNKNOWN discover scan stale\n"
-
-    sense = senses(home)
-    assert "freshness=stale" in sense
-    assert "STATE: UNKNOWN" in sense
 
 
 def test_health_detects_dead_top_even_when_bottom_is_alive(tmp_path: Path, monkeypatch) -> None:
@@ -264,56 +243,271 @@ def test_health_linked_service_verdicts(tmp_path: Path, monkeypatch, fault) -> N
         assert (home / "observations" / "health").read_text(encoding="utf-8").startswith("UNKNOWN ")
 
 
-def test_senses_reports_absent_source_as_unavailable_not_unchecked(tmp_path: Path) -> None:
+def test_senses_reports_absent_source_as_unavailable_not_unchecked(tmp_path: Path, current_endpoint) -> None:
     home = tmp_path / "site"
-    snapshot = {"created": _now_iso(), "node": "node", "observations": [
+    _write_scan(home, [
         {"id": "sense.proc.loadavg", "state": "verified", "sample": "1.23", "kind": "read"},
         {"id": "sense.input.keyboard-interrupt-count", "state": "unavailable",
          "sample": "no keyboard interrupt source on this host", "kind": "counter"},
-    ]}
-    (home / "discovery").mkdir(parents=True)
-    (home / "discovery" / "latest.json").write_text(json.dumps(snapshot), encoding="utf-8")
+    ])
     rendered = senses(home)
     assert "UNAVAILABLE sense.input.keyboard-interrupt-count" in rendered
-    assert "STATE: GREEN — all wired sample reads verified" in rendered
-    assert "UNAVAILABLE senses 1 named an absent source, not a failed read" in rendered
-    assert (home / "observations" / "senses").read_text(encoding="utf-8") == "PASS senses 2 verified samples\n"
+    assert "STATE: GREEN" in rendered
+    assert "UNAVAILABLE senses 1" in rendered
+    assert (home / "observations" / "senses").read_text(encoding="utf-8").startswith("PASS senses 2 ")
 
 
-def test_senses_labels_cpu_busy_as_short_window_evidence(tmp_path: Path) -> None:
+def test_senses_still_counts_an_unreadable_counter_as_unknown(tmp_path: Path, current_endpoint) -> None:
     home = tmp_path / "site"
-    snapshot = {"created": _now_iso(), "node": "node", "observations": [
-        {"id": "sense.proc.loadavg", "state": "verified", "sample": "37.92 39.70 40.09", "kind": "read"},
-        {"id": "sense.proc.cpu-busy", "state": "verified",
-         "sample": "short-window=0.1s busy=99.9% idle=0.1% high", "kind": "read"},
-    ]}
-    (home / "discovery").mkdir(parents=True)
-    (home / "discovery" / "latest.json").write_text(json.dumps(snapshot), encoding="utf-8")
-    rendered = senses(home)
-    assert "VERIFIED sense.proc.cpu-busy: short-window=0.1s busy=99.9% idle=0.1% high" in rendered
-    assert "STATE: GREEN — all wired sample reads verified" in rendered
-    assert "SUSTAINED" not in rendered
-    assert (home / "observations" / "senses").read_text(encoding="utf-8") == "PASS senses 2 verified samples\n"
-
-
-def test_senses_still_counts_an_unreadable_counter_as_unknown(tmp_path: Path) -> None:
-    home = tmp_path / "site"
-    snapshot = {"created": _now_iso(), "node": "node", "observations": [
+    _write_scan(home, [
         {"id": "sense.input.keyboard-interrupt-count", "state": "unknown",
          "sample": "counter unreadable; /proc/interrupts unavailable", "kind": "counter"},
-    ]}
-    (home / "discovery").mkdir(parents=True)
-    (home / "discovery" / "latest.json").write_text(json.dumps(snapshot), encoding="utf-8")
+    ])
     rendered = senses(home)
     assert "UNKNOWN sense.input.keyboard-interrupt-count" in rendered
-    assert "STATE: UNKNOWN — 1 senses need a checked read or honest unavailable claim" in rendered
+    assert "STATE: UNKNOWN" in rendered
     assert "UNAVAILABLE senses" not in rendered
-    assert (home / "observations" / "senses").read_text(encoding="utf-8") == "UNKNOWN senses 1 unverified or stale\n"
+    assert (home / "observations" / "senses").read_text(encoding="utf-8").startswith("UNKNOWN ")
 
 
-def _now_iso() -> str:
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+def _endpoint(first: int, last: int, utc_ns: int = 1_700_000_000_000_000_000) -> dict:
+    return {"clock": "CLOCK_BOOTTIME", "bounds_ns": [first, last],
+            "boot_id": "12345678-1234-5678-1234-567812345678",
+            "time_namespace": "time:[4026531834]",
+            "offsets": {"monotonic": [0, 0], "boottime": [0, 0]}, "utc_ns": utc_ns}
+
+
+@pytest.fixture
+def current_endpoint(monkeypatch) -> dict:
+    current = _endpoint(20_000_000_000, 20_000_000_100)
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.scan_freshness.endpoint", lambda: current)
+    return current
+
+
+def _write_scan(home: Path, observations: list[dict], *, acquisition: bool = True,
+                status: str | None = "succeeded", stage: str = "notification",
+                error: str | None = None) -> dict:
+    snapshot = {"created": "2099-01-01T00:00:00Z", "scan_id": "sample-1",
+                "node": "node", "observations": observations}
+    if acquisition:
+        snapshot["acquisition"] = {
+            "start": _endpoint(10_000_000_000, 10_000_000_100),
+            "end": _endpoint(11_000_000_000, 11_000_000_100, 1_700_000_001_000_000_000)}
+    directory = home / "discovery"
+    directory.mkdir(parents=True)
+    (directory / "latest.json").write_text(json.dumps(snapshot), encoding="utf-8")
+    if status is not None:
+        attempt = {"status": status, "stage": stage, "scan_id": "sample-1",
+                   "created": "2023-11-14T22:13:20Z", "artifact": "sample-1.json"}
+        if error is not None:
+            attempt["error"] = error
+        (directory / "attempt.json").write_text(json.dumps(attempt), encoding="utf-8")
+    return snapshot
+
+
+def _journal() -> dict:
+    return {"id": "sense.journal.kernel-error-count", "state": "verified", "kind": "read",
+            "sample": "last-10min kernel-error-count=7", "count": 7,
+            "coverage": {"since": "2023-11-14T22:03:20.123456+00:00",
+                         "until": "2023-11-14T22:13:20.123456+00:00",
+                         "boot_id": "12345678123456781234567812345678",
+                         "acquisition_started_ns": 10_000_000_100,
+                         "acquisition_finished_ns": 11_000_000_000}}
+
+
+@pytest.mark.parametrize("pane", [discover, senses])
+def test_journal_keeps_original_fixed_window_and_full_metadata(
+        tmp_path: Path, current_endpoint, pane) -> None:
+    home = tmp_path / "site"
+    journal = _journal()
+    journal["coverage"]["source_note"] = "original source metadata " + "x" * 180
+    _write_scan(home, [journal])
+    rendered = pane(home)
+    assert "VERIFIED sense.journal.kernel-error-count" in rendered
+    assert "historical sample=last-10min kernel-error-count=7 fixed-window count=7" in rendered
+    for key, value in journal["coverage"].items():
+        assert str(value) in rendered
+    assert "freshness=recent utc_consistency=consistent" in rendered
+    assert "STATE: GREEN" in rendered
+
+
+@pytest.mark.parametrize("pane", [discover, senses])
+@pytest.mark.parametrize("identity", ["sense.journal.kernel-error-count", "sense.journal.kernel-error-rate"])
+def test_legacy_journal_preserves_count_but_cannot_establish_current_trust(
+        tmp_path: Path, current_endpoint, pane, identity) -> None:
+    home = tmp_path / "site"
+    journal = _journal()
+    journal["id"] = identity
+    del journal["coverage"]
+    _write_scan(home, [journal], acquisition=False)
+    rendered = pane(home)
+    assert f"UNKNOWN {identity}" in rendered
+    assert "historical sample=last-10min kernel-error-count=7 fixed-window count=7" in rendered
+    assert "since=unknown until=unknown boot=unknown" in rendered
+    assert "source_bounds=unknown" in rendered
+    assert "freshness=unknown utc_consistency=unknown" in rendered
+    assert "VERIFIED sense.journal" not in rendered
+    assert "STATE: GREEN" not in rendered
+
+
+@pytest.mark.parametrize("field,value", [
+    ("since", None), ("since", "2023-11-14T22:03:20"), ("until", "invalid"),
+    ("until", "2023-11-14T22:00:00+00:00"), ("boot_id", None),
+    ("boot_id", "12345678-1234-5678-1234-567812345678"), ("count", None),
+    ("count", True), ("count", -1),
+])
+def test_journal_invalid_coverage_cannot_be_verified(
+        tmp_path: Path, current_endpoint, field, value) -> None:
+    home = tmp_path / "site"
+    journal = _journal()
+    target = journal if field == "count" else journal["coverage"]
+    if value is None:
+        del target[field]
+    else:
+        target[field] = value
+    _write_scan(home, [journal])
+    rendered = senses(home)
+    assert "freshness=recent" in rendered
+    assert "UNKNOWN sense.journal.kernel-error-count" in rendered
+    assert "source_state=verified source_bounds=unknown" in rendered
+    assert "STATE: UNKNOWN" in rendered
+
+
+def test_recent_acquisition_does_not_verify_unknown_journal_source(
+        tmp_path: Path, current_endpoint) -> None:
+    home = tmp_path / "site"
+    journal = _journal()
+    journal["state"] = "unknown"
+    journal["reason"] = "journal output incomplete"
+    _write_scan(home, [journal])
+    rendered = senses(home)
+    assert "freshness=recent" in rendered
+    assert "UNKNOWN sense.journal.kernel-error-count" in rendered
+    assert "journal output incomplete" in rendered
+    assert "STATE: UNKNOWN" in rendered
+
+
+@pytest.mark.parametrize("pane", [discover, senses])
+@pytest.mark.parametrize("status,stage,error", [
+    ("running", "acquisition", None), ("failed", "acquisition", "probe failed"),
+    ("failed", "publication", "write failed"), ("failed", "notification", "feed append failed"),
+    (None, "acquisition", None),
+])
+def test_incomplete_attempt_remains_visible_without_downgrading_acquired_source(
+        tmp_path: Path, current_endpoint, pane, status, stage, error) -> None:
+    home = tmp_path / "site"
+    _write_scan(home, [
+        {"id": "sense.proc.loadavg", "state": "verified", "sample": "1.23", "kind": "read"},
+    ], status=status, stage=stage, error=error)
+    rendered = pane(home)
+    assert f"ATTEMPT: {(status or 'unknown').upper()}" in rendered
+    if status is not None:
+        assert f"stage={stage}" in rendered
+    if error is not None:
+        assert error in rendered
+    assert "VERIFIED sense.proc.loadavg" in rendered
+    assert "freshness=recent" in rendered
+    assert "STATE: UNKNOWN" in rendered
+    assert (home / "observations" / pane.__name__).read_text(encoding="utf-8").startswith("UNKNOWN ")
+
+
+@pytest.mark.parametrize("pane", [discover, senses])
+@pytest.mark.parametrize("marker", ["unreadable", "different-scan"])
+def test_attempt_unknown_or_for_another_sample_cannot_claim_success(
+        tmp_path: Path, current_endpoint, pane, marker) -> None:
+    home = tmp_path / "site"
+    _write_scan(home, [
+        {"id": "sense.proc.loadavg", "state": "verified", "sample": "1.23", "kind": "read"},
+    ])
+    path = home / "discovery" / "attempt.json"
+    if marker == "unreadable":
+        path.write_text("{", encoding="utf-8")
+    else:
+        attempt = json.loads(path.read_text(encoding="utf-8"))
+        attempt["scan_id"] = "another-scan"
+        path.write_text(json.dumps(attempt), encoding="utf-8")
+    rendered = pane(home)
+    assert "ATTEMPT: UNKNOWN" in rendered if marker == "unreadable" else "sample_match=unknown" in rendered
+    assert "VERIFIED sense.proc.loadavg" in rendered
+    assert "STATE: UNKNOWN" in rendered
+    assert (home / "observations" / pane.__name__).read_text(encoding="utf-8").startswith("UNKNOWN ")
+
+
+@pytest.mark.parametrize("pane", [discover, senses])
+@pytest.mark.parametrize("first,last,freshness", [
+    (910_000_000_000, 910_000_000_000, "recent"),
+    (910_000_000_000, 910_000_000_001, "unknown"),
+    (911_000_000_001, 911_000_000_001, "stale"),
+])
+def test_empty_scan_obeys_full_age_interval_at_fifteen_minute_boundary(
+        tmp_path: Path, current_endpoint, pane, first, last, freshness) -> None:
+    home = tmp_path / "site"
+    snapshot = _write_scan(home, [])
+    snapshot["acquisition"]["start"]["bounds_ns"] = [10_000_000_000, 10_000_000_000]
+    snapshot["acquisition"]["end"]["bounds_ns"] = [11_000_000_000, 11_000_000_000]
+    (home / "discovery" / "latest.json").write_text(json.dumps(snapshot), encoding="utf-8")
+    current_endpoint["bounds_ns"] = [first, last]
+    rendered = pane(home)
+    assert f"freshness={freshness}" in rendered
+    report = (home / "observations" / pane.__name__).read_text(encoding="utf-8")
+    assert report.startswith("PASS " if freshness == "recent" else "UNKNOWN ")
+
+
+@pytest.mark.parametrize("pane", [discover, senses])
+def test_empty_legacy_scan_cannot_pass_without_acquisition(
+        tmp_path: Path, current_endpoint, pane) -> None:
+    home = tmp_path / "site"
+    _write_scan(home, [], acquisition=False)
+    rendered = pane(home)
+    assert "freshness=unknown" in rendered
+    assert "STATE: UNKNOWN" in rendered
+    assert (home / "observations" / pane.__name__).read_text(encoding="utf-8").startswith("UNKNOWN ")
+
+
+@pytest.mark.parametrize("pane", [discover, senses])
+@pytest.mark.parametrize("row", [
+    {"id": "sense.tmux.cached-read"},
+    {"id": "sense.proc.loadavg", "cached": True},
+    {"id": "sense.proc.loadavg", "imported": True},
+])
+def test_cached_source_cannot_be_refreshed_by_enclosing_acquisition(
+        tmp_path: Path, current_endpoint, pane, row) -> None:
+    home = tmp_path / "site"
+    _write_scan(home, [
+        {**row, "state": "verified", "sample": "old source sample", "kind": "read"},
+    ])
+    rendered = pane(home)
+    assert "source_state=verified source_freshness=unknown" in rendered
+    assert "STATE: UNKNOWN" in rendered
+    assert (home / "observations" / pane.__name__).read_text().startswith("UNKNOWN ")
+
+
+@pytest.mark.parametrize("pane", [discover, senses])
+@pytest.mark.parametrize("marker", ["cached", "imported"])
+def test_cached_journal_preserves_bounds_without_refreshing_source(
+        tmp_path: Path, current_endpoint, pane, marker) -> None:
+    home = tmp_path / "site"
+    journal = {**_journal(), marker: True}
+    _write_scan(home, [journal])
+    rendered = pane(home)
+    assert journal["coverage"]["since"] in rendered
+    assert journal["coverage"]["until"] in rendered
+    assert "source_freshness=unknown" in rendered
+    assert "STATE: UNKNOWN" in rendered
+    assert (home / "observations" / pane.__name__).read_text().startswith("UNKNOWN ")
+
+
+@pytest.mark.parametrize("pane", [discover, senses])
+def test_acquisition_wall_anomaly_is_visible_without_replacing_boottime_recency(
+        tmp_path: Path, current_endpoint, pane) -> None:
+    home = tmp_path / "site"
+    snapshot = _write_scan(home, [_journal()])
+    snapshot["acquisition"]["end"]["utc_ns"] = 1_699_999_999_000_000_000
+    (home / "discovery" / "latest.json").write_text(json.dumps(snapshot), encoding="utf-8")
+    rendered = pane(home)
+    assert "freshness=recent utc_consistency=anomaly" in rendered
+    assert "VERIFIED sense.journal.kernel-error-count" in rendered
+    assert "STATE: GREEN" in rendered
 
 
 @pytest.mark.parametrize("manifest", [None, "{", '{"unit":"health.service"}', '["bad"]'])

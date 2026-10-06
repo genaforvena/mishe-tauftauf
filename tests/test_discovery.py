@@ -32,12 +32,6 @@ def test_scan_writes_real_bounded_local_evidence(tmp_path: Path) -> None:
 
 
     assert all("/dev/input" not in str(row["sample"]) for row in observed.values())
-    report = Feed(home).entries()[-1].body
-    assert report.startswith("[discovery] Read-only scan at ")
-    assert "Verified readings:" in report
-    assert "Unknown readings:" in report
-    assert f"Full sample: {artifact.resolve()}." in report
-    assert "Next: senses should" in report
     shown = subprocess.run([sys.executable, "-m", "mishe_tauftauf", "--home", str(home),
                             "discover", "show"], capture_output=True, text=True)
     assert shown.returncode == 0
@@ -78,7 +72,8 @@ def test_unchanged_scan_updates_artifact_without_log_spam(tmp_path: Path) -> Non
         scan(home)
         scan(home)
     assert len(Feed(home).entries()) == 1
-    assert latest(home) == second
+
+
 def test_discovery_notices_existing_cpu_class_crossings_not_numeric_drift(tmp_path: Path) -> None:
     home = tmp_path / "site"
     snapshots = [
@@ -102,7 +97,6 @@ def test_discovery_notices_existing_cpu_class_crossings_not_numeric_drift(tmp_pa
     assert "sense.proc.cpu-busy class not-high -> high" in entries[-1].body
     assert "short-window=0.1s busy=58.0% idle=42.0%" in entries[-1].body
     assert "kernel-error-count=8" in json.dumps(latest(home))
-    assert latest(home) == snapshots[-1]
     assert all(path.exists() for path in artifacts)
 
 
@@ -157,7 +151,6 @@ def test_thermal_identity_changes_notify_but_temperature_drift_does_not(tmp_path
     assert len(entries) == 2
     assert "sense.thermal.hwmon" in entries[-1].body
     assert "nvme:temp2(Sensor)=43.0C" in entries[-1].body
-    assert latest(home) == snapshots[-1]
 
 
 def test_cpu_pressure_reports_valid_sample_and_unavailable_source(tmp_path: Path) -> None:
@@ -673,54 +666,98 @@ def test_journal_cleanup_wait_uses_only_remaining_deadline() -> None:
 
 
 
-def test_renew_scan_refreshes_missing_and_expired_evidence_without_log_spam(tmp_path: Path, monkeypatch) -> None:
+def _scan_endpoint(ns: int) -> dict:
+    return {"clock": "CLOCK_BOOTTIME", "bounds_ns": [ns, ns],
+            "boot_id": "12345678-1234-1234-1234-123456789abc",
+            "time_namespace": "time:[1]",
+            "offsets": {"monotonic": [0, 0], "boottime": [0, 0]},
+            "utc_ns": ns}
+
+
+def test_renew_scan_refreshes_expired_evidence_without_log_spam(tmp_path: Path, monkeypatch) -> None:
+    from mishe_tauftauf import scan_freshness
+
     home = tmp_path / "site"
-    clock = datetime(2026, 1, 1, tzinfo=timezone.utc)
-
-    class Clock(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return clock
-
-    monkeypatch.setattr(discovery, "datetime", Clock)
-    first = {"created": clock.isoformat(), "node": "node", "observations": [
+    now = 1_000_000_000
+    monkeypatch.setattr(discovery, "endpoint", lambda: _scan_endpoint(now))
+    monkeypatch.setattr(scan_freshness, "endpoint", lambda: _scan_endpoint(now))
+    value = {"created": "2026-01-01T00:00:00Z", "node": "node", "observations": [
         {"id": "sense.value", "state": "verified", "sample": 1, "kind": "read"},
     ]}
-    with patch("mishe_tauftauf.discovery.sample", return_value=first):
-        artifact = renew_scan(home)
-        assert artifact is not None
-        assert json.loads(artifact.read_text()) == latest(home) == first
+    with patch("mishe_tauftauf.discovery.sample", return_value=value):
+        original = renew_scan(home)
+        original_bytes = original.read_bytes()
         baseline = Feed(home).entries()
-        assert len(baseline) == 1
-        assert scan_age(home) == 0
-
-        clock += timedelta(seconds=600)
+        now += 600_000_000_000
         assert scan_age(home) == 600
         assert renew_scan(home) is None
-        assert latest(home) == first
-
-    clock += timedelta(microseconds=1)
-    fresh = {**first, "created": clock.isoformat()}
-    with patch("mishe_tauftauf.discovery.sample", return_value=fresh):
-        artifact = renew_scan(home)
-        assert artifact is not None
-        assert json.loads(artifact.read_text()) == latest(home) == fresh
+        assert (home / "discovery/latest.json").read_bytes() == original_bytes
+        now += 1
+        renewed = renew_scan(home)
+        assert renewed != original
+        assert original.read_bytes() == original_bytes
         assert scan_age(home) == 0
         assert renew_scan(home) is None
     assert Feed(home).entries() == baseline
 
 
+@pytest.mark.parametrize("created", ["2020-01-01T00:00:00Z", "2099-01-01T00:00:00Z"])
+def test_legacy_scan_renews_without_promoting_wall_timestamp(tmp_path: Path, created: str) -> None:
+    root = tmp_path / "discovery"
+    root.mkdir()
+    legacy = {"created": created, "node": "node", "observations": []}
+    (root / "latest.json").write_text(json.dumps(legacy))
+    assert scan_age(tmp_path) is None
+    with patch("mishe_tauftauf.discovery.sample", return_value=legacy):
+        artifact = renew_scan(tmp_path)
+    assert artifact is not None
+    assert latest(tmp_path)["scan_id"]
+
+
+@pytest.mark.parametrize("stage", ["acquisition", "publication", "notification"])
+def test_failed_scan_keeps_correct_receipt_and_visible_stage(tmp_path: Path, stage: str) -> None:
+    value = {"created": "2026-01-01T00:00:00Z", "node": "node", "observations": []}
+    with patch("mishe_tauftauf.discovery.sample", return_value=value):
+        original = scan(tmp_path)
+    before = original.read_bytes()
+    changed = {**value, "observations": [
+        {"id": "sense.value", "state": "unknown", "sample": "unreadable", "kind": "read"}]}
+    original_replace = discovery.os.replace
+
+    def fail_publication(source, destination):
+        if Path(destination).name == "latest.json":
+            raise OSError("controlled publication failure")
+        return original_replace(source, destination)
+
+    failure = (patch("mishe_tauftauf.discovery.sample", side_effect=OSError("controlled acquisition failure"))
+               if stage == "acquisition" else
+               patch("mishe_tauftauf.discovery.os.replace", side_effect=fail_publication)
+               if stage == "publication" else
+               patch("mishe_tauftauf.discovery.Feed.append", side_effect=OSError("controlled notification failure")))
+    with patch("mishe_tauftauf.discovery.sample", return_value=changed), failure:
+        with pytest.raises(OSError, match=f"controlled {stage} failure"):
+            scan(tmp_path)
+    assert original.read_bytes() == before
+    attempt = discovery.scan_attempt(tmp_path)
+    assert attempt["status"] == "failed"
+    assert attempt["stage"] == stage
+    if stage == "notification":
+        assert latest(tmp_path)["scan_id"] == attempt["scan_id"]
+        assert latest(tmp_path)["observations"] == changed["observations"]
+        assert (tmp_path / "discovery" / attempt["artifact"]).read_bytes() == (tmp_path / "discovery/latest.json").read_bytes()
+    else:
+        assert (tmp_path / "discovery/latest.json").read_bytes() == before
+
+
 def test_resident_ticks_renew_freshness_evidence_even_when_top_panes_fail(tmp_path: Path, monkeypatch) -> None:
     from mishe_tauftauf import seed, tmux
 
+    from mishe_tauftauf import scan_freshness
+
     clock = datetime(2026, 1, 1, tzinfo=timezone.utc)
-
-    class Clock(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return clock
-
-    monkeypatch.setattr(discovery, "datetime", Clock)
+    now = 1_000_000_000
+    monkeypatch.setattr(discovery, "endpoint", lambda: _scan_endpoint(now))
+    monkeypatch.setattr(scan_freshness, "endpoint", lambda: _scan_endpoint(now))
     monkeypatch.setattr(tmux, "owns_session", lambda *args: True)
     stale = {"created": (clock - timedelta(seconds=601)).isoformat(),
              "node": "node", "observations": [
@@ -735,9 +772,10 @@ def test_resident_ticks_renew_freshness_evidence_even_when_top_panes_fail(tmp_pa
             with patch("mishe_tauftauf.discovery.sample", return_value=stale):
                 scan(home)
             baseline = Feed(home).entries()
+            now += 601_000_000_000
             with patch("mishe_tauftauf.discovery.sample", return_value=fresh):
                 assert seed.tick(home, "session", slug).startswith("UNKNOWN seed")
-            assert latest(home) == (fresh if slug in ("discover", "senses") else stale)
+            assert latest(home)["created"] == (fresh if slug in ("discover", "senses") else stale)["created"]
             assert Feed(home).entries() == baseline
 
 

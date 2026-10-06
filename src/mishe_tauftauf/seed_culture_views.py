@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import subprocess
+import re
 import sys
 from time import monotonic
 from datetime import datetime, timezone
@@ -13,7 +14,8 @@ from pathlib import Path
 
 from .access import list_requests, recoveries, retired_requests
 from .ci_watch import line as ci_line
-from .discovery import latest
+from .discovery import latest, scan_attempt
+from . import scan_freshness
 
 
 def _report(home: Path, slug: str, verdict: str) -> None:
@@ -22,37 +24,100 @@ def _report(home: Path, slug: str, verdict: str) -> None:
     path.write_text(verdict + "\n", encoding="utf-8")
 
 
-def _snapshot_age(snapshot: dict[str, object]) -> float | None:
-    """Age of a scan in seconds, or None when it cannot establish freshness.
+def _scan_reading(snapshot: dict[str, object]) -> tuple[str, str]:
+    current = scan_freshness.endpoint()
+    bounds = scan_freshness.age_bounds(snapshot, current) if current is not None else None
+    return (scan_freshness.classify_age(bounds, 900),
+            scan_freshness.utc_consistency(snapshot))
 
-    A timestamp ahead of the wall clock is not evidence of recency: a backward
-    clock step (NTP correction, VM restore, suspend/resume) would otherwise keep
-    a stale scan reading ``recent`` until real time catches up. Treat a negative
-    age like an unavailable timestamp so the panes fail closed to UNKNOWN.
-    """
+
+def _attempt_reading(home: Path, snapshot: dict[str, object] | None) -> tuple[str, bool]:
+    attempt = scan_attempt(home)
+    if attempt is None:
+        return "ATTEMPT: UNKNOWN — no durable scan attempt", False
+    status = str(attempt.get("status", "unknown"))
+    stage = str(attempt.get("stage", "unknown"))
+    identity = attempt.get("scan_id")
+    matches = snapshot is not None and identity == snapshot.get("scan_id") and isinstance(identity, str)
+    line = (f"ATTEMPT: {status.upper()} stage={stage} scan_id={identity or 'unknown'} "
+            f"created={attempt.get('created', 'unknown')}")
+    if "artifact" in attempt:
+        line += f" artifact={attempt['artifact']}"
+    if "error" in attempt:
+        line += f" error={attempt['error']}"
+    if status == "succeeded" and not matches:
+        line += " sample_match=unknown"
+    return line, status == "succeeded" and matches
+
+
+def _journal_bounds_valid(item: dict[str, object]) -> bool:
+    coverage = item.get("coverage")
+    count = item.get("count")
+    if not isinstance(coverage, dict) or type(count) is not int or count < 0:
+        return False
+    boot = coverage.get("boot_id")
+    if not isinstance(boot, str) or re.fullmatch(r"[0-9a-f]{32}", boot) is None:
+        return False
     try:
-        created = datetime.fromisoformat(str(snapshot["created"]).replace("Z", "+00:00"))
-    except (ValueError, KeyError):
-        return None
-    age = (datetime.now(timezone.utc) - created).total_seconds()
-    return age if age >= 0 else None
+        since = datetime.fromisoformat(coverage["since"].replace("Z", "+00:00"))
+        until = datetime.fromisoformat(coverage["until"].replace("Z", "+00:00"))
+        return since.utcoffset() is not None and until.utcoffset() is not None and since <= until
+    except (KeyError, AttributeError, TypeError, ValueError):
+        return False
+
+
+def _observation_reading(item: dict[str, object], freshness: str) -> tuple[str, str]:
+    source_state = str(item.get("state", "unknown"))
+    state = source_state if freshness == "recent" or source_state == "unavailable" else "unknown"
+    identity = str(item.get("id", "unknown"))
+    sample = str(item.get("sample", "unknown"))
+    if identity.startswith("sense.journal."):
+        valid = identity == "sense.journal.kernel-error-count" and _journal_bounds_valid(item)
+        if not valid and state != "unavailable":
+            state = "unknown"
+        coverage = item.get("coverage")
+        fields = coverage if isinstance(coverage, dict) else {}
+        detail = (f"historical sample={sample} fixed-window count={item.get('count', 'unknown')} "
+                  f"since={fields.get('since', 'unknown')} until={fields.get('until', 'unknown')} "
+                  f"boot={fields.get('boot_id', 'unknown')} source_state={source_state} "
+                  f"source_bounds={'valid' if valid else 'unknown'} "
+                  f"source_metadata={json.dumps({key: value for key, value in item.items() if key != 'id'}, sort_keys=True)}")
+    else:
+        detail = f"{sample[:120]} source_state={source_state}"
+    if ((identity.startswith("sense.tmux.") and identity != "sense.tmux.windows")
+            or item.get("cached") or item.get("imported")):
+        if state != "unavailable":
+            state = "unknown"
+        detail += " source_freshness=unknown"
+    return state, f"{state.upper()} {identity}: {detail}"
 
 
 def discover(home: Path) -> str:
     lines = ["DESIRED STATE: useful reads have a real sample, honest status, and an owned next step"]
     snapshot = latest(home)
+    attempt_line, attempt_succeeded = _attempt_reading(home, snapshot)
+    lines.append(attempt_line)
     if snapshot is None:
         lines.append("STATE: UNKNOWN — no discovery scan yet")
         verdict = "UNKNOWN discover has no scan"
     else:
-        age = _snapshot_age(snapshot)
-        lines.append(f"SCAN: {snapshot.get('created', 'unknown')} freshness={'stale' if age is None or age > 900 else 'recent'}")
+        freshness, consistency = _scan_reading(snapshot)
+        lines.append(f"SCAN: {snapshot.get('created', 'unknown')} freshness={freshness} utc_consistency={consistency}")
         observations = snapshot.get("observations", [])
+        unknown = 0
         for item in observations:
-            lines.append(f"{item['state'].upper()} {item['id']}: {str(item['sample'])[:120]}")
-        if age is None or age > 900:
-            lines.append("STATE: UNKNOWN — scan stale; renew the read")
-            verdict = "UNKNOWN discover scan stale"
+            state, line = _observation_reading(item, freshness)
+            unknown += state not in {"verified", "unavailable", "available"}
+            lines.append(line)
+        if freshness != "recent":
+            lines.append(f"STATE: UNKNOWN — scan freshness {freshness}; renew the read")
+            verdict = f"UNKNOWN discover scan freshness {freshness}"
+        elif not attempt_succeeded:
+            lines.append("STATE: UNKNOWN — latest scan attempt not succeeded for this sample")
+            verdict = "UNKNOWN discover latest attempt not succeeded"
+        elif unknown:
+            lines.append(f"STATE: UNKNOWN — {unknown} source reads unverified")
+            verdict = f"UNKNOWN discover {unknown} source reads unverified"
         else:
             lines.append("STATE: GREEN — recent bounded read-only scan")
             verdict = "PASS discover recent scan"
@@ -62,7 +127,7 @@ def discover(home: Path) -> str:
         lines.append(f"REQUEST {item.identity} unblocks={','.join(item.unblocks)}")
     lines.extend(["GOAL: discover useful new directions for Mishe and this plant's goals",
                   "PURSUIT: explore capabilities and crossed senses; use related literature when useful, assess fit, and check ideas",
-                  "NEXT: renew an absent or stale scan; otherwise choose one observation, reading, or experiment and record its outcome"])
+                  "NEXT: renew an absent, stale, or unknown scan; otherwise choose one observation, reading, or experiment and record its outcome"])
     _report(home, "discover", verdict)
     return "\n".join(lines) + "\n"
 
@@ -72,23 +137,30 @@ def senses(home: Path) -> str:
              "PURSUIT: wire useful reads, reproduce hollow or failed checks, and own reusable fixes through review, branch CI and ready integration",
              "NEXT: pursue a new useful read when an UNKNOWN has a documented retry condition; verify its live sample"]
     snapshot = latest(home)
+    attempt_line, attempt_succeeded = _attempt_reading(home, snapshot)
+    lines.append(attempt_line)
     if snapshot is None:
         verdict = "UNKNOWN senses no discovery sample"
         lines.append("STATE: UNKNOWN — no sample exists")
     else:
-        age = _snapshot_age(snapshot)
-        stale = age is None or age > 900
+        freshness, consistency = _scan_reading(snapshot)
         senses_rows = [item for item in snapshot.get("observations", []) if str(item.get("id", "")).startswith("sense.")]
         unknown = 0
         unavailable = 0
         for item in senses_rows:
-            state = "unknown" if stale else item["state"]
+            state, line = _observation_reading(item, freshness)
             unknown += state not in {"verified", "unavailable"}
             unavailable += state == "unavailable"
-            lines.append(f"{state.upper()} {item['id']}: {str(item['sample'])[:120]}")
-        lines.append(f"SCAN: {snapshot.get('created', 'unknown')} freshness={'stale' if stale else 'recent'}")
-        if unknown:
-            verdict = f"UNKNOWN senses {unknown} unverified or stale"
+            lines.append(line)
+        lines.append(f"SCAN: {snapshot.get('created', 'unknown')} freshness={freshness} utc_consistency={consistency}")
+        if freshness != "recent":
+            verdict = f"UNKNOWN senses scan freshness {freshness}"
+            lines.append(f"STATE: UNKNOWN — scan freshness {freshness}; renew the read")
+        elif not attempt_succeeded:
+            verdict = "UNKNOWN senses latest attempt not succeeded"
+            lines.append("STATE: UNKNOWN — latest scan attempt not succeeded for this sample")
+        elif unknown:
+            verdict = f"UNKNOWN senses {unknown} unverified"
             lines.append(f"STATE: UNKNOWN — {unknown} senses need a checked read or honest unavailable claim")
         else:
             verdict = f"PASS senses {len(senses_rows)} verified samples"

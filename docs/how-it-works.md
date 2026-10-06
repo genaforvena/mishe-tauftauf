@@ -137,6 +137,23 @@ The caller still supplies the provider worker, current authority, durable
 effects and recovery. This transport does not activate a resident or establish
 credential/account parity.
 
+For pinned Codex full-history SSE, each correlated `response.completed` also
+returns a logical checkpoint in the same `NativeTurn` that the caller journal
+records as `model_output`. A fresh `NativeSession(..., checkpoint=...)` sends it
+only on its first turn. The packaged worker rejects assistant/tool-result
+continuation without a checkpoint, changed context, incomplete or mismatched
+results, duplicate original call IDs and occupied provider state before resolving
+credentials for the turn. Import requires the exact provider source digest and
+restores only session/thread/window/turn identity and turn-start time into a new
+factory-owned container. It is not a supported upstream state API.
+
+Checkpoints do not restore account, installation, routing, sockets, compaction,
+effort-transition history or effect authority. No compaction/history rewriting is
+supported across this boundary. The caller must supply an immutable, singly owned
+completed-result history and reconcile original effects before continuation;
+the transport neither selects nor authenticates a journal. Error/incomplete
+responses retain diagnostics but do not establish a recovery checkpoint.
+
 The wheel includes the native TypeScript worker, session and auth bootstrap.
 `inference_native.native_worker_command(bun=..., node_modules=...,
 staging_parent=...)` stages those sources in a temporary owned directory with
@@ -190,11 +207,29 @@ Roles are not file restrictions. Within owned scope, every mind may repair Mishe
 
 Discovery starts with bounded, read-only local samples: commands on `PATH`, `/proc` and `/sys` values, disk space, tmux windows, and input activity counters. Input activity counts do not capture key content. Each discovery entry explains available commands, verified readings, unknowns, the artifact, and the next action. Repeated scans refresh local evidence but append chat only when availability, status, or an unknown reason changes. Discover and senses wake for those meaningful changes, not every moving counter.
 
-The discover and senses supervisor ticks renew a missing scan or one older than
-600 seconds, before the panes' 900-second stale boundary. This bounded read runs
-under the seed lock even when the upper pane is unavailable or stopped; other
-channels do not renew it. An unchanged scan does not append another discovery
-event, so keeping samples current does not itself require a mind wake.
+The discover and senses supervisor ticks renew a missing, incompatible, or
+uncertain scan, or one whose conservative acquisition age exceeds 600 seconds.
+Each persisted receipt binds its observations and scan ID to start/end
+`CLOCK_BOOTTIME` brackets, boot ID, time namespace, and namespace offsets.
+Compatible age bounds are recent only when their upper bound is at most the
+threshold; they are stale when their lower bound exceeds it, and otherwise
+UNKNOWN. The panes use 900 seconds. Legacy UTC-only receipts remain historical
+and UNKNOWN until renewed; wall-clock endpoint consistency is shown separately,
+not used to establish freshness.
+
+This bounded read runs under the seed lock even when the upper pane is
+unavailable or stopped; other channels do not renew it. An unchanged scan does
+not append another discovery event. `discovery/attempt.json` exposes acquisition,
+publication, and notification failures separately from `latest.json`: a failed
+acquisition or pre-commit publication retains the previous sample; a failed
+notification retains the newly committed sample but cannot claim completed
+delivery. Historical scan artifacts are preserved.
+
+Acquisition freshness does not refresh cached or imported source evidence.
+Journal counts retain their original fixed `since`/`until` bounds, count, boot,
+and source metadata in both panes; they are not a sliding “last ten minutes”
+claim at render time. Missing bounds and cached/imported source validity remain
+UNKNOWN independently of a recent enclosing scan.
 
 Local scans are only one input to discovery. Discover also selects neighboring topics
 from literature, reads relevant primary sources, and assesses their mechanisms,
