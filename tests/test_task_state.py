@@ -132,6 +132,25 @@ def test_nonowner_cannot_close_another_roles_task(tmp_path):
     assert "repair" in task_state.states(Feed(tmp_path).entries())
 
 
+def test_sync_follower_can_close_the_kernel_sync_task_it_opened(tmp_path):
+    # The automated CI follower opens a kernel-sync task as "sync" on a
+    # linked-site hold and closes it with "[done]" after a successful replant;
+    # the owner guard must not drop that close and leave the finished task on
+    # the board.
+    Feed(tmp_path).append("sync", "[task] kernel-sync-abc-tiny-fleet owner=genome source=ci\n"
+                                  "Refresh /tmp/site from green core commit abc; current blocker: lease absent.")
+    assert "kernel-sync-abc-tiny-fleet" in task_state.states(Feed(tmp_path).entries())
+    Feed(tmp_path).append("sync", "[done] kernel-sync-abc-tiny-fleet\nReplanted /tmp/site from core abc.")
+    assert "kernel-sync-abc-tiny-fleet" not in task_state.states(Feed(tmp_path).entries())
+    assert task_state.registry(Feed(tmp_path).entries())["kernel-sync-abc-tiny-fleet"].status == "done"
+
+
+def test_nonowner_mind_cannot_close_a_sync_created_task(tmp_path):
+    Feed(tmp_path).append("sync", "[task] kernel-sync-abc-tiny-fleet owner=genome source=ci\nhold")
+    Feed(tmp_path).append("witness", "[done] kernel-sync-abc-tiny-fleet — not mine to close")
+    assert "kernel-sync-abc-tiny-fleet" in task_state.states(Feed(tmp_path).entries())
+
+
 def test_closed_task_stays_closed_on_taking_in_both_views(tmp_path):
     from mishe_tauftauf.seed_board import open_tasks
     task(tmp_path)

@@ -158,7 +158,11 @@ def registry(entries: list[FeedEntry]) -> dict[str, TaskState]:
         elif match := STATE_RE.match(first):
             action, identity = match.groups()
             old = result.get(identity)
-            if old and old.status not in {"done", "dropped"} and entry.source in {old.owner, "operator"}:
+            # The owner and the operator may transition a task. The automated CI
+            # follower ("sync") is also accepted: it opens a kernel-sync task on a
+            # linked-site hold and closes it with "[done]" after the replant.
+            if (old and old.status not in {"done", "dropped"}
+                    and entry.source in {old.owner, "operator", "sync"}):
                 if action == "taking":
                     result[identity] = replace(old, activity="taking")
                 elif not old.managed:
