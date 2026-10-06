@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .access import list_requests, recoveries, retired_requests
 from .ci_watch import line as ci_line
-from .discovery import latest, scan_attempt
+from .discovery import latest, producer_label, scan_attempt
 from . import scan_freshness
 
 
@@ -105,7 +105,8 @@ def discover(home: Path) -> str:
         verdict = "UNKNOWN discover has no scan"
     else:
         freshness, consistency = _scan_reading(snapshot)
-        lines.append(f"SCAN: {snapshot.get('created', 'unknown')} freshness={freshness} utc_consistency={consistency}")
+        lines.append(f"SCAN: {snapshot.get('created', 'unknown')} freshness={freshness} "
+                     f"utc_consistency={consistency} producer={producer_label(home, snapshot.get('producer'))}")
         observations = snapshot.get("observations", [])
         unknown = 0
         for item in observations:
@@ -155,7 +156,8 @@ def senses(home: Path) -> str:
             unknown += state not in {"verified", "unavailable"}
             unavailable += state == "unavailable"
             lines.append(line)
-        lines.append(f"SCAN: {snapshot.get('created', 'unknown')} freshness={freshness} utc_consistency={consistency}")
+        lines.append(f"SCAN: {snapshot.get('created', 'unknown')} freshness={freshness} "
+                     f"utc_consistency={consistency} producer={producer_label(home, snapshot.get('producer'))}")
         if freshness != "recent":
             verdict = f"UNKNOWN senses scan freshness {freshness}"
             lines.append(f"STATE: UNKNOWN — scan freshness {freshness}; renew the read")
