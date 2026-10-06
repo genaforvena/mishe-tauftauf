@@ -73,6 +73,21 @@ def test_unchanged_scan_updates_artifact_without_log_spam(tmp_path: Path) -> Non
         scan(home)
     assert len(Feed(home).entries()) == 1
 
+def test_scan_includes_producer_provenance(tmp_path: Path) -> None:
+    home = tmp_path / "site"
+    artifact = scan(home)
+    snapshot = json.loads(artifact.read_text())
+    assert "producer" in snapshot
+    producer = snapshot["producer"]
+    # The producer names the package root and the git commit that produced it.
+    expected_root = str(Path(discovery.__file__).resolve().parent)
+    assert producer.startswith(expected_root + "@")
+    sha = producer.rsplit("@", 1)[-1]
+    assert sha == "unknown" or re.fullmatch(r"[0-9a-f]{40}", sha)
+
+    # latest.json carries the same producer.
+    assert latest(home)["producer"] == producer
+
 
 def test_discovery_notices_existing_cpu_class_crossings_not_numeric_drift(tmp_path: Path) -> None:
     home = tmp_path / "site"
