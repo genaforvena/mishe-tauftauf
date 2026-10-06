@@ -325,7 +325,7 @@ def test_runtime_only_cli_preserves_dirty_application_and_contract(tmp_path: Pat
     workspace.mkdir()
     subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
     home = workspace / ".mishe-tauftauf"
-    session = "mishe-refresh-test-" + uuid.uuid4().hex[:10]
+    session = f"mishe-tauftauf-test-{os.getpid()}-{uuid.uuid4().hex[:10]}"
     argv = [sys.executable, "-m", "mishe_tauftauf.plant", "--workspace", str(workspace),
             "--home", str(home), "--session", session, "--engine-command", "cat", "--no-services"]
     try:
@@ -409,7 +409,7 @@ def test_runtime_refresh_does_not_wait_for_delivery_projection(tmp_path):
     workspace.mkdir()
     subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
     home = workspace / ".mishe-tauftauf"
-    session = "mishe-maintenance-test-" + uuid.uuid4().hex[:10]
+    session = f"mishe-tauftauf-test-{os.getpid()}-{uuid.uuid4().hex[:10]}"
     script = """
 from mishe_tauftauf import delivery, ci_watch
 import runpy

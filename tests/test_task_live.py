@@ -1,5 +1,6 @@
 """Exercise canonical wall producer/reviewer delivery through actual tmux."""
 
+import os
 import subprocess
 import sys
 import time
@@ -18,7 +19,7 @@ def test_wall_cpu_producer_and_independent_reviewer_run_without_ledger_gate(tmp_
     workspace.mkdir()
     subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
     home = workspace / ".mishe-tauftauf"
-    session = "mishe-production-test-" + uuid.uuid4().hex[:10]
+    session = f"mishe-tauftauf-test-{os.getpid()}-{uuid.uuid4().hex[:10]}"
 
     def cli(*args, ok=True):
         result = subprocess.run([sys.executable, "-m", "mishe_tauftauf", "--home", str(home), *args],
