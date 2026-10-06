@@ -366,7 +366,11 @@ The journal unit-failure-count sense (`sense.journal.unit-failure-count`) reads
 the system journal for `Failed with result '<class>'` messages from systemd,
 grouping raw counts by failed unit and class over a fixed 600-second window.
 The kernel-error-count sense (`-k -p err`) never sees these records because
-they are logged at warning priority, not as kernel messages. The window matches
+they are logged at warning priority, not as kernel messages. It groups the
+count by each message's reporting source (the text before the first `': '`), so
+a window dominated by one repeating driver message cannot be read as a fault
+count; the sample names the largest sources and folds the rest into `other`,
+and `classes` carries the full breakdown. The window matches
 the scan renewal threshold, so consecutive scans cover the boot without a gap.
 
 ### Linked health is a separate live check

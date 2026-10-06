@@ -426,8 +426,37 @@ def _journal_boot() -> str | None:
     return value if re.fullmatch(r"[0-9a-f]{32}", value) else None
 
 
+KERNEL_SOURCE_LIMIT = 8
+"""Distinct kernel sources named in one sample line; the rest are folded into
+``other``. A window is normally dominated by one repeating driver message and
+the sample line is what a reader scans, so the largest classes are named first;
+the full breakdown stays in ``classes``."""
+
+
+def _kernel_source(message: str) -> str:
+    """The reporting source of a kernel message: text before the first ``': '``.
+
+    Kernel messages follow ``<source>: <text>``, where the source names the
+    driver, subsystem or device that logged it. Grouping by that name separates
+    a repeating driver message from an unrelated fault in the same window, so a
+    raw count cannot be read as a fault count. A source is capped at 64
+    characters so a long first line cannot balloon the breakdown. A message with
+    no separator keeps its first line, and one that yields nothing is attributed
+    to ``unattributed`` rather than dropped, so the classes always sum to the
+    count.
+    """
+    head = message.split("\n", 1)[0]
+    source, separator, _ = head.partition(": ")
+    source = (source if separator else head).strip()[:64]
+    return source or "unattributed"
+
+
 def _journal_error_window(past_minutes: int = 10) -> dict:
-    """Count visible kernel entries in one fixed window; never infer fault or rate."""
+    """Count visible kernel entries in one fixed window; never infer fault or rate.
+
+    Entries are grouped by reporting source so a repeating driver message cannot
+    be read as a fault count.
+    """
     started = time.monotonic_ns()
     boot = _journal_boot()
     until = datetime.now(timezone.utc)
@@ -450,7 +479,7 @@ def _journal_error_window(past_minutes: int = 10) -> dict:
         "journalctl", f"--boot={boot}", "-k", "-p", "err",
         "--since", since.strftime("%Y-%m-%d %H:%M:%S.%f UTC"),
         "--until", until.strftime("%Y-%m-%d %H:%M:%S.%f UTC"),
-        "-o", "json", "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,_BOOT_ID,_TRANSPORT,PRIORITY",
+        "-o", "json", "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,_BOOT_ID,_TRANSPORT,PRIORITY,MESSAGE",
         "--no-pager", "--quiet"])
     after = _journal_boot()
     finished = time.monotonic_ns()
@@ -462,6 +491,7 @@ def _journal_error_window(past_minutes: int = 10) -> dict:
         unknown["reason"] = "incomplete or failed acquisition"
         return unknown
     cursors: set[str] = set()
+    classes: dict[str, int] = {}
     try:
         for line in output.decode("utf-8").splitlines():
             record = json.loads(line)
@@ -479,12 +509,20 @@ def _journal_error_window(past_minutes: int = 10) -> dict:
                     or not lower <= int(timestamp) <= upper):
                 raise ValueError("invalid entry metadata")
             cursors.add(cursor)
+            message = record.get("MESSAGE")
+            source = _kernel_source(message) if isinstance(message, str) else "unattributed"
+            classes[source] = classes.get(source, 0) + 1
     except (UnicodeError, ValueError, TypeError):
         unknown["reason"] = "invalid journal entry metadata"
         return unknown
-    return {"state": "verified",
-            "sample": f"last-{past_minutes}min kernel-error-count={len(cursors)}",
-            "count": len(cursors), "coverage": coverage}
+    ordered = sorted(classes.items(), key=lambda item: (-item[1], item[0]))
+    parts = [f"last-{past_minutes}min kernel-error-count={len(cursors)}"]
+    parts.extend(f"{name}={count}" for name, count in ordered[:KERNEL_SOURCE_LIMIT])
+    other = sum(count for _, count in ordered[KERNEL_SOURCE_LIMIT:])
+    if other:
+        parts.append(f"other={other}")
+    return {"state": "verified", "sample": " ".join(parts), "count": len(cursors),
+            "classes": classes, "coverage": coverage}
 
 
 
