@@ -338,11 +338,16 @@ still read verified. The renderer coverage sense
 entry module, hashes that module's package import closure in the renderer root
 and in the pin, and reports `drift` naming every module that differs or is
 missing on either side. A renderer that does not export `PYTHONPATH` inherits
-its root from the pane watcher's environment; the sense resolves that root from
-the pane's start command and reports `unknown` naming the role when it cannot.
-The pane's cwd is checked for a `mishe_tauftauf/` package that would shadow the
-`PYTHONPATH` root, since `python -m` inserts the cwd before `PYTHONPATH` in
-`sys.path`. `unavailable` means no renderer runs a package module at all.
+its root from the pane watcher's environment; the sense reads that root from
+the watcher process's live environment (falling back to the pane's start
+command) and reports `unknown` naming the role when it cannot. An export that
+is conditional or built from the inherited `$PYTHONPATH` may not decide the
+root, so it is `unknown` too, named `conditional_unknown`. Renderers that run
+no package module are named `uncovered`, so the sense shows its scope rather
+than only the renderers it covers. The pane's cwd is checked for a
+`mishe_tauftauf/` package that would shadow the `PYTHONPATH` root, since
+`python -m` inserts the cwd before `PYTHONPATH` in `sys.path`. `unavailable`
+means no renderer runs a package module at all.
 
 ### Linked health is a separate live check
 
