@@ -187,7 +187,7 @@ def test_new_permissions_bottom_pane_gets_its_own_import_root(tmp_path, monkeypa
         return R()
 
     monkeypatch.setattr(seed_permission_panel, "_tmux", fake_tmux)
-    monkeypatch.setattr(seed_permission_panel, "owns_session", lambda home, session: True)
+    monkeypatch.setattr(seed_permission_panel, "await_owned", lambda home, session: True)
     monkeypatch.setenv("PYTHONPATH", "/stale/server/root")
 
     assert seed_permission_panel.ensure(home, "probe") == "permissions panel ready in probe"
@@ -229,7 +229,7 @@ def test_ensure_reports_only_panel_transitions(tmp_path, monkeypatch):
         return R()
 
     monkeypatch.setattr(seed_permission_panel, "_tmux", fake_tmux)
-    monkeypatch.setattr(seed_permission_panel, "owns_session", lambda home, session: True)
+    monkeypatch.setattr(seed_permission_panel, "await_owned", lambda home, session: True)
 
     assert seed_permission_panel.ensure(home, "probe") == "permissions panel ready in probe"
     shell = home / "bin" / "permissions-shell"
@@ -272,7 +272,7 @@ def test_ensure_reports_recreated_top_pains_helper(tmp_path, monkeypatch):
         return R()
 
     monkeypatch.setattr(seed_permission_panel, "_tmux", fake_tmux)
-    monkeypatch.setattr(seed_permission_panel, "owns_session", lambda home, session: True)
+    monkeypatch.setattr(seed_permission_panel, "await_owned", lambda home, session: True)
 
     assert seed_permission_panel.ensure(home, "probe") == "permissions panel ready in probe"
     top = home / "top-pains" / "permissions"

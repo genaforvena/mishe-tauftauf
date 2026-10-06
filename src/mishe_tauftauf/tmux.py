@@ -37,16 +37,44 @@ def _tmux(*args: str, check: bool = True) -> subprocess.CompletedProcess[bytes]:
     return result
 
 
-def owns_session(home: Path, session: str) -> bool:
+def session_owner(session: str) -> str | None:
+    """The home recorded on the session, or None while it is unset or absent."""
     result = _tmux("show-option", "-qv", "-t", session, OWNED_OPTION, check=False)
-    return result.returncode == 0 and result.stdout.decode().strip() == str(home.resolve())
+    if result.returncode != 0:
+        return None
+    return result.stdout.decode().strip() or None
+
+
+def owns_session(home: Path, session: str) -> bool:
+    return session_owner(session) == str(home.resolve())
+
+
+def await_owned(home: Path, session: str, timeout: float = 15.0) -> bool:
+    """Wait out a concurrent raise that created the session but has not owned it yet.
+
+    A supervisor raises the session and only then records the owning home, so a
+    second supervisor can observe the session with the option still unset. That
+    window is not a foreign session: wait for the owner to be recorded, and fail
+    at once only when a *different* home appears, or when the deadline passes.
+    """
+    wanted = str(home.resolve())
+    deadline = time.monotonic() + timeout
+    while True:
+        owner = session_owner(session)
+        if owner == wanted:
+            return True
+        if owner is not None:
+            return False
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.1)
 
 
 def start(home: Path, session: str = "mishe-tauftauf", interval: float = 5.0) -> None:
     if _tmux("has-session", "-t", session, check=False).returncode != 0:
         _tmux("new-session", "-d", "-s", session, "-n", "bootstrap")
         _tmux("set-option", "-t", session, OWNED_OPTION, str(home.resolve()))
-    elif not owns_session(home, session):
+    elif not await_owned(home, session):
         raise TmuxError(f"session {session!r} exists but is not owned by {home}")
     command = _python_command("--home", str(home), "pain", "watch")
     slugs = discover(home)

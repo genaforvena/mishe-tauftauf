@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from .runtime_source import python_search_path
-from .tmux import _python_command, _tmux, owns_session
+from .tmux import _python_command, _tmux, await_owned
 
 
 def write_launchers(home: Path) -> bool:
@@ -55,7 +55,7 @@ def ensure(home: Path, session: str, interval: float = 5) -> str:
     created or upgraded launcher is a reportable transition.
     """
     home = home.resolve()
-    if not owns_session(home, session):
+    if not await_owned(home, session):
         raise ValueError(f"session {session} is not owned by {home}")
     acted = write_launchers(home)
     shell = home / "bin" / "permissions-shell"

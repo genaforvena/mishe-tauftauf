@@ -266,6 +266,38 @@ class TmuxTests(unittest.TestCase):
             (home / ".seed-raised").write_text("", encoding="utf-8")
             self.assertIsNone(recorded_session(home))
 
+
+class OwnershipWaitTests(unittest.TestCase):
+    def test_session_owner_reads_the_recorded_home(self):
+        from mishe_tauftauf import tmux as tmux_module
+
+        with mock.patch.object(tmux_module, "_tmux",
+                               lambda *a, **k: subprocess.CompletedProcess(a, 0, b"/site\n")):
+            self.assertEqual(tmux_module.session_owner("session"), "/site")
+        with mock.patch.object(tmux_module, "_tmux",
+                               lambda *a, **k: subprocess.CompletedProcess(a, 0, b"")):
+            self.assertIsNone(tmux_module.session_owner("session"))
+
+    def test_await_owned_fails_at_once_on_a_different_home(self):
+        # A genuinely foreign session must still be refused, not waited on.
+        from mishe_tauftauf import tmux as tmux_module
+
+        home = Path("/site").resolve()
+        with mock.patch.object(tmux_module, "_tmux",
+                               lambda *a, **k: subprocess.CompletedProcess(a, 0, b"/other\n")), \
+                mock.patch.object(tmux_module.time, "sleep", lambda *a: None):
+            self.assertFalse(tmux_module.await_owned(home, "session", timeout=0.5))
+
+    def test_await_owned_times_out_while_the_session_stays_unowned(self):
+        from mishe_tauftauf import tmux as tmux_module
+
+        home = Path("/site").resolve()
+        with mock.patch.object(tmux_module, "_tmux",
+                               lambda *a, **k: subprocess.CompletedProcess(a, 0, b"")), \
+                mock.patch.object(tmux_module.time, "sleep", lambda *a: None):
+            self.assertFalse(tmux_module.await_owned(home, "session", timeout=0.0))
+
+
 class MindPaneTests(unittest.TestCase):
     def test_check_mind_pane_reports_missing_dead_and_live(self):
         # `check_pane` reads `.0` only, so a dead chartered mind pane stayed
