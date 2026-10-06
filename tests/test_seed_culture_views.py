@@ -642,6 +642,71 @@ def test_health_reports_unknown_when_session_unset(tmp_path: Path, monkeypatch) 
     assert (home / "observations" / "health").read_text(encoding="utf-8").startswith(
         "UNKNOWN health session unset at ")
 
+def test_health_reports_unknown_when_the_pane_read_times_out(tmp_path: Path, monkeypatch) -> None:
+    """A timed-out tmux read is no observation; it must not claim every window missing."""
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health" / "windows.json").write_text(json.dumps(["health"]), encoding="utf-8")
+    (home / "health" / "services.json").write_text("[]", encoding="utf-8")
+    monkeypatch.setenv("MISHE_SEED_SESSION", "test-session")
+
+    def run(argv, **_kwargs):
+        if argv[0] == "tmux":
+            raise subprocess.TimeoutExpired(argv, 2)
+        return subprocess.CompletedProcess(argv, 0, "PASS doctor\n", "")
+
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.subprocess.run", run)
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.ci_line", lambda _home: "CI: PASS")
+    rendered = health(home)
+    assert "WINDOWS: UNKNOWN — pane read failed" in rendered
+    assert "STATE: UNKNOWN — pane read failed" in rendered
+    assert "windows-missing" not in rendered
+    assert (home / "observations" / "health").read_text(encoding="utf-8").startswith(
+        "UNKNOWN health pane read failed at ")
+
+
+def test_health_reports_unknown_when_the_pane_read_fails(tmp_path: Path, monkeypatch) -> None:
+    """A non-zero tmux exit is a failed read, not a claim that the session is empty."""
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health" / "windows.json").write_text(json.dumps(["health"]), encoding="utf-8")
+    (home / "health" / "services.json").write_text("[]", encoding="utf-8")
+    monkeypatch.setenv("MISHE_SEED_SESSION", "test-session")
+
+    def run(argv, **_kwargs):
+        if argv[0] == "tmux":
+            return subprocess.CompletedProcess(argv, 1, "", "can't find session: test-session\n")
+        return subprocess.CompletedProcess(argv, 0, "PASS doctor\n", "")
+
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.subprocess.run", run)
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.ci_line", lambda _home: "CI: PASS")
+    rendered = health(home)
+    assert "WINDOWS: UNKNOWN — pane read failed" in rendered
+    assert "STATE: UNKNOWN — pane read failed" in rendered
+    assert (home / "observations" / "health").read_text(encoding="utf-8").startswith(
+        "UNKNOWN health pane read failed at ")
+
+
+def test_health_keeps_a_real_window_mismatch_red(tmp_path: Path, monkeypatch) -> None:
+    """A readable pane list that is missing a manifest window stays RED."""
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health" / "windows.json").write_text(json.dumps(["health", "docs"]), encoding="utf-8")
+    (home / "health" / "services.json").write_text("[]", encoding="utf-8")
+    monkeypatch.setenv("MISHE_SEED_SESSION", "test-session")
+
+    def run(argv, **_kwargs):
+        if argv[0] == "tmux":
+            return subprocess.CompletedProcess(argv, 0, "health 0 0\n", "")
+        return subprocess.CompletedProcess(argv, 0, "PASS doctor\n", "")
+
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.subprocess.run", run)
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.ci_line", lambda _home: "CI: PASS")
+    rendered = health(home)
+    assert "WINDOWS: RED health missing=docs" in rendered
+    assert "STATE: RED" in rendered
+    assert "windows-missing=docs" in (home / "observations" / "health").read_text(encoding="utf-8")
+
 
 def test_health_names_runtime_import_root_drift_as_a_cause(tmp_path: Path, monkeypatch) -> None:
     """A covered unit importing another root must be named in the durable report."""

@@ -130,7 +130,10 @@ compare live windows with `health/windows.json` (`windows-missing`,
 `windows-extra`) and flag a dead renderer or a chartered mind's lower pane
 (`windows-dead`), which can wedge while its renderer lease stays green. Roles
 without a deterministic report producer show that disposition without attaching
-legacy report files.
+legacy report files. A `tmux` read that fails or times out is reported as
+`pane read failed` and reads UNKNOWN rather than claiming the whole manifest is
+missing; only a readable pane list can raise `windows-missing` or
+`windows-extra`.
 
 ### Doctor is a check with a repair side effect
 
