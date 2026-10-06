@@ -12,8 +12,10 @@ import selectors
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from uuid import uuid4
 
 from .feed import Feed
+from .scan_freshness import age_bounds, classify_age, endpoint
 
 COMMANDS = ("rg", "git", "tmux", "python3", "systemctl", "journalctl", "ps", "df",
             "lsusb", "lspci", "sensors", "upower", "evtest")
@@ -1095,19 +1097,69 @@ def sample(home: Path) -> dict[str, object]:
             "node": os.uname().nodename, "observations": observed}
 
 
-def scan(home: Path) -> Path:
-    previous = latest(home)
-    snapshot = sample(home)
+def _write_attempt(home: Path, attempt: dict[str, object]) -> None:
     root = home / "discovery"
     root.mkdir(parents=True, exist_ok=True)
-    stamp = snapshot["created"].replace(":", "").replace("-", "")
-    artifact = root / f"scan-{stamp}-{os.getpid()}.json"
-    payload = json.dumps(snapshot, sort_keys=True, ensure_ascii=False, indent=2) + "\n"
-    artifact.write_text(payload, encoding="utf-8")
-    latest_path = root / "latest.json"
-    temporary = root / f".latest-{os.getpid()}.tmp"
-    temporary.write_text(payload, encoding="utf-8")
-    os.replace(temporary, latest_path)
+    temporary = root / f".attempt-{os.getpid()}.tmp"
+    temporary.write_text(json.dumps(attempt, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(temporary, root / "attempt.json")
+
+
+def scan_attempt(home: Path) -> dict[str, object] | None:
+    """Last acquisition/publication attempt, separate from successful source evidence."""
+    try:
+        attempt = json.loads((home / "discovery" / "attempt.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as error:
+        return {"status": "unknown", "stage": "unknown", "error": str(error)}
+    if (not isinstance(attempt, dict)
+            or attempt.get("status") not in {"running", "succeeded", "failed"}
+            or attempt.get("stage") not in {"acquisition", "publication", "notification"}):
+        return {"status": "unknown", "stage": "unknown", "error": "invalid attempt record"}
+    return attempt
+
+
+def scan(home: Path) -> Path:
+    """Acquire and publish a receipt; notification failure never rolls it back."""
+    previous = latest(home)
+    scan_id = uuid4().hex
+    attempt = {"scan_id": scan_id, "status": "running", "stage": "acquisition",
+               "created": datetime.now(timezone.utc).isoformat()}
+    _write_attempt(home, attempt)
+    try:
+        start = endpoint()
+        snapshot = dict(sample(home))
+        snapshot["acquisition"] = {"start": start, "end": endpoint()}
+        snapshot["scan_id"] = scan_id
+        attempt["stage"] = "publication"
+        _write_attempt(home, attempt)
+        root = home / "discovery"
+        stamp = snapshot["created"].replace(":", "").replace("-", "")
+        artifact = root / f"scan-{stamp}-{scan_id}.json"
+        payload = json.dumps(snapshot, sort_keys=True, ensure_ascii=False, indent=2) + "\n"
+        artifact.write_text(payload, encoding="utf-8")
+        latest_path = root / "latest.json"
+        temporary = root / f".latest-{os.getpid()}.tmp"
+        temporary.write_text(payload, encoding="utf-8")
+        os.replace(temporary, latest_path)
+        attempt.update(stage="notification", artifact=artifact.name)
+        _write_attempt(home, attempt)
+        _notify_scan(home, snapshot, previous, artifact)
+        attempt["status"] = "succeeded"
+        _write_attempt(home, attempt)
+    except Exception as error:
+        attempt.update(status="failed", error=f"{type(error).__name__}: {error}")
+        try:
+            _write_attempt(home, attempt)
+        except OSError as marker_error:
+            raise marker_error from error
+        raise
+    return artifact
+
+
+def _notify_scan(home: Path, snapshot: dict[str, object],
+                 previous: dict[str, object] | None, artifact: Path) -> None:
     readings = snapshot["observations"]
     available = [str(item["id"]).removeprefix("command.") for item in readings
                  if item["kind"] == "declaration" and item["state"] == "available"]
@@ -1138,7 +1190,7 @@ def scan(home: Path) -> Path:
     old_signature = signature(previous)
     changed = [name for name in current_signature if current_signature[name] != old_signature.get(name)]
     if previous is not None and not changed:
-        return artifact
+        return
     change_details = []
     for name in changed:
         if previous is None:
@@ -1181,7 +1233,6 @@ def scan(home: Path) -> Path:
              "Next: senses should verify useful unknown readings or record why the source is unavailable; "
              "discover should seek one new useful read."]
     Feed(home).append("discover", "\n".join(lines))
-    return artifact
 
 
 def latest(home: Path) -> dict[str, object] | None:
@@ -1197,15 +1248,9 @@ RENEWAL_MAX_AGE_SECONDS = 600.0
 
 
 def scan_age(home: Path) -> float | None:
-    """Age of the newest scan in seconds, or None when its timestamp is unavailable."""
-    snapshot = latest(home)
-    if snapshot is None:
-        return None
-    try:
-        created = datetime.fromisoformat(str(snapshot["created"]).replace("Z", "+00:00"))
-    except (ValueError, KeyError):
-        return None
-    return (datetime.now(timezone.utc) - created).total_seconds()
+    """Conservative upper acquisition age in seconds; legacy/incompatible receipts are unknown."""
+    bounds = age_bounds(latest(home))
+    return None if bounds is None else bounds[1] / 1_000_000_000
 
 
 def renew_scan(home: Path, max_age_seconds: float = RENEWAL_MAX_AGE_SECONDS) -> Path | None:
@@ -1214,7 +1259,7 @@ def renew_scan(home: Path, max_age_seconds: float = RENEWAL_MAX_AGE_SECONDS) -> 
     Return the new artifact path, or None while the latest scan is fresh.
     scan() updates latest.json and deduplicates unchanged states in the feed.
     """
-    age = scan_age(home)
-    if age is not None and age <= max_age_seconds:
+    bounds = age_bounds(latest(home))
+    if classify_age(bounds, max_age_seconds) == "recent":
         return None
     return scan(home)
