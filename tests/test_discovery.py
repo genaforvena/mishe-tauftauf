@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -1262,6 +1263,262 @@ def test_ledger_invariant_missing_phase_counts_as_unknown(tmp_path):
     assert result["state"] == "verified"
     assert result["sample"] == "violations=unknown:1 records=1 bool_dv=1"
     assert result["violations"] == {"unknown": 1}
+
+def test_dv_binding_clean_store(tmp_path):
+    home = tmp_path / "site"
+    _write_patch(home, "a.json", {"phase": "applied", "delivery_verified": True,
+                                  "verification": {"command": "x", "exit": 0}})
+    _write_patch(home, "b.json", {"phase": "reverted", "delivery_verified": False})
+    result = discovery._ledger_dv_binding(home)
+    assert result["state"] == "verified"
+    assert result["sample"] == "unbound=0 records=2 bool_dv=2"
+    assert result["unbound"] == 0
+
+
+def test_dv_binding_flags_unbound_true(tmp_path):
+    home = tmp_path / "site"
+    _write_patch(home, "a.json", {"phase": "applied", "delivery_verified": True,
+                                  "verification": {"command": "x", "exit": 0}})
+    _write_patch(home, "b.json", {"phase": "applied", "delivery_verified": True})
+    result = discovery._ledger_dv_binding(home)
+    assert result["state"] == "drift"
+    assert result["sample"] == "unbound=applied records=2 bool_dv=2"
+    assert result["unbound"] == 1
+
+
+def test_dv_binding_false_without_verification_not_unbound(tmp_path):
+    home = tmp_path / "site"
+    _write_patch(home, "a.json", {"phase": "reverted", "delivery_verified": False})
+    result = discovery._ledger_dv_binding(home)
+    assert result["state"] == "verified"
+    assert result["sample"] == "unbound=0 records=1 bool_dv=1"
+    assert result["unbound"] == 0
+
+
+def test_dv_binding_non_boolean_dv_ignored(tmp_path):
+    home = tmp_path / "site"
+    _write_patch(home, "a.json", {"phase": "applied", "delivery_verified": "yes"})
+    result = discovery._ledger_dv_binding(home)
+    assert result["state"] == "verified"
+    assert result["sample"] == "unbound=0 records=1 bool_dv=0"
+
+
+def test_dv_binding_missing_store_is_unknown(tmp_path):
+    result = discovery._ledger_dv_binding(tmp_path / "site")
+    assert result["state"] == "unknown"
+    assert result["sample"] == "patch store unavailable"
+
+
+def test_dv_binding_empty_store_is_unknown(tmp_path):
+    (tmp_path / "site" / "patches").mkdir(parents=True)
+    result = discovery._ledger_dv_binding(tmp_path / "site")
+    assert result["state"] == "unknown"
+    assert result["sample"] == "records=0 bool_dv=0"
+
+
+def test_dv_binding_unreadable_record_keeps_detected_unbound(tmp_path):
+    home = tmp_path / "site"
+    _write_patch(home, "a.json", {"phase": "applied", "delivery_verified": True})
+    (home / "patches" / "broken.json").write_text("not json\n", encoding="utf-8")
+    result = discovery._ledger_dv_binding(home)
+    assert result["state"] == "unknown"
+    assert result["sample"] == ("records=1 bool_dv=1 unreadable=broken.json "
+                                "unbound=applied")
+    assert result["unbound"] == 1
+
+
+def _write_pin(home: Path, sha: str) -> None:
+    (home / "health").mkdir(parents=True, exist_ok=True)
+    (home / "health" / "runtime-release.json").write_text(
+        json.dumps({"version": 1, "sha": sha}), encoding="utf-8")
+
+
+def _mock_pin_git(monkeypatch, head_sha: str, lag: int, oldest_time: str) -> None:
+    class _FakeGit:
+        def run(self, cmd, **kwargs):
+            if cmd[:2] == ["git", "rev-parse"]:
+                return subprocess.CompletedProcess(cmd, 0, head_sha, "")
+            if cmd[:3] == ["git", "merge-base", "--is-ancestor"]:
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+            if cmd[:3] == ["git", "rev-list", "--count"]:
+                return subprocess.CompletedProcess(cmd, 0, str(lag), "")
+            if cmd[:3] == ["git", "log", "--format=%cI"]:
+                return subprocess.CompletedProcess(cmd, 0, oldest_time, "")
+            raise AssertionError(f"unexpected git command: {cmd}")
+    monkeypatch.setattr(discovery, "subprocess", _FakeGit())
+
+
+def test_pin_lag_equal_to_head(tmp_path, monkeypatch):
+    home = tmp_path / "site"
+    sha = "a" * 40
+    _write_pin(home, sha)
+    _mock_pin_git(monkeypatch, sha, 0, "")
+    result = discovery._runtime_pin_lag(home)
+    assert result["state"] == "verified"
+    assert result["sample"] == f"pin={sha[:7]} head={sha[:7]} lag=0"
+    assert result["lag"] == 0
+
+
+def test_pin_lag_behind_head(tmp_path, monkeypatch):
+    home = tmp_path / "site"
+    pin = "a" * 40
+    head = "b" * 40
+    _write_pin(home, pin)
+    oldest = "2026-10-06T16:00:00+00:00\n2026-10-06T17:00:00+00:00"
+    _mock_pin_git(monkeypatch, head, 3, oldest)
+    now = datetime(2026, 10, 6, 18, 0, 0, tzinfo=timezone.utc)
+    result = discovery._runtime_pin_lag(home, now=now)
+    assert result["state"] == "verified"
+    assert result["sample"] == f"pin={pin[:7]} head={head[:7]} lag=3 age=1h00m"
+    assert result["lag"] == 3
+    assert result["age"] == "1h00m"
+
+
+def test_pin_lag_missing_pin_file(tmp_path):
+    result = discovery._runtime_pin_lag(tmp_path / "site")
+    assert result["state"] == "unknown"
+    assert result["sample"] == "pin file unavailable"
+
+
+def test_pin_lag_pin_not_ancestor(tmp_path, monkeypatch):
+    home = tmp_path / "site"
+    pin = "a" * 40
+    head = "b" * 40
+    _write_pin(home, pin)
+
+    class _FakeGit:
+        def run(self, cmd, **kwargs):
+            if cmd[:2] == ["git", "rev-parse"]:
+                return subprocess.CompletedProcess(cmd, 0, head, "")
+            if cmd[:3] == ["git", "merge-base", "--is-ancestor"]:
+                return subprocess.CompletedProcess(cmd, 1, "", "")
+            raise AssertionError(f"unexpected git command: {cmd}")
+    monkeypatch.setattr(discovery, "subprocess", _FakeGit())
+    result = discovery._runtime_pin_lag(home)
+    assert result["state"] == "unknown"
+    assert result["sample"] == "pin not an ancestor of HEAD"
+
+
+def test_pin_lag_git_error(tmp_path, monkeypatch):
+    home = tmp_path / "site"
+    _write_pin(home, "a" * 40)
+
+    class _FakeGit:
+        def run(self, cmd, **kwargs):
+            return subprocess.CompletedProcess(cmd, 128, "", "fatal: not a git repository")
+    monkeypatch.setattr(discovery, "subprocess", _FakeGit())
+    result = discovery._runtime_pin_lag(home)
+    assert result["state"] == "unknown"
+    assert "git error" in result["sample"]
+
+
+def _tape_entry(sequence: int, timestamp: str, source: str, body: str) -> bytes:
+    header = f"v1 {sequence:020d} {timestamp} {source} ::\n"
+    lines = body.splitlines(keepends=True)
+    if not lines:
+        lines = [body]
+    framed = []
+    for line in lines:
+        if line.endswith("\n"):
+            framed.append("    | " + line)
+        else:
+            framed.append("    | " + line + "\n")
+    terminator = "    .\n" if body.endswith("\n") else "    .-\n"
+    return (header + "".join(framed) + terminator).encode("utf-8")
+
+
+def _write_outcome(home: Path, role: str) -> str:
+    (home / "records").mkdir(parents=True, exist_ok=True)
+    payload = {"version": 1, "kind": "wall-outcome",
+               "payload": {"role": role, "kind": "accepted", "text": "outcome"}}
+    data = json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=False, allow_nan=False).encode("utf-8")
+    digest = hashlib.sha256(data).hexdigest()
+    (home / "records" / f"{digest}.json").write_bytes(data)
+    return digest
+
+
+def _dm_now() -> datetime:
+    return datetime(2026, 10, 6, 18, 0, 0, tzinfo=timezone.utc)
+
+
+def test_dm_disposition_age_replied_outcome_and_open(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir(parents=True, exist_ok=True)
+    carol_digest = _write_outcome(home, "carol")
+    entries = [
+        (1, "2026-10-06T12:30:00Z", "alice", "[dm] to=bob\n# hi bob\n"),
+        (2, "2026-10-06T12:35:00Z", "bob", "[dm] to=alice\n# hi alice\n"),
+        (3, "2026-10-06T13:00:00Z", "alice", "[dm] to=carol\n# hi carol\n"),
+        (4, "2026-10-06T13:30:00Z", "carol",
+         f"[record] records/{carol_digest}.json sha256={carol_digest}\n"),
+        (5, "2026-10-06T14:00:00Z", "alice", "[dm] to=dave\n# hi dave\n"),
+    ]
+    (home / "chat.log").write_bytes(
+        b"".join(_tape_entry(seq, ts, src, body) for seq, ts, src, body in entries))
+    result = discovery._coord_dm_disposition_age(home, now=_dm_now())
+    assert result["state"] == "verified"
+    assert result["dms"] == 4
+    assert result["dispositioned"] == 3
+    assert result["open"] == 1
+    assert result["p50_minutes"] == 25
+    assert result["p90_minutes"] == 29
+    assert result["oldest_open"] == "dave:4h00m"
+    assert result["sample"] == ("dms=4 dispositioned=3 open=1 "
+                                "p50=25m p90=29m oldest_open=dave:4h00m")
+
+
+def test_dm_disposition_age_reply_to_third_party_dispositions(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "records").mkdir(parents=True, exist_ok=True)
+    entries = [
+        (1, "2026-10-06T12:30:00Z", "alice", "[dm] to=bob\n# hi bob\n"),
+        (2, "2026-10-06T12:35:00Z", "bob", "[dm] to=carol\n# hi carol\n"),
+    ]
+    (home / "chat.log").write_bytes(
+        b"".join(_tape_entry(seq, ts, src, body) for seq, ts, src, body in entries))
+    result = discovery._coord_dm_disposition_age(home, now=_dm_now())
+    assert result["state"] == "verified"
+    assert result["dms"] == 2
+    assert result["dispositioned"] == 1
+    assert result["open"] == 1
+
+
+def test_dm_disposition_age_missing_tape(tmp_path):
+    result = discovery._coord_dm_disposition_age(tmp_path / "site", now=_dm_now())
+    assert result["state"] == "unknown"
+    assert result["sample"] == "chat tape unavailable"
+
+
+def test_dm_disposition_age_missing_records(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir(parents=True, exist_ok=True)
+    entries = [
+        (1, "2026-10-06T12:30:00Z", "alice", "[dm] to=bob\n# hi bob\n"),
+    ]
+    (home / "chat.log").write_bytes(
+        b"".join(_tape_entry(seq, ts, src, body) for seq, ts, src, body in entries))
+    result = discovery._coord_dm_disposition_age(home, now=_dm_now())
+    assert result["state"] == "unknown"
+    assert result["sample"] == "outcome store unavailable"
+
+
+def test_dm_disposition_age_empty_window(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "records").mkdir(parents=True, exist_ok=True)
+    entries = [
+        (1, "2026-10-06T10:00:00Z", "alice", "[dm] to=bob\n# hi bob\n"),
+    ]
+    (home / "chat.log").write_bytes(
+        b"".join(_tape_entry(seq, ts, src, body) for seq, ts, src, body in entries))
+    result = discovery._coord_dm_disposition_age(home, now=_dm_now())
+    assert result["state"] == "verified"
+    assert result["dms"] == 0
+    assert result["dispositioned"] == 0
+    assert result["open"] == 0
+    assert result["sample"] == "dms=0 dispositioned=0 open=0"
 
 
 

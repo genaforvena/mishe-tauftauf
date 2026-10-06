@@ -1,6 +1,7 @@
 """Read-only local frontier scan; values are evidence, not authority."""
 
 from __future__ import annotations
+import bisect
 import ast
 
 import hashlib
@@ -15,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from .feed import Feed
+from .feed import Feed, parse_feed
 from .runtime_source import source_for
 from .scan_freshness import age_bounds, classify_age, endpoint
 
@@ -878,6 +879,57 @@ def _ledger_delivery_invariant(home: Path) -> dict:
     return {"id": "sense.ledger.delivery-invariant", "state": "verified",
             "sample": sample, "records": len(records),
             "bool_dv": len(bool_dv), "violations": violations, "kind": "read"}
+
+def _ledger_dv_binding(home: Path) -> dict:
+    """Flag ``delivery_verified=true`` records that carry no ``verification`` dict.
+
+    A boolean ``delivery_verified`` is a claim that bytes moved; the
+    ``verification`` dict is the binding that proves it (command, exit code,
+    evidence). A ``true`` without that dict is an unbound claim: the ledger
+    says delivered but records nothing that could confirm it. The 38917
+    revival trigger's mechanical branch, monitored continuously: exactly one
+    frozen record (``health-stale-pend-detection``) carries the unbound shape
+    and no current producer path produces it, so the sense flags the state
+    rather than the record. The sense flags; it does not decide — a new
+    legitimate producer that omits the binding and a genuine collapse both
+    read as unbound. The verified sample ends with the coverage tier
+    ``records=N bool_dv=M``; an empty, missing or unreadable store reads
+    UNKNOWN rather than a clean bill, so a store-path or format change cannot
+    pass as the invariant holding, with an unreadable store appending
+    ``unreadable=<file>`` after the tier.
+    """
+    records, unreadable = _patch_records(home)
+    bool_dv = [r for r in records if isinstance(r.get("delivery_verified"), bool)]
+    unbound = [r for r in bool_dv
+               if r.get("delivery_verified") is True
+               and not isinstance(r.get("verification"), dict)]
+    if not records or unreadable:
+        if not (home / "patches").is_dir():
+            sample = "patch store unavailable"
+        elif unreadable:
+            sample = (f"records={len(records)} bool_dv={len(bool_dv)} "
+                      f"unreadable={','.join(unreadable[:3])}"
+                      + ("…" if len(unreadable) > 3 else ""))
+        else:
+            sample = f"records=0 bool_dv=0"
+        if unbound:
+            sample += (" unbound=" + ",".join(
+                r.get("phase", "?") if isinstance(r.get("phase"), str) else "?"
+                for r in unbound[:3]))
+        return {"id": "sense.ledger.dv-binding", "state": "unknown",
+                "sample": sample, "records": len(records),
+                "bool_dv": len(bool_dv), "unbound": len(unbound), "kind": "read"}
+    if unbound:
+        sample = ("unbound=" + ",".join(
+            r.get("phase", "?") if isinstance(r.get("phase"), str) else "?"
+            for r in unbound[:3]))
+    else:
+        sample = "unbound=0"
+    sample += f" records={len(records)} bool_dv={len(bool_dv)}"
+    return {"id": "sense.ledger.dv-binding",
+            "state": "drift" if unbound else "verified",
+            "sample": sample, "records": len(records),
+            "bool_dv": len(bool_dv), "unbound": len(unbound), "kind": "read"}
 
 
 
@@ -1778,6 +1830,212 @@ def _renderer_coverage(home: Path) -> dict[str, object]:
             "identity": {"renderers": identity_renderers,
                          "drift": drift, "uncovered": sorted(uncovered), "pin": pin}}
 
+def _format_age(delta: timedelta) -> str:
+    """Human age for a commit waiting on a pin advance, e.g. ``1h20m``."""
+    total = int(delta.total_seconds())
+    if total < 0:
+        return "unknown"
+    hours, rem = divmod(total, 3600)
+    minutes = rem // 60
+    if hours:
+        return f"{hours}h{minutes:02d}m"
+    return f"{minutes}m"
+
+
+def _runtime_pin_lag(home: Path, now: datetime | None = None) -> dict[str, object]:
+    """Count the commits between the runtime pin and the checkout HEAD.
+
+    The pin names the bytes the services import; HEAD is the checkout the
+    minds edit. The lag is how far the live code leads the pin, and the age
+    is how long the oldest unactivated commit has waited. A pin that is not
+    an ancestor of HEAD (a rebase or a foreign checkout) reads UNKNOWN, as
+    does a missing pin file or a git failure: the lag cannot be computed, so
+    it must not read as zero. ``pin == HEAD`` reads ``lag=0`` verified: the
+    checkout is exactly the pinned state.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    pin_path = home / "health" / "runtime-release.json"
+    if not pin_path.exists():
+        return {"id": "sense.runtime.pin-lag", "state": "unknown",
+                "sample": "pin file unavailable", "kind": "read"}
+    try:
+        pin = json.loads(pin_path.read_text(encoding="utf-8")).get("sha")
+    except (OSError, ValueError):
+        return {"id": "sense.runtime.pin-lag", "state": "unknown",
+                "sample": "pin file unreadable", "kind": "read"}
+    if not isinstance(pin, str) or not re.fullmatch(r"[0-9a-f]{7,40}", pin):
+        return {"id": "sense.runtime.pin-lag", "state": "unknown",
+                "sample": "pin sha invalid", "kind": "read"}
+    checkout_root = Path(home).resolve().parent
+    try:
+        head = subprocess.run(["git", "rev-parse", "HEAD"],
+                              capture_output=True, text=True, timeout=2,
+                              cwd=checkout_root)
+        if head.returncode != 0:
+            return {"id": "sense.runtime.pin-lag", "state": "unknown",
+                    "sample": f"git error: {head.stderr.strip() or 'rev-parse failed'}",
+                    "kind": "read"}
+        head_sha = head.stdout.strip()
+        if not re.fullmatch(r"[0-9a-f]{40}", head_sha):
+            return {"id": "sense.runtime.pin-lag", "state": "unknown",
+                    "sample": "git error: malformed HEAD sha", "kind": "read"}
+        if head_sha == pin:
+            return {"id": "sense.runtime.pin-lag", "state": "verified",
+                    "sample": f"pin={pin[:7]} head={head_sha[:7]} lag=0",
+                    "pin": pin, "head": head_sha, "lag": 0, "kind": "read"}
+        ancestor = subprocess.run(["git", "merge-base", "--is-ancestor", pin, head_sha],
+                                  capture_output=True, text=True, timeout=2,
+                                  cwd=checkout_root)
+        if ancestor.returncode != 0:
+            return {"id": "sense.runtime.pin-lag", "state": "unknown",
+                    "sample": "pin not an ancestor of HEAD",
+                    "pin": pin, "head": head_sha, "kind": "read"}
+        count = subprocess.run(["git", "rev-list", "--count", f"{pin}..{head_sha}"],
+                               capture_output=True, text=True, timeout=2,
+                               cwd=checkout_root)
+        if count.returncode != 0:
+            return {"id": "sense.runtime.pin-lag", "state": "unknown",
+                    "sample": f"git error: {count.stderr.strip() or 'rev-list failed'}",
+                    "pin": pin, "head": head_sha, "kind": "read"}
+        lag = int(count.stdout.strip())
+        age_str = "unknown"
+        oldest = subprocess.run(["git", "log", "--format=%cI", f"{pin}..{head_sha}"],
+                                capture_output=True, text=True, timeout=2,
+                                cwd=checkout_root)
+        if oldest.returncode == 0 and oldest.stdout.strip():
+            oldest_time = oldest.stdout.strip().splitlines()[-1]
+            try:
+                oldest_dt = datetime.fromisoformat(oldest_time.replace("Z", "+00:00"))
+                age_str = _format_age(now - oldest_dt)
+            except ValueError:
+                age_str = "unknown"
+        return {"id": "sense.runtime.pin-lag", "state": "verified",
+                "sample": f"pin={pin[:7]} head={head_sha[:7]} lag={lag} age={age_str}",
+                "pin": pin, "head": head_sha, "lag": lag, "age": age_str, "kind": "read"}
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"id": "sense.runtime.pin-lag", "state": "unknown",
+                "sample": f"git error: {exc}", "kind": "read"}
+
+
+DM_TO_RE = re.compile(r"^\[dm\] to=([A-Za-z0-9_.-]+)")
+RECORD_REF_RE = re.compile(r"\[record\] records/([0-9a-f]{64})\.json sha256=[0-9a-f]{64}")
+DM_DISPOSITION_WINDOW_SECONDS = 6 * 3600
+"""Hours of DM history one disposition sample covers."""
+
+
+def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[str, object]:
+    """Measure how long addressed DMs wait for a disposition.
+
+    A DM is dispositioned when the target replies by DM or records a wall
+    outcome after it; the join separates real stalls from correlated silence
+    (a mind busy on wall work, not ignoring the message). The window is the
+    last 6 hours. State is ``verified`` when the tape and outcome store are
+    readable; ``unknown`` when either is missing or unreadable, so a source
+    change cannot pass as a clean bill.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    tape_path = home / "chat.log"
+    if not tape_path.exists():
+        return {"id": "sense.coord.dm-disposition-age", "state": "unknown",
+                "sample": "chat tape unavailable", "kind": "read"}
+    try:
+        entries = parse_feed(tape_path.read_bytes(), home=home)
+    except (OSError, ValueError) as exc:
+        return {"id": "sense.coord.dm-disposition-age", "state": "unknown",
+                "sample": f"chat tape unreadable: {exc}", "kind": "read"}
+    ref_time: dict[str, datetime] = {}
+    for entry in entries:
+        match = RECORD_REF_RE.search(entry.body)
+        if match:
+            ref_time[match.group(1)] = datetime.fromisoformat(
+                entry.timestamp.replace("Z", "+00:00"))
+    records_dir = home / "records"
+    if not records_dir.is_dir():
+        return {"id": "sense.coord.dm-disposition-age", "state": "unknown",
+                "sample": "outcome store unavailable", "kind": "read"}
+    outcomes: list[tuple[datetime, str]] = []
+    for path in sorted(records_dir.glob("*.json")):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(record, dict) or record.get("kind") != "wall-outcome":
+            continue
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        role = payload.get("role")
+        if not isinstance(role, str):
+            continue
+        if path.stem in ref_time:
+            outcomes.append((ref_time[path.stem], role))
+    window_start = now - timedelta(seconds=DM_DISPOSITION_WINDOW_SECONDS)
+    dms: list[tuple[datetime, str, str]] = []
+    source_dms: dict[str, list[datetime]] = {}
+    for entry in entries:
+        match = DM_TO_RE.match(entry.body)
+        if not match:
+            continue
+        ts = datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))
+        source_dms.setdefault(entry.source, []).append(ts)
+        if ts >= window_start:
+            dms.append((ts, entry.source, match.group(1)))
+    for times in source_dms.values():
+        times.sort()
+    if not dms:
+        return {"id": "sense.coord.dm-disposition-age", "state": "verified",
+                "sample": "dms=0 dispositioned=0 open=0", "kind": "read",
+                "dms": 0, "dispositioned": 0, "open": 0}
+    dispositioned = 0
+    ages: list[float] = []
+    open_ages: list[tuple[float, str]] = []
+    for ts, _source, target in dms:
+        disp_time = None
+        times = source_dms.get(target)
+        if times:
+            idx = bisect.bisect_right(times, ts)
+            if idx < len(times):
+                disp_time = times[idx]
+        if disp_time is None:
+            for ots, orole in outcomes:
+                if orole == target and ots > ts:
+                    disp_time = ots
+                    break
+        if disp_time is not None:
+            dispositioned += 1
+            ages.append((disp_time - ts).total_seconds())
+        else:
+            open_ages.append(((now - ts).total_seconds(), target))
+    open_count = len(dms) - dispositioned
+    ages.sort()
+    open_ages.sort()
+
+    def percentile(sorted_vals: list[float], p: float) -> float:
+        if not sorted_vals:
+            return 0.0
+        k = (len(sorted_vals) - 1) * p
+        f = int(k)
+        c = min(f + 1, len(sorted_vals) - 1)
+        return sorted_vals[f] + (sorted_vals[c] - sorted_vals[f]) * (k - f)
+
+    p50 = percentile(ages, 0.5) / 60.0
+    p90 = percentile(ages, 0.9) / 60.0
+    oldest = ""
+    if open_ages:
+        oldest_age, oldest_role = open_ages[-1]
+        oldest = f"{oldest_role}:{_format_age(timedelta(seconds=oldest_age))}"
+    sample = (f"dms={len(dms)} dispositioned={dispositioned} open={open_count} "
+              f"p50={p50:.0f}m p90={p90:.0f}m")
+    if oldest:
+        sample += f" oldest_open={oldest}"
+    return {"id": "sense.coord.dm-disposition-age", "state": "verified",
+            "sample": sample, "kind": "read",
+            "dms": len(dms), "dispositioned": dispositioned, "open": open_count,
+            "p50_minutes": round(p50), "p90_minutes": round(p90),
+            "oldest_open": oldest}
+
 def sample(home: Path) -> dict[str, object]:
     """Take bounded reads; never open input event streams or record key content."""
     observed: list[dict[str, object]] = []
@@ -1791,6 +2049,7 @@ def sample(home: Path) -> dict[str, object]:
                      **_journal_unit_failure_window()})
     observed.append(_mind_wedge_suspects())
     observed.append(_ledger_delivery_invariant(home))
+    observed.append(_ledger_dv_binding(home))
 
     loadavg = _read(Path("/proc/loadavg"), 256)
     observed.append({"id": "sense.proc.loadavg", "state": "verified" if loadavg else "unknown",
@@ -1976,6 +2235,8 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_sensor_coverage(home, roots))
     observed.append(_renderer_coverage(home))
     observed.append(_runtime_drift_across_sites(home))
+    observed.append(_runtime_pin_lag(home))
+    observed.append(_coord_dm_disposition_age(home))
     return {"created": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
             "node": os.uname().nodename, "observations": observed}
 
