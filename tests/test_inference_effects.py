@@ -1178,3 +1178,80 @@ def test_the_boundary_has_no_status_branch_it_cannot_reach(tmp_path):
     assert "partial" in _EFFECT_STATUSES
     # `not-started` is the caller's accounting, not an outcome this store holds.
     assert "not-started" not in _EFFECT_STATUSES
+
+
+def test_a_claimed_operation_that_lost_its_receipt_is_not_re_executed(tmp_path):
+    """A caller-named operation that died after its start record is not run twice.
+
+    `drive_native` forwards the provider's call untouched, so a caller-named
+    identity reaches the loop only through `claim_for`. When the capability dies
+    after the start record is durable, the operation is `started-without-outcome`
+    and must stay refused. But `recover(call)` derives its id from the provider
+    call alone, so a claimed operation is invisible to that route: it reads the
+    provider call id, not the caller's id that actually started. `None` then
+    means 'allocate it', and a successor dispatches the call under a derived id
+    while the original start record still names the caller's id. The capability
+    runs a second time for one provider call, which the one-execution contract
+    exists to prevent.
+    """
+    store = tmp_path / "effects"
+    runs = []
+    call = {"type": "toolCall", "id": "call-provider", "name": "inspect",
+            "arguments": {"path": "owned-evidence"}}
+    died = boundary(tmp_path, lambda call: runs.append(call["operation_id"])
+                    or (_ for _ in ()).throw(OSError("died after the start record")))
+    died.reserve("report-37233-v1", capability="inspect",
+                 arguments={"path": "owned-evidence"})
+    died(call, claim_for="report-37233-v1")
+    assert runs == ["report-37233-v1"]
+    assert (store / "starts.jsonl").read_text().strip(), "the start record survived"
+
+    fresh = boundary(tmp_path, lambda call: runs.append(call["operation_id"])
+                     or {"ok": True}, writer_id="loop-2")
+    # The loop's recovery route names the operation, and it must name the one
+    # that actually started, not an id that was never allocated.
+    verdict = fresh.recover(call)
+    assert verdict is not None, "recover lost a started operation"
+    assert verdict["status"] == "unknown"
+    assert verdict["operation_id"] == "report-37233-v1"
+    assert verdict["failure"] == "started-without-outcome"
+    # unknown is not permission to retry, under either id.
+    again = fresh(call, claim_for="report-37233-v1")
+    assert again["status"] == "unknown"
+    assert again["executions"] == 0
+    assert runs == ["report-37233-v1"], "the capability ran a second time"
+
+
+def test_a_lost_receipt_is_not_re_executed_without_the_claim(tmp_path):
+    """The dispatch route resolves the same id the recovery route does.
+
+    `drive_native` forwards the provider's call untouched, so after a lost
+    receipt it re-proposes the same call without `claim_for`. Deriving the id
+    from the provider call alone would allocate a second, derived operation and
+    execute the capability under it while the first start record still names the
+    caller's id. The id the call is bound to must be resolved from the store,
+    not derived from the call.
+    """
+    store = tmp_path / "effects"
+    runs = []
+    call = {"type": "toolCall", "id": "call-provider", "name": "inspect",
+            "arguments": {"path": "owned-evidence"}}
+    died = boundary(tmp_path, lambda call: runs.append(call["operation_id"])
+                    or (_ for _ in ()).throw(OSError("died after the start record")))
+    died.reserve("report-37233-v1", capability="inspect",
+                 arguments={"path": "owned-evidence"})
+    died(call, claim_for="report-37233-v1")
+    assert runs == ["report-37233-v1"]
+
+    # The retried call carries no claim: this is the shape drive_native sends.
+    fresh = boundary(tmp_path, lambda call: runs.append(call["operation_id"])
+                     or {"ok": True}, writer_id="loop-2")
+    again = fresh(call)
+    assert again["status"] == "unknown"
+    assert again["operation_id"] == "report-37233-v1"
+    assert again["executions"] == 0
+    assert runs == ["report-37233-v1"], "the capability ran a second time"
+    # No second operation was created for one provider call.
+    starts = [json.loads(line)["operation_id"] for line in
+              (store / "starts.jsonl").read_text().splitlines()]
+    assert starts == ["report-37233-v1"]
