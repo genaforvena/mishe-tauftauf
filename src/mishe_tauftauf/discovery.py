@@ -740,6 +740,86 @@ def _mind_wedge_suspects() -> dict:
             "sample": sample, "suspects": suspects,
             "panes": panes, "with_log": with_log, "kind": "read"}
 
+LEDGER_DV_PHASES = frozenset({
+    "applied", "review-refused", "reverted", "revert-failed",
+    "revert-observation-failed",
+})
+"""Phases where a boolean ``delivery_verified`` is accepted.
+
+An observed-accepted set, not a code-derived one: the producer writes
+``delivery_verified`` only when bytes move, so the code-derived delivery
+outcomes are ``applied``, ``reverted``, ``revert-failed`` and
+``revert-observation-failed``. ``review-refused`` stays because one frozen
+pre-2026-10-01 record (``culture-audit-repair``) carries a boolean dv at
+that phase and no current producer path produces that combination; dropping
+it would latch that record as a permanent false positive. Extend the set when
+a new delivery-outcome phase legitimately carries a boolean dv.
+"""
+
+
+def _patch_records(home: Path) -> tuple[list[dict], list[str]]:
+    """Readable patch records and unreadable patch file names under the site home."""
+    records: list[dict] = []
+    unreadable: list[str] = []
+    for path in sorted((home / "patches").glob("*.json")):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            unreadable.append(path.name)
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+        else:
+            unreadable.append(path.name)
+    return records, unreadable
+
+
+def _ledger_delivery_invariant(home: Path) -> dict:
+    """Flag boolean ``delivery_verified`` on a phase that is not a delivery outcome.
+
+    The 38917 revival trigger's mechanical branch, monitored continuously: a
+    boolean ``delivery_verified`` on a phase outside ``LEDGER_DV_PHASES``. The
+    sense flags; it does not decide — a new legitimate delivery-outcome phase
+    and a genuine collapse both read as "outside the set", and the "is a
+    delivery outcome" judgment is not fully mechanical. The sample names the
+    offending phase (``violations=<phase>:<count>``) so a mind can
+    disposition without re-deriving. Coverage tier: ``records=N bool_dv=M``
+    ends the sample, and an unreadable or empty store reads UNKNOWN rather
+    than a clean bill, so a store-path or format change cannot pass as the
+    invariant holding.
+    """
+    records, unreadable = _patch_records(home)
+    bool_dv = [r for r in records if isinstance(r.get("delivery_verified"), bool)]
+    if not records or unreadable:
+        if not (home / "patches").is_dir():
+            sample = "patch store unavailable"
+        elif unreadable:
+            sample = (f"records={len(records)} bool_dv={len(bool_dv)} "
+                      f"unreadable={','.join(unreadable[:3])}"
+                      + ("…" if len(unreadable) > 3 else ""))
+        else:
+            sample = f"records=0 bool_dv=0"
+        return {"id": "sense.ledger.delivery-invariant", "state": "unknown",
+                "sample": sample, "records": len(records),
+                "bool_dv": len(bool_dv), "violations": {}, "kind": "read"}
+    violations: dict[str, int] = {}
+    for record in bool_dv:
+        phase = record.get("phase")
+        key = phase if isinstance(phase, str) else "unknown"
+        if key not in LEDGER_DV_PHASES:
+            violations[key] = violations.get(key, 0) + 1
+    if violations:
+        sample = ("violations=" + " ".join(
+            f"{phase}:{count}" for phase, count in sorted(violations.items())))
+    else:
+        sample = "violations=0"
+    sample += f" records={len(records)} bool_dv={len(bool_dv)}"
+    return {"id": "sense.ledger.delivery-invariant", "state": "verified",
+            "sample": sample, "records": len(records),
+            "bool_dv": len(bool_dv), "violations": violations, "kind": "read"}
+
+
+
 
 def _import_root(path: str) -> str | None:
     """The source root a PYTHONPATH entry imports, or None when it names none.
@@ -1510,6 +1590,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append({"id": "sense.journal.unit-failure-count", "kind": "read",
                      **_journal_unit_failure_window()})
     observed.append(_mind_wedge_suspects())
+    observed.append(_ledger_delivery_invariant(home))
 
     loadavg = _read(Path("/proc/loadavg"), 256)
     observed.append({"id": "sense.proc.loadavg", "state": "verified" if loadavg else "unknown",
