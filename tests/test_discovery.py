@@ -773,7 +773,8 @@ def _unit_failure_fixture(monkeypatch, output, boots=None, restart_context=None,
                         lambda: next(boots) if boots is not None else _JOURNAL_BOOT)
     monkeypatch.setattr(discovery, "_journal_command", lambda cmd: output)
     monkeypatch.setattr(discovery, "_unit_restart_context",
-                        lambda units: restart_context or {})
+                        lambda units: {u: restart_context[u] for u in units
+                                       if restart_context and u in restart_context})
     if session is None:
         monkeypatch.delenv("MISHE_SEED_SESSION", raising=False)
     else:
@@ -876,20 +877,36 @@ def test_unit_failure_window_validates_exact_boundaries(monkeypatch, offset, ver
     assert result["state"] == ("verified" if verified else "unknown")
 
 def test_unit_failure_includes_restart_context_in_sample(monkeypatch):
+    unit = f"{_PLANT_SESSION}-discover.service"
     result = _unit_failure_fixture(monkeypatch, _journal_bytes(
-        _unit_failure_record(MESSAGE="mesh-cleaner.service: Failed with result 'exit-code'.")),
-        restart_context={"mesh-cleaner.service": {"restarts": 1, "active": "running"}})
+        _unit_failure_record(MESSAGE=f"{unit}: Failed with result 'exit-code'.")),
+        restart_context={unit: {"restarts": 1, "active": "running"}})
     assert result["state"] == "verified"
-    assert result["unit_context"] == {"mesh-cleaner.service": {"restarts": 1, "active": "running"}}
-    assert "mesh-cleaner.service:restarts=1,active=running" in result["sample"]
+    assert result["unit_context"] == {unit: {"restarts": 1, "active": "running"}}
+    assert f"{unit}:restarts=1,active=running" in result["sample"]
 
 
 def test_unit_failure_omits_restart_context_when_unavailable(monkeypatch):
     result = _unit_failure_fixture(monkeypatch, _journal_bytes(
-        _unit_failure_record(MESSAGE="mesh-cleaner.service: Failed with result 'exit-code'.")))
+        _unit_failure_record(
+            MESSAGE=f"{_PLANT_SESSION}-discover.service: Failed with result 'exit-code'.")))
     assert result["state"] == "verified"
     assert result["unit_context"] == {}
     assert "restarts=" not in result["sample"]
+
+
+def test_unit_failure_never_attaches_restart_context_to_a_foreign_unit(monkeypatch):
+    # Restart context is looked up for plant-owned units only: a foreign
+    # failure is disclosed, but must not gain a restarts= clause even when
+    # systemctl would report one for it.
+    unit = "mishe-cleaner-recovered.service"
+    result = _unit_failure_fixture(monkeypatch, _journal_bytes(
+        _unit_failure_record(MESSAGE=f"{unit}: Failed with result 'exit-code'.")),
+        restart_context={unit: {"restarts": 114, "active": "running"}})
+    assert result["state"] == "verified"
+    assert result["unit_context"] == {}
+    assert "restarts=" not in result["sample"]
+    assert result["foreign_units"] == {unit: 1}
 
 
 def test_unit_restart_context_queries_systemctl(monkeypatch):
