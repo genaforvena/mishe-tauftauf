@@ -379,7 +379,9 @@ means no renderer runs a package module at all.
 The covered services' imported roots are also compared with the pin's sensor
 set by `sense.runtime.sensor-coverage`: it parses each root's `discovery.py`
 for the `sense.*` ids that root can emit and names `missing=` or `added=` per
-root against the pin, so a release that silently drops or adds a reading —
+root against the pin. The coordinator's declared checkout root is exempt from
+`added=` only (it may lead the pin by a commit); `missing=` on that root still
+reads drift. A release that silently drops or adds a reading —
 changing what the plant can observe — cannot pass merely because its import
 root still matches. A root that cannot be parsed adds `unreadable=<root>` and
 reads `drift`; no imported root, an all-unreadable root set, or an unreadable
