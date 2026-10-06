@@ -1696,6 +1696,65 @@ def test_drift_across_sites_marks_mapped_unit_without_import_root_unknown(
     assert row["identity"]["stale"] == {}
 
 
+def test_drift_across_sites_reads_the_scanning_site_with_no_registered_sites(
+        tmp_path: Path) -> None:
+    # The registry lists the *other* sites, so an empty one says nothing about
+    # the scanning site's own units: they share its bus and still need its pin.
+    own_sha: list[str] = []
+    own_pin = tmp_path / "releases" / "own"
+    _release_tree(own_pin, own_sha)
+    home = tmp_path / "plant"
+    _pin(home, own_pin, own_sha[0], "mishe-self")
+    _linked_registry(home, [])
+    unit = "mishe-self-senses.service"
+    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
+            patch.object(discovery, "_unit_import_roots",
+                         return_value={unit: str(own_pin)}), \
+            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
+        row = discovery._runtime_drift_across_sites(home)
+    assert row["state"] == "verified"
+    assert row["identity"]["sites"] == ["mishe-self"]
+    assert row["identity"]["stale"] == {}
+    assert "sites=1" in row["sample"]
+
+
+def test_drift_across_sites_names_a_stale_own_unit_with_no_registered_sites(
+        tmp_path: Path) -> None:
+    # An empty registry must not hide the scanning site's own stale release; the
+    # unit is named even though no other site is registered to compare against.
+    pinned_sha: list[str] = []
+    stale_sha: list[str] = []
+    pinned = tmp_path / "releases" / "pinned"
+    stale = tmp_path / "releases" / "stale"
+    _release_tree(pinned, pinned_sha)
+    _release_tree(stale, stale_sha)
+    home = tmp_path / "plant"
+    _pin(home, pinned, pinned_sha[0], "mishe-self")
+    _linked_registry(home, [])
+    unit = "mishe-self-core-self-observer.service"
+    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
+            patch.object(discovery, "_unit_import_roots", return_value={unit: str(stale)}), \
+            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
+        row = discovery._runtime_drift_across_sites(home)
+    assert row["state"] == "drift"
+    assert f"stale={unit}@{stale.name}" in row["sample"]
+    assert row["identity"]["stale"] == {unit: str(stale)}
+
+
+def test_drift_across_sites_is_unknown_when_the_registry_has_no_site_list(
+        tmp_path: Path) -> None:
+    # A registry whose site list is unreadable names no session to map, so the
+    # reading stays unknown rather than reporting the scanning site as clean.
+    home = tmp_path / "plant"
+    (home / "health").mkdir(parents=True, exist_ok=True)
+    (home / "health" / "linked-sites.json").write_text(
+        json.dumps({"sites": {}, "version": 1}), encoding="utf-8")
+    with patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
+        row = discovery._runtime_drift_across_sites(home)
+    assert row["state"] == "unknown"
+    assert "no site list" in row["sample"]
+
+
 def test_active_site_units_reads_the_list_units_table_not_show_properties(
         tmp_path: Path) -> None:
     # ``list-units`` ignores ``-p`` and prints an indented column table, so the
