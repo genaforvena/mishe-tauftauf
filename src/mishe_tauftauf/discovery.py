@@ -2001,6 +2001,28 @@ def scan_attempt(home: Path) -> dict[str, object] | None:
         return {"status": "unknown", "stage": "unknown", "error": "invalid attempt record"}
     return attempt
 
+def _producer() -> str:
+    """Identify the code that produced a scan: package root + git commit.
+
+    A checkout run and a pin-run resolve to different package roots, so the
+    field distinguishes them even when their readings are identical.  The git
+    commit names the exact source tree; ``unknown`` means the root is not a
+    git work tree (e.g. a release directory).
+    """
+    package_root = Path(__file__).resolve().parent
+    checkout_root = package_root.parent.parent
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=2,
+            cwd=checkout_root,
+        )
+        sha = result.stdout.strip() if result.returncode == 0 else "unknown"
+    except (OSError, subprocess.TimeoutExpired):
+        sha = "unknown"
+    return f"{package_root}@{sha}"
+
+
 
 def scan(home: Path) -> Path:
     """Acquire and publish a receipt; notification failure never rolls it back."""
@@ -2014,6 +2036,7 @@ def scan(home: Path) -> Path:
         snapshot = dict(sample(home))
         snapshot["acquisition"] = {"start": start, "end": endpoint()}
         snapshot["scan_id"] = scan_id
+        snapshot["producer"] = _producer()
         attempt["stage"] = "publication"
         _write_attempt(home, attempt)
         root = home / "discovery"
