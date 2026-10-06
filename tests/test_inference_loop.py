@@ -3,7 +3,7 @@ import json
 import pytest
 
 from mishe_tauftauf.inference_loop import (
-    NativeJournal, NativeJournalError, drive_native, read_native_journal,
+    NativeJournal, NativeJournalError, drive_native, read_native_journal, recover_native,
 )
 from mishe_tauftauf.inference_worker import WorkerTurn
 
@@ -408,3 +408,102 @@ def test_noncontinuable_history_refuses_before_callbacks(tmp_path, change):
     assert events == []
     assert session.inputs == []
     assert path.read_bytes() == original
+
+
+def checkpoint_journal(tmp_path, **options):
+    from mishe_tauftauf.inference_transport import NativeTurn
+    response = turn([CALL])
+    native = NativeTurn(response.terminal, response.assistant, None, None,
+                        {"sessionId": "recorded-session", "boundaryDigest": "recorded-boundary"})
+    path = tmp_path / "checkpoint.jsonl"
+    boundary = options.pop("boundary", "tool_result")
+    with NativeJournal(path) as journal:
+        def record(event):
+            journal(event)
+            if event["kind"] == boundary:
+                raise InterruptedError
+        with pytest.raises(InterruptedError):
+            drive(Session(native), record=record, **options)
+    return path
+
+
+def recovery_options(record):
+    return dict(record=record, dispatch=lambda call: pytest.fail("redispatch"),
+                phase=lambda call: pytest.fail("new proposal"),
+                cancelled=lambda: False, authorized=lambda call: True,
+                complete=lambda context: True)
+
+
+def test_recovery_selects_exact_recorded_checkpoint_results_and_budgets(tmp_path):
+    from contextlib import contextmanager
+    path = checkpoint_journal(tmp_path)
+    original = path.read_bytes()
+    state = read_native_journal(path)
+    session = Session(turn())
+    opened, closed = [], []
+    @contextmanager
+    def open_session(*, checkpoint):
+        opened.append(checkpoint)
+        try:
+            yield session
+        finally:
+            closed.append(True)
+    events = []
+    result = recover_native(path, open_session=open_session, **recovery_options(events.append))
+    assert opened == [state["provider_checkpoint"]]
+    assert session.inputs == [state["context"]]
+    assert json.loads(session.inputs[0]["messages"][-1]["content"][0]["text"]) == {
+        "status": "completed"}
+    assert result["status"] == "complete"
+    assert (result["turns"], result["calls"]) == (2, 1)
+    assert events[0]["state"]["budgets"] == {"turns": 3, "calls": 2}
+    assert closed == [True]
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("boundary,outcome", [
+    ("model_input", "completed"), ("model_output", "completed"),
+    ("proposal", "completed"), ("tool_result", "unknown"), ("tool_result", "partial"),
+])
+def test_recovery_unknown_never_constructs_provider(tmp_path, boundary, outcome):
+    path = checkpoint_journal(tmp_path, boundary=boundary,
+                              dispatch=lambda call: {"status": outcome})
+    result = recover_native(path, open_session=lambda **kw: pytest.fail("provider opened"),
+                            **recovery_options(lambda event: None))
+    assert result["status"] == "unknown"
+    assert result["pending_calls"] == read_native_journal(path)["pending_calls"]
+
+
+def test_recovery_requires_checkpoint_from_same_output(tmp_path):
+    path = interrupted_journal(tmp_path)
+    with pytest.raises(NativeJournalError, match="missing recorded provider checkpoint"):
+        recover_native(path, open_session=lambda **kw: pytest.fail("provider opened"),
+                       **recovery_options(lambda event: pytest.fail("recorded")))
+
+
+def test_recovery_seed_preserves_checkpoint_when_interrupted_before_next_input(tmp_path):
+    path = checkpoint_journal(tmp_path)
+    second = tmp_path / "second.jsonl"
+    from contextlib import nullcontext
+    with NativeJournal(second) as journal:
+        def record(event):
+            journal(event)
+            raise InterruptedError
+        with pytest.raises(InterruptedError):
+            recover_native(path, open_session=lambda **kw: nullcontext(Session()),
+                           **recovery_options(record))
+    assert read_native_journal(second)["provider_checkpoint"] == (
+        read_native_journal(path)["provider_checkpoint"])
+    session = Session(turn())
+    result = recover_native(second, open_session=lambda **kw: nullcontext(session),
+                            **recovery_options(lambda event: None))
+    assert result["status"] == "complete"
+    assert session.inputs == [read_native_journal(path)["context"]]
+
+
+def test_recovery_exhausted_budget_never_constructs_provider(tmp_path):
+    path = checkpoint_journal(tmp_path, max_turns=1)
+    result = recover_native(path, open_session=lambda **kw: pytest.fail("provider opened"),
+                            **recovery_options(lambda event: None))
+    assert result["status"] == "turn_budget"
+    assert (result["turns"], result["calls"]) == (1, 1)
