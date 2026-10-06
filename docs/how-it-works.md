@@ -108,9 +108,10 @@ it maps the provider's call shape onto a durable, reconcilable operation: it
 allocates the intent before any effect, persists the start record before the
 executor runs, and appends the outcome afterwards. The reply it returns is the
 loop's expected status shape, so `completed` continues and `unknown` stops
-without retry. A second dispatch of the same operation id is refused, never
-re-executed. The scope is a single local store and single writer per process;
-process-crash recovery, not power loss.
+without retry. A second dispatch of the same operation id returns the recorded
+outcome or an explicit `unknown`, never a second execution. The scope is a
+single local store and single writer per process; process-crash recovery, not
+power loss.
 
 `inference_loop.NativeJournal` is an optional caller-owned `record` callback:
 it exclusively creates a new private JSONL file, flushes and fsyncs every event
