@@ -129,7 +129,11 @@ authority all match, and refuses a changed binding as `ChangedContentReuse`
 before any effect. One provider call id binds at most one operation, so a
 second reservation or dispatch under a call id another record already holds is
 refused as `CallIdConflict` before any write, including the reservation upgrade
-that would otherwise take a call id an operation already discharged: the resolve
+that would otherwise take a call id an operation already discharged. That check
+reads outcomes as well as intents, because `dispatch` writes the call id onto
+the outcome: a store this boundary did not write can hold an outcome naming a
+call whose intent record is gone, and scanning the intents alone would let a
+second operation execute for a call that already produced an effect. The resolve
 lookup that names an operation by its provider call alone has one answer or
 none. `drive_native` passes the provider's call through untouched
 and a provider does not echo the caller's id, so `__call__(call,

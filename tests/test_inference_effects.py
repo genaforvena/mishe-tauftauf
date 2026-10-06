@@ -1393,3 +1393,110 @@ def test_a_claim_cannot_rebind_a_call_id_another_operation_holds(tmp_path):
                       "arguments": {"path": "owned-evidence"}},
                      claim_for="report-second")
     assert (reply["status"], reply["operation_id"]) == ("completed", "report-second")
+
+
+def test_recover_names_an_operation_whose_intent_was_retired_after_its_outcome(
+        tmp_path):
+    """An outcome whose intent record is gone still names its own operation.
+
+    `_resolve_operation_id` looks for the provider call id among intents first
+    and then among outcomes, and the outcome branch is the one that holds when a
+    store has been repaired: `drop_reserved` is the only path that removes an
+    intent, and it refuses an id that has an outcome, but a caller may rewrite
+    the intents file by hand or run an older boundary. Then only the outcome
+    names the provider call, and if resolve did not read it, `recover` would
+    answer `None` — no durable state — for a call that already produced an
+    effect, and the caller would dispatch it again under a derived id.
+    """
+    store = tmp_path / "effects"
+    dispatch = boundary(tmp_path, lambda call: {"ok": True})
+    call = {"type": "toolCall", "id": "call-provider", "name": "inspect",
+            "arguments": {"path": "owned-evidence"}}
+    reply = dispatch(call)
+    assert reply["status"] == "completed"
+    # Simulate a repair that rewrote the intents file without this record.
+    (store / "intents.jsonl").write_text("")
+    fresh = boundary(tmp_path, lambda call: {"ok": True}, writer_id="loop-2")
+    assert fresh.recover(call) is not None, "recover lost a completed operation"
+    assert fresh.recover(call)["operation_id"] == reply["operation_id"]
+
+
+def test_a_claim_cannot_rebind_an_id_a_different_provider_call_completed(tmp_path):
+    """One caller id names one provider call, in both directions.
+
+    `allocate` rejects a second caller id under a provider call an intent already
+    holds, and `bind_dispatch` refuses a claim whose provider call an intent
+    holds too, so the store keeps one intent per provider call. The remaining
+    direction is a caller reusing its own durable id for a *different* provider
+    call: the id already has an outcome, so `bind_dispatch` answers
+    `AlreadyExecuted` before any effect, and the resolve path still names the
+    operation the outcome belongs to. This pins that both directions hold, so a
+    later change to the outcome check cannot silently drop one.
+    """
+    store = tmp_path / "effects"
+    runs = []
+    dispatch = boundary(tmp_path, lambda call: runs.append(call["operation_id"])
+                        or {"ok": True})
+    first_call = {"type": "toolCall", "id": "call-first", "name": "inspect",
+                  "arguments": {"path": "owned-evidence"}}
+    call_id = dispatch(first_call)["operation_id"]
+    assert runs == [call_id]
+
+    # A new provider call claiming the first operation's id: the caller is
+    # reusing its own durable name for a different provider call.
+    second_call = {"type": "toolCall", "id": "call-second", "name": "inspect",
+                   "arguments": {"path": "owned-evidence"},
+                   "operation_id": call_id}
+    with pytest.raises(AlreadyExecuted):
+        dispatch(second_call)
+    assert runs == [call_id], "the capability ran a second time"
+    # One provider call still names one operation, in both directions.
+    rows = [json.loads(line) for line in
+            (store / "intents.jsonl").read_text().splitlines()]
+    assert [row["operation_id"] for row in rows] == [call_id]
+    assert dispatch.recover(second_call)["operation_id"] == call_id
+    assert dispatch.recover(first_call)["operation_id"] == call_id
+
+
+def test_a_second_operation_cannot_take_a_call_an_outcome_already_discharged(
+        tmp_path):
+    """One provider call id names one operation, even when its intent is gone.
+
+    `_conflicts_with` scans the intents only, but `dispatch` writes the provider
+    call id onto the outcome as well. `drop_reserved` is the only path that
+    retires an intent and it refuses an id with an outcome, so in a store this
+    boundary wrote the intent always outlives the dispatch. A store it did not
+    write can differ: a caller's repair, a hand rewrite or an older boundary can
+    leave an outcome naming a provider call whose intent record is gone. The
+    conflict check then finds nothing and a second operation executes for a
+    provider call that already produced an effect — the exact double execution
+    the one-operation-per-call invariant exists to prevent, and the resolve path
+    only detects afterwards, when it raises `CallIdConflict` instead of naming
+    either.
+    """
+    store = tmp_path / "effects"
+    runs = []
+    dispatch = boundary(tmp_path, lambda call: runs.append(call["operation_id"])
+                        or {"ok": True})
+    call = {"type": "toolCall", "id": "call-provider", "name": "inspect",
+            "arguments": {"path": "owned-evidence"}}
+    first = dispatch(call)
+    assert first["status"] == "completed"
+    assert runs == [first["operation_id"]]
+
+    # A store this boundary did not write: the intent is gone, the outcome keeps
+    # the provider call id.
+    (store / "intents.jsonl").write_text("")
+    fresh = boundary(tmp_path, lambda call: runs.append(call["operation_id"])
+                     or {"ok": True}, writer_id="loop-2")
+    # The arriving call names a different operation id of its own, so neither
+    # the outcome check nor the id check can catch it: only the call id can.
+    replay = dict(call, operation_id="report-replay")
+    with pytest.raises(CallIdConflict):
+        fresh(replay)
+    assert runs == [first["operation_id"]], "the capability ran a second time"
+    outcomes = [json.loads(line) for line in
+                (store / "outcomes.jsonl").read_text().splitlines()]
+    assert [row["operation_id"] for row in outcomes] == [first["operation_id"]]
+    # The first operation is still the one this provider call resolves to.
+    assert fresh.recover(call)["operation_id"] == first["operation_id"]
