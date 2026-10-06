@@ -18,6 +18,19 @@ from .wall import settings
 
 WORKER_SETTLE_SECONDS = 60
 """Extra outer budget so the reviewer can settle after its own model-call budget."""
+def verified_delivery(record: dict) -> bool:
+    """A patch record that is a verified delivery, not merely a set boolean.
+
+    ``verify`` writes ``delivery_verified=True`` together with the
+    ``verification`` digest and time, and no other producer sets the boolean
+    true, so the binding is the evidence and the boolean alone is not. A record
+    carrying only the flag is a hand-edit or a torn write; every consumer shares
+    this test so none renders or counts it as verified delivery
+    (docs/wall-coordination.md: "Only a successful exercise records
+    ``delivery_verified=true``, the exact patch digest and verification time").
+    """
+    return bool(record.get("delivery_verified")) and isinstance(record.get("verification"), dict)
+
 
 def snapshot(path):
     if path.is_symlink():

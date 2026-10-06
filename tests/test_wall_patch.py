@@ -164,9 +164,17 @@ def test_delivery_requires_successful_revert_observation_and_reapply(tmp_path, m
     wall_patch.verify(home, "change")
     record = wall_patch.status(home, "change")
     assert record["phase"] == "applied" and record["delivery_verified"]
+    assert wall_patch.verified_delivery(record)
     assert record["revert_observation"]["code"] == 0
     assert record["verification"]["patch_hash"]
     assert deployed.read_text() == "after\n"
+
+def test_verified_delivery_requires_the_verification_binding():
+    assert not wall_patch.verified_delivery({"phase": "applied", "delivery_verified": True})
+    assert not wall_patch.verified_delivery({"phase": "applied"})
+    assert not wall_patch.verified_delivery({"phase": "applied", "delivery_verified": True, "verification": "yes"})
+    assert wall_patch.verified_delivery({"phase": "applied", "delivery_verified": True,
+                                         "verification": {"at": "2026-10-01T00:00:00+00:00"}})
 
 
 def test_verified_delivery_clears_a_stale_apply_failure(tmp_path, monkeypatch):

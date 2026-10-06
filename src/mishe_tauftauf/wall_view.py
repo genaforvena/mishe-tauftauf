@@ -14,6 +14,7 @@ from pathlib import Path
 from . import seed_culture_views, seed_witness_view
 from .ci_watch import line as ci_line
 from .observations import validate_slug
+from .wall_patch import verified_delivery
 
 
 def _import_roots(environment: str) -> list[str]:
@@ -256,7 +257,7 @@ def render(home: Path, role: str) -> str:
         try:
             record = json.loads(path.read_text())
             phase = record["phase"]
-            delivery = (" delivery=" + ("verified" if record.get("delivery_verified") else "incomplete")) if phase == "applied" else ""
+            delivery = (" delivery=" + ("verified" if verified_delivery(record) else "incomplete")) if phase == "applied" else ""
             lines.append(f"PATCH {path.stem}: {phase}" + delivery + (f" failure={record['failure']}" if record.get("failure") else ""))
         except (OSError, ValueError, KeyError) as exc:
             lines.append(f"UNKNOWN patch {path.stem}: {exc}")

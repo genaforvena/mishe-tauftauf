@@ -38,9 +38,14 @@ def test_metrics_do_not_count_merely_applied_patches_as_verified_delivery(tmp_pa
     patches = home / "patches"
     patches.mkdir()
     (patches / "missing-revert.json").write_text(json.dumps({"phase": "applied"}))
+    # A boolean without the verification binding is not verified delivery, the
+    # same predicate wall_view renders.
+    (patches / "flag-only.json").write_text(json.dumps({"phase": "applied", "delivery_verified": True}))
+    (patches / "verified.json").write_text(json.dumps({
+        "phase": "applied", "delivery_verified": True, "verification": {"at": datetime.now(timezone.utc).isoformat()}}))
     sample = trial_metrics.collect(home, datetime.now(timezone.utc) - timedelta(hours=1))
-    assert sample["deliveries"]["verified_in_window"] == []
-    assert sample["deliveries"]["applied_without_verification"] == ["missing-revert"]
+    assert sample["deliveries"]["verified_in_window"] == ["verified"]
+    assert sorted(sample["deliveries"]["applied_without_verification"]) == ["flag-only", "missing-revert"]
 
 
 def test_sampler_preserves_partial_sample_on_service_timeout(tmp_path, monkeypatch):

@@ -13,6 +13,7 @@ from .feed import Feed
 from .post_check import _save
 from .wall import settings
 from .records import payload
+from .wall_patch import verified_delivery
 
 
 PREFIXES = {"wakes": "seed wake ", "redeliveries": "seed redeliver ",
@@ -65,7 +66,7 @@ def collect(home: Path, start: datetime, *, end=None) -> dict:
             record = json.loads(path.read_text())
             patches[path.stem] = record["phase"]
             if record["phase"] == "applied":
-                if record.get("delivery_verified") and record.get("verification"):
+                if verified_delivery(record):
                     at = datetime.fromisoformat(record["verification"]["at"])
                     if start <= at <= end:
                         verified.append(path.stem)
