@@ -132,6 +132,42 @@ def stop(home: Path, session: str = "mishe-tauftauf") -> None:
         raise TmuxError(f"refusing to remove unowned session {session!r}")
     _tmux("kill-session", "-t", session)
 
+def list_sessions() -> list[str]:
+    """All session names on the shared tmux server, or [] when tmux is missing."""
+    if shutil.which("tmux") is None:
+        return []
+    result = _tmux("list-sessions", "-F", "#{session_name}", check=False)
+    if result.returncode:
+        return []
+    return [line for line in result.stdout.decode("utf-8", "replace").splitlines() if line]
+
+
+def sweep_orphan_test_sessions() -> list[str]:
+    """Kill mishe-tauftauf-test-* sessions whose owning pid is dead.
+
+    A hard-killed pytest leaks its tmux session because the test's finally
+    cleanup never runs. The session name embeds the creating pid
+    (``mishe-tauftauf-test-{pid}``); when that pid is gone the session is
+    orphaned. Returns the names of sessions killed.
+    """
+    killed: list[str] = []
+    for session in list_sessions():
+        if not session.startswith("mishe-tauftauf-test-"):
+            continue
+        pid_str = session.rsplit("-", 1)[-1]
+        try:
+            pid = int(pid_str)
+        except ValueError:
+            continue
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            _tmux("kill-session", "-t", session, check=False)
+            killed.append(session)
+        except PermissionError:
+            pass
+    return killed
+
 
 def capture_raw(session: str, slug: str) -> str:
     result = _tmux("capture-pane", "-p", "-t", f"{session}:{slug}.0", "-S", "-", check=False)
