@@ -128,7 +128,10 @@ binding to the real call when the bound capability, version, arguments and
 authority all match, and refuses a changed binding as `ChangedContentReuse`
 before any effect; `drive_native` passes the provider's call through untouched
 and a provider does not echo the caller's id, so `__call__(call,
-claim_for=operation_id)` is the route that names it. A `claim_for` naming no
+claim_for=operation_id)` is the route that names it; and after a crash the retry
+arrives without the claim, so the unclaimed route resolves the operation id a
+record already holds for this provider call instead of deriving a fresh one and
+executing the capability under it a second time. A `claim_for` naming no
 operation in the store is a `ValueError`, and one whose id already has an
 outcome is `AlreadyExecuted`. `drop_reserved` retires a reservation
 that was provably never dispatched; it never removes a start record or an

@@ -966,6 +966,40 @@ class EffectBoundary:
         digest = hashlib.sha256(native_id.encode("utf-8")).hexdigest()[:12]
         return f"{self.operation_prefix}-{safe}-{digest}"
 
+    def _resolve_operation_id(self, call: Mapping[str, Any]) -> str:
+        """The id this provider call is bound to, or the id a dispatch would take.
+
+        A caller-named operation reaches the loop only through `claim_for`, so a
+        call can be bound under an id that `call` itself does not carry: the
+        provider call id is in `native_call`, the caller's id is in the record.
+        Recovery by the provider call alone has to find that record, or it reads
+        a derived id that was never allocated and reports 'no durable state',
+        which the caller reads as permission to dispatch — and the capability
+        runs a second time while the first start record still names another id.
+
+        The caller's explicit `operation_id` always wins, as in `_operation_id`.
+        """
+        caller_id = call.get("operation_id")
+        if isinstance(caller_id, str) and caller_id:
+            if not _OPERATION_ID_RE.match(caller_id):
+                raise ValueError(
+                    f"operation_id {caller_id!r} must match [A-Za-z0-9_.:-]+")
+            return caller_id
+        with self.ledger._locked():
+            # At most one intent can hold a given provider call id: a claimed id
+            # is rebound in place by `bind_dispatch` rather than appended as a
+            # second record, and a derived id is allocated only when no claimed
+            # record exists.
+            for operation_id, intent in self.ledger._read_intents().items():
+                if intent.native_call is not None and (
+                        intent.native_call.get("id") == call.get("id")):
+                    return operation_id
+            for operation_id, outcome in self.ledger._read_outcomes().items():
+                if outcome.native_call is not None and (
+                        outcome.native_call.get("id") == call.get("id")):
+                    return operation_id
+        return self._operation_id(call)
+
     def __call__(self, call: Mapping[str, Any], *,
                  claim_for: str | None = None) -> dict[str, Any]:
         """Bind, start and record one capability call, then reply for the loop.
@@ -992,8 +1026,14 @@ class EffectBoundary:
             if not self._has_intent(claim_for):
                 raise ValueError(
                     f"claim_for {claim_for!r} names no operation in this store")
-        operation_id = claim_for if claim_for is not None else self._operation_id(
-            native_call)
+            operation_id = claim_for
+        else:
+            # A caller-named operation that died after its start record is bound
+            # to the provider call under the caller's id, so the dispatch route
+            # must resolve the same id the recovery route does. Deriving from
+            # the provider call alone would allocate a second, derived operation
+            # and execute the capability again under it.
+            operation_id = self._resolve_operation_id(native_call)
         capability = native_call.get("name")
         if not isinstance(capability, str) or not capability:
             raise ValueError("a native call name is required")
@@ -1059,6 +1099,13 @@ class EffectBoundary:
         durable state to reconcile and may allocate it. Any other reply is the
         durable state and must not be retried: a `started-without-outcome`
         failure is an unknown effect, not permission to run the capability again.
+
+        The id is resolved rather than derived: a caller-named operation reaches
+        the loop only through `claim_for`, so the durable record that belongs to
+        this provider call can carry an id the call itself does not. Deriving
+        from the provider call alone would read an id that was never allocated,
+        answer `None`, and let a successor execute the capability a second time
+        under a derived id while the first start record still names another.
         """
-        return self.status(self._operation_id(call))
+        return self.status(self._resolve_operation_id(call))
 
