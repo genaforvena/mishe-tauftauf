@@ -410,11 +410,14 @@ pin module is `UNKNOWN`, not a clean bill.
 The journal unit-failure-count sense (`sense.journal.unit-failure-count`) reads
 the system journal for `Failed with result '<class>'` messages from systemd,
 grouping raw counts by failed unit and class over a fixed 600-second window.
-The count is plant-scoped: the plant's own units are its `mishe-*` services and
-the `tmux-spawn-*.scope` cgroups its tmux server creates for quick-exit panes; a
-unit on the shared host journal that is not the plant's is disclosed as
-`foreign=<name>:<count>` and excluded from the count, so another node's test
-harness cannot read as a plant failure.
+The count is plant-scoped by name prefix: a unit counts as plant when its name
+starts with `mishe-` (the plant's services) or `tmux-spawn-` (the cgroups its
+tmux server creates for quick-exit panes); a unit matching neither is disclosed
+as `foreign=<name>:<count>` and excluded from the count, so another node's test
+harness cannot read as a plant failure. The scope is prefix-based, so a foreign
+unit whose own name starts with `mishe-` — currently
+`mishe-cleaner-recovered.service`, which the drift-across-sites sense reads as
+foreign — is counted as plant; senses owns that rule.
 For each failed unit systemd still reports as loaded, the sample also carries
 restart context, `<unit>:restarts=N,active=<state>`, so a unit that exits
 nonzero by design and recovers (`active=running`) reads differently from a
