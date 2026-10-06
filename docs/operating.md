@@ -342,9 +342,12 @@ its root from the pane watcher's environment; the sense reads that root from
 the watcher process's live environment (falling back to the pane's start
 command) and reports `unknown` naming the role when it cannot. An export that
 is conditional or built from the inherited `$PYTHONPATH` may not decide the
-root, so it is `unknown` too, named `conditional_unknown`. Renderers that run
-no package module are named `uncovered`, so the sense shows its scope rather
-than only the renderers it covers. The pane's cwd is checked for a
+root, so it is `unknown` too, named `conditional_unknown`. An export that names
+no usable root at all (an empty `PYTHONPATH` or a bare separator) leaves the
+renderer's effective root unread, so it is `unknown` too, named
+`export_unknown`. Renderers that run no package module are named `uncovered`,
+so the sense shows its scope rather than only the renderers it covers. The
+pane's cwd is checked for a
 `mishe_tauftauf/` package that would shadow the `PYTHONPATH` root, since
 `python -m` inserts the cwd before `PYTHONPATH` in `sys.path`. `unavailable`
 means no renderer runs a package module at all.
