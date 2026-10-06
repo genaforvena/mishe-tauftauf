@@ -316,6 +316,19 @@ leaves the service roots unread, so the line reports `services=UNKNOWN`, not
 pane. Moving the pin is not a push or a CI result; keep source, CI and running
 code as separate evidence.
 
+A wall-mode site's panes render from the snapshot named in
+`coordination-mode.json` (`runtime`), not from the pin, so moving the pin alone
+leaves those renderer bytes stale: the panes show old logic while the services
+import the new release. Rebind the snapshot's package to the release before or
+with the advance — copy `<release>/src/mishe_tauftauf/` over
+`<snapshot>/src/mishe_tauftauf/`, after saving the old package under the ignored
+site — and let `sense.runtime.renderer-coverage` confirm it: the sense hashes
+each renderer's import closure in the renderer root and in the pin and reports
+`drift` naming every module that differs, so a partial rebind is visible rather
+than silent. The snapshot's files outside those closures are inert to the panes.
+A patch that must survive a pin advance belongs on `main`; the rebind replaces
+the snapshot's patched bytes with the release's.
+
 The launcher writes the pin, then reconciles the covered services onto it,
 before it runs its own discovery scan, so the launcher's own post-return reading
 is the reconciled state, not the swap transient. A scan that samples during the
