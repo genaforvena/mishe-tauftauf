@@ -324,6 +324,17 @@ when a running session unit's import root cannot be discovered from systemd,
 its main process, or the main process's direct children. No root means the pin
 comparison is unevidenced, not clean.
 
+The service comparison covers only the roots the listed services import. A pane
+renderer that exports its own `PYTHONPATH` runs from a root no manifest names,
+so a stale snapshot there would show old logic in the pane while the dashboard
+still read verified. The renderer coverage sense
+(`sense.runtime.renderer-coverage`) reads each Top Pain's exported root and
+entry module, hashes that module's package import closure in the renderer root
+and in the pin, and reports `drift` naming every module that differs or is
+missing on either side. A renderer that inherits the pin is already covered by
+the service comparison and is not listed; `unavailable` means no renderer
+exports its own root.
+
 ### Linked health is a separate live check
 
 The core health pane reads each registered site's `health/services.json` and checks those named units on **this host's user systemd manager**. It is read-only with respect to linked services and independent of the recorded applied SHA. It is not remote fleet monitoring.

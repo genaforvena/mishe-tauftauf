@@ -1258,6 +1258,196 @@ def test_sensor_coverage_names_a_sensor_a_service_added_that_the_pin_lacks() -> 
     assert reading["sample"] == f"{live.name}=2 {live.name} added=sense.tmux.windows"
 
 
+
+def _top_pain(home: Path, slug: str, body: str) -> None:
+    directory = home / "top-pains"
+    directory.mkdir(exist_ok=True)
+    path = directory / slug
+    path.write_text(body, encoding="utf-8")
+    path.chmod(0o755)
+
+
+def _renderer_root(root: Path, modules: dict[str, str]) -> Path:
+    package = root / "src" / "mishe_tauftauf"
+    package.mkdir(parents=True, exist_ok=True)
+    for name, source in modules.items():
+        (package / f"{name}.py").write_text(source, encoding="utf-8")
+    return root
+
+
+def test_top_pain_roots_expands_the_scripts_home_variable() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    _top_pain(home, "senses",
+              "home=/srv/site\nexport PYTHONPATH=$home/artifacts/trial/runtime/src\n"
+              "exec python -m mishe_tauftauf.wall_view --home \"$home\" --role senses\n")
+    roots, failure = discovery._top_pain_roots(home)
+    assert failure is None
+    assert roots == [("/srv/site/artifacts/trial/runtime", "wall_view")]
+
+
+def test_top_pain_roots_reads_every_entry_a_script_names() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    _top_pain(home, "health",
+              "export PYTHONPATH=/srv/snapshot/src\n"
+              "python -m mishe_tauftauf.seed_culture_views --view health\n"
+              "exec python -m mishe_tauftauf.wall_view --role health\n")
+    roots, failure = discovery._top_pain_roots(home)
+    assert failure is None
+    assert roots == [("/srv/snapshot", "seed_culture_views"), ("/srv/snapshot", "wall_view")]
+
+
+def test_top_pain_roots_skips_a_renderer_that_inherits_the_pin() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    _top_pain(home, "permissions",
+              "exec python -m mishe_tauftauf.seed_culture_views --view permissions\n")
+    roots, failure = discovery._top_pain_roots(home)
+    assert failure is None
+    assert roots == []
+
+
+def test_top_pain_roots_reports_an_unresolvable_import_root() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    _top_pain(home, "senses",
+              "export PYTHONPATH=$elsewhere/src\nexec python -m mishe_tauftauf.wall_view\n")
+    roots, failure = discovery._top_pain_roots(home)
+    assert roots == []
+    assert failure == "top-pain senses import root unresolvable"
+
+
+def test_top_pain_roots_reads_a_quoted_pythonpath() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    _top_pain(home, "senses",
+              'export PYTHONPATH="/srv/snapshot/src"\n'
+              "exec python -m mishe_tauftauf.wall_view\n")
+    roots, failure = discovery._top_pain_roots(home)
+    assert failure is None
+    assert roots == [("/srv/snapshot", "wall_view")]
+
+
+def test_top_pain_roots_leaves_a_longer_variable_unresolved() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    _top_pain(home, "senses",
+              "home=/srv/site\nexport PYTHONPATH=$home_extra/src\n"
+              "exec python -m mishe_tauftauf.wall_view\n")
+    roots, failure = discovery._top_pain_roots(home)
+    assert roots == []
+    assert failure == "top-pain senses import root unresolvable"
+
+
+def test_package_imports_reads_relative_and_absolute_forms() -> None:
+    from mishe_tauftauf import discovery
+
+    names = discovery._package_imports(
+        "from . import seed_culture_views\n"
+        "from .ci_watch import line\n"
+        "from mishe_tauftauf import observations\n"
+        "from mishe_tauftauf.feed import Feed\n"
+        "import mishe_tauftauf.wall\n"
+        "import os\n")
+    assert names == {"seed_culture_views", "ci_watch", "observations", "feed", "wall"}
+
+
+def test_renderer_coverage_names_a_renderer_root_stale_against_the_pin() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    pin = _renderer_root(Path("/tmp") / f"renderer-pin-{os.getpid()}",
+                         {"wall_view": "VALUE = 1\n"})
+    renderer = _renderer_root(Path("/tmp") / f"renderer-stale-{os.getpid()}",
+                              {"wall_view": "VALUE = 2\n"})
+    _top_pain(home, "senses",
+              f"export PYTHONPATH={renderer}/src\nexec python -m mishe_tauftauf.wall_view\n")
+    try:
+        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)):
+            reading = discovery._renderer_coverage(home)
+    finally:
+        shutil.rmtree(pin)
+        shutil.rmtree(renderer)
+    assert reading["state"] == "drift"
+    assert reading["sample"] == "renderers=1 drift=wall_view=wall_view"
+    assert reading["identity"]["drift"] == [
+        {"root": str(renderer), "entry": "wall_view", "modules": ["wall_view"]}]
+
+
+def test_renderer_coverage_names_a_module_the_renderer_root_lacks() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    source = {"wall_view": "from . import feed\n", "feed": "VALUE = 1\n"}
+    pin = _renderer_root(Path("/tmp") / f"renderer-closure-pin-{os.getpid()}", dict(source))
+    renderer = _renderer_root(Path("/tmp") / f"renderer-closure-short-{os.getpid()}",
+                              {"wall_view": source["wall_view"]})
+    _top_pain(home, "senses",
+              f"export PYTHONPATH={renderer}/src\nexec python -m mishe_tauftauf.wall_view\n")
+    try:
+        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)):
+            reading = discovery._renderer_coverage(home)
+    finally:
+        shutil.rmtree(pin)
+        shutil.rmtree(renderer)
+    assert reading["state"] == "drift"
+    assert reading["identity"]["drift"] == [
+        {"root": str(renderer), "entry": "wall_view", "modules": ["feed"]}]
+
+
+def test_renderer_coverage_reports_verified_when_the_renderer_matches_the_pin() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    modules = {"wall_view": "from . import feed\n", "feed": "VALUE = 1\n"}
+    pin = _renderer_root(Path("/tmp") / f"renderer-match-pin-{os.getpid()}", dict(modules))
+    renderer = _renderer_root(Path("/tmp") / f"renderer-match-live-{os.getpid()}", dict(modules))
+    _top_pain(home, "senses",
+              f"export PYTHONPATH={renderer}/src\nexec python -m mishe_tauftauf.wall_view\n")
+    try:
+        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)):
+            reading = discovery._renderer_coverage(home)
+    finally:
+        shutil.rmtree(pin)
+        shutil.rmtree(renderer)
+    assert reading["state"] == "verified"
+    assert reading["sample"] == "renderers=1"
+
+
+def test_renderer_coverage_is_unavailable_without_a_self_rooted_renderer() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    reading = discovery._renderer_coverage(home)
+    assert reading["state"] == "unavailable"
+    assert reading["sample"] == "no renderer exports its own import root"
+
+
+def test_renderer_coverage_keeps_an_unreadable_pin_unknown() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    renderer = _renderer_root(Path("/tmp") / f"renderer-weakpin-{os.getpid()}",
+                              {"wall_view": "VALUE = 1\n"})
+    _top_pain(home, "senses",
+              f"export PYTHONPATH={renderer}/src\nexec python -m mishe_tauftauf.wall_view\n")
+    try:
+        with patch("mishe_tauftauf.discovery._pinned_root",
+                   return_value=(None, "pin invalid: not a clean worktree")):
+            reading = discovery._renderer_coverage(home)
+    finally:
+        shutil.rmtree(renderer)
+    assert reading["state"] == "unknown"
+    assert reading["sample"] == "pin unreadable: pin invalid: not a clean worktree"
+
+
 def test_service_import_roots_parses_and_deduplicates_pythonpath() -> None:
     from mishe_tauftauf import discovery
 
