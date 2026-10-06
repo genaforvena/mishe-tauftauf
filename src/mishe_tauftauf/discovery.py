@@ -1949,8 +1949,8 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
     for entry in entries:
         match = RECORD_REF_RE.search(entry.body)
         if match:
-            ref_time[match.group(1)] = datetime.fromisoformat(
-                entry.timestamp.replace("Z", "+00:00"))
+            ref_time.setdefault(match.group(1), datetime.fromisoformat(
+                entry.timestamp.replace("Z", "+00:00")))
     records_dir = home / "records"
     if not records_dir.is_dir():
         return {"id": "sense.coord.dm-disposition-age", "state": "unknown",
@@ -1971,6 +1971,7 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
             continue
         if path.stem in ref_time:
             outcomes.append((ref_time[path.stem], role))
+    outcomes.sort()
     window_start = now - timedelta(seconds=DM_DISPOSITION_WINDOW_SECONDS)
     dms: list[tuple[datetime, str, str]] = []
     source_dms: dict[str, list[datetime]] = {}
