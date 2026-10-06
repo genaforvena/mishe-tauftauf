@@ -1520,6 +1520,31 @@ def test_dm_disposition_age_empty_window(tmp_path):
     assert result["open"] == 0
     assert result["sample"] == "dms=0 dispositioned=0 open=0"
 
+def test_dm_disposition_age_uses_earliest_outcome(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "records").mkdir(parents=True, exist_ok=True)
+    # Two outcomes for the same role at different times; the disposition age
+    # must use the earliest, regardless of record filename (digest) order.
+    early = _write_outcome(home, "bob")
+    late = _write_outcome(home, "bob")
+    entries = [
+        (1, "2026-10-06T12:00:00Z", "alice", "[dm] to=bob\n# hi bob\n"),
+        (2, "2026-10-06T12:30:00Z", "bob",
+         f"[record] records/{early}.json sha256={early}\n"),
+        (3, "2026-10-06T13:00:00Z", "bob",
+         f"[record] records/{late}.json sha256={late}\n"),
+    ]
+    (home / "chat.log").write_bytes(
+        b"".join(_tape_entry(seq, ts, src, body) for seq, ts, src, body in entries))
+    result = discovery._coord_dm_disposition_age(home, now=_dm_now())
+    assert result["state"] == "verified"
+    assert result["dms"] == 1
+    assert result["dispositioned"] == 1
+    assert result["open"] == 0
+    # The earliest outcome (12:30) dispositions the DM, not the later (13:00).
+    assert result["p50_minutes"] == 30
+
 
 
 
