@@ -68,6 +68,20 @@ def publication_lock(home):
 class FeedError(ValueError):
     pass
 
+def _reject_record_tag_lines(body: str) -> None:
+    """Reject a body that begins a line with the record tag.
+
+    ``_verify_records`` re-resolves tag-prefixed lines on every tape read, so a
+    non-canonical such line must never reach the tape. ``append_record`` calls
+    this before durably preparing the record, so a rejected publication cannot
+    leak an orphan record file.
+    """
+    for line in body.splitlines():
+        if line.lstrip().startswith("[record]"):
+            raise FeedError(
+                "record explanation must not begin a line with the [record] tag; "
+                f"the feed appends the immutable reference itself: {line.strip()!r}")
+
 
 @dataclass(frozen=True)
 class FeedEntry:
@@ -562,6 +576,7 @@ class Feed:
         from .records import prepare
         if not isinstance(body, str) or not body.strip():
             raise FeedError("record explanation must be non-empty text")
+        _reject_record_tag_lines(body)
         ref = prepare(self.home, payload, kind=kind)
         append_kwargs.setdefault("context", payload)
         return self.append(source, body.rstrip("\n") + "\n" + ref, **append_kwargs)

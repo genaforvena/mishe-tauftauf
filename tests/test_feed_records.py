@@ -79,6 +79,13 @@ def test_orphan_has_no_feed_effect(tmp_path):
     prepare(tmp_path, {"identity": "orphan"})
     assert Feed(tmp_path).entries() == []
 
+def test_record_explanation_tag_line_is_rejected_before_any_record_is_written(tmp_path):
+    from mishe_tauftauf.feed import FeedError
+    with pytest.raises(FeedError, match=r"\[record\] citing lines"):
+        Feed(tmp_path).append_record("witness", "Wrapped prose\n[record] citing lines.", {"ok": True})
+    assert not (tmp_path / "records").exists()
+    assert Feed(tmp_path).entries() == []
+
 
 def test_task_event_converts_inline_payload(tmp_path):
     from mishe_tauftauf.records import payload
