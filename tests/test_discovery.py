@@ -1077,6 +1077,16 @@ def test_ledger_invariant_unreadable_record_is_unknown(tmp_path):
     assert result["state"] == "unknown"
     assert result["sample"] == "records=1 bool_dv=1 unreadable=broken.json"
 
+def test_ledger_invariant_unreadable_record_keeps_detected_violation(tmp_path):
+    home = tmp_path / "site"
+    _write_patch(home, "a.json", {"phase": "reviewed", "delivery_verified": True})
+    (home / "patches" / "broken.json").write_text("not json\n", encoding="utf-8")
+    result = discovery._ledger_delivery_invariant(home)
+    assert result["state"] == "unknown"
+    assert result["sample"] == ("records=1 bool_dv=1 unreadable=broken.json "
+                                "violations=reviewed:1")
+    assert result["violations"] == {"reviewed": 1}
+
 
 def test_ledger_invariant_non_boolean_dv_ignored(tmp_path):
     home = tmp_path / "site"
