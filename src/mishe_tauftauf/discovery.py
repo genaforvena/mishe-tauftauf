@@ -3,6 +3,7 @@
 from __future__ import annotations
 import ast
 
+import hashlib
 import json
 import os
 import time
@@ -900,6 +901,162 @@ def _sensor_coverage(home: Path, roots: list[str]) -> dict[str, object]:
                          "missing": missing, "extra": extra,
                          "pin": pinned if pin_failure is None else None}}
 
+
+TOP_PAIN_ENTRY = re.compile(r"-m\s+mishe_tauftauf\.([A-Za-z_][A-Za-z0-9_]*)")
+TOP_PAIN_PATH = re.compile(r"""PYTHONPATH=("[^"]*"|'[^']*'|[^\s'\";]+)""")
+TOP_PAIN_HOME = re.compile(r"^\s*home=([^\s'\";]+)", re.MULTILINE)
+TOP_PAIN_VAR = re.compile(r"\$\{home\}|\$home(?![A-Za-z0-9_])")
+
+
+def _shell_home(value: str, script: str) -> str | None:
+    """Expand a Top Pain's ``$home`` reference, or None when it stays unknown.
+
+    The pane scripts assign ``home=<site home>`` and then export a PYTHONPATH
+    built from it, so the literal text alone does not name a directory. An
+    expansion this reader cannot resolve is reported rather than guessed.
+    """
+    match = TOP_PAIN_HOME.search(script)
+    if match is not None:
+        value = TOP_PAIN_VAR.sub(lambda _: match.group(1), value)
+    return None if "$" in value else value
+
+
+def _top_pain_roots(home: Path) -> tuple[list[tuple[str, str]], str | None]:
+    """The (import root, entry module) each pane renderer runs, with a reason.
+
+    A Top Pain may export PYTHONPATH itself, which overrides the pin its pane
+    watcher runs under, so its renderer imports a root no service manifest
+    names. Only renderers that both export a root and name a package entry are
+    returned: one that inherits the pin is already covered by the service
+    comparison, and one that runs no package module has no closure to read.
+    """
+    directory = home / "top-pains"
+    if not directory.is_dir():
+        return [], None
+    found: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for path in sorted(directory.iterdir()):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return [], f"top-pain {path.name} unreadable"
+        entry = [match.group(1) for match in TOP_PAIN_ENTRY.finditer(text)]
+        declared = TOP_PAIN_PATH.search(text)
+        if not entry or declared is None:
+            continue
+        value = declared.group(1)
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        value = _shell_home(value, text)
+        if value is None:
+            return [], f"top-pain {path.name} import root unresolvable"
+        for component in value.split(os.pathsep):
+            root = _import_root(component)
+            if not root:
+                continue
+            for module in entry:
+                if (root, module) not in seen:
+                    seen.add((root, module))
+                    found.append((root, module))
+    return found, None
+
+
+def _package_imports(source: str) -> set[str]:
+    """The package modules ``source`` imports, relative or absolute."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set()
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.level:
+                if node.module:
+                    names.add(node.module.split(".")[0])
+                else:
+                    names.update(alias.name.split(".")[0] for alias in node.names)
+            elif node.module and node.module.split(".")[0] == "mishe_tauftauf":
+                parts = node.module.split(".")
+                if len(parts) > 1:
+                    names.add(parts[1])
+                else:
+                    names.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                parts = alias.name.split(".")
+                if parts[0] == "mishe_tauftauf" and len(parts) > 1:
+                    names.add(parts[1])
+    return names
+
+
+def _module_digests(package: Path, entry: str) -> dict[str, str | None]:
+    """Every module in ``entry``'s import closure, as name -> sha256 (None absent).
+
+    The walk stops at a module the root does not carry: its own imports cannot
+    be read from there, and its absence is already the drift to report.
+    """
+    digests: dict[str, str | None] = {}
+    stack = [entry]
+    while stack:
+        name = stack.pop()
+        if name in digests:
+            continue
+        try:
+            source = (package / f"{name}.py").read_bytes()
+        except OSError:
+            digests[name] = None
+            continue
+        digests[name] = hashlib.sha256(source).hexdigest()
+        stack.extend(_package_imports(source.decode("utf-8", "replace")) - digests.keys())
+    return digests
+
+
+def _renderer_coverage(home: Path) -> dict[str, object]:
+    """Compare every self-rooted pane renderer's import closure with the pin's.
+
+    A renderer that exports its own PYTHONPATH renders from a root the service
+    comparison never sees, so a stale snapshot there shows old logic in a pane
+    while the dashboard still reads verified. Each renderer's package closure is
+    hashed in its own root and in the pin; a module that differs, is missing
+    from the renderer root, or is missing from the pin is drift.
+    """
+    pairs, failure = _top_pain_roots(home)
+    if failure is not None:
+        return {"id": "sense.runtime.renderer-coverage", "state": "unknown",
+                "sample": failure, "kind": "read"}
+    if not pairs:
+        return {"id": "sense.runtime.renderer-coverage", "state": "unavailable",
+                "sample": "no renderer exports its own import root", "kind": "read"}
+    pin, pin_failure = _pinned_root(home, str(Path(home).resolve().parent))
+    if pin is None:
+        return {"id": "sense.runtime.renderer-coverage", "state": "unknown",
+                "sample": f"pin unreadable: {pin_failure}", "kind": "read"}
+    pinned = Path(pin) / "src" / "mishe_tauftauf"
+    references: dict[str, dict[str, str | None]] = {}
+    drift: list[dict[str, object]] = []
+    for root, entry in pairs:
+        if entry not in references:
+            references[entry] = _module_digests(pinned, entry)
+        local = _module_digests(Path(root) / "src" / "mishe_tauftauf", entry)
+        # Compare the union: a module the pin's closure reaches but the
+        # renderer's does not is drift too, and only the local walk would miss it.
+        reference = references[entry]
+        differing = sorted(name for name in set(local) | set(reference)
+                           if local.get(name) != reference.get(name))
+        if differing:
+            drift.append({"root": root, "entry": entry, "modules": differing})
+    parts = [f"renderers={len(pairs)}"]
+    if drift:
+        parts.append("drift=" + " ".join(
+            f"{item['entry']}=" + ",".join(item["modules"]) for item in drift))
+    return {"id": "sense.runtime.renderer-coverage",
+            "state": "drift" if drift else "verified",
+            "sample": " ".join(parts), "kind": "read",
+            "identity": {"renderers": [f"{root}:{entry}" for root, entry in pairs],
+                         "drift": drift, "pin": pin}}
+
 def sample(home: Path) -> dict[str, object]:
     """Take bounded reads; never open input event streams or record key content."""
     observed: list[dict[str, object]] = []
@@ -1092,6 +1249,7 @@ def sample(home: Path) -> dict[str, object]:
                      "sample": names or "session unavailable", "kind": "read"})
     roots, _coverage_failure = _service_import_roots(home)
     observed.append(_sensor_coverage(home, roots))
+    observed.append(_renderer_coverage(home))
     observed.append(_runtime_drift_across_sites(home))
     return {"created": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
             "node": os.uname().nodename, "observations": observed}
