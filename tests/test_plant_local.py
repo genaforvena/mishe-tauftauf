@@ -380,7 +380,7 @@ def test_replant_drops_a_retired_window_name(tmp_path: Path) -> None:
     workspace.mkdir()
     subprocess.run(["git", "-C", str(workspace), "init", "-q"], check=True)
     home = workspace / ".mishe-tauftauf"
-    session = "mishe-window-prune-test-" + uuid.uuid4().hex[:10]
+    session = f"mishe-tauftauf-test-{os.getpid()}-{uuid.uuid4().hex[:10]}"
     argv = [sys.executable, "-m", "mishe_tauftauf.plant", "--workspace", str(workspace),
             "--home", str(home), "--session", session, "--engine-command", "cat", "--no-services"]
     try:
