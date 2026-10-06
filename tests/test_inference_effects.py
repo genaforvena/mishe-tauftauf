@@ -251,6 +251,26 @@ def test_request_digest_binds_content_authority_and_call_identity(tmp_path):
     same = allocate(led, operation_id="op-4", request=base)
     assert same.request_digest == a.request_digest
 
+def test_request_digest_binds_the_capability_version(tmp_path):
+    led = ledger(tmp_path)
+    base = {"obligation": "ob-1"}
+    a = allocate(led, operation_id="op-1", request=base)
+    same = allocate(led, operation_id="op-2", request=base)
+    assert same.request_digest == a.request_digest
+    # A same-id rebind under a different capability version is different content,
+    # not the same operation replayed at another version.
+    other = led.allocate("record_marker", "v2", {"text": "a"},
+                         authority="marker_root:append-one-line",
+                         request=base, operation_id="op-3")
+    assert other.request_digest != a.request_digest
+    # An empty version is bound like any other value, so the digest never
+    # silently treats an unset version as interchangeable with a set one.
+    explicit = request_digest(base, "marker_root:append-one-line",
+                              capability="record_marker", capability_version="v1")
+    defaulted = request_digest(base, "marker_root:append-one-line",
+                               capability="record_marker")
+    assert explicit != defaulted
+
 
 def test_arguments_are_snapshotted_so_mutation_cannot_change_the_binding(tmp_path):
     led = ledger(tmp_path)
@@ -790,6 +810,72 @@ def test_boundary_reserve_rejects_changed_content_before_any_effect(tmp_path):
         dispatch.reserve("report-37233-v1", capability="inspect",
                          arguments={"target": "owned-evidence"})
     assert dispatch.open_intents()[0].operation_id == "report-37233-v1"
+
+def test_boundary_a_reserved_id_is_not_free_for_a_changed_capability_version(tmp_path):
+    """A reserved id dispatched at another version never starts an effect.
+
+    The version is bound in the digest, so a dispatch that arrives with a
+    different `capability_version` is changed content: it is refused before any
+    effect rather than silently upgrading the reservation to the new version.
+    """
+    seen = []
+    dispatch = boundary(tmp_path, lambda call: seen.append(call) or {"ok": True})
+    dispatch.reserve("report-37233-v1", capability="publish-owned-report",
+                     arguments={"target": "owned-evidence"})
+    call = {"type": "toolCall", "id": "call-12", "name": "publish-owned-report",
+            "arguments": {"target": "owned-evidence"},
+            "operation_id": "report-37233-v1"}
+    with pytest.raises(ChangedContentReuse):
+        boundary(tmp_path, lambda call: seen.append(call) or {"ok": True},
+                 capability_version="v2")(call)
+    assert seen == []
+    # The reservation is untouched, still reconcilable at its own version.
+    intent = dispatch.open_intents()[0]
+    assert (intent.capability_version, intent.reservation) == ("v1", True)
+
+
+def test_boundary_a_dispatched_id_is_not_free_for_a_changed_capability_version(tmp_path):
+    """A bound id rebound at another version is refused, not replayed.
+
+    Covers the post-binding path: once the id is bound, a second dispatch under
+    a different version must fail the digest comparison instead of executing at
+    the recorded version. Uses a capability that failed, so a start record
+    exists with no outcome and the digest comparison in `bind_dispatch` is the
+    one that fires. Nothing is replayed, and the one start record stands.
+    """
+    seen = []
+
+    def failing(call):
+        seen.append(call)
+        raise RuntimeError("the capability failed")
+
+    dispatch = boundary(tmp_path, failing)
+    state = dispatch(NATIVE_CALL)
+    assert (state["status"], state["failure"]) == ("unknown", "capability-failed")
+    assert len(seen) == 1
+    with pytest.raises(ChangedContentReuse):
+        boundary(tmp_path, failing, capability_version="v2")(NATIVE_CALL)
+    assert len(seen) == 1
+    store = tmp_path / "effects"
+    starts = [json.loads(line) for line in store.joinpath("starts.jsonl").read_text().splitlines()
+              if line.strip()]
+    assert len(starts) == 1
+    assert dispatch.status(state["operation_id"])["failure"] == "started-without-outcome"
+
+
+def test_boundary_reserve_then_dispatch_binds_the_same_version(tmp_path):
+    """A reservation and a matching dispatch at one version upgrade cleanly."""
+    seen = []
+    dispatch = boundary(tmp_path, lambda call: seen.append(call) or {"ok": True})
+    dispatch.reserve("report-37233-v1", capability="publish-owned-report",
+                     arguments={"target": "owned-evidence"})
+    call = {"type": "toolCall", "id": "call-13", "name": "publish-owned-report",
+            "arguments": {"target": "owned-evidence"},
+            "operation_id": "report-37233-v1"}
+    reply = dispatch(call)
+    assert reply["status"] == "completed"
+    assert seen[0]["capability_version"] == "v1"
+    assert dispatch.open_intents() == []
 
 
 def test_boundary_reserve_is_durable_across_a_process_restart(tmp_path):

@@ -52,6 +52,7 @@ def _reservation_digest(arguments: Mapping[str, Any], *, authority: str,
     """
     return request_digest({"reservation": _RESERVATION_MARKER}, authority,
                           arguments=arguments, capability=capability,
+                          capability_version=capability_version,
                           budget=budget, native_call=native_call)
 
 
@@ -256,7 +257,7 @@ def canonical_request(request: Mapping[str, Any]) -> str:
 
 def request_digest(request: Mapping[str, Any], authority: str,
                    *, arguments: Mapping[str, Any] | None = None,
-                   capability: str = "",
+                   capability: str = "", capability_version: str = "",
                    budget: Mapping[str, Any] | None = None,
                    native_call: Mapping[str, Any] | None = None) -> str:
     """Bind an operation to the exact content, arguments, authority and call identity.
@@ -264,12 +265,17 @@ def request_digest(request: Mapping[str, Any], authority: str,
     Authority is part of the digest so the same arguments under a different
     authority are a different effect, not a reuse. The original call identity is
     part of it so a provider-issued call id cannot be detached from its effect.
+    `capability_version` is part of it so an id reserved or dispatched against
+    one version of a capability cannot be silently replayed against another:
+    the reservation's version is bound, not merely recorded.
     """
     digest = hashlib.sha256()
     digest.update(b"mishe-effect-request-v1\n")
     digest.update(canonical_request(request).encode("utf-8"))
     digest.update(b"\n")
     digest.update(capability.encode("utf-8"))
+    digest.update(b"\n")
+    digest.update(capability_version.encode("utf-8"))
     digest.update(b"\n")
     digest.update(authority.encode("utf-8"))
     if arguments is not None:
@@ -413,9 +419,10 @@ class EffectLedger:
 
         `operation_id` is the caller's durable identity for this operation,
         allocated by the loop before dispatch and reused by recovery. A same-ID
-        request with different content, authority or call identity raises
-        `ChangedContentReuse` before any write; a same-ID request with the same
-        binding returns the existing intent, never permission to dispatch twice.
+        request with different content, authority, call identity or capability
+        version raises `ChangedContentReuse` before any write; a same-ID request
+        with the same binding returns the existing intent, never permission to
+        dispatch twice.
 
         `native_call` carries the provider's call opaque: its `id` must survive
         byte-for-byte into the next native tool result, so the ledger stores it
@@ -440,8 +447,9 @@ class EffectLedger:
         call = _snapshot(native_call) if native_call is not None else None
         if digest is None:
             digest = request_digest(snapshot, authority, arguments=normalized,
-                                    capability=capability, budget=budget,
-                                    native_call=call)
+                                    capability=capability,
+                                    capability_version=capability_version,
+                                    budget=budget, native_call=call)
         with self._locked():
             intents = self._read_intents()
             existing = intents.get(operation_id)
@@ -478,8 +486,9 @@ class EffectLedger:
         the dispatch request and the provider call, clearing its reservation
         marker, so `dispatch` then binds it as the recorded intent and starts it
         once. An id that already has an outcome raises `AlreadyExecuted`, and a
-        dispatch that binds different values is `ChangedContentReuse` before any
-        effect, exactly as a repeated dispatch is.
+        dispatch that binds different values — including a different
+        `capability_version` — is `ChangedContentReuse` before any effect,
+        exactly as a repeated dispatch is.
 
         The caller's request snapshot is taken here so a mutated caller object
         cannot change what the digest commits to.
@@ -489,7 +498,9 @@ class EffectLedger:
             recorded = self._read_intents().get(operation_id)
             digest = request_digest(snapshot_request, authority,
                                     arguments=arguments, capability=capability,
-                                    budget=budget, native_call=snapshot_request["call"])
+                                    capability_version=capability_version,
+                                    budget=budget,
+                                    native_call=snapshot_request["call"])
             if recorded is None:
                 return self.allocate(capability, capability_version, arguments,
                                      authority=authority, request=snapshot_request,
