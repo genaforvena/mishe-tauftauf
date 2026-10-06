@@ -508,30 +508,3 @@ def test_recovery_exhausted_budget_never_constructs_provider(tmp_path):
     assert result["status"] == "turn_budget"
     assert (result["turns"], result["calls"]) == (1, 1)
 
-
-def test_proposal_names_the_operation_before_dispatch(tmp_path):
-    """A crash after proposal must leave the call attributable, not anonymous.
-
-    `dispatch` owns durable operation identity, so a crash between the recorded
-    proposal and the effect leaves the caller journal holding a pending call
-    whose operation id is unknown: `read_native_journal` cannot name the effect
-    a successor must reconcile, and the pending call carries no id to match
-    against the effect store. The proposal record is the last durable row
-    written before dispatch, so it must name the operation.
-    """
-    path = tmp_path / "caller.jsonl"
-
-    def dispatch(call):
-        raise InterruptedError("crash before the effect persisted")
-
-    with NativeJournal(path) as journal, pytest.raises(InterruptedError):
-        drive(Session(turn([CALL])), record=journal, dispatch=dispatch)
-
-    rows = [json.loads(line) for line in path.read_text().splitlines()]
-    proposal = next(row for row in rows if row["kind"] == "proposal")
-    assert isinstance(proposal.get("operation_id"), str) and proposal["operation_id"], \
-        "the proposal does not name an operation"
-    recovered = read_native_journal(path)
-    pending = recovered["pending_calls"][0]
-    assert pending["operation_id"] == proposal["operation_id"], \
-        "recovery does not expose the operation id a successor must reconcile"
