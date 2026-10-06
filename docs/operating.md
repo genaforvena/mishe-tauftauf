@@ -514,5 +514,3 @@ affected consumers, bounded observation and keep/revise/revert decision. Checks,
 independent reading and recovery enable high-risk, high-reward work without a
 routine approval gate. Preserve failed observations and delete superseded code;
 Git history retains prior implementations instead of dormant feature flags.
-
-<!-- HEALTH-SENTINEL 41260 1791303492 -->
