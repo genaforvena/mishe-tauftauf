@@ -613,10 +613,10 @@ def _journal_unit_failure_window(past_minutes: int = 10) -> dict:
 
 
 WEDGE_CHAIN_THRESHOLD = 3
-"""Open automatic-retry chain length at or above which a mind is suspect."""
+"""Open continue chain length at or above which a mind is suspect."""
 
 WEDGE_SPAN_THRESHOLD_MINUTES = 15.0
-"""Minutes an open retry chain must span before a mind is suspect."""
+"""Minutes an open continue chain must span before a mind is suspect."""
 
 
 def _omp_log_path(pid: int) -> Path | None:
@@ -629,18 +629,23 @@ def _omp_log_path(pid: int) -> Path | None:
     return matches[-1] if matches else None
 
 
-def _omp_retry_chain(pid: int, now: datetime) -> dict | None:
-    """Open automatic-retry chain for one pane pid from its omp session log.
+def _omp_continue_chain(pid: int, now: datetime) -> dict | None:
+    """Open continue chain for one pane pid from its omp session log.
 
-    The chain is the count of ``agent.continue scheduled`` events with
-    ``source=automatic-retry`` since the last ``agent_end maintenance routing``
-    with ``stopReason="stop"``. The span is minutes from the first retry in
-    the open chain to *now*. Returns None when no log exists for the pid.
+    The chain is the count of ``agent.continue scheduled`` events of *any*
+    source since the last ``agent_end maintenance routing`` with
+    ``stopReason="stop"`` (a completed turn). The span is minutes from the
+    first continue in the open chain to *now*. Counting every source, rather
+    than one retry class, keeps a wedge that manifests as stream stalls or
+    unexpected stops from escaping; a class allowlist would also fail silently
+    as omp adds classes. ``sources`` carries the per-source breakdown. Returns
+    None when no log exists for the pid.
     """
     log_path = _omp_log_path(pid)
     if log_path is None:
         return None
-    retries: list[datetime] = []
+    continues: list[datetime] = []
+    sources: dict[str, int] = {}
     try:
         text = log_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -660,25 +665,31 @@ def _omp_retry_chain(pid: int, now: datetime) -> dict | None:
             ts = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
         except ValueError:
             continue
-        if (message == "agent.continue scheduled"
-                and record.get("source") == "automatic-retry"):
-            retries.append(ts)
+        if message == "agent.continue scheduled":
+            continues.append(ts)
+            source = record.get("source")
+            key = source if isinstance(source, str) and source else "unknown"
+            sources[key] = sources.get(key, 0) + 1
         elif (message == "agent_end maintenance routing"
                 and record.get("stopReason") == "stop"):
-            retries = []
-    if not retries:
-        return {"chain": 0, "span_minutes": 0.0}
-    span = (now - retries[0]).total_seconds() / 60.0
-    return {"chain": len(retries), "span_minutes": round(span, 1)}
+            continues = []
+            sources = {}
+    if not continues:
+        return {"chain": 0, "span_minutes": 0.0, "sources": {}}
+    span = (now - continues[0]).total_seconds() / 60.0
+    return {"chain": len(continues), "span_minutes": round(span, 1),
+            "sources": sources}
 
 
 def _mind_wedge_suspects() -> dict:
-    """Flag minds whose open omp automatic-retry chain indicates a wedge.
+    """Flag minds whose open omp continue chain indicates a wedge.
 
     Rule R: SUSPECT when the open chain is >= 3 and spans >= 15 min with no
-    successful turn completion between. The signal reads omp's session log
-    (``~/.omp/logs/omp.<date>.<pid>.log``); a format or path change silently
-    disables it, so a missing log is UNKNOWN, not a clean bill.
+    completed turn between. The signal reads omp's session log
+    (``~/.omp/logs/omp.<date>.<pid>.log``); the sample carries a coverage tier
+    (``panes=N with_log=M``), and a pane set with no log at all reads UNKNOWN
+    rather than a clean bill, so a log format or path change cannot silently
+    pass as healthy.
     """
     now = datetime.now(timezone.utc)
     try:
@@ -695,6 +706,8 @@ def _mind_wedge_suspects() -> dict:
                 "sample": "tmux pane enumeration failed", "suspects": [],
                 "kind": "read"}
     suspects = []
+    panes = 0
+    with_log = 0
     for line in result.stdout.splitlines():
         parts = line.split("|", 1)
         if len(parts) != 2:
@@ -704,21 +717,28 @@ def _mind_wedge_suspects() -> dict:
             pid = int(pid_str)
         except ValueError:
             continue
-        chain = _omp_retry_chain(pid, now)
+        panes += 1
+        chain = _omp_continue_chain(pid, now)
         if chain is None:
             continue
+        with_log += 1
         if (chain["chain"] >= WEDGE_CHAIN_THRESHOLD
                 and chain["span_minutes"] >= WEDGE_SPAN_THRESHOLD_MINUTES):
             suspects.append({"window": window_name, "pid": pid, **chain})
     if suspects:
         sample = "suspects=" + " ".join(
             f"{s['window']}(pid={s['pid']},chain={s['chain']},"
-            f"span={s['span_minutes']}min)"
+            f"span={s['span_minutes']}min,src="
+            + ",".join(f"{name}:{count}"
+                       for name, count in sorted(s["sources"].items())) + ")"
             for s in suspects)
     else:
         sample = "suspects=0"
-    return {"id": "sense.mind.wedge-suspect", "state": "verified",
-            "sample": sample, "suspects": suspects, "kind": "read"}
+    sample += f" panes={panes} with_log={with_log}"
+    state = "verified" if with_log else "unknown"
+    return {"id": "sense.mind.wedge-suspect", "state": state,
+            "sample": sample, "suspects": suspects,
+            "panes": panes, "with_log": with_log, "kind": "read"}
 
 
 def _import_root(path: str) -> str | None:
