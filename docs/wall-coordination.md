@@ -85,9 +85,11 @@ The evidence file must be written once and never edited — do not cite a wall
 (`wall write` replaces it whole), a `progress.md`, `chat.log`, or a shared
 results JSON, since any later edit invalidates the bound digest and drops the
 outcome from the trial's evidenced-outcome count. Cite a per-outcome artifact
-under `artifacts/` — a file created for that one outcome and never reused. A
-path inside `artifacts/` is not enough by itself: wake notes and other working
-files that a later turn may edit are ineligible even there.
+under `artifacts/` — a file created for that one outcome and never reused. The
+three requirements are independent: a file can be unedited yet sit outside
+`artifacts/`, or be cited by a second outcome, and is ineligible for that reason
+alone. Being inside `artifacts/` is not sufficient by itself either — wake notes
+and other working files that a later turn may edit are ineligible even there.
 Kinds are `accepted`, `blocker-resolved`, `blocker-retired`, and
 `hypothesis-changed`. The immutable reference binds the evidence digest. These
 are author reports, not independent acceptance. Do not report unchanged status
