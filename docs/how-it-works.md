@@ -286,6 +286,14 @@ site with no pin, or a unit whose import root cannot be discovered — is
 `unknown`, not `verified`. Its sample retains the `unattributed`, `uninspectable`
 and `unpinned` unit lists so readers can distinguish coverage gaps from drift.
 
+The kernel journal sense counts readable priority `err` or higher kernel entries
+in a fixed ten-minute UTC window, not message lines, independent faults or a
+rate. Its coverage records endpoints, boot identity and monotonic acquisition
+bounds. Failed, incomplete or invalid acquisition is UNKNOWN, with no last-N
+fallback. A verified zero does not establish journal retention or permission
+completeness. The window is historical evidence; current decisions need a fresh
+scan, and a boot or source change invalidates comparisons.
+
 Checks, not minds, decide reproducible facts: counts, deployment identity, deadlines, and observed outcomes. Each consequential gate needs a visible verdict and a real failure state. Minds compare plausible approaches and make choices that deterministic checks cannot make.
 
 For a RED or UNKNOWN result, the working sequence is:

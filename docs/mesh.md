@@ -31,14 +31,6 @@ covers only the named checks; missing, failed and stale readings stay unresolved
 and a live pane or lease proves only that it renders, not that its content is
 current or correct.
 
-The kernel journal sense counts readable priority `err` or higher kernel entries
-in a fixed ten-minute UTC window, not message lines, independent faults or a
-rate. Its coverage records endpoints, boot identity and monotonic acquisition
-bounds. Failed, incomplete or invalid acquisition is UNKNOWN, with no last-N
-fallback. A verified zero does not establish journal retention or permission
-completeness. The window is historical evidence; current decisions need a fresh
-scan, and a boot or source change invalidates comparisons.
-
 Wakes stop at the `until` time in the site's `coordination-mode.json` (a null
 time leaves the window open), and nothing re-arms them automatically: a passed
 stop time suppresses new wakes while services, panes and watcher
