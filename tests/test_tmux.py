@@ -394,6 +394,48 @@ class OrphanSweepTests(unittest.TestCase):
             killed = tmux_module.sweep_orphan_test_sessions()
         self.assertEqual(killed, [])
 
+    def test_sweep_kills_suffixed_pid_variants(self):
+        # Tests also create `mishe-tauftauf-test-{pid}-default`, `-configured`
+        # and `-mind`; the pid is the segment after the prefix, not the last.
+        from mishe_tauftauf import tmux as tmux_module
+
+        def result(returncode, stdout):
+            return subprocess.CompletedProcess([], returncode, stdout.encode(), b"")
+
+        calls = []
+        def fake_tmux(*args, **kwargs):
+            calls.append(args)
+            if args[0] == "list-sessions":
+                return result(0, "mishe-tauftauf-test-999999-default\n"
+                                 "mishe-tauftauf-test-999999-configured\n"
+                                 "mishe-tauftauf-test-999999-mind\n")
+            return result(0, "")
+
+        with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux), \
+                mock.patch.object(tmux_module.os, "kill", side_effect=ProcessLookupError):
+            killed = tmux_module.sweep_orphan_test_sessions()
+        self.assertEqual(killed, ["mishe-tauftauf-test-999999-default",
+                                  "mishe-tauftauf-test-999999-configured",
+                                  "mishe-tauftauf-test-999999-mind"])
+        self.assertIn(("kill-session", "-t", "mishe-tauftauf-test-999999-mind"), calls)
+
+    def test_sweep_skips_non_numeric_pid_before_a_suffix(self):
+        from mishe_tauftauf import tmux as tmux_module
+
+        def result(returncode, stdout):
+            return subprocess.CompletedProcess([], returncode, stdout.encode(), b"")
+
+        def fake_tmux(*args, **kwargs):
+            if args[0] == "list-sessions":
+                return result(0, "mishe-tauftauf-test-abc-mind\n")
+            return result(0, "")
+
+        with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux):
+            killed = tmux_module.sweep_orphan_test_sessions()
+        self.assertEqual(killed, [])
+
     def test_sweep_handles_permission_error(self):
         from mishe_tauftauf import tmux as tmux_module
 

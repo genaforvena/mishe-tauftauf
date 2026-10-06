@@ -147,14 +147,15 @@ def sweep_orphan_test_sessions() -> list[str]:
 
     A hard-killed pytest leaks its tmux session because the test's finally
     cleanup never runs. The session name embeds the creating pid
-    (``mishe-tauftauf-test-{pid}``); when that pid is gone the session is
+    (``mishe-tauftauf-test-{pid}`` plus an optional ``-<word>`` suffix); when
+    that pid is gone the session is
     orphaned. Returns the names of sessions killed.
     """
     killed: list[str] = []
     for session in list_sessions():
         if not session.startswith("mishe-tauftauf-test-"):
             continue
-        pid_str = session.rsplit("-", 1)[-1]
+        pid_str = session[len("mishe-tauftauf-test-"):].split("-", 1)[0]
         try:
             pid = int(pid_str)
         except ValueError:
