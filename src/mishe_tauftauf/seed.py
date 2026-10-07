@@ -27,12 +27,19 @@ from .tmux import OWNED_OPTION, _pane_stopped_or_dead, _python_command, _tmux, a
 def _fresh_wedge_suspect(home: Path, role: str, pid: str) -> bool:
     """Return true only for fresh sensor evidence bound to this live pane."""
     try:
-        scans = sorted((home / "discovery").glob("scan-*.json"))
+        scans = []
+        for path in (home / "discovery").glob("scan-*.json"):
+            scan = json.loads(path.read_text(encoding="utf-8"))
+            created = datetime.fromisoformat(str(scan["created"]).replace("Z", "+00:00"))
+            scans.append((created, scan))
         if not scans:
             return False
-        scan = json.loads(scans[-1].read_text(encoding="utf-8"))
-        created = datetime.fromisoformat(str(scan["created"]).replace("Z", "+00:00"))
-        age = (datetime.now(timezone.utc) - created).total_seconds()
+        newest = max(created for created, _ in scans)
+        latest = [scan for created, scan in scans if created == newest]
+        if len(latest) != 1:
+            return False
+        scan = latest[0]
+        age = (datetime.now(timezone.utc) - newest).total_seconds()
         if age < 0 or age > 30 * 60:
             return False
         observations = scan.get("observations")
