@@ -15,7 +15,7 @@ from .ci_watch import line as ci_line
 from .seed_board import open_tasks, repeated_no_change, work_receipts
 from . import task_state
 from .coordination_checks import anomalies
-from .seed import recorded_session
+from .seed import _wedge_evidence, recorded_session
 
 # Stages whose refusals cannot be superseded by a live caller, so they must not
 # latch as the witness pane's standing publication result (docs/publication-checks.md):
@@ -157,10 +157,6 @@ def _mind_not_idle(session: str, role: str) -> bool:
         return not seed._mind_idle(session, role)
     except (OSError, RuntimeError):
         return False
-# A wedge reading older than this cannot support a live claim: the discovery
-# sense scans about every ten minutes, so three missed periods mean the
-# evidence has aged out and the pane must not cry wolf.
-_WEDGE_EVIDENCE_MAX_AGE_MINUTES = 30
 
 
 def _mind_pane_pid(session: str, role: str) -> int | None:
@@ -183,46 +179,12 @@ def _wedge_reading(home: Path, session: str) -> tuple[dict[str, dict], str | Non
     available evidence, not proof that any particular mind is making progress.
     Invalid evidence cannot accuse a mind or justify recovery.
     """
-    try:
-        scans = []
-        for path in (home / "discovery").glob("scan-*.json"):
-            scan = json.loads(path.read_text(encoding="utf-8"))
-            created = datetime.fromisoformat(str(scan["created"]).replace("Z", "+00:00"))
-            if created.tzinfo is None:
-                return {}, "scan timestamp has no timezone"
-            scans.append((created, scan))
-        if not scans:
-            return {}, "no discovery scan"
-        newest = max(created for created, _ in scans)
-        latest = [scan for created, scan in scans if created == newest]
-        if len(latest) != 1:
-            return {}, "newest scan timestamp is ambiguous"
-        scan = latest[0]
-        age_seconds = (datetime.now(timezone.utc) - newest).total_seconds()
-    except (OSError, ValueError, KeyError, TypeError):
-        return {}, "discovery scan unreadable or malformed"
-    if age_seconds < 0:
-        return {}, "newest scan is future-dated"
-    if age_seconds > _WEDGE_EVIDENCE_MAX_AGE_MINUTES * 60:
-        return {}, "newest scan is stale"
-    observations = scan.get("observations")
-    if not isinstance(observations, list):
-        return {}, "scan observations malformed"
-    readings = [row for row in observations
-                if isinstance(row, dict) and row.get("id") == "sense.mind.wedge-suspect"]
-    if len(readings) != 1:
-        return {}, "wedge reading missing or ambiguous"
-    observation = readings[0]
-    if observation.get("state") != "verified":
-        return {}, "wedge reading not verified"
-    reported = observation.get("suspects")
-    if not isinstance(reported, list) or any(not isinstance(row, dict) for row in reported):
-        return {}, "wedge suspects malformed"
+    reported, unavailable = _wedge_evidence(home)
+    if unavailable is not None:
+        return {}, unavailable
     suspects: dict[str, dict] = {}
     for suspect in reported:
-        window, pid = suspect.get("window"), suspect.get("pid")
-        if not isinstance(window, str) or not isinstance(pid, int) or isinstance(pid, bool):
-            return {}, "wedge suspect identity malformed"
+        window, pid = suspect["window"], suspect["pid"]
         if pid == _mind_pane_pid(session, window):
             suspects[window] = suspect
     return suspects, None

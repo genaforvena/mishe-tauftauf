@@ -322,14 +322,14 @@ def test_chain_suspect_with_unusable_sources_is_still_reported(tmp_path, monkeyp
 @pytest.fixture
 def monitor_home(tmp_path, monkeypatch):
     from datetime import datetime, timezone
-    import mishe_tauftauf.seed_witness_view as view
+    from mishe_tauftauf import seed, seed_witness_view as view
 
     class Clock(datetime):
         @classmethod
         def now(cls, tz=None):
             return cls(2026, 10, 7, 10, tzinfo=timezone.utc)
 
-    monkeypatch.setattr(view, 'datetime', Clock)
+    monkeypatch.setattr(seed, 'datetime', Clock)
     busy_mind(tmp_path, monkeypatch, [entry(1, 'seed', 'seed wake audit observation=1')])
     monkeypatch.setattr(view.subprocess, 'run',
                         lambda *a, **kw: SimpleNamespace(returncode=0, stdout='audit\n'))
