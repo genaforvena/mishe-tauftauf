@@ -13,6 +13,8 @@ from dataclasses import asdict
 from typing import Callable
 from pathlib import Path
 
+from .inference_worker import WorkerError
+
 
 def snapshot(value):
     return json.loads(json.dumps(value, ensure_ascii=False, allow_nan=False))
@@ -75,6 +77,7 @@ def drive_native(session, context: dict, *, obligation: dict, max_turns: int,
         'pending_calls': recovery['pending_calls'] if recovery else [],
         'status': recovery['status'] if recovery else 'ready',
         'provider_checkpoint': recovery['provider_checkpoint'] if recovery else None,
+        'model_failure': recovery['model_failure'] if recovery else None,
     }
     emit('checkpoint', state=checkpoint)
     if recovery and recovery['status'] != 'ready':
@@ -85,7 +88,14 @@ def drive_native(session, context: dict, *, obligation: dict, max_turns: int,
         emit('model_input', turn=index, context=context)
         if cancelled():
             return stop('cancelled')
-        turn = session.turn(snapshot(context))
+        try:
+            turn = session.turn(snapshot(context))
+        except WorkerError as exc:
+            # Keep the transport's original diagnostic, not a cancellation
+            # reclassification. No terminal/checkpoint means no safe replay.
+            emit('model_failure', turn=index,
+                 error={'type': type(exc).__name__, 'message': str(exc)})
+            raise
         turns += 1
         emit('model_output', turn=index, response=asdict(turn))
         assistant = snapshot(turn.assistant)
@@ -242,6 +252,7 @@ def _reconstruct_native(rows):
     stopped = False
     budgets = None
     provider_checkpoint = None
+    model_failure = None
     for row in rows:
         if stopped or row['obligation'] != obligation:
             raise NativeJournalError('record after stop or changed obligation')
@@ -275,6 +286,12 @@ def _reconstruct_native(rows):
                     or (status == 'ready' and pending)):
                 raise NativeJournalError('invalid continuation boundary')
             state = 'ready' if status == 'ready' else 'unresolved'
+            model_failure = snapshot(seed.get('model_failure'))
+            if model_failure is not None:
+                if (status != 'unknown' or not isinstance(model_failure, dict)
+                        or set(model_failure) != {'type', 'message'}
+                        or any(not isinstance(v, str) for v in model_failure.values())):
+                    raise NativeJournalError('invalid model failure checkpoint')
             continue
         if kind == 'stop':
             if row['turns'] != turns or row['calls'] != calls:
@@ -297,6 +314,15 @@ def _reconstruct_native(rows):
             if not isinstance(context['messages'], list):
                 raise NativeJournalError('messages must be an ordered list')
             state, status = 'input', 'unknown'
+        elif kind == 'model_failure':
+            if state != 'input' or row['turn'] != turns:
+                raise NativeJournalError('failure without pending model input')
+            error = row['error']
+            if (not isinstance(error, dict) or set(error) != {'type', 'message'}
+                    or any(not isinstance(v, str) for v in error.values())):
+                raise NativeJournalError('invalid model failure diagnostic')
+            model_failure = snapshot(error)
+            state, status = 'unresolved', 'unknown'
         elif kind == 'model_output':
             if state != 'input' or row['turn'] != turns:
                 raise NativeJournalError('unexpected model output')
@@ -357,4 +383,5 @@ def _reconstruct_native(rows):
             'status': status, 'pending_calls': snapshot(pending),
             'used_ids': sorted(used_ids), 'turns': turns, 'calls': calls,
             'stopped': stopped, 'budgets': budgets,
-            'provider_checkpoint': provider_checkpoint}
+            'provider_checkpoint': provider_checkpoint,
+            'model_failure': model_failure}
