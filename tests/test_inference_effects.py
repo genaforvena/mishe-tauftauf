@@ -163,6 +163,33 @@ def test_store_lock_rejects_overlapping_writers_in_one_process(tmp_path):
                 pass
 
 
+@pytest.mark.parametrize("failed_journal", ["intents.jsonl", "starts.jsonl"])
+def test_journal_write_failure_never_reaches_the_capability(
+        tmp_path, monkeypatch, failed_journal):
+    store = tmp_path / "effects"
+    seen = []
+    dispatch = boundary(tmp_path, lambda call: seen.append(call) or {"ok": True})
+    append = dispatch.ledger._append
+
+    def fail_selected_write(path, record):
+        if path.name == failed_journal:
+            raise OSError("simulated journal write failure")
+        append(path, record)
+
+    monkeypatch.setattr(dispatch.ledger, "_append", fail_selected_write)
+    with pytest.raises(OSError, match="simulated journal write failure"):
+        dispatch({"type": "toolCall", "id": "call-write-failure",
+                  "name": "inspect", "arguments": {"path": "owned-evidence"}})
+
+    assert seen == []
+    assert (store / "starts.jsonl").read_text() == ""
+    assert (store / "outcomes.jsonl").read_text() == ""
+    if failed_journal == "intents.jsonl":
+        assert (store / "intents.jsonl").read_text() == ""
+    else:
+        assert (store / "intents.jsonl").read_text().strip()
+
+
 def test_start_record_is_flushed_before_the_capability_runs(tmp_path):
     """The start record is durable before any effect, so a crash leaves a witness."""
     led = ledger(tmp_path)
