@@ -1,4 +1,5 @@
 import hashlib
+from contextlib import contextmanager
 
 import pytest
 
@@ -72,8 +73,15 @@ def test_cancelled_proposal_and_exclusive_journal_prevent_later_replay(tmp_path)
             return NativeTurn('done', {'role': 'assistant', 'content': [call],
                                       'stopReason': 'toolUse', 'timestamp': 1})
 
-    session = Session()
-    result = run_exact_inspection(session, tmp_path / 'run', manifest, executor,
+    sessions = []
+
+    @contextmanager
+    def open_session():
+        session = Session()
+        sessions.append(session)
+        yield session
+
+    result = run_exact_inspection(open_session, tmp_path / 'run', manifest, executor,
                                   complete=lambda context: False)
     assert result['status'] == 'cancelled'
     assert result['calls'] == 0
@@ -81,9 +89,10 @@ def test_cancelled_proposal_and_exclusive_journal_prevent_later_replay(tmp_path)
     journal = (tmp_path / 'run/journal.jsonl').read_bytes()
     state['cancelled'] = False
     with pytest.raises(FileExistsError):
-        run_exact_inspection(session, tmp_path / 'run', manifest, executor,
+        run_exact_inspection(open_session, tmp_path / 'run', manifest, executor,
                              complete=lambda context: False)
-    assert session.calls == 1
+    assert len(sessions) == 1
+    assert sessions[0].calls == 1
     assert (tmp_path / 'run/journal.jsonl').read_bytes() == journal
 
 
@@ -93,3 +102,39 @@ def test_expected_byte_count_is_caller_authority(tmp_path):
     # Failed preparation is diagnosis evidence, not an automatically reusable run.
     assert (tmp_path / 'run').is_dir()
     assert not (tmp_path / 'run/manifest.json').exists()
+
+
+@pytest.mark.parametrize('failure', ['construction', 'turn'])
+def test_failed_session_keeps_reservation_and_cannot_restart(tmp_path, failure):
+    _, manifest, executor, _ = prepare(tmp_path)
+    attempts = []
+    closed = []
+
+    class Session:
+        def turn(self, context):
+            raise RuntimeError('turn failed')
+
+    @contextmanager
+    def open_session():
+        attempts.append('construction')
+        if failure == 'construction':
+            raise RuntimeError('construction failed')
+        try:
+            yield Session()
+        finally:
+            closed.append(True)
+
+    with pytest.raises(RuntimeError, match=failure + ' failed'):
+        run_exact_inspection(open_session, tmp_path / 'run', manifest, executor,
+                             complete=lambda context: False)
+    journal = (tmp_path / 'run/journal.jsonl').read_bytes()
+    if failure == 'construction':
+        assert journal == b''
+        assert closed == []
+    else:
+        assert closed == [True]
+    with pytest.raises(FileExistsError):
+        run_exact_inspection(open_session, tmp_path / 'run', manifest, executor,
+                             complete=lambda context: False)
+    assert attempts == ['construction']
+    assert (tmp_path / 'run/journal.jsonl').read_bytes() == journal
