@@ -183,6 +183,94 @@ class NativeJournalError(ValueError):
     """Unusable caller history; preserved bytes never authorize continuation."""
 
 
+
+def reconcile_caller_journal(
+    journal_path: Path,
+    effect_store_dir: Path,
+    *,
+    writer_id: str,
+    obligation: dict,
+    authority: str,
+    authorized: Callable,
+    capability_version: str = "v1",
+    budget: dict | None = None,
+    operation_prefix: str = "effect",
+) -> dict:
+    """Reconcile a caller journal's pending calls against the effect store.
+
+    After a crash between `dispatch(call)` and `emit('tool_result', ...)`, the
+    effect store has a durable outcome but the caller journal is missing the
+    `tool_result` row. This function reads the journal, finds pending calls,
+    and for each one calls `EffectBoundary.recover(call)` to get the durable
+    outcome without executing.
+
+    If the outcome is `completed` and authority is still granted, appends a
+    durable `tool_result` row to the journal. If the outcome is `unknown` or
+    `None`, leaves the call pending. If authority is revoked, returns
+    `authority_denied` without appending.
+
+    Never dispatches, never constructs a provider session, never duplicates
+    execution.
+
+    Returns a dict with `status` and `reconciled` (list of call ids that were
+    reconciled).
+    """
+    from .inference_effects import EffectBoundary
+
+    state = read_native_journal(journal_path)
+    pending = state["pending_calls"]
+    if not pending:
+        return {"status": "completed", "reconciled": []}
+
+    boundary = EffectBoundary(
+        effect_store_dir,
+        writer_id=writer_id,
+        obligation=obligation,
+        execute=lambda call: None,  # never called by recover
+        authority=authority,
+        capability_version=capability_version,
+        budget=budget,
+        operation_prefix=operation_prefix,
+    )
+
+    reconciled = []
+    for call in pending:
+        outcome = boundary.recover(call)
+        if outcome is None:
+            # Never allocated: no durable state to reconcile
+            continue
+        if outcome["status"] != "completed":
+            # Unknown or partial: leave pending, do not dispatch
+            continue
+        if not authorized(call):
+            return {"status": "authority_denied", "reconciled": reconciled}
+        # Append durable tool_result row
+        message = {
+            "role": "toolResult",
+            "toolCallId": call["id"],
+            "toolName": call["name"],
+            "content": [{"type": "text", "text": json.dumps(outcome, ensure_ascii=False, allow_nan=False)}],
+            "isError": False,
+            "timestamp": 0,
+        }
+        # Append to journal
+        with open(journal_path, "a", encoding="utf-8") as f:
+            event = {
+                "kind": "tool_result",
+                "turn": state["turns"] - 1,
+                "call": call,
+                "message": message,
+                "obligation": obligation,
+            }
+            f.write(json.dumps(event, ensure_ascii=False, allow_nan=False) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        reconciled.append(call["id"])
+
+    if reconciled:
+        return {"status": "completed", "reconciled": reconciled}
+    return {"status": "unknown", "reconciled": []}
+
 class NativeJournal:
     """Exclusive new caller journal, usable as drive_native's record callback.
 

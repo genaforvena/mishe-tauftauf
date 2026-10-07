@@ -610,3 +610,156 @@ def test_recovery_exhausted_budget_never_constructs_provider(tmp_path):
     assert result["status"] == "turn_budget"
     assert (result["turns"], result["calls"]) == (1, 1)
 
+
+
+def test_crash_between_dispatch_and_tool_result_reconciles_from_effect_store(tmp_path):
+    """Crash after dispatch but before tool_result: bridge appends durable result."""
+    from mishe_tauftauf.inference_effects import EffectBoundary
+
+    store_dir = tmp_path / "effects"
+    boundary = EffectBoundary(
+        store_dir, writer_id="loop-1", obligation={"source": "owned-event"},
+        execute=lambda call: {"marker": "done"}, authority="test:authority",
+    )
+    path = tmp_path / "caller.jsonl"
+    with NativeJournal(path) as journal:
+        def record(event):
+            if event["kind"] == "tool_result":
+                raise InterruptedError("crash before tool_result persisted")
+            journal(event)
+
+        with pytest.raises(InterruptedError):
+            drive_native(Session(turn([CALL])), CONTEXT,
+                         obligation={"source": "owned-event"}, max_turns=3, max_calls=2,
+                         dispatch=boundary, record=record, phase=lambda call: None,
+                         cancelled=lambda: False, authorized=lambda call: True,
+                         complete=lambda ctx: False)
+
+    # Effect store has the outcome; caller journal is missing tool_result
+    recovered = read_native_journal(path)
+    assert recovered["status"] == "unknown"
+    assert recovered["pending_calls"] == [CALL]
+    assert recovered["calls"] == 0
+
+    # Reconciliation bridge appends the durable tool_result
+    from mishe_tauftauf.inference_loop import reconcile_caller_journal
+    result = reconcile_caller_journal(
+        path, store_dir, writer_id="loop-1",
+        obligation={"source": "owned-event"}, authority="test:authority",
+        authorized=lambda call: True,
+    )
+    assert result["status"] == "completed"
+
+    # Caller journal now has the tool_result; no duplicate dispatch
+    final = read_native_journal(path)
+    assert final["status"] == "ready"
+    assert final["pending_calls"] == []
+    assert final["calls"] == 1
+    assert final["used_ids"] == [CALL["id"]]
+
+
+def test_reconcile_never_dispatches_for_unknown_outcome(tmp_path):
+    """Unknown outcome in effect store: bridge leaves call pending, no dispatch."""
+    from mishe_tauftauf.inference_effects import EffectBoundary
+
+    store_dir = tmp_path / "effects"
+    boundary = EffectBoundary(
+        store_dir, writer_id="loop-1", obligation={"source": "owned-event"},
+        execute=lambda call: {"marker": "done"}, authority="test:authority",
+    )
+    path = tmp_path / "caller.jsonl"
+    with NativeJournal(path) as journal:
+        def record(event):
+            if event["kind"] == "tool_result":
+                raise InterruptedError("crash before tool_result persisted")
+            journal(event)
+
+        with pytest.raises(InterruptedError):
+            drive_native(Session(turn([CALL])), CONTEXT,
+                         obligation={"source": "owned-event"}, max_turns=3, max_calls=2,
+                         dispatch=lambda call: {"status": "unknown"},
+                         record=record, phase=lambda call: None,
+                         cancelled=lambda: False, authorized=lambda call: True,
+                         complete=lambda ctx: False)
+
+    from mishe_tauftauf.inference_loop import reconcile_caller_journal
+    result = reconcile_caller_journal(
+        path, store_dir, writer_id="loop-1",
+        obligation={"source": "owned-event"}, authority="test:authority",
+        authorized=lambda call: True,
+    )
+    assert result["status"] == "unknown"
+
+    final = read_native_journal(path)
+    assert final["status"] == "unknown"
+    assert final["pending_calls"] == [CALL]
+    assert final["calls"] == 0
+
+
+def test_reconcile_rejects_revoked_authority(tmp_path):
+    """Completed outcome but authority revoked: bridge leaves call pending."""
+    from mishe_tauftauf.inference_effects import EffectBoundary
+
+    store_dir = tmp_path / "effects"
+    boundary = EffectBoundary(
+        store_dir, writer_id="loop-1", obligation={"source": "owned-event"},
+        execute=lambda call: {"marker": "done"}, authority="test:authority",
+    )
+    path = tmp_path / "caller.jsonl"
+    with NativeJournal(path) as journal:
+        def record(event):
+            if event["kind"] == "tool_result":
+                raise InterruptedError("crash before tool_result persisted")
+            journal(event)
+
+        with pytest.raises(InterruptedError):
+            drive_native(Session(turn([CALL])), CONTEXT,
+                         obligation={"source": "owned-event"}, max_turns=3, max_calls=2,
+                         dispatch=boundary, record=record, phase=lambda call: None,
+                         cancelled=lambda: False, authorized=lambda call: True,
+                         complete=lambda ctx: False)
+
+    from mishe_tauftauf.inference_loop import reconcile_caller_journal
+    result = reconcile_caller_journal(
+        path, store_dir, writer_id="loop-1",
+        obligation={"source": "owned-event"}, authority="test:authority",
+        authorized=lambda call: False,
+    )
+    assert result["status"] == "authority_denied"
+
+    final = read_native_journal(path)
+    assert final["status"] == "unknown"
+    assert final["pending_calls"] == [CALL]
+    assert final["calls"] == 0
+
+
+def test_reconcile_no_effect_store_leaves_pending(tmp_path):
+    """No effect store: bridge returns unknown, no dispatch."""
+    path = tmp_path / "caller.jsonl"
+    with NativeJournal(path) as journal:
+        def record(event):
+            if event["kind"] == "tool_result":
+                raise InterruptedError("crash before tool_result persisted")
+            journal(event)
+
+        with pytest.raises(InterruptedError):
+            drive_native(Session(turn([CALL])), CONTEXT,
+                         obligation={"source": "owned-event"}, max_turns=3, max_calls=2,
+                         dispatch=lambda call: {"status": "completed"},
+                         record=record, phase=lambda call: None,
+                         cancelled=lambda: False, authorized=lambda call: True,
+                         complete=lambda ctx: False)
+
+    store_dir = tmp_path / "nonexistent"
+    from mishe_tauftauf.inference_loop import reconcile_caller_journal
+    result = reconcile_caller_journal(
+        path, store_dir, writer_id="loop-1",
+        obligation={"source": "owned-event"}, authority="test:authority",
+        authorized=lambda call: True,
+    )
+    assert result["status"] == "unknown"
+
+    final = read_native_journal(path)
+    assert final["status"] == "unknown"
+    assert final["pending_calls"] == [CALL]
+    assert final["calls"] == 0
