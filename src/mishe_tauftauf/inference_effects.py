@@ -425,7 +425,10 @@ class EffectLedger:
             raise JournalCorrupt(
                 f"truncated line in {path}: "
                 f"{fragment!r}")
-        text = data.decode("utf-8", errors="replace")
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise JournalCorrupt(f"invalid UTF-8 in {path}: {exc}") from exc
         for line in text.splitlines():
             line_text = line.strip()
             if not line_text:
@@ -483,7 +486,11 @@ class EffectLedger:
             fragment = tail[tail.rfind(b"\n") + 1:]
             raise JournalCorrupt(f"truncated line in {path}: {fragment!r}")
         if tail:
-            for row in self._parse_lines(tail.decode("utf-8", errors="replace")):
+            try:
+                text = tail.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise JournalCorrupt(f"invalid UTF-8 in {path}: {exc}") from exc
+            for row in self._parse_lines(text):
                 typed = _RECORD_TYPES[record_type].from_record(row)
                 if typed.operation_id in records:
                     raise JournalCorrupt(
