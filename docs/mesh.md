@@ -32,6 +32,10 @@ and a live pane or lease proves only that it renders, not that its content is
 current or correct.
 Terminal panes rotate explicitly numbered continuations when the full report
 does not fit; `pain read ROLE --launcher dashboard` remains the complete evidence.
+Discovery readers reject malformed receipts as a whole rather than trusting a
+readable subset. Discover and senses then replace their observation verdict with
+UNKNOWN while retaining the separate scan-attempt evidence; valid historical
+DRIFT remains visible, with stale reads displayed as UNKNOWN.
 
 The space-light reader consumes the owned Note3's atomic `SITE/body/space.json`
 boundary without starting another collector. It keeps lux, source, session and

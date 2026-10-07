@@ -156,7 +156,7 @@ def cmd_discover(args) -> int:
     if snapshot is None:
         print("UNKNOWN discovery has no scan")
         return 1
-    print(f"scan {snapshot['created']} node={snapshot['node']}")
+    print(f"scan {snapshot.get('created', 'unknown')} node={snapshot.get('node', 'unknown')}")
     for item in snapshot["observations"]:
         print(f"{item['id']} {item['state']} sample={item['sample']}")
     return 0

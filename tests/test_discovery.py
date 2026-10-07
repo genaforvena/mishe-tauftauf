@@ -75,6 +75,24 @@ def test_unchanged_scan_updates_artifact_without_log_spam(tmp_path: Path) -> Non
         scan(home)
     assert len(Feed(home).entries()) == 1
 
+def test_scan_recovers_from_malformed_previous_receipt(tmp_path: Path) -> None:
+    root = tmp_path / "discovery"
+    root.mkdir()
+    damaged = {"observations": ["invalid previous row"]}
+    (root / "latest.json").write_text(json.dumps(damaged))
+    value = {"created": "2026-01-01T00:00:00Z", "node": "node", "observations": [
+        {"id": "sense.value", "kind": "read", "state": "future-state", "sample": [1, 2]},
+    ]}
+    with patch("mishe_tauftauf.discovery.sample", return_value=value):
+        artifact = scan(tmp_path)
+    assert discovery.scan_attempt(tmp_path)["status"] == "succeeded"
+    assert latest(tmp_path)["observations"] == value["observations"]
+    entry = Feed(tmp_path).entries()[-1]
+    assert "Initial baseline." in entry.body
+    assert "sense.value — [1, 2]" in entry.body
+    assert artifact.exists()
+
+
 def test_scan_includes_producer_provenance(tmp_path: Path) -> None:
     home = tmp_path / "site"
     artifact = scan(home)

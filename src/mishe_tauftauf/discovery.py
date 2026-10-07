@@ -3216,11 +3216,24 @@ def _notify_scan(home: Path, snapshot: dict[str, object],
 
 
 def latest(home: Path) -> dict[str, object] | None:
+    """Read a complete observation receipt, or treat malformed evidence as absent.
+
+    Samples retain their JSON types (including numeric counters and lists).
+    State strings are open-ended: admitting a receipt does not verify its reads.
+    """
     path = home / "discovery" / "latest.json"
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        snapshot = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+    if not isinstance(snapshot, dict) or not isinstance(snapshot.get("observations"), list):
+        return None
+    for item in snapshot["observations"]:
+        if (not isinstance(item, dict)
+                or not all(isinstance(item.get(key), str) for key in ("id", "kind", "state"))
+                or "sample" not in item):
+            return None
+    return snapshot
 
 
 RENEWAL_MAX_AGE_SECONDS = 600.0
