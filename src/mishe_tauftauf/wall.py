@@ -21,20 +21,26 @@ _RECORD_REF_RE = re.compile(r"\[record\] records/([0-9a-f]{64})\.json sha256=[0-
 
 
 def _bound_evidence_paths(home: Path) -> set[str]:
-    """Return the set of evidence paths already bound by wall outcomes.
+    """Return the set of evidence paths already bound by post-clause wall outcomes.
 
     A wall outcome binds its evidence file with ``payload.evidence.path`` at
     record time. The D-check refuses an evidence path that is already bound by
-    another outcome, enforcing the write-once evidence rule.
+    another post-clause outcome, enforcing the write-once evidence rule.
+
+    The clause time is ``EVIDENCE_BINDING_CLAUSE_TIME`` from ``discovery.py``;
+    outcomes recorded earlier are not bound by it.
+
+    Raises ``ValueError`` when the bound set cannot be derived (fail-closed).
     """
+    from .discovery import EVIDENCE_BINDING_CLAUSE_TIME
     from .feed import parse_feed
     tape_path = home / "chat.log"
     if not tape_path.exists():
         return set()
     try:
         entries = parse_feed(tape_path.read_bytes(), home=home)
-    except (OSError, ValueError):
-        return set()
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"cannot derive bound evidence paths: {exc}") from exc
     ref_shas: set[str] = set()
     for entry in entries:
         match = _RECORD_REF_RE.search(entry.body)
@@ -42,7 +48,7 @@ def _bound_evidence_paths(home: Path) -> set[str]:
             ref_shas.add(match.group(1))
     records_dir = home / "records"
     if not records_dir.is_dir():
-        return set()
+        raise ValueError("cannot derive bound evidence paths: records/ directory missing")
     bound: set[str] = set()
     for sha in ref_shas:
         path = records_dir / f"{sha}.json"
@@ -52,6 +58,15 @@ def _bound_evidence_paths(home: Path) -> set[str]:
             continue
         if not isinstance(record, dict) or record.get("kind") != "wall-outcome":
             continue
+        # Scope: only post-clause outcomes are bound by the write-once rule
+        ts_str = record.get("timestamp")
+        if isinstance(ts_str, str):
+            try:
+                ts = datetime.fromisoformat(ts_str.removesuffix("Z") + "+00:00")
+                if ts < EVIDENCE_BINDING_CLAUSE_TIME:
+                    continue
+            except ValueError:
+                continue
         payload = record.get("payload")
         if not isinstance(payload, dict):
             continue
