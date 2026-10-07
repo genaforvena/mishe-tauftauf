@@ -614,6 +614,8 @@ def _new_session(session: str, first_window: str, workspace: str) -> None:
     _tmux(*argv)
 
 def start(home: Path, session: str, slug: str, interval: float) -> str:
+    from .tmux import TmuxError
+
     slug = validate_slug(slug)
     workspace = str(home.parent.resolve())
     if not executable(home / "top-pains" / slug) or not executable(home / "minds" / slug):
@@ -676,7 +678,18 @@ def start(home: Path, session: str, slug: str, interval: float) -> str:
         _record_mind_model(home, slug, home / "minds" / slug, "start")
         time.sleep(2.0)
         if _state(home, slug)[1] is not None:
-            _send(f"{target}.1", _restore_text(home, slug, session))
+            # Restored pending work is a convenience, not the supervisor's
+            # reason to exist. Once the session is raised, a send that cannot
+            # verify the mind's idle mode (a busy or dialog pane) must HOLD,
+            # exactly as the tick and clear paths do. Letting it propagate
+            # crashed the unit after a successful respawn: systemd restart 15s
+            # later (observed 2026-10-07T18:15:07Z, PID 1559592), discarding a
+            # live session and burning a restart for a recoverable transport
+            # condition.
+            try:
+                _send(f"{target}.1", _restore_text(home, slug, session))
+            except (OSError, ValueError, TmuxError) as exc:
+                print(f"HOLD seed {slug} restore: {exc}", flush=True)
     return f"seed {slug} ready in {session}"
 
 

@@ -213,6 +213,52 @@ def test_omp_delivery_holds_when_idle_mode_cannot_be_verified(monkeypatch):
         assert not any(args[0] == "send-keys" and args[-1] != "i" for args in calls)
 
 
+def test_start_holds_a_restore_send_failure_without_killing_the_supervisor(tmp_path, monkeypatch):
+    """A restore send that cannot verify the idle mode must HOLD, not exit.
+
+    Observed 2026-10-07T18:15:07Z: after a successful mind respawn, `start`'s
+    restored-pending-work send raised `OMP idle input mode unavailable` and the
+    unit exited status 2; systemd restarted it 15s later, discarding the live
+    session for a recoverable transport condition. `start` must return ready
+    and print a HOLD line instead.
+    """
+    from subprocess import CompletedProcess
+    from mishe_tauftauf import seed
+
+    home = seeded_home(tmp_path)
+    (home / "top-pains").mkdir(parents=True)
+    probe = home / "top-pains" / "genome"
+    probe.write_text("#!/bin/sh\nexit 0\n")
+    probe.chmod(0o755)
+    launcher = home / "minds" / "genome"
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text("#!/bin/sh\nexec omp --model vendor/model-a\n")
+    launcher.chmod(0o755)
+
+    monkeypatch.setattr(seed, "_new_session", lambda *a: None)
+    monkeypatch.setattr(seed, "_record_mind_model", lambda *a: None)
+    monkeypatch.setattr(seed.time, "sleep", lambda *a: None)
+    monkeypatch.setattr(seed, "_state", lambda home, slug, **kw: (None, 54155, None, None, None, None, None, None))
+    monkeypatch.setattr(seed, "_restore_text", lambda *a, **kw: "restore")
+    monkeypatch.setattr(seed, "_send", lambda *a: (_ for _ in ()).throw(
+        ValueError("OMP idle input mode unavailable; delivery held")))
+    pids = iter(["101\n", "202\n"])
+
+    def command(*args, **kwargs):
+        if args[0] == "has-session":
+            return CompletedProcess(args, 1, b"", b"")
+        if args[-1] == "#{session_id}":
+            return CompletedProcess(args, 0, b"$1\n", b"")
+        if args[-1] == "#{pane_pid}":
+            return CompletedProcess(args, 0, next(pids).encode(), b"")
+        return CompletedProcess(args, 0, b"0\n", b"")
+
+    monkeypatch.setattr(seed, "_tmux", command)
+    # The unit must survive the failed restore send: start returns ready rather
+    # than raising out of the supervisor's loop.
+    assert seed.start(home, "session", "genome", 5).startswith("seed genome ready")
+
+
 def test_codex_mind_requires_its_idle_prompt(monkeypatch) -> None:
     from subprocess import CompletedProcess
 
