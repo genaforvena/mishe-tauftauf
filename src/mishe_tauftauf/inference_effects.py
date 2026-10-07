@@ -516,11 +516,12 @@ class EffectLedger:
         """Bind an operation ID to content and authority before any effect.
 
         `operation_id` is the caller's durable identity for this operation,
-        allocated by the loop before dispatch and reused by recovery. A same-ID
-        request with different content, authority, call identity or capability
-        version raises `ChangedContentReuse` before any write; a same-ID request
-        with the same binding returns the existing intent, never permission to
-        dispatch twice.
+        allocated by the loop before dispatch and reused by recovery. For an ID
+        with no recorded outcome, different content, authority, call identity or
+        capability version raises `ChangedContentReuse` before any write; the
+        same binding returns the existing intent, never permission to dispatch
+        twice. An ID with a recorded outcome raises `AlreadyExecuted` before
+        comparing pending content; use `reconcile` to read the retained outcome.
 
         `native_call` carries the provider's call opaque: its `id` must survive
         byte-for-byte into the next native tool result, so the ledger stores it
@@ -589,9 +590,8 @@ class EffectLedger:
         the dispatch request and the provider call, clearing its reservation
         marker, so `dispatch` then binds it as the recorded intent and starts it
         once. An id that already has an outcome raises `AlreadyExecuted`, and a
-        dispatch that binds different values — including a different
-        `capability_version` — is `ChangedContentReuse` before any effect,
-        exactly as a repeated dispatch is.
+        pending dispatch that binds different values — including a different
+        `capability_version` — is `ChangedContentReuse` before any effect.
 
         The caller's request snapshot is taken here so a mutated caller object
         cannot change what the digest commits to.
@@ -988,10 +988,11 @@ class EffectBoundary:
     error cannot leave a durable record of content the store cannot re-read.
 
     `operation_id` is generated from the provider's call id when the caller does
-    not supply one, so a provider-issued id names its own effect. Reuse of that
-    id with changed content, arguments or authority raises `ChangedContentReuse`
-    before any effect. A same-id second dispatch returns the recorded outcome or
-    an explicit `unknown`, never a second execution.
+    not supply one, so a provider-issued id names its own effect. Changed content,
+    arguments or authority for a pending id raises `ChangedContentReuse` before
+    any effect. An id with a recorded outcome raises `AlreadyExecuted` on
+    dispatch. Read the retained outcome through `reconcile`; missing or
+    incomplete history is `unknown`, never permission for a second execution.
 
     A caller who must name an operation before the provider has issued a call id
     (a reserved report identity, an id fixed by an upstream contract) uses
@@ -1096,8 +1097,9 @@ class EffectBoundary:
                  claim_for: str | None = None) -> dict[str, Any]:
         """Bind, start and record one capability call, then reply for the loop.
 
-        Never retries: a second call with the same id returns the durable state
-        or an explicit `unknown`, and the capability runs at most once per id.
+        Never retries: a completed id raises `AlreadyExecuted` during binding.
+        A matching pending binding cannot repeat a started effect; use
+        `reconcile` for the retained outcome or explicit `unknown`.
 
         `claim_for` names an existing reservation this call fulfils: the
         operation runs under the caller's id rather than one derived from the
