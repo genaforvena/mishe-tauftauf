@@ -3,6 +3,7 @@
 Caller supplies trusted identity, expected bytes and session/completion oracle.
 No provider construction, automatic recovery or OS sandbox is supplied here.
 """
+import fcntl
 import hashlib
 import json
 import os
@@ -11,8 +12,7 @@ import stat
 from pathlib import Path
 
 from .inference_effects import EffectBoundary
-from .inference_loop import NativeJournal, drive_native
-
+from .inference_loop import NativeJournal, drive_native, read_native_journal
 
 class InspectionRefused(RuntimeError):
     """Evidence or current capability authority no longer matches."""
@@ -157,29 +157,72 @@ def prepare_exact_inspection(directory, *, source_path, source_sha, source_bytes
     return manifest, executor
 
 
-def run_exact_inspection(open_session, directory, manifest, executor, *, complete):
-    """Reserve the caller journal before constructing and driving a session.
+def reconcile_caller_journal(journal_path, boundary, *, authorized):
+    """Restore a completed effect receipt after the caller lost its result row.
 
-    open_session is a zero-argument context-manager factory; construction must
-    be deferred until it is called. The same journal stays open through session
-    exit. Caller owns trusted unchanged manifest/executor objects, admission,
-    session time/output caps and independent completion. Existing runs refuse
-    before construction; failed startup retains an empty, unreadable reservation.
-    Uncertain effects require original-store reconciliation, never blind retry.
-    Selector records intended model only; this function cannot attest the session.
+    Unknown effect state or revoked authority never appends a result or dispatches.
     """
+    path = Path(journal_path)
+    if not path.exists() or path.stat().st_size == 0:
+        return None
+    recovery = read_native_journal(path)
+    call = recovery['proposed_call']
+    turn = recovery['proposed_turn']
+    if (call is None or recovery['stopped']
+            or call not in recovery['pending_calls']):
+        return None
+    raw = path.read_bytes()
+    outcome = boundary.recover(call)
+    if outcome is None or outcome.get('status') != 'completed':
+        return outcome
+
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        if path.read_bytes() != raw:
+            raise RuntimeError('caller journal changed during reconciliation')
+        if not authorized(call):
+            return {'status': 'authority_denied', 'outcome': outcome}
+        assistant = recovery['context']['messages'][-1]
+        message = {'role': 'toolResult', 'toolCallId': call['id'],
+                   'toolName': call['name'], 'content': [{'type': 'text',
+                   'text': json.dumps(outcome, ensure_ascii=False, allow_nan=False)}],
+                   'isError': False, 'timestamp': assistant.get('timestamp', 0)}
+        event = {'kind': 'tool_result', 'turn': turn, 'call': call,
+                 'message': message, 'obligation': recovery['obligation']}
+        data = (json.dumps(event, ensure_ascii=False, allow_nan=False) + '\n').encode()
+        written = 0
+        while written < len(data):
+            written += os.write(fd, data[written:])
+        os.fsync(fd)
+        return outcome
+    finally:
+        os.close(fd)
+
+
+def run_exact_inspection(open_session, directory, manifest, executor, *, complete):
+    """Reserve the caller journal, drive a session, then reconcile its receipt."""
     def authorized(call):
         try:
             executor.validate(call)
             return True
         except InspectionRefused:
             return False
-    with NativeJournal(Path(directory) / 'journal.jsonl') as journal:
-        with open_session() as session:
-            return drive_native(session, manifest['context'],
-                                obligation=manifest['obligation'],
-                                max_turns=manifest['max_turns'],
-                                max_calls=manifest['max_calls'], dispatch=executor,
-                                record=journal, phase=lambda call: None,
-                                cancelled=executor.cancelled, authorized=authorized,
-                                complete=complete)
+
+    journal_path = Path(directory) / 'journal.jsonl'
+    journal_reserved = False
+    try:
+        with NativeJournal(journal_path) as journal:
+            journal_reserved = True
+            with open_session() as session:
+                return drive_native(session, manifest['context'],
+                                    obligation=manifest['obligation'],
+                                    max_turns=manifest['max_turns'],
+                                    max_calls=manifest['max_calls'], dispatch=executor,
+                                    record=journal, phase=lambda call: None,
+                                    cancelled=executor.cancelled,
+                                    authorized=authorized, complete=complete)
+    finally:
+        if journal_reserved:
+            reconcile_caller_journal(journal_path, executor.boundary,
+                                     authorized=authorized)

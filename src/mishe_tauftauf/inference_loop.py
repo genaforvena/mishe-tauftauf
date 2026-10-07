@@ -333,6 +333,7 @@ def _reconstruct_native(rows):
     context = None
     pending = []
     proposed = None
+    proposed_turn = None
     used_ids = set()
     turns = calls = 0
     state = 'initial'
@@ -442,6 +443,7 @@ def _reconstruct_native(rows):
                     or row['turn'] != turns - 1 or row['call'] != pending[0]):
                 raise NativeJournalError('proposal disagrees with selected call')
             proposed = row['call']
+            proposed_turn = row['turn']
         elif kind == 'tool_result':
             if (state != 'selected' or proposed is None
                     or row['turn'] != turns - 1 or row['call'] != proposed):
@@ -460,6 +462,7 @@ def _reconstruct_native(rows):
             context['messages'].append(snapshot(message))
             pending.pop(0)
             proposed = None
+            proposed_turn = None
             calls += 1
             if outcome_status != 'completed':
                 state, status = 'unresolved', 'unknown'
@@ -469,6 +472,8 @@ def _reconstruct_native(rows):
             raise NativeJournalError('unknown record kind')
     return {'obligation': snapshot(obligation), 'context': context,
             'status': status, 'pending_calls': snapshot(pending),
+            'proposed_call': snapshot(proposed) if proposed is not None else None,
+            'proposed_turn': proposed_turn,
             'used_ids': sorted(used_ids), 'turns': turns, 'calls': calls,
             'stopped': stopped, 'budgets': budgets,
             'provider_checkpoint': provider_checkpoint,
