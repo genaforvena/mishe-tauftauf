@@ -94,9 +94,7 @@ RENEWAL_SLUGS = frozenset({"discover", "senses"})
 
 
 OBS_RE = re.compile(r"seed observation ([a-z0-9-]+)(?: sha256=([0-9a-f]{64}))?\Z")
-WAKE_RE = re.compile(r"seed wake ([a-z0-9-]+) observation=([1-9][0-9]*)(?: event=([1-9][0-9]*))?(?: task=(\S+))?\Z")
-YIELD_RE = re.compile(r"seed yield ([a-z0-9-]+) wake=([1-9][0-9]*)( continue=1)?\Z")
-CLEAR_RE = re.compile(r"seed clear ([a-z0-9-]+) after=([1-9][0-9]*)\Z")
+from .chat_protocol import decode_lifecycle
 # OMP's idle status can include a token after INSERT, e.g. "INSERT y >".
 # Recognize that status without treating a spinner-bearing line as idle.
 _OMP_INSERT_PROMPT_RE = re.compile(r"\s*π > INSERT(?: +[A-Za-z0-9!?-]+)* >")
@@ -213,19 +211,20 @@ def _state(home: Path, slug: str, *, entries=None) -> tuple[str | None, int | No
                 digest = match.group(2)
                 unresolved_observation = None if digest else entry
                 last_observation = entry.sequence
-        elif match := WAKE_RE.fullmatch(line):
-            if match.group(1) == slug:
+        else:
+            control = decode_lifecycle(entry)
+            if control is None or control.role != slug:
+                continue
+            if control.kind == "wake":
                 pending = entry.sequence
-                last_woken_observation = int(match.group(2))
+                last_woken_observation = control.observation
                 last_wake_at = datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))
-        elif match := YIELD_RE.fullmatch(line):
-            if match.group(1) == slug and pending == int(match.group(2)):
+            elif control.kind == "yield" and pending == control.wake:
                 last_yield = pending
-                continue_yield = pending if match.group(3) else None
+                continue_yield = pending if control.continue_work else None
                 pending = None
-        elif match := CLEAR_RE.fullmatch(line):
-            if match.group(1) == slug:
-                last_clear = int(match.group(2))
+            elif control.kind == "clear":
+                last_clear = control.wake
     # Only the final observation's digest is returned; resolve its immutable
     # record once instead of reading one record per historical observation.
     if digest is None and unresolved_observation is not None:
@@ -243,18 +242,20 @@ def clear_stalls(entries, *, now: datetime | None = None, timeout: float = 120):
     for entry in entries:
         if entry.source != "seed":
             continue
-        line = _receipt_line(entry.body)
-        if match := WAKE_RE.fullmatch(line):
-            pending[match[1]] = entry.sequence
-            settled.pop(match[1], None)
-        elif match := YIELD_RE.fullmatch(line):
-            if pending.get(match[1]) == int(match[2]):
-                pending.pop(match[1])
-                settled[match[1]] = entry
-        elif match := CLEAR_RE.fullmatch(line):
-            receipt = settled.get(match[1])
-            if receipt and int(YIELD_RE.fullmatch(_receipt_line(receipt.body))[2]) == int(match[2]):
-                settled.pop(match[1])
+        control = decode_lifecycle(entry)
+        if control is None:
+            continue
+        role = control.role
+        if control.kind == "wake":
+            pending[role] = entry.sequence
+            settled.pop(role, None)
+        elif control.kind == "yield" and pending.get(role) == control.wake:
+            pending.pop(role)
+            settled[role] = entry
+        elif control.kind == "clear":
+            receipt = settled.get(role)
+            if receipt and decode_lifecycle(receipt).wake == control.wake:
+                settled.pop(role)
     return {slug: entry for slug, entry in settled.items()
             if (now - datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))).total_seconds() >= timeout}
 
@@ -279,14 +280,16 @@ def stale_pends(entries, *, now: datetime | None = None, timeout: float = 600):
     for entry in entries:
         if entry.source != "seed":
             continue
-        line = _receipt_line(entry.body)
-        if match := WAKE_RE.fullmatch(line):
-            pending[match[1]] = entry.sequence
-            entries_by_slug[match[1]] = entry
-        elif match := YIELD_RE.fullmatch(line):
-            if pending.get(match[1]) == int(match[2]):
-                pending.pop(match[1])
-                entries_by_slug.pop(match[1], None)
+        control = decode_lifecycle(entry)
+        if control is None:
+            continue
+        role = control.role
+        if control.kind == "wake":
+            pending[role] = entry.sequence
+            entries_by_slug[role] = entry
+        elif control.kind == "yield" and pending.get(role) == control.wake:
+            pending.pop(role)
+            entries_by_slug.pop(role, None)
     return {slug: entries_by_slug[slug] for slug in pending
             if (now - datetime.fromisoformat(entries_by_slug[slug].timestamp.replace("Z", "+00:00"))).total_seconds() >= timeout}
 
@@ -780,7 +783,8 @@ def _clear_due(home: Path, slug: str, grace_seconds: float) -> bool:
     if pending is not None or last_yield is None or last_yield == last_clear:
         return False
     for entry in reversed(Feed(home).entries()):
-        if entry.source == "seed" and YIELD_RE.fullmatch(_receipt_line(entry.body)) and entry.body.startswith(f"seed yield {slug} wake={last_yield}"):
+        control = decode_lifecycle(entry)
+        if control and control.kind == "yield" and control.role == slug and control.wake == last_yield:
             age = (datetime.now(timezone.utc) - datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))).total_seconds()
             return age >= grace_seconds
     return False

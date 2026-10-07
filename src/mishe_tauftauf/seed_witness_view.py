@@ -258,14 +258,15 @@ def render(home: Path) -> str:
     if feed_error:
         lines.append("CLEAR STALL: UNKNOWN — canonical receipts unavailable")
     else:
-        from .seed import clear_stalls, YIELD_RE, _receipt_line
+        from .seed import clear_stalls
+        from .chat_protocol import decode_lifecycle
         try:
             stalls = clear_stalls(entries)
             if not stalls:
                 lines.append("CLEAR STALL: GREEN — no overdue settled wake")
             faulted: list[str] = []
             for role, receipt in sorted(stalls.items()):
-                wake = int(YIELD_RE.fullmatch(_receipt_line(receipt.body))[2])
+                wake = decode_lifecycle(receipt).wake
                 owner = "witness" if role == "health" else "health"
                 if _mind_not_idle(session, role):
                     suspect = wedges.get(role)
@@ -294,14 +295,14 @@ def render(home: Path) -> str:
         except (ValueError, TypeError, OverflowError) as exc:
             lines.append(f"CLEAR STALL: UNKNOWN — receipt timing unavailable: {exc}")
             verdict = "UNKNOWN witness clear-stall receipt evidence"
-        from .seed import stale_pends, WAKE_RE
+        from .seed import stale_pends
         try:
             pends = stale_pends(entries)
             if not pends:
                 lines.append("STALE PEND: GREEN — no overdue pending wake")
             faulted: list[str] = []
             for role, receipt in sorted(pends.items()):
-                wake = int(WAKE_RE.fullmatch(_receipt_line(receipt.body))[2])
+                wake = decode_lifecycle(receipt).observation
                 owner = "witness" if role == "health" else "health"
                 if _mind_not_idle(session, role):
                     suspect = wedges.get(role)

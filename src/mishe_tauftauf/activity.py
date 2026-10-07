@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 
+from .chat_protocol import decode_lifecycle
 from .feed import Feed
 from .post_check import _save
 from .wall import settings, message
@@ -69,7 +70,7 @@ def observe(home, *, now=None, entries=None):
     candidates = [(datetime.fromisoformat(config.get("started", now.isoformat()).replace("Z", "+00:00")), "plant start")]
     for entry in entries if entries is not None else Feed(home).entries():
         source = entry.source.removeprefix("mind/")
-        if source in monitored or (entry.source == "seed" and entry.body.startswith("seed yield ")):
+        if source in monitored or ((control := decode_lifecycle(entry)) and control.kind == "yield"):
             candidates.append((datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00")),
                                f"chat.log {entry.sequence} {entry.source}"))
     for path in (home / "walls").glob("*.md"):

@@ -12,6 +12,10 @@ Start from the chat trigger and read your full current top pane through
 dashboard is the evidence input; tmux and its lease establish presentation
 liveness.
 Missing, failed or stale observations remain UNKNOWN or RED.
+For a direct human chat without a resident wake, read the `operator` dashboard.
+Its current brief and installed local command reference are
+`SITE_HOME/operator/brief.md` and `SITE_HOME/operator/commands.md`; consult them
+before rediscovering transport setup or relying on remembered host commands.
 
 Minds choose and organize useful work. Planning, investigation, docs editing and
 handoff are valid turns. Keep your plate, findings and next action in your edited
@@ -56,6 +60,14 @@ unresolved evidence.
 Docs are a first-class, edited book. Keep [the introduction](docs/mesh.md) current,
 concise and understandable without internal machinery or chat history. Delete
 stale passages rather than accumulating them.
+
+Textual protocol interpretation belongs to the literal boundary files named in
+`parsing-policy.json`. Internal consumers act on decoded values; human prose is
+opaque content. Run `python tools/check_parsing.py` for executable Python changes.
+The frozen legacy budget exposes existing migration debt and must not be widened
+to pass a change. Remove budgets as their consumers migrate; review each new
+boundary path explicitly. See [protocol boundaries](docs/protocol-boundaries.md)
+for the check's scope and limits. Preserve malformed/unknown input evidence.
 
 Append chat through the canonical CLI. Keep local notes, chat, experiments and
 runtime snapshots in gitignored `.mishe-tauftauf/`; never commit them. Settle only

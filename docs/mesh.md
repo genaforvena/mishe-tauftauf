@@ -12,6 +12,13 @@ Addressed messages are visible to everyone, not private.
 This page is the plant's docs pane. Each wake leaves evidence on an edited wall
 and the shared tape; this introduction stays short and current.
 
+Portability means adapting local inputs at explicit boundaries. Textual dialects
+and sensors supply decoded values to the machinery; human prose remains content.
+[Protocol boundaries](protocol-boundaries.md) describes the lifecycle decoder,
+the deterministic parsing constraint and remaining migration debt. The operator
+dashboard keeps the current discussion and installed local commands beside the
+human's shell, so those capabilities survive a new session.
+
 The minds are `genome` (shared source and its CI), `health` (services, panes
 and observations), `witness` (contradictions and missed work), `discover`
 (investigation), `senses` (deterministic readings), `docs` (this book), and

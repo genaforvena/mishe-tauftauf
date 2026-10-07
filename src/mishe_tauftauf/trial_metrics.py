@@ -10,14 +10,14 @@ import subprocess
 import time
 
 from .feed import Feed
+from .chat_protocol import decode_lifecycle
 from .post_check import _save
 from .wall import settings
 from .records import payload
 from .wall_patch import verified_delivery
 
 
-PREFIXES = {"wakes": "seed wake ", "redeliveries": "seed redeliver ",
-    "settlements": "seed yield ", "observations": "seed observation ",
+PREFIXES = {"redeliveries": "seed redeliver ", "observations": "seed observation ",
     "addressed_messages": "[dm]", "legacy_task_transitions": "[task-"}
 
 
@@ -25,8 +25,12 @@ def collect(home: Path, start: datetime, *, end=None) -> dict:
     end = end or datetime.now(timezone.utc)
     entries = [e for e in Feed(home).entries() if start <= datetime.fromisoformat(e.timestamp.replace("Z", "+00:00")) <= end]
     counts = {name: sum(e.body.startswith(prefix) for e in entries) for name, prefix in PREFIXES.items()}
+    lifecycle = [control for entry in entries if (control := decode_lifecycle(entry))]
+    counts.update(wakes=sum(control.kind == "wake" for control in lifecycle),
+                  settlements=sum(control.kind == "yield" for control in lifecycle))
     by_source = dict(Counter(e.source for e in entries))
-    by_role = {}
+    by_role = {name: dict(Counter(control.role for control in lifecycle if control.kind == kind))
+               for name, kind in (("wakes", "wake"), ("settlements", "yield"))}
     for name, prefix in PREFIXES.items():
         if name in {"wakes", "redeliveries", "settlements", "observations"}:
             by_role[name] = dict(Counter(e.body.split()[2] for e in entries if e.body.startswith(prefix)))

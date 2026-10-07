@@ -773,6 +773,7 @@ def test_plant_reconciles_services_before_discovery_scan(tmp_path: Path, monkeyp
     monkeypatch.setattr(plant, "owns_session", lambda h, session: True)
     monkeypatch.setattr(plant, "ensure_engine_for_new_minds", lambda h, engine_command: None)
     monkeypatch.setattr(plant.seed_permission_panel, "ensure", lambda h, session: None)
+    monkeypatch.setattr("mishe_tauftauf.operator_view.ensure", lambda *a: None)
     monkeypatch.setattr(plant, "_tmux",
                         lambda *a, **k: SimpleNamespace(stdout=SimpleNamespace(decode=lambda: "")))
     monkeypatch.setattr(plant, "write_service_manifest", lambda h, session, persist: [])

@@ -2317,8 +2317,7 @@ SETTLE_RESULT_WINDOW = 100
 """Trailing settlements one result-mix sample covers."""
 SETTLE_INCIDENT_GAP_SECONDS = 60 * 60
 """Blocked settlements closer than this belong to one incident."""
-SEED_YIELD_RE = re.compile(r"^seed yield (\S+) wake=(\d+)")
-TURN_SETTLED_RE = re.compile(r"Turn settled \(([^)]+)\);")
+from .chat_protocol import decode_lifecycle
 
 
 def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[str, object]:
@@ -2514,13 +2513,15 @@ def _seed_settle_result_mix(home: Path) -> dict[str, object]:
                 "sample": f"chat tape unreadable: {exc}", "kind": "read"}
     settlements: list[tuple[datetime, str]] = []
     for entry in entries:
-        if entry.source != "seed" or SEED_YIELD_RE.match(entry.body) is None:
-            continue
-        settled = TURN_SETTLED_RE.search(entry.body)
-        if settled is None:
+        try:
+            control = decode_lifecycle(entry)
+        except ValueError as exc:
+            return {"id": "sense.seed.settle-result-mix", "state": "unknown",
+                    "sample": f"invalid lifecycle control: {exc}", "kind": "read"}
+        if control is None or control.kind != "yield" or control.result is None:
             continue
         ts = datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))
-        settlements.append((ts, settled.group(1)))
+        settlements.append((ts, control.result))
     window = settlements[-SETTLE_RESULT_WINDOW:]
     counts = {"verified": 0, "changed": 0, "blocked": 0, "other": 0}
     for _ts, result in window:
