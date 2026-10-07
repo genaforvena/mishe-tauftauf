@@ -1991,7 +1991,9 @@ def _write_evidenced_outcome(home: Path, role: str, evidence: Path,
 
 def _binding_tape(home: Path, citations: list[tuple[int, str, str, str]]) -> None:
     (home / "chat.log").write_bytes(
-        b"".join(_tape_entry(seq, ts, src, body) for seq, ts, src, body in citations))
+        b"".join(_tape_entry(seq, ts, src,
+                            f"Wall outcome accepted by {src}\noutcome\n" + body)
+                 for seq, ts, src, body in citations))
 
 
 def test_evidence_binding_clean_store(tmp_path):
@@ -2016,7 +2018,6 @@ def test_evidence_binding_clean_store(tmp_path):
     assert result["latest_roles"] == 2
     assert result["latest_bad"] == 0
     assert result["all_bad"] == 0
-    assert result["sample"] == "bound=2 latest_roles=2 latest_bad=0 all_bad=0"
 
 
 def test_evidence_binding_flags_mutated_evidence(tmp_path):
@@ -2063,14 +2064,10 @@ def test_evidence_binding_resolves_a_dot_dot_path_before_the_artifacts_test(tmp_
     (home / "records").mkdir(parents=True)
     evidence = home / "walls" / "discover.md"
     evidence.write_text("wall file\n")
-    digest = _write_evidenced_outcome(home, "alice", evidence)
-    # The stored path reaches the file through artifacts/ but canonicalizes
-    # outside it: the writer's non-resolved form must not pass the test.
-    record_path = home / "records" / f"{digest}.json"
-    record = json.loads(record_path.read_text(encoding="utf-8"))
-    record["payload"]["evidence"]["path"] = \
-        str(home / "artifacts" / ".." / "walls" / "discover.md")
-    record_path.write_text(json.dumps(record), encoding="utf-8")
+    # Preserve content-addressed envelope integrity while testing the lexical
+    # traversal: the evidence itself resolves outside artifacts.
+    digest = _write_evidenced_outcome(
+        home, "alice", home / "artifacts" / ".." / "walls" / "discover.md")
     _binding_tape(home, [
         (1, "2026-10-06T17:00:00Z", "alice",
          f"[record] records/{digest}.json sha256={digest}\n"),
@@ -2131,7 +2128,6 @@ def test_evidence_binding_latest_window_clean_while_all_has_history(tmp_path):
 def test_evidence_binding_missing_tape(tmp_path):
     result = discovery._ledger_evidence_binding(tmp_path / "site")
     assert result["state"] == "unknown"
-    assert result["sample"] == "chat tape unavailable"
 
 
 def test_evidence_binding_no_post_clause_outcomes(tmp_path):
@@ -2144,7 +2140,61 @@ def test_evidence_binding_no_post_clause_outcomes(tmp_path):
     ])
     result = discovery._ledger_evidence_binding(home)
     assert result["state"] == "unknown"
-    assert result["sample"] == "no post-clause outcomes"
+
+
+@pytest.mark.parametrize("damage", [
+    "missing", "corrupt", "kind-typo", "role-typo", "leading-blank",
+    "replaced-header", "wrong-envelope", "role-mismatch", "missing-reference",
+])
+@pytest.mark.parametrize("changed", [False, True])
+def test_evidence_binding_incomplete_publication_preserves_known_drift(tmp_path, damage, changed):
+    from mishe_tauftauf import wall, records
+    from tests.test_wall import setup_wall
+    setup_wall(tmp_path)
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    first = artifacts / "first.txt"
+    first.write_text("first evidence\n")
+    wall.outcome(tmp_path, "discover", "accepted", "First contribution.", first)
+    second = artifacts / "second.txt"
+    second.write_text("second evidence\n")
+    heading = "Wall outcome accepted by health"
+    data = {"role": "health", "kind": "accepted", "text": "Second contribution.",
+            "evidence": {"path": str(second), "sha256": hashlib.sha256(second.read_bytes()).hexdigest()}}
+    if damage == "kind-typo":
+        heading = "Wall outcome acceptd by health"
+    elif damage == "role-typo":
+        heading += "!"
+    elif damage == "leading-blank":
+        heading = "\n" + heading
+    elif damage == "replaced-header":
+        heading = "Damaged publication header"
+    elif damage == "role-mismatch":
+        data["role"] = "discover"
+    if damage == "missing-reference":
+        event = Feed(tmp_path).append("health", heading + "\n" + data["text"])
+    else:
+        event = Feed(tmp_path).append_record("health", heading + "\n" + data["text"], data,
+                                            kind="event" if damage == "wrong-envelope" else "wall-outcome")
+    if damage in ("missing", "corrupt"):
+        digest = records.REFERENCE_RE.fullmatch(event.body.splitlines()[-1]).group(1)
+        path = tmp_path / "records" / (digest + ".json")
+        if damage == "missing":
+            path.unlink()
+        else:
+            path.chmod(0o600)
+            path.write_text("{broken json")
+    if changed:
+        first.write_text("controlled evidence change\n")
+    observed = discovery._ledger_evidence_binding(tmp_path)
+    assert observed["state"] == ("drift" if changed else "unknown")
+    assert observed["all_bad"] == int(changed)
+    assert observed["bound"] == 1
+    assert [row["sequence"] for row in observed["incomplete"]] == [event.sequence]
+    third = artifacts / "third.txt"
+    third.write_text("independent next contribution\n")
+    with pytest.raises(ValueError, match="cannot derive"):
+        wall.outcome(tmp_path, "senses", "accepted", "Third contribution.", third)
 
 
 

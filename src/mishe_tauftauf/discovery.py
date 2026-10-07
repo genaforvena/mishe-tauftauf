@@ -18,6 +18,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from .feed import Feed, parse_feed
+from .outcome_events import classify_outcomes
 from .runtime_source import source_for
 from .scan_freshness import age_bounds, classify_age, endpoint
 
@@ -2564,66 +2565,35 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     post-clause outcome's evidence and reports two windows: the latest
     outcome per role (live compliance) and the whole post-clause set
     (standing audit — the store is append-only, so a repaired violation stays
-    flagged). State is ``drift`` when any checked outcome violates,
-    ``verified`` when none do, ``unknown`` when the tape or record store is
-    unreadable or no post-clause outcome exists.
+    flagged). State is ``drift`` when any checked outcome violates, including
+    when other publications have incomplete coverage; otherwise incomplete
+    coverage, unavailable input or no eligible event is ``unknown``.
 
     The under-artifacts test resolves the stored path first, so a ``..``
     segment cannot pass it lexically. D counts distinct stored path strings:
     two names for one inode (hardlink aliasing) both read clean.
     """
-    tape_path = home / "chat.log"
-    if not tape_path.exists():
+    coverage = classify_outcomes(home, EVIDENCE_BINDING_CLAUSE_TIME)
+    incomplete = coverage["incomplete"]
+    if coverage["unavailable"]:
         return {"id": "sense.ledger.evidence-binding", "state": "unknown",
-                "sample": "chat tape unavailable", "kind": "read"}
-    try:
-        entries = parse_feed(tape_path.read_bytes(), home=home)
-    except (OSError, ValueError) as exc:
+                "sample": coverage["unavailable"], "kind": "read",
+                "coverage_incomplete": len(incomplete), "incomplete": incomplete}
+    loaded = [(datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00")),
+               row["sequence"], row["role"], row["evidence"])
+              for row in coverage["events"]]
+    if not loaded and not incomplete:
         return {"id": "sense.ledger.evidence-binding", "state": "unknown",
-                "sample": f"chat tape unreadable: {exc}", "kind": "read"}
-    ref_time: dict[str, datetime] = {}
-    for entry in entries:
-        match = RECORD_REF_RE.search(entry.body)
-        if match:
-            ref_time.setdefault(match.group(1), datetime.fromisoformat(
-                entry.timestamp.replace("Z", "+00:00")))
-    records_dir = home / "records"
-    if not records_dir.is_dir():
-        return {"id": "sense.ledger.evidence-binding", "state": "unknown",
-                "sample": "outcome store unavailable", "kind": "read"}
-    post = {sha: ts for sha, ts in ref_time.items()
-            if ts >= EVIDENCE_BINDING_CLAUSE_TIME}
-    if not post:
-        return {"id": "sense.ledger.evidence-binding", "state": "unknown",
-                "sample": "no post-clause outcomes", "kind": "read"}
-    loaded: list[tuple[datetime, str, dict]] = []
-    for sha, ts in post.items():
-        path = records_dir / f"{sha}.json"
-        try:
-            record = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if not isinstance(record, dict) or record.get("kind") != "wall-outcome":
-            continue
-        payload = record.get("payload")
-        if not isinstance(payload, dict):
-            continue
-        role = payload.get("role")
-        evidence = payload.get("evidence")
-        if not isinstance(role, str) or not isinstance(evidence, dict):
-            continue
-        loaded.append((ts, role, evidence))
-    if not loaded:
-        return {"id": "sense.ledger.evidence-binding", "state": "unknown",
-                "sample": "no readable post-clause outcomes", "kind": "read"}
+                "sample": "no post-clause outcomes", "kind": "read",
+                "coverage_incomplete": 0, "incomplete": []}
     artifacts_root = home.resolve() / "artifacts"
     path_counts: dict[str, int] = {}
-    for _ts, _role, evidence in loaded:
+    for _ts, _sequence, _role, evidence in loaded:
         path = evidence.get("path")
         if isinstance(path, str):
             path_counts[path] = path_counts.get(path, 0) + 1
-    checked: list[tuple[datetime, str, str, str]] = []
-    for ts, role, evidence in loaded:
+    checked: list[tuple[datetime, int, str, str, str]] = []
+    for ts, sequence, role, evidence in loaded:
         path = evidence.get("path")
         digest = evidence.get("sha256")
         classes: list[str] = []
@@ -2643,30 +2613,33 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
         if path_counts.get(path, 0) > 1:
             classes.append("D")
         name = file_path.name if file_path is not None else str(path)
-        checked.append((ts, role, name, "".join(classes)))
+        checked.append((ts, sequence, role, name, "".join(classes)))
     checked.sort()
-    violations = [row for row in checked if row[3]]
-    latest: dict[str, tuple[datetime, str]] = {}
-    for ts, role, _name, classes in checked:
-        current = latest.get(role)
-        if current is None or ts > current[0]:
-            latest[role] = (ts, classes)
-    latest_bad = sum(1 for _, classes in latest.values() if classes)
+    violations = [row for row in checked if row[4]]
+    latest: dict[str, tuple[datetime, int, str]] = {}
+    for ts, sequence, role, _name, classes in checked:
+        latest[role] = (ts, sequence, classes)
+    latest_bad = sum(1 for _, _, classes in latest.values() if classes)
     parts = [f"bound={len(checked)} latest_roles={len(latest)} "
              f"latest_bad={latest_bad} all_bad={len(violations)}"]
+    if incomplete:
+        parts.append(f"coverage_incomplete={len(incomplete)} sequences=" +
+                     ",".join(str(row["sequence"]) for row in incomplete[:3]))
     if violations:
         parts.append("violating=" + " ".join(
             f"{role}@{ts.strftime('%Y-%m-%dT%H:%M:%SZ')}:{name}({classes})"
-            for ts, role, name, classes in violations[-3:][::-1]))
+            for ts, _sequence, role, name, classes in violations[-3:][::-1]))
         if len(violations) > 3:
             parts.append(f"+{len(violations) - 3}more")
     return {"id": "sense.ledger.evidence-binding",
-            "state": "drift" if violations else "verified",
+            "state": "drift" if violations else "unknown" if incomplete else "verified",
             "sample": " ".join(parts), "kind": "read",
             "bound": len(checked), "latest_roles": len(latest),
             "latest_bad": latest_bad, "all_bad": len(violations),
+            "coverage_incomplete": len(incomplete), "incomplete": incomplete,
+            "event_sequences": [row["sequence"] for row in coverage["events"]],
             "violations": [f"{role}@{ts.strftime('%Y-%m-%dT%H:%M:%SZ')}:{name}({classes})"
-                           for ts, role, name, classes in violations]}
+                           for ts, _sequence, role, name, classes in violations]}
 
 SPACE_SOURCE = "http://127.0.0.1:8765/node/note3"
 SPACE_PRODUCER = {"name": "android-body-perception", "entry_point": "watch.py",
