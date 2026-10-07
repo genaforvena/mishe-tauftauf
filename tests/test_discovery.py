@@ -3403,7 +3403,7 @@ def test_branch_inventory_verified_when_main_is_the_sole_branch(tmp_path):
     reading = discovery._repo_branch_inventory(_inventory_home(root))
     assert reading["state"] == "verified"
     assert reading["sample"] == ("local=1 extra=none remote=1 extra_remote=none "
-                                 "worktrees=1 nonmain=0 dirty=0 "
+                                 "worktrees=1 nonmain=0 dirty=0 strays=none "
                                  "nonmain_names=none dirty_names=none")
 
 
@@ -3500,6 +3500,60 @@ def test_branch_inventory_reports_dirty_worktree_bytes(tmp_path):
     assert reading["state"] == "verified"
     assert reading["dirty"] == 1
     assert reading["dirty_names"] == ["worktrees/draft"]
+
+
+def test_branch_inventory_names_untracked_strays_in_the_shared_checkout(tmp_path):
+    from mishe_tauftauf import discovery
+
+    root = tmp_path / "checkout"
+    _init_repo(root)
+    _pushable_origin(root, tmp_path)
+    (root / "notes").mkdir()
+    (root / "notes" / "senses-1-wall.md").write_text("scratch\n", encoding="utf-8")
+    reading = discovery._repo_branch_inventory(_inventory_home(root))
+    # A local note written against a repo-root-relative path is not ignored, so
+    # a broad `git add` would commit it. `dirty` alone names only the worktree;
+    # the reader must see which bytes, or the hazard stays anonymous.
+    assert reading["strays"] == ["notes/"]
+    assert "strays=notes/" in reading["sample"]
+    # The pane truncates the sample at 120 chars, so the hazard must land before
+    # the long nonmain/dirty name lists or the operator never sees it.
+    assert reading["sample"].index("strays=") < 120
+    assert reading["dirty"] == 1
+    assert reading["state"] == "verified"
+
+
+def test_branch_inventory_strays_exclude_ignored_and_tracked_entries(tmp_path):
+    from mishe_tauftauf import discovery
+
+    root = tmp_path / "checkout"
+    _init_repo(root)
+    _pushable_origin(root, tmp_path)
+    (root / "site" / "notes").mkdir(parents=True)
+    (root / "site" / "notes" / "kept.md").write_text("kept\n", encoding="utf-8")
+    (root / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+    _git(root, "add", "tracked.txt")
+    assert _git(root, "commit", "-m", "tracked").returncode == 0
+    reading = discovery._repo_branch_inventory(_inventory_home(root))
+    # The ignored site home and a committed file are not strays; the field must
+    # not flag the site's own notes as checkout debris.
+    assert reading["strays"] == []
+    assert "strays=none" in reading["sample"]
+
+
+def test_branch_inventory_stray_names_are_not_c_quoted(tmp_path):
+    from mishe_tauftauf import discovery
+
+    root = tmp_path / "checkout"
+    _init_repo(root)
+    _pushable_origin(root, tmp_path)
+    (root / "my notes").mkdir()
+    (root / "my notes" / "x.md").write_text("scratch\n", encoding="utf-8")
+    reading = discovery._repo_branch_inventory(_inventory_home(root))
+    # git C-quotes a path with a space unless `-z` is passed, so without the
+    # flag the reader would see an escaped string instead of the real path.
+    assert reading["strays"] == ["my notes/"]
+    assert '"my notes/"' not in reading["sample"]
 
 
 def test_branch_inventory_unknown_when_not_a_git_repo(tmp_path):
