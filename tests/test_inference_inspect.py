@@ -48,11 +48,13 @@ def test_evidence_replacement_after_preflight_discloses_nothing(tmp_path, replac
     assert executor(call)['status'] == 'unknown'
 
 
-@pytest.mark.parametrize('arguments', [{'path': '/ungranted'},
-                                      {'path': 'replace', 'sha256': 'model-owned'}])
-def test_out_of_schema_selection_never_starts(tmp_path, arguments):
+@pytest.mark.parametrize('violation', ['ungranted-path', 'extra-field'])
+def test_out_of_schema_selection_never_starts(tmp_path, violation):
     _, _, executor, call = prepare(tmp_path)
-    call['arguments'] = arguments
+    if violation == 'extra-field':
+        call['arguments']['sha256'] = 'model-owned'
+    else:
+        call['arguments']['path'] = '/ungranted'
     assert executor(call)['status'] == 'not-started'
     assert executor.boundary.recover(call) is None
 
