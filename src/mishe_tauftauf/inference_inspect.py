@@ -157,12 +157,15 @@ def prepare_exact_inspection(directory, *, source_path, source_sha, source_bytes
     return manifest, executor
 
 
-def run_exact_inspection(session, directory, manifest, executor, *, complete):
-    """Drive one trusted prepared composition with an exclusive caller journal.
+def run_exact_inspection(open_session, directory, manifest, executor, *, complete):
+    """Reserve the caller journal before constructing and driving a session.
 
-    Caller owns unchanged manifest/executor objects, session lifetime/time/output
-    caps and independent completion. A previous run refuses before another turn;
-    uncertain effects require original-store reconciliation, never blind retry.
+    open_session is a zero-argument context-manager factory; construction must
+    be deferred until it is called. The same journal stays open through session
+    exit. Caller owns trusted unchanged manifest/executor objects, admission,
+    session time/output caps and independent completion. Existing runs refuse
+    before construction; failed startup retains an empty, unreadable reservation.
+    Uncertain effects require original-store reconciliation, never blind retry.
     Selector records intended model only; this function cannot attest the session.
     """
     def authorized(call):
@@ -172,10 +175,11 @@ def run_exact_inspection(session, directory, manifest, executor, *, complete):
         except InspectionRefused:
             return False
     with NativeJournal(Path(directory) / 'journal.jsonl') as journal:
-        return drive_native(session, manifest['context'],
-                            obligation=manifest['obligation'],
-                            max_turns=manifest['max_turns'],
-                            max_calls=manifest['max_calls'], dispatch=executor,
-                            record=journal, phase=lambda call: None,
-                            cancelled=executor.cancelled, authorized=authorized,
-                            complete=complete)
+        with open_session() as session:
+            return drive_native(session, manifest['context'],
+                                obligation=manifest['obligation'],
+                                max_turns=manifest['max_turns'],
+                                max_calls=manifest['max_calls'], dispatch=executor,
+                                record=journal, phase=lambda call: None,
+                                cancelled=executor.cancelled, authorized=authorized,
+                                complete=complete)

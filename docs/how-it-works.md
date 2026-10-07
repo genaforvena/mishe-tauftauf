@@ -185,12 +185,17 @@ refuses symlinks, the target must be a stable regular UTF-8 file, and its digest
 must match before any text is returned. The model can select only `inspect` with
 that exact path and no extra arguments. `EffectBoundary` binds the read to the
 actual caller obligation and writer, rather than a prototype identity.
-`run_exact_inspection` composes this executor with `drive_native` and an exclusive
-`NativeJournal`; reusing a prepared run refuses before another model turn.
+`run_exact_inspection` accepts a zero-argument context-managed session factory.
+It reserves an exclusive `NativeJournal` before calling the factory and keeps
+the same writer open through construction, `drive_native` and session exit.
+Construction must be deferred into the factory; wrapping an already-created
+session cannot protect startup. Reusing a prepared run refuses before factory
+invocation. Failed construction retains an empty reservation, not a readable
+checkpoint or permission to retry; reconcile it rather than deleting it.
 An evidence change after dispatch starts remains UNKNOWN even if bytes are later
-restored. The caller owns trusted unchanged manifest/executor objects, session
-lifetime/output/time limits and the independent completion oracle. The recorded
-selector is intended-model metadata, not proof of the session's provider choice.
+restored. The caller owns trusted unchanged manifest/executor objects, admission,
+session lifetime/output/time limits and the independent completion oracle.
+The recorded selector is intended-model metadata, not proof of the session's provider choice.
 There is no automatic recovery, hostile-caller protection or OS sandbox here;
 synthetic source checks do not establish a deployed resident consumer.
 
