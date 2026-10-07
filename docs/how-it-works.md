@@ -224,9 +224,14 @@ An attempted second dispatch poisons the session and raises
 cannot replace that diagnostic. An ordinary error terminal remains an error,
 and a later caller-authorized turn has its own one-fetch allowance. This is not
 automatic retry authority, an output-token cap, a spend guarantee or proof that
-the server processed only one request. `drive_native` currently propagates this
-exception without recording its diagnostic in the caller journal; the pending
-model input remains unresolved and must not be blindly resubmitted.
+the server processed only one request. `drive_native` persists a `model_failure`
+with the original `WorkerError` type and diagnostic before propagating the
+exception. Budget exhaustion, cancellation and time limits retain their distinct
+transport diagnostics; none supplies a model completion or authorizes replay.
+Journal reconstruction preserves the failure through a recovery checkpoint,
+keeps the input UNKNOWN, and never opens a provider session for that input.
+If recording fails, that error propagates and the retained pending input still
+remains unresolved. Older journals without a failure record remain UNKNOWN.
 
 For pinned Codex full-history SSE, each correlated `response.completed` also
 returns a logical checkpoint in the same `NativeTurn` that the caller journal

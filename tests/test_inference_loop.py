@@ -5,7 +5,7 @@ import pytest
 from mishe_tauftauf.inference_loop import (
     NativeJournal, NativeJournalError, drive_native, read_native_journal, recover_native,
 )
-from mishe_tauftauf.inference_worker import WorkerTurn
+from mishe_tauftauf.inference_worker import WorkerError, WorkerTurn
 
 
 CALL = {"type": "toolCall", "id": "call_native|fc_native", "name": "inspect",
@@ -40,6 +40,85 @@ def drive(session, **overrides):
     options.update(overrides)
     result = drive_native(session, CONTEXT, **options)
     return result, events, effects
+
+
+def test_worker_failure_is_durable_unknown_and_never_reopened(tmp_path):
+    diagnostic = "original transport diagnostic"
+    failure = WorkerError(diagnostic)
+
+    class FailedSession:
+        def turn(self, context):
+            raise failure
+
+    path = tmp_path / "failed.jsonl"
+    with NativeJournal(path) as journal:
+        with pytest.raises(WorkerError) as caught:
+            drive(FailedSession(), record=journal)
+    assert caught.value is failure
+    recovered = read_native_journal(path)
+    assert recovered["model_failure"] == {"type": "WorkerError", "message": diagnostic}
+    assert recovered["status"] == "unknown"
+    assert recovered["stopped"] is False
+    assert recovered["context"] == CONTEXT
+    assert recovered["turns"] == recovered["calls"] == 0
+    with NativeJournal(tmp_path / "recovery.jsonl") as journal:
+        result = recover_native(
+            path, open_session=lambda **kw: pytest.fail("failed input replayed"),
+            dispatch=lambda call: pytest.fail("unexpected effect"),
+            record=journal, phase=lambda call: None, cancelled=lambda: False,
+            authorized=lambda call: True, complete=lambda ctx: pytest.fail("false completion"))
+    assert result["status"] == "unknown"
+    assert read_native_journal(tmp_path / "recovery.jsonl")["model_failure"] == recovered["model_failure"]
+
+
+def test_failure_recording_error_keeps_pending_input_unknown(tmp_path):
+    class FailedSession:
+        def turn(self, context):
+            raise WorkerError("native provider fetch budget exhausted")
+
+    path = tmp_path / "failed-record.jsonl"
+    with NativeJournal(path) as journal:
+        def record(event):
+            if event["kind"] == "model_failure":
+                raise OSError("failure journal unavailable")
+            journal(event)
+
+        with pytest.raises(OSError, match="failure journal unavailable"):
+            drive(FailedSession(), record=record)
+    recovered = read_native_journal(path)
+    assert recovered["status"] == "unknown"
+    assert recovered["model_failure"] is None
+    assert recovered["stopped"] is False
+
+
+@pytest.mark.parametrize("mutation", ["after_failure", "wrong_turn", "missing_message",
+                                    "ready_checkpoint"])
+def test_invalid_failure_history_cannot_authorize_replay(tmp_path, mutation):
+    events = []
+
+    class FailedSession:
+        def turn(self, context):
+            raise WorkerError("native provider fetch budget exhausted")
+
+    with pytest.raises(WorkerError):
+        drive(FailedSession(), record=events.append)
+    if mutation == "after_failure":
+        events.append({**events[-2], "turn": 0})
+    elif mutation == "wrong_turn":
+        events[-1]["turn"] = 1
+    elif mutation == "missing_message":
+        del events[-1]["error"]["message"]
+    else:
+        events = [events[0]]
+        events[0]["state"]["model_failure"] = {"type": "WorkerError", "message": "failed"}
+    path = tmp_path / "invalid.jsonl"
+    path.write_text("".join(json.dumps(row) + "\n" for row in events))
+    with pytest.raises(NativeJournalError):
+        recover_native(
+            path, open_session=lambda **kw: pytest.fail("invalid input replayed"),
+            dispatch=lambda call: pytest.fail("invalid effect"), record=lambda event: None,
+            phase=lambda call: None, cancelled=lambda: False,
+            authorized=lambda call: True, complete=lambda ctx: True)
 
 
 def test_next_model_input_preserves_correlated_result_and_opaque_history():
