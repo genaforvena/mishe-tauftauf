@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 
 from .feed import Feed
+from .chat_protocol import decode_lifecycle
 from .records import payload
 from .task_state import TaskState, eligible, registry
 
@@ -43,7 +44,13 @@ def project(entries, payloads: dict | None = None):
             except (ValueError, TypeError, KeyError, OSError) as exc:
                 errors.append({'sequence': entry.sequence, 'message': str(exc)})
                 data = {}
-        event = dict(sequence=entry.sequence, source=entry.source, body=entry.body, payload=data)
+        try:
+            control = decode_lifecycle(entry)
+        except ValueError as exc:
+            control = None
+            errors.append({'sequence': entry.sequence, 'message': str(exc)})
+        event = dict(sequence=entry.sequence, source=entry.source, body=entry.body, payload=data,
+                     lifecycle=asdict(control) if control else None)
         events.append(event)
         by_sequence[entry.sequence] = event
         if entry.body.startswith('[work] '):
@@ -106,8 +113,9 @@ def anomalies(entries, payloads: dict | None = None):
             if prior and prior[:2] != current[:2]:
                 findings.append(_finding(key, 'double-claim', 'RED', 'Two unsettled wakes claim this task.', [prior[2], current[2]]))
             claims[key] = current
-        elif match := re.match(r'seed yield (\S+) wake=(\d+)', body):
-            claims = {key: claim for key, claim in claims.items() if claim[:2] != (match[1], int(match[2]))}
+        elif (control := event['lifecycle']) and control['kind'] == 'yield':
+            claims = {key: claim for key, claim in claims.items()
+                      if claim[:2] != (control['role'], control['wake'])}
     for identity, history in view['receipts'].items():
         recent = history[-3:]
         if len(recent) < 3:

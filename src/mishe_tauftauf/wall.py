@@ -10,6 +10,7 @@ import re
 import shlex
 
 from .feed import Feed
+from .chat_protocol import decode_lifecycle
 from .outcome_events import OUTCOME_KINDS, classify_outcomes
 
 WALL_MAX_BYTES = 16384
@@ -335,8 +336,11 @@ def settle(home: Path, role: str, wake: int, text: str, continuation: bool, resu
                 handoff_path = home / "handoffs" / f"{role}.md"
                 if not all(path.is_file() and path.read_text() == text for path in (wall_path, handoff_path)):
                     raise ValueError("settled turn notes differ; reconcile instead of attributing a new effect")
-                receipt = next(e for e in reversed(Feed(home).entries()) if e.source == "seed" and e.body.startswith(f"seed yield {role} wake={wake}"))
-                if (" continue=1" in receipt.body.splitlines()[0]) != continuation or f"Turn settled ({result});" not in receipt.body:
+                receipt = next(e for e in reversed(Feed(home).entries())
+                               if (control := decode_lifecycle(e)) and control.kind == "yield"
+                               and control.role == role and control.wake == wake)
+                control = decode_lifecycle(receipt)
+                if control.continue_work != continuation or control.result != result:
                     raise ValueError("settled turn result or continuation differs")
                 return f"yield seed {role} wake {wake} already settled"
             raise ValueError(f"wake {wake} is not pending for {role}")
@@ -431,8 +435,8 @@ RETRY_HOLD_SECONDS = 1800
 def _pending_body(home: Path, wake: int) -> str:
     """The wake receipt's own body, minus its receipt line.
 
-    `seed._state` decides *whether* a turn is owed by matching the same
-    `WAKE_RE` receipt grammar, so the body is looked up by that grammar rather
+    `seed._state` decides *whether* a turn is owed from the same decoded
+    lifecycle values, so the body is looked up by that control identity rather
     than by sequence number: a seed-sourced non-wake entry (an observation is
     also `source == "seed"`) must not be presented as owed work. `deliver`
     announces only a sequence, so without this lookup the obligation layer
@@ -444,10 +448,10 @@ def _pending_body(home: Path, wake: int) -> str:
     for entry in Feed(home).entries():
         if entry.sequence != wake or entry.source != "seed":
             continue
-        if not seed.WAKE_RE.fullmatch(seed._receipt_line(entry.body)):
+        control = decode_lifecycle(entry)
+        if control is None or control.kind != "wake":
             return "(no pending wake body; reconcile against the tape)"
-        lines = entry.body.splitlines()
-        return "\n".join(lines[1:]).strip() or "(pending wake carries no body)"
+        return control.prose or "(pending wake carries no body)"
     return "(no pending wake body; reconcile against the tape)"
 
 
@@ -525,13 +529,25 @@ def tick(home: Path, session: str, role: str, self_pick_seconds: float = 300) ->
             # notice, a peer message and an operator DM stay deliverable, so a
             # stranded plant can still decide to re-arm, escalate or report.
             entries = Feed(home).entries()
-            last_wake = next((e.sequence for e in reversed(entries) if e.body.startswith(f"seed wake {role} ")), 0)
+            last_wake = next((e.sequence for e in reversed(entries)
+                              if (control := decode_lifecycle(e)) and control.kind == "wake"
+                              and control.role == role), 0)
             inbox = [e for e in entries if addressed(e, role) and e.sequence > last_wake]
             if inbox:
                 if not seed._mind_ready(session, role):
                     return f"held seed {role} mind busy; addressed message preserved while the window is ended"
                 if not owns_session(home, session):
                     raise ValueError("session is not owned")
+                if observation is None:
+                    # An addressed escalation is deliverable without a sensor
+                    # reading. Record the missing evidence explicitly instead
+                    # of emitting an undecodable observation=None receipt.
+                    snapshot = "UNKNOWN — no sensor observation; addressed escalation only."
+                    observed = Feed(home).append_record("seed", f"seed observation {role}\n{snapshot}",
+                        {"digest": hashlib.sha256(snapshot.encode()).hexdigest(), "role": role,
+                         "snapshot": snapshot, "command_ok": False, "notify": True,
+                         "trigger_sequence": inbox[-1].sequence}, kind="observation")
+                    observation = observed.sequence
                 wake = Feed(home).append("seed", f"seed wake {role} observation={observation}\n"
                     "The wake window ended, but an addressed message awaits you. "
                     "Reconcile it and decide: re-arm, escalate, or report. No autonomous wake was created.")
@@ -577,7 +593,9 @@ def tick(home: Path, session: str, role: str, self_pick_seconds: float = 300) ->
                 "Existing unsettled turn. Edited wall notes preserve the earlier obligations; read them before continuing.")
         if settled and settled != cleared:
             return f"held seed {role} awaiting idle rotation"
-        last_wake = next((e.sequence for e in reversed(entries) if e.body.startswith(f"seed wake {role} ")), 0)
+        last_wake = next((e.sequence for e in reversed(entries)
+                              if (control := decode_lifecycle(e)) and control.kind == "wake"
+                              and control.role == role), 0)
         inbox = [e for e in entries if addressed(e, role) and e.sequence > last_wake]
         periodic = last_at is None or (self_pick_seconds > 0 and
             (datetime.now(timezone.utc) - last_at).total_seconds() >= self_pick_seconds)

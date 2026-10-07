@@ -7,7 +7,6 @@ import hashlib
 import json
 import math
 import os
-import re
 import subprocess
 import tempfile
 import time
@@ -27,7 +26,7 @@ ANALYSES = {
     'none': 'No particular analysis stands out; use the charter and live pane.',
     'unknown': 'Context is insufficient to choose; inspect the original evidence.',
 }
-WAKE = re.compile(r'seed wake witness observation=[1-9][0-9]*(?: event=[1-9][0-9]*)?(?: task=\S+)?\Z')
+from mishe_tauftauf.chat_protocol import decode_lifecycle
 
 
 def _hash(value):
@@ -127,7 +126,7 @@ def snapshot(home: Path, cutoff: int) -> dict:
 
 def advise(home: Path, wake: int, *, config_path: Path | None = None) -> dict:
     entries = Feed(home).entries()
-    if not any(e.sequence == wake and e.source == 'seed' and WAKE.fullmatch(e.body.splitlines()[0]) for e in entries):
+    if not any(e.sequence == wake and (control := decode_lifecycle(e)) and control.kind == 'wake' and control.role == 'witness' for e in entries):
         raise ValueError('not a canonical witness wake')
     with _lock(home) as directory:
         path = directory / f'{wake}.json'

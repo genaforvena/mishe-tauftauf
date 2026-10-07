@@ -15,6 +15,13 @@ def test_expired_trial_still_delivers_addressed_escalation(tmp_path, monkeypatch
     assert wall.tick(tmp_path, "session", "health", 300).startswith("wake ")
     wakes = [e for e in Feed(tmp_path).entries() if e.body.startswith("seed wake health ")]
     assert len(wakes) == 1 and "addressed message awaits" in wakes[0].body
+    from mishe_tauftauf.chat_protocol import decode_lifecycle
+    from mishe_tauftauf.records import payload
+    control = decode_lifecycle(wakes[0])
+    observed = next(e for e in Feed(tmp_path).entries() if e.sequence == control.observation)
+    assert payload(observed)["command_ok"] is False
+    assert payload(observed)["trigger_sequence"] == alert.sequence
+    assert "UNKNOWN" in payload(observed)["snapshot"]
     assert str(alert.sequence) in sent[-1]
     # A settled escalation is answered once; the next tick creates no new wake.
     Feed(tmp_path).append("seed", f"seed yield health wake={wakes[0].sequence}")

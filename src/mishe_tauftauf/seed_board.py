@@ -10,9 +10,7 @@ from .feed import FeedEntry
 
 TASK_RE = re.compile(r"^\[task\]\s+(\S+)\s+owner=([a-z0-9-]+)(?:\s|$)")
 STATE_RE = re.compile(r"^\[(taking|done|dropped)\]\s+(\S+)(?:\s|$)")
-WAKE_RE = re.compile(r"^seed wake ([a-z0-9-]+) observation=([1-9][0-9]*)(?: event=[1-9][0-9]*)?(?: task=(\S+))?\Z")
-YIELD_RE = re.compile(r"^seed yield ([a-z0-9-]+) wake=([1-9][0-9]*)(?: continue=1)?\Z")
-SETTLED_RE = re.compile(r"^Turn settled \(([a-z]+)\);")
+from .chat_protocol import decode_lifecycle
 CLAIM_RE = re.compile(r"^\[task-claim\] (\S+) owner=([a-z0-9-]+) previous=([a-z0-9-]+)(?:\s|$)")
 
 
@@ -48,25 +46,17 @@ def work_receipts(entries: list[FeedEntry], channel: str) -> list[Work]:
     settled result. The wake's sequence is the receipt's wake number.
     """
     wakes: dict[int, tuple[str, str | None]] = {}
-    for entry in entries:
-        if entry.source != "seed" or not entry.body:
-            continue
-        if match := WAKE_RE.match(entry.body.splitlines()[0]):
-            if match.group(1) == channel:
-                wakes[entry.sequence] = (match.group(2), match.group(3))
+    decoded = [(entry, decode_lifecycle(entry)) for entry in entries]
+    for entry, control in decoded:
+        if control and control.kind == "wake" and control.role == channel:
+            wakes[entry.sequence] = (str(control.observation), control.task)
     work = []
-    for entry in entries:
-        if entry.source != "seed" or not entry.body:
+    for entry, control in decoded:
+        if not control or control.kind != "yield" or control.role != channel or control.result is None:
             continue
-        lines = entry.body.splitlines()
-        if not (match := YIELD_RE.match(lines[0])) or match.group(1) != channel:
-            continue
-        settled = next((found for line in lines[1:] if (found := SETTLED_RE.match(line))), None)
-        if settled is None:
-            continue
-        wake = int(match.group(2))
+        wake = control.wake
         observation, task = wakes.get(wake, (str(wake), None))
-        work.append(Work(channel, wake, observation, settled.group(1), task))
+        work.append(Work(channel, wake, observation, control.result, task))
     return work
 
 

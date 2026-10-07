@@ -16,9 +16,7 @@ from .seed_board import TASK_RE, STATE_RE, CLAIM_RE
 from .records import payload as record_payload
 
 EVENT_RE = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z")
-TASK_WAKE_RE = re.compile(r"seed wake ([a-z0-9-]+) observation=\d+(?: event=\d+)? task=(\S+)\Z")
-TASK_YIELD_RE = re.compile(r"seed yield ([a-z0-9-]+) wake=(\d+)(?: continue=1)?\Z")
-ACTIVE_WAKE_RE = re.compile(r"seed wake ([a-z0-9-]+) observation=\d+(?: event=\d+)?(?: task=\S+)?\Z")
+from .chat_protocol import decode_lifecycle
 
 
 @dataclass(frozen=True)
@@ -145,12 +143,12 @@ def registry(entries: list[FeedEntry]) -> dict[str, TaskState]:
     active = {}
     for entry in entries:
         first = entry.body.splitlines()[0].lstrip(" \t") if entry.body else ""
-        if entry.source == "seed":
-            if match := ACTIVE_WAKE_RE.fullmatch(first):
-                active[match.group(1)] = entry.sequence
-            elif match := TASK_YIELD_RE.fullmatch(first):
-                if active.get(match.group(1)) == int(match.group(2)):
-                    active.pop(match.group(1), None)
+        control = decode_lifecycle(entry)
+        if control:
+            if control.kind == "wake":
+                active[control.role] = entry.sequence
+            elif control.kind == "yield" and active.get(control.role) == control.wake:
+                active.pop(control.role, None)
         if match := TASK_RE.match(first):
             identity, owner = match.groups()
             if identity not in result:
@@ -271,24 +269,25 @@ def pending_tasks(entries: list[FeedEntry]) -> dict[tuple[str, int], str]:
         if entry.body.startswith("[task-claim] ") and not CLAIM_RE.fullmatch(first):
             data = record_payload(entry)
             pending[(data["owner"], data["attempt_wake"])] = data["identity"]
-        elif entry.source == "seed" and (match := TASK_WAKE_RE.fullmatch(first)):
-            pending[(match.group(1), entry.sequence)] = match.group(2)
-        elif entry.source == "seed" and (match := TASK_YIELD_RE.fullmatch(first)):
-            pending.pop((match.group(1), int(match.group(2))), None)
+        else:
+            control = decode_lifecycle(entry)
+            if control and control.kind == "wake" and control.task is not None:
+                pending[(control.role, entry.sequence)] = control.task
+            elif control and control.kind == "yield":
+                pending.pop((control.role, control.wake), None)
     return pending
 
 
 def active_wakes(entries: list[FeedEntry]) -> dict[str, int]:
     active = {}
     for entry in entries:
-        if entry.source != "seed":
+        control = decode_lifecycle(entry)
+        if control is None:
             continue
-        first = entry.body.splitlines()[0]
-        if match := ACTIVE_WAKE_RE.fullmatch(first):
-            active[match.group(1)] = entry.sequence
-        elif match := TASK_YIELD_RE.fullmatch(first):
-            if active.get(match.group(1)) == int(match.group(2)):
-                active.pop(match.group(1), None)
+        if control.kind == "wake":
+            active[control.role] = entry.sequence
+        elif control.kind == "yield" and active.get(control.role) == control.wake:
+            active.pop(control.role, None)
     return active
 
 
@@ -429,7 +428,7 @@ def independent_opportunity(entries: list[FeedEntry], owner: str) -> str | None:
                     for s in waiting)
     digest = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
     first = f"[task-opportunity] owner={owner} waiting={digest}"
-    if any(entry.source == "seed" and entry.body.startswith(f"seed wake {owner} ")
+    if any((control := decode_lifecycle(entry)) and control.kind == "wake" and control.role == owner
            and first in entry.body.splitlines() for entry in entries):
         return None
     return digest
