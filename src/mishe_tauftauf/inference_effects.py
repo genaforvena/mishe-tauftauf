@@ -694,6 +694,14 @@ class EffectLedger:
                 call["native_call"] = dict(intent.native_call)
             try:
                 result = executor(call)
+            except (AlreadyExecuted, ConcurrentClaim):
+                # These name durable store state, not a capability outcome: an
+                # operation that already has an outcome and an id another writer
+                # holds are decisions this store made before any effect. The
+                # caller needs the store's verdict rather than the reply the
+                # generic branch below gives for an effect that may have
+                # happened but lost its receipt.
+                raise
             except (StoreUnavailable, JournalCorrupt, ChangedContentReuse):
                 raise
             except ValueError as exc:
