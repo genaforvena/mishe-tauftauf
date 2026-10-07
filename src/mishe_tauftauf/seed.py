@@ -561,6 +561,24 @@ def start(home: Path, session: str, slug: str, interval: float) -> str:
         (home / ".seed-raised").write_text(f"{session} {identity}\n", encoding="utf-8")
     elif not await_owned(home, session):
         raise ValueError(f"session {session} is not owned by {home}")
+    else:
+        # The receipt is durable state for consumers without the environment
+        # override: senses, the CLI's default-session fallback, renderer
+        # probes and stop's safety guard. It is written only when the session
+        # is created, so a receipt lost while the session lives would wedge
+        # those readers on unknowns or the wrong literal. Re-heal it from the
+        # owned session rather than let a missing file outlive the plant.
+        identity = _tmux("display-message", "-p", "-t", session, "#{session_id}").stdout.decode().strip()
+        expected = f"{session} {identity}\n"
+        receipt = home / ".seed-raised"
+        # An unreadable receipt is the corruption this heals, not a reason
+        # to wedge the supervisor on the way past it.
+        try:
+            current = receipt.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            current = None
+        if current != expected:
+            receipt.write_text(expected, encoding="utf-8")
     target = f"{session}:{slug}"
     names = _tmux("list-windows", "-t", session, "-F", "#{window_name}").stdout.decode().splitlines()
     new_window = slug not in names
