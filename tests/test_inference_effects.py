@@ -694,6 +694,83 @@ def test_boundary_and_drive_native_end_to_end(tmp_path):
     assert fresh.open_intents() == []
 
 
+
+def test_lost_loop_receipt_recovers_completed_effect_in_fresh_process(tmp_path):
+    """A successful effect whose caller receipt is lost is read, never replayed."""
+    store = tmp_path / "effects"
+    caller = tmp_path / "caller.jsonl"
+    ran = tmp_path / "executed.txt"
+    call = {"type": "toolCall", "id": "call-receipt-lost", "name": "inspect",
+            "arguments": {"path": "owned-evidence"}}
+    context = {"messages": [{"role": "user", "content": "Inspect evidence"}],
+               "tools": [{"name": "inspect"}]}
+    child = tmp_path / "dispatch.py"
+    child.write_text(textwrap.dedent(
+        """
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, %r)
+        from mishe_tauftauf.inference_effects import EffectBoundary
+        from mishe_tauftauf.inference_loop import NativeJournal, drive_native
+        from mishe_tauftauf.inference_worker import WorkerTurn
+
+        call = %r
+        context = %r
+        class Session:
+            def turn(self, context):
+                return WorkerTurn("done", {"role": "assistant",
+                    "content": [call], "stopReason": "toolUse"}, None)
+
+        def execute(ledger_call):
+            Path(%r).write_text("effect\\n")
+            return {"host_id": "result-17", "bytes": [0, 255]}
+
+        dispatch = EffectBoundary(Path(%r), writer_id="loop-1",
+            obligation={"source": "owned-event"}, execute=execute,
+            authority="inspect")
+        with NativeJournal(Path(%r)) as journal:
+            def record(event):
+                if event["kind"] == "tool_result":
+                    raise OSError("caller receipt lost after effect")
+                journal(event)
+            try:
+                drive_native(Session(), context, obligation={"source": "owned-event"},
+                    max_turns=2, max_calls=1, dispatch=dispatch, record=record,
+                    phase=lambda call: None, cancelled=lambda: False,
+                    authorized=lambda call: True, complete=lambda context: True)
+            except OSError as exc:
+                if "caller receipt lost" not in str(exc):
+                    raise
+        """
+        % (str(STORE), call, context, str(ran), str(store), str(caller))))
+    subprocess.run([sys.executable, str(child)], check=True, capture_output=True,
+                   text=True)
+    assert ran.read_text() == "effect\n"
+
+    recovery = tmp_path / "recover.py"
+    recovery.write_text(textwrap.dedent(
+        """
+        import json, sys
+        from pathlib import Path
+        sys.path.insert(0, %r)
+        from mishe_tauftauf.inference_effects import EffectBoundary
+        call = %r
+        boundary = EffectBoundary(Path(%r), writer_id="loop-2",
+            obligation={"source": "owned-event"},
+            execute=lambda call: (_ for _ in ()).throw(
+                AssertionError("completed effect replayed")), authority="inspect")
+        print(json.dumps(boundary.recover(call)))
+        """
+        % (str(STORE), call, str(store))))
+    recovered = json.loads(subprocess.run(
+        [sys.executable, str(recovery)], check=True, capture_output=True,
+        text=True).stdout)
+    assert recovered["status"] == "completed"
+    assert recovered["result"] == {"host_id": "result-17", "bytes": [0, 255]}
+    assert recovered["executions"] == 1
+    assert ran.read_text() == "effect\n"
+
+
 def test_boundary_never_executes_a_completed_operation_again(tmp_path):
     """A repeated dispatch is refused, never re-executed."""
     runs = []
