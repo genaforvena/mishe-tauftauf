@@ -155,8 +155,6 @@ class NativeSession:
             if self.checkpoint is not None:
                 request['checkpoint'] = self.checkpoint
             frame = self._exchange(request)
-            if self.process.poll() is not None:
-                raise WorkerError('native session exited during turn')
             if frame.get('type') != 'turn' or type(frame.get('id')) is not int or frame['id'] != self.next_id:
                 raise WorkerError('mismatched native turn receipt')
             completion = frame.get('frame')
@@ -172,6 +170,14 @@ class NativeSession:
                 raise WorkerError('UNKNOWN: missing native logical checkpoint')
             self.checkpoint = None
             self.next_id += 1
+            if self.process.poll() is not None:
+                # The worker is dead, so this receipt cannot prove the provider
+                # state it was recorded from is still the one the caller means to
+                # continue. Report it as transport-limited rather than 'done':
+                # the caller owns the reconciliation of an orphaned provider.
+                return NativeTurn('transport-receipt-after-exit', decoded.assistant,
+                                  decoded.wire_usage, completion.get('wire_terminal'),
+                                  checkpoint)
             return NativeTurn(decoded.terminal, decoded.assistant, decoded.wire_usage,
                               completion.get('wire_terminal'), checkpoint)
         except BaseException:

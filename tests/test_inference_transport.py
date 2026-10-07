@@ -1,4 +1,5 @@
 import sys
+import time
 
 import pytest
 
@@ -107,8 +108,6 @@ def test_failed_exchange_reaps_and_refuses_reuse(tmp_path, turn, match):
     assert_reaped(session)
 
 
-
-
 def test_completion_written_before_a_nonzero_exit_is_kept_not_refused(tmp_path):
     # A worker that writes its completion and exits nonzero in the same tick can
     # have the line land during the post-EOF drain rather than before it. That
@@ -118,11 +117,19 @@ def test_completion_written_before_a_nonzero_exit_is_kept_not_refused(tmp_path):
         "emit({'type':'turn','id':request['id'],'frame':" + repr(FRAME) + "}); __import__('os')._exit(7)"
     )), "fixture/model", "session", timeout=3)
     turn = session.turn({})
-    assert turn.terminal == "done"
+    # The receipt won, so the caller owns the assistant text. Whether the dead
+    # worker is reaped before or after the receipt is read is scheduling
+    # dependent; a reaped worker makes the turn transport-limited rather than
+    # 'done', because the provider state it was recorded from is no longer
+    # reachable.
     assert turn.assistant == FRAME["assistant"]
+    assert turn.terminal in ("done", "transport-receipt-after-exit")
+    assert session.next_id == 2
     assert not session.pending
-    # The turn completed, so the exit is still the caller's to classify.
-    with pytest.raises(WorkerError, match="exited 7"):
+    # The worker died before answering the disposal exchange, so close() refuses
+    # by whichever path that takes: the reaped exit surfaces from the drain, or
+    # the write of the close request fails on a pipe the dead worker abandoned.
+    with pytest.raises(WorkerError, match="exited 7|input closed"):
         session.close()
     assert_reaped(session)
 
@@ -134,6 +141,58 @@ def test_worker_exiting_without_writing_anything_is_still_refused(tmp_path):
     session = NativeSession(command(tmp_path, turn="__import__('os')._exit(7)"),
                             "fixture/model", "session", timeout=3)
     with pytest.raises(WorkerError, match="exited 7"):
+        session.turn({})
+    assert_reaped(session)
+
+
+def test_completion_received_after_the_worker_exits_still_completes_the_turn(tmp_path, monkeypatch):
+    # The completion can be read from the pipe after the worker has already exited
+    # rather than merely racing it: the parent is delayed, the worker writes its
+    # receipt and dies, and only then does the read happen. turn() refused that
+    # receipt as "exited during turn", discarding a turn the caller was charged
+    # for. A receipt for THIS turn wins; the exit stays for the next call.
+    original_pump = NativeSession._pump
+    original_exchange = NativeSession._exchange
+    in_turn = False
+
+    def slow_read(self, data, timeout=None, *, check=True):
+        nonlocal in_turn
+        # Delay only the first read inside the turn exchange, so the worker has
+        # written its receipt and exited before the parent reads the pipe.
+        if in_turn:
+            in_turn = False
+            time.sleep(0.3)
+        return original_pump(self, data, timeout=timeout, check=check)
+
+    def slow_exchange(self, request):
+        nonlocal in_turn
+        in_turn = request.get('type') == 'turn'
+        return original_exchange(self, request)
+
+    monkeypatch.setattr(NativeSession, "_pump", slow_read)
+    monkeypatch.setattr(NativeSession, "_exchange", slow_exchange)
+    session = NativeSession(command(tmp_path, turn=(
+        "emit({'type':'turn','id':request['id'],'frame':" + repr(FRAME) + "});"
+        " __import__('os')._exit(7)"
+    )), "fixture/model", "session", timeout=3)
+    turn = session.turn({})
+    assert turn.assistant == FRAME["assistant"]
+    assert session.next_id == 2
+    # The worker is dead, so this session cannot answer another turn: the next
+    # turn fails, whether it trips the exit guard or the closed input pipe.
+    with pytest.raises(WorkerError, match="exited during turn|input closed"):
+        session.turn({})
+    assert_reaped(session)
+
+
+def test_a_receipt_naming_another_turn_is_still_refused(tmp_path):
+    # The receipt is what names the outcome, but only when it names THIS turn:
+    # one that does not is still refused rather than laundered into a result.
+    session = NativeSession(command(tmp_path, turn=(
+        "emit({'type':'turn','id':request['id']+1,'frame':" + repr(FRAME) + "});"
+        " __import__('os')._exit(7)"
+    )), "fixture/model", "session", timeout=3)
+    with pytest.raises(WorkerError, match="mismatched native turn receipt"):
         session.turn({})
     assert_reaped(session)
 
