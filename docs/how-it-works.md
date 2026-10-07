@@ -283,6 +283,18 @@ There is no caller-supplied checkpoint or result override. Journal ownership and
 current original-effect authority remain caller obligations; this does not
 authenticate edited journal bytes or establish live resident recovery.
 
+`inference_inspect.reconcile_caller_journal(path, boundary, authorized=...)`
+reconciles a proposed call against its original `EffectBoundary` without
+dispatching. It appends a `tool_result` only for a completed recorded outcome
+while current authority still passes; missing or unknown outcomes and revoked
+authority leave the proposal pending. `run_exact_inspection` invokes this after
+its journal writer closes, including an ordinary exception after dispatch.
+Abrupt process death skips that cleanup, so a fresh caller must invoke the
+reconciliation helper before deciding whether the call remains unresolved.
+Stopped journals, unproposed selections and calls with an already recorded
+result are not modified. This is process-crash recovery, not power-loss
+durability or exactly-once execution.
+
 The wheel includes the native TypeScript worker, session and auth bootstrap.
 `inference_native.native_worker_command(bun=..., node_modules=...,
 staging_parent=...)` stages those sources in a temporary owned directory with

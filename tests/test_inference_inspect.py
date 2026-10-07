@@ -4,8 +4,9 @@ from contextlib import contextmanager
 import pytest
 
 from mishe_tauftauf.inference_inspect import (
-    prepare_exact_inspection, run_exact_inspection,
+    prepare_exact_inspection, reconcile_caller_journal, run_exact_inspection,
 )
+from mishe_tauftauf.inference_loop import read_native_journal
 from mishe_tauftauf.inference_transport import NativeTurn
 
 
@@ -138,3 +139,150 @@ def test_failed_session_keeps_reservation_and_cannot_restart(tmp_path, failure):
                              complete=lambda context: False)
     assert attempts == ['construction']
     assert (tmp_path / 'run/journal.jsonl').read_bytes() == journal
+
+
+def test_lost_result_is_reconciled_without_redispatch(tmp_path, monkeypatch):
+    import mishe_tauftauf.inference_inspect as inspection
+
+    _, manifest, executor, call = prepare(tmp_path)
+    executions = []
+    execute = executor.boundary.execute
+
+    def counted(ledger_call):
+        executions.append(ledger_call)
+        return execute(ledger_call)
+
+    executor.boundary.execute = counted
+
+    class Session:
+        def turn(self, context):
+            return NativeTurn('done', {'role': 'assistant', 'content': [call],
+                                      'stopReason': 'toolUse', 'timestamp': 7})
+
+    @contextmanager
+    def open_session():
+        yield Session()
+
+    drive = inspection.drive_native
+
+    def interrupt_before_result(session, context, **options):
+        record = options['record']
+
+        def interrupted(event):
+            if event['kind'] == 'tool_result':
+                raise InterruptedError('process lost before receipt')
+            record(event)
+
+        options['record'] = interrupted
+        return drive(session, context, **options)
+
+    monkeypatch.setattr(inspection, 'drive_native', interrupt_before_result)
+    with pytest.raises(InterruptedError, match='process lost'):
+        run_exact_inspection(open_session, tmp_path / 'run', manifest, executor,
+                             complete=lambda context: False)
+
+    journal = tmp_path / 'run/journal.jsonl'
+    recovery = read_native_journal(journal)
+    assert recovery['status'] == 'ready'
+    assert recovery['context']['messages'][-1]['toolCallId'] == call['id']
+    assert len(executions) == 1
+    assert reconcile_caller_journal(journal, executor.boundary,
+                                   authorized=lambda pending: True) is None
+    assert len(executions) == 1
+
+
+def test_completed_effect_is_not_recovered_after_authority_revocation(
+        tmp_path, monkeypatch):
+    import mishe_tauftauf.inference_inspect as inspection
+
+    state = {'cancelled': False}
+    _, manifest, executor, call = prepare(
+        tmp_path, cancelled=lambda: state['cancelled'])
+    execute = executor.boundary.execute
+
+    def revoke_after_effect(ledger_call):
+        result = execute(ledger_call)
+        state['cancelled'] = True
+        return result
+
+    executor.boundary.execute = revoke_after_effect
+
+    class Session:
+        def turn(self, context):
+            return NativeTurn('done', {'role': 'assistant', 'content': [call],
+                                      'stopReason': 'toolUse', 'timestamp': 7})
+
+    @contextmanager
+    def open_session():
+        yield Session()
+
+    drive = inspection.drive_native
+
+    def interrupt_before_result(session, context, **options):
+        record = options['record']
+
+        def interrupted(event):
+            if event['kind'] == 'tool_result':
+                raise InterruptedError()
+            record(event)
+
+        options['record'] = interrupted
+        return drive(session, context, **options)
+
+    monkeypatch.setattr(inspection, 'drive_native', interrupt_before_result)
+    with pytest.raises(InterruptedError):
+        run_exact_inspection(open_session, tmp_path / 'run', manifest, executor,
+                             complete=lambda context: False)
+
+    recovery = read_native_journal(tmp_path / 'run/journal.jsonl')
+    assert recovery['status'] == 'unknown'
+    assert recovery['pending_calls'] == [call]
+    assert executor.boundary.recover(call)['status'] == 'completed'
+
+
+def test_refused_existing_run_does_not_reconcile_its_journal(tmp_path, monkeypatch):
+    import mishe_tauftauf.inference_inspect as inspection
+
+    _, manifest, executor, call = prepare(tmp_path)
+    sessions = []
+
+    class Session:
+        def turn(self, context):
+            return NativeTurn('done', {'role': 'assistant', 'content': [call],
+                                      'stopReason': 'toolUse', 'timestamp': 1})
+
+    @contextmanager
+    def open_session():
+        sessions.append(True)
+        yield Session()
+
+    drive = inspection.drive_native
+
+    def lose_receipt(session, context, **options):
+        record = options['record']
+
+        def interrupted(event):
+            if event['kind'] == 'tool_result':
+                raise InterruptedError()
+            record(event)
+
+        options['record'] = interrupted
+        return drive(session, context, **options)
+
+    monkeypatch.setattr(inspection, 'drive_native', lose_receipt)
+    monkeypatch.setattr(inspection, 'reconcile_caller_journal', lambda *a, **k: None)
+    with pytest.raises(InterruptedError):
+        run_exact_inspection(open_session, tmp_path / 'run', manifest, executor,
+                             complete=lambda context: False)
+    journal = tmp_path / 'run/journal.jsonl'
+    preserved = journal.read_bytes()
+    assert read_native_journal(journal)['proposed_call'] == call
+
+    monkeypatch.setattr(
+        inspection, 'reconcile_caller_journal',
+        reconcile_caller_journal)
+    with pytest.raises(FileExistsError):
+        run_exact_inspection(open_session, tmp_path / 'run', manifest, executor,
+                             complete=lambda context: False)
+    assert journal.read_bytes() == preserved
+    assert sessions == [True]
