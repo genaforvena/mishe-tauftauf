@@ -250,6 +250,18 @@ def test_opencode_mind_requires_empty_idle_prompt(monkeypatch) -> None:
     monkeypatch.setattr(seed, "_tmux", fake_tmux(idle.replace("Ask anything…", "draft wake text")))
     assert not seed._mind_ready("session", "genome")
 
+    # A session with history keeps the same input box and drops the
+    # placeholder: it is idle and must still accept a wake.
+    used = ("│\n│  Build · Muse Spark 1.3 Free OpenCode Zen\n"
+            "/tmp/opencode                             shift+tab agents  ctrl+p commands\n")
+    monkeypatch.setattr(seed, "_tmux", fake_tmux(used))
+    assert seed._mind_ready("session", "genome")
+
+    # The running-turn status holds delivery even without a spinner line.
+    busy = idle + "⬝⬝⬝■■ esc interrupt        shift+tab agents  ctrl+p commands\n"
+    monkeypatch.setattr(seed, "_tmux", fake_tmux(busy))
+    assert not seed._mind_ready("session", "genome")
+
 
 def test_redelivered_wake_includes_restored_charter_and_handoff(tmp_path: Path, monkeypatch) -> None:
     from datetime import datetime, timedelta, timezone
