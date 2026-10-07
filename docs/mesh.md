@@ -30,6 +30,8 @@ Dashboards and walls report bounded observations, not overall health. GREEN
 covers only the named checks; missing, failed and stale readings stay unresolved,
 and a live pane or lease proves only that it renders, not that its content is
 current or correct.
+Terminal panes rotate explicitly numbered continuations when the full report
+does not fit; `pain read ROLE --launcher dashboard` remains the complete evidence.
 
 The space-light reader consumes the owned Note3's atomic `SITE/body/space.json`
 boundary without starting another collector. It keeps lux, source, session and

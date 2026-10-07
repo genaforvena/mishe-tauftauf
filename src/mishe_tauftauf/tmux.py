@@ -171,7 +171,7 @@ def sweep_orphan_test_sessions() -> list[str]:
 
 
 def capture_raw(session: str, slug: str) -> str:
-    result = _tmux("capture-pane", "-p", "-t", f"{session}:{slug}.0", "-S", "-", check=False)
+    result = _tmux("capture-pane", "-p", "-J", "-t", f"{session}:{slug}.0", "-S", "-", check=False)
     if result.returncode:
         return f"UNKNOWN — top-pain {slug} pane missing\n"
     try:

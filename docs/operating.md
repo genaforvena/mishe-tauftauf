@@ -74,9 +74,19 @@ For an ownership-checked reading of the actual top pane, not a newly rendered ap
   --launcher tmux --session "$SESSION"
 ```
 
-A supervisor's `pain watch` publishes the exact frame it renders to
-`SITE/dashboards/ROLE.json`. That frame is what the pane shows, what the mind is
-told to read, and the sensor text the supervisor digests for change detection.
+`pain watch` publishes the complete current report, including wake and lease, to
+`SITE/dashboards/ROLE.json`. Minds and supervisors read that complete report.
+On a terminal, the watcher reserves space for the footer and rotates ordered
+`VIEW n/N` continuations instead of scrolling facts off screen. Each page names
+its current body digest and the full-dashboard command. Different digests are
+different acquisitions, not an immutable multi-page sample. Source timestamps
+and freshness do not advance merely because another page is displayed.
+Widths use terminal cells and whole Unicode graphemes; cursor-control bytes are
+shown as escapes without changing the canonical report. A viewport too small
+for a fact plus its instructions and footer displays UNKNOWN without a new lease.
+Tmux capture joins soft-wrapped footer lines so a narrow pane still exposes the
+complete lease; hard-wrapped fact rows remain ordered. Nonterminal output stays
+complete. Use the canonical read below when comparing full facts or provenance.
 Headless `pain read` rendering preserves a caller's nonempty `MISHE_SEED_SESSION`;
 when absent or empty, it uses the session recorded in `SITE/.seed-raised` when
 available. Without a readable recorded session it leaves the variable unset.
