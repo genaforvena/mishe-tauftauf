@@ -9,12 +9,14 @@ replaceable adapter, so moving the plant does not require teaching its internal
 control logic the new site's language. This does not require strict typing or a
 single predetermined schema: ordinary Python values are sufficient.
 
-The literal approved adapter files are in `parsing-policy.json`. They currently
-cover chat lifecycle decoding, feed framing, immutable record envelopes, external
-renderer/filter input, CLI arguments and the human operator view. The checker is
-also a boundary: it reads Python source and policy files. New adapters require an
-explicit, reviewed addition of their exact path; a directory-wide exemption would
-make the constraint ineffective.
+The literal approved adapter files are in `parsing-policy.json`. They cover chat
+lifecycle decoding, feed framing, immutable record envelopes, external
+renderer/filter input, CLI arguments, the human operator view and the durable
+effect ledger. The ledger reads its append-only UTF-8 JSONL journals as a boundary:
+invalid encoding or malformed records fail closed and remain intact as evidence.
+The checker is also a boundary: it reads Python source and policy files. New
+adapters require an explicit, reviewed addition of their exact path; a
+directory-wide exemption would make the constraint ineffective.
 
 `chat_protocol.py` interprets historical wake, yield and clear receipts. A
 seed-sourced receipt's first line supplies the lifecycle kind and header fields;

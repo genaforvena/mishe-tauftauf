@@ -523,6 +523,19 @@ def test_a_truncated_or_malformed_journal_fails_closed(tmp_path):
     # The bytes remain as evidence.
     assert "operat" in outcomes.read_text()
 
+def test_invalid_utf8_journal_bytes_fail_closed_without_rewriting_evidence(tmp_path):
+    led = ledger(tmp_path)
+    intent = allocate(led)
+    led.dispatch(intent, lambda call: {"text": "ok"})
+    outcomes = led.store_dir / "outcomes.jsonl"
+    damaged = outcomes.read_bytes().replace(b'"ok"', b'"\xffk"')
+    outcomes.write_bytes(damaged)
+
+    with pytest.raises(JournalCorrupt):
+        ledger(tmp_path).reconcile("op-1")
+
+    assert outcomes.read_bytes() == damaged
+
 
 def test_a_torn_line_is_reported_by_its_real_partial_record(tmp_path):
     """A torn write is named by the bytes that lost their terminator.

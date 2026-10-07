@@ -6,6 +6,7 @@
     "src/mishe_tauftauf/observations.py",
     "src/mishe_tauftauf/cli.py",
     "src/mishe_tauftauf/operator_view.py",
+    "src/mishe_tauftauf/inference_effects.py",
     "tools/check_parsing.py"
   ],
   "legacy": {
@@ -345,22 +346,6 @@
       "dc08d8966eb33191b2f2fb120d6b77cef8fd5d8d8b247900581cec604247346d": 2,
       "ed7f4001f679ade05801e1b896182ce286c345823b0beac82c8c3013e47e2089": 1,
       "fd472bf73e19dcb035e8d99d0963b723fd53fd60458ccf2376baae7ae9707d21": 1
-    },
-    "src/mishe_tauftauf/inference_effects.py": {
-      "00f06094f854046a952f82115f5e473e6e4f45832376182f8964d9f4b9fab454": 1,
-      "6415315668906541cd932f4e7c181d5059cf955601d7d3f9d684cfa95379aed6": 1,
-      "753090059f93988d67efd87ece9fa931b9442cf02f8817de9e26918537345870": 2,
-      "805d2b3375358ffd72de7cfe071be70fd85687e274adecb14cd4f52c7f2fc0b4": 1,
-      "9d3c260c78f52aaed885f02e374bffedb7bc218c32cdaaf835b5e5d391c217f6": 1,
-      "a6a18e13d4bfbc83409e38d3e7d499f82507c2297e1a0947685c9ead9c8f2361": 1,
-      "ae573c01600a9f83db5d1801eaf77a34586620f8123a49e51f74890fac5ff999": 1,
-      "b2d11a3b847d7dcd366c22ec6b26c6d876380244f14484db5d746290dc3930e3": 1,
-      "bc1af2f7da910ae763fe1f9df6596f466b3e88f36fa4a21216baf3a91c9ab782": 1,
-      "bc3135867799300cb33a7de9c8f2d6044aea345de99118f7963fadfe15068269": 2,
-      "c0bce1ae25a1c1fd3b5055b0bc0ebae3f85088ca56f717221683d857958796c4": 2,
-      "c79b5ca1244037af196d80010b4540f5f8516968a5033ef156aa953c2f771e23": 1,
-      "dc08d8966eb33191b2f2fb120d6b77cef8fd5d8d8b247900581cec604247346d": 2,
-      "ebeccba71ac321e0530d170b0b6d056691af88abe7580589015e07a9d81a77b9": 1
     },
     "src/mishe_tauftauf/inference_inspect.py": {
       "7ce7d50c4959cfd31aecf7ac8e6245d25c9fd6863877d2f3ff6bea6c4b34892a": 1,
