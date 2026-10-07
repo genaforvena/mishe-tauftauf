@@ -3143,6 +3143,33 @@ def test_renderer_coverage_script_chain_is_unknown_without_a_pane_environment() 
     assert "script_unknown=self-development" in reading["sample"]
 
 
+def test_renderer_coverage_reports_drift_even_when_a_sibling_root_is_unresolved() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    pin = _renderer_root(Path("/tmp") / f"renderer-precedence-pin-{os.getpid()}",
+                         {"feed": "VALUE = 1\n", "wall_view": "VALUE = 1\n"})
+    renderer = _renderer_root(Path("/tmp") / f"renderer-precedence-stale-{os.getpid()}",
+                              {"feed": "VALUE = 1\n", "wall_view": "VALUE = 2\n"})
+    _top_pain(home, "senses",
+              f"export PYTHONPATH={renderer}/src\nexec python -m mishe_tauftauf.wall_view\n")
+    _top_pain(home, "self-development",
+              "from plan_state import main\n"
+              "raise SystemExit(main())\n")
+    _site_script(home, "plan_state.py", "from mishe_tauftauf.feed import Feed\n")
+    try:
+        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
+                patch("mishe_tauftauf.discovery._pane_info", return_value={}):
+            reading = discovery._renderer_coverage(home)
+    finally:
+        shutil.rmtree(pin)
+        shutil.rmtree(renderer)
+    assert reading["state"] == "drift"
+    assert "script_unknown=self-development" in reading["sample"]
+    assert reading["identity"]["drift"] == [
+        {"root": str(renderer), "entry": "wall_view", "modules": ["wall_view"]}]
+
+
 def test_pane_info_reads_role_names_from_start_commands() -> None:
     from mishe_tauftauf import discovery
     stdout = (

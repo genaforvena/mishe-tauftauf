@@ -1904,6 +1904,13 @@ def _renderer_coverage(home: Path) -> dict[str, object]:
     root the pane environment resolves. A root other than the pin is drift and
     an unresolvable one is unknown, so the indirect path never reads verified
     on environment inheritance alone.
+
+    The aggregate state ranks a definite violation above an incomplete check:
+    one drifted renderer makes the state ``drift`` even when another renderer's
+    root is unread, and the unread names stay in the sample. A pane executing
+    bytes the pin does not govern is a finding a reader must not take for merely
+    unknown, so ``unknown`` is reserved for a population with no drift found and
+    at least one root unread.
     """
     pairs, uncovered, failure = _top_pain_roots(home)
     if failure is not None:
@@ -2038,7 +2045,7 @@ def _renderer_coverage(home: Path) -> dict[str, object]:
             f"{item['entry']}=" + ",".join(item["modules"]) for item in drift))
     unresolved = (inherited_unknown or conditional_unknown or export_unknown
                   or script_unknown)
-    state = "unknown" if unresolved else ("drift" if drift else "verified")
+    state = "drift" if drift else ("unknown" if unresolved else "verified")
     return {"id": "sense.runtime.renderer-coverage",
             "state": state,
             "sample": " ".join(parts), "kind": "read",

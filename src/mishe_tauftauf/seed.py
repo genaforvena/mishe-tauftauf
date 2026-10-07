@@ -199,8 +199,11 @@ def clear_stalls(entries, *, now: datetime | None = None, timeout: float = 120):
 def _observation_text(slug: str, frame: str) -> str:
     if slug not in {"discover", "senses"}:
         return frame
+    # "DRIFT " joins "UNKNOWN " for the senses pane: both are unverified states,
+    # so both samples must reach the observation text that the wake carries.
     prefixes = ("STATE:", "UNKNOWN ", "UNAVAILABLE command.", "AVAILABLE command.",
-                "PERMISSION REQUESTS:", "REQUEST ") if slug == "discover" else ("STATE:", "UNKNOWN ")
+                "PERMISSION REQUESTS:", "REQUEST ") if slug == "discover" else (
+                    "STATE:", "UNKNOWN ", "DRIFT ")
     return "\n".join(line for line in frame.splitlines() if line.startswith(prefixes))
 
 def stale_pends(entries, *, now: datetime | None = None, timeout: float = 600):
