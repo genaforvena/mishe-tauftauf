@@ -6,6 +6,97 @@ from mishe_tauftauf import seed, wall, observations, ci_watch, post_check
 from mishe_tauftauf.feed import Feed
 
 
+from datetime import datetime, timezone
+
+def test_seed_recovers_only_a_fresh_wedge_bound_to_live_pane(tmp_path, monkeypatch):
+    from subprocess import CompletedProcess
+    home = tmp_path / "site"
+    discovery_dir = home / "discovery"
+    discovery_dir.mkdir(parents=True)
+    created = datetime.now(timezone.utc).isoformat()
+    (discovery_dir / "scan-1.json").write_text(json.dumps({
+        "created": created,
+        "observations": [{"id": "sense.mind.wedge-suspect", "state": "verified",
+                          "suspects": [{"window": "genome", "pid": 42, "chain": 12}]}],
+    }))
+    monkeypatch.setattr(seed, "_tmux", lambda *a, **k:
+                        CompletedProcess(a, 0, b"0 42\n", b""))
+    assert seed._mind_pane_wedged(home, "owned-session", "genome")
+    monkeypatch.setattr(seed, "_tmux", lambda *a, **k:
+                        CompletedProcess(a, 0, b"0 43\n", b""))
+    assert not seed._mind_pane_wedged(home, "owned-session", "genome")
+
+
+def test_seed_does_not_recover_dead_or_stale_wedge_evidence(tmp_path, monkeypatch):
+    from datetime import timedelta
+    from subprocess import CompletedProcess
+    home = tmp_path / "site"
+    discovery_dir = home / "discovery"
+    discovery_dir.mkdir(parents=True)
+    stale = (datetime.now(timezone.utc) - timedelta(minutes=31)).isoformat()
+    (discovery_dir / "scan-1.json").write_text(json.dumps({
+        "created": stale,
+        "observations": [{"id": "sense.mind.wedge-suspect", "suspects": [
+            {"window": "genome", "pid": 42},
+        ]}],
+    }))
+    monkeypatch.setattr(seed, "_tmux", lambda *a, **k:
+                        CompletedProcess(a, 0, b"1 42\n", b""))
+    assert not seed._mind_pane_wedged(home, "owned-session", "genome")
+    monkeypatch.setattr(seed, "_tmux", lambda *a, **k:
+                        CompletedProcess(a, 0, b"0 42\n", b""))
+    assert not seed._mind_pane_wedged(home, "owned-session", "genome")
+
+
+def test_seed_start_respawns_a_live_pane_with_fresh_wedge_evidence(tmp_path, monkeypatch):
+    from subprocess import CompletedProcess
+    home = tmp_path / "site"
+    (home / "top-pains").mkdir(parents=True)
+    (home / "top-pains" / "genome").write_text("#!/bin/sh\nexit 0\n")
+    (home / "top-pains" / "genome").chmod(0o755)
+    (home / "minds").mkdir()
+    (home / "minds" / "genome").write_text("#!/bin/sh\nexec true\n")
+    (home / "minds" / "genome").chmod(0o755)
+    discovery_dir = home / "discovery"
+    discovery_dir.mkdir()
+    (discovery_dir / "scan-1.json").write_text(json.dumps({
+        "created": datetime.now(timezone.utc).isoformat(),
+        "observations": [{"id": "sense.mind.wedge-suspect", "state": "verified",
+                          "suspects": [{"window": "genome", "pid": 42}]}],
+    }))
+    monkeypatch.setattr(seed, "await_owned", lambda *a: True)
+    monkeypatch.setattr(seed, "_mind_launch_argv", lambda *a: ("mind-launcher",))
+    monkeypatch.setattr(seed, "_record_mind_model", lambda *a: None)
+    monkeypatch.setattr(seed, "_state", lambda *a, **k: (None, None, None, None, None, None, None, None))
+    monkeypatch.setattr(seed.time, "sleep", lambda *a: None)
+    pid = ["42"]
+    respawns = []
+
+    def command(*args, **kwargs):
+        if args[0] == "respawn-pane":
+            respawns.append(args)
+            pid[0] = "43"
+        if args[-1] == "#{session_id}":
+            output = "$1\n"
+        elif args[0] == "list-windows":
+            output = "genome\n"
+        elif args[0] == "list-panes":
+            output = "0\n1\n"
+        elif args[-1] == "#{pane_dead} #{pane_pid}":
+            output = f"0 {pid[0]}\n"
+        elif args[-1] == "#{pane_dead}":
+            output = "0\n"
+        elif args[-1] == "#{pane_pid}":
+            output = f"{pid[0]}\n"
+        else:
+            output = "0\n"
+        return CompletedProcess(args, 0, output.encode(), b"")
+
+    monkeypatch.setattr(seed, "_tmux", command)
+    assert seed.start(home, "owned-session", "genome", 5).startswith("seed genome ready")
+    assert [call[call.index("-t") + 1] for call in respawns] == ["owned-session:genome.1"]
+
+
 def test_missing_configuration_means_open_wall_workflow(tmp_path):
     assert wall.settings(tmp_path).get("mode") == "wall"
     assert not wall.settings(tmp_path).get("until")
