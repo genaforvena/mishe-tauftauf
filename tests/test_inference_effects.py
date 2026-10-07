@@ -1190,6 +1190,35 @@ def test_boundary_drop_reserved_refuses_a_started_or_completed_operation(tmp_pat
     assert dispatch.status("report-37233-v1") is None
 
 
+def test_boundary_drop_reserved_preserves_an_ambiguous_started_operation(tmp_path):
+    """A failed receipt cannot make a possibly-effectful identity reusable."""
+    store = tmp_path / "effects"
+    dispatch = boundary(
+        tmp_path, lambda call: (_ for _ in ()).throw(OSError("lost receipt")))
+    dispatch.reserve("report-37233-v1", capability="publish-owned-report",
+                     arguments={"target": "owned-evidence"})
+    call = {"type": "toolCall", "id": "call-12",
+            "name": "publish-owned-report",
+            "arguments": {"target": "owned-evidence"}}
+
+    reply = dispatch(call, claim_for="report-37233-v1")
+    assert (reply["status"], reply["failure"]) == ("unknown", "capability-failed")
+    assert dispatch.drop_reserved("report-37233-v1") is False
+
+    fresh = boundary(tmp_path, lambda call: {"ok": True}, writer_id="loop-2")
+    state = fresh.status("report-37233-v1")
+    assert (state["status"], state["failure"]) == (
+        "unknown", "started-without-outcome")
+    with pytest.raises(ChangedContentReuse):
+        fresh.reserve("report-37233-v1", capability="publish-owned-report",
+                      arguments={"target": "different-evidence"})
+    assert fresh.status("report-37233-v1")["failure"] == "started-without-outcome"
+    assert [intent.operation_id for intent in fresh.open_intents()] == [
+        "report-37233-v1"]
+    assert (store / "starts.jsonl").read_text().strip()
+    assert (store / "outcomes.jsonl").read_text().strip() == ""
+
+
 def test_boundary_an_operation_id_can_be_caller_named(tmp_path):
     seen = []
     call = {"type": "toolCall", "id": "call-77", "name": "inspect",
