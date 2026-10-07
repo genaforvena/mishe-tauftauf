@@ -2168,9 +2168,14 @@ def _repo_branch_inventory(home: Path) -> dict[str, object]:
     pushed ``main`` SHAs), one under ``.mishe-tauftauf/worktrees/`` is the
     sanctioned preservation area and is reported, and one elsewhere is drift —
     unique commits belong on ``main`` or in the preservation area. Uncommitted
-    bytes in a non-release worktree are reported as ``dirty``. State is
-    ``unknown`` when the workspace is not a git repo or the remote cannot be
-    read.
+    bytes in a non-release worktree are reported as ``dirty``. The shared
+    checkout's untracked, non-ignored entries are named as ``strays``: a local
+    note or evidence file written against a repo-root-relative path lands there
+    rather than under the ignored site home, where a broad ``git add`` would
+    commit it — the worktree's ``dirty`` name alone would hide which bytes. The
+    state is unchanged by strays, as by ``dirty``: neither is itself a branch
+    violation. State is ``unknown`` when the workspace is not a git repo or the
+    remote cannot be read.
     """
     checkout_root = Path(home).resolve().parent
     unknown = {"id": "sense.repo.branch-inventory", "state": "unknown", "kind": "read"}
@@ -2251,14 +2256,27 @@ def _repo_branch_inventory(home: Path) -> dict[str, object]:
             # Unique commits belong on main or in the preservation area.
             drift_names.append(display(path))
     dirty_names: list[str] = []
+    strays: list[str] = []
     for path, _head in entries:
         if releases_area in Path(path).parents:
             continue  # pinned release snapshots: their bytes are the pin's business
-        status = run("-C", path, "status", "--porcelain")
+        status = run("-C", path, "status", "--porcelain", "-z")
         if status is None or status.returncode != 0:
             return unread(f"worktree status unreadable: {display(path)}")
         if status.stdout.strip():
             dirty_names.append(display(path))
+        if Path(path).resolve() == checkout_root:
+            # Untracked, non-ignored entries in the shared checkout. A local
+            # note or evidence file written against a repo-root-relative path
+            # lands here; `dirty` names the worktree but not the hazard, and a
+            # broad ``git add`` would commit it. The site's own artifacts and
+            # notes live under the ignored home, so anything untracked here is
+            # a stray the reader should see named. ``-z`` suppresses git's
+            # C-quoting, so a name with a space or a non-ASCII byte is reported
+            # as itself; the field sits before the long name lists because the
+            # pane truncates the sample.
+            strays = sorted(entry[3:] for entry in status.stdout.split("\0")
+                            if entry.startswith("?? "))
     parts = [f"local={len(local_names)}"]
     parts.append("extra=" + (",".join(extra) if extra else "none"))
     parts.append(f"remote={len(remote_names)}")
@@ -2266,6 +2284,9 @@ def _repo_branch_inventory(home: Path) -> dict[str, object]:
     parts.append(f"worktrees={len(entries)}")
     parts.append(f"nonmain={len(nonmain_names)}")
     parts.append(f"dirty={len(dirty_names)}")
+    parts.append("strays=" + (",".join(strays[:3]) if strays else "none"))
+    if len(strays) > 3:
+        parts.append(f"strays_more=+{len(strays) - 3}")
     parts.append("nonmain_names=" + (",".join(nonmain_names[:3]) if nonmain_names else "none"))
     if len(nonmain_names) > 3:
         parts.append(f"nonmain_more=+{len(nonmain_names) - 3}")
@@ -2279,6 +2300,7 @@ def _repo_branch_inventory(home: Path) -> dict[str, object]:
             "extra_remote": extra_remote, "worktrees": len(entries),
             "nonmain": len(nonmain_names), "dirty": len(dirty_names),
             "nonmain_names": nonmain_names, "dirty_names": dirty_names,
+            "strays": strays,
             "drift": drift_names}
 
 DM_TO_RE = re.compile(r"^\[dm\] to=([A-Za-z0-9_.-]+)")
