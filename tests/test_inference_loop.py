@@ -339,6 +339,29 @@ def test_failed_fsync_poisoned_writer_cannot_continue(tmp_path, monkeypatch):
         assert path.read_bytes() == before
 
 
+def test_proposal_journal_failure_prevents_dispatch(tmp_path):
+    path = tmp_path / "proposal-failure.jsonl"
+    session = Session(turn([CALL]))
+    dispatched = []
+    with NativeJournal(path) as journal:
+        def record(event):
+            if event["kind"] == "proposal":
+                raise OSError("proposal journal unavailable")
+            journal(event)
+
+        with pytest.raises(OSError, match="proposal journal unavailable"):
+            drive_native(session, CONTEXT, obligation={"source": "owned-event"},
+                         max_turns=3, max_calls=2, record=record,
+                         dispatch=lambda call: dispatched.append(call) or {
+                             "status": "completed"},
+                         phase=lambda call: None, cancelled=lambda: False,
+                         authorized=lambda call: True, complete=lambda ctx: False)
+    assert session.inputs == [CONTEXT]
+    assert dispatched == []
+    assert all(row["kind"] != "proposal"
+               for row in map(json.loads, path.read_text().splitlines()))
+
+
 def interrupted_journal(tmp_path, *, max_turns=3, max_calls=2, boundary="tool_result",
                         calls=(CALL,), outcome="completed"):
     path = tmp_path / "original.jsonl"
