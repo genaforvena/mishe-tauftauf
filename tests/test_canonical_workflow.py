@@ -27,6 +27,32 @@ def test_seed_recovers_only_a_fresh_wedge_bound_to_live_pane(tmp_path, monkeypat
     assert not seed._mind_pane_wedged(home, "owned-session", "genome")
 
 
+def test_seed_uses_newest_scan_timestamp_not_filename_order(tmp_path, monkeypatch):
+    from datetime import timedelta
+    from subprocess import CompletedProcess
+    home = tmp_path / "site"
+    discovery_dir = home / "discovery"
+    discovery_dir.mkdir(parents=True)
+    now = datetime.now(timezone.utc)
+    suspect = {"id": "sense.mind.wedge-suspect", "state": "verified",
+               "suspects": [{"window": "genome", "pid": 42}]}
+    clear = {"id": "sense.mind.wedge-suspect", "state": "verified", "suspects": []}
+    (discovery_dir / "scan-z.json").write_text(json.dumps({
+        "created": (now - timedelta(seconds=2)).isoformat(), "observations": [suspect],
+    }))
+    (discovery_dir / "scan-a.json").write_text(json.dumps({
+        "created": (now - timedelta(seconds=1)).isoformat(), "observations": [clear],
+    }))
+    monkeypatch.setattr(seed, "_tmux", lambda *a, **k:
+                        CompletedProcess(a, 0, b"0 42\n", b""))
+    assert not seed._mind_pane_wedged(home, "owned-session", "genome")
+
+    (discovery_dir / "scan-b.json").write_text(json.dumps({
+        "created": (now - timedelta(milliseconds=500)).isoformat(), "observations": [suspect],
+    }))
+    assert seed._mind_pane_wedged(home, "owned-session", "genome")
+
+
 def test_seed_does_not_recover_dead_or_stale_wedge_evidence(tmp_path, monkeypatch):
     from datetime import timedelta
     from subprocess import CompletedProcess
