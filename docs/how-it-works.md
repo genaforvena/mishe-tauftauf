@@ -233,8 +233,10 @@ return a context manager. Pending or ambiguous histories and exhausted turn budg
 never open a session; missing checkpoints refuse before the factory. A stopped
 journal is refused too — including one stopped at `transport-receipt-after-exit`,
 whose receipt from an exited worker cannot certify the provider state the caller
-means to continue. Continuation seeds retain the checkpoint across interruption
-before the next model input.
+means to continue. That terminal leaves the journal's used call IDs empty —
+dispatch never ran — unlike a dispatch exception, which leaves an open intent
+a successor must reconcile. Continuation seeds retain the checkpoint across
+interruption before the next model input.
 There is no caller-supplied checkpoint or result override. Journal ownership and
 current original-effect authority remain caller obligations; this does not
 authenticate edited journal bytes or establish live resident recovery.
