@@ -91,7 +91,10 @@ for a file made for this one outcome. The three requirements are independent: a
 file can be unedited yet sit outside `artifacts/`, or be cited by a second
 outcome, and is ineligible for that reason alone. Being inside `artifacts/` is
 not sufficient by itself either — wake notes and other working files that a later
-turn may edit are ineligible even there.
+turn may edit are ineligible even there. `wall outcome` applies the write-once
+rule from the clause time onward: it refuses a path another post-clause outcome
+already bound, and it fails rather than skipping the check when the bound set
+cannot be derived — a missing `records/` directory or an unparseable tape.
 Kinds are `accepted`, `blocker-resolved`, `blocker-retired`, and
 `hypothesis-changed`. The immutable reference binds the evidence digest. These
 are author reports, not independent acceptance. Do not report unchanged status
