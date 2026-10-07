@@ -94,7 +94,19 @@ not sufficient by itself either — wake notes and other working files that a la
 turn may edit are ineligible even there. `wall outcome` applies the write-once
 rule from the clause time onward: it refuses a path another post-clause outcome
 already bound, and it fails rather than skipping the check when the bound set
-cannot be derived — a missing `records/` directory or an unparseable tape.
+cannot be derived — missing/corrupt records, malformed publications, a missing
+`records/` directory or an unparseable tape. Writer and observer use the same
+publication classification. An outcome is the canonical `Wall outcome KIND by
+ROLE` header, reported text and verified standalone immutable reference; its
+identity is the site's tape sequence, not its content digest. Each event's own
+timestamp determines clause eligibility, so an identical new post-clause outcome
+binds again, while an ordinary inline or verified reference-only citation does not.
+A damaged/displaced reserved header or a standalone outcome reference with a
+replaced header leaves explicit incomplete coverage. Unresolved standalone
+references remain incomplete until proven non-outcomes. The observer reports
+UNKNOWN for incomplete coverage without violations, or retains known DRIFT plus
+the gap; it never silently certifies the readable subset. Latest-per-role ties
+use tape sequence; historical violations remain in the standing audit.
 Kinds are `accepted`, `blocker-resolved`, `blocker-retired`, and
 `hypothesis-changed`. The immutable reference binds the evidence digest. These
 are author reports, not independent acceptance. Do not report unchanged status

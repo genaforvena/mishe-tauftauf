@@ -10,78 +10,25 @@ import re
 import shlex
 
 from .feed import Feed
+from .outcome_events import OUTCOME_KINDS, classify_outcomes
 
-OUTCOME_KINDS = ("accepted", "blocker-resolved", "blocker-retired", "hypothesis-changed")
 WALL_MAX_BYTES = 16384
 """Hard byte bound for one edited wall; walls are bounded prose, unlike chat.log."""
 WALL_MAX_LINES = 200
 """Hard line bound for one edited wall; keeps the pane readable."""
 
-_RECORD_REF_RE = re.compile(r"\[record\] records/([0-9a-f]{64})\.json sha256=[0-9a-f]{64}")
 
 
 def _bound_evidence_paths(home: Path) -> set[str]:
-    """Return the set of evidence paths already bound by post-clause wall outcomes.
-
-    A wall outcome binds its evidence file with ``payload.evidence.path`` at
-    record time. The D-check refuses an evidence path that is already bound by
-    another post-clause outcome, enforcing the write-once evidence rule.
-
-    The clause time is ``EVIDENCE_BINDING_CLAUSE_TIME`` from ``discovery.py``;
-    outcomes recorded earlier are not bound by it.
-
-    Raises ``ValueError`` when the bound set cannot be derived (fail-closed).
-    """
+    """Derive post-clause event bindings, failing closed on incomplete coverage."""
     from .discovery import EVIDENCE_BINDING_CLAUSE_TIME
-    from .feed import parse_feed
-    tape_path = home / "chat.log"
-    if not tape_path.exists():
+    coverage = classify_outcomes(home, EVIDENCE_BINDING_CLAUSE_TIME)
+    if coverage["unavailable"] == "chat tape unavailable" and not (home / "chat.log").exists():
         return set()
-    try:
-        entries = parse_feed(tape_path.read_bytes(), home=home)
-    except (OSError, ValueError) as exc:
-        raise ValueError(f"cannot derive bound evidence paths: {exc}") from exc
-    # The timestamp lives on the feed entry, not on the record: `records.prepare`
-    # writes {version, kind, payload} only, and a record is content-addressed by
-    # exactly that content, so no wall-outcome record carries a timestamp. The
-    # entry that cites the record is the only place its time is recorded.
-    cited: dict[str, datetime] = {}
-    for entry in entries:
-        match = _RECORD_REF_RE.search(entry.body)
-        if not match:
-            continue
-        try:
-            cited_time = datetime.fromisoformat(
-                entry.timestamp.removesuffix("Z") + "+00:00")
-        except ValueError:
-            continue
-        cited.setdefault(match.group(1), cited_time)
-    records_dir = home / "records"
-    if not records_dir.is_dir():
-        raise ValueError("cannot derive bound evidence paths: records/ directory missing")
-    bound: set[str] = set()
-    for sha, cited_time in cited.items():
-        if cited_time < EVIDENCE_BINDING_CLAUSE_TIME:
-            # The write-once rule applies from the clause time onward; an outcome
-            # recorded earlier is not bound by it.
-            continue
-        path = records_dir / f"{sha}.json"
-        try:
-            record = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if not isinstance(record, dict) or record.get("kind") != "wall-outcome":
-            continue
-        payload = record.get("payload")
-        if not isinstance(payload, dict):
-            continue
-        evidence = payload.get("evidence")
-        if not isinstance(evidence, dict):
-            continue
-        path_str = evidence.get("path")
-        if isinstance(path_str, str):
-            bound.add(path_str)
-    return bound
+    if coverage["unavailable"] or coverage["incomplete"]:
+        raise ValueError("cannot derive bound evidence paths: " +
+                         str(coverage["unavailable"] or coverage["incomplete"]))
+    return {row["evidence"]["path"] for row in coverage["events"]}
 
 
 def outcome(home: Path, role: str, kind: str, text: str, evidence: Path):

@@ -95,6 +95,13 @@ def payload(entry) -> dict:
         if not isinstance(data, dict):
             raise ValueError("control payload must be an object")
         return data
+    return envelope(entry)["payload"]
+
+
+def envelope(entry) -> dict:
+    """Verify and return an immutable envelope, including its publication kind."""
+    refs = [line for line in entry.body.splitlines()
+            if line.lstrip().startswith("[record]")]
     if len(refs) != 1 or not (match := REFERENCE_RE.fullmatch(refs[0])):
         raise ValueError("missing or invalid immutable record reference")
     digest, expected = match.groups()
@@ -116,4 +123,4 @@ def payload(entry) -> dict:
             not isinstance(record.get("kind"), str) or not record["kind"] or
             not isinstance(record.get("payload"), dict)):
         raise ValueError("invalid immutable record envelope")
-    return record["payload"]
+    return record

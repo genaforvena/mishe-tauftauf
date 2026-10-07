@@ -716,6 +716,41 @@ def test_wall_outcome_ignores_an_outcome_recorded_before_the_clause_time(tmp_pat
             if entry.body.startswith("Wall outcome accepted")]
 
 
+
+def test_wall_outcome_counts_post_clause_replay_of_pre_clause_record(tmp_path):
+    from mishe_tauftauf import wall, records
+    from mishe_tauftauf.discovery import EVIDENCE_BINDING_CLAUSE_TIME
+    setup_wall(tmp_path)
+    evidence = tmp_path / "artifacts" / "sample.md"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text("control=4 candidate=4")
+    wall.outcome(tmp_path, "discover", "hypothesis-changed", "Old outcome.", evidence)
+    old = Feed(tmp_path).entries()[-1]
+    before = (EVIDENCE_BINDING_CLAUSE_TIME
+              - timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+    _backdate_entry(tmp_path, old.sequence, before)
+    Feed(tmp_path).append_record(old.source, "\n".join(old.body.splitlines()[:-1]),
+                                 records.payload(old), kind="wall-outcome")
+    with pytest.raises(ValueError, match="already bound"):
+        wall.outcome(tmp_path, "health", "accepted", "Replay refused.", evidence)
+
+
+def test_wall_outcome_does_not_bind_an_inline_historical_citation(tmp_path):
+    from mishe_tauftauf import wall
+    from mishe_tauftauf.discovery import EVIDENCE_BINDING_CLAUSE_TIME
+    setup_wall(tmp_path)
+    evidence = tmp_path / "artifacts" / "sample.md"
+    evidence.parent.mkdir()
+    evidence.write_text("immutable evidence\n")
+    wall.outcome(tmp_path, "discover", "accepted", "Old contribution.", evidence)
+    old = Feed(tmp_path).entries()[-1]
+    before = (EVIDENCE_BINDING_CLAUSE_TIME - timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+    _backdate_entry(tmp_path, old.sequence, before)
+    Feed(tmp_path).append("health", "Historical citation: " + old.body.splitlines()[-1])
+    wall.outcome(tmp_path, "health", "accepted", "Actual new contribution.", evidence)
+    with pytest.raises(ValueError, match="already bound"):
+        wall.outcome(tmp_path, "senses", "accepted", "Another contribution.", evidence)
+
 def test_delivery_dashboard_separates_source_and_runtime_and_marks_incomplete(tmp_path, monkeypatch):
     from mishe_tauftauf import wall_view
     home = tmp_path / "site"
