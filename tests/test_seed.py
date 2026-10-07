@@ -766,6 +766,26 @@ def test_seed_adds_live_channel_to_existing_owned_session(tmp_path: Path) -> Non
     finally:
         tmux("kill-session", "-t", session)
 
+def test_seed_stop_still_refuses_a_session_start_never_adopted(tmp_path: Path) -> None:
+    """stop's receipt guard must survive: no start, no receipt, no kill.
+
+    An owned session that seed start never adopted has no receipt, so stop
+    must refuse to kill it — the safety path a healed start must not erode.
+    """
+    home = seeded_home(tmp_path)
+    session = f"mishe-tauftauf-test-{os.getpid()}-{uuid.uuid4().hex[:10]}"
+    assert cli(home, "init", "--slug", "genome").returncode == 0
+    assert tmux("new-session", "-d", "-s", session, "-n", "operator", "sh").returncode == 0
+    assert tmux("set-option", "-t", session, "@mishe-tauftauf-home", str(home.resolve())).returncode == 0
+    try:
+        assert not (home / ".seed-raised").exists()
+        refused = cli(home, "stop", "--session", session)
+        assert refused.returncode == 2
+        assert "not raised by this seed" in refused.stderr
+        assert tmux("has-session", "-t", session).returncode == 0
+    finally:
+        tmux("kill-session", "-t", session)
+
 
 def test_seed_witness_profile_reads_chat_and_reports_missing_channels(tmp_path: Path) -> None:
     home = seeded_home(tmp_path)
