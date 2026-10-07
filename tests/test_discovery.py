@@ -2939,6 +2939,58 @@ def test_renderer_coverage_names_a_module_the_renderer_root_lacks() -> None:
         {"root": str(renderer), "entry": "wall_view", "modules": ["feed"]}]
 
 
+def test_renderer_coverage_dedupes_drift_rows_sharing_a_root_and_modules() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    pin = _renderer_root(Path("/tmp") / f"renderer-dedupe-pin-{os.getpid()}",
+                         {"wall_view": "VALUE = 1\n"})
+    renderer = _renderer_root(Path("/tmp") / f"renderer-dedupe-stale-{os.getpid()}",
+                              {"wall_view": "VALUE = 2\n"})
+    for role in ("senses", "docs", "discover"):
+        _top_pain(home, role,
+                  f"export PYTHONPATH={renderer}/src\nexec python -m mishe_tauftauf.wall_view\n")
+    try:
+        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
+                patch("mishe_tauftauf.discovery._pane_info", return_value={}):
+            reading = discovery._renderer_coverage(home)
+    finally:
+        shutil.rmtree(pin)
+        shutil.rmtree(renderer)
+    # Three roles render from one stale root with one module set: that is one
+    # violation, so nothing distinct is left unshown and no ``+Nmore`` appears.
+    assert reading["state"] == "drift"
+    assert reading["sample"] == "renderers=3 drift=wall_view=wall_view"
+    assert len(reading["identity"]["drift"]) == 3
+
+
+def test_renderer_coverage_caps_the_drift_sample_and_counts_the_rest() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    modules = ("wall_view", "seed_culture_views", "feed", "wall")
+    pin = _renderer_root(Path("/tmp") / f"renderer-cap-pin-{os.getpid()}",
+                         {name: "VALUE = 1\n" for name in modules})
+    renderer = _renderer_root(Path("/tmp") / f"renderer-cap-stale-{os.getpid()}",
+                              {name: "VALUE = 2\n" for name in modules})
+    for module, role in zip(modules, ("senses", "docs", "discover", "genome")):
+        _top_pain(home, role,
+                  f"export PYTHONPATH={renderer}/src\nexec python -m mishe_tauftauf.{module}\n")
+    try:
+        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
+                patch("mishe_tauftauf.discovery._pane_info", return_value={}):
+            reading = discovery._renderer_coverage(home)
+    finally:
+        shutil.rmtree(pin)
+        shutil.rmtree(renderer)
+    # The pane truncates the sample, so the drift list leads it and only two
+    # distinct violations are shown; ``+Nmore`` names the rest.
+    assert reading["state"] == "drift"
+    assert reading["sample"].startswith("renderers=4 drift=")
+    assert reading["sample"].endswith(" +2more")
+    assert "script_unknown" not in reading["sample"]
+
+
 def test_renderer_coverage_reports_verified_when_the_renderer_matches_the_pin() -> None:
     from mishe_tauftauf import discovery
 

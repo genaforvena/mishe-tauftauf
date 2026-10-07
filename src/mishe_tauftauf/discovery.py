@@ -1911,6 +1911,10 @@ def _renderer_coverage(home: Path) -> dict[str, object]:
     bytes the pin does not govern is a finding a reader must not take for merely
     unknown, so ``unknown`` is reserved for a population with no drift found and
     at least one root unread.
+
+    The pane truncates the sample, so the drift list leads it and is capped at
+    two distinct violations with ``+Nmore``; the unread names follow. A reader
+    who sees ``drift`` sees what drifted, and the identity keeps every row.
     """
     pairs, uncovered, failure = _top_pain_roots(home)
     if failure is not None:
@@ -2028,6 +2032,22 @@ def _renderer_coverage(home: Path) -> dict[str, object]:
             identity_renderers.append(f"{effective_root}:mishe_tauftauf.{module}:script-chain")
 
     parts = [f"renderers={len(pairs)}"]
+    if drift:
+        # The pane truncates the sample, so the definite violation leads and is
+        # capped: a reader who sees ``drift`` must see what drifted, not only
+        # that some other renderer's root was unread. Renderers that share a
+        # root and a module set are one violation, not one row per role.
+        rows: list[str] = []
+        seen: set[tuple[str, str, tuple[str, ...]]] = set()
+        for item in drift:
+            key = (str(item["root"]), str(item["entry"]), tuple(item["modules"]))
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(f"{item['entry']}=" + ",".join(item["modules"]))
+        shown = rows[:2]
+        parts.append("drift=" + " ".join(shown)
+                     + (f" +{len(rows) - len(shown)}more" if len(rows) > len(shown) else ""))
     if inherited_unknown:
         parts.append("inherited_unknown=" + ",".join(sorted(inherited_unknown)))
     if conditional_unknown:
@@ -2040,9 +2060,6 @@ def _renderer_coverage(home: Path) -> dict[str, object]:
         parts.append("uncovered=" + ",".join(sorted(uncovered)))
     if indirect:
         parts.append("indirect_package=" + ",".join(sorted(indirect)))
-    if drift:
-        parts.append("drift=" + " ".join(
-            f"{item['entry']}=" + ",".join(item["modules"]) for item in drift))
     unresolved = (inherited_unknown or conditional_unknown or export_unknown
                   or script_unknown)
     state = "drift" if drift else ("unknown" if unresolved else "verified")
