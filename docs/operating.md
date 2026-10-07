@@ -371,7 +371,10 @@ still read verified. The renderer coverage sense
 (`sense.runtime.renderer-coverage`) reads each Top Pain's exported root and
 entry module, hashes that module's package import closure in the renderer root
 and in the pin, and reports `drift` naming every module that differs or is
-missing on either side; the sample opens with `renderers=N`, the renderers it
+missing on either side; the state reads `drift` even when another renderer's
+root is unread, with the unread names kept in the sample
+(`script_unknown=…`), so a definite violation is never demoted to `unknown`
+by an unread sibling. The sample opens with `renderers=N`, the renderers it
 checked. A renderer that does not export `PYTHONPATH` inherits its root from the
 pane watcher's environment; the sense reads that root from the watcher process's
 live environment (falling back to the pane's start command) and reports
