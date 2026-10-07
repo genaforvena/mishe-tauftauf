@@ -87,6 +87,10 @@ for a fact plus its instructions and footer displays UNKNOWN without a new lease
 Tmux capture joins soft-wrapped footer lines so a narrow pane still exposes the
 complete lease; hard-wrapped fact rows remain ordered. Nonterminal output stays
 complete. Use the canonical read below when comparing full facts or provenance.
+Surface checks must acquire the relevant measured row across reachable pages;
+a single continuation need not contain it. Match the source's complete measured
+value, not a substring that also appears in desired state or unrelated headlines.
+Check lease advancement separately from sensor transitions.
 Headless `pain read` rendering preserves a caller's nonempty `MISHE_SEED_SESSION`;
 when absent or empty, it uses the session recorded in `SITE/.seed-raised` when
 available. Without a readable recorded session it leaves the variable unset.

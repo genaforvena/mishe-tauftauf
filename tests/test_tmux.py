@@ -12,11 +12,23 @@ from pathlib import Path
 from unittest import mock
 
 from mishe_tauftauf.cli import initialize, main
-from mishe_tauftauf.tmux import capture_raw, check_pane, repair_top, start, stop
+from mishe_tauftauf.tmux import capture_raw, check_pane, lease_value, repair_top, start, stop
 
 
 @unittest.skipUnless(os.environ.get("PATH") and __import__("shutil").which("tmux"), "tmux unavailable")
 class TmuxTests(unittest.TestCase):
+    def _wait_measured(self, session, value, timeout=4.0):
+        """Acquire the sensor's exact measured row across viewport pages."""
+        expected = f"MEASURED STATE: {value}"
+        deadline = time.monotonic() + timeout
+        captured = ""
+        while time.monotonic() < deadline:
+            captured = capture_raw(session, "sensor")
+            if expected in captured.splitlines() and lease_value(captured) is not None:
+                return captured
+            time.sleep(0.05)
+        self.fail(f"measured row {expected!r} not reachable within {timeout}s:\n{captured}")
+
     def test_real_red_green_surface_and_advancing_lease(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory); initialize(home)
@@ -24,20 +36,16 @@ class TmuxTests(unittest.TestCase):
             freeze = home / "freeze"
             renderer = home / "top-pains" / "sensor"
             renderer.write_text(
-                f"#!/bin/sh\n[ -e {freeze} ] && sleep 30\nprintf 'DESIRED STATE: green\\n'; cat {fixture}\n",
+                f"#!/bin/sh\n[ -e {freeze} ] && sleep 30\nprintf 'DESIRED STATE: green\\nMEASURED STATE: '; cat {fixture}\n",
                 encoding="utf-8",
             )
             renderer.chmod(0o755)
             session = f"mishe-tauftauf-test-{os.getpid()}"
             try:
                 start(home, session, interval=0.2)
-                for _ in range(40):
-                    red = capture_raw(session, "sensor")
-                    if "red" in red and "-- pane live " in red:
-                        break
-                    time.sleep(0.1)
-                self.assertIn("red", red)
-                lease1 = [line for line in red.splitlines() if "-- pane live " in line][-1]
+                red = self._wait_measured(session, "red")
+                self.assertNotIn("MEASURED STATE: green", red.splitlines())
+                lease1 = lease_value(red)
                 deadline = time.monotonic() + 2.0
                 lease2 = lease1
                 while time.monotonic() < deadline:
@@ -50,8 +58,7 @@ class TmuxTests(unittest.TestCase):
                     time.sleep(0.05)
                 self.assertNotEqual(lease1, lease2, "pane-live lease did not advance within 2 seconds")
                 fixture.write_text("green\n", encoding="utf-8")
-                time.sleep(0.4)
-                self.assertIn("green", capture_raw(session, "sensor"))
+                self._wait_measured(session, "green")
                 ok, line = check_pane(home, session, "sensor", wait=0.4)
                 self.assertTrue(ok, line)
                 # Hang the owned renderer inside its bounded probe: the lease must freeze.
@@ -63,8 +70,7 @@ class TmuxTests(unittest.TestCase):
                 freeze.unlink()
                 repaired, detail = repair_top(home, session, "sensor")
                 self.assertTrue(repaired, detail)
-                time.sleep(0.5)
-                self.assertIn("green", capture_raw(session, "sensor"))
+                self._wait_measured(session, "green")
                 repaired, detail = repair_top(home, session, "sensor")
                 self.assertFalse(repaired)
                 self.assertIn("recurrence within", detail)
@@ -100,7 +106,7 @@ class TmuxTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory); initialize(home)
             renderer = home / "top-pains" / "sensor"
-            renderer.write_text("#!/bin/sh\nprintf 'DESIRED STATE: green\\n'\n", encoding="utf-8")
+            renderer.write_text("#!/bin/sh\nprintf 'MEASURED STATE: green\\n'\n", encoding="utf-8")
             renderer.chmod(0o755)
             impostor = home / ".mishe-tuftauf"
             # An initialized but unrelated site reaches the ownership gate;
@@ -109,11 +115,7 @@ class TmuxTests(unittest.TestCase):
             session = f"mishe-tauftauf-test-{os.getpid()}"
             try:
                 start(home, session, interval=0.2)
-                for _ in range(40):
-                    if "green" in capture_raw(session, "sensor"):
-                        break
-                    time.sleep(0.25)
-                self.assertIn("green", capture_raw(session, "sensor"))
+                self._wait_measured(session, "green")
                 wrong = subprocess.run(
                     [sys.executable, "-m", "mishe_tauftauf", "--home", str(impostor),
                      "pain", "read", "sensor", "--launcher", "tmux", "--session", session],
@@ -125,7 +127,7 @@ class TmuxTests(unittest.TestCase):
                      "pain", "read", "sensor", "--launcher", "tmux", "--session", session],
                     capture_output=True, text=True)
                 self.assertEqual(right.returncode, 0, right.stderr)
-                self.assertIn("green", right.stdout)
+                self.assertIsNotNone(lease_value(right.stdout))
             finally:
                 stop(home, session)
 
