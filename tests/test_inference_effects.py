@@ -1500,3 +1500,49 @@ def test_a_second_operation_cannot_take_a_call_an_outcome_already_discharged(
     assert [row["operation_id"] for row in outcomes] == [first["operation_id"]]
     # The first operation is still the one this provider call resolves to.
     assert fresh.recover(call)["operation_id"] == first["operation_id"]
+
+
+def test_a_boundary_signal_from_a_capability_is_not_reported_as_a_capability_failure(
+        tmp_path):
+    """A signal this module defines is a store signal, not a capability crash.
+
+    `dispatch` re-raises the exceptions that name durable store state so the
+    caller learns the store instead of an effect verdict. `ChangedContentReuse`,
+    `CallIdConflict` and the journal classes propagate; `AlreadyExecuted` and
+    `ConcurrentClaim` did not, so a capability that raised either was reported
+    as `unknown` / `capability-failed` — the same reply the boundary gives for
+    an effect that may have happened but lost its receipt. A caller cannot
+    distinguish "the store refused this operation" from "the capability crashed
+    mid-effect", so a caller that treats `capability-failed` as evidence of an
+    unknown effect would record a durable unknown for an operation the store
+    had already refused to start.
+    """
+    for signal, message in ((AlreadyExecuted,
+                             "operation_id op-finished already has an outcome record"),
+                            (ConcurrentClaim,
+                             "a second writer disputed this operation id")):
+        store_dir = tmp_path / f"effects-{signal.__name__}"
+        raised = EffectBoundary(store_dir,
+                                execute=lambda call: (_ for _ in ()).throw(
+                                    signal(message)),
+                                writer_id="loop-1",
+                                obligation={"source": "owned-event"},
+                                authority="marker_root:read-owned-evidence")
+        with pytest.raises(signal):
+            raised(NATIVE_CALL)
+        # The store's refusal is not an effect, so nothing was recorded.
+        assert not (store_dir / "outcomes.jsonl").read_text().strip()
+
+
+def test_every_exception_the_module_defines_reaches_the_loop_through_dispatch(
+        tmp_path):
+    """`dispatch` re-raises every signal this module defines, not a subset."""
+    signals = [AlreadyExecuted, ConcurrentClaim, StoreUnavailable, JournalCorrupt,
+               ChangedContentReuse, CallIdConflict]
+    for signal in signals:
+        store_dir = tmp_path / f"effects-{signal.__name__}"
+        led = EffectLedger(store_dir, writer_id=f"loop-{signal.__name__}")
+        intent = allocate(led, operation_id=f"op-{signal.__name__}")
+        with pytest.raises(signal):
+            led.dispatch(intent, lambda call: (_ for _ in ()).throw(signal("x")))
+        assert not (store_dir / "outcomes.jsonl").read_text().strip()

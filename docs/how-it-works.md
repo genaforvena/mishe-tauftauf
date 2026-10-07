@@ -113,6 +113,14 @@ outcome or an explicit `unknown`, never a second execution. The scope is a
 single local store and single writer per process; process-crash recovery, not
 power loss.
 
+Every exception this module defines reaches the caller from dispatch instead of
+the generic `unknown` / `capability-failed` reply: `AlreadyExecuted` and
+`ConcurrentClaim` name durable store decisions made before any effect, so they
+are re-raised like `StoreUnavailable`, `JournalCorrupt` and `ChangedContentReuse`
+rather than reported as a capability that crashed mid-effect. The generic branch
+is reserved for an exception that establishes nothing about whether the effect
+happened, which is exactly why a store verdict must not be routed through it.
+
 Two statuses the loop accepts are not branches of this boundary. `partial` parses
 from the journal but nothing here writes it — an effect is recorded once as
 `completed` or left with no outcome at all, which reads back as `unknown` — so it
