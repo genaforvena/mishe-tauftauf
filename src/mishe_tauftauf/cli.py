@@ -225,6 +225,7 @@ def cmd_pain_read(args) -> int:
 def cmd_pain_watch(args) -> int:
     validate_slug(args.slug)
     feed = Feed(args.home)
+    tick = 0
     try:
         while True:
             ok = False
@@ -235,20 +236,31 @@ def cmd_pain_watch(args) -> int:
                 from .seed import _state
                 _, pending, settled, cleared, *_ = _state(args.home, args.slug, entries=entries)
                 status = f"pending={pending or 'none'} yield={settled or 'none'} clear={cleared or 'none'}"
-                frame = rendered.body
-                if not frame.endswith("\n"):
-                    frame += "\n"
-                frame += f"-- {FOOTER_WAKE_LABEL}: {status} --\n"
+                body = rendered.body
+                if not body.endswith("\n"):
+                    body += "\n"
+                footer = f"-- {FOOTER_WAKE_LABEL}: {status} --\n"
             except FeedError as exc:
                 ok = False
-                frame = (
+                body = (
                     "STATE: RED — chat feed is malformed; repair the framed feed before retrying\n"
                     f"FEED ERROR: {exc}\n"
                 )
-            frame += f"-- pane live {utc_now()} · refresh {args.interval:g}s · ticks every frame --\n"
+                footer = ""
+            footer += f"-- pane live {utc_now()} · refresh {args.interval:g}s · ticks every frame --\n"
+            frame = body + footer
             from .dashboard import publish
             publish(args.home, args.slug, frame, ok)
-            sys.stdout.write("\x1b[H\x1b[2J" + frame)
+            displayed = frame
+            if sys.stdout.isatty():
+                from .viewport import project
+                try:
+                    size = os.get_terminal_size(sys.stdout.fileno())
+                    displayed = project(body, footer, args.slug, size.columns, size.lines, tick)
+                except OSError:
+                    displayed = "UNKNOWN — terminal geometry unavailable"
+            sys.stdout.write("\x1b[H\x1b[2J" + displayed)
+            tick += 1
             sys.stdout.flush()
             time.sleep(args.interval)
     except KeyboardInterrupt:
