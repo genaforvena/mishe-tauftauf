@@ -230,8 +230,11 @@ covers nine loop causes a reconciling caller may need to tell apart.
 checkpoint, exact completed results and original budgets from that caller journal,
 then opens a fresh session through `open_session(checkpoint=...)`. The factory must
 return a context manager. Pending or ambiguous histories and exhausted turn budgets
-never open a session; missing checkpoints refuse before the factory. Continuation
-seeds retain the checkpoint across interruption before the next model input.
+never open a session; missing checkpoints refuse before the factory. A stopped
+journal is refused too — including one stopped at `transport-receipt-after-exit`,
+whose receipt from an exited worker cannot certify the provider state the caller
+means to continue. Continuation seeds retain the checkpoint across interruption
+before the next model input.
 There is no caller-supplied checkpoint or result override. Journal ownership and
 current original-effect authority remain caller obligations; this does not
 authenticate edited journal bytes or establish live resident recovery.
