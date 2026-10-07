@@ -10,9 +10,9 @@ from mishe_tauftauf.feed import Feed
 def site(tmp_path):
     home = tmp_path / 'site'
     home.mkdir()
+    (home / 'records').mkdir()
     Feed(home).append('operator', '[wish] Investigate forgotten requests')
-    wake = Feed(home).append('seed', 'seed wake witness observation=1\nReal obligation.')
-    return home, wake.sequence
+    return home, None
 
 
 def configure(home, tmp_path, response=None):
