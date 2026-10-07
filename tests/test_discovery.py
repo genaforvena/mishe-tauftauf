@@ -1033,7 +1033,8 @@ def test_wedge_chain_3_span_30min_is_suspect(monkeypatch, tmp_path):
     _wedge_clock(monkeypatch)
     result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
     assert result == {"chain": 3, "span_minutes": 30.0,
-                      "sources": {"automatic-retry": 3}, "cause": "none"}
+                      "sources": {"automatic-retry": 3}, "cause": "none",
+                      "last_error_ts": None, "error_count": 0}
 
 
 def test_wedge_chain_below_3_is_not_suspect(monkeypatch, tmp_path):
@@ -1046,7 +1047,8 @@ def test_wedge_chain_below_3_is_not_suspect(monkeypatch, tmp_path):
     _wedge_clock(monkeypatch)
     result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
     assert result == {"chain": 2, "span_minutes": 10.0,
-                      "sources": {"automatic-retry": 2}, "cause": "none"}
+                      "sources": {"automatic-retry": 2}, "cause": "none",
+                      "last_error_ts": None, "error_count": 0}
 
 
 def test_wedge_span_below_15min_is_not_suspect(monkeypatch, tmp_path):
@@ -1060,7 +1062,8 @@ def test_wedge_span_below_15min_is_not_suspect(monkeypatch, tmp_path):
     _wedge_clock(monkeypatch)
     result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
     assert result == {"chain": 3, "span_minutes": 10.0,
-                      "sources": {"automatic-retry": 3}, "cause": "none"}
+                      "sources": {"automatic-retry": 3}, "cause": "none",
+                      "last_error_ts": None, "error_count": 0}
 
 
 def test_wedge_chain_resets_on_success(monkeypatch, tmp_path):
@@ -1072,7 +1075,8 @@ def test_wedge_chain_resets_on_success(monkeypatch, tmp_path):
     monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
     _wedge_clock(monkeypatch)
     result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
-    assert result == {"chain": 0, "span_minutes": 0.0, "sources": {}, "cause": "none"}
+    assert result == {"chain": 0, "span_minutes": 0.0, "sources": {}, "cause": "none",
+                      "last_error_ts": None, "error_count": 0}
 
 
 def test_wedge_no_log_returns_none(monkeypatch):
@@ -1086,7 +1090,8 @@ def test_wedge_empty_log_is_chain_zero(monkeypatch, tmp_path):
     monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
     _wedge_clock(monkeypatch)
     result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
-    assert result == {"chain": 0, "span_minutes": 0.0, "sources": {}, "cause": "none"}
+    assert result == {"chain": 0, "span_minutes": 0.0, "sources": {}, "cause": "none",
+                      "last_error_ts": None, "error_count": 0}
 
 
 def test_wedge_sense_flags_wedged_mind(monkeypatch, tmp_path):
@@ -1176,7 +1181,8 @@ def test_wedge_chain_counts_all_continue_sources(monkeypatch, tmp_path):
                       "sources": {"automatic-retry": 1,
                                   "stream-stall-continue": 1,
                                   "todo-reminder": 1},
-                      "cause": "none"}
+                      "cause": "none",
+                      "last_error_ts": None, "error_count": 0}
 
 
 def test_wedge_chain_only_success_resets(monkeypatch, tmp_path):
@@ -1191,7 +1197,8 @@ def test_wedge_chain_only_success_resets(monkeypatch, tmp_path):
     _wedge_clock(monkeypatch)
     result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
     assert result == {"chain": 2, "span_minutes": 60.0,
-                      "sources": {"automatic-retry": 2}, "cause": "none"}
+                      "sources": {"automatic-retry": 2}, "cause": "none",
+                      "last_error_ts": None, "error_count": 0}
 
 
 def test_wedge_chain_records_sourceless_continue(monkeypatch, tmp_path):
@@ -1208,7 +1215,8 @@ def test_wedge_chain_records_sourceless_continue(monkeypatch, tmp_path):
     _wedge_clock(monkeypatch)
     result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
     assert result == {"chain": 3, "span_minutes": 60.0,
-                      "sources": {"unknown": 3}, "cause": "none"}
+                      "sources": {"unknown": 3}, "cause": "none",
+                      "last_error_ts": None, "error_count": 0}
 
 
 def _provider_error(timestamp: str, status: int | None = None,
@@ -1290,6 +1298,132 @@ def test_wedge_sense_sample_carries_the_cause(monkeypatch, tmp_path):
     assert result["suspects"][0]["cause"] == "provider-error:500"
     assert ("health(pid=12345,chain=3,span=30.0min,"
             "src=automatic-retry:3,cause=provider-error:500)") in result["sample"]
+
+def test_wedge_r2_provider_error_stale_is_suspect(monkeypatch, tmp_path):
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _provider_error("2026-10-06T13:30:00+00:00", 403),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
+    _wedge_clock(monkeypatch)
+    result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
+    assert result["chain"] == 0
+    assert result["cause"] == "provider-error:403"
+    assert result["last_error_ts"] == "2026-10-06T13:30:00+00:00"
+    assert result["error_count"] == 1
+
+
+def test_wedge_r2_provider_error_fresh_is_not_suspect(monkeypatch, tmp_path):
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _provider_error("2026-10-06T13:58:00+00:00", 403),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
+    _wedge_clock(monkeypatch)
+    result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
+    assert result["chain"] == 0
+    assert result["cause"] == "provider-error:403"
+    assert result["last_error_ts"] == "2026-10-06T13:58:00+00:00"
+    assert result["error_count"] == 1
+
+
+def test_wedge_r2_error_reset_on_success(monkeypatch, tmp_path):
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _provider_error("2026-10-06T13:30:00+00:00", 403),
+        _success("2026-10-06T13:35:00+00:00"),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
+    _wedge_clock(monkeypatch)
+    result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
+    assert result["chain"] == 0
+    assert result["cause"] == "none"
+    assert result["last_error_ts"] is None
+    assert result["error_count"] == 0
+
+
+def test_wedge_r2_with_chain_is_r1_not_r2(monkeypatch, tmp_path):
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _provider_error("2026-10-06T13:25:00+00:00", 500),
+        _retry("2026-10-06T13:30:00+00:00", 1),
+        _provider_error("2026-10-06T13:35:00+00:00", 500),
+        _retry("2026-10-06T13:40:00+00:00", 2),
+        _provider_error("2026-10-06T13:45:00+00:00", 500),
+        _retry("2026-10-06T13:50:00+00:00", 3),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
+    _wedge_clock(monkeypatch)
+    result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
+    assert result["chain"] == 3
+    assert result["cause"] == "provider-error:500"
+    assert result["error_count"] == 3
+
+
+def test_wedge_r2_sense_flags_stuck_pane(monkeypatch, tmp_path):
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _provider_error("2026-10-06T13:30:00+00:00", 403),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path",
+                        lambda pid: log if pid == 12345 else None)
+    _wedge_clock(monkeypatch)
+
+    class FakeResult:
+        returncode = 0
+        stdout = "docs|12345\nbody-research|67890"
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
+    result = discovery._mind_wedge_suspects()
+    assert result["state"] == "verified"
+    assert len(result["suspects"]) == 1
+    assert result["suspects"][0]["window"] == "docs"
+    assert result["suspects"][0]["pid"] == 12345
+    assert result["suspects"][0]["rule"] == "provider-error"
+    assert result["suspects"][0]["chain"] == 0
+    assert result["suspects"][0]["cause"] == "provider-error:403"
+    assert result["suspects"][0]["error_age_minutes"] == 30.0
+    assert ("docs(pid=12345,rule=provider-error,chain=0,"
+            "error_age=30.0min,cause=provider-error:403)") in result["sample"]
+    assert "panes=2 with_log=1" in result["sample"]
+
+
+def test_wedge_r2_sense_fresh_error_not_flagged(monkeypatch, tmp_path):
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _provider_error("2026-10-06T13:58:00+00:00", 403),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path",
+                        lambda pid: log if pid == 12345 else None)
+    _wedge_clock(monkeypatch)
+
+    class FakeResult:
+        returncode = 0
+        stdout = "docs|12345\nbody-research|67890"
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
+    result = discovery._mind_wedge_suspects()
+    assert result["state"] == "verified"
+    assert result["suspects"] == []
+    assert result["sample"] == "suspects=0 panes=2 with_log=1"
+
+
+def test_wedge_r2_sense_success_after_error_not_flagged(monkeypatch, tmp_path):
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _provider_error("2026-10-06T13:30:00+00:00", 403),
+        _success("2026-10-06T13:35:00+00:00"),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path",
+                        lambda pid: log if pid == 12345 else None)
+    _wedge_clock(monkeypatch)
+
+    class FakeResult:
+        returncode = 0
+        stdout = "docs|12345\nbody-research|67890"
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
+    result = discovery._mind_wedge_suspects()
+    assert result["state"] == "verified"
+    assert result["suspects"] == []
+    assert result["sample"] == "suspects=0 panes=2 with_log=1"
 
 
 def _write_patch(home: Path, name: str, record: object) -> None:
