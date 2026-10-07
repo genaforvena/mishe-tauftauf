@@ -157,6 +157,86 @@ def _mind_not_idle(session: str, role: str) -> bool:
         return not seed._mind_idle(session, role)
     except (OSError, RuntimeError):
         return False
+# A wedge reading older than this cannot support a live claim: the discovery
+# sense scans about every ten minutes, so three missed periods mean the
+# evidence has aged out and the pane must not cry wolf.
+_WEDGE_EVIDENCE_MAX_AGE_MINUTES = 30
+
+
+def _mind_pane_pid(session: str, role: str) -> int | None:
+    """``role``'s mind pane pid in ``session``, or None when tmux cannot answer."""
+    from . import seed
+    probe = seed._tmux("display-message", "-p", "-t", f"{session}:{role}.1",
+                       "#{pane_pid}", check=False)
+    if probe.returncode:
+        return None
+    try:
+        return int(probe.stdout.decode("utf-8", "replace").strip())
+    except ValueError:
+        return None
+
+
+def _wedge_suspects(home: Path, session: str) -> dict[str, dict]:
+    """Fresh ``sense.mind.wedge-suspect`` suspects for this session's roles.
+
+    A live pane that is not idle is normally a mind mid-turn, but the same shape
+    covers a mind wedged on provider errors: ``omp`` retries a failed endpoint
+    forever, the pane never returns to its idle prompt, and the supervisor holds
+    the wake as ``mind busy`` or ``delivery retry exhausted``. The discovery
+    sense already separates the two; this reads its published reading so the
+    disposition view stops rendering a wedge as progress.
+
+    The sense enumerates every pane on the tmux server and publishes a bare
+    window name, and every plant names its windows after the same roles, so a
+    suspect is kept only when its pid is this session's pane for that role. An
+    unanswerable pid drops the suspect rather than risk naming another plant's
+    pane.
+
+    Fail-open: no scan, an unreadable, unparseable or unexpectedly shaped one,
+    or one older than ``_WEDGE_EVIDENCE_MAX_AGE_MINUTES`` yields no suspects,
+    which keeps the existing ``HELD`` line rather than inventing a fault.
+    """
+    try:
+        scans = sorted((home / "discovery").glob("scan-*.json"))
+        if not scans:
+            return {}
+        scan = json.loads(scans[-1].read_text(encoding="utf-8"))
+        created = datetime.fromisoformat(str(scan["created"]).replace("Z", "+00:00"))
+        age_seconds = (datetime.now(timezone.utc) - created).total_seconds()
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}
+    if age_seconds > _WEDGE_EVIDENCE_MAX_AGE_MINUTES * 60:
+        return {}
+    observations = scan.get("observations")
+    if not isinstance(observations, list):
+        return {}
+    suspects: dict[str, dict] = {}
+    for observation in observations:
+        if not isinstance(observation, dict) or observation.get("id") != "sense.mind.wedge-suspect":
+            continue
+        reported = observation.get("suspects")
+        if not isinstance(reported, list):
+            continue
+        for suspect in reported:
+            if not isinstance(suspect, dict):
+                continue
+            window = suspect.get("window")
+            if isinstance(window, str) and suspect.get("pid") == _mind_pane_pid(session, window):
+                suspects[window] = suspect
+    return suspects
+
+
+def _wedge_note(suspect: dict) -> str:
+    """One-line wedge evidence, in the shape the sense publishes."""
+    if suspect.get("rule") == "provider-error":
+        return (f"rule=provider-error error_age={suspect.get('error_age_minutes')}min "
+                f"cause={suspect.get('cause')}")
+    sources = suspect.get("sources")
+    if not isinstance(sources, dict):
+        sources = {}
+    rendered = ",".join(f"{name}:{count}" for name, count in sorted(sources.items()))
+    return (f"chain={suspect.get('chain')} span={suspect.get('span_minutes')}min "
+            f"src={rendered} cause={suspect.get('cause')}")
 
 
 def render(home: Path) -> str:
@@ -194,6 +274,8 @@ def render(home: Path) -> str:
     lines.append(ci)
     if ci.startswith("CI: FAIL") and verdict.startswith("PASS"):
         verdict = "FAIL witness CI failure needs genome follow-through"
+    wedges = _wedge_suspects(home, session)
+    wedged: list[str] = []
     payloads = {}
     try:
         entries = Feed(home).entries(payloads=payloads)
@@ -216,9 +298,22 @@ def render(home: Path) -> str:
                 wake = int(YIELD_RE.fullmatch(_receipt_line(receipt.body))[2])
                 owner = "witness" if role == "health" else "health"
                 if _mind_not_idle(session, role):
-                    # The supervisor holds the rotation, not a fault to repair.
+                    suspect = wedges.get(role)
+                    if suspect and suspect.get("rule") != "provider-error":
+                        # An open retry chain cannot end by itself, so the
+                        # supervisor can never settle the wake.
+                        lines.append(f"CLEAR STALL: WEDGE-SUSPECT {role} wake={wake} yield={receipt.sequence} "
+                                     + _wedge_note(suspect))
+                        lines.append(f"  Evidence: {Feed(home).path} settled={receipt.timestamp}; "
+                                     "recover the pane engine before the wake can settle")
+                        wedged.append(role)
+                        continue
+                    # The supervisor holds the rotation, not a fault to repair. A
+                    # stale provider error is reported, not asserted: its rule also
+                    # fires on a pane that is still streaming a long turn.
                     lines.append(f"CLEAR STALL: HELD {role} wake={wake} yield={receipt.sequence} "
-                                 "mind not idle; supervisor holding rotation")
+                                 "mind not idle; supervisor holding rotation"
+                                 + (f" · wedge-suspect={_wedge_note(suspect)}" if suspect else ""))
                     lines.append(f"  Evidence: {Feed(home).path} settled={receipt.timestamp}; "
                                  "recheck after the mind's turn ends")
                     continue
@@ -240,10 +335,21 @@ def render(home: Path) -> str:
                 wake = int(WAKE_RE.fullmatch(_receipt_line(receipt.body))[2])
                 owner = "witness" if role == "health" else "health"
                 if _mind_not_idle(session, role):
+                    suspect = wedges.get(role)
+                    if suspect and suspect.get("rule") != "provider-error":
+                        # An open retry chain cannot end by itself, so the hold
+                        # is permanent.
+                        lines.append(f"STALE PEND: WEDGE-SUSPECT {role} wake={wake} pending={receipt.sequence} "
+                                     + _wedge_note(suspect))
+                        lines.append(f"  Evidence: {Feed(home).path} woken={receipt.timestamp}; "
+                                     "recover the pane engine before the wake can settle")
+                        wedged.append(role)
+                        continue
                     # A live mind mid-turn is still working its delivered wake; the
                     # supervisor is waiting for it to settle, not failing to run it.
                     lines.append(f"STALE PEND: HELD {role} wake={wake} pending={receipt.sequence} "
-                                 "mind not idle; turn in progress")
+                                 "mind not idle; turn in progress"
+                                 + (f" · wedge-suspect={_wedge_note(suspect)}" if suspect else ""))
                     lines.append(f"  Evidence: {Feed(home).path} woken={receipt.timestamp}; "
                                  "recheck after the mind's turn ends")
                     continue
@@ -255,6 +361,8 @@ def render(home: Path) -> str:
         except (ValueError, TypeError, OverflowError) as exc:
             lines.append("STALE PEND: UNKNOWN — receipt timing unavailable: " + str(exc))
             verdict = "UNKNOWN witness stale-pend receipt evidence"
+        if wedged:
+            verdict = f"FAIL witness wedge-suspect mind {','.join(sorted(set(wedged)))} needs checked recovery"
     visible: list[str] = []
     try:
         tasks = open_tasks(entries)

@@ -228,3 +228,133 @@ def test_live_mind_pane_accepts_every_ready_engine(monkeypatch):
     assert not view._mind_pane_live('session', 'docs')
     monkeypatch.setattr(seed, '_tmux', pane('0 bash'))
     assert not view._mind_pane_live('session', 'docs')
+
+
+def wedge_scan(tmp_path, suspects, created=None):
+    """Publish a discovery scan carrying a `sense.mind.wedge-suspect` reading."""
+    from datetime import datetime, timezone
+    directory = tmp_path / 'discovery'
+    directory.mkdir(exist_ok=True)
+    created = created or datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    (directory / 'scan-20260930T000000Z-aaaa.json').write_text(json.dumps({
+        'created': created,
+        'observations': [{'id': 'sense.mind.wedge-suspect', 'state': 'verified',
+                          'suspects': suspects}]}), encoding='utf-8')
+
+def busy_mind(tmp_path, monkeypatch, entries):
+    import mishe_tauftauf.seed as seed
+    import mishe_tauftauf.seed_witness_view as view
+    wire(tmp_path, monkeypatch, entries)
+    monkeypatch.setattr(view, '_mind_pane_live', lambda session, role: True)
+    monkeypatch.setattr(view, '_mind_pane_pid', lambda session, role: 1)
+    monkeypatch.setattr(seed, '_mind_idle', lambda session, slug: False)
+
+
+def test_wedged_mind_is_not_rendered_as_a_turn_in_progress(tmp_path, monkeypatch):
+    entries = [entry(1, 'seed', 'seed wake audit observation=1'),
+               entry(2, 'seed', 'seed yield audit wake=1')]
+    busy_mind(tmp_path, monkeypatch, entries)
+    wedge_scan(tmp_path, [{'window': 'audit', 'pid': 1, 'chain': 12, 'span_minutes': 110.2,
+                           'sources': {'automatic-retry': 10, 'stream-stall-continue': 2},
+                           'cause': 'provider-error:500'}])
+    output = render(tmp_path)
+    assert ('CLEAR STALL: WEDGE-SUSPECT audit wake=1 yield=2 chain=12 span=110.2min '
+            'src=automatic-retry:10,stream-stall-continue:2 cause=provider-error:500') in output
+    assert 'CLEAR STALL: HELD' not in output
+    assert 'STATE: RED' in output
+    assert (tmp_path / 'observations' / 'witness').read_text() == \
+        'FAIL witness wedge-suspect mind audit needs checked recovery\n'
+
+
+def test_wedged_mind_is_not_rendered_as_a_pending_turn(tmp_path, monkeypatch):
+    entries = [entry(1, 'seed', 'seed wake audit observation=1')]
+    busy_mind(tmp_path, monkeypatch, entries)
+    wedge_scan(tmp_path, [{'window': 'audit', 'pid': 1, 'chain': 12, 'span_minutes': 22.5,
+                           'sources': {'automatic-retry': 12}, 'cause': 'provider-error:500'}])
+    output = render(tmp_path)
+    assert ('STALE PEND: WEDGE-SUSPECT audit wake=1 pending=1 chain=12 span=22.5min '
+            'src=automatic-retry:12 cause=provider-error:500') in output
+    assert 'STALE PEND: HELD' not in output
+    assert 'STATE: RED' in output
+
+
+def test_provider_error_suspect_is_reported_without_asserting_a_wedge(tmp_path, monkeypatch):
+    # The provider-error rule also fires on a pane still streaming a long turn,
+    # so the pane reports it on the HELD line and does not claim a wedge.
+    entries = [entry(1, 'seed', 'seed wake audit observation=1'),
+               entry(2, 'seed', 'seed yield audit wake=1')]
+    busy_mind(tmp_path, monkeypatch, entries)
+    wedge_scan(tmp_path, [{'window': 'audit', 'pid': 1, 'chain': 0, 'rule': 'provider-error',
+                           'error_age_minutes': 8.4, 'cause': 'provider-error:403'}])
+    output = render(tmp_path)
+    assert ('CLEAR STALL: HELD audit wake=1 yield=2 mind not idle; supervisor holding rotation '
+            '· wedge-suspect=rule=provider-error error_age=8.4min cause=provider-error:403') in output
+    assert 'WEDGE-SUSPECT' not in output
+    assert 'STATE: RED' not in output
+
+
+def test_wedge_suspect_for_another_sessions_pane_is_not_surfaced(tmp_path, monkeypatch):
+    # The sense enumerates every pane on the tmux server and plants share role
+    # window names, so only a pid match may name this session's pane.
+    entries = [entry(1, 'seed', 'seed wake audit observation=1'),
+               entry(2, 'seed', 'seed yield audit wake=1')]
+    busy_mind(tmp_path, monkeypatch, entries)
+    wedge_scan(tmp_path, [{'window': 'audit', 'pid': 4242, 'chain': 12, 'span_minutes': 110.2,
+                           'sources': {'automatic-retry': 10}, 'cause': 'provider-error:500'}])
+    output = render(tmp_path)
+    assert 'CLEAR STALL: HELD audit wake=1 yield=2' in output
+    assert 'WEDGE-SUSPECT' not in output
+
+
+def test_aged_or_unreadable_wedge_evidence_leaves_a_live_turn_held(tmp_path, monkeypatch):
+    entries = [entry(1, 'seed', 'seed wake audit observation=1'),
+               entry(2, 'seed', 'seed yield audit wake=1')]
+    busy_mind(tmp_path, monkeypatch, entries)
+    wedge_scan(tmp_path, [{'window': 'audit', 'pid': 1, 'chain': 12, 'span_minutes': 110.2,
+                           'sources': {'automatic-retry': 10}, 'cause': 'provider-error:500'}],
+               created='2026-09-30T00:00:00Z')
+    output = render(tmp_path)
+    assert 'CLEAR STALL: HELD audit wake=1 yield=2' in output
+    assert 'WEDGE-SUSPECT' not in output
+    (tmp_path / 'discovery' / 'scan-20260930T000000Z-aaaa.json').write_text('{not json', encoding='utf-8')
+    output = render(tmp_path)
+    assert 'CLEAR STALL: HELD audit wake=1 yield=2' in output
+    assert 'WEDGE-SUSPECT' not in output
+
+
+def test_malformed_wedge_scan_never_crashes_or_cries_wolf(tmp_path, monkeypatch):
+    entries = [entry(1, 'seed', 'seed wake audit observation=1'),
+               entry(2, 'seed', 'seed yield audit wake=1')]
+    busy_mind(tmp_path, monkeypatch, entries)
+    scan = tmp_path / 'discovery' / 'scan-20260930T000000Z-aaaa.json'
+    scan.parent.mkdir(exist_ok=True)
+    from datetime import datetime, timezone
+    fresh = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    payloads = (
+        # a naive timestamp cannot be aged, and must not raise on the subtraction
+        '{"created": "2026-09-30T00:00:00", "observations": [{"id": "sense.mind.wedge-suspect", "suspects": ["nope"]}]}',
+        # shaped wrongly but fresh: these reach the reading loops
+        f'{{"created": "{fresh}", "observations": 5}}',
+        f'{{"created": "{fresh}", "observations": [{{"id": "sense.mind.wedge-suspect", "suspects": 5}}]}}',
+        f'{{"created": "{fresh}", "observations": [{{"id": "sense.mind.wedge-suspect", "suspects": [5, null]}}]}}',
+        f'{{"created": "{fresh}", "observations": [{{"id": "sense.mind.wedge-suspect", "suspects": [{{"window": "audit", "pid": 4242}}]}}]}}',
+        '{"created": "2026-09-30T00:00:00Z", "observations": null}',
+        '{"observations": []}',
+        '[]',
+    )
+    for payload in payloads:
+        scan.write_text(payload, encoding='utf-8')
+        output = render(tmp_path)
+        assert 'CLEAR STALL: HELD audit wake=1 yield=2' in output
+        assert 'WEDGE-SUSPECT' not in output
+
+
+def test_chain_suspect_with_unusable_sources_is_still_reported(tmp_path, monkeypatch):
+    entries = [entry(1, 'seed', 'seed wake audit observation=1'),
+               entry(2, 'seed', 'seed yield audit wake=1')]
+    busy_mind(tmp_path, monkeypatch, entries)
+    wedge_scan(tmp_path, [{'window': 'audit', 'pid': 1, 'chain': 12, 'span_minutes': 110.2,
+                           'sources': 5, 'cause': 'provider-error:500'}])
+    output = render(tmp_path)
+    assert ('CLEAR STALL: WEDGE-SUSPECT audit wake=1 yield=2 chain=12 span=110.2min '
+            'src= cause=provider-error:500') in output
