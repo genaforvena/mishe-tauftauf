@@ -15,6 +15,20 @@ export async function withNativeSession<T>(selector: string, sessionId: string,
   let active: Promise<unknown> | null = null;
   const controller = new AbortController();
   async function generate(context: Context) {
+  // Bound all provider retry layers, including encoding fallback.
+  let fetches = 0;
+  let fetchBudgetError: Error | null = null;
+  const fetchOnce: typeof fetch = async (input, init) => {
+   if (controller.signal.aborted) throw new Error('native turn cancelled before fetch');
+   if (fetches >= 1) {
+    poisoned = true;
+    fetchBudgetError = new Error('native provider fetch budget exhausted');
+    controller.abort(fetchBudgetError);
+    throw fetchBudgetError;
+   }
+   fetches++;
+   return fetch(input, init);
+  };
   let wireUsage: Record<string, unknown> | null = null;
   let createdId: string | null = null;
   let wireTerminal: {event: string; response_id: string | null} | null = null;
@@ -25,6 +39,8 @@ export async function withNativeSession<T>(selector: string, sessionId: string,
    providerSessionState: state,
    preferWebsockets: false, // Checkpoints cover exact full-history SSE only.
    signal: controller.signal,
+   fetch: fetchOnce,
+   codexSseMaxAttempts: 1,
    // Reset for each native payload opening, not each lower-level HTTP retry.
    onPayload: () => { wireUsage = null; createdId = null; wireTerminal = null; },
    onSseEvent: event => {
@@ -52,6 +68,8 @@ export async function withNativeSession<T>(selector: string, sessionId: string,
   let terminal: string | undefined;
   for await (const event of stream) terminal = event.type;
   const assistant = await stream.result();
+  // The provider may normalize our abort into ordinary cancellation.
+  if (fetchBudgetError) throw fetchBudgetError;
   if (terminal !== 'done' && terminal !== 'error') throw new Error('native stream ended without terminal event');
   // Native normalization is not evidence of raw usage or response correlation.
   const observed = wireTerminal as {event: string; response_id: string | null} | null;

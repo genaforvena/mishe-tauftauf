@@ -217,6 +217,17 @@ The caller still supplies the provider worker, current authority, durable
 effects and recovery. This transport does not activate a resident or establish
 credential/account parity.
 
+The packaged native provider session permits at most one underlying `fetch`
+dispatch per turn, including lower-level HTTP retries and encoding fallback.
+An attempted second dispatch poisons the session and raises
+`native provider fetch budget exhausted`; provider cancellation normalization
+cannot replace that diagnostic. An ordinary error terminal remains an error,
+and a later caller-authorized turn has its own one-fetch allowance. This is not
+automatic retry authority, an output-token cap, a spend guarantee or proof that
+the server processed only one request. `drive_native` currently propagates this
+exception without recording its diagnostic in the caller journal; the pending
+model input remains unresolved and must not be blindly resubmitted.
+
 For pinned Codex full-history SSE, each correlated `response.completed` also
 returns a logical checkpoint in the same `NativeTurn` that the caller journal
 records as `model_output`. A fresh `NativeSession(..., checkpoint=...)` sends it
