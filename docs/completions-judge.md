@@ -2,6 +2,8 @@
 
 This adapter uses an explicitly selected OpenAI-compatible **Chat Completions**
 endpoint (`BASE/chat/completions`), not the legacy text completions endpoint.
+Native System One models use a different protocol; see the dated
+[decision-model research and evaluation plan](decision-models.md).
 It has no third-party dependencies and does not change the default judge.
 The provider must support system/user messages, `response_format: json_object`,
 `temperature: 0`, and `max_tokens`. Unsupported settings fail visibly; there is
