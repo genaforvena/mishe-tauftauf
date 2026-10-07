@@ -642,32 +642,6 @@ def test_wall_outcome_requires_evidence_and_cli_records_prose(tmp_path):
     assert entry.body.startswith("Wall outcome hypothesis-changed")
     assert payload(entry)["evidence"]["sha256"]
 
-def test_wall_outcome_refuses_already_bound_evidence_path(tmp_path):
-    """D-check: outcome refuses an evidence path already bound by another outcome."""
-    from mishe_tauftauf import wall
-    setup_wall(tmp_path)
-    evidence = tmp_path / "artifacts" / "sample.md"
-    evidence.parent.mkdir(parents=True)
-    evidence.write_text("control=4 candidate=4")
-    # First outcome binds the evidence path
-    wall.outcome(tmp_path, "discover", "hypothesis-changed", "First outcome.", evidence)
-    # Second outcome with the same evidence path must be refused
-    with pytest.raises(ValueError, match="already bound"):
-        wall.outcome(tmp_path, "health", "accepted", "Second outcome.", evidence)
-
-
-def test_wall_outcome_allows_distinct_evidence_paths(tmp_path):
-    """D-check: outcome allows distinct evidence paths."""
-    from mishe_tauftauf import wall
-    setup_wall(tmp_path)
-    evidence1 = tmp_path / "artifacts" / "sample1.md"
-    evidence1.parent.mkdir(parents=True)
-    evidence1.write_text("control=4 candidate=4")
-    evidence2 = tmp_path / "artifacts" / "sample2.md"
-    evidence2.write_text("control=5 candidate=5")
-    wall.outcome(tmp_path, "discover", "hypothesis-changed", "First outcome.", evidence1)
-    wall.outcome(tmp_path, "health", "accepted", "Second outcome.", evidence2)
-
 
 def test_delivery_dashboard_separates_source_and_runtime_and_marks_incomplete(tmp_path, monkeypatch):
     from mishe_tauftauf import wall_view

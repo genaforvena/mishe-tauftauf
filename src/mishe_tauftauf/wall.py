@@ -17,52 +17,6 @@ WALL_MAX_BYTES = 16384
 WALL_MAX_LINES = 200
 """Hard line bound for one edited wall; keeps the pane readable."""
 
-_RECORD_REF_RE = re.compile(r"\[record\] records/([0-9a-f]{64})\.json sha256=[0-9a-f]{64}")
-
-
-def _bound_evidence_paths(home: Path) -> set[str]:
-    """Return the set of evidence paths already bound by wall outcomes.
-
-    A wall outcome binds its evidence file with ``payload.evidence.path`` at
-    record time. The D-check refuses an evidence path that is already bound by
-    another outcome, enforcing the write-once evidence rule.
-    """
-    from .feed import parse_feed
-    tape_path = home / "chat.log"
-    if not tape_path.exists():
-        return set()
-    try:
-        entries = parse_feed(tape_path.read_bytes(), home=home)
-    except (OSError, ValueError):
-        return set()
-    ref_shas: set[str] = set()
-    for entry in entries:
-        match = _RECORD_REF_RE.search(entry.body)
-        if match:
-            ref_shas.add(match.group(1))
-    records_dir = home / "records"
-    if not records_dir.is_dir():
-        return set()
-    bound: set[str] = set()
-    for sha in ref_shas:
-        path = records_dir / f"{sha}.json"
-        try:
-            record = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if not isinstance(record, dict) or record.get("kind") != "wall-outcome":
-            continue
-        payload = record.get("payload")
-        if not isinstance(payload, dict):
-            continue
-        evidence = payload.get("evidence")
-        if not isinstance(evidence, dict):
-            continue
-        path_str = evidence.get("path")
-        if isinstance(path_str, str):
-            bound.add(path_str)
-    return bound
-
 
 def outcome(home: Path, role: str, kind: str, text: str, evidence: Path):
     """Record an evidence-backed contribution, not a task transition or acceptance gate."""
@@ -76,11 +30,6 @@ def outcome(home: Path, role: str, kind: str, text: str, evidence: Path):
     data = evidence.read_bytes()
     if not data:
         raise ValueError("outcome evidence must not be empty")
-    # D-check: refuse an already-bound evidence path
-    bound = _bound_evidence_paths(home)
-    evidence_str = str(evidence)
-    if evidence_str in bound:
-        raise ValueError(f"outcome evidence path already bound: {evidence_str}")
     return Feed(home).append_record(role, f"Wall outcome {kind} by {role}\n{text.strip()}",
         {"role": role, "kind": kind, "text": text.strip(),
          "evidence": {"path": str(evidence), "sha256": hashlib.sha256(data).hexdigest()}},
