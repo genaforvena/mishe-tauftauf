@@ -754,10 +754,15 @@ def test_seed_adds_live_channel_to_existing_owned_session(tmp_path: Path) -> Non
         assert "HEADLINE:" in dashboard.stdout
         assert "SOURCE:" in dashboard.stdout
         assert tmux("list-panes", "-t", f"{session}:operator", "-F", "#{pane_index}").stdout.splitlines() == ["0"]
-        refused = cli(home, "stop", "--session", session)
-        assert refused.returncode == 2
-        assert "not raised by this seed" in refused.stderr
-        assert tmux("has-session", "-t", session).returncode == 0
+        # A start that adopts an owned externally-raised session heals its
+        # receipt, so stop's owner guard passes instead of refusing forever:
+        # the receipt is durable state re-derived from the owned session.
+        receipt = (home / ".seed-raised").read_text(encoding="utf-8")
+        assert receipt.startswith(session + " ")
+        stopped = cli(home, "stop", "--session", session)
+        assert stopped.returncode == 0, stopped.stderr
+        assert subprocess.run(["tmux", "has-session", "-t", session],
+                              capture_output=True).returncode != 0
     finally:
         tmux("kill-session", "-t", session)
 
