@@ -11,6 +11,21 @@ def setup_wall(home):
     (home / "coordination-mode.json").write_text(json.dumps({"mode": "wall", "until": (datetime.now(timezone.utc)+timedelta(hours=10)).isoformat()}))
 
 
+def _backdate_entry(home, sequence, timestamp):
+    """Rewrite one feed entry header's timestamp, leaving its body untouched."""
+    import re
+    path = home / "chat.log"
+    lines = path.read_text().splitlines(keepends=True)
+    header = re.compile(r"((?:v1 )?%020d )\d{4}-\d{2}-\d{2}T[^\n]+Z( [A-Za-z0-9._/-]+ ::\n\Z)" % sequence)
+    for index, line in enumerate(lines):
+        match = header.fullmatch(line)
+        if match:
+            lines[index] = f"{match.group(1)}{timestamp}{match.group(2)}"
+            break
+    else:
+        raise AssertionError(f"no feed header found for sequence {sequence}")
+    path.write_text("".join(lines))
+
 def test_wall_chat_does_not_call_receipt_reviewer(tmp_path, monkeypatch):
     setup_wall(tmp_path)
     def reject(*args, **kwargs):
@@ -667,6 +682,38 @@ def test_wall_outcome_allows_distinct_evidence_paths(tmp_path):
     evidence2.write_text("control=5 candidate=5")
     wall.outcome(tmp_path, "discover", "hypothesis-changed", "First outcome.", evidence1)
     wall.outcome(tmp_path, "health", "accepted", "Second outcome.", evidence2)
+
+
+def test_wall_outcome_ignores_an_outcome_recorded_before_the_clause_time(tmp_path):
+    """D-check scope: a pre-clause outcome does not bind its evidence path.
+
+    The write-once rule applies from `EVIDENCE_BINDING_CLAUSE_TIME` onward. A
+    rule introduced after evidence was already lawfully bound cannot refuse that
+    evidence retroactively, so an outcome recorded before the clause leaves the
+    path free for a later outcome.
+    """
+    from mishe_tauftauf import wall
+    from mishe_tauftauf.discovery import EVIDENCE_BINDING_CLAUSE_TIME
+    setup_wall(tmp_path)
+    evidence = tmp_path / "artifacts" / "sample.md"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text("control=4 candidate=4")
+    wall.outcome(tmp_path, "discover", "hypothesis-changed", "Old outcome.", evidence)
+    old = Feed(tmp_path).entries()[-1]
+    # Backdate the citing entry to before the clause: a rule introduced after
+    # evidence was lawfully bound cannot refuse that evidence retroactively.
+    # The timestamp lives in the entry header, not on the content-addressed
+    # record, so the record bytes stay valid evidence.
+    before = (EVIDENCE_BINDING_CLAUSE_TIME
+              - timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+    _backdate_entry(tmp_path, old.sequence, before)
+    assert datetime.fromisoformat(
+        Feed(tmp_path).entries()[-1].timestamp.removesuffix("Z") + "+00:00"
+    ) < EVIDENCE_BINDING_CLAUSE_TIME
+    # A pre-clause binding must not refuse a later outcome's evidence
+    wall.outcome(tmp_path, "health", "accepted", "New outcome.", evidence)
+    assert [entry for entry in Feed(tmp_path).entries()
+            if entry.body.startswith("Wall outcome accepted")]
 
 
 def test_delivery_dashboard_separates_source_and_runtime_and_marks_incomplete(tmp_path, monkeypatch):
