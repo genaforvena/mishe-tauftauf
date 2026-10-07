@@ -31,6 +31,11 @@ covers only the named checks; missing, failed and stale readings stay unresolved
 and a live pane or lease proves only that it renders, not that its content is
 current or correct.
 
+Repairs start with causal investigation and leave failures observable. Preserve
+what failed, explain why, and test that recurrence still reaches a mind able to
+respond. Missing or broken monitoring stays unresolved. A retry can restore work
+without fixing its cause; fewer warnings alone do not demonstrate improvement.
+
 Wakes stop at the `until` time in the site's `coordination-mode.json` (a null
 time leaves the window open), and nothing re-arms them automatically: a passed
 stop time suppresses new wakes while services, panes and watcher

@@ -40,6 +40,17 @@ snapshot so unfinished source edits do not silently become live. See
 `applied` alone is incomplete delivery. Use the reviewed `verify` recovery
 exercise before claiming verified delivery; preserve older incomplete records.
 
+No fix without causal investigation, and no resolution without a continuing way
+to observe its failure. Preserve the original failure evidence, state the causal
+diagnosis and its limits, and name how recurrence will be detected and routed to
+a resolver within a bounded interval. Exercise that detection with a controlled
+failure; also check that missing, stale or broken monitoring stays UNKNOWN or
+RED. Removing a warning, retrying, or obtaining one successful sample does not
+resolve the cause. A bounded recovery may restore work while the diagnosis stays
+open. Replace a retired detector with tested equivalent coverage before removing
+it; never make a patch appear successful by narrowing observation or erasing
+unresolved evidence.
+
 Docs are a first-class, edited book. Keep [the introduction](docs/mesh.md) current,
 concise and understandable without internal machinery or chat history. Delete
 stale passages rather than accumulating them.

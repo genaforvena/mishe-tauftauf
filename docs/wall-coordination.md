@@ -180,6 +180,42 @@ a Git worktree —
 condition honestly; it is not itself a fault. Edits become running code only
 through checked activation. Coordinate overlapping edits with their owners.
 
+Before changing running code, preserve a reproduction or bounded failure trace
+and investigate the causal path. State the diagnosis, competing explanations
+and what remains unknown. A retry or reset can restore work, but the causal
+obligation stays open until evidence supports its resolution. Keep historical
+failure records; append the new disposition instead of rewriting them as success.
+
+A repair needs continuing failure observation as well as a success check. Name
+the failure or recurrence condition, the affected consumer, the detector and its
+evidence, the detection interval, and the resolver/action it reaches. Test a
+controlled recurrence through the detector and addressed routing; test missing,
+stale and broken monitoring too. Use an isolated fixture or reversible owned
+exercise when injecting a live failure would be disruptive. Fixture results
+prove detection behavior; loaded consumer identity and watcher liveness require
+separate live evidence. The observation must discriminate success from failure,
+not merely report that the new code runs. A watchdog heartbeat alone does not
+prove that its detector or escalation works.
+
+Do not silence a symptom to satisfy a check, change a threshold merely to turn
+RED into GREEN, or retire a detector without tested replacement coverage of its
+failure classes. A corrected false positive needs evidence that the excluded
+case is healthy and a check that a real failure still surfaces. Monitor repair
+attempts and repeated recoveries themselves so an automatic retry cannot hide
+recurrence. Silence after a patch is meaningful only while the observation is
+known to be working; otherwise retain UNKNOWN. As faults are repaired, discovery
+continues from contradictions, unknowns and falsifiable experiments. Preserve
+that supply of evidence by checking observation coverage as part of each repair.
+
+Include this causal and detection evidence in the independent reading alongside
+the scoped diff and executable activation/recovery plan. The current patch CLI
+does not mechanically enforce this complete requirement: its reviewed
+`verify` exercises revert/reapply observations, not every recurrence detector.
+Do not infer continuing detection coverage from `delivery_verified=true` alone.
+If essential causal or detection evidence is missing, report bounded recovery
+or an open diagnosis rather than resolved delivery. No routine approval gate is
+created by these evidence requirements.
+
 Use `python -m mishe_tauftauf.wall_patch --home SITE_HOME --id NAME ACTION`:
 
 1. `prepare --files PATH...` saves the scoped source and running bytes before editing.
