@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .access import list_requests, recoveries, retired_requests
 from .ci_watch import line as ci_line
-from .discovery import latest, producer_label, scan_attempt
+from .discovery import latest, producer_label, scan_attempt, _space_light, _space_light_read
 from . import scan_freshness
 
 
@@ -71,6 +71,15 @@ def _observation_reading(item: dict[str, object], freshness: str) -> tuple[str, 
     state = source_state if freshness == "recent" or source_state == "unavailable" else "unknown"
     identity = str(item.get("id", "unknown"))
     sample = str(item.get("sample", "unknown"))
+    if identity == "sense.space.light":
+        current = (_space_light(item["boundary"], datetime.now(timezone.utc).timestamp())
+                   if "boundary" in item else item)
+        state = current["state"]
+        detail = (f"{current['sample']} source_state={source_state}; "
+                  f"display_state={current['state']}; clock=unverified")
+        if current.get("event_sample"):
+            detail += "; retained history: " + current["event_sample"]
+        return state, f"{state.upper()} {identity}: {detail}"
     if identity.startswith("sense.journal."):
         # Any journal sense carries the same bounds contract: a count over a
         # named boot and window. Trust the contract rather than a fixed id
@@ -108,6 +117,8 @@ def discover(home: Path) -> str:
         lines.append(f"SCAN: {snapshot.get('created', 'unknown')} freshness={freshness} "
                      f"utc_consistency={consistency} producer={producer_label(home, snapshot.get('producer'))}")
         observations = snapshot.get("observations", [])
+        observations = [item for item in observations if item.get("id") != "sense.space.light"]
+        observations.append(_space_light_read(home))
         unknown = 0
         for item in observations:
             state, line = _observation_reading(item, freshness)
@@ -148,7 +159,11 @@ def senses(home: Path) -> str:
         lines.append("STATE: UNKNOWN — no sample exists")
     else:
         freshness, consistency = _scan_reading(snapshot)
-        senses_rows = [item for item in snapshot.get("observations", []) if str(item.get("id", "")).startswith("sense.")]
+        senses_rows = [item for item in snapshot.get("observations", [])
+                       if str(item.get("id", "")).startswith("sense.")
+                       and item.get("id") != "sense.space.light"]
+        space = _space_light_read(home)
+        senses_rows.append(space)
         unknown = 0
         unavailable = 0
         for item in senses_rows:
@@ -156,6 +171,13 @@ def senses(home: Path) -> str:
             unknown += state not in {"verified", "unavailable"}
             unavailable += state == "unavailable"
             lines.append(line)
+        provenance = space.get("provenance", {})
+        lines.append(f"UNKNOWN SPACE: phone/host clock agreement unverified; "
+                     f"boundary_state={space['state']} reason={space['reason']} "
+                     f"source={provenance.get('source', 'unknown')} "
+                     f"session={provenance.get('session', 'unknown')} "
+                     f"retained_historical_event={space.get('event_id') or 'none'}; "
+                     "baseline/restart/recovery are not physical transitions")
         lines.append(f"SCAN: {snapshot.get('created', 'unknown')} freshness={freshness} "
                      f"utc_consistency={consistency} producer={producer_label(home, snapshot.get('producer'))}")
         if freshness != "recent":
