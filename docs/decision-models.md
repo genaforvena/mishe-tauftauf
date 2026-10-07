@@ -60,7 +60,7 @@ Use **native System One HTTP**, with `state` and named `questions`:
 | --- | --- | --- | --- |
 | Local Ollama | `http://127.0.0.1:11434/v1/systemone` | Explicit local decision-model tag | None |
 | OpenCode Zen | `https://opencode.ai/zen/v1/systemone` | `jev-1.13-free` | Zen bearer key |
-| Direct TypeSafe | `https://api.typesafe.ai/v1/systemone` | Prefer pinned `jev-1.13.0` after evaluation | TypeSafe bearer key; separately priced |
+| Direct TypeSafe | `https://api.typesafe.ai/v1/systemone` | Request `jev-1.13.0` only after evaluation; availability and immutable weights are unverified | TypeSafe bearer key; separately priced |
 
 Ollama requires 0.35+ for Nimble/Tev1 and 0.35.1+ for Clef. It currently
 documents local decision serving; ordinary Ollama cloud chat availability does
@@ -75,8 +75,10 @@ Ollama's examples and SDK-support notes remain inconsistent.
 
 Jev supports `noul`, `choice` and `score`; its direct-service model contract has
 32K for state plus the longest question and 64K for the complete request. These
-direct-service limits are not proof of the free Zen account's quota. Mutable
-aliases must be recorded and re-evaluated on version change.
+direct-service limits are not proof of the free Zen account's quota. Model
+names are requested selectors, not evidence of account availability or
+immutable weights; record the returned identity and re-evaluate on version
+change.
 [TypeSafe model contract](https://docs.typesafe.ai/models)
 
 The existing `jev_judge.py` uses this HTTP shape for a single Noul. Its base URL
