@@ -176,54 +176,56 @@ def _mind_pane_pid(session: str, role: str) -> int | None:
         return None
 
 
-def _wedge_suspects(home: Path, session: str) -> dict[str, dict]:
-    """Fresh ``sense.mind.wedge-suspect`` suspects for this session's roles.
+def _wedge_reading(home: Path, session: str) -> tuple[dict[str, dict], str | None]:
+    """PID-bound positives and aggregate unavailability, never role coverage.
 
-    A live pane that is not idle is normally a mind mid-turn, but the same shape
-    covers a mind wedged on provider errors: ``omp`` retries a failed endpoint
-    forever, the pane never returns to its idle prompt, and the supervisor holds
-    the wake as ``mind busy`` or ``delivery retry exhausted``. The discovery
-    sense already separates the two; this reads its published reading so the
-    disposition view stops rendering a wedge as progress.
-
-    The sense enumerates every pane on the tmux server and publishes a bare
-    window name, and every plant names its windows after the same roles, so a
-    suspect is kept only when its pid is this session's pane for that role. An
-    unanswerable pid drops the suspect rather than risk naming another plant's
-    pane.
-
-    Fail-open: no scan, an unreadable, unparseable or unexpectedly shaped one,
-    or one older than ``_WEDGE_EVIDENCE_MAX_AGE_MINUTES`` yields no suspects,
-    which keeps the existing ``HELD`` line rather than inventing a fault.
+    The producer has no covered-PID list. A fresh verified empty aggregate is
+    available evidence, not proof that any particular mind is making progress.
+    Invalid evidence cannot accuse a mind or justify recovery.
     """
     try:
-        scans = sorted((home / "discovery").glob("scan-*.json"))
+        scans = []
+        for path in (home / "discovery").glob("scan-*.json"):
+            scan = json.loads(path.read_text(encoding="utf-8"))
+            created = datetime.fromisoformat(str(scan["created"]).replace("Z", "+00:00"))
+            if created.tzinfo is None:
+                return {}, "scan timestamp has no timezone"
+            scans.append((created, scan))
         if not scans:
-            return {}
-        scan = json.loads(scans[-1].read_text(encoding="utf-8"))
-        created = datetime.fromisoformat(str(scan["created"]).replace("Z", "+00:00"))
-        age_seconds = (datetime.now(timezone.utc) - created).total_seconds()
+            return {}, "no discovery scan"
+        newest = max(created for created, _ in scans)
+        latest = [scan for created, scan in scans if created == newest]
+        if len(latest) != 1:
+            return {}, "newest scan timestamp is ambiguous"
+        scan = latest[0]
+        age_seconds = (datetime.now(timezone.utc) - newest).total_seconds()
     except (OSError, ValueError, KeyError, TypeError):
-        return {}
+        return {}, "discovery scan unreadable or malformed"
+    if age_seconds < 0:
+        return {}, "newest scan is future-dated"
     if age_seconds > _WEDGE_EVIDENCE_MAX_AGE_MINUTES * 60:
-        return {}
+        return {}, "newest scan is stale"
     observations = scan.get("observations")
     if not isinstance(observations, list):
-        return {}
+        return {}, "scan observations malformed"
+    readings = [row for row in observations
+                if isinstance(row, dict) and row.get("id") == "sense.mind.wedge-suspect"]
+    if len(readings) != 1:
+        return {}, "wedge reading missing or ambiguous"
+    observation = readings[0]
+    if observation.get("state") != "verified":
+        return {}, "wedge reading not verified"
+    reported = observation.get("suspects")
+    if not isinstance(reported, list) or any(not isinstance(row, dict) for row in reported):
+        return {}, "wedge suspects malformed"
     suspects: dict[str, dict] = {}
-    for observation in observations:
-        if not isinstance(observation, dict) or observation.get("id") != "sense.mind.wedge-suspect":
-            continue
-        reported = observation.get("suspects")
-        if not isinstance(reported, list):
-            continue
-        for suspect in reported:
-            if not isinstance(suspect, dict):
-                continue
-            window = suspect.get("window")
-            if isinstance(window, str) and suspect.get("pid") == _mind_pane_pid(session, window):
-                suspects[window] = suspect
-    return suspects
+    for suspect in reported:
+        window, pid = suspect.get("window"), suspect.get("pid")
+        if not isinstance(window, str) or not isinstance(pid, int) or isinstance(pid, bool):
+            return {}, "wedge suspect identity malformed"
+        if pid == _mind_pane_pid(session, window):
+            suspects[window] = suspect
+    return suspects, None
 
 
 def _wedge_note(suspect: dict) -> str:
@@ -274,7 +276,13 @@ def render(home: Path) -> str:
     lines.append(ci)
     if ci.startswith("CI: FAIL") and verdict.startswith("PASS"):
         verdict = "FAIL witness CI failure needs genome follow-through"
-    wedges = _wedge_suspects(home, session)
+    wedges, monitor_reason = _wedge_reading(home, session)
+    lines.append("MIND MONITOR: " +
+                 (f"UNKNOWN — {monitor_reason}; owner=health"
+                  if monitor_reason else "AVAILABLE — fresh verified aggregate") +
+                 "; per-role coverage UNKNOWN; useful progress not established")
+    lines.append(f"  Evidence: {home / 'discovery'} sense.mind.wedge-suspect; "
+                 "inspect producer on unavailable evidence, not a busy-pane restart")
     wedged: list[str] = []
     payloads = {}
     try:
@@ -308,9 +316,8 @@ def render(home: Path) -> str:
                                      "recover the pane engine before the wake can settle")
                         wedged.append(role)
                         continue
-                    # The supervisor holds the rotation, not a fault to repair. A
-                    # stale provider error is reported, not asserted: its rule also
-                    # fires on a pane that is still streaming a long turn.
+                    # A hold observes the idle gate only, not useful progress.
+                    # Provider-error evidence can also name a streaming pane.
                     lines.append(f"CLEAR STALL: HELD {role} wake={wake} yield={receipt.sequence} "
                                  "mind not idle; supervisor holding rotation"
                                  + (f" · wedge-suspect={_wedge_note(suspect)}" if suspect else ""))
@@ -345,10 +352,9 @@ def render(home: Path) -> str:
                                      "recover the pane engine before the wake can settle")
                         wedged.append(role)
                         continue
-                    # A live mind mid-turn is still working its delivered wake; the
-                    # supervisor is waiting for it to settle, not failing to run it.
+                    # A hold observes the idle gate only, not useful progress.
                     lines.append(f"STALE PEND: HELD {role} wake={wake} pending={receipt.sequence} "
-                                 "mind not idle; turn in progress"
+                                 "mind not idle; supervisor holding delivery"
                                  + (f" · wedge-suspect={_wedge_note(suspect)}" if suspect else ""))
                     lines.append(f"  Evidence: {Feed(home).path} woken={receipt.timestamp}; "
                                  "recheck after the mind's turn ends")
@@ -452,6 +458,8 @@ def render(home: Path) -> str:
     lines.append("GOAL: keep the plant's shared work coherent until each need has an owner, checked result, and next step")
     lines.append("PURSUIT: notice stale panes, forgotten tasks, duplicate claims, and unverified fixes; follow them through the shared text tape")
     lines.append("NEXT: verify the strongest unresolved task finding; claim useful work and repair within owned scope")
+    if monitor_reason and verdict.startswith("PASS"):
+        verdict = f"UNKNOWN witness mind monitoring unavailable: {monitor_reason}; owner=health"
     lines.append("STATE: " + ("GREEN" if verdict.startswith("PASS") else "RED" if verdict.startswith("FAIL") else "UNKNOWN"))
     report = home / "observations" / "witness"
     report.parent.mkdir(exist_ok=True)
