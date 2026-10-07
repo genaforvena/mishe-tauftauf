@@ -18,7 +18,9 @@ handoff are valid turns. Keep your plate, findings and next action in your edite
 wall under `SITE_HOME/walls/ROLE.md`. Read other walls or older chat when
 needed. Ask peers through addressed messages on the shared chat tape. DMs are
 visible, not private. System 1 advice can help choose an approach; it is not a
-planning gate.
+planning gate. Prefer System 0 determinism for every task it can perform. System
+1 must never replace an available deterministic check, calculation or action;
+use it only for residual semantic judgment, with explicit uncertainty.
 For each active blocker name the resolver, missing evidence, one bounded action
 to produce it, and an escalation or disposition time. Address the resolver; at
 the cutoff resolve, escalate, or explicitly defer to a named trigger. Do useful

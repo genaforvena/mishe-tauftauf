@@ -6,6 +6,11 @@ Research checked against live primary sources on **2026-10-07**. Availability,
 versions and free offers need another lookup before each trial. These are
 candidate recommendations, not mishe benchmark results or an activated gate.
 
+System 0 comes first: use deterministic checks, calculations and actions
+wherever they can do the work. System 1 must never replace them. Before adding
+a model question, name the residual semantic judgment that code cannot settle;
+if a deterministic solution becomes available, retire that model question.
+
 Decision models can help identify unsupported causal claims, classify session
 behavior and select a bounded investigation. Code continues to own timestamps,
 sequence IDs, hashes, test results, scope, admission budgets and the conditions
@@ -128,15 +133,29 @@ Never let a confident semantic verdict override failed deterministic checks.
 Start with shadow decisions over saved, owned evidence; the decisions have no
 effect on settlement, activation, suppression or incident closure. Compare Jev
 with Nimble Q4 and Tev1 4B on identical small packets. Add Clef-flash only for a
-separate visual task. Pin model identity and question wording for each run.
+separate visual task. Record requested and returned model identity and the
+exact question contract for each run. Evaluate the complete model, question, answer variants and
+context combination; a published ranking does not select that combination.
+
+First run the deterministic baseline and remove questions it already answers.
+Keep expected labels independent of candidate prompts and model outputs. On
+the remaining semantic cases, vary question wording, answer wording and order,
+and context separately before testing their interactions. Use equivalent
+paraphrases, evidence at different positions, irrelevant distractors, missing
+evidence and contradictions. Equivalent framing should preserve the answer;
+missing or contradictory evidence may require uncertainty. Measure whether
+framing changes matter more than model changes here rather than assuming
+either dominates.
 
 Use contrastive pairs that change one decisive fact: a recurrence check passes
 or fails; the monitor is fresh or stale; a peer keeps chatting while the subject
 is silent; an idle session did or did not yield; suppression does or does not
 retain replacement coverage. Include incomplete evidence, injected instructions
 and shuffled choice order. Report false acceptance, missed failure, abstention,
-pair consistency, latency and resource use per failure class. Keep threshold
-selection separate from held-out evaluation. A small smoke suite proves only
+pair consistency, framing sensitivity, worst observed false acceptance, latency
+and resource use per failure class and configuration. Keep prompt, option,
+context and threshold selection separate from held-out evaluation; freeze that
+whole contract before testing it. A small smoke suite proves only
 that suite, not calibration or deployment readiness.
 
 Promotion needs an independent reading, deterministic failure-path and routing
