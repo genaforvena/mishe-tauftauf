@@ -12,7 +12,8 @@ def site(tmp_path):
     home.mkdir()
     (home / 'records').mkdir()
     Feed(home).append('operator', '[wish] Investigate forgotten requests')
-    return home, None
+    entry = Feed(home).append('seed', 'seed wake witness observation=1')
+    return home, entry.sequence
 
 
 def configure(home, tmp_path, response=None):
