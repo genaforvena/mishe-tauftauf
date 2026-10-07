@@ -727,6 +727,15 @@ WEDGE_CHAIN_THRESHOLD = 3
 WEDGE_SPAN_THRESHOLD_MINUTES = 15.0
 """Minutes an open continue chain must span before a mind is suspect."""
 
+WEDGE_ERROR_STALE_MINUTES = 5.0
+"""Minutes since the last provider error before a chainless pane is suspect.
+
+Rule R2 fires when a pane has provider errors but no continue chain: the turn
+fails instantly (e.g. a 403 FreeTierError), so omp never schedules a retry and
+rule R (chain >= 3, span >= 15 min) cannot fire. Five minutes is long enough
+that a healthy retry would have produced either a success or a continue chain.
+"""
+
 
 def _omp_log_path(pid: int) -> Path | None:
     """The omp session log for one pane pid, or None when absent."""
@@ -774,7 +783,10 @@ def _omp_continue_chain(pid: int, now: datetime) -> dict | None:
     error`` record in the chain (``provider-error:<status>``, the HTTP status
     when the record or its message names one), or ``none`` when the chain holds
     no provider error — so a retry loop against a failing upstream reads
-    differently from a hung pane.
+    differently from a hung pane. ``last_error_ts`` is the timestamp of the
+    newest such record in the open chain (None when there is none) and
+    ``error_count`` the number of them; rule R2 reads both to flag a pane whose
+    turn fails instantly with no retry scheduled.
     """
     log_path = _omp_log_path(pid)
     if log_path is None:
@@ -782,6 +794,8 @@ def _omp_continue_chain(pid: int, now: datetime) -> dict | None:
     continues: list[datetime] = []
     sources: dict[str, int] = {}
     error_classes: dict[str, int] = {}
+    last_error_ts: datetime | None = None
+    error_count: int = 0
     try:
         text = log_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -809,27 +823,37 @@ def _omp_continue_chain(pid: int, now: datetime) -> dict | None:
         elif message == "agent turn ended with provider error":
             error_class = _provider_error_class(record)
             error_classes[error_class] = error_classes.get(error_class, 0) + 1
+            last_error_ts = ts
+            error_count += 1
         elif (message == "agent_end maintenance routing"
                 and record.get("stopReason") == "stop"):
             continues = []
             sources = {}
             error_classes = {}
-    if not continues:
-        return {"chain": 0, "span_minutes": 0.0, "sources": {}, "cause": "none"}
-    span = (now - continues[0]).total_seconds() / 60.0
+            last_error_ts = None
+            error_count = 0
     cause = "none"
     if error_classes:
         dominant = sorted(error_classes.items(), key=lambda item: (-item[1], item[0]))[0][0]
         cause = f"provider-error:{dominant}"
+    span = (now - continues[0]).total_seconds() / 60.0 if continues else 0.0
     return {"chain": len(continues), "span_minutes": round(span, 1),
-            "sources": sources, "cause": cause}
-
+            "sources": sources, "cause": cause,
+            "last_error_ts": last_error_ts.isoformat() if last_error_ts else None,
+            "error_count": error_count}
 
 def _mind_wedge_suspects() -> dict:
-    """Flag minds whose open omp continue chain indicates a wedge.
+    """Flag minds whose omp session log indicates a wedge.
 
-    Rule R: SUSPECT when the open chain is >= 3 and spans >= 15 min with no
-    completed turn between. The signal reads omp's session log
+    Rule R (chain wedge): SUSPECT when the open continue chain is >= 3 and
+    spans >= 15 min with no completed turn between.
+
+    Rule R2 (provider-error wedge): SUSPECT when the pane has provider errors
+    but no continue chain and the last error is >= 5 min old. This catches the
+    instant-provider-error failure mode (e.g. a 403 FreeTierError) where the
+    turn fails immediately, omp never schedules a retry, and rule R cannot fire.
+
+    The signal reads omp's session log
     (``~/.omp/logs/omp.<date>.<pid>.log``); the sample carries a coverage tier
     (``panes=N with_log=M``), and a pane set with no log at all reads UNKNOWN
     rather than a clean bill, so a log format or path change cannot silently
@@ -869,14 +893,31 @@ def _mind_wedge_suspects() -> dict:
         if (chain["chain"] >= WEDGE_CHAIN_THRESHOLD
                 and chain["span_minutes"] >= WEDGE_SPAN_THRESHOLD_MINUTES):
             suspects.append({"window": window_name, "pid": pid, **chain})
+        elif (chain["chain"] == 0
+                and chain["cause"] != "none"
+                and chain["last_error_ts"] is not None):
+            last_error = datetime.fromisoformat(chain["last_error_ts"])
+            error_age_min = (now - last_error).total_seconds() / 60.0
+            if error_age_min >= WEDGE_ERROR_STALE_MINUTES:
+                suspects.append({"window": window_name, "pid": pid, **chain,
+                                 "rule": "provider-error",
+                                 "error_age_minutes": round(error_age_min, 1)})
     if suspects:
-        sample = "suspects=" + " ".join(
-            f"{s['window']}(pid={s['pid']},chain={s['chain']},"
-            f"span={s['span_minutes']}min,src="
-            + ",".join(f"{name}:{count}"
-                       for name, count in sorted(s["sources"].items()))
-            + f",cause={s['cause']})"
-            for s in suspects)
+        parts = []
+        for s in suspects:
+            if s.get("rule") == "provider-error":
+                parts.append(
+                    f"{s['window']}(pid={s['pid']},rule=provider-error,"
+                    f"chain={s['chain']},error_age={s['error_age_minutes']}min,"
+                    f"cause={s['cause']})")
+            else:
+                parts.append(
+                    f"{s['window']}(pid={s['pid']},chain={s['chain']},"
+                    f"span={s['span_minutes']}min,src="
+                    + ",".join(f"{name}:{count}"
+                               for name, count in sorted(s["sources"].items()))
+                    + f",cause={s['cause']})")
+        sample = "suspects=" + " ".join(parts)
     else:
         sample = "suspects=0"
     sample += f" panes={panes} with_log={with_log}"
