@@ -24,6 +24,46 @@ from .observations import executable, strip_owned_chrome, validate_home, validat
 from .tmux import OWNED_OPTION, _pane_stopped_or_dead, _python_command, _tmux, await_owned, capture_raw, lease_value, owns_session
 
 
+def _fresh_wedge_suspect(home: Path, role: str, pid: str) -> bool:
+    """Return true only for fresh sensor evidence bound to this live pane."""
+    try:
+        scans = sorted((home / "discovery").glob("scan-*.json"))
+        if not scans:
+            return False
+        scan = json.loads(scans[-1].read_text(encoding="utf-8"))
+        created = datetime.fromisoformat(str(scan["created"]).replace("Z", "+00:00"))
+        age = (datetime.now(timezone.utc) - created).total_seconds()
+        if age < 0 or age > 30 * 60:
+            return False
+        observations = scan.get("observations")
+        if not isinstance(observations, list):
+            return False
+        for observation in observations:
+            if (not isinstance(observation, dict)
+                    or observation.get("id") != "sense.mind.wedge-suspect"
+                    or observation.get("state") != "verified"):
+                continue
+            suspects = observation.get("suspects")
+            if isinstance(suspects, list) and any(
+                    isinstance(suspect, dict) and suspect.get("window") == role
+                    and str(suspect.get("pid")) == pid for suspect in suspects):
+                return True
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    return False
+
+
+def _mind_pane_wedged(home: Path, session: str, role: str) -> bool:
+    target = f"{session}:{role}.1"
+    probe = _tmux("display-message", "-p", "-t", target, "#{pane_dead} #{pane_pid}",
+                  check=False)
+    if probe.returncode:
+        return False
+    fields = probe.stdout.decode(errors="replace").strip().split()
+    return (len(fields) == 2 and fields[0] == "0"
+            and _fresh_wedge_suspect(home, role, fields[1]))
+
+
 RENEWAL_SLUGS = frozenset({"discover", "senses"})
 """Resident channels whose panes depend on discovery scan freshness."""
 
@@ -599,7 +639,9 @@ def start(home: Path, session: str, slug: str, interval: float) -> str:
     if created or new_window or top_dead:
         _tmux("respawn-pane", "-k", "-t", f"{target}.0", *top_cmd)
     mind_dead = _tmux("display-message", "-p", "-t", f"{target}.1", "#{pane_dead}").stdout.decode().strip() == "1"
-    if created or new_window or mind_dead:
+    mind_wedged = (not created and not new_window and not mind_dead
+                   and _mind_pane_wedged(home, session, slug))
+    if created or new_window or mind_dead or mind_wedged:
         before = _tmux("display-message", "-p", "-t", f"{target}.1", "#{pane_pid}").stdout.decode().strip()
         _tmux("respawn-pane", "-k", "-t", f"{target}.1", *_mind_launch_argv(home, slug))
         still_dead = _tmux("display-message", "-p", "-t", f"{target}.1", "#{pane_dead}").stdout.decode().strip() == "1"
