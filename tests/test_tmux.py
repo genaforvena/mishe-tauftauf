@@ -34,9 +34,11 @@ class TmuxTests(unittest.TestCase):
             home = Path(directory); initialize(home)
             fixture = home / "fixture"; fixture.write_text("red\n", encoding="utf-8")
             freeze = home / "freeze"
+            entered = home / "freeze-entered"
             renderer = home / "top-pains" / "sensor"
             renderer.write_text(
-                f"#!/bin/sh\n[ -e {freeze} ] && sleep 30\nprintf 'DESIRED STATE: green\\nMEASURED STATE: '; cat {fixture}\n",
+                f"#!/bin/sh\nif [ -e {freeze} ]; then touch {entered}; sleep 30; fi\n"
+                f"printf 'DESIRED STATE: green\\nMEASURED STATE: '; cat {fixture}\n",
                 encoding="utf-8",
             )
             renderer.chmod(0o755)
@@ -61,12 +63,18 @@ class TmuxTests(unittest.TestCase):
                 self._wait_measured(session, "green")
                 ok, line = check_pane(home, session, "sensor", wait=0.4)
                 self.assertTrue(ok, line)
-                # Hang the owned renderer inside its bounded probe: the lease must freeze.
+                # A pre-freeze invocation can still publish a frame. Start the
+                # checker only after a later invocation enters the blocking path.
                 freeze.touch()
-                time.sleep(0.3)
+                deadline = time.monotonic() + 4.0
+                while not entered.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(entered.exists(), "renderer did not enter the freeze path")
+                frozen_lease = lease_value(capture_raw(session, "sensor"))
                 ok, line = check_pane(home, session, "sensor", wait=0.5)
-                self.assertFalse(ok)
+                self.assertFalse(ok, line)
                 self.assertIn("pane-frozen", line)
+                self.assertEqual(frozen_lease, lease_value(capture_raw(session, "sensor")))
                 freeze.unlink()
                 repaired, detail = repair_top(home, session, "sensor")
                 self.assertTrue(repaired, detail)

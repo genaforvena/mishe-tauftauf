@@ -172,6 +172,11 @@ cleanup never runs. The sweep reads the creating pid from the session name and
 kills the session when that pid is dead.
 
 The pane check samples the pane in bounded windows (11 seconds each by default, set by `--pane-wait`; an empty pane is retried before it holds) and names the failure: a top pane holds as `pane-missing`, `pane-empty` (a renderer process exists but printed no first frame), `pane-fallback` (unreadable pane or no owned lease) or `pane-frozen` (renderer stopped/dead, or its lease did not advance across two windows — a `--pane-wait` shorter than the refresh interval reports healthy panes this way); each built-in resident's lower pane is checked separately as `mind-pane-missing` or `mind-pane-dead`. Optional `laya` being unavailable is not a missing dependency for the default plant. Do not add hosted-adapter live flags unless you intend to invoke those services.
+
+For a controlled renderer hang, wait for that invocation to acknowledge entry
+into the blocking path before sampling its lease. A render already in flight
+when the hang is requested can still finish and publish one advancing frame;
+elapsed time since the request is not proof that rendering has stopped.
 The optional witness analysis advisor asks a local Laya model which investigation to try; [observable analysis advice](analysis-advisor.md) covers its setup, feedback and handoff repeat check.
 
 If doctor reports site files staged or tracked in Git, resolve that boundary before landing work. If it reports corrupt feed framing, preserve the tape and diagnose the reported entry rather than appending invented receipts or deleting history to turn the pane green.
