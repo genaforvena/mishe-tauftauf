@@ -74,7 +74,14 @@ def test_seed_does_not_recover_dead_or_stale_wedge_evidence(tmp_path, monkeypatc
     assert not seed._mind_pane_wedged(home, "owned-session", "genome")
 
 
-def test_seed_start_respawns_a_live_pane_with_fresh_wedge_evidence(tmp_path, monkeypatch):
+@pytest.mark.parametrize("suspects, duplicate_reading, recover", [
+    ([{"window": "genome", "pid": 42}], False, True),
+    ([{"window": "genome", "pid": 42}], True, False),
+    ([{"window": "genome", "pid": 42}, 5], False, False),
+    ([{"window": "genome", "pid": "42"}], False, False),
+])
+def test_seed_start_recovers_only_valid_aggregate(
+        tmp_path, monkeypatch, suspects, duplicate_reading, recover):
     from subprocess import CompletedProcess
     home = tmp_path / "site"
     (home / "top-pains").mkdir(parents=True)
@@ -85,10 +92,14 @@ def test_seed_start_respawns_a_live_pane_with_fresh_wedge_evidence(tmp_path, mon
     (home / "minds" / "genome").chmod(0o755)
     discovery_dir = home / "discovery"
     discovery_dir.mkdir()
+    readings = [{"id": "sense.mind.wedge-suspect", "state": "verified",
+                 "suspects": suspects}]
+    if duplicate_reading:
+        readings.append({"id": "sense.mind.wedge-suspect", "state": "verified",
+                         "suspects": []})
     (discovery_dir / "scan-1.json").write_text(json.dumps({
         "created": datetime.now(timezone.utc).isoformat(),
-        "observations": [{"id": "sense.mind.wedge-suspect", "state": "verified",
-                          "suspects": [{"window": "genome", "pid": 42}]}],
+        "observations": readings,
     }))
     monkeypatch.setattr(seed, "await_owned", lambda *a: True)
     monkeypatch.setattr(seed, "_mind_launch_argv", lambda *a: ("mind-launcher",))
@@ -120,7 +131,8 @@ def test_seed_start_respawns_a_live_pane_with_fresh_wedge_evidence(tmp_path, mon
 
     monkeypatch.setattr(seed, "_tmux", command)
     assert seed.start(home, "owned-session", "genome", 5).startswith("seed genome ready")
-    assert [call[call.index("-t") + 1] for call in respawns] == ["owned-session:genome.1"]
+    assert [call[call.index("-t") + 1] for call in respawns] == (
+        ["owned-session:genome.1"] if recover else [])
 
 
 def test_missing_configuration_means_open_wall_workflow(tmp_path):

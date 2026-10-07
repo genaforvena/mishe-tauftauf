@@ -24,40 +24,58 @@ from .observations import executable, strip_owned_chrome, validate_home, validat
 from .tmux import OWNED_OPTION, _pane_stopped_or_dead, _python_command, _tmux, await_owned, capture_raw, lease_value, owns_session
 
 
-def _fresh_wedge_suspect(home: Path, role: str, pid: str) -> bool:
-    """Return true only for fresh sensor evidence bound to this live pane."""
+def _wedge_evidence(home: Path) -> tuple[list[dict], str | None]:
+    """Validate the whole aggregate before either consumer binds live PIDs.
+
+    Availability does not establish per-role coverage or useful progress.
+    """
     try:
         scans = []
         for path in (home / "discovery").glob("scan-*.json"):
             scan = json.loads(path.read_text(encoding="utf-8"))
             created = datetime.fromisoformat(str(scan["created"]).replace("Z", "+00:00"))
+            if created.tzinfo is None:
+                return [], "scan timestamp has no timezone"
             scans.append((created, scan))
         if not scans:
-            return False
+            return [], "no discovery scan"
         newest = max(created for created, _ in scans)
         latest = [scan for created, scan in scans if created == newest]
         if len(latest) != 1:
-            return False
+            return [], "newest scan timestamp is ambiguous"
         scan = latest[0]
-        age = (datetime.now(timezone.utc) - newest).total_seconds()
-        if age < 0 or age > 30 * 60:
-            return False
-        observations = scan.get("observations")
-        if not isinstance(observations, list):
-            return False
-        for observation in observations:
-            if (not isinstance(observation, dict)
-                    or observation.get("id") != "sense.mind.wedge-suspect"
-                    or observation.get("state") != "verified"):
-                continue
-            suspects = observation.get("suspects")
-            if isinstance(suspects, list) and any(
-                    isinstance(suspect, dict) and suspect.get("window") == role
-                    and str(suspect.get("pid")) == pid for suspect in suspects):
-                return True
+        age_seconds = (datetime.now(timezone.utc) - newest).total_seconds()
     except (OSError, ValueError, KeyError, TypeError):
-        return False
-    return False
+        return [], "discovery scan unreadable or malformed"
+    if age_seconds < 0:
+        return [], "newest scan is future-dated"
+    if age_seconds > 30 * 60:
+        return [], "newest scan is stale"
+    observations = scan.get("observations")
+    if not isinstance(observations, list):
+        return [], "scan observations malformed"
+    readings = [row for row in observations
+                if isinstance(row, dict) and row.get("id") == "sense.mind.wedge-suspect"]
+    if len(readings) != 1:
+        return [], "wedge reading missing or ambiguous"
+    observation = readings[0]
+    if observation.get("state") != "verified":
+        return [], "wedge reading not verified"
+    reported = observation.get("suspects")
+    if not isinstance(reported, list) or any(not isinstance(row, dict) for row in reported):
+        return [], "wedge suspects malformed"
+    for suspect in reported:
+        window, pid = suspect.get("window"), suspect.get("pid")
+        if not isinstance(window, str) or not isinstance(pid, int) or isinstance(pid, bool):
+            return [], "wedge suspect identity malformed"
+    return reported, None
+
+
+def _fresh_wedge_suspect(home: Path, role: str, pid: str) -> bool:
+    """Return true only for valid fresh evidence bound to this live pane."""
+    suspects, unavailable = _wedge_evidence(home)
+    return unavailable is None and any(
+        suspect["window"] == role and str(suspect["pid"]) == pid for suspect in suspects)
 
 
 def _mind_pane_wedged(home: Path, session: str, role: str) -> bool:
