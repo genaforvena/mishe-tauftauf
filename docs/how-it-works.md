@@ -108,10 +108,15 @@ it maps the provider's call shape onto a durable, reconcilable operation: it
 allocates the intent before any effect, persists the start record before the
 executor runs, and appends the outcome afterwards. The reply it returns is the
 loop's expected status shape, so `completed` continues and `unknown` stops
-without retry. A second dispatch of the same operation id returns the recorded
-outcome or an explicit `unknown`, never a second execution. The scope is a
-single local store and single writer per process; process-crash recovery, not
-power loss.
+without retry. Matching pending bindings reuse the intent; changed content is
+refused. Completed allocation or binding raises `AlreadyExecuted`, even for
+changed content: this callback is not an idempotent resend API. Low-level
+`EffectLedger.dispatch` returns an existing outcome before fresh content
+validation; use binding for dispatch and `reconcile` for recorded-result recovery.
+Reconciliation never executes; absent history or an intent without an outcome
+is UNKNOWN, not permission to retry. The executor must still check current
+authority. `completed` records its return, not physical success or remote delivery.
+The scope is one local store and writer; process-crash recovery, not power loss.
 
 Every exception this module defines reaches the caller from dispatch instead of
 the generic `unknown` / `capability-failed` reply: `AlreadyExecuted` and
