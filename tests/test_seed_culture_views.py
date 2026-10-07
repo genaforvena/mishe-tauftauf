@@ -314,6 +314,66 @@ def _write_scan(home: Path, observations: list[dict], *, acquisition: bool = Tru
     return snapshot
 
 
+@pytest.mark.parametrize("pane", [discover, senses])
+@pytest.mark.parametrize("damage", [
+    "missing", "syntax", "root", "absent-list", "null-list", "object-list",
+    "row", "missing-sample", "id-type", "kind-type", "state-type",
+])
+def test_rejected_receipt_replaces_prior_success_without_erasing_attempt(
+        tmp_path: Path, current_endpoint, pane, damage) -> None:
+    snapshot = _write_scan(tmp_path, [
+        {"id": "sense.value", "kind": "read", "state": "verified", "sample": 12},
+    ], status="failed", error="retained acquisition failure")
+    path = tmp_path / "discovery/latest.json"
+    if damage == "missing":
+        path.unlink()
+    elif damage == "syntax":
+        path.write_text("{")
+    else:
+        if damage == "root":
+            snapshot = []
+        elif damage == "absent-list":
+            del snapshot["observations"]
+        elif damage == "null-list":
+            snapshot["observations"] = None
+        elif damage == "object-list":
+            snapshot["observations"] = {}
+        elif damage == "row":
+            snapshot["observations"].append("invalid row")
+        elif damage == "missing-sample":
+            del snapshot["observations"][0]["sample"]
+        else:
+            snapshot["observations"][0][damage.removesuffix("-type")] = None
+        path.write_text(json.dumps(snapshot))
+    report = tmp_path / "observations" / pane.__name__
+    report.parent.mkdir()
+    report.write_text("PASS controlled predecessor, not acquisition evidence\n")
+    attempt = (tmp_path / "discovery/attempt.json").read_bytes()
+    rendered = pane(tmp_path)
+    assert "STATE: UNKNOWN" in rendered
+    assert "retained acquisition failure" in rendered
+    assert "VERIFIED sense.value" not in rendered
+    assert report.read_text().startswith("UNKNOWN ")
+    assert (tmp_path / "discovery/attempt.json").read_bytes() == attempt
+
+
+@pytest.mark.parametrize("pane", [discover, senses])
+@pytest.mark.parametrize("age", ["recent", "stale"])
+def test_valid_drift_retains_source_state_across_freshness(
+        tmp_path: Path, current_endpoint, pane, age) -> None:
+    _write_scan(tmp_path, [
+        {"id": "sense.ledger.evidence-binding", "kind": "read",
+         "state": "drift", "sample": "all_bad=63"},
+    ])
+    if age == "stale":
+        current_endpoint["bounds_ns"] = [912_000_000_000, 912_000_000_000]
+    rendered = pane(tmp_path)
+    display = "DRIFT" if age == "recent" else "UNKNOWN"
+    assert f"{display} sense.ledger.evidence-binding: all_bad=63 source_state=drift" in rendered
+    assert f"freshness={age}" in rendered
+    assert (tmp_path / "observations" / pane.__name__).read_text().startswith("UNKNOWN ")
+
+
 def _journal() -> dict:
     return {"id": "sense.journal.kernel-error-count", "state": "verified", "kind": "read",
             "sample": "last-10min kernel-error-count=7", "count": 7,
