@@ -212,3 +212,19 @@ def test_render_output_is_identical_with_and_without_the_shared_payload_map(tmp_
     monkeypatch.setattr(view, 'anomalies', lambda entries, **kwargs: real_anomalies(entries))
     without_map = view.render(tmp_path)
     assert with_map == without_map
+
+
+def test_live_mind_pane_accepts_every_ready_engine(monkeypatch):
+    import mishe_tauftauf.seed as seed
+    import mishe_tauftauf.seed_witness_view as view
+
+    def pane(value):
+        return lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=value.encode())
+
+    for engine in ('omp', 'codex', 'opencode'):
+        monkeypatch.setattr(seed, '_tmux', pane(f'0 {engine}'))
+        assert view._mind_pane_live('session', 'docs')
+    monkeypatch.setattr(seed, '_tmux', pane('1 opencode'))
+    assert not view._mind_pane_live('session', 'docs')
+    monkeypatch.setattr(seed, '_tmux', pane('0 bash'))
+    assert not view._mind_pane_live('session', 'docs')

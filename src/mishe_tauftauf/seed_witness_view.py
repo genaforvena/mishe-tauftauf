@@ -138,7 +138,7 @@ def _mind_pane_live(session: str, role: str) -> bool:
     if probe.returncode:
         return False
     fields = probe.stdout.decode("utf-8", "replace").split()
-    return len(fields) == 2 and fields[0] == "0" and fields[1] in {"omp", "codex"}
+    return len(fields) == 2 and fields[0] == "0" and fields[1] in {"omp", "codex", "opencode"}
 
 
 def _mind_not_idle(session: str, role: str) -> bool:
