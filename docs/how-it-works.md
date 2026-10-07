@@ -217,6 +217,14 @@ supported across this boundary. The caller must supply an immutable, singly owne
 completed-result history and reconcile original effects before continuation;
 the transport neither selects nor authenticates a journal. Error/incomplete
 responses retain diagnostics but do not establish a recovery checkpoint.
+A correlated receipt can also arrive after its worker has exited, in which case
+`turn()` returns the terminal `transport-receipt-after-exit` instead of `done`:
+the assistant text is kept and the caller owns reconciling a provider it can no
+longer continue. The loop stops `unknown` without dispatching under it, because
+that terminal proves a selection without proving the provider state it was made
+from is still live. The `model_output` row keeps the terminal, so a fresh process
+can branch on it where the recorded `stop` status alone is ambiguous: `unknown`
+covers nine loop causes a reconciling caller may need to tell apart.
 
 `inference_loop.recover_native(path, open_session=..., ...)` selects the logical
 checkpoint, exact completed results and original budgets from that caller journal,
