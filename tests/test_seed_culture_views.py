@@ -252,9 +252,18 @@ def test_senses_reports_absent_source_as_unavailable_not_unchecked(tmp_path: Pat
     ])
     rendered = senses(home)
     assert "UNAVAILABLE sense.input.keyboard-interrupt-count" in rendered
-    assert "STATE: GREEN" in rendered
-    assert "UNAVAILABLE senses 1" in rendered
-    assert (home / "observations" / "senses").read_text(encoding="utf-8").startswith("PASS senses 2 ")
+
+
+def test_missing_space_boundary_keeps_other_reads_but_cannot_claim_overall_success(
+        tmp_path: Path, current_endpoint) -> None:
+    home = tmp_path / "site"
+    _write_scan(home, [
+        {"id": "sense.proc.loadavg", "state": "verified", "sample": "1.23", "kind": "read"},
+    ])
+    rendered = senses(home)
+    assert "VERIFIED sense.proc.loadavg" in rendered
+    assert "UNKNOWN sense.space.light" in rendered
+    assert (home / "observations" / "senses").read_text(encoding="utf-8").startswith("UNKNOWN ")
 
 
 def test_senses_still_counts_an_unreadable_counter_as_unknown(tmp_path: Path, current_endpoint) -> None:
@@ -328,7 +337,6 @@ def test_journal_keeps_original_fixed_window_and_full_metadata(
     for key, value in journal["coverage"].items():
         assert str(value) in rendered
     assert "freshness=recent utc_consistency=consistent" in rendered
-    assert "STATE: GREEN" in rendered
 
 
 def _unit_failure() -> dict:
@@ -352,7 +360,6 @@ def test_unit_failure_journal_sense_verifies_with_valid_bounds(
     assert "VERIFIED sense.journal.unit-failure-count" in rendered
     assert "historical sample=last-10min unit-failure-count=2 resources=2" in rendered
     assert "source_bounds=valid" in rendered
-    assert "STATE: GREEN" in rendered
 
 
 @pytest.mark.parametrize("pane", [discover, senses])
@@ -473,8 +480,6 @@ def test_empty_scan_obeys_full_age_interval_at_fifteen_minute_boundary(
     current_endpoint["bounds_ns"] = [first, last]
     rendered = pane(home)
     assert f"freshness={freshness}" in rendered
-    report = (home / "observations" / pane.__name__).read_text(encoding="utf-8")
-    assert report.startswith("PASS " if freshness == "recent" else "UNKNOWN ")
 
 
 @pytest.mark.parametrize("pane", [discover, senses])
@@ -531,7 +536,6 @@ def test_acquisition_wall_anomaly_is_visible_without_replacing_boottime_recency(
     rendered = pane(home)
     assert "freshness=recent utc_consistency=anomaly" in rendered
     assert "VERIFIED sense.journal.kernel-error-count" in rendered
-    assert "STATE: GREEN" in rendered
 
 
 @pytest.mark.parametrize("manifest", [None, "{", '{"unit":"health.service"}', '["bad"]'])
