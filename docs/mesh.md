@@ -31,6 +31,16 @@ covers only the named checks; missing, failed and stale readings stay unresolved
 and a live pane or lease proves only that it renders, not that its content is
 current or correct.
 
+The space-light reader consumes the owned Note3's atomic `SITE/body/space.json`
+boundary without starting another collector. It keeps lux, source, session and
+original sample/receipt times visible. Freshness is conditional on unverified
+phone/host clock agreement, capped at 30 seconds or the producer's shorter
+validity; polling or rendering cannot extend it. Missing, broken, delayed or
+expired evidence is UNKNOWN. Retained measured light changes are history, not
+room occupancy or human attendance; startup and recovery are not physical events.
+The Android publisher and each core caller need their own checked activation —
+source support alone does not establish a working live feed.
+
 Repairs start with causal investigation and leave failures observable. Preserve
 what failed, explain why, and test that recurrence still reaches a mind able to
 respond. Missing or broken monitoring stays unresolved. A retry can restore work

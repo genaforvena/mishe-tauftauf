@@ -6,6 +6,7 @@ import ast
 
 import hashlib
 import json
+import math
 import os
 import time
 import re
@@ -2667,6 +2668,159 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
             "violations": [f"{role}@{ts.strftime('%Y-%m-%dT%H:%M:%SZ')}:{name}({classes})"
                            for ts, role, name, classes in violations]}
 
+SPACE_SOURCE = "http://127.0.0.1:8765/node/note3"
+SPACE_PRODUCER = {"name": "android-body-perception", "entry_point": "watch.py",
+                  "mode": "space", "contract": 1}
+SPACE_VALIDITY_SECONDS = 30.0
+
+
+def _space_number(value: object) -> bool:
+    return type(value) in (int, float) and math.isfinite(value)
+
+
+def _space_utc(value: object) -> float:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.utcoffset() is None:
+        raise ValueError("missing UTC offset")
+    return parsed.timestamp()
+
+
+def _space_stamp(value: float) -> str:
+    return datetime.fromtimestamp(value, timezone.utc).isoformat(timespec="seconds")
+
+
+def _space_endpoint(item: dict, validity: float) -> tuple[float, float]:
+    phone, receipt = item["phone_sample_epoch_s"], item["consumer_receipt_epoch_s"]
+    if (not _space_number(phone) or not _space_number(receipt)
+            or type(item["sequence"]) is not int or item["sequence"] < 0
+            or not _space_number(item["lux"]) or item["lux"] < 0
+            or not 0 <= receipt - phone <= validity):
+        raise ValueError("invalid endpoint")
+    return phone, receipt
+
+
+def _space_light(data: object, now: float) -> dict:
+    """Validate original evidence; publication and polling never renew a sample."""
+    row = {"id": "sense.space.light", "kind": "read", "state": "unknown",
+           "reason": "malformed-boundary", "sample": "Note3 light UNKNOWN: malformed-boundary",
+           "current_lux": None, "event_id": None, "historical_transition": None,
+           "clock_uncertainty": "phone/host clock agreement unverified"}
+
+    def unknown(reason: str) -> dict:
+        row.update(state="unknown", reason=reason, current_lux=None, event_id=None,
+                   sample=f"Note3 light UNKNOWN: {reason}; source={SPACE_SOURCE}")
+        return row
+
+    try:
+        if (type(data["schema_version"]) is not int or data["schema_version"] != 1
+                or data["producer"] != SPACE_PRODUCER or not isinstance(data["nodes"], list)):
+            return unknown("invalid-schema-or-producer")
+        nodes = [node for node in data["nodes"] if node["node"] == "note3"]
+        if len(nodes) != 1:
+            return unknown("missing-or-duplicate-note3")
+        node = nodes[0]
+        # Retain only the owned Note3 boundary; never forward other devices.
+        row["boundary"] = {"schema_version": data["schema_version"], "producer": data["producer"],
+                           "generated_at_utc": data["generated_at_utc"], "nodes": [node]}
+        if (node["source"] != SPACE_SOURCE or not isinstance(node["session"], str)
+                or not node["session"].strip() or type(node["cursor"]) is not int):
+            return unknown("invalid-provenance")
+        row["provenance"] = {"source": node["source"], "session": node["session"]}
+        row["historical_transition"] = node.get("last_light_transition")
+        if node["backlog_page_pending"] is not False:
+            return unknown("backlog-or-missing-coverage")
+        if node["transport"] != "reachable" or node["last_error"] is not None:
+            return unknown("transport-not-current")
+        light = node["light"]
+        validity = light["validity_seconds"]
+        if not _space_number(validity) or validity <= 0:
+            return unknown("invalid-validity")
+        validity = min(validity, SPACE_VALIDITY_SECONDS)
+        row["validity_seconds"] = validity
+        if (light["status"] != "fresh-clock-conditional"
+                or light["delayed_at_receipt"] is not False):
+            return unknown("light-not-current-or-delayed")
+        if light["units"] != "lux":
+            return unknown("invalid-light-units")
+        phone, receipt = _space_endpoint(light, validity)
+        if node["cursor"] < light["sequence"]:
+            return unknown("invalid-sequence")
+        collection_age = light["age_ms_at_phone_collection"]
+        if not _space_number(collection_age) or not 0 <= collection_age <= validity * 1000:
+            return unknown("invalid-or-stale-collection-age")
+        generated, poll = _space_utc(data["generated_at_utc"]), _space_utc(node["last_poll_utc"])
+        times = (phone, receipt, generated, poll)
+        if any(value > now for value in times):
+            return unknown("clock-future")
+        if any(now - value > validity for value in times):
+            return unknown("stale-original-evidence")
+        row.update(state="verified", reason="fresh-clock-conditional",
+                   current_lux=light["lux"], sequence=light["sequence"],
+                   expires_epoch_s=min(times) + validity,
+                   sample=(f"Note3 {light['lux']:g}lux #{light['sequence']} fresh-clock-conditional; "
+                           f"phone={_space_stamp(phone)} receipt={_space_stamp(receipt)}; "
+                           f"validity={validity:g}s source={node['source']} session={node['session']}"))
+        event = node.get("last_light_transition")
+        if isinstance(event, dict):
+            try:
+                event_validity = event["validity_seconds"]
+                if not _space_number(event_validity) or event_validity <= 0:
+                    raise ValueError("invalid event validity")
+                event_validity = min(validity, event_validity)
+                start, end = event["from"], event["to"]
+                start_phone, start_receipt = _space_endpoint(start, event_validity)
+                end_phone, end_receipt = _space_endpoint(end, event_validity)
+                if (event["kind"] != "measured_light_bucket_transition"
+                        or event["source"] != node["source"] or event["session"] != node["session"]
+                        or event["event_id"] != f"note3:{node['session']}:{end['sequence']}"
+                        or not start["sequence"] < end["sequence"] <= light["sequence"]
+                        or not 0 <= end_phone - start_phone <= event_validity
+                        or end_receipt < start_receipt
+                        or any(not 0 <= now - value <= event_validity
+                               for value in (start_phone, start_receipt, end_phone, end_receipt))):
+                    raise ValueError("invalid event provenance or window")
+                buckets = tuple(math.floor(math.log2(1 + point["lux"])) for point in (start, end))
+                if (buckets[0] == buckets[1] or type(event["bucket_from"]) is not int
+                        or type(event["bucket_to"]) is not int
+                        or buckets != (event["bucket_from"], event["bucket_to"])):
+                    raise ValueError("invalid transition")
+                row["event_id"] = event["event_id"]
+                row["event_sequence"] = end["sequence"]
+                row["event_sample"] = (
+                    f"historical measured light change #{start['sequence']} {start['lux']:g}lux"
+                    f" -> #{end['sequence']} {end['lux']:g}lux; "
+                    f"phone={_space_stamp(start_phone)}->{_space_stamp(end_phone)}; "
+                    f"fresh-clock-conditional source={node['source']} session={node['session']}")
+            except (KeyError, TypeError, ValueError, AttributeError, OverflowError):
+                row["event_reason"] = "invalid-or-expired-historical-transition"
+        return row
+    except (KeyError, TypeError, ValueError, AttributeError, OverflowError):
+        return unknown("malformed-boundary")
+
+
+def _space_light_read(home: Path) -> dict:
+    path = home / "body" / "space.json"
+    text = _read(path, 65536)
+    try:
+        data = json.loads(text) if text is not None else None
+    except (ValueError, TypeError):
+        data = None
+    row = _space_light(data, time.time())
+    if data is None:
+        row.update(reason="boundary-absent-or-corrupt",
+                   sample=f"Note3 light UNKNOWN: boundary-absent-or-corrupt; file={path}")
+    return row
+
+
+def _space_new_event(previous: dict | None, current: dict) -> bool:
+    """Baseline, restart and recovery seed history instead of replaying events."""
+    return bool(previous and previous.get("state") == current.get("state") == "verified"
+                and previous.get("provenance") == current.get("provenance")
+                and previous.get("expires_epoch_s", -1) >= time.time()
+                and current.get("event_id") and current["event_id"] != previous.get("event_id")
+                and current.get("event_sequence", -1) > previous.get("sequence", -1))
+
+
 def sample(home: Path) -> dict[str, object]:
     """Take bounded reads; never open input event streams or record key content."""
     observed: list[dict[str, object]] = []
@@ -2682,6 +2836,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_ledger_delivery_invariant(home))
     observed.append(_ledger_dv_binding(home))
     observed.append(_ledger_evidence_binding(home))
+    observed.append(_space_light_read(home))
 
     loadavg = _read(Path("/proc/loadavg"), 256)
     observed.append({"id": "sense.proc.loadavg", "state": "verified" if loadavg else "unknown",
@@ -2995,6 +3150,10 @@ def scan(home: Path) -> Path:
 def _notify_scan(home: Path, snapshot: dict[str, object],
                  previous: dict[str, object] | None, artifact: Path) -> None:
     readings = snapshot["observations"]
+    # Recheck the original boundary at notification time, not the scan timestamp.
+    readings = [_space_light(item["boundary"], time.time())
+                if item.get("id") == "sense.space.light" and "boundary" in item else item
+                for item in readings]
     available = [str(item["id"]).removeprefix("command.") for item in readings
                  if item["kind"] == "declaration" and item["state"] == "available"]
     unavailable = [str(item["id"]).removeprefix("command.") for item in readings
@@ -3009,7 +3168,9 @@ def _notify_scan(home: Path, snapshot: dict[str, object],
             identifier = str(item["id"])
             state = str(item["state"])
             sample_text = str(item["sample"])
-            if item["kind"] == "declaration" or state != "verified":
+            if identifier == "sense.space.light":
+                detail = json.dumps((item.get("reason"), item.get("provenance")), sort_keys=True)
+            elif item["kind"] == "declaration" or state != "verified":
                 detail = sample_text
             elif identifier == "sense.proc.cpu-busy":
                 detail = "high" if re.search(r"(?:^|\s)high(?:$|\s)", sample_text) else "not-high"
@@ -3020,9 +3181,14 @@ def _notify_scan(home: Path, snapshot: dict[str, object],
             result[identifier] = (state, detail)
         return result
 
-    current_signature = signature(snapshot)
+    current_signature = signature({"observations": readings})
     old_signature = signature(previous)
     changed = [name for name in current_signature if current_signature[name] != old_signature.get(name)]
+    old_space = next((item for item in (previous or {}).get("observations", [])
+                      if item.get("id") == "sense.space.light"), None)
+    new_space = next((item for item in readings if item.get("id") == "sense.space.light"), None)
+    if new_space and _space_new_event(old_space, new_space) and "sense.space.light" not in changed:
+        changed.append("sense.space.light")
     if previous is not None and not changed:
         return
     change_details = []
@@ -3033,6 +3199,12 @@ def _notify_scan(home: Path, snapshot: dict[str, object],
         old_reading = next((item for item in previous.get("observations", [])
                             if item["id"] == name), None)
         new_reading = next((item for item in readings if item["id"] == name), None)
+        if name == "sense.space.light" and old_reading and new_reading:
+            if _space_new_event(old_reading, new_reading):
+                change_details.append(f"{name} {new_reading['event_sample']}")
+            else:
+                change_details.append(f"{name} availability/provenance baseline (not a physical transition)")
+            continue
         if old_reading and new_reading and old_reading["state"] == new_reading["state"] == "verified":
             if name == "sense.proc.cpu-busy":
                 old_class = "high" if re.search(
