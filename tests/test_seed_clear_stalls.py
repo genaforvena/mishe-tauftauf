@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -118,6 +119,13 @@ def test_live_renderer_exposes_stall_and_recovers_without_writing_tasks(tmp_path
 def test_live_renderer_exposes_stale_pend(tmp_path, monkeypatch):
     from mishe_tauftauf import seed
     home, view = prepare_view(tmp_path, monkeypatch)
+    (home / "discovery").mkdir()
+    (home / "discovery/scan-receipt-control.json").write_text(json.dumps({
+        "created": datetime.now(timezone.utc).isoformat(),
+        "observations": [{
+            "id": "sense.mind.wedge-suspect", "state": "verified", "suspects": [],
+        }],
+    }))
     receipts = [entry(1, "seed wake genome observation=1", age=10000)]
     monkeypatch.setattr(view, "_mind_pane_live", lambda session, role: True)
     monkeypatch.setattr(seed, "_mind_idle", lambda session, slug: True)
