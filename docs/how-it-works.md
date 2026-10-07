@@ -178,6 +178,22 @@ dispatch started. A retained stop is the previous caller's report, not independe
 acceptance. This API covers single-writer local file/process-crash evidence,
 not power-loss durability, automatic recovery or a deployed resident route.
 
+`inference_inspect.prepare_exact_inspection` freezes one caller-supplied absolute
+file path, SHA256, byte count, source/task identity and loop budgets before a model
+turn. Preflight and dispatch use the same bounded read: every path component
+refuses symlinks, the target must be a stable regular UTF-8 file, and its digest
+must match before any text is returned. The model can select only `inspect` with
+that exact path and no extra arguments. `EffectBoundary` binds the read to the
+actual caller obligation and writer, rather than a prototype identity.
+`run_exact_inspection` composes this executor with `drive_native` and an exclusive
+`NativeJournal`; reusing a prepared run refuses before another model turn.
+An evidence change after dispatch starts remains UNKNOWN even if bytes are later
+restored. The caller owns trusted unchanged manifest/executor objects, session
+lifetime/output/time limits and the independent completion oracle. The recorded
+selector is intended-model metadata, not proof of the session's provider choice.
+There is no automatic recovery, hostile-caller protection or OS sandbox here;
+synthetic source checks do not establish a deployed resident consumer.
+
 `inference_transport.NativeSession` implements a caller-owned sequential IPC
 session for that loop. It opens a worker with a model selector and session ID,
 correlates numbered turns, and retains raw terminal provenance in `NativeTurn`.
