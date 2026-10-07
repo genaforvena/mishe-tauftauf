@@ -39,3 +39,15 @@ def test_scan_values_do_not_create_new_exploration_obligation():
     second = "GOAL: look\nVERIFIED sense.load: 2\nSCAN: second\nUNKNOWN sense.keyboard: unavailable\nSTATE: UNKNOWN\n"
     assert _observation_text("senses", first) == _observation_text("senses", second)
     assert _observation_text("genome", first) != _observation_text("genome", second)
+
+
+def test_a_drift_sense_line_reaches_the_senses_observation_text():
+    frame = ("GOAL: look\n"
+             "DRIFT sense.runtime.renderer-coverage: renderers=9 "
+             "script_unknown=self-development source_state=drift\n"
+             "VERIFIED sense.proc.loadavg: 9.76 12.71 20.45 source_state=verified\n"
+             "STATE: UNKNOWN — 5 senses need a checked read or honest unavailable claim\n")
+    reduced = _observation_text("senses", frame)
+    assert "DRIFT sense.runtime.renderer-coverage" in reduced
+    assert "VERIFIED sense.proc.loadavg" not in reduced
+    assert "STATE: UNKNOWN" in reduced
