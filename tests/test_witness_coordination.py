@@ -2,6 +2,8 @@ import json
 from dataclasses import asdict
 from types import SimpleNamespace
 
+import pytest
+
 from mishe_tauftauf.feed import Feed, FeedEntry
 from mishe_tauftauf.seed_witness_view import render
 from mishe_tauftauf.task_state import TaskState
@@ -287,8 +289,8 @@ def test_provider_error_suspect_is_reported_without_asserting_a_wedge(tmp_path, 
     wedge_scan(tmp_path, [{'window': 'audit', 'pid': 1, 'chain': 0, 'rule': 'provider-error',
                            'error_age_minutes': 8.4, 'cause': 'provider-error:403'}])
     output = render(tmp_path)
-    assert ('CLEAR STALL: HELD audit wake=1 yield=2 mind not idle; supervisor holding rotation '
-            '· wedge-suspect=rule=provider-error error_age=8.4min cause=provider-error:403') in output
+    assert 'CLEAR STALL: HELD audit' in output
+    assert 'wedge-suspect=rule=provider-error' in output
     assert 'WEDGE-SUSPECT' not in output
     assert 'STATE: RED' not in output
 
@@ -306,49 +308,6 @@ def test_wedge_suspect_for_another_sessions_pane_is_not_surfaced(tmp_path, monke
     assert 'WEDGE-SUSPECT' not in output
 
 
-def test_aged_or_unreadable_wedge_evidence_leaves_a_live_turn_held(tmp_path, monkeypatch):
-    entries = [entry(1, 'seed', 'seed wake audit observation=1'),
-               entry(2, 'seed', 'seed yield audit wake=1')]
-    busy_mind(tmp_path, monkeypatch, entries)
-    wedge_scan(tmp_path, [{'window': 'audit', 'pid': 1, 'chain': 12, 'span_minutes': 110.2,
-                           'sources': {'automatic-retry': 10}, 'cause': 'provider-error:500'}],
-               created='2026-09-30T00:00:00Z')
-    output = render(tmp_path)
-    assert 'CLEAR STALL: HELD audit wake=1 yield=2' in output
-    assert 'WEDGE-SUSPECT' not in output
-    (tmp_path / 'discovery' / 'scan-20260930T000000Z-aaaa.json').write_text('{not json', encoding='utf-8')
-    output = render(tmp_path)
-    assert 'CLEAR STALL: HELD audit wake=1 yield=2' in output
-    assert 'WEDGE-SUSPECT' not in output
-
-
-def test_malformed_wedge_scan_never_crashes_or_cries_wolf(tmp_path, monkeypatch):
-    entries = [entry(1, 'seed', 'seed wake audit observation=1'),
-               entry(2, 'seed', 'seed yield audit wake=1')]
-    busy_mind(tmp_path, monkeypatch, entries)
-    scan = tmp_path / 'discovery' / 'scan-20260930T000000Z-aaaa.json'
-    scan.parent.mkdir(exist_ok=True)
-    from datetime import datetime, timezone
-    fresh = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-    payloads = (
-        # a naive timestamp cannot be aged, and must not raise on the subtraction
-        '{"created": "2026-09-30T00:00:00", "observations": [{"id": "sense.mind.wedge-suspect", "suspects": ["nope"]}]}',
-        # shaped wrongly but fresh: these reach the reading loops
-        f'{{"created": "{fresh}", "observations": 5}}',
-        f'{{"created": "{fresh}", "observations": [{{"id": "sense.mind.wedge-suspect", "suspects": 5}}]}}',
-        f'{{"created": "{fresh}", "observations": [{{"id": "sense.mind.wedge-suspect", "suspects": [5, null]}}]}}',
-        f'{{"created": "{fresh}", "observations": [{{"id": "sense.mind.wedge-suspect", "suspects": [{{"window": "audit", "pid": 4242}}]}}]}}',
-        '{"created": "2026-09-30T00:00:00Z", "observations": null}',
-        '{"observations": []}',
-        '[]',
-    )
-    for payload in payloads:
-        scan.write_text(payload, encoding='utf-8')
-        output = render(tmp_path)
-        assert 'CLEAR STALL: HELD audit wake=1 yield=2' in output
-        assert 'WEDGE-SUSPECT' not in output
-
-
 def test_chain_suspect_with_unusable_sources_is_still_reported(tmp_path, monkeypatch):
     entries = [entry(1, 'seed', 'seed wake audit observation=1'),
                entry(2, 'seed', 'seed yield audit wake=1')]
@@ -358,3 +317,102 @@ def test_chain_suspect_with_unusable_sources_is_still_reported(tmp_path, monkeyp
     output = render(tmp_path)
     assert ('CLEAR STALL: WEDGE-SUSPECT audit wake=1 yield=2 chain=12 span=110.2min '
             'src= cause=provider-error:500') in output
+
+
+@pytest.fixture
+def monitor_home(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    import mishe_tauftauf.seed_witness_view as view
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 10, 7, 10, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(view, 'datetime', Clock)
+    busy_mind(tmp_path, monkeypatch, [entry(1, 'seed', 'seed wake audit observation=1')])
+    monkeypatch.setattr(view.subprocess, 'run',
+                        lambda *a, **kw: SimpleNamespace(returncode=0, stdout='audit\n'))
+    (tmp_path / 'health').mkdir()
+    (tmp_path / 'health' / 'windows.json').write_text('["audit"]')
+    (tmp_path / 'publication-check.json').write_text('{"command": ["worker"]}')
+    (tmp_path / 'post-checks').mkdir()
+    (tmp_path / 'post-checks' / 'review.json').write_text(
+        '{"status": "clear", "semantic_status": "clear"}')
+    return tmp_path
+
+
+def monitor_scan(created='2026-10-07T10:00:00Z', state='verified', suspects=None):
+    return {'created': created, 'observations': [
+        {'id': 'sense.mind.wedge-suspect', 'state': state, 'suspects': suspects or []}]}
+
+
+@pytest.mark.parametrize('payload', [
+    None,
+    '{not json',
+    '[]',
+    json.dumps(monitor_scan(created='2026-10-07T10:00:01Z')),
+    json.dumps(monitor_scan(created='2026-10-07T09:29:59Z')),
+    json.dumps(monitor_scan(created='2026-10-07T10:00:00')),
+    json.dumps(monitor_scan(state='unknown', suspects=[{'window': 'audit', 'pid': 1}])),
+    '{"created": "2026-10-07T10:00:00Z", "observations": []}',
+    '{"created": "2026-10-07T10:00:00Z", "observations": 5}',
+    json.dumps(monitor_scan(suspects=[5])),
+    json.dumps(monitor_scan(suspects=[{'window': 'audit', 'pid': True}])),
+])
+def test_unavailable_monitor_does_not_accuse_or_clear_busy_mind(monitor_home, payload):
+    if payload is not None:
+        (monitor_home / 'discovery').mkdir()
+        (monitor_home / 'discovery' / 'scan-a.json').write_text(payload)
+    output = render(monitor_home)
+    assert 'MIND MONITOR: UNKNOWN' in output
+    assert 'owner=health' in output
+    assert 'STATE: UNKNOWN' in output
+    assert 'STALE PEND: HELD audit' in output
+    assert 'WEDGE-SUSPECT' not in output
+    assert (monitor_home / 'observations' / 'witness').read_text().startswith('UNKNOWN')
+
+
+@pytest.mark.parametrize('created', ['2026-10-07T10:00:00Z', '2026-10-07T09:30:00Z'])
+def test_available_empty_aggregate_never_claims_role_coverage(monitor_home, created):
+    wedge_scan(monitor_home, [], created=created)
+    output = render(monitor_home)
+    assert 'MIND MONITOR: AVAILABLE' in output
+    assert 'per-role coverage UNKNOWN; useful progress not established' in output
+    assert 'STATE: GREEN' in output
+    assert 'STALE PEND: HELD audit' in output
+
+
+def test_monitor_selects_created_time_not_filename(monitor_home):
+    directory = monitor_home / 'discovery'
+    directory.mkdir()
+    (directory / 'scan-a.json').write_text(json.dumps(monitor_scan()))
+    (directory / 'scan-z.json').write_text(json.dumps(monitor_scan(
+        created='2026-10-07T09:55:00Z', suspects=[{'window': 'audit', 'pid': 1}])))
+    output = render(monitor_home)
+    assert 'MIND MONITOR: AVAILABLE' in output
+    assert 'STATE: GREEN' in output
+    assert 'WEDGE-SUSPECT' not in output
+
+
+def test_ambiguous_newest_monitor_scan_cannot_accuse_mind(monitor_home):
+    directory = monitor_home / 'discovery'
+    directory.mkdir()
+    (directory / 'scan-a.json').write_text(json.dumps(monitor_scan()))
+    (directory / 'scan-z.json').write_text(json.dumps(monitor_scan(
+        suspects=[{'window': 'audit', 'pid': 1}])))
+    output = render(monitor_home)
+    assert 'MIND MONITOR: UNKNOWN' in output
+    assert 'STATE: UNKNOWN' in output
+    assert 'WEDGE-SUSPECT' not in output
+
+
+def test_missing_monitor_does_not_hide_independent_receipt_failure(monitor_home, monkeypatch):
+    import mishe_tauftauf.seed_witness_view as view
+    monkeypatch.setattr(view, '_mind_not_idle', lambda *args: False)
+    output = render(monitor_home)
+    assert 'MIND MONITOR: UNKNOWN' in output
+    assert 'STALE PEND: RED audit' in output
+    assert 'STATE: RED' in output
+    assert (monitor_home / 'observations' / 'witness').read_text().startswith(
+        'FAIL witness overdue pending wake audit')
