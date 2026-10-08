@@ -190,7 +190,6 @@ def reconcile_caller_journal(
     effect_store_dir: Path,
     *,
     writer_id: str,
-    obligation: dict,
     authority: str,
     authorized: Callable,
     capability_version: str = "v1",
@@ -222,11 +221,13 @@ def reconcile_caller_journal(
     pending = state["pending_calls"]
     if not pending:
         return {"status": "completed", "reconciled": []}
+    if state["stopped"]:
+        return {"status": "unknown", "reconciled": []}
 
     boundary = EffectBoundary(
         effect_store_dir,
         writer_id=writer_id,
-        obligation=obligation,
+        obligation=state["obligation"],
         execute=lambda call: None,  # never called by recover
         authority=authority,
         capability_version=capability_version,
@@ -261,7 +262,7 @@ def reconcile_caller_journal(
                 "turn": state["turns"] - 1,
                 "call": call,
                 "message": message,
-                "obligation": obligation,
+                "obligation": state["obligation"],
             }
             f.write(json.dumps(event, ensure_ascii=False, allow_nan=False) + "\n")
             f.flush()
