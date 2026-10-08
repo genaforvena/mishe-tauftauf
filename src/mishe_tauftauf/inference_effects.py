@@ -1151,8 +1151,8 @@ class EffectBoundary:
         return effect_outcome_for(self.ledger.dispatch(bound, self._runner))
 
     def _runner(self, ledger_call: dict[str, Any]) -> Any:
-        # The caller rechecks current authority against its own state; the
-        # persisted authority is a binding, not a fresh grant.
+        # The execute callback MUST recheck current authority against its own
+        # state; the persisted authority is a binding, not a fresh grant.
         return snapshot_json(self.execute(ledger_call))
 
     def _has_intent(self, operation_id: str) -> bool:

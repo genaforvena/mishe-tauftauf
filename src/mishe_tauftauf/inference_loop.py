@@ -129,8 +129,9 @@ def drive_native(session, context: dict, *, obligation: dict, max_turns: int,
                 return stop('authority_denied')
             if cancelled():
                 return stop('cancelled')
-            # dispatch owns final after-persistence authority check and durable
-            # operation identity. Exceptions propagate: never retry blindly.
+            # dispatch owns durable operation identity; the execute callback it
+            # invokes owns the final after-persistence authority check. Exceptions
+            # propagate: never retry blindly.
             outcome = snapshot(dispatch(snapshot(call)))
             if not isinstance(outcome, dict) or outcome.get('status') not in (
                     'completed', 'partial', 'unknown', 'not-started'):
