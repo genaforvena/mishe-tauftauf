@@ -45,6 +45,51 @@ not a hosted service, a sandbox, or a promise that every repair will be correct.
 Read [Mesh, in view](docs/mesh.md) for the living workflow. Every fresh plant uses
 edited walls, addressed chat, one shared checkout and the single main branch.
 [Wall coordination](docs/wall-coordination.md) covers the commands and recovery.
+To load just one section from a
+longer guide, run this AWK command from the repository root. Set `file`
+and `title` to a maintained document and its exact heading text (at any depth):
+
+```sh
+file='docs/operating.md'
+title='Inspect the running plant'
+awk -v title="$title" '
+  {
+    if ($0 ~ /^#+ /) {
+      level = length($0) - length(substr($0, match($0, /[^#]/)))
+      if (show && level <= target) show = 0
+      if (substr($0, level + 2) == title) {
+        n++
+        show = 1
+        target = level
+      }
+    }
+    if (show) {
+      if (n == 1) block[++lines] = $0
+    }
+  }
+  END {
+    if (n != 1) {
+      print "expected one matching heading; found " (n + 0) > "/dev/stderr"
+      exit 2
+    }
+    for (i = 1; i <= lines; i++) print block[i]
+  }
+' "$file"
+```
+
+The selector buffers before printing, so a missing or duplicate heading exits
+with status 2 and emits no candidate section. It stops at the next heading of
+the same or higher level, preserving nested subsections when selected. The file
+and title above are examples; this is text extraction, not a search of the
+whole book, a validated command catalogue, or evidence that returned
+instructions are safe to execute. Check the command's exit status before using
+its output. AWK is ordinary text extraction, not evidence that a topic is
+absent.
+
+The selector is intentionally shown here as the bootstrap. Read this entry
+point first, then use its extraction command to load a specific maintained
+section only when the next question warrants it. It does not discover the file
+or title for you; follow the links and headings visible in this book.
 
 | You want to… | Read |
 | --- | --- |
@@ -167,6 +212,9 @@ It follows a bad reading through reproduction, review, push, and replacement CI.
 An agent saying “fixed” is a claim. The check is the receipt.
 
 ## Find your way around the checkout
+For a focused reader lookup, the [operating guide](docs/operating.md) begins
+with linked sections for site discovery and inspection; the AWK example above
+loads just one section when the full guide is unnecessary.
 
 | Path | What belongs there |
 | --- | --- |

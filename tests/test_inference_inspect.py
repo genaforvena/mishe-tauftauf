@@ -240,6 +240,26 @@ def test_completed_effect_is_not_recovered_after_authority_revocation(
     assert executor.boundary.recover(call)['status'] == 'completed'
 
 
+def test_revocation_after_durable_start_prevents_inspection(tmp_path):
+    state = {'cancelled': False}
+    _, _, executor, call = prepare(
+        tmp_path, cancelled=lambda: state['cancelled'])
+    executor.read = lambda: pytest.fail('revoked inspection reached file read')
+    execute = executor.boundary.execute
+
+    def revoke_before_effect(ledger_call):
+        state['cancelled'] = True
+        return execute(ledger_call)
+
+    executor.boundary.execute = revoke_before_effect
+    result = executor(call)
+
+    assert result['status'] == 'unknown'
+    assert result['failure'] == 'capability-failed'
+    assert executor.boundary.recover(call)['status'] == 'unknown'
+    assert executor.boundary.recover(call)['failure'] == 'started-without-outcome'
+
+
 def test_refused_existing_run_does_not_reconcile_its_journal(tmp_path, monkeypatch):
     import mishe_tauftauf.inference_inspect as inspection
 
