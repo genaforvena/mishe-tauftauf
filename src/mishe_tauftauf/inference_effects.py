@@ -75,9 +75,9 @@ class AlreadyExecuted(RuntimeError):
     """An outcome record already exists for this operation ID.
 
     Raised by `allocate` when a caller-chosen ID collides with a finished
-    operation. `dispatch` on a completed or started operation instead returns the
-    recorded outcome, so an idempotent caller need not distinguish a recovered
-    store from a fresh one.
+    operation. `dispatch` returns the stored outcome for a completed operation;
+    a started operation without a stored outcome returns `unknown` and is never
+    executed again.
     """
 
 
