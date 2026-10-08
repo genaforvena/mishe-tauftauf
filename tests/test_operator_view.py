@@ -125,6 +125,72 @@ def test_operator_renderer_participates_in_existing_lease_detector(tmp_path, mon
     assert state == "STALE" and "RED" in lines[0] and "operator" in lines[0]
 
 
+@pytest.mark.parametrize("fault", [None, "dead", "stale", "broken", "missing-window", "missing-top", "missing-shell"])
+def test_supervised_dashboard_repairs_faults_without_restarting_healthy_shell(tmp_path, monkeypatch, fault):
+    from mishe_tauftauf import operator_view
+    calls = []
+    panes = ["%top", "%shell"] if fault != "missing-top" else ["%shell"]
+    if fault == "missing-shell":
+        panes = ["%top"]
+    def tmux(*args, **kw):
+        calls.append(args)
+        data = b""
+        if args[0] == "list-windows":
+            data = b"" if fault == "missing-window" else b"operator\n"
+        elif args[0] == "list-panes":
+            data = b"%new-shell\n" if fault == "missing-window" else ("\n".join(panes) + "\n").encode()
+        elif args[0] == "show-option":
+            data = b"%top\n"
+        elif args[0] == "split-window":
+            data = b"%new-top\n"
+        return CompletedProcess(args, 0, data)
+    monkeypatch.setattr(operator_view, "owns_session", lambda *a: True)
+    monkeypatch.setattr(operator_view, "_tmux", tmux)
+    monkeypatch.setattr(operator_view, "_pane_stopped_or_dead", lambda *a: fault == "dead")
+    def read(*a, **kw):
+        if fault in {"stale", "broken"}:
+            raise ValueError("dashboard stale or unreadable")
+        return "frame", True
+    monkeypatch.setattr("mishe_tauftauf.dashboard.read", read)
+    status = operator_view.ensure(tmp_path, "owned", "operator", refresh=False)
+    mutations = [a for a in calls if a[0] in {"respawn-pane", "split-window", "new-window"}]
+    assert bool(mutations) == (fault is not None)
+    assert all("%shell" not in a for a in mutations if a[0] == "respawn-pane")
+    assert bool(status) == (fault is not None)
+    assert any(a[0] == "set-option" and "remain-on-exit" in a for a in calls)
+
+
+def test_operator_supervisor_unit_is_persistent_and_covered(tmp_path, monkeypatch):
+    from mishe_tauftauf import plant
+    monkeypatch.setattr("mishe_tauftauf.runtime_source.source_for", lambda *a: tmp_path)
+    text = plant.unit_text(tmp_path, "owned", "operator-view", "/python")
+    assert "-m mishe_tauftauf.operator_view" in text
+    assert "--session owned --window operator --follow" in text
+    assert "Restart=always" in text and "WantedBy=default.target" in text
+    assert "owned-operator-view.service" in plant.service_manifest(tmp_path, "owned", True)
+    text = plant.unit_text(tmp_path, "owned", "operator-view", "/python", operator_window="human")
+    assert "--window human --follow" in text
+
+
+def test_recovery_routes_to_health_without_reporting_unchanged_state(tmp_path, monkeypatch):
+    from mishe_tauftauf import operator_view
+    statuses = iter(["", "controlled recovery"])
+    sleeps = []
+    messages = []
+    monkeypatch.setattr(operator_view, "ensure", lambda *a, **kw: next(statuses))
+    monkeypatch.setattr("mishe_tauftauf.wall.message", lambda *a: messages.append(a))
+    def sleep(interval):
+        sleeps.append(interval)
+        if len(sleeps) == 2:
+            raise KeyboardInterrupt
+    monkeypatch.setattr(operator_view.time, "sleep", sleep)
+    with pytest.raises(KeyboardInterrupt):
+        operator_view.run(tmp_path, "owned", "operator", 5)
+    assert len(messages) == 1
+    assert messages[0][1:3] == ("operator-view", "health")
+    assert "controlled recovery" in messages[0][3]
+
+
 @pytest.mark.parametrize("existing", [False, True])
 @pytest.mark.parametrize("cleanup_fails", [False, True])
 def test_failed_dashboard_marker_restores_publisher_and_only_removes_new_pane(tmp_path, monkeypatch, existing, cleanup_fails):

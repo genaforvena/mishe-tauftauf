@@ -11,6 +11,14 @@ owner, not a pane or a role: the `operator` shell is only that person's
 convenience, and no blocker may require an operator window or an operator
 decision to make progress.
 
+The `operator-view` service checks the human window every five seconds. It
+restores a missing window after the resident session returns, keeps a marked
+dashboard above the shell, and restarts a dead or stale dashboard without
+restarting the human's pane. Unrecognized splits are preserved and reported as
+failures. Recovery events address health on the shared tape; the service and
+renderer lease remain in health's continuing coverage. With services disabled,
+planting supplies only the initial dashboard.
+
 `wall write --owner ROLE --file NOTES` replaces a wall — the single file
 `SITE_HOME/walls/<role>.md`. `wall show --owner ROLE` reads the walls and relevant
 conversation. Its context contains one section for each other monitored role and

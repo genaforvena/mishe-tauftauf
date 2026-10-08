@@ -17,7 +17,8 @@ and sensors supply decoded values to the machinery; human prose remains content.
 [Protocol boundaries](protocol-boundaries.md) describes the lifecycle decoder,
 the deterministic parsing constraint and remaining migration debt. The operator
 dashboard keeps the current discussion and installed local commands beside the
-human's shell, so those capabilities survive a new session.
+human's shell. A persistent supervisor restores its presentation after a restart
+and reports recoveries to health while preserving the human's running pane.
 
 The minds are `genome` (shared source and its CI), `health` (services, panes
 and observations), `witness` (contradictions and missed work), `discover`
