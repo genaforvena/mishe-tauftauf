@@ -125,7 +125,7 @@ def service_manifest(home: Path, session: str, persist: bool) -> list[str]:
     an existing manifest. `coordination` still installs itself, because only the
     core checkout runs it.
     """
-    units = [unit_name(session, slug) for slug in (*ROLES, "permissions", "ci", *OUT_OF_BAND)]
+    units = [unit_name(session, slug) for slug in (*ROLES, "permissions", "operator-view", "ci", *OUT_OF_BAND)]
     if not persist:
         return []
     installed = set()
@@ -207,13 +207,16 @@ def _service_search_path(home: Path) -> str:
     return os.pathsep.join([site_bin, *rest])
 
 
-def unit_text(home: Path, session: str, slug: str, python: str) -> str:
+def unit_text(home: Path, session: str, slug: str, python: str, *, operator_window: str | None = None) -> str:
     from .runtime_source import source_for
     source = source_for(home, ROOT)
     self_pick_seconds = 3600 if slug == "research-methods" else 600 if slug == "discover" else 300
     command = (f"{python} -m mishe_tauftauf.ci_watch --home {home} --follow" if slug == "ci" else
                f"{python} -m mishe_tauftauf.seed_permission_panel --home {home} --session {session} --follow"
                if slug == "permissions" else
+               f"{python} -m mishe_tauftauf.operator_view --home {home} --session {session} "
+               f"--window {operator_window or preferred_operator_window(home, None)} --follow"
+               if slug == "operator-view" else
                f"{python} -m mishe_tauftauf --home {home} seed run --session {session} "
                f"--slug {slug} --interval 5 --self-pick-seconds {self_pick_seconds} "
                "--clear-grace-seconds 30")
@@ -312,7 +315,7 @@ def _service_active(name: str, env: dict[str, str]) -> bool:
     ).returncode == 0
 
 
-def reconcile_services(home: Path, session: str, persist: bool, python: str) -> None:
+def reconcile_services(home: Path, session: str, persist: bool, python: str, *, operator_window: str | None = None) -> None:
     """Reconcile every covered service onto the pinned release.
 
     Generated units are rewritten whole. Units the dashboard covers but the
@@ -330,7 +333,8 @@ def reconcile_services(home: Path, session: str, persist: bool, python: str) -> 
     # skips it leaves the watcher importing the previous root and reading
     # DRIFT, so it is reconciled alongside the units a replant launches.
     reconciled = {slug: unit_text(home, session, slug, python)
-                  for slug in (*ROLES, "permissions", "ci")}
+                  for slug in (*ROLES, "permissions", "operator-view", "ci")}
+    reconciled["operator-view"] = unit_text(home, session, "operator-view", python, operator_window=operator_window)
     reconciled["silence"] = silence_unit_text(home, session, python)
     generated = {unit_name(session, slug) for slug in reconciled}
     active_before = {}
@@ -438,9 +442,6 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
         print(seed.start(home, session, slug, 5), flush=True)
     if not owns_session(home, session):
         raise RuntimeError(f"session {session} lost its site ownership marker")
-    names = _tmux("list-windows", "-t", session, "-F", "#{window_name}").stdout.decode().splitlines()
-    if operator_window not in names:
-        _tmux("new-window", "-d", "-t", session, "-n", operator_window, "-c", str(workspace), "sh")
     from .operator_view import ensure as ensure_operator
     ensure_operator(home, session, operator_window)
     status = seed_permission_panel.ensure(home, session)
@@ -460,7 +461,7 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
         _tmux("set-window-option", "-t", f"{session}:{name}", "automatic-rename", "off")
     (home / "health").mkdir(exist_ok=True)
     write_service_manifest(home, session, persist)
-    reconcile_services(home, session, persist, sys.executable)
+    reconcile_services(home, session, persist, sys.executable, operator_window=operator_window)
     previous_session = os.environ.get("MISHE_SEED_SESSION")
     os.environ["MISHE_SEED_SESSION"] = session
     try:

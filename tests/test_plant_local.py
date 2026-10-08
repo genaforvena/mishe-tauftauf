@@ -237,7 +237,7 @@ def test_service_manifest_lists_every_planted_unit(tmp_path: Path) -> None:
     # `silence` is generated now, so a fresh site's manifest names it without
     # waiting for an out-of-band install to append it.
     assert plant.service_manifest(home, "core", persist=True) == sorted(
-        plant.unit_name("core", slug) for slug in (*plant.ROLES, "permissions", "ci", *plant.OUT_OF_BAND))
+        plant.unit_name("core", slug) for slug in (*plant.ROLES, "permissions", "operator-view", "ci", *plant.OUT_OF_BAND))
 
 
 def test_replant_keeps_installed_out_of_band_units_in_the_manifest(tmp_path: Path) -> None:
@@ -577,7 +577,7 @@ def test_reconcile_services_repoints_a_site_declared_unit(tmp_path: Path, monkey
     monkeypatch.setattr("mishe_tauftauf.runtime_source.source_for",
                         lambda home, default: tmp_path / "releases" / "new")
     fragments = {plant.unit_name("core", slug): home / plant.unit_name("core", slug)
-                 for slug in (*plant.ROLES, "permissions", "ci", *plant.OUT_OF_BAND)}
+                 for slug in (*plant.ROLES, "permissions", "operator-view", "ci", *plant.OUT_OF_BAND)}
     calls = _fake_systemctl(monkeypatch, fragments)
 
     plant.reconcile_services(home, "core", True, "/usr/bin/python3")
@@ -605,7 +605,7 @@ def test_reconcile_services_edits_a_self_installed_fragment_in_place(tmp_path: P
     monkeypatch.setattr("mishe_tauftauf.runtime_source.source_for",
                         lambda home, default: tmp_path / "releases" / "new")
     fragments = {plant.unit_name("core", slug): home / plant.unit_name("core", slug)
-                 for slug in (*plant.ROLES, "permissions", "ci", *plant.OUT_OF_BAND)}
+                 for slug in (*plant.ROLES, "permissions", "operator-view", "ci", *plant.OUT_OF_BAND)}
     fragments["core-body.service"] = fragment
     _fake_systemctl(monkeypatch, fragments)
 
@@ -636,7 +636,7 @@ def test_reconcile_services_refuses_a_drifted_site_unit_fragment(tmp_path: Path,
     monkeypatch.setattr("mishe_tauftauf.runtime_source.source_for",
                         lambda home, default: tmp_path / "releases" / "new")
     fragments = {plant.unit_name("core", slug): home / plant.unit_name("core", slug)
-                 for slug in (*plant.ROLES, "permissions", "ci", *plant.OUT_OF_BAND)}
+                 for slug in (*plant.ROLES, "permissions", "operator-view", "ci", *plant.OUT_OF_BAND)}
     fragments["core-coordination.service"] = drifted
     _fake_systemctl(monkeypatch, fragments)
 
@@ -774,11 +774,13 @@ def test_plant_reconciles_services_before_discovery_scan(tmp_path: Path, monkeyp
     monkeypatch.setattr(plant, "ensure_engine_for_new_minds", lambda h, engine_command: None)
     monkeypatch.setattr(plant.seed_permission_panel, "ensure", lambda h, session: None)
     monkeypatch.setattr("mishe_tauftauf.operator_view.ensure", lambda *a: None)
-    monkeypatch.setattr(plant, "_tmux",
-                        lambda *a, **k: SimpleNamespace(stdout=SimpleNamespace(decode=lambda: "")))
+    def tmux(*args, **kwargs):
+        assert args[0] != "new-window", "operator creation belongs inside locked ensure"
+        return SimpleNamespace(stdout=SimpleNamespace(decode=lambda: ""))
+    monkeypatch.setattr(plant, "_tmux", tmux)
     monkeypatch.setattr(plant, "write_service_manifest", lambda h, session, persist: [])
 
-    def mock_reconcile(h, session, persist, python):
+    def mock_reconcile(h, session, persist, python, **kwargs):
         call_order.append("reconcile_services")
     monkeypatch.setattr(plant, "reconcile_services", mock_reconcile)
 
