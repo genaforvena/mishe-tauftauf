@@ -101,6 +101,32 @@ def test_wall_limit_is_configurable_and_enforced_at_the_bound(tmp_path):
     assert (tmp_path / "walls" / "genome.md").read_text() == "y" * 32
 
 
+def test_wall_write_audit_log_records_invocation(tmp_path):
+    setup_wall(tmp_path)
+    from mishe_tauftauf import wall
+    notes = tmp_path / "NOTES"
+    notes.write_text("Audit test notes")
+    wall.write(tmp_path, "genome", "Audit test notes", source_path=str(notes))
+    audit_path = tmp_path / "logs" / "wall-write-audit.jsonl"
+    assert audit_path.is_file()
+    entry = json.loads(audit_path.read_text())
+    assert entry["role"] == "genome"
+    assert entry["source"] == str(notes)
+    assert entry["wall"].endswith("walls/genome.md")
+    assert "ts" in entry and "mtime" in entry
+
+
+def test_wall_write_audit_log_works_without_source_path(tmp_path):
+    setup_wall(tmp_path)
+    from mishe_tauftauf import wall
+    wall.write(tmp_path, "genome", "No source path")
+    audit_path = tmp_path / "logs" / "wall-write-audit.jsonl"
+    assert audit_path.is_file()
+    entry = json.loads(audit_path.read_text())
+    assert entry["role"] == "genome"
+    assert entry["source"] is None
+
+
 
 def test_wall_is_visible_without_hiding_failed_sensor(tmp_path, monkeypatch):
     setup_wall(tmp_path)
