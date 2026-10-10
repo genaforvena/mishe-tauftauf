@@ -717,6 +717,31 @@ def test_health_reports_unknown_when_session_unset(tmp_path: Path, monkeypatch) 
     assert (home / "observations" / "health").read_text(encoding="utf-8").startswith(
         "UNKNOWN health session unset at ")
 
+def test_health_falls_back_to_the_recorded_session(tmp_path: Path, monkeypatch) -> None:
+    """An unset env session resolves from the site receipt, not UNKNOWN."""
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health" / "windows.json").write_text(json.dumps(["health"]), encoding="utf-8")
+    (home / "health" / "services.json").write_text('["steady.service"]', encoding="utf-8")
+    (home / ".seed-raised").write_text("test-session $1\n", encoding="utf-8")
+    monkeypatch.setenv("MISHE_SEED_SESSION", "")
+
+    def run(argv, **_kwargs):
+        if argv[0] == "tmux":
+            return subprocess.CompletedProcess(argv, 0, "health 0 0\nhealth 1 0\n", "")
+        if argv[0] == "systemctl":
+            return subprocess.CompletedProcess(
+                argv, 0, "Id=steady.service\nActiveState=active\nSubState=running\nNRestarts=0\n", "")
+        return subprocess.CompletedProcess(argv, 0, "PASS doctor\n", "")
+
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.subprocess.run", run)
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.ci_line", lambda _home: "CI: PASS")
+    rendered = health(home)
+    assert "session unset" not in rendered
+    assert "WINDOWS: PASS health" in rendered
+    assert (home / "observations" / "health").read_text(encoding="utf-8").startswith(
+        "PASS health internal checks at ")
+
 def test_health_reports_unknown_when_the_pane_read_times_out(tmp_path: Path, monkeypatch) -> None:
     """A timed-out tmux read is no observation; it must not claim every window missing."""
     home = tmp_path / "site"
