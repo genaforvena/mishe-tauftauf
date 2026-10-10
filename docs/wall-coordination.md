@@ -91,29 +91,32 @@ obligation is waiting; an unresolved recovery does not justify a blocked wake.
 a contribution with an existing nonempty evidence file inside the owned site.
 The evidence file must be written once, retained, and never edited or deleted —
 do not cite a wall (`wall write` replaces it whole), a `progress.md`, `chat.log`,
-or a shared results JSON, since any later edit or removal invalidates the bound
-digest and drops the outcome from the trial's evidenced-outcome count. Cite a
-per-outcome artifact under `artifacts/` — a file created for that one outcome,
-kept for the life of the trial and never reused. The load-bearing property is
-that the bound bytes stay at the bound path unchanged, so deletion invalidates
-the bound digest exactly as an edit does; `artifacts/` is a proxy for a file made
-for this one outcome, and a bound artifact is retained evidence, not a scaffold
-to clean up once the outcome is recorded. Correct an already-bound artifact by
-writing a new artifact and citing it in a new outcome; the earlier outcome cannot
-be rebound, so an in-place edit drops it from the count permanently. The three
-requirements are independent:
-a file can be unedited yet sit outside `artifacts/`, or be cited by a second
-outcome, and is ineligible for that reason alone — a binding-eligibility
-violation the sense audits, not a removal from the evidenced count, which
-follows the bound digest: only a later edit or removal drops an outcome.
+or a shared results JSON, since any later edit invalidates the bound digest
+and drops the outcome from the trial's evidenced-outcome count, while a removal
+flags the outcome as absent without dropping it. Cite a per-outcome artifact
+under `artifacts/` — a file created for that one outcome, kept for the life of
+the trial and never reused. The load-bearing property is that the bound bytes
+stay at the bound path unchanged, so a later edit invalidates the bound digest;
+a deletion is not digest-compared — it is flagged as absence, a distinct and
+more severe class; `artifacts/` is a proxy for a file made for this one
+outcome, and a bound artifact is retained evidence, not a scaffold to clean up
+once the outcome is recorded. Correct an already-bound artifact by writing a
+new artifact and citing it in a new outcome; the earlier outcome cannot be
+rebound, so an in-place edit drops it from the count permanently. The four
+requirements are independent — under `artifacts/` (A), unedited (B), present
+(C), cited once (D): a file can be unedited yet sit outside `artifacts/`, be
+missing, or be cited by a second outcome, and is ineligible for that reason
+alone — a binding-eligibility violation the sense audits, not a removal from
+the evidenced count, which follows the bound digest: only a later edit drops
+an outcome; a removal flags it in the standing audit without excluding it.
 Being inside `artifacts/` is not sufficient by itself either — wake notes and other working files that a later
 turn may edit are ineligible even there. `wall outcome` applies the write-once
 rule from the clause time onward: it refuses a path another post-clause outcome
 already bound, and it fails rather than skipping the check when the bound set
 cannot be derived — missing/corrupt records, malformed publications, a missing
 `records/` directory or an unparseable tape. Bind time enforces only the
-inside-site and write-once rules; the `artifacts/`-containment and
-unchanged-bytes requirements are measured after the fact by
+inside-site and write-once rules; the `artifacts/`-containment, unchanged-bytes,
+existence and citation requirements are measured after the fact by
 `sense.ledger.evidence-binding`, whose live window (`latest_bad_roles`) reports
 current compliance while its standing audit retains every historical violation.
 Writer and observer use the same
