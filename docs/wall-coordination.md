@@ -89,14 +89,17 @@ obligation is waiting; an unresolved recovery does not justify a blocked wake.
 
 `wall outcome --owner ROLE --kind KIND --file NOTES --evidence FILE` records
 a contribution with an existing nonempty evidence file inside the owned site.
-The evidence file must be written once and never edited — do not cite a wall
-(`wall write` replaces it whole), a `progress.md`, `chat.log`, or a shared
-results JSON, since any later edit invalidates the bound digest and drops the
-outcome from the trial's evidenced-outcome count. Cite a per-outcome artifact
-under `artifacts/` — a file created for that one outcome and never reused. The
-load-bearing property is that the file is never edited; `artifacts/` is a proxy
-for a file made for this one outcome. The three requirements are independent: a
-file can be unedited yet sit outside `artifacts/`, or be cited by a second
+The evidence file must be written once, retained, and never edited or deleted —
+do not cite a wall (`wall write` replaces it whole), a `progress.md`, `chat.log`,
+or a shared results JSON, since any later edit or removal invalidates the bound
+digest and drops the outcome from the trial's evidenced-outcome count. Cite a
+per-outcome artifact under `artifacts/` — a file created for that one outcome,
+kept for the life of the trial and never reused. The load-bearing property is
+that the bound bytes stay at the bound path unchanged, so deletion invalidates
+the bound digest exactly as an edit does; `artifacts/` is a proxy for a file made
+for this one outcome, and a bound artifact is retained evidence, not a scaffold
+to clean up once the outcome is recorded. The three requirements are independent:
+a file can be unedited yet sit outside `artifacts/`, or be cited by a second
 outcome, and is ineligible for that reason alone. Being inside `artifacts/` is
 not sufficient by itself either — wake notes and other working files that a later
 turn may edit are ineligible even there. `wall outcome` applies the write-once
