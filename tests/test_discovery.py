@@ -2057,6 +2057,33 @@ def test_evidence_binding_flags_mutated_evidence(tmp_path):
     assert "wake-a.md(B)" in result["sample"]
 
 
+def test_evidence_binding_flags_deleted_evidence(tmp_path):
+    """A bound file that has been deleted is a broken digest (B), not a skip.
+
+    Observed live 2026-10-10 (witness wake 63206): a mind recorded an outcome
+    and then removed its own per-outcome evidence file, so the sense reported
+    drift with class B. Deletion is a distinct mechanism from a later edit, and
+    the OSError branch must keep flagging it rather than dropping the row.
+    """
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    evidence = home / "artifacts" / "wake-a.md"
+    evidence.write_text("write-once bytes\n")
+    digest = _write_evidenced_outcome(home, "alice", evidence)
+    evidence.unlink()
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "alice",
+         f"[record] records/{digest}.json sha256={digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    assert result["state"] == "drift"
+    assert result["bound"] == 1
+    assert result["all_bad"] == 1
+    assert result["latest_bad"] == 1
+    assert "wake-a.md(B)" in result["sample"]
+
+
 def test_evidence_binding_flags_outside_artifacts(tmp_path):
     home = tmp_path / "site"
     (home / "artifacts").mkdir(parents=True)
