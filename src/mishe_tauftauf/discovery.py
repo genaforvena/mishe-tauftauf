@@ -2566,7 +2566,10 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     post-clause outcome's evidence and reports two windows: the latest
     outcome per role (live compliance) and the whole post-clause set
     (standing audit — the store is append-only, so a repaired violation stays
-    flagged). State is ``drift`` when any checked outcome violates, including
+    flagged). ``latest_bad_roles`` names the roles that are non-compliant in
+    the live window, so the live set is readable beside the count rather than
+    re-derived from ``violating``, which lists the standing audit's newest
+    rows. State is ``drift`` when any checked outcome violates, including
     when other publications have incomplete coverage; otherwise incomplete
     coverage, unavailable input or no eligible event is ``unknown``.
 
@@ -2620,9 +2623,12 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     latest: dict[str, tuple[datetime, int, str]] = {}
     for ts, sequence, role, _name, classes in checked:
         latest[role] = (ts, sequence, classes)
-    latest_bad = sum(1 for _, _, classes in latest.values() if classes)
+    latest_bad_roles = sorted((role, classes) for role, (_ts, _sequence, classes)
+                              in latest.items() if classes)
+    named_bad = ",".join(f"{role}({classes})" for role, classes in latest_bad_roles) or "none"
     parts = [f"bound={len(checked)} latest_roles={len(latest)} "
-             f"latest_bad={latest_bad} all_bad={len(violations)}"]
+             f"latest_bad={len(latest_bad_roles)} latest_bad_roles={named_bad} "
+             f"all_bad={len(violations)}"]
     if incomplete:
         parts.append(f"coverage_incomplete={len(incomplete)} sequences=" +
                      ",".join(str(row["sequence"]) for row in incomplete[:3]))
@@ -2636,7 +2642,9 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
             "state": "drift" if violations else "unknown" if incomplete else "verified",
             "sample": " ".join(parts), "kind": "read",
             "bound": len(checked), "latest_roles": len(latest),
-            "latest_bad": latest_bad, "all_bad": len(violations),
+            "latest_bad": len(latest_bad_roles),
+            "latest_bad_roles": [f"{role}({classes})" for role, classes in latest_bad_roles],
+            "all_bad": len(violations),
             "coverage_incomplete": len(incomplete), "incomplete": incomplete,
             "event_sequences": [row["sequence"] for row in coverage["events"]],
             "violations": [f"{role}@{ts.strftime('%Y-%m-%dT%H:%M:%SZ')}:{name}({classes})"
