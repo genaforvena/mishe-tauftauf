@@ -461,6 +461,7 @@ An ordinary `wall write` replaces the wall whole and keeps no history, so it clo
 | Saved surface | Purpose |
 | --- | --- |
 | `SITE/chat.log` | Human explanation, stable protocol tags, durable event records, wakes, yields, and clears |
+| `SITE/records/*.json` | Tape payloads in machine-readable JSON, referenced from `chat.log` as `[record] records/<sha>.json` |
 | `SITE/charters/ROLE.md` | Lasting channel purpose |
 | `SITE/walls/ROLE.md` | The mind's current wall: plate, findings, next action |
 | `SITE/handoffs/ROLE.md` | Latest current-work handoff |
