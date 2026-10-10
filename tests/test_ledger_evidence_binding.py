@@ -71,3 +71,49 @@ def test_evidence_binding_names_live_bad_roles_not_the_standing_audit(tmp_path):
     assert result["latest_bad_roles"] == ["alice(A)"]
     assert "latest_bad_roles=alice(A)" in result["sample"]
     assert "latest_bad_roles=bob" not in result["sample"]
+
+def test_evidence_binding_violating_rows_show_site_relative_paths(tmp_path):
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "walls").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    # alice's evidence lives outside artifacts/: the row must show where.
+    wall_file = home / "walls" / "alice.md"
+    wall_file.write_text("wall file\n")
+    alice_digest = _write_evidenced_outcome(home, "alice", wall_file)
+    # bob's evidence is bound by an absolute path under the home, then edited.
+    absolute = home / "artifacts" / "bob.md"
+    absolute.write_text("write-once\n")
+    bob_digest = _write_evidenced_outcome(home, "bob", absolute)
+    absolute.write_text("edited after record\n")
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "alice",
+         f"[record] records/{alice_digest}.json sha256={alice_digest}\n"),
+        (2, "2026-10-06T17:30:00Z", "bob",
+         f"[record] records/{bob_digest}.json sha256={bob_digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    assert result["state"] == "drift"
+    assert "alice@2026-10-06T17:00:00Z:walls/alice.md(A)" in result["sample"]
+    assert "bob@2026-10-06T17:30:00Z:artifacts/bob.md(B)" in result["sample"]
+    assert result["violations"] == [
+        "alice@2026-10-06T17:00:00Z:walls/alice.md(A)",
+        "bob@2026-10-06T17:30:00Z:artifacts/bob.md(B)",
+    ]
+
+
+def test_evidence_binding_violating_row_outside_home_shows_stored_path(tmp_path):
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    outside = tmp_path / "elsewhere" / "secret.md"
+    outside.parent.mkdir(parents=True)
+    outside.write_text("outside the site home\n")
+    digest = _write_evidenced_outcome(home, "alice", outside)
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "alice",
+         f"[record] records/{digest}.json sha256={digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    assert result["state"] == "drift"
+    assert f"alice@2026-10-06T17:00:00Z:{outside}(A)" in result["sample"]
