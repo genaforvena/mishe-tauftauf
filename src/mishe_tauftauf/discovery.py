@@ -2554,6 +2554,20 @@ EVIDENCE_BINDING_CLAUSE_TIME = datetime(2026, 10, 6, 16, 22, 11, tzinfo=timezone
 outcomes recorded earlier are not bound by it."""
 
 
+def _display_path(path: str, home: Path) -> str:
+    """Site-relative display form of a stored evidence path.
+
+    The pane must show where a violating file lives, so a stored path is
+    rendered relative to the site home when its canonical form stays inside
+    it; a path canonicalizing outside the home is shown as stored.
+    """
+    candidate = Path(path) if os.path.isabs(path) else home / path
+    try:
+        return candidate.resolve().relative_to(home.resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
 def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     """Check that post-clause wall outcomes bind write-once evidence.
 
@@ -2616,7 +2630,7 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
             classes.append("B")
         if path_counts.get(path, 0) > 1:
             classes.append("D")
-        name = file_path.name if file_path is not None else str(path)
+        name = _display_path(path, home) if file_path is not None else str(path)
         checked.append((ts, sequence, role, name, "".join(classes)))
     checked.sort()
     violations = [row for row in checked if row[4]]
