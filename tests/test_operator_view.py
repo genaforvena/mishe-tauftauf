@@ -43,7 +43,7 @@ def test_ensure_splits_above_existing_shell_and_never_respawns_it(tmp_path, monk
         if args[0] == "show-option":
             return CompletedProcess(args, 0, b"%dashboard\n")
         return CompletedProcess(args, 0, b"")
-    monkeypatch.setattr(operator_view, "owns_session", lambda *a: True)
+    monkeypatch.setattr(operator_view, "await_owned", lambda *a: True)
     monkeypatch.setattr(operator_view, "_tmux", tmux)
     operator_view.ensure(tmp_path, "owned", "operator")
     operator_view.ensure(tmp_path, "owned", "operator")
@@ -56,15 +56,39 @@ def test_ensure_splits_above_existing_shell_and_never_respawns_it(tmp_path, monk
 
 def test_ensure_rejects_foreign_session_before_writing(tmp_path, monkeypatch):
     from mishe_tauftauf import operator_view
-    monkeypatch.setattr(operator_view, "owns_session", lambda *a: False)
+    monkeypatch.setattr(operator_view, "await_owned", lambda *a: False)
     with pytest.raises(ValueError, match="owned"):
         operator_view.ensure(tmp_path, "foreign", "operator")
     assert not list(tmp_path.iterdir())
 
 
+def test_ensure_waits_out_a_session_raised_before_its_owner_marker(tmp_path, monkeypatch):
+    """The launcher raises the session and only then records the owning home.
+
+    A consumer that starts concurrently - the operator-view service at boot - must
+    wait for the marker instead of reporting a foreign session. Every boot from
+    Oct 5 to Oct 10 failed here; systemd's RestartSec hid the cause.
+    """
+    from mishe_tauftauf import operator_view, tmux
+    owners = iter([None, None, str(tmp_path.resolve())])
+    monkeypatch.setattr(tmux, "session_owner", lambda session: next(owners, str(tmp_path.resolve())))
+    monkeypatch.setattr(operator_view, "_tmux", lambda *a, **kw: CompletedProcess(a, 0, b"%shell\n"))
+    status = operator_view.ensure(tmp_path, "owned", "operator")
+    assert "restored" in status
+
+
+def test_ensure_rejects_a_session_owned_by_another_home(tmp_path, monkeypatch):
+    from mishe_tauftauf import operator_view, tmux
+    monkeypatch.setattr(tmux, "session_owner", lambda session: str(tmp_path / "elsewhere"))
+    monkeypatch.setattr(operator_view, "_tmux", lambda *a, **kw: CompletedProcess(a, 0, b""))
+    with pytest.raises(ValueError, match="owned"):
+        operator_view.ensure(tmp_path, "owned", "operator")
+    assert not list(tmp_path.iterdir())
+
+
 def test_ensure_preserves_unrecognized_existing_split(tmp_path, monkeypatch):
     from mishe_tauftauf import operator_view
-    monkeypatch.setattr(operator_view, "owns_session", lambda *a: True)
+    monkeypatch.setattr(operator_view, "await_owned", lambda *a: True)
     def tmux(*args, **kwargs):
         assert args[0] != "respawn-pane"
         return CompletedProcess(args, 0, b"%top\n%bottom\n" if args[0] == "list-panes" else b"")
@@ -87,7 +111,7 @@ def test_ensure_rejects_symlinked_install_paths(tmp_path, monkeypatch, relative)
     target = home / relative
     target.parent.mkdir(parents=True, exist_ok=True)
     target.symlink_to(outside)
-    monkeypatch.setattr(operator_view, "owns_session", lambda *a: True)
+    monkeypatch.setattr(operator_view, "await_owned", lambda *a: True)
     monkeypatch.setattr(operator_view, "_tmux", lambda *a, **kw: CompletedProcess(a, 0, b"%shell\n"))
     with pytest.raises(ValueError, match="not owned"):
         operator_view.ensure(home, "owned", "operator")
@@ -98,7 +122,7 @@ def test_ensure_uses_selected_runtime_and_refuses_missing_renderer(tmp_path, mon
     from mishe_tauftauf import operator_view
     root = tmp_path / "pinned/src"
     root.mkdir(parents=True)
-    monkeypatch.setattr(operator_view, "owns_session", lambda *a: True)
+    monkeypatch.setattr(operator_view, "await_owned", lambda *a: True)
     monkeypatch.setattr(operator_view, "_tmux", lambda *a, **kw: CompletedProcess(a, 0, b"%shell\n"))
     monkeypatch.setattr(operator_view, "package_for", lambda *a: root)
     with pytest.raises(ValueError, match="selected runtime lacks"):
@@ -144,7 +168,7 @@ def test_supervised_dashboard_repairs_faults_without_restarting_healthy_shell(tm
         elif args[0] == "split-window":
             data = b"%new-top\n"
         return CompletedProcess(args, 0, data)
-    monkeypatch.setattr(operator_view, "owns_session", lambda *a: True)
+    monkeypatch.setattr(operator_view, "await_owned", lambda *a: True)
     monkeypatch.setattr(operator_view, "_tmux", tmux)
     monkeypatch.setattr(operator_view, "_pane_stopped_or_dead", lambda *a: fault == "dead")
     def read(*a, **kw):
@@ -196,7 +220,7 @@ def test_recovery_routes_to_health_without_reporting_unchanged_state(tmp_path, m
 def test_failed_dashboard_marker_restores_publisher_and_only_removes_new_pane(tmp_path, monkeypatch, existing, cleanup_fails):
     from mishe_tauftauf import operator_view
     from mishe_tauftauf.tmux import TmuxError
-    monkeypatch.setattr(operator_view, "owns_session", lambda *a: True)
+    monkeypatch.setattr(operator_view, "await_owned", lambda *a: True)
     calls = []
     def tmux(*args, **kw):
         calls.append(args)
@@ -223,3 +247,29 @@ def test_failed_dashboard_marker_restores_publisher_and_only_removes_new_pane(tm
         assert top.read_text() == "old publisher" and top.stat().st_mode & 0o777 == 0o700
     else:
         assert not top.exists()
+
+
+@pytest.mark.parametrize("fault,expected", [
+    ("dead", "(trigger: pane-stopped-or-dead)"),
+    ("stale", "(trigger: publication: dashboard stale or future)"),
+])
+def test_recovery_message_names_the_check_that_fired(tmp_path, monkeypatch, fault, expected):
+    """A dead renderer and a live renderer respawned for an unreadable, missing or
+    stale publication must not read the same on the shared tape."""
+    from mishe_tauftauf import operator_view
+    def tmux(*args, **kw):
+        if args[0] == "list-panes":
+            return CompletedProcess(args, 0, b"%top\n%shell\n")
+        if args[0] == "show-option":
+            return CompletedProcess(args, 0, b"%top\n")
+        return CompletedProcess(args, 0, b"")
+    monkeypatch.setattr(operator_view, "await_owned", lambda *a: True)
+    monkeypatch.setattr(operator_view, "_tmux", tmux)
+    monkeypatch.setattr(operator_view, "_pane_stopped_or_dead", lambda *a: fault == "dead")
+    def read(*a, **kw):
+        if fault == "stale":
+            raise ValueError("dashboard stale or future")
+        return "frame", True
+    monkeypatch.setattr("mishe_tauftauf.dashboard.read", read)
+    status = operator_view.ensure(tmp_path, "owned", "operator", refresh=False)
+    assert expected in status

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .observations import validate_slug
 from .runtime_source import package_for
-from .tmux import _pane_stopped_or_dead, _tmux, owns_session
+from .tmux import _pane_stopped_or_dead, _tmux, await_owned
 
 
 def render(home: Path) -> tuple[str, bool]:
@@ -46,7 +46,7 @@ def ensure(home: Path, session: str, window: str, *, package_root: Path | None =
     """Serialize planting and supervision of the same human window."""
     home = home.resolve()
     validate_slug(window)
-    if not owns_session(home, session):
+    if not await_owned(home, session):
         raise ValueError(f"session {session!r} is not owned by {home}")
     lock = home / ".operator-view.lock"
     if lock.is_symlink():
@@ -61,7 +61,7 @@ def _ensure(home: Path, session: str, window: str, *, package_root: Path | None,
     """Install a top dashboard, preserving the existing operator shell by pane ID."""
     home = home.resolve()
     validate_slug(window)
-    if not owns_session(home, session):
+    if not await_owned(home, session):
         raise ValueError(f"session {session!r} is not owned by {home}")
     names = _tmux("list-windows", "-t", session, "-F", "#{window_name}").stdout.decode().splitlines()
     if window not in names:
@@ -78,19 +78,27 @@ def _ensure(home: Path, session: str, window: str, *, package_root: Path | None,
             panes.append(shell)
             restored_shell = True
     dashboard = None
+    trigger = ""
     if len(panes) == 2:
         dashboard = _tmux("show-option", "-wqv", "-t", target,
                           "@mishe-operator-dashboard").stdout.decode().strip()
         if dashboard != panes[0]:
             raise ValueError("operator top pane is not an installed dashboard; preserve existing panes")
         _tmux("set-option", "-p", "-t", dashboard, "remain-on-exit", "on")
-        if not refresh and not _pane_stopped_or_dead(session, window):
-            from .dashboard import read
-            try:
-                read(home, window)
-                return f"operator shell restored in {target}" if restored_shell else ""
-            except ValueError:
-                pass  # Missing, malformed or stale publication requires recovery.
+        if not refresh:
+            if _pane_stopped_or_dead(session, window):
+                trigger = "pane-stopped-or-dead"
+            else:
+                from .dashboard import read
+                try:
+                    read(home, window)
+                    return f"operator shell restored in {target}" if restored_shell else ""
+                except ValueError as exc:
+                    # A live pane whose publication is unreadable, missing or stale is
+                    # respawned here. Naming the check that fired separates "the renderer
+                    # died" from "the supervisor killed a live renderer", which the shared
+                    # tape otherwise cannot tell apart.
+                    trigger = f"publication: {exc}"
     elif len(panes) != 1:
         raise ValueError("operator window must contain a shell or a dashboard above a shell")
     for name in ("operator", "operator/brief.md", "operator/commands.md", "top-pains", f"top-pains/{window}"):
@@ -147,7 +155,8 @@ def _ensure(home: Path, session: str, window: str, *, package_root: Path | None,
     elif len(panes) == 2:
         _tmux("respawn-pane", "-k", "-t", dashboard, *command)
     _tmux("set-option", "-w", "-t", target, "automatic-rename", "off")
-    return f"operator dashboard restored in {target}; lower pane preserved"
+    detail = f" (trigger: {trigger})" if trigger else ""
+    return f"operator dashboard restored in {target}{detail}; lower pane preserved"
 
 
 def run(home: Path, session: str, window: str, interval: float) -> None:
