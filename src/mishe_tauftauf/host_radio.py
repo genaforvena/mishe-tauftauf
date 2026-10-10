@@ -24,7 +24,9 @@ from pathlib import Path
 BLUETOOTH_ROOT = Path("/sys/class/bluetooth")
 RFKILL_ROOT = Path("/sys/class/rfkill")
 NET_ROOT = Path("/sys/class/net")
-COMMAND_TIMEOUT_SECONDS = 5.0
+COMMAND_TIMEOUT_SECONDS = 10.0
+"""``bluetoothctl show`` bound: the daemon answers in ~7s on this host (witness,
+2026-10-10), so 5s read as a false ``bluetoothctl-timeout`` UNKNOWN."""
 
 POWERED = re.compile(r"^[ \t]*Powered:\s+(yes|no)$", re.MULTILINE)
 ACTIVE_INSTANCES = re.compile(r"^[ \t]*ActiveInstances:\s+0x[0-9a-fA-F]+\s+\((\d+)\)$",
@@ -125,7 +127,9 @@ def controller_state(command: str = "bluetoothctl",
 
     ``btmgmt info`` did not return within 300 s on this host (discover,
     2026-10-10), so the powered and advertising state is read through
-    ``bluetoothctl show`` under a timeout. A timeout, a non-zero exit or output
+    ``bluetoothctl show`` under a timeout. The daemon answers in ~7s (witness,
+    2026-10-10), so the bound is 10s: a 5s timeout read as a false
+    ``bluetoothctl-timeout`` UNKNOWN. A timeout, a non-zero exit or output
     that does not carry the powered field yields ``error`` and no values: a hang
     is not evidence that the controller is absent.
     """
