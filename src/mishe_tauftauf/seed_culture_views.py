@@ -16,6 +16,7 @@ from .access import list_requests, recoveries, retired_requests
 from .ci_watch import line as ci_line
 from .discovery import latest, producer_label, scan_attempt, _space_light, _space_light_read
 from . import scan_freshness
+from .seed import recorded_session
 
 
 def _report(home: Path, slug: str, verdict: str) -> None:
@@ -245,7 +246,7 @@ def health(home: Path) -> str:
     lines.append("DOCTOR: " + ("PASS" if doctor.returncode == 0 else "RED"))
     if doctor.returncode:
         lines.extend(doctor.stdout.splitlines()[-8:])
-    session = os.environ.get("MISHE_SEED_SESSION", "")
+    session = os.environ.get("MISHE_SEED_SESSION", "") or recorded_session(home) or ""
     expected_path = home / "health" / "windows.json"
     try:
         expected = set(json.loads(expected_path.read_text(encoding="utf-8")))
