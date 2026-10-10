@@ -52,6 +52,8 @@ def test_sysfs_decode_reads_presence_rfkill_and_operstate(tmp_path: Path) -> Non
     assert host_radio.rfkill_verdict(switches, "bluetooth") == "unblocked"
     assert host_radio.rfkill_verdict(switches, "wlan") == "blocked"
     assert host_radio.rfkill_verdict(switches, "wwan") is None
+    # Every switch reads, so nothing is hidden from a short list.
+    assert host_radio.rfkill_unreadable(rfkill) == []
 
 
 def test_absent_sysfs_roots_decode_to_empty_not_to_a_verdict(tmp_path: Path) -> None:
@@ -60,6 +62,7 @@ def test_absent_sysfs_roots_decode_to_empty_not_to_a_verdict(tmp_path: Path) -> 
     assert host_radio.wireless_interfaces(missing) == []
     assert host_radio.rfkill_switches(missing) == []
     assert host_radio.operstate("hci0", missing) is None
+    assert host_radio.rfkill_unreadable(missing) == []
 
 
 def test_controller_state_decodes_indented_report_read_only(monkeypatch) -> None:
@@ -113,10 +116,13 @@ def test_controller_state_unread_report_is_an_error(monkeypatch, stdout, returnc
     assert state == {"powered": None, "advertising": None, "error": error}
 
 
-def _radio_row(monkeypatch, *, controllers, interfaces, switches, controller, operstates=None):
+def _radio_row(monkeypatch, *, controllers, interfaces, switches, controller,
+               operstates=None, unreadable_switches=()):
     monkeypatch.setattr(discovery, "bluetooth_controllers", lambda: list(controllers))
     monkeypatch.setattr(discovery, "wireless_interfaces", lambda: list(interfaces))
     monkeypatch.setattr(discovery, "rfkill_switches", lambda: list(switches))
+    monkeypatch.setattr(discovery, "rfkill_unreadable",
+                        lambda: list(unreadable_switches))
     monkeypatch.setattr(discovery, "controller_state", lambda: dict(controller))
     monkeypatch.setattr(discovery, "operstate",
                         lambda name: (operstates or {}).get(name))
@@ -134,7 +140,7 @@ def test_host_radio_verified_sample_names_every_state(monkeypatch) -> None:
 
     assert row["id"] == "sense.space.host-radio"
     assert row["state"] == "verified"
-    assert row["sample"] == ("BLE hci0 powered=yes adv=0/5; wifi wlxabc=down; "
+    assert row["sample"] == ("BLE hci0 powered=yes adv-instances=0/5; wifi wlxabc=down; "
                             "rfkill bt=unblocked wlan=unblocked")
     assert row["consumer"] == "space-perception/host-half"
     assert row["controllers"] == ["hci0"] and row["wireless"] == ["wlxabc"]
@@ -183,7 +189,7 @@ def test_host_radio_blocked_switch_is_verified_and_names_the_block(monkeypatch) 
         operstates={"wlxabc": "down"})
 
     assert row["state"] == "verified"
-    assert row["sample"].startswith("BLE hci0 powered=yes rfkill-blocked;")
+    assert row["sample"].startswith("BLE hci0 powered=yes adv-instances=unread rfkill-blocked;")
     assert "rfkill bt=blocked wlan=unblocked" in row["sample"]
 
 
@@ -193,3 +199,57 @@ def test_scan_carries_the_host_radio_row(tmp_path: Path) -> None:
     assert rows["sense.space.host-radio"]["state"] in {"verified", "unknown"}
     assert rows["sense.space.host-radio"]["consumer"] == "space-perception/host-half"
     assert rows["command.bluetoothctl"]["state"] in {"available", "unavailable"}
+
+
+def test_rfkill_unreadable_names_the_switches_a_short_list_hides(tmp_path: Path) -> None:
+    rfkill = tmp_path / "rfkill"
+    _sysfs(rfkill, "rfkill0/type", "bluetooth\n")
+    _sysfs(rfkill, "rfkill0/soft", "0\n")  # rfkill0/hard is missing -> skipped
+    _sysfs(rfkill, "rfkill1/type", "wlan\n")
+    _sysfs(rfkill, "rfkill1/soft", "0\n")
+    _sysfs(rfkill, "rfkill1/hard", "0\n")
+    _sysfs(rfkill, "rfkill2/soft", "0\n")  # rfkill2/type is missing -> unknown
+    _sysfs(rfkill, "rfkill2/hard", "0\n")
+
+    assert host_radio.rfkill_switches(rfkill) == [{"type": "wlan", "soft": "0", "hard": "0"}]
+    assert host_radio.rfkill_unreadable(rfkill) == ["bluetooth", "unknown"]
+
+
+def test_host_radio_unread_operstate_is_unknown_and_names_the_interface(monkeypatch) -> None:
+    row = _radio_row(
+        monkeypatch, controllers=["hci0"], interfaces=["wlxabc"],
+        switches=[{"type": "bluetooth", "soft": "0", "hard": "0"},
+                  {"type": "wlan", "soft": "0", "hard": "0"}],
+        controller={"powered": True, "advertising": {"active": 0, "supported": 5},
+                    "error": None},
+        operstates={})
+
+    assert row["state"] == "unknown"
+    assert row["reason"] == "operstate-unread:wlxabc"
+    assert "wifi wlxabc=unread" in row["sample"]
+
+
+def test_host_radio_unreadable_rfkill_switch_reads_unread_not_absent(monkeypatch) -> None:
+    row = _radio_row(
+        monkeypatch, controllers=["hci0"], interfaces=["wlxabc"],
+        switches=[{"type": "wlan", "soft": "0", "hard": "0"}],
+        controller={"powered": True, "advertising": {"active": 0, "supported": 5},
+                    "error": None},
+        operstates={"wlxabc": "down"}, unreadable_switches=["bluetooth"])
+
+    assert row["state"] == "unknown"
+    assert row["reason"] == "rfkill-unreadable:bluetooth"
+    assert "rfkill bt=unread wlan=unblocked" in row["sample"]
+
+
+def test_host_radio_powered_without_advertising_counters_names_them_unread(monkeypatch) -> None:
+    row = _radio_row(
+        monkeypatch, controllers=["hci0"], interfaces=["wlxabc"],
+        switches=[{"type": "bluetooth", "soft": "0", "hard": "0"},
+                  {"type": "wlan", "soft": "0", "hard": "0"}],
+        controller={"powered": True, "advertising": {"active": None, "supported": None},
+                    "error": None},
+        operstates={"wlxabc": "down"})
+
+    assert row["state"] == "verified"
+    assert "adv-instances=unread" in row["sample"]

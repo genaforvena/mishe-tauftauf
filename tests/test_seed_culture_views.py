@@ -283,11 +283,11 @@ def test_senses_shows_the_host_radio_verdict_from_the_scan(tmp_path: Path, curre
     home = tmp_path / "site"
     _write_scan(home, [
         {"id": "sense.space.host-radio", "state": "verified", "kind": "read",
-         "sample": "BLE hci0 powered=yes adv=0/5; wifi wlxabc=down; "
+         "sample": "BLE hci0 powered=yes adv-instances=0/5; wifi wlxabc=down; "
                     "rfkill bt=unblocked wlan=unblocked"},
     ])
     rendered = senses(home)
-    assert "VERIFIED sense.space.host-radio: BLE hci0 powered=yes adv=0/5" in rendered
+    assert "VERIFIED sense.space.host-radio: BLE hci0 powered=yes adv-instances=0/5" in rendered
 
 
 def _endpoint(first: int, last: int, utc_ns: int = 1_700_000_000_000_000_000) -> dict:
