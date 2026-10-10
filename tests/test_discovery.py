@@ -2060,9 +2060,10 @@ def test_evidence_binding_flags_mutated_evidence(tmp_path):
 def test_evidence_binding_flags_deleted_evidence(tmp_path):
     """A bound file that has been deleted is a broken digest (B), not a skip.
 
-    Observed live 2026-10-10 (witness wake 63206): a mind recorded an outcome
-    and then removed its own per-outcome evidence file, so the sense reported
-    drift with class B. Deletion is a distinct mechanism from a later edit, and
+    Observed live 2026-10-10 (witness wake 63206): a bound per-outcome
+    evidence file was absent at audit time, so the sense reported drift with
+    class B. The removal mechanism is unestablished. Deletion is a distinct
+    branch from a later edit, and
     the OSError branch must keep flagging it rather than dropping the row.
     """
     home = tmp_path / "site"
