@@ -4253,6 +4253,23 @@ def test_drift_across_sites_names_a_foreign_unit_importing_the_checkout(
     assert row["identity"]["unattributed"] == []
 
 
+def test_foreign_checkout_consumers_skips_unit_with_description_naming_root(
+        tmp_path: Path) -> None:
+    # A plant-level service whose description names the checkout root is local,
+    # not foreign, even when its script text references the checkout.
+    checkout = tmp_path.resolve()
+    local_unit = "mishe-cleaner-recovered.service"
+    foreign_unit = "mishe-unlisted.service"
+    with patch.object(discovery, "_unit_description",
+                      side_effect=lambda u: f"{checkout.name} report-only cleaner coordinator"
+                      if u == local_unit else ""), \
+            patch.object(discovery, "_unit_names_checkout", return_value=True):
+        consumers = discovery._foreign_checkout_consumers(
+            [local_unit, foreign_unit], checkout)
+    assert local_unit not in consumers
+    assert consumers[foreign_unit] == str(checkout)
+
+
 def test_drift_across_sites_keeps_a_foreign_unit_off_the_checkout_unattributed(
         tmp_path: Path) -> None:
     # A foreign unit whose import root is another release, and whose ExecStart
