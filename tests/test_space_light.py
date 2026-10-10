@@ -186,3 +186,36 @@ def test_missing_and_corrupt_file_are_unknown(tmp_path: Path):
     (tmp_path / "body").mkdir()
     (tmp_path / "body" / "space.json").write_text("{broken")
     assert discovery._space_light_read(tmp_path)["reason"] == "boundary-absent-or-corrupt"
+
+
+def test_stale_unknown_names_last_phone_sample_and_age():
+    data = boundary()
+    data["nodes"][0]["light"]["status"] = "stale"
+    row = discovery._space_light(data, NOW + 7200)
+    assert row["state"] == "unknown"
+    assert row["reason"] == "light-not-current-or-delayed"
+    assert "last-phone=" in row["sample"] and stamp(NOW - 20) in row["sample"]
+    assert "age=2h0m" in row["sample"]
+
+
+def test_delayed_unknown_names_age():
+    data = boundary()
+    data["nodes"][0]["light"]["delayed_at_receipt"] = True
+    row = discovery._space_light(data, NOW + 5)
+    assert row["reason"] == "light-not-current-or-delayed"
+    assert "age=25s" in row["sample"]
+
+
+def test_expired_fresh_claim_names_age():
+    data = boundary()
+    row = discovery._space_light(data, NOW + 31)
+    assert row["reason"] == "stale-original-evidence"
+    assert "last-phone=" in row["sample"] and stamp(NOW - 20) in row["sample"]
+
+
+def test_unknown_without_valid_phone_epoch_omits_age():
+    data = boundary()
+    data["nodes"][0]["light"].update(status="stale", phone_sample_epoch_s=None)
+    row = discovery._space_light(data, NOW + 5)
+    assert row["reason"] == "light-not-current-or-delayed"
+    assert "last-phone=" not in row["sample"]
