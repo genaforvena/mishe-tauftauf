@@ -23,6 +23,14 @@ parent/child columns and the `tmux list-panes` pane pid list. A caller reaps onl
 processes it can attribute to a known parent; malformed or unreadable output
 yields no pid rather than a guess.
 
+`host_radio.py` decodes this host's BLE/Wi-Fi adapter state for the
+space-perception sense: the kernel sysfs ABI for `/sys/class/bluetooth`,
+`/sys/class/rfkill` and `/sys/class/net` (one newline-terminated value per file),
+and the human-readable `bluetoothctl show` report. It returns ordinary Python
+values and never mutates a radio. A missing adapter, an unreadable file or a
+command that does not return inside its bound is an explicit error value, so the
+consumer keeps the reading UNKNOWN instead of reading absence or a hang as calm.
+
 `chat_protocol.py` interprets historical wake, yield and clear receipts. A
 seed-sourced receipt's first line supplies the lifecycle kind and header fields;
 for yields, the decoder also extracts a reported result from a subsequent line

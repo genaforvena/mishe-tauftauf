@@ -279,6 +279,17 @@ def test_senses_still_counts_an_unreadable_counter_as_unknown(tmp_path: Path, cu
     assert (home / "observations" / "senses").read_text(encoding="utf-8").startswith("UNKNOWN ")
 
 
+def test_senses_shows_the_host_radio_verdict_from_the_scan(tmp_path: Path, current_endpoint) -> None:
+    home = tmp_path / "site"
+    _write_scan(home, [
+        {"id": "sense.space.host-radio", "state": "verified", "kind": "read",
+         "sample": "BLE hci0 powered=yes adv=0/5; wifi wlxabc=down; "
+                    "rfkill bt=unblocked wlan=unblocked"},
+    ])
+    rendered = senses(home)
+    assert "VERIFIED sense.space.host-radio: BLE hci0 powered=yes adv=0/5" in rendered
+
+
 def _endpoint(first: int, last: int, utc_ns: int = 1_700_000_000_000_000_000) -> dict:
     return {"clock": "CLOCK_BOOTTIME", "bounds_ns": [first, last],
             "boot_id": "12345678-1234-5678-1234-567812345678",

@@ -19,12 +19,15 @@ from uuid import uuid4
 
 from . import omp_pane
 from .feed import Feed, parse_feed
+from .host_radio import (BLUETOOTH_ROOT, COMMAND_TIMEOUT_SECONDS, NET_ROOT, RFKILL_ROOT,
+                         bluetooth_controllers, controller_state, operstate,
+                         rfkill_switches, rfkill_verdict, wireless_interfaces)
 from .outcome_events import classify_outcomes
 from .runtime_source import source_for
 from .scan_freshness import age_bounds, classify_age, endpoint
 
 COMMANDS = ("rg", "git", "tmux", "python3", "systemctl", "journalctl", "ps", "df",
-            "lsusb", "lspci", "sensors", "upower", "evtest")
+            "lsusb", "lspci", "bluetoothctl", "sensors", "upower", "evtest")
 
 SENSOR_ID = re.compile(r"^sense\.[a-z0-9]+(?:\.[a-z0-9-]+)+$")
 
@@ -2902,6 +2905,57 @@ def _space_new_event(previous: dict | None, current: dict) -> bool:
                 and current.get("event_sequence", -1) > previous.get("sequence", -1))
 
 
+def _host_radio_read() -> dict:
+    """Sample this host's BLE/Wi-Fi adapter state for the space programme.
+
+    Consumer: the space-perception programme's host half, which must know whether
+    the owned radio pair is present and usable before a bounded experiment. A
+    missing adapter or an unreadable controller stays UNKNOWN — absence and a
+    hang are not calm. A radio that is ``down`` or rfkill-blocked is a verified
+    state, and the sample names it.
+    """
+    controllers = bluetooth_controllers()
+    interfaces = wireless_interfaces()
+    switches = rfkill_switches()
+    ble_switch = rfkill_verdict(switches, "bluetooth")
+    wlan_switch = rfkill_verdict(switches, "wlan")
+    problems: list[str] = []
+    if controllers:
+        controller = controller_state()
+        if controller["error"]:
+            problems.append(str(controller["error"]))
+            ble = f"BLE {','.join(controllers)} powered=unread"
+        else:
+            ble = f"BLE {','.join(controllers)} powered={'yes' if controller['powered'] else 'no'}"
+            advertising = controller["advertising"]
+            if advertising and advertising["supported"] is not None:
+                ble += f" adv={advertising['active']}/{advertising['supported']}"
+    else:
+        problems.append("no-bluetooth-controller")
+        ble = "BLE absent"
+    if ble_switch == "blocked":
+        ble += " rfkill-blocked"
+    if interfaces:
+        wifi = "wifi " + ",".join(f"{name}={operstate(name) or 'unread'}" for name in interfaces)
+    else:
+        problems.append("no-wifi-interface")
+        wifi = "wifi absent"
+    if wlan_switch == "blocked":
+        wifi += " rfkill-blocked"
+    sample = (f"{ble}; {wifi}; rfkill bt={ble_switch or 'absent'} wlan={wlan_switch or 'absent'}")
+    if problems:
+        sample = f"host radio UNKNOWN {','.join(problems)}; " + sample
+    return {"id": "sense.space.host-radio", "kind": "read",
+            "state": "unknown" if problems else "verified",
+            "reason": ",".join(problems) if problems else "host-radio-state",
+            "sample": sample,
+            "consumer": "space-perception/host-half",
+            "provenance": {"sysfs": [str(BLUETOOTH_ROOT), str(RFKILL_ROOT), str(NET_ROOT)],
+                           "command": "bluetoothctl show",
+                           "timeout_seconds": COMMAND_TIMEOUT_SECONDS},
+            "controllers": controllers, "wireless": interfaces}
+
+
 def sample(home: Path) -> dict[str, object]:
     """Take bounded reads; never open input event streams or record key content."""
     observed: list[dict[str, object]] = []
@@ -2918,6 +2972,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_ledger_dv_binding(home))
     observed.append(_ledger_evidence_binding(home))
     observed.append(_space_light_read(home))
+    observed.append(_host_radio_read())
 
     loadavg = _read(Path("/proc/loadavg"), 256)
     observed.append({"id": "sense.proc.loadavg", "state": "verified" if loadavg else "unknown",
