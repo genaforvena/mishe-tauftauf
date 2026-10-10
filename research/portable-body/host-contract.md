@@ -148,6 +148,28 @@ not the caller.
 - A2: interpreter executes via host calls; host OS enforces permissions.
 - A3: shell executes via host calls; host OS enforces permissions.
 
+### M8 scope decision: host OS enforcement only
+
+**Decision:** For the minimal body, host authority = host OS enforcement.
+The body does NOT implement a call-time policy layer. Caller labels (e.g.,
+"read", "write") are NOT grants — they are hints. The host OS is the
+authority: file permissions, process permissions, device permissions, etc.
+
+**Rationale:**
+- A policy engine would violate "do not turn a tiny seed into a large
+  service" (charter mandate).
+- The OS already enforces permissions on every effect the body can
+  produce (file I/O, process spawning, device access).
+- The `/proc/sysrq-trigger` failure case is handled by the OS: if the
+  caller lacks permission to write to that device, the OS denies it
+  regardless of the caller's label.
+- All three alternatives execute via host calls; the OS enforces
+  permissions on those calls uniformly.
+
+**Future optional feature:** A host-owned policy layer (default-deny for
+unlabeled effects, explicit allow rules) could be added as a non-minimal
+extension. It is NOT required for the minimal body.
+
 ## Derived properties (consequences of M1–M4)
 
 These are not separate mechanisms but emerge from the mandatory set:

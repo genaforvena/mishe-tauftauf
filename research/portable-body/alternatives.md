@@ -105,10 +105,12 @@ On Windows, `fcntl`/`signal`/`os.killpg` calls are replaced with
 
 ### Portability
 
-- **Linux:** works today (measured).
-- **Windows:** requires platform adapter for `fcntl`/`signal`/`os.killpg`.
-  Estimated adapter: ~500 B conditional code. Windows Python is a standard
-  download.
+- **Windows:** feasible with thin platform adapter (~90 B). `fcntl.flock` →
+  `msvcrt.locking` (mandatory byte-range lock; acceptable for single-writer
+  coordination). `os.killpg` → `taskkill /T /F` (process-tree kill). Reasoning
+  artifact: `artifacts/body-wake779-windows-portability.md` (wake 779). Untested
+  on Windows (no host available). Real portability floor is Python 3.12+ (~30 MB
+  installed), not the POSIX surface.
 - **Minimal hosts:** requires Python 3.12+ (~30 MB installed). NOT suitable
   for embedded or minimal hosts.
 
@@ -433,6 +435,14 @@ result → prints `OK bytes_written=5 operation_id=op-abc123`. ✅
 **4. Connection loss:** `write_file` writes intent → shell killed before
 outcome → on restart, `recover op-abc123` → `OK status=in_flight` →
 `reconcile` writes `outcome op-abc123 status=indeterminate`. ✅
+
+### Host authority
+
+A3 authority = host OS enforcement only. No call-time policy layer. Caller
+labels are not grants. The shell does not second-guess the host OS — if
+the OS denies an effect (file permissions, device access, process
+permissions), the body reports the failure. See host-contract.md M8 scope
+decision.
 
 ### Size and cost
 
