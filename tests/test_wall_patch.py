@@ -520,6 +520,48 @@ def test_review_answer_names_invalid_answer_when_retries_exhaust(tmp_path, monke
                                   validate=reject)
     importlib.reload(wall_review)
 
+def test_review_answer_retries_a_timed_out_reader_then_succeeds(tmp_path, monkeypatch):
+    # A provider stall kills the call with TimeoutExpired; one uncaught timeout
+    # recorded the whole patch as review-unavailable with no retry. A timeout is
+    # a failed attempt and must be retried inside the same budget.
+    import subprocess
+    from mishe_tauftauf import wall_review
+    import importlib
+
+    runs = []
+    good = '{"version": 1, "input_hash": "h", "results": []}'
+
+    def stall_then_ok(*args, **kwargs):
+        runs.append(kwargs.get("timeout"))
+        if len(runs) < wall_review.MAX_EMPTY_RETRIES:
+            raise subprocess.TimeoutExpired(cmd="omp", timeout=kwargs.get("timeout", 0))
+        return type("R", (), {"returncode": 0, "stdout": good, "stderr": ""})()
+
+    monkeypatch.setenv("MISHE_WALL_REVIEW_TIMEOUT", "120")
+    importlib.reload(wall_review)
+    answer = wall_review.review_answer("model", tmp_path, tmp_path / "req.txt", runner=stall_then_ok)
+    importlib.reload(wall_review)
+    assert len(runs) == 3, "a timed-out reader must be retried, not accepted on the stalled run"
+    assert answer == json.loads(good)
+    # Each attempt is capped at an even share of the budget (120/3 = 40s on the
+    # first attempt), so the retries fit inside the same budget.
+    assert all(timeout is not None and 0 < timeout <= 40 for timeout in runs)
+
+
+def test_review_answer_names_the_timeout_when_retries_exhaust(tmp_path, monkeypatch):
+    import subprocess
+    from mishe_tauftauf import wall_review
+    import importlib
+
+    def stall(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="omp", timeout=kwargs.get("timeout", 0))
+
+    monkeypatch.setenv("MISHE_WALL_REVIEW_TIMEOUT", "120")
+    importlib.reload(wall_review)
+    with pytest.raises(RuntimeError, match="timed out"):
+        wall_review.review_answer("model", tmp_path, tmp_path / "req.txt", runner=stall)
+    importlib.reload(wall_review)
+
 
 def test_failed_test_drops_the_stale_review_verdict(tmp_path, monkeypatch):
     # A test failure must not keep a verdict from an earlier review of the same
