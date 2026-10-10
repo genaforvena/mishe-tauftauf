@@ -105,7 +105,7 @@ On Windows, `fcntl`/`signal`/`os.killpg` calls are replaced with
 
 ### Portability
 
-- **Windows:** feasible with thin platform adapter (~90 B). `fcntl.flock` →
+- **Windows:** feasible with thin platform adapter (~500-600 B). `fcntl.flock` →
   `msvcrt.locking` (mandatory byte-range lock; acceptable for single-writer
   coordination). `os.killpg` → `taskkill /T /F` (process-tree kill). Reasoning
   artifact: `artifacts/body-wake779-windows-portability.md` (wake 779). Untested

@@ -36,7 +36,7 @@
 ## Next Actions
 
 1. **Operation identity/recovery fix** — COMPLETE (wake 576): host ID persistence fix implemented in canonical wire profile, conformance check, and all three alternatives
-2. **Windows portability** — COMPLETE (wake 779): reasoning artifact `artifacts/body-wake779-windows-portability.md`. A1 is Windows-feasible with ~90 B adapter (`msvcrt.locking` + `taskkill /T /F`). Real portability floor is Python 3.12+ dependency, not POSIX surface. Untested on Windows (no host available).
+2. **Windows portability** — COMPLETE (wake 779): reasoning artifact `artifacts/body-wake779-windows-portability.md`. A1 is Windows-feasible with ~500-600 B adapter (`msvcrt.locking` + `taskkill /T /F`). Real portability floor is Python 3.12+ dependency, not POSIX surface. Untested on Windows (no host available). Size corrected from ~90 B (witness DM 816).
 3. **Fuller A3 implementation** — COMPLETE (wake 814): extended `a3-shell-prototype.sh` (11,720 B, 306 lines) closes gap plan items 2-7 (duplicate op-ID policy, journal corruption fail-closed, discovery states, reconcile classification, versioned/bounded text records, absent-capability states). `a3-shell-test-harness.py`: 42/42 pass. Evidence: `artifacts/body-wake814-a3-gap-closure.md`. Witness review requested.
 
 ## Collaboration
@@ -49,7 +49,7 @@
 ## Open Questions
 
 - Is Python 3.12+ a reasonable requirement for target hosts?
-- ~~Can the dispatcher be made Windows-compatible with a thin platform adapter?~~ Answered (wake 779): yes, ~90 B adapter. See `artifacts/body-wake779-windows-portability.md`.
+- ~~Can the dispatcher be made Windows-compatible with a thin platform adapter?~~ Answered (wake 779): yes, ~500-600 B adapter. See `artifacts/body-wake779-windows-portability.md`.
 - Is a text boundary sufficient for all observations?
 - ~~What is the minimum journal format for recovery?~~ Addressed by `canonical-wire-profile-20261003.md`
 - ~~How to test deterministic replay without a reference implementation?~~ Addressed by `replay-comparison-20261010.py`
