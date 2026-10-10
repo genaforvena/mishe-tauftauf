@@ -2620,9 +2620,16 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     flagged). ``latest_bad_roles`` names the roles that are non-compliant in
     the live window, so the live set is readable beside the count rather than
     re-derived from ``violating``, which lists the standing audit's newest
-    rows. State is ``drift`` when any checked outcome violates, including
-    when other publications have incomplete coverage; otherwise incomplete
-    coverage, unavailable input or no eligible event is ``unknown``.
+    rows. ``latest_bad_last`` stamps each live-bad role's last outcome time:
+    the live window is the latest outcome per role over the whole post-clause
+    set, so it is unbounded in time and an inactive role's row stands until
+    the role publishes again — the stamp reads such a row as stale, not
+    current. ``count_excluded`` names the retained-bytes rows (B), the only
+    class the trial's evidenced-outcome count drops, beside ``all_bad``'s
+    audit of all three classes. State is ``drift`` when any checked outcome
+    violates, including when other publications have incomplete coverage;
+    otherwise incomplete coverage, unavailable input or no eligible event is
+    ``unknown``.
 
     The under-artifacts test resolves the stored path first, so a ``..``
     segment cannot pass it lexically. D counts distinct stored path strings:
@@ -2677,9 +2684,14 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     latest_bad_roles = sorted((role, classes) for role, (_ts, _sequence, classes)
                               in latest.items() if classes)
     named_bad = ",".join(f"{role}({classes})" for role, classes in latest_bad_roles) or "none"
+    bad_last_rows = [(role, latest[role][0]) for role, _classes in latest_bad_roles]
+    bad_last = ",".join(f"{role}@{ts.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+                        for role, ts in bad_last_rows) or "none"
+    count_excluded = sum(1 for row in checked if "B" in row[4])
     parts = [f"bound={len(checked)} latest_roles={len(latest)} "
              f"latest_bad={len(latest_bad_roles)} latest_bad_roles={named_bad} "
-             f"all_bad={len(violations)}"]
+             f"latest_bad_last={bad_last} "
+             f"all_bad={len(violations)} count_excluded={count_excluded}"]
     if incomplete:
         parts.append(f"coverage_incomplete={len(incomplete)} sequences=" +
                      ",".join(str(row["sequence"]) for row in incomplete[:3]))
@@ -2695,7 +2707,9 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
             "bound": len(checked), "latest_roles": len(latest),
             "latest_bad": len(latest_bad_roles),
             "latest_bad_roles": [f"{role}({classes})" for role, classes in latest_bad_roles],
-            "all_bad": len(violations),
+            "latest_bad_last": [f"{role}@{ts.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+                                for role, ts in bad_last_rows],
+            "all_bad": len(violations), "count_excluded": count_excluded,
             "coverage_incomplete": len(incomplete), "incomplete": incomplete,
             "event_sequences": [row["sequence"] for row in coverage["events"]],
             "violations": [f"{role}@{ts.strftime('%Y-%m-%dT%H:%M:%SZ')}:{name}({classes})"
@@ -3217,7 +3231,7 @@ def _notify_scan(home: Path, snapshot: dict[str, object],
     unavailable = [str(item["id"]).removeprefix("command.") for item in readings
                    if item["kind"] == "declaration" and item["state"] == "unavailable"]
     verified = [item for item in readings if item["kind"] != "declaration" and item["state"] == "verified"]
-    unknown = [item for item in readings if item["kind"] != "declaration" and item["state"] != "verified"]
+    nonverified = [item for item in readings if item["kind"] != "declaration" and item["state"] != "verified"]
     def signature(data: dict[str, object] | None) -> dict[str, tuple[str, str]]:
         if data is None:
             return {}
@@ -3292,8 +3306,11 @@ def _notify_scan(home: Path, snapshot: dict[str, object],
              change_text,
              f"Available commands ({len(available)}): {', '.join(available) or 'none'}.",
              f"Unavailable commands ({len(unavailable)}): {', '.join(unavailable) or 'none'}.",
-             "Verified readings: " + ("; ".join(f"{item['id']} = {item['sample']}" for item in verified) or "none") + ".",
-             "Unknown readings: " + ("; ".join(f"{item['id']} — {item['sample']}" for item in unknown) or "none") + ".",
+             "Verified readings: " + ("; ".join(f"{item['id']} = {item['sample']}" for item in verified) or "none") + "."] + [
+        f"{state[:1].upper()}{state[1:]} readings: " +
+        ("; ".join(f"{item['id']} — {item['sample']}" for item in nonverified
+                   if str(item["state"]) == state) or "none") + "."
+        for state in sorted({str(item["state"]) for item in nonverified})] + [
              f"Full sample: {artifact.resolve()}.",
              "Next: senses should verify useful unknown readings or record why the source is unavailable; "
              "discover should seek one new useful read."]
