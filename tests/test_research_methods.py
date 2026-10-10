@@ -73,7 +73,7 @@ def test_research_methods_is_visible_to_peers_and_activity_without_local_registr
     (tmp_path / "walls").mkdir()
     (tmp_path / "walls" / f"{ROLE}.md").write_text("Question: does the planned comparison distinguish the alternatives?")
     assert ROLE in activity.roles(tmp_path)
-    assert f"WALL {ROLE}" in wall.context(tmp_path, "genome")
+    assert f"PEER WALL {ROLE}" in wall.context(tmp_path, "genome")
     event = Feed(tmp_path).append(ROLE, "Changed hypothesis; evidence in artifacts/methods.md.")
     (tmp_path / "coordination-mode.json").write_text(json.dumps({"mode": "wall", "started": "2000-01-01T00:00:00+00:00"}))
     result = activity.check(tmp_path, now=datetime.now(timezone.utc))

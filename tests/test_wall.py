@@ -59,8 +59,12 @@ def test_wall_context_includes_only_monitored_role_walls(tmp_path):
     (tmp_path / "walls" / "resident.md").write_text("Resident plan")
     wall.message(tmp_path, "health", "genome", "Sample is ready; see artifacts/sample.md")
     text = wall.context(tmp_path, "genome")
-    sections = [line for line in text.splitlines() if line.startswith("WALL ")]
-    assert sections == ["WALL health", "WALL operator", "WALL resident"]
+    sections = [line for line in text.splitlines() if line.startswith("PEER WALL ")]
+    assert sections == [
+        f"PEER WALL health — reference only; never copy into your own wall",
+        f"PEER WALL operator — reference only; never copy into your own wall",
+        f"PEER WALL resident — reference only; never copy into your own wall",
+    ]
     assert "Operator position" in text
     assert "Scratch audit" not in text
     assert "Sample is ready; see artifacts/sample.md" in text
@@ -125,6 +129,32 @@ def test_wall_write_audit_log_works_without_source_path(tmp_path):
     entry = json.loads(audit_path.read_text())
     assert entry["role"] == "genome"
     assert entry["source"] is None
+
+
+def test_wall_write_rejects_byte_identical_peer_wall(tmp_path):
+    setup_wall(tmp_path)
+    from mishe_tauftauf import wall
+    wall.write(tmp_path, "genome", "Wake 1494 verified. Phone light channel regular.")
+    with pytest.raises(ValueError, match="byte-identical to peer wall genome"):
+        wall.write(tmp_path, "witness", "Wake 1494 verified. Phone light channel regular.")
+    assert not (tmp_path / "walls" / "witness.md").exists()
+    assert (tmp_path / "walls" / "genome.md").read_text().startswith("Wake 1494")
+
+
+def test_wall_write_allows_unchanged_own_wall_rewrite(tmp_path):
+    setup_wall(tmp_path)
+    from mishe_tauftauf import wall
+    wall.write(tmp_path, "genome", "Steady state; nothing new.")
+    wall.write(tmp_path, "genome", "Steady state; nothing new.")
+    assert (tmp_path / "walls" / "genome.md").read_text() == "Steady state; nothing new."
+
+
+def test_peer_copy_guard_requires_exact_bytes(tmp_path):
+    setup_wall(tmp_path)
+    from mishe_tauftauf import wall
+    wall.write(tmp_path, "genome", "Same evidence, new framing.\n")
+    wall.write(tmp_path, "witness", "Same evidence, new framing.")
+    assert "new framing" in (tmp_path / "walls" / "witness.md").read_text()
 
 
 

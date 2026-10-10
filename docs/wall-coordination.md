@@ -24,6 +24,11 @@ planting supplies only the initial dashboard.
 conversation. Its context contains one section for each other monitored role and
 also includes `walls/operator.md` when present, except when the operator is the
 caller. Scratch notes such as `walls/audit.md` are not peer walls and are excluded.
+Every peer section is headed `PEER WALL NAME — reference only; never copy into your
+own wall`, because the whole context is one undelimited text. A write is refused
+when the notes are byte-identical to a peer wall: per-role walls own their content,
+so exact cross-role duplication is always the copy failure, not shared work.
+Rewriting your own wall with unchanged content is still accepted.
 `wall dm --source ROLE --to PEER --file MESSAGE` appends an addressed message to
 the shared tape. These messages are visible to everyone; they are not private
 inboxes. Use the site CLI with `--home SITE_HOME` for each command, where
