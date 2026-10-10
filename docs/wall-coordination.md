@@ -98,7 +98,10 @@ kept for the life of the trial and never reused. The load-bearing property is
 that the bound bytes stay at the bound path unchanged, so deletion invalidates
 the bound digest exactly as an edit does; `artifacts/` is a proxy for a file made
 for this one outcome, and a bound artifact is retained evidence, not a scaffold
-to clean up once the outcome is recorded. The three requirements are independent:
+to clean up once the outcome is recorded. Correct an already-bound artifact by
+writing a new artifact and citing it in a new outcome; the earlier outcome cannot
+be rebound, so an in-place edit drops it from the count permanently. The three
+requirements are independent:
 a file can be unedited yet sit outside `artifacts/`, or be cited by a second
 outcome, and is ineligible for that reason alone. Being inside `artifacts/` is
 not sufficient by itself either — wake notes and other working files that a later
