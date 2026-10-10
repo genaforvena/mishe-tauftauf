@@ -48,6 +48,16 @@ class ProcessTableTests(unittest.TestCase):
         self.assertEqual(proc_table.pane_pids(b"4242\n\nnot-a-pid\n"), [4242])
         self.assertEqual(proc_table.pane_pids(b""), [])
 
+    def test_pane_records_decode_session_window_pid(self):
+        self.assertEqual(
+            proc_table.pane_records("mishe-tauftauf|senses|4242\nandroid-body|senses|4243\n"),
+            [("mishe-tauftauf", "senses", 4242), ("android-body", "senses", 4243)])
+
+    def test_pane_records_skip_junk_not_guess_a_session(self):
+        self.assertEqual(
+            proc_table.pane_records("mishe-tauftauf|senses\nmishe-tauftauf|senses|x\n\n"),
+            [])
+
 
 if __name__ == "__main__":
     unittest.main()
