@@ -31,8 +31,8 @@ values and never mutates a radio. A missing adapter or a `bluetoothctl` read tha
 fails or does not return inside its bound is an explicit problem value, so the
 consumer keeps the reading UNKNOWN rather than reading absence or a hang as calm.
 An unreadable sysfs value is named `unread` rather than dropped, and an unreadable
-rfkill switch is omitted from the decoded list: a caller must not read a short
-list as a radio that is absent.
+rfkill switch is omitted from the decoded list: `rfkill_unreadable()` names the
+skipped switches, so a caller can tell an omission from a radio that is absent.
 
 `chat_protocol.py` interprets historical wake, yield and clear receipts. A
 seed-sourced receipt's first line supplies the lifecycle kind and header fields;
