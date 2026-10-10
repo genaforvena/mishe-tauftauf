@@ -10,6 +10,10 @@ Two external spellings meet here, so consumers act on decoded values:
   log records the bare ``longcat-2.5-preview-free``, and a name may carry more
   than one ``/``. The final path segment is the model's identity, so that is
   what ``same_model`` compares; no provider prefix is guessed.
+* A malformed launcher can leave ``--model`` without a usable value: the flag
+  last, an empty ``--model=``, or another option (``--model --thinking``) as its
+  value. None of those is a model name, so ``model`` reads ``None`` rather than
+  a value that would make the wedge reader drop every record it should count.
 
 ``sense.mind.wedge-suspect`` needs both: an omp session log carries provider
 errors from every agent the pane hosts, including the title generator and
@@ -42,8 +46,17 @@ def option(argv: list[str], name: str) -> str | None:
 
 
 def model(argv: list[str]) -> str | None:
-    """The ``--model`` a pane process was launched with, or ``None``."""
-    return option(argv, "--model")
+    """The ``--model`` a pane process was launched with, or ``None``.
+
+    A malformed launcher can leave the flag without a usable value: ``--model``
+    last, an empty ``--model=``, or another option as the value (``--model
+    --thinking``). None of those is a model name, so this reads ``None``, which
+    the caller treats as "cannot attribute" and counts rather than hides.
+    """
+    value = option(argv, "--model")
+    if not value or value.startswith("-"):
+        return None
+    return value
 
 
 def same_model(left: str, right: str) -> bool:
