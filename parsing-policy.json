@@ -8,6 +8,7 @@
     "src/mishe_tauftauf/operator_view.py",
     "src/mishe_tauftauf/inference_effects.py",
     "src/mishe_tauftauf/omp_pane.py",
+    "src/mishe_tauftauf/proc_table.py",
     "tools/check_parsing.py"
   ],
   "legacy": {

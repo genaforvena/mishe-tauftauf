@@ -354,6 +354,40 @@ class OrphanSweepTests(unittest.TestCase):
         self.assertEqual(killed, ["mishe-tauftauf-test-999999"])
         self.assertIn(("kill-session", "-t", "mishe-tauftauf-test-999999"), calls)
 
+    def test_sweep_reaps_the_detached_children_of_a_leaked_session(self):
+        from mishe_tauftauf import tmux as tmux_module
+
+        def result(returncode, stdout):
+            return subprocess.CompletedProcess([], returncode, stdout.encode(), b"")
+
+        calls = []
+        def fake_tmux(*args, **kwargs):
+            calls.append(args)
+            if args[0] == "list-sessions":
+                return result(0, "mishe-tauftauf-test-999999\n")
+            if args[0] == "list-panes":
+                return result(0, "4242\n")
+            return result(0, "")
+
+        signalled = []
+        def fake_kill(pid, sig):
+            if pid == 999999:
+                raise ProcessLookupError
+            signalled.append((pid, sig))
+
+        with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux), \
+                mock.patch.object(tmux_module, "children_by_parent",
+                                  return_value={4242: [4243], 4243: [4244]}), \
+                mock.patch.object(tmux_module.os, "kill", side_effect=fake_kill):
+            killed = tmux_module.sweep_orphan_test_sessions()
+        self.assertEqual(killed, ["mishe-tauftauf-test-999999"])
+        # The detached mind outlives kill-session, so the whole pane tree is
+        # read while the pane is alive and killed after the session goes.
+        self.assertEqual(set(signalled), {(pid, tmux_module.signal.SIGKILL) for pid in (4242, 4243, 4244)})
+        self.assertLess(calls.index(("list-panes", "-t", "mishe-tauftauf-test-999999", "-F", "#{pane_pid}")),
+                        calls.index(("kill-session", "-t", "mishe-tauftauf-test-999999")))
+
     def test_sweep_leaves_session_with_live_pid(self):
         from mishe_tauftauf import tmux as tmux_module
 

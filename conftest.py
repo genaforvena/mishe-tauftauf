@@ -54,3 +54,16 @@ if _origin_path != _PACKAGE.resolve():
         "Test a release deliberately: run that release's own tests, "
         "e.g. .venv/bin/pytest SITE_HOME/releases/<sha>/tests -q"
         % (_origin_path.parent.parent, _ROOT))
+
+
+def pytest_configure(config):
+    """Reap sessions a hard-killed earlier run leaked, before this one adds more.
+
+    A hard kill skips every test's finally cleanup, so its tmux session and the
+    detached mind under its pane survive with no owner. The sweep kills only
+    sessions whose embedded creating pid is dead, so a concurrently running
+    suite's live sessions are untouched.
+    """
+    from mishe_tauftauf.tmux import sweep_orphan_test_sessions
+
+    sweep_orphan_test_sessions()

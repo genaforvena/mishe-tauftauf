@@ -4,12 +4,14 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 from .observations import FOOTER_LEASE_RE, discover, strip_owned_chrome
+from .proc_table import children_by_parent, pane_pids
 
 OWNED_OPTION = "@mishe-tauftauf-home"
 _LAST_REPAIR: dict[tuple[str, str], float] = {}
@@ -142,14 +144,36 @@ def list_sessions() -> list[str]:
     return [line for line in result.stdout.decode("utf-8", "replace").splitlines() if line]
 
 
+def _pane_descendants(session: str) -> list[int]:
+    """Every pid under a session's panes, the panes themselves included.
+
+    A seed mind is started in its own session so closing a pane cannot SIGHUP an
+    in-flight mind, so that child outlives a leaked ``kill-session``. While the
+    pane still lives its parent link is intact, so the tree is read before the
+    session is killed and reaped afterwards.
+    """
+    result = _tmux("list-panes", "-t", session, "-F", "#{pane_pid}", check=False)
+    if result.returncode:
+        return []
+    pending = pane_pids(result.stdout)
+    children = children_by_parent()
+    found: list[int] = []
+    while pending:
+        pid = pending.pop()
+        found.append(pid)
+        pending.extend(children.get(pid, ()))
+    return found
+
+
 def sweep_orphan_test_sessions() -> list[str]:
     """Kill mishe-tauftauf-test-* sessions whose owning pid is dead.
 
     A hard-killed pytest leaks its tmux session because the test's finally
     cleanup never runs. The session name embeds the creating pid
     (``mishe-tauftauf-test-{pid}`` plus an optional ``-<word>`` suffix); when
-    that pid is gone the session is
-    orphaned. Returns the names of sessions killed.
+    that pid is gone the session is orphaned. The pane's detached children are
+    reaped with it, or a leaked mind keeps running with no owner. Returns the
+    names of sessions killed.
     """
     killed: list[str] = []
     for session in list_sessions():
@@ -163,7 +187,13 @@ def sweep_orphan_test_sessions() -> list[str]:
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
+            descendants = _pane_descendants(session)
             _tmux("kill-session", "-t", session, check=False)
+            for child in descendants:
+                try:
+                    os.kill(child, signal.SIGKILL)
+                except OSError:
+                    pass
             killed.append(session)
         except PermissionError:
             pass
