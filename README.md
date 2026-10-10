@@ -91,6 +91,12 @@ point first, then use its extraction command to load a specific maintained
 section only when the next question warrants it. It does not discover the file
 or title for you; follow the links and headings visible in this book.
 
+The book itself is written for ordinary search: every reader-facing command is
+named where its practice is described, so searching for the goal rather than
+only the topic reaches the instructions. That rule is checked against the
+shipped command list rather than assumed, and it is why no index, registry, or
+capability catalogue is maintained beside these pages.
+
 | You want to… | Read |
 | --- | --- |
 | Plant it and watch one real task | [Getting started](docs/getting-started.md) |
