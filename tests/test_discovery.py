@@ -2141,6 +2141,12 @@ def test_notify_scan_labels_non_verified_readings_by_state(tmp_path):
     unknown_line = next(line for line in body.splitlines()
                         if line.startswith("Unknown readings:"))
     assert "sense.b" not in unknown_line
+    # The guidance line names every non-verified state shown, so a literal
+    # reader cannot take a drift reading as needing no verification (witness
+    # 64896).
+    next_line = next(line for line in body.splitlines() if line.startswith("Next:"))
+    for state in ("drift", "unknown", "unavailable"):
+        assert state in next_line
 
 
 def test_evidence_binding_flags_mutated_evidence(tmp_path):

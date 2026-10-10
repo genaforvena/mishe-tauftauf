@@ -2636,12 +2636,15 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     the live window is the latest outcome per role over the whole post-clause
     set, so it is unbounded in time and an inactive role's row stands until
     the role publishes again — the stamp reads such a row as stale, not
-    current. ``count_excluded`` names the retained-bytes rows (B), the only
-    class the trial's evidenced-outcome count drops, beside ``all_bad``'s
-    audit of all three classes. State is ``drift`` when any checked outcome
-    violates, including when other publications have incomplete coverage;
-    otherwise incomplete coverage, unavailable input or no eligible event is
-    ``unknown``.
+    current. ``count_excluded`` names the retained-bytes rows (B) — the class
+    the trial's evidenced-outcome count drops among the rows this sense
+    checks — beside ``all_bad``'s audit of all three classes. The trial also
+    drops out-of-home paths (A-only here) and unparseable publications
+    (coverage-incomplete here) as ``evidence_unavailable``, so the two counts
+    agree only while no such row exists. State is ``drift`` when any checked
+    outcome violates, including when other publications have incomplete
+    coverage; otherwise incomplete coverage, unavailable input or no eligible
+    event is ``unknown``.
 
     The under-artifacts test resolves the stored path first, so a ``..``
     segment cannot pass it lexically. D counts distinct stored path strings:
@@ -3376,7 +3379,7 @@ def _notify_scan(home: Path, snapshot: dict[str, object],
                    if str(item["state"]) == state) or "none") + "."
         for state in sorted({str(item["state"]) for item in nonverified})] + [
              f"Full sample: {artifact.resolve()}.",
-             "Next: senses should verify useful unknown readings or record why the source is unavailable; "
+             "Next: senses should verify useful unknown or drift readings or record why the source is unavailable; "
              "discover should seek one new useful read."]
     Feed(home).append("discover", "\n".join(lines))
 
