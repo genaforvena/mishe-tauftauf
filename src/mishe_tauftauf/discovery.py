@@ -2685,6 +2685,29 @@ def _space_stamp(value: float) -> str:
     return datetime.fromtimestamp(value, timezone.utc).isoformat(timespec="seconds")
 
 
+def _space_age(seconds: float) -> str:
+    """Compact age for the pane; a reader must see how stale a sample is."""
+    days, rem = divmod(int(seconds), 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, secs = divmod(rem, 60)
+    if days:
+        return f"{days}d{hours}h"
+    if hours:
+        return f"{hours}h{minutes}m"
+    if minutes:
+        return f"{minutes}m{secs}s"
+    return f"{secs}s"
+
+
+def _space_light_age(light: dict, now: float) -> str | None:
+    """Name the last validated phone sample and its age so an UNKNOWN reading
+    still says how stale the feed is, not only that it is not current."""
+    phone = light.get("phone_sample_epoch_s")
+    if not _space_number(phone) or phone < 0 or phone > now:
+        return None
+    return f"last-phone={_space_stamp(phone)} age={_space_age(now - phone)}"
+
+
 def _space_endpoint(item: dict, validity: float) -> tuple[float, float]:
     phone, receipt = item["phone_sample_epoch_s"], item["consumer_receipt_epoch_s"]
     if (not _space_number(phone) or not _space_number(receipt)
@@ -2702,9 +2725,11 @@ def _space_light(data: object, now: float) -> dict:
            "current_lux": None, "event_id": None, "historical_transition": None,
            "clock_uncertainty": "phone/host clock agreement unverified"}
 
-    def unknown(reason: str) -> dict:
+    def unknown(reason: str, detail: str | None = None) -> dict:
         row.update(state="unknown", reason=reason, current_lux=None, event_id=None,
-                   sample=f"Note3 light UNKNOWN: {reason}; source={SPACE_SOURCE}")
+                   sample=f"Note3 light UNKNOWN: {reason}"
+                          + (f" {detail}" if detail else "")
+                          + f"; source={SPACE_SOURCE}")
         return row
 
     try:
@@ -2735,7 +2760,7 @@ def _space_light(data: object, now: float) -> dict:
         row["validity_seconds"] = validity
         if (light["status"] != "fresh-clock-conditional"
                 or light["delayed_at_receipt"] is not False):
-            return unknown("light-not-current-or-delayed")
+            return unknown("light-not-current-or-delayed", _space_light_age(light, now))
         if light["units"] != "lux":
             return unknown("invalid-light-units")
         phone, receipt = _space_endpoint(light, validity)
@@ -2749,7 +2774,7 @@ def _space_light(data: object, now: float) -> dict:
         if any(value > now for value in times):
             return unknown("clock-future")
         if any(now - value > validity for value in times):
-            return unknown("stale-original-evidence")
+            return unknown("stale-original-evidence", _space_light_age(light, now))
         row.update(state="verified", reason="fresh-clock-conditional",
                    current_lux=light["lux"], sequence=light["sequence"],
                    expires_epoch_s=min(times) + validity,
