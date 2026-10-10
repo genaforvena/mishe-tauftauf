@@ -315,7 +315,7 @@ def restore(home: Path, role: str, session: str) -> str:
         "and retires the unnecessary request without new authority. Keep choosing useful independent work; "
         "settle changed or verified when that work produced progress even if another obligation waits. "
         "Record meaningful outcomes with CLI wall outcome --owner ROLE --kind KIND "
-        "--file NOTES --evidence FILE (an owned-site evidence file); kinds: accepted, "
+        "--file NOTES --evidence FILE (an owned-site per-outcome evidence file under `artifacts/`); kinds: accepted, "
         "blocker-resolved, blocker-retired, hypothesis-changed. Counts remain author reports. "
         "Call seed yield directly: its lock serializes turns and waits normally. "
         "Do not gate settlement on fuser showing the lock file open; that does not prove a held lock. "
