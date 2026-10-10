@@ -36,7 +36,7 @@ Operation identity is caller-assigned before effect dispatch.
 - Import RSS: 21,504 KiB
 - Platform surface: POSIX-only (fcntl, signal, os.killpg)
 - Windows adapter: required but not built
-- Dependencies: Python 3.12+, stdlib only
+- Dependencies: Python 3.10+, stdlib only (dispatcher subset; full project also needs `wcwidth`)
 
 ### Four-scenario walkthrough
 
@@ -154,7 +154,7 @@ echo "op=o1 status=ok result=$(wc -c < /tmp/result)" >> journal.log
 |---|---|---|---|
 | Orchestration | CPython | Custom C / awk | bash/sh |
 | Size | 113 KB source | <10 KB C / ~2 KB awk | ~3 KB shell |
-| Portability floor | Python 3.12+ | C compiler or awk | POSIX shell + coreutils |
+| Portability floor | Python 3.10+ | C compiler or awk | POSIX shell + coreutils |
 | Operation identity | JSONL record | Line-based command | key=value journal |
 | Recovery | Query by op ID | RECOVER command | grep journal |
 | Testability | High (Python asserts) | Medium (custom parser) | Low (shell quoting) |
