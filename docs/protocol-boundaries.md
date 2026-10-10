@@ -18,6 +18,11 @@ The checker is also a boundary: it reads Python source and policy files. New
 adapters require an explicit, reviewed addition of their exact path; a
 directory-wide exemption would make the constraint ineffective.
 
+`proc_table.py` decodes the two external tables that name process ids: the `ps`
+parent/child columns and the `tmux list-panes` pane pid list. A caller reaps only
+processes it can attribute to a known parent; malformed or unreadable output
+yields no pid rather than a guess.
+
 `chat_protocol.py` interprets historical wake, yield and clear receipts. A
 seed-sourced receipt's first line supplies the lifecycle kind and header fields;
 for yields, the decoder also extracts a reported result from a subsequent line
