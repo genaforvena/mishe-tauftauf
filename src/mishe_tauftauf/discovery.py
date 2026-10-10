@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from . import omp_pane
+from . import omp_pane, proc_table
 from .feed import Feed, parse_feed
 from .host_radio import (BLUETOOTH_ROOT, COMMAND_TIMEOUT_SECONDS, NET_ROOT, RFKILL_ROOT,
                          bluetooth_controllers, controller_state, operstate,
@@ -896,6 +896,13 @@ def _mind_wedge_suspects() -> dict:
     instant-provider-error failure mode (e.g. a 403 FreeTierError) where the
     turn fails immediately, omp never schedules a retry, and rule R cannot fire.
 
+    A pane is identified by window, pid and the tmux session hosting it. More
+    than one site renders on this host and their window names collide, so a
+    suspect without its session cannot be attributed to this plant or the
+    linked site beside it. Live evidence 2026-10-10: eight consecutive scans
+    flagged the same six roles with a fresh pid batch each time, and every
+    flagged pid's omp session log belonged to the linked android-body site.
+
     The signal reads omp's session log
     (``~/.omp/logs/omp.<date>.<pid>.log``); the sample carries a coverage tier
     (``panes=N with_log=M``), and a pane set with no log at all reads UNKNOWN
@@ -912,7 +919,8 @@ def _mind_wedge_suspects() -> dict:
     now = datetime.now(timezone.utc)
     try:
         result = subprocess.run(
-            ["tmux", "list-panes", "-a", "-F", "#{window_name}|#{pane_pid}"],
+            ["tmux", "list-panes", "-a", "-F",
+             "#{session_name}|#{window_name}|#{pane_pid}"],
             capture_output=True, text=True, timeout=5
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -927,15 +935,7 @@ def _mind_wedge_suspects() -> dict:
     panes = 0
     with_log = 0
     foreign = 0
-    for line in result.stdout.splitlines():
-        parts = line.split("|", 1)
-        if len(parts) != 2:
-            continue
-        window_name, pid_str = parts
-        try:
-            pid = int(pid_str)
-        except ValueError:
-            continue
+    for session, window_name, pid in proc_table.pane_records(result.stdout):
         panes += 1
         chain = _omp_continue_chain(pid, now, _pane_mind_model(pid))
         if chain is None:
@@ -944,14 +944,16 @@ def _mind_wedge_suspects() -> dict:
         foreign += chain["foreign"]
         if (chain["chain"] >= WEDGE_CHAIN_THRESHOLD
                 and chain["span_minutes"] >= WEDGE_SPAN_THRESHOLD_MINUTES):
-            suspects.append({"window": window_name, "pid": pid, **chain})
+            suspects.append({"window": window_name, "pid": pid, "session": session,
+                             **chain})
         elif (chain["chain"] == 0
                 and chain["cause"] != "none"
                 and chain["last_error_ts"] is not None):
             last_error = datetime.fromisoformat(chain["last_error_ts"])
             error_age_min = (now - last_error).total_seconds() / 60.0
             if error_age_min >= WEDGE_ERROR_STALE_MINUTES:
-                suspects.append({"window": window_name, "pid": pid, **chain,
+                suspects.append({"window": window_name, "pid": pid,
+                                 "session": session, **chain,
                                  "rule": "provider-error",
                                  "error_age_minutes": round(error_age_min, 1)})
     if suspects:
@@ -959,12 +961,14 @@ def _mind_wedge_suspects() -> dict:
         for s in suspects:
             if s.get("rule") == "provider-error":
                 parts.append(
-                    f"{s['window']}(pid={s['pid']},rule=provider-error,"
+                    f"{s['window']}(pid={s['pid']},session={s['session']},"
+                    f"rule=provider-error,"
                     f"chain={s['chain']},error_age={s['error_age_minutes']}min,"
                     f"cause={s['cause']})")
             else:
                 parts.append(
-                    f"{s['window']}(pid={s['pid']},chain={s['chain']},"
+                    f"{s['window']}(pid={s['pid']},session={s['session']},"
+                    f"chain={s['chain']},"
                     f"span={s['span_minutes']}min,src="
                     + ",".join(f"{name}:{count}"
                                for name, count in sorted(s["sources"].items()))

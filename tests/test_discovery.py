@@ -1125,17 +1125,18 @@ def test_wedge_sense_flags_wedged_mind(monkeypatch, tmp_path):
 
     class FakeResult:
         returncode = 0
-        stdout = "research-methods|12345\nbody-research|67890"
+        stdout = "mishe-tauftauf|research-methods|12345\nandroid-body|body-research|67890"
     monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
     result = discovery._mind_wedge_suspects()
     assert result["state"] == "verified"
     assert len(result["suspects"]) == 1
     assert result["suspects"][0]["window"] == "research-methods"
     assert result["suspects"][0]["pid"] == 12345
+    assert result["suspects"][0]["session"] == "mishe-tauftauf"
     assert result["suspects"][0]["chain"] == 3
     assert result["suspects"][0]["span_minutes"] == 30.0
     assert result["suspects"][0]["sources"] == {"automatic-retry": 3}
-    assert ("research-methods(pid=12345,chain=3,span=30.0min,"
+    assert ("research-methods(pid=12345,session=mishe-tauftauf,chain=3,span=30.0min,"
             "src=automatic-retry:3,cause=none)") in result["sample"]
     assert "panes=2 with_log=1" in result["sample"]
 
@@ -1152,7 +1153,7 @@ def test_wedge_sense_no_suspects(monkeypatch, tmp_path):
 
     class FakeResult:
         returncode = 0
-        stdout = "research-methods|12345\nbody-research|67890"
+        stdout = "mishe-tauftauf|research-methods|12345\nandroid-body|body-research|67890"
     monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
     result = discovery._mind_wedge_suspects()
     assert result["state"] == "verified"
@@ -1177,7 +1178,7 @@ def test_wedge_sense_no_logs_is_unknown(monkeypatch):
 
     class FakeResult:
         returncode = 0
-        stdout = "research-methods|12345\nbody-research|67890"
+        stdout = "mishe-tauftauf|research-methods|12345\nandroid-body|body-research|67890"
     monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
     result = discovery._mind_wedge_suspects()
     assert result["state"] == "unknown"
@@ -1311,11 +1312,11 @@ def test_wedge_sense_sample_carries_the_cause(monkeypatch, tmp_path):
 
     class FakeResult:
         returncode = 0
-        stdout = "health|12345\nbody-research|67890"
+        stdout = "mishe-tauftauf|health|12345\nandroid-body|body-research|67890"
     monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
     result = discovery._mind_wedge_suspects()
     assert result["suspects"][0]["cause"] == "provider-error:500"
-    assert ("health(pid=12345,chain=3,span=30.0min,"
+    assert ("health(pid=12345,session=mishe-tauftauf,chain=3,span=30.0min,"
             "src=automatic-retry:3,cause=provider-error:500)") in result["sample"]
 
 def test_wedge_r2_provider_error_stale_is_suspect(monkeypatch, tmp_path):
@@ -1390,7 +1391,7 @@ def test_wedge_r2_sense_flags_stuck_pane(monkeypatch, tmp_path):
 
     class FakeResult:
         returncode = 0
-        stdout = "docs|12345\nbody-research|67890"
+        stdout = "mishe-tauftauf|docs|12345\nandroid-body|body-research|67890"
     monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
     result = discovery._mind_wedge_suspects()
     assert result["state"] == "verified"
@@ -1401,9 +1402,35 @@ def test_wedge_r2_sense_flags_stuck_pane(monkeypatch, tmp_path):
     assert result["suspects"][0]["chain"] == 0
     assert result["suspects"][0]["cause"] == "provider-error:403"
     assert result["suspects"][0]["error_age_minutes"] == 30.0
-    assert ("docs(pid=12345,rule=provider-error,chain=0,"
+    assert ("docs(pid=12345,session=mishe-tauftauf,rule=provider-error,chain=0,"
             "error_age=30.0min,cause=provider-error:403)") in result["sample"]
     assert "panes=2 with_log=1" in result["sample"]
+
+
+def test_wedge_sense_reports_pane_session(monkeypatch, tmp_path):
+    # Live false positive 2026-10-10: two sites render on this host and share
+    # every window name, so six "suspects" on this plant's dashboard were all
+    # the linked site's panes. The sample must name the session.
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _provider_error("2026-10-06T13:30:00+00:00", 403),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path",
+                        lambda pid: log if pid == 12345 else None)
+    _wedge_clock(monkeypatch)
+
+    class FakeResult:
+        returncode = 0
+        stdout = "android-body|senses|12345\nmishe-tauftauf|senses|67890"
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
+    result = discovery._mind_wedge_suspects()
+    assert result["state"] == "verified"
+    assert len(result["suspects"]) == 1
+    assert result["suspects"][0]["window"] == "senses"
+    assert result["suspects"][0]["pid"] == 12345
+    assert result["suspects"][0]["session"] == "android-body"
+    assert ("senses(pid=12345,session=android-body,rule=provider-error,chain=0,"
+            "error_age=30.0min,cause=provider-error:403)") in result["sample"]
 
 
 def test_wedge_r2_sense_fresh_error_not_flagged(monkeypatch, tmp_path):
@@ -1417,7 +1444,7 @@ def test_wedge_r2_sense_fresh_error_not_flagged(monkeypatch, tmp_path):
 
     class FakeResult:
         returncode = 0
-        stdout = "docs|12345\nbody-research|67890"
+        stdout = "mishe-tauftauf|docs|12345\nandroid-body|body-research|67890"
     monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
     result = discovery._mind_wedge_suspects()
     assert result["state"] == "verified"
@@ -1437,7 +1464,7 @@ def test_wedge_r2_sense_success_after_error_not_flagged(monkeypatch, tmp_path):
 
     class FakeResult:
         returncode = 0
-        stdout = "docs|12345\nbody-research|67890"
+        stdout = "mishe-tauftauf|docs|12345\nandroid-body|body-research|67890"
     monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
     result = discovery._mind_wedge_suspects()
     assert result["state"] == "verified"
@@ -1518,7 +1545,7 @@ def test_wedge_r2_foreign_model_error_is_not_a_suspect(monkeypatch, tmp_path):
 
     class FakeResult:
         returncode = 0
-        stdout = "docs|12345\nbody-research|67890"
+        stdout = "mishe-tauftauf|docs|12345\nandroid-body|body-research|67890"
     monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
     result = discovery._mind_wedge_suspects()
     assert result["state"] == "verified"

@@ -30,3 +30,24 @@ def children_by_parent() -> dict[int, list[int]]:
 def pane_pids(raw: bytes) -> list[int]:
     """Pids from ``tmux list-panes -F '#{pane_pid}'`` output; junk is skipped."""
     return [int(value) for value in raw.decode("ascii", "replace").split() if value.isdigit()]
+
+
+def pane_records(raw: str) -> list[tuple[str, str, int]]:
+    """(session, window, pid) from ``tmux list-panes -a -F`` three-field output.
+
+    The third dialect names session, window and pid, separated by ``|``.
+    Internal consumers attribute each pane to the site hosting it: two sites
+    render on one host and share every window name, so a window and pid alone
+    cannot say which plant a suspect belongs to. Junk lines yield no record
+    rather than a guess.
+    """
+    records: list[tuple[str, str, int]] = []
+    for line in raw.splitlines():
+        fields = line.split("|")
+        if len(fields) != 3:
+            continue
+        session, window, pid_text = fields
+        if not pid_text.isdigit():
+            continue
+        records.append((session, window, int(pid_text)))
+    return records
