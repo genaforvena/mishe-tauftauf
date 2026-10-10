@@ -2053,19 +2053,21 @@ def _renderer_coverage(home: Path) -> dict[str, object]:
         # The script runs with the watcher's environment and the site home
         # first on its path, so a package dir there shadows every root.
         effective_root: str | None = None
+        pane = pane_info.get(role)
         if (home / "mishe_tauftauf").is_dir():
             effective_root = str(home)
-        else:
-            pane = pane_info.get(role)
-            if pane is not None:
-                for component in (*_pane_pythonpath(pane[2]), *_command_pythonpath(pane[0])):
-                    candidate = _import_root(component)
-                    if candidate:
-                        effective_root = candidate
-                        break
+        elif pane is not None:
+            for component in (*_pane_pythonpath(pane[2]), *_command_pythonpath(pane[0])):
+                candidate = _import_root(component)
+                if candidate:
+                    effective_root = candidate
+                    break
         if effective_root is None:
             # No pane runs this renderer, so the bytes its script imports are
-            # unread rather than the pin's.
+            # unread rather than the pin's. A renderer with no pane is not
+            # executing, so there is nothing to verify.
+            if pane is None:
+                continue
             script_unknown.append(role)
             continue
         package_path = Path(effective_root) / "src" / "mishe_tauftauf"

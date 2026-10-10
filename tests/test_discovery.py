@@ -3382,7 +3382,7 @@ def test_renderer_coverage_flags_a_script_resolving_to_a_foreign_root() -> None:
         {"root": str(other), "entry": "feed", "modules": ["feed"]}]
 
 
-def test_renderer_coverage_script_chain_is_unknown_without_a_pane_environment() -> None:
+def test_renderer_coverage_script_chain_skipped_without_a_pane() -> None:
     from mishe_tauftauf import discovery
 
     home = tmp_site_with_services()
@@ -3400,9 +3400,8 @@ def test_renderer_coverage_script_chain_is_unknown_without_a_pane_environment() 
             reading = discovery._renderer_coverage(home)
     finally:
         shutil.rmtree(pin)
-    assert reading["state"] == "unknown"
-    assert "script_unknown=self-development" in reading["sample"]
-
+    assert reading["state"] == "verified"
+    assert "script_unknown=self-development" not in reading["sample"]
 
 def test_renderer_coverage_reports_drift_even_when_a_sibling_root_is_unresolved() -> None:
     from mishe_tauftauf import discovery
@@ -3426,7 +3425,7 @@ def test_renderer_coverage_reports_drift_even_when_a_sibling_root_is_unresolved(
         shutil.rmtree(pin)
         shutil.rmtree(renderer)
     assert reading["state"] == "drift"
-    assert "script_unknown=self-development" in reading["sample"]
+    assert "script_unknown=self-development" not in reading["sample"]
     assert reading["identity"]["drift"] == [
         {"root": str(renderer), "entry": "wall_view", "modules": ["wall_view"]}]
 
