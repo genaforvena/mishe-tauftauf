@@ -109,7 +109,12 @@ turn may edit are ineligible even there. `wall outcome` applies the write-once
 rule from the clause time onward: it refuses a path another post-clause outcome
 already bound, and it fails rather than skipping the check when the bound set
 cannot be derived — missing/corrupt records, malformed publications, a missing
-`records/` directory or an unparseable tape. Writer and observer use the same
+`records/` directory or an unparseable tape. Bind time enforces only the
+inside-site and write-once rules; the `artifacts/`-containment and
+unchanged-bytes requirements are measured after the fact by
+`sense.ledger.evidence-binding`, whose live window (`latest_bad_roles`) reports
+current compliance while its standing audit retains every historical violation.
+Writer and observer use the same
 publication classification. An outcome is the canonical `Wall outcome KIND by
 ROLE` header, reported text and verified standalone immutable reference; its
 identity is the site's tape sequence, not its content digest. Each event's own
