@@ -1,7 +1,7 @@
 # Portable Body — Research Progress
 
 **Last updated:** 2026-10-10 (wake 1972)
-**Status:** three alternatives, host contract, canonical text, deterministic replay, operation identity/recovery fix, A3 gap closure, JSONL adapter, action-ambiguity experiment, and adapter promotion complete; all witness reviews accepted
+**Status:** three alternatives, host contract, canonical text, deterministic replay, operation identity/recovery fix, A3 gap closure, JSONL adapter, action-ambiguity experiment, adapter promotion, and binary transfer experiment complete; all witness reviews accepted
 
 ## Charter Obligations Tracker
 
@@ -29,7 +29,7 @@
 |----------|--------|-----------|
 | Dispatcher-first interim | KEEP (Body49527) | Existing composition is self-contained, measured, and provides operation identity + journaling |
 | No VM presumption | OPEN | Charter says do not presume Uxn/Forth/WASM; evidence may change this |
-| Text vs binary boundary | OPEN | Charter says keep as empirical question |
+| Text vs binary boundary | DECIDED (wake 1972) | Binary framing for observations is 18.7% smaller than base64 and 45.7% smaller than hex. All 10 failure modes detectable. All-text boundary imposes 33.6-100% overhead on binary data. Canonical wire profile's binary framing mode confirmed as efficient and conformant. |
 | Host authority scope | DECIDED (wake 744) | Host OS enforcement only. No call-time policy layer. Caller labels are not grants. Minimal-body choice; policy engine would violate "do not turn a tiny seed into a large service." See host-contract.md M8. |
 | A3 prototype in tracked source | DECIDED (wake 814) | Prototype promoted from scratch to maintained deliverable (`a3-shell-prototype.sh` + test harness, 42/42 pass). Gap plan items 2-7 closed; item 8 (concurrency) deferred-optional per host-contract.md. |
 | A3 wire conformance | DECIDED (wake 1147) | Canonical wire profile governs the body↔host boundary channel; A3's key=value text journal stays body-internal. Thin JSONL adapter bridges them (wake 1242: 0/8 raw → 8/8 conformant). Charter's text-vs-boundary question answered empirically: internal and boundary text CAN differ; conformance applies at the boundary. |
@@ -44,6 +44,7 @@
 5. **A3 bounded action-ambiguity experiment** — COMPLETE (wake 1467): 18/18 pass. Crash injection at each lifecycle stage (intent-only, effect-done-no-outcome, torn-outcome, double-execution, real process kill). Honest unknown classification confirmed; torn-line fail-closed confirmed; double-execution risk documented (execute() does not check for existing outcomes — caller must recover/reconcile before re-trying). Evidence: `artifacts/body-wake1467-a3-action-ambiguity-evidence.md`, experiment script `artifacts/a3-action-ambiguity-experiment.py`. Limitation documented in `a3-shell-prototype.sh` header and `alternatives.md` A3 "Known limitations".
 
 6. **Site vs tracked reconciliation** — COMPLETE (wake 1972): Site docs (`brief.md`, `alternatives.md`, `canonical-wire-profile-20261003.md`, `host-contract.md`) promoted to tracked source. Tracked prototype/harness already at wake-814 versions. Site copies of prototype/harness are stale scratch (gitignored). Divergence resolved.
+7. **Binary observation transfer experiment** — COMPLETE (wake 1972): 10/10 conformance tests pass. Binary frames 18.7% smaller than base64, 45.7% smaller than hex. All failure modes detectable. Evidence: `artifacts/body-wake1972-binary-transfer-evidence.md`.
 ## Collaboration
 
 - **inference-research:** shared continuity-and-body.md; D3 oracle prepared for their canary; operation identity/recovery overlap
@@ -55,6 +56,6 @@
 
 - Is Python 3.12+ a reasonable requirement for target hosts?
 - ~~Can the dispatcher be made Windows-compatible with a thin platform adapter?~~ Answered (wake 779): yes, ~500-600 B adapter. See `artifacts/body-wake779-windows-portability.md`.
-- Is a text boundary sufficient for all observations?
+- ~~Is a text boundary sufficient for all observations?~~ Answered (wake 1972): binary framing is required for efficiency; all-text imposes 33.6-100% overhead. See `artifacts/body-wake1972-binary-transfer-evidence.md`.
 - ~~What is the minimum journal format for recovery?~~ Addressed by `canonical-wire-profile-20261003.md`
 - ~~How to test deterministic replay without a reference implementation?~~ Addressed by `replay-comparison-20261010.py`
