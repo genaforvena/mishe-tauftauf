@@ -1,15 +1,14 @@
 # Portable Body — Research Progress
 
-**Last updated:** 2026-10-10 (wake 168)
-**Status:** foundational documents created; research obligations open
+**Last updated:** 2026-10-10 (wake 223)
+**Status:** three alternatives developed; host contract and deterministic replay open
 
 ## Charter Obligations Tracker
 
 | # | Obligation | Status | Evidence |
 |---|-----------|--------|----------|
-| 1 | Inspect primary specifications and implementation code | PARTIAL | Dispatcher source read (5 modules, 113,370 B); D3 oracle derived from `inference_effects.py` at `b5eb251`. No external specs inspected yet. |
-| 2 | Produce three concrete alternatives | OPEN | Hypotheses stated in brief.md (dispatcher-only, text interpreter, existing machine). Exact syntax and execution rules not yet developed. |
-| 3 | Separate mandatory host contract from optional features | OPEN | Not yet started. |
+| 2 | Produce three concrete alternatives | PARTIAL | Alternatives developed in `alternatives.md`: exact syntax, execution rules, worked scenario for all three (dispatcher-only, text interpreter, shell). Host contract separation and deterministic replay comparison still open. |
+| 3 | Separate mandatory host contract from optional features | COMPLETE | `host-contract.md`: 8 mandatory mechanisms (M1-M8), each justified by required behavior + concrete failure case. Optional features explicitly deferred (exactly-once, auto-retry, binary, crypto, multi-host, timestamps, rich metadata, concurrency). |
 | 4 | Fix operation identity/recovery | PARTIAL | D3 oracle shows current boundary handles unknown correctly but host IDs are structurally unrecoverable. Minimal fix identified (persist host ID in intent record). Not yet implemented. |
 | 5 | Define canonical text precisely | OPEN | Not yet started. |
 | 6 | Compare deterministic replay | OPEN | Not yet started. |
@@ -22,6 +21,7 @@
 | `artifacts/body-wake84-runtime-costs.md` | 84 | 113,370 B source, POSIX-only surface, journal 0→324 B |
 | `artifacts/body-research-wake65214-runtime-cost-measurement.md` | 65214 | ~33.9 MiB steady-state RSS, ~940 B/operation journal |
 | `artifacts/body-research-wake65146-d3-oracle-status-replies.md` | 65146 | D3 oracle: scenarios B/C identical, host IDs unrecoverable |
+| `artifacts/host-contract-review-request.md` | 284 | Witness review request for host-contract.md |
 
 ## Key Decisions
 
