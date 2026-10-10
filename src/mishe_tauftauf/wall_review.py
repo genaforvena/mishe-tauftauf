@@ -113,11 +113,14 @@ def review_answer(model: str, directory: Path, path: Path, runner=subprocess.run
     an unattributable JSONDecodeError. It can also return well-formed JSON whose
     version/input_hash or question coverage does not match the request; validating
     that only after the retry loop let one bad answer raise out of ``main()`` and
-    record the whole patch as ``review-unavailable``. Both are failed attempts, not
-    an unavailable reviewer, and are fast on the flaky provider (13-35 s against a
+    record the whole patch as ``review-unavailable``. A provider stall that kills
+    the call with ``TimeoutExpired`` had the same effect: one uncaught hang burned
+    the whole budget, so no retry could follow. Both are failed attempts, not an
+    unavailable reviewer, and are fast on the flaky provider (13-35 s against a
     540 s budget), so retry inside the single reviewer budget rather than widening
-    the outer worker deadline. ``runner`` and ``validate`` are injectable so the
-    retry can be tested without a model call.
+    the outer worker deadline. Each attempt is capped at an even share of the
+    remaining budget so every retry fits inside it. ``runner`` and ``validate``
+    are injectable so the retry can be tested without a model call.
     """
     home = Path(os.environ["MISHE_SEED_HOME"]) if os.environ.get("MISHE_SEED_HOME") else None
     budget = reviewer_timeout(home)
@@ -125,10 +128,20 @@ def review_answer(model: str, directory: Path, path: Path, runner=subprocess.run
     attempt = 0
     while True:
         attempt += 1
-        result = runner(["omp", "--print", "--no-session", "--no-extensions", "--no-tools",
-                         "--no-lsp", "--no-pty", "--model", model, "--thinking", "high",
-                         "--cwd", str(directory), "@" + str(path)],
-                        capture_output=True, text=True, timeout=remaining_budget(budget, started))
+        # Cap each attempt at an even share of the budget; one stalled call can
+        # no longer consume the whole budget before a retry can run.
+        share = max(1.0, min(remaining_budget(budget, started), budget / MAX_EMPTY_RETRIES))
+        try:
+            result = runner(["omp", "--print", "--no-session", "--no-extensions", "--no-tools",
+                             "--no-lsp", "--no-pty", "--model", model, "--thinking", "high",
+                             "--cwd", str(directory), "@" + str(path)],
+                            capture_output=True, text=True, timeout=share)
+        except subprocess.TimeoutExpired:
+            if attempt >= MAX_EMPTY_RETRIES:
+                raise RuntimeError(
+                    f"patch reader timed out on {attempt} attempts; "
+                    f"its {budget:.0f}s budget is spent") from None
+            continue
         if result.returncode:
             raise RuntimeError(f"patch reader failed: {result.stderr[-1000:]}")
         raw = result.stdout.strip()
