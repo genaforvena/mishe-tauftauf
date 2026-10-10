@@ -34,6 +34,15 @@ class ProcessTableTests(unittest.TestCase):
         with mock.patch.object(proc_table.subprocess, "run", return_value=result):
             self.assertEqual(proc_table.children_by_parent(), {})
 
+    def test_missing_ps_binary_yields_no_relation(self):
+        with mock.patch.object(proc_table.subprocess, "run", side_effect=FileNotFoundError("ps")):
+            self.assertEqual(proc_table.children_by_parent(), {})
+
+    def test_undecodable_table_yields_no_relation(self):
+        failure = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+        with mock.patch.object(proc_table.subprocess, "run", side_effect=failure):
+            self.assertEqual(proc_table.children_by_parent(), {})
+
     def test_pane_pids_decode_and_skip_junk(self):
         self.assertEqual(proc_table.pane_pids(b"4242\n4243\n"), [4242, 4243])
         self.assertEqual(proc_table.pane_pids(b"4242\n\nnot-a-pid\n"), [4242])
