@@ -827,3 +827,90 @@ def test_reconcile_stopped_journal_leaves_pending(tmp_path):
     assert final["stopped"] is True
     assert final["pending_calls"] == [CALL]
     assert final["calls"] == 0
+
+def test_real_subprocess_crash_during_execute_reconciles_without_redispatch(tmp_path):
+    """A real process killed during execute (after start, before outcome):
+    reconcile_caller_journal reports unknown and never re-dispatches.
+
+    Bridges the gap between the synthetic in-process exception injection and the
+    throwaway live canary: real subprocess death through `drive_native` +
+    `EffectBoundary` + `reconcile_caller_journal` in a permanent test.
+    """
+    import subprocess
+    import sys
+    import textwrap
+    from pathlib import Path
+
+    store = Path(__file__).resolve().parent.parent / "src"
+    journal_path = tmp_path / "caller.jsonl"
+    store_dir = tmp_path / "effects"
+    script = tmp_path / "child.py"
+    script.write_text(textwrap.dedent(
+        """
+        import json, sys, time
+        from pathlib import Path
+        sys.path.insert(0, %r)
+        from mishe_tauftauf.inference_effects import EffectBoundary
+        from mishe_tauftauf.inference_loop import NativeJournal, drive_native
+        from mishe_tauftauf.inference_worker import WorkerTurn
+
+        call = %r
+        context = %r
+
+        class Session:
+            def turn(self, context):
+                return WorkerTurn("done", {"role": "assistant",
+                    "content": [call], "stopReason": "toolUse"}, None)
+
+        def execute(ledger_call):
+            print(json.dumps({"started": True}), flush=True)
+            time.sleep(600)
+
+        dispatch = EffectBoundary(Path(%r), writer_id="loop-1",
+            obligation={"source": "owned-event"}, execute=execute,
+            authority="test:authority")
+        with NativeJournal(Path(%r)) as journal:
+            drive_native(Session(), context, obligation={"source": "owned-event"},
+                max_turns=2, max_calls=1, dispatch=dispatch, record=journal,
+                phase=lambda call: None, cancelled=lambda: False,
+                authorized=lambda call: True, complete=lambda context: False)
+        """
+        % (str(store), CALL, CONTEXT, str(store_dir), str(journal_path))))
+    child = subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True)
+    try:
+        line = child.stdout.readline()
+        if not line:
+            raise AssertionError(
+                f"child produced no receipt; stderr:\n{child.stderr.read()}")
+        assert json.loads(line) == {"started": True}
+    finally:
+        child.kill()
+        child.wait(timeout=10)
+
+    # The caller journal holds the proposal but no tool_result: the call is
+    # still pending, its effect status UNKNOWN.
+    state = read_native_journal(journal_path)
+    assert state["stopped"] is False
+    assert state["status"] == "unknown"
+    assert state["pending_calls"] == [CALL]
+    assert state["calls"] == 0
+
+    # The effect store has an intent and a start record but no outcome.
+    assert (store_dir / "intents.jsonl").read_text().strip() != ""
+    assert (store_dir / "starts.jsonl").read_text().strip() != ""
+    assert (store_dir / "outcomes.jsonl").read_text().strip() == ""
+
+    from mishe_tauftauf.inference_loop import reconcile_caller_journal
+    # Reconciliation reports unknown and appends nothing: no re-dispatch, no
+    # provider session, no second execution.
+    result = reconcile_caller_journal(
+        journal_path, store_dir, writer_id="loop-1", authority="test:authority",
+        authorized=lambda call: True,
+    )
+    assert result == {"status": "unknown", "reconciled": []}
+
+    final = read_native_journal(journal_path)
+    assert final["stopped"] is False
+    assert final["pending_calls"] == [CALL]
+    assert final["calls"] == 0
