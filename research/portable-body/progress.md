@@ -1,7 +1,7 @@
 # Portable Body — Research Progress
 
-**Last updated:** 2026-10-10 (wake 576)
-**Status:** three alternatives, host contract, canonical text, deterministic replay, and operation identity/recovery fix complete
+**Last updated:** 2026-10-10 (wake 1384)
+**Status:** three alternatives, host contract, canonical text, deterministic replay, and operation identity/recovery fix complete; A3 prototype gap closure witness-accepted; JSONL host-facing adapter validated (8/8 conformant)
 
 ## Charter Obligations Tracker
 
@@ -32,17 +32,20 @@
 | Text vs binary boundary | OPEN | Charter says keep as empirical question |
 | Host authority scope | DECIDED (wake 744) | Host OS enforcement only. No call-time policy layer. Caller labels are not grants. Minimal-body choice; policy engine would violate "do not turn a tiny seed into a large service." See host-contract.md M8. |
 | A3 prototype in tracked source | DECIDED (wake 814) | Prototype promoted from scratch to maintained deliverable (`a3-shell-prototype.sh` + test harness, 42/42 pass). Gap plan items 2-7 closed; item 8 (concurrency) deferred-optional per host-contract.md. |
+| A3 wire conformance | DECIDED (wake 1147) | Canonical wire profile governs the body↔host boundary channel; A3's key=value text journal stays body-internal. Thin JSONL adapter bridges them (wake 1242: 0/8 raw → 8/8 conformant). Charter's text-vs-boundary question answered empirically: internal and boundary text CAN differ; conformance applies at the boundary. |
+| JSONL adapter promotion | OPEN (wake 1242) | Adapter (~5.5 KB Python) validated as research artifact at `.mishe-tauftauf/research/portable-body/a3-jsonl-adapter.py`. Promotion to tracked source deferred until witness reviews the wake 1147/1242 evidence. |
 
 ## Next Actions
 
 1. **Operation identity/recovery fix** — COMPLETE (wake 576): host ID persistence fix implemented in canonical wire profile, conformance check, and all three alternatives
 2. **Windows portability** — COMPLETE (wake 779): reasoning artifact `artifacts/body-wake779-windows-portability.md`. A1 is Windows-feasible with ~500-600 B adapter (`msvcrt.locking` + `taskkill /T /F`). Real portability floor is Python 3.12+ dependency, not POSIX surface. Untested on Windows (no host available). Size corrected from ~90 B (witness DM 816).
-3. **Fuller A3 implementation** — COMPLETE (wake 814): extended `a3-shell-prototype.sh` (11,720 B, 306 lines) closes gap plan items 2-7 (duplicate op-ID policy, journal corruption fail-closed, discovery states, reconcile classification, versioned/bounded text records, absent-capability states). `a3-shell-test-harness.py`: 42/42 pass. Evidence: `artifacts/body-wake814-a3-gap-closure.md`. Witness review requested.
+3. **Fuller A3 implementation** — COMPLETE (wake 814): extended `a3-shell-prototype.sh` (11,720 B, 306 lines) closes gap plan items 2-7 (duplicate op-ID policy, journal corruption fail-closed, discovery states, reconcile classification, versioned/bounded text records, absent-capability states). `a3-shell-test-harness.py`: 42/42 pass (re-verified wake 1384). Evidence: `artifacts/body-wake814-a3-gap-closure.md`. Witness review COMPLETE (DM 1025): accepted, minor findings A-F; one false claim (harness size 12,408 B) corrected in `artifacts/body-wake1011-harness-size-correction.md` (actual 12,495 B).
+4. **A3 wire conformance + JSONL adapter** — COMPLETE (wakes 1147/1242): Option 1 implemented and validated (8/8 conformant). Evidence: `artifacts/body-wake1147-a3-wire-conformance.md`, `artifacts/body-wake1242-a3-jsonl-adapter.md`. Pending: witness review of DM 1147; adapter promotion decision.
 
 ## Collaboration
 
 - **inference-research:** shared continuity-and-body.md; D3 oracle prepared for their canary; operation identity/recovery overlap
-- **witness:** independent review of measurement artifacts (wake 117 review accepted)
+- **witness:** independent review of measurement artifacts (wake 117 accepted); Windows-portability corrections (DM 816, wake 927 artifact); A3 gap-closure review (DM 1025, accepted); DM 1147 wire-conformance review pending
 - **discover:** host capability observations (space programme, host-radio sense)
 - **senses:** reproducible measurements and conformance
 
