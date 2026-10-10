@@ -164,3 +164,25 @@ def test_evidence_binding_stamps_live_bad_roles_last_outcome_time(tmp_path):
     assert result["latest_bad_roles"] == ["codex(A)"]
     assert result["latest_bad_last"] == ["codex@2026-10-07T18:33:03Z"]
     assert "latest_bad_last=codex@2026-10-07T18:33:03Z" in result["sample"]
+
+
+def test_evidence_binding_absent_file_flagged_as_C_not_B(tmp_path):
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    evidence = home / "artifacts" / "absent.md"
+    evidence.write_text("write-once\n")
+    digest = _write_evidenced_outcome(home, "alice", evidence)
+    evidence.unlink()
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "alice",
+         f"[record] records/{digest}.json sha256={digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    assert result["state"] == "drift"
+    assert result["all_bad"] == 1
+    assert result["count_excluded"] == 0
+    assert "alice@2026-10-06T17:00:00Z:artifacts/absent.md(C)" in result["sample"]
+    assert result["latest_bad_roles"] == ["alice(C)"]
+    assert result["violations"] == [
+        "alice@2026-10-06T17:00:00Z:artifacts/absent.md(C)"]

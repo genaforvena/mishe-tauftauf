@@ -2169,15 +2169,15 @@ def test_evidence_binding_flags_mutated_evidence(tmp_path):
 
 
 def test_evidence_binding_flags_deleted_evidence(tmp_path):
-    """A bound file that has been deleted is a broken digest (B), not a skip.
+    """A bound file that has been deleted is absent (C), not a broken digest (B).
 
     Observed live 2026-10-10: a bound per-outcome evidence file was written,
     its outcome recorded, then deleted by the recording mind as a "scaffold"
     before settling (mechanism verified from that mind's own omp session log,
     witness wake 63338; reproduced by research-methods wake 63341), so the
-    sense reported drift with class B. Deletion is a distinct branch from a
-    later edit, and the OSError branch must keep flagging it rather than
-    dropping the row.
+    sense reported drift. Deletion is a distinct branch from a later edit:
+    the file is absent (C), not edited (B), and the existence check must
+    keep flagging it rather than dropping the row.
     """
     home = tmp_path / "site"
     (home / "artifacts").mkdir(parents=True)
@@ -2195,7 +2195,7 @@ def test_evidence_binding_flags_deleted_evidence(tmp_path):
     assert result["bound"] == 1
     assert result["all_bad"] == 1
     assert result["latest_bad"] == 1
-    assert "wake-a.md(B)" in result["sample"]
+    assert "wake-a.md(C)" in result["sample"]
 
 
 def test_evidence_binding_flags_outside_artifacts(tmp_path):

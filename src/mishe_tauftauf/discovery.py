@@ -2625,10 +2625,11 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
 
     A ``wall-outcome`` record binds its per-outcome evidence file with
     ``payload.evidence.{path,sha256}`` at record time. The clause
-    (``docs/wall-coordination.md``) prescribes three independent
+    (``docs/wall-coordination.md``) prescribes four independent
     requirements: the path is under ``artifacts/`` (A), the file is unedited
-    — the bound digest still matches the current bytes (B) — and the path is
-    cited by no other outcome (D). The sense re-hashes every tape-referenced
+    — the bound digest still matches the current bytes (B) — the bound file
+    exists (C), and the path is cited by no other outcome (D). The sense
+    re-hashes every tape-referenced
     post-clause outcome's evidence and reports two windows: the latest
     outcome per role (live compliance) and the whole post-clause set
     (standing audit — the store is append-only, so a repaired violation stays
@@ -2638,10 +2639,9 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     rows. ``latest_bad_last`` stamps each live-bad role's last outcome time:
     the live window is the latest outcome per role over the whole post-clause
     set, so it is unbounded in time and an inactive role's row stands until
-    the role publishes again — the stamp reads such a row as stale, not
     current. ``count_excluded`` names the retained-bytes rows (B) — the class
     the trial's evidenced-outcome count drops among the rows this sense
-    checks — beside ``all_bad``'s audit of all three classes. The trial also
+    checks — beside ``all_bad``'s audit of all four classes. The trial also
     drops out-of-home paths (A-only here) and unparseable publications
     (coverage-incomplete here) as ``evidence_unavailable``, so the two counts
     agree only while no such row exists. State is ``drift`` when any checked
@@ -2684,10 +2684,13 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
         if resolved is None or not resolved.is_relative_to(artifacts_root):
             classes.append("A")
         try:
-            current = (hashlib.sha256(resolved.read_bytes()).hexdigest()
-                       if resolved is not None else None)
-            if current != digest:
-                classes.append("B")
+            if resolved is not None and not resolved.exists():
+                classes.append("C")
+            else:
+                current = (hashlib.sha256(resolved.read_bytes()).hexdigest()
+                           if resolved is not None else None)
+                if current != digest:
+                    classes.append("B")
         except OSError:
             classes.append("B")
         if path_counts.get(path, 0) > 1:
