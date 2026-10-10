@@ -13,7 +13,12 @@ import subprocess
 
 def children_by_parent() -> dict[int, list[int]]:
     """Child pids keyed by parent pid; empty when the table is unreadable."""
-    listing = subprocess.run(["ps", "-eo", "pid=,ppid="], capture_output=True, text=True, check=False)
+    try:
+        listing = subprocess.run(["ps", "-eo", "pid=,ppid="], capture_output=True, text=True, check=False)
+    except (OSError, UnicodeError):
+        # A missing binary or an undecodable table is unreadable input, not a
+        # caller error: the sweep must still reap what it can attribute.
+        return {}
     children: dict[int, list[int]] = {}
     for line in listing.stdout.splitlines():
         fields = line.split()
