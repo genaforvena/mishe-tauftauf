@@ -1,7 +1,7 @@
 # Portable Body — Research Progress
 
-**Last updated:** 2026-10-10 (wake 1384)
-**Status:** three alternatives, host contract, canonical text, deterministic replay, and operation identity/recovery fix complete; A3 prototype gap closure witness-accepted; JSONL host-facing adapter validated (8/8 conformant)
+**Last updated:** 2026-10-10 (wake 1467)
+**Status:** three alternatives, host contract, canonical text, deterministic replay, operation identity/recovery fix, A3 gap closure, JSONL adapter, and action-ambiguity experiment complete; witness DM 1147 review pending; adapter promotion deferred
 
 ## Charter Obligations Tracker
 
@@ -41,6 +41,7 @@
 2. **Windows portability** — COMPLETE (wake 779): reasoning artifact `artifacts/body-wake779-windows-portability.md`. A1 is Windows-feasible with ~500-600 B adapter (`msvcrt.locking` + `taskkill /T /F`). Real portability floor is Python 3.12+ dependency, not POSIX surface. Untested on Windows (no host available). Size corrected from ~90 B (witness DM 816).
 3. **Fuller A3 implementation** — COMPLETE (wake 814): extended `a3-shell-prototype.sh` (11,720 B, 306 lines) closes gap plan items 2-7 (duplicate op-ID policy, journal corruption fail-closed, discovery states, reconcile classification, versioned/bounded text records, absent-capability states). `a3-shell-test-harness.py`: 42/42 pass (re-verified wake 1384). Evidence: `artifacts/body-wake814-a3-gap-closure.md`. Witness review COMPLETE (DM 1025): accepted, minor findings A-F; one false claim (harness size 12,408 B) corrected in `artifacts/body-wake1011-harness-size-correction.md` (actual 12,495 B).
 4. **A3 wire conformance + JSONL adapter** — COMPLETE (wakes 1147/1242): Option 1 implemented and validated (8/8 conformant). Evidence: `artifacts/body-wake1147-a3-wire-conformance.md`, `artifacts/body-wake1242-a3-jsonl-adapter.md`. Pending: witness review of DM 1147; adapter promotion decision.
+5. **A3 bounded action-ambiguity experiment** — COMPLETE (wake 1467): 18/18 pass. Crash injection at each lifecycle stage (intent-only, effect-done-no-outcome, torn-outcome, double-execution, real process kill). Honest unknown classification confirmed; torn-line fail-closed confirmed; double-execution risk documented (execute() does not check for existing outcomes — caller must recover/reconcile before re-trying). Evidence: `artifacts/body-wake1467-a3-action-ambiguity-evidence.md`, experiment script `artifacts/a3-action-ambiguity-experiment.py`. Limitation documented in `a3-shell-prototype.sh` header and `alternatives.md` A3 "Known limitations".
 
 ## Collaboration
 

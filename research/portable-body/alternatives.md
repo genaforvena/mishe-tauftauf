@@ -444,6 +444,14 @@ the OS denies an effect (file permissions, device access, process
 permissions), the body reports the failure. See host-contract.md M8 scope
 decision.
 
+### Known limitations
+
+- **Double-execution risk:** `execute()` does not check for existing outcomes.
+  A caller that re-runs `execute()` with the same op_id after a crash will
+  double-execute the effect. The caller must use `recover`/`reconcile` before
+  re-trying. Consistent with host-contract.md "no implied exactly-once
+  execution". Verified by wake-1467 action-ambiguity experiment (18/18 pass).
+
 ### Size and cost
 
 | Metric | Value |
