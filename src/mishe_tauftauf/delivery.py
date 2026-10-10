@@ -264,7 +264,7 @@ def _sync(home: Path, record: dict, previous: dict | None) -> None:
             if old is None:
                 state = task_state.TaskState(identity, "genome", 0, managed=True,
                     delivery=record["identity"], delivery_token=token, evidence=evidence, evidence_sha256=digest,
-                    next_step=f"Run delivery integrate {record['identity']} --source genome; author {record['owner']} owns rollout.",
+                    next_step=f"Commit scoped work on main; genome pushes and checks exact-SHA CI; author {record['owner']} owns rollout.",
                     progress=("Independent review passes for exact head " + record['head'] + "; main-only landing, no publication branch."
                               if record.get("main_only") else f"Independent review and branch CI pass for exact head {record['head']}."))
                 _publish(home, record, lambda guard: task_state._append(home, "genome", state, "task-add", commit_guard=guard), tasks=(identity,))

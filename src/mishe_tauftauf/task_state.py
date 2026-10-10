@@ -298,16 +298,70 @@ def candidates(entries: list[FeedEntry], now: datetime | None = None) -> list[Ta
                    if s.identity not in reserved and eligible(s, entries, now)), key=lambda s: s.sequence)
 
 
-def board(entries: list[FeedEntry]) -> list[str]:
+def _delivery_index(home: Path) -> dict[str, tuple[str, str, int]]:
+    """Live ``(phase, head, transition)`` per delivery record, for the board.
+
+    The mutation path that advanced these records is retired, so a record can
+    already be done or integrated while its integration task is still open. The
+    board consults the record so it does not keep labelling a finished or
+    superseded candidate as the top MAIN INTEGRATION PRIORITY. ``delivery.load``
+    owns the record dialect; a missing or invalid record is omitted, leaving its
+    task row unchanged rather than guessed.
+    """
+    from . import delivery
+
+    index: dict[str, tuple[str, str, int]] = {}
+    for path in sorted((home / "deliveries").glob("*.json")):
+        try:
+            record = delivery.load(home, path.stem)
+        except (OSError, ValueError):
+            continue
+        index[path.stem] = (record["phase"], record["head"], record["transition"])
+    return index
+
+
+def board(entries: list[FeedEntry], home: Path | None = None) -> list[str]:
     output = ["SHARED TASK BOARD — choose useful work and claim before acting."]
-    priorities = {s.identity: s.sequence for s in states(entries).values() if s.delivery}
+    deliveries = _delivery_index(home) if home is not None else {}
+
+    def _delivery_record(state: TaskState) -> tuple[str, str, int] | None:
+        return deliveries.get(state.delivery) if state.delivery else None
+
+    def _is_priority(state: TaskState) -> bool:
+        record = _delivery_record(state)
+        if record is None:
+            return bool(state.delivery)
+        phase, head, transition = record
+        if phase in {"done", "integrated"}:
+            return False
+        return state.delivery_token == f"{head}:{transition}"
+
+    def _next_step(state: TaskState) -> str:
+        """Delivery tasks name current practice, never the retired mutation.
+
+        The delivery mutation path is retired, so the stored instruction on an
+        open delivery task can name a command the CLI refuses. The live record
+        decides the row: a finished or superseded candidate reads as such, and a
+        still-current one names committing on main.
+        """
+        record = _delivery_record(state)
+        if record is None:
+            return state.next_step
+        phase, head, transition = record
+        if phase in {"done", "integrated"}:
+            return "Delivery integrated; the mutation path is retired — commit scoped work on main and verify runtime recovery."
+        if state.delivery_token != f"{head}:{transition}":
+            return "Superseded candidate; the delivery advanced at a later head — no action."
+        return "Delivery mutation is retired — commit scoped work on main; genome pushes and checks exact-SHA CI."
+
+    priorities = {s.identity: s.sequence for s in states(entries).values() if _is_priority(s)}
     ready = {s.identity for s in candidates(entries)}
     reserved = set(pending_tasks(entries).values())
     for state in sorted(states(entries).values(), key=lambda s: (priorities.get(s.identity, float("inf")), s.sequence)):
         if state.identity in priorities:
             output.append(f"MAIN INTEGRATION PRIORITY: {state.identity}; ready integration position {priorities[state.identity]}.")
         availability = "reserved" if state.identity in reserved else "ready" if state.identity in ready else "waiting"
-        output.append(f"{state.identity}: {availability}; responsible mind {state.owner}. Next: {state.next_step}")
+        output.append(f"{state.identity}: {availability}; responsible mind {state.owner}. Next: {_next_step(state)}")
         if state.reason:
             output.append(f"  Reason: {state.reason}")
         if state.evidence:

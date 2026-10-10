@@ -428,7 +428,7 @@ def cmd_task(args) -> int:
     if args.task_command not in {None, "show"}:
         raise ValueError("task-ledger mutation is retired; use walls and addressed messages")
     entries = Feed(args.home).entries()
-    print("\n".join(task_state.lines(entries, args.owner) if args.owner else task_state.board(entries)) or "No historical open tasks.")
+    print("\n".join(task_state.lines(entries, args.owner) if args.owner else task_state.board(entries, args.home)) or "No historical open tasks.")
     return 0
 
 

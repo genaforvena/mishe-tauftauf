@@ -540,6 +540,32 @@ def test_mind_choice_preserves_fact_owned_ready_integration(candidate, monkeypat
     assert all(not __import__('mishe_tauftauf.post_check', fromlist=['_deterministic'])._deterministic(e.body) for e in Feed(home).entries())
 
 
+def test_board_priority_consults_the_live_delivery_record(candidate, monkeypatch):
+    home, _, _, _, head, _ = candidate
+    submit(candidate)
+    monkeypatch.setattr(delivery, "read_ci", lambda *args: ci(head))
+    delivery.check(home, "repair")
+    ready = "\n".join(task_state.board(Feed(home).entries(), home))
+    assert "MAIN INTEGRATION PRIORITY" in ready
+    # The retired mutation is never named as an instruction.
+    assert "delivery integrate" not in ready
+    record_path = home / "deliveries" / "repair.json"
+    record = delivery.load(home, "repair")
+    # A task whose candidate head no longer matches the live record head is superseded.
+    record["head"] = "0" * 40
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+    superseded = "\n".join(task_state.board(Feed(home).entries(), home))
+    assert "MAIN INTEGRATION PRIORITY" not in superseded
+    assert "delivery integrate" not in superseded
+    # An integrated record is finished, not the priority.
+    record["head"] = head
+    record["phase"] = "integrated"
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+    integrated = "\n".join(task_state.board(Feed(home).entries(), home))
+    assert "MAIN INTEGRATION PRIORITY" not in integrated
+    assert "delivery integrate" not in integrated
+
+
 def test_shared_choice_cannot_transfer_author_delivery(candidate, monkeypatch):
     home, _, _, _, head, proof = candidate
     submit(candidate)
