@@ -15,3 +15,5 @@ htmlcov/
 # The whole `.mishe-*` namespace is plant-local: a typo'd `--home` or a stray
 # evidence write (e.g. `.mishe-tauftauft/`) can never be staged or committed.
 .mishe-*
+# Settlement notes: `seed yield --file NOTES` resolves cwd-relative (plant root).
+NOTES
