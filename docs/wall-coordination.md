@@ -332,7 +332,8 @@ keep/revise/revert decision; `mishe-tauftauf --home SITE predict ROLE` records i
 on the tape. A prediction needs exactly one whole
 `Check at: YYYY-MM-DDTHH:MM:SSZ` line naming when it will be judged, and
 `--replaces SEQUENCE` supersedes an active prediction for the same role.
-above to running code, including independent reading and visible failures.
+Apply the checked activation and recovery procedure above to running code,
+including independent reading and visible failures.
 These checks enable experimentation; they are not a routine approval gate.
 Keep accepted experiments canonical, revise what needs work and remove
 superseded alternate code paths. Git preserves former implementations without
