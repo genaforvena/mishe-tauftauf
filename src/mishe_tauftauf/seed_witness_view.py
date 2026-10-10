@@ -342,7 +342,7 @@ def render(home: Path) -> str:
     for task in tasks[-20:]:
         lines.append(f"{task.identity} owner={task.owner} state={task.status} at={task.sequence}")
     try:
-        lines.extend(task_state.lines(entries))
+        lines.extend(task_state.lines(entries, home=home))
     except ValueError as exc:
         verdict = f"UNKNOWN witness task state: {exc}"
         lines.append(verdict)

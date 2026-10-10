@@ -298,72 +298,112 @@ def candidates(entries: list[FeedEntry], now: datetime | None = None) -> list[Ta
                    if s.identity not in reserved and eligible(s, entries, now)), key=lambda s: s.sequence)
 
 
-def _delivery_index(home: Path) -> dict[str, tuple[str, str, int]]:
-    """Live ``(phase, head, transition)`` per delivery record, for the board.
+DeliveryIndex = dict[str, tuple[str, str, int, str]]
+
+
+def _delivery_index(home: Path) -> DeliveryIndex:
+    """Live ``(phase, head, transition, reason)`` per delivery record, for a view.
 
     The mutation path that advanced these records is retired, so a record can
-    already be done or integrated while its integration task is still open. The
-    board consults the record so it does not keep labelling a finished or
-    superseded candidate as the top MAIN INTEGRATION PRIORITY. ``delivery.load``
+    already be done or integrated while its integration task is still open. A
+    view consults the record so it does not keep labelling a finished or
+    superseded candidate as the top MAIN INTEGRATION PRIORITY, and so a row does
+    not keep the pre-transition text it was registered with. ``delivery.load``
     owns the record dialect; a missing or invalid record is omitted, leaving its
     task row unchanged rather than guessed.
     """
     from . import delivery
 
-    index: dict[str, tuple[str, str, int]] = {}
+    index: DeliveryIndex = {}
     for path in sorted((home / "deliveries").glob("*.json")):
         try:
             record = delivery.load(home, path.stem)
         except (OSError, ValueError):
             continue
-        index[path.stem] = (record["phase"], record["head"], record["transition"])
+        index[path.stem] = (record["phase"], record["head"], record["transition"], record["reason"])
     return index
+
+
+def _delivery_record(state: TaskState, deliveries: DeliveryIndex) -> tuple[str, str, int, str] | None:
+    """The live record for a task row, matched by its delivery id or its identity.
+
+    The delivery author task carries no delivery id of its own, so its identity
+    is the record name; the genome integration row carries the delivery id and
+    the token of the head it was raised for.
+    """
+    return deliveries.get(state.delivery or state.identity)
+
+
+def _delivery_priority(state: TaskState, deliveries: DeliveryIndex) -> bool:
+    record = _delivery_record(state, deliveries)
+    if record is None:
+        return bool(state.delivery)
+    if not state.delivery:
+        # An author row can carry the delivery's identity but never its
+        # integration token; only the genome integration row is a priority.
+        return False
+    phase, head, transition, _ = record
+    if phase in {"done", "integrated"}:
+        return False
+    return state.delivery_token == f"{head}:{transition}"
+
+
+def _delivery_next_step(state: TaskState, deliveries: DeliveryIndex) -> str:
+    """Delivery tasks name current practice, never the retired mutation.
+
+    The delivery mutation path is retired, so the stored instruction on an open
+    delivery task can name a command the CLI refuses. The live record decides the
+    row: a finished, blocked or superseded candidate reads as such, and a
+    still-current integration row names committing on main. A live candidate
+    leaves an author row its own wait text, which is the bounded retry that
+    releases it.
+    """
+    record = _delivery_record(state, deliveries)
+    if record is None:
+        return state.next_step
+    phase, head, transition, _ = record
+    if phase in {"done", "integrated"}:
+        return "Delivery integrated; the mutation path is retired — commit scoped work on main and verify runtime recovery."
+    if phase == "blocked":
+        return "Delivery blocked; the author repairs or retires the candidate — no integration wait."
+    if state.delivery_token == f"{head}:{transition}":
+        return "Delivery mutation is retired — commit scoped work on main; genome pushes and checks exact-SHA CI."
+    if state.delivery:
+        return "Superseded candidate; the delivery advanced at a later head — no action."
+    return state.next_step
+
+
+def _delivery_reason(state: TaskState, deliveries: DeliveryIndex) -> str:
+    """A stored row reason is pre-transition text; the live record replaces it.
+
+    The author wait text and an integration row's reason are written before the
+    record advances, so a done, integrated or blocked record — or an integration
+    row whose token names an earlier head — would otherwise keep telling a reader
+    to wait for a transition that already happened.
+    """
+    record = _delivery_record(state, deliveries)
+    if record is None or not state.reason:
+        return state.reason
+    phase, head, transition, reason = record
+    if phase in {"done", "integrated", "blocked"} or (state.delivery and state.delivery_token != f"{head}:{transition}"):
+        return f"Delivery record {phase} at head {head[:12]}: {reason}"
+    return state.reason
 
 
 def board(entries: list[FeedEntry], home: Path | None = None) -> list[str]:
     output = ["SHARED TASK BOARD — choose useful work and claim before acting."]
     deliveries = _delivery_index(home) if home is not None else {}
-
-    def _delivery_record(state: TaskState) -> tuple[str, str, int] | None:
-        return deliveries.get(state.delivery) if state.delivery else None
-
-    def _is_priority(state: TaskState) -> bool:
-        record = _delivery_record(state)
-        if record is None:
-            return bool(state.delivery)
-        phase, head, transition = record
-        if phase in {"done", "integrated"}:
-            return False
-        return state.delivery_token == f"{head}:{transition}"
-
-    def _next_step(state: TaskState) -> str:
-        """Delivery tasks name current practice, never the retired mutation.
-
-        The delivery mutation path is retired, so the stored instruction on an
-        open delivery task can name a command the CLI refuses. The live record
-        decides the row: a finished or superseded candidate reads as such, and a
-        still-current one names committing on main.
-        """
-        record = _delivery_record(state)
-        if record is None:
-            return state.next_step
-        phase, head, transition = record
-        if phase in {"done", "integrated"}:
-            return "Delivery integrated; the mutation path is retired — commit scoped work on main and verify runtime recovery."
-        if state.delivery_token != f"{head}:{transition}":
-            return "Superseded candidate; the delivery advanced at a later head — no action."
-        return "Delivery mutation is retired — commit scoped work on main; genome pushes and checks exact-SHA CI."
-
-    priorities = {s.identity: s.sequence for s in states(entries).values() if _is_priority(s)}
+    priorities = {s.identity: s.sequence for s in states(entries).values() if _delivery_priority(s, deliveries)}
     ready = {s.identity for s in candidates(entries)}
     reserved = set(pending_tasks(entries).values())
     for state in sorted(states(entries).values(), key=lambda s: (priorities.get(s.identity, float("inf")), s.sequence)):
         if state.identity in priorities:
             output.append(f"MAIN INTEGRATION PRIORITY: {state.identity}; ready integration position {priorities[state.identity]}.")
         availability = "reserved" if state.identity in reserved else "ready" if state.identity in ready else "waiting"
-        output.append(f"{state.identity}: {availability}; responsible mind {state.owner}. Next: {_next_step(state)}")
-        if state.reason:
-            output.append(f"  Reason: {state.reason}")
+        output.append(f"{state.identity}: {availability}; responsible mind {state.owner}. Next: {_delivery_next_step(state, deliveries)}")
+        reason = _delivery_reason(state, deliveries)
+        if reason:
+            output.append(f"  Reason: {reason}")
         if state.evidence:
             output.append(f"  Evidence: {state.evidence}")
         if state.retry_task:
@@ -624,15 +664,16 @@ def record_attempt(home: Path, state: TaskState, wake: int, observation: int, *,
                    attempt_wake=wake, attempt_observation=observation))
 
 
-def lines(entries: list[FeedEntry], owner: str | None = None) -> list[str]:
+def lines(entries: list[FeedEntry], owner: str | None = None, home: Path | None = None) -> list[str]:
     output = []
+    deliveries = _delivery_index(home) if home is not None else {}
     for state in sorted(states(entries).values(), key=lambda state: state.sequence):
         if owner is not None and state.owner != owner:
             continue
         retry = state.retry_event or state.retry_at or state.retry_task or "new checked step required"
         output.append(f"TASK STEP {state.identity} owner={state.owner} state={state.status} "
                       f"attempt={state.attempt_wake or 'none'} observation={state.attempt_observation or 'none'} "
-                      f"retry={retry}: {state.next_step}")
+                      f"retry={retry}: {_delivery_next_step(state, deliveries)}")
         if state.parent:
             output.append(f"  PARENT: {state.parent} — child completion does not complete this goal")
         if state.evidence:
@@ -643,8 +684,9 @@ def lines(entries: list[FeedEntry], owner: str | None = None) -> list[str]:
             output.append(f"  ADMISSIBLE WORK: {state.alternative} — final acceptance remains waiting")
         if state.helpers:
             output.append("  OFFERED HELPERS: " + ",".join(state.helpers))
-        if state.reason:
-            output.append(f"  WAIT: {state.reason}")
+        reason = _delivery_reason(state, deliveries)
+        if reason:
+            output.append(f"  WAIT: {reason}")
     return output
 
 

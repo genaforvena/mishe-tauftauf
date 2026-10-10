@@ -566,6 +566,36 @@ def test_board_priority_consults_the_live_delivery_record(candidate, monkeypatch
     assert "delivery integrate" not in integrated
 
 
+def test_delivery_views_project_an_author_row_from_the_live_delivery_record(candidate, monkeypatch):
+    home, _, _, _, head, _ = candidate
+    submit(candidate)
+    monkeypatch.setattr(delivery, "read_ci", lambda *args: ci(head))
+    delivery.check(home, "repair")
+
+    def author_row():
+        return next(line for line in task_state.board(Feed(home).entries(), home) if line.startswith("repair:"))
+
+    board = "\n".join(task_state.board(Feed(home).entries(), home))
+    # A live candidate keeps the author's own bounded wait text.
+    assert "awaits CI or main integration" in board
+    assert "Delivery record" not in board
+    steps = "\n".join(task_state.lines(Feed(home).entries(), "senses", home))
+    assert "awaits CI or main integration" in steps
+    record_path = home / "deliveries" / "repair.json"
+    record = delivery.load(home, "repair")
+    for phase in ("blocked", "integrated"):
+        record["phase"] = phase
+        record["transition"] += 1
+        record_path.write_text(json.dumps(record), encoding="utf-8")
+        board = "\n".join(task_state.board(Feed(home).entries(), home))
+        assert "awaits CI or main integration" not in board
+        assert f"Delivery {phase}" in author_row()
+        assert f"Delivery record {phase} at head {head[:12]}" in board
+        steps = "\n".join(task_state.lines(Feed(home).entries(), "senses", home))
+        assert "awaits CI or main integration" not in steps
+        assert f"Delivery {phase}" in steps
+
+
 def test_shared_choice_cannot_transfer_author_delivery(candidate, monkeypatch):
     home, _, _, _, head, proof = candidate
     submit(candidate)
