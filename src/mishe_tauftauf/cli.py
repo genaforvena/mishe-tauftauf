@@ -222,13 +222,32 @@ def cmd_pain_read(args) -> int:
     return cmd_pain_render(args)
 
 
+def _renderer_heartbeat(home: Path, slug: str) -> None:
+    """Touch a per-slug heartbeat so a stale dashboard can be told apart from a
+    live-but-hung loop (heartbeat fresh, dashboard stale) or a dead loop."""
+    path = home / "logs" / f"pain-watch-{slug}.heartbeat"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"{time.time():.0f}\n", encoding="utf-8")
+
+
+def _capture_renderer_failure(home: Path, slug: str) -> None:
+    """Append the renderer traceback to a durable per-slug log. The tmux pane that
+    hosts a pain-watch loop is destroyed by the operator-view supervisor on respawn,
+    so a traceback written only to the pane is lost; this file survives respawn."""
+    import traceback
+    path = home / "logs" / f"pain-watch-{slug}.stderr"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(f"\n=== {utc_now()} ===\n")
+        traceback.print_exc(file=handle)
+
 def cmd_pain_watch(args) -> int:
     validate_slug(args.slug)
     feed = Feed(args.home)
     tick = 0
     try:
         while True:
-            ok = False
+            _renderer_heartbeat(args.home, args.slug)
             try:
                 rendered = compose_frame(args.home, args.slug, args.timeout)
                 ok = rendered.ok
@@ -265,6 +284,9 @@ def cmd_pain_watch(args) -> int:
             time.sleep(args.interval)
     except KeyboardInterrupt:
         return 0
+    except Exception:
+        _capture_renderer_failure(args.home, args.slug)
+        raise
 
 
 def cmd_check(args) -> int:
