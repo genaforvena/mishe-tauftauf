@@ -1052,7 +1052,7 @@ def test_wedge_chain_3_span_30min_is_suspect(monkeypatch, tmp_path):
     result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
     assert result == {"chain": 3, "span_minutes": 30.0,
                       "sources": {"automatic-retry": 3}, "cause": "none",
-                      "last_error_ts": None, "error_count": 0}
+                      "last_error_ts": None, "error_count": 0, "foreign": 0}
 
 
 def test_wedge_chain_below_3_is_not_suspect(monkeypatch, tmp_path):
@@ -1066,7 +1066,7 @@ def test_wedge_chain_below_3_is_not_suspect(monkeypatch, tmp_path):
     result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
     assert result == {"chain": 2, "span_minutes": 10.0,
                       "sources": {"automatic-retry": 2}, "cause": "none",
-                      "last_error_ts": None, "error_count": 0}
+                      "last_error_ts": None, "error_count": 0, "foreign": 0}
 
 
 def test_wedge_span_below_15min_is_not_suspect(monkeypatch, tmp_path):
@@ -1081,7 +1081,7 @@ def test_wedge_span_below_15min_is_not_suspect(monkeypatch, tmp_path):
     result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
     assert result == {"chain": 3, "span_minutes": 10.0,
                       "sources": {"automatic-retry": 3}, "cause": "none",
-                      "last_error_ts": None, "error_count": 0}
+                      "last_error_ts": None, "error_count": 0, "foreign": 0}
 
 
 def test_wedge_chain_resets_on_success(monkeypatch, tmp_path):
@@ -1094,7 +1094,7 @@ def test_wedge_chain_resets_on_success(monkeypatch, tmp_path):
     _wedge_clock(monkeypatch)
     result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
     assert result == {"chain": 0, "span_minutes": 0.0, "sources": {}, "cause": "none",
-                      "last_error_ts": None, "error_count": 0}
+                      "last_error_ts": None, "error_count": 0, "foreign": 0}
 
 
 def test_wedge_no_log_returns_none(monkeypatch):
@@ -1109,7 +1109,7 @@ def test_wedge_empty_log_is_chain_zero(monkeypatch, tmp_path):
     _wedge_clock(monkeypatch)
     result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
     assert result == {"chain": 0, "span_minutes": 0.0, "sources": {}, "cause": "none",
-                      "last_error_ts": None, "error_count": 0}
+                      "last_error_ts": None, "error_count": 0, "foreign": 0}
 
 
 def test_wedge_sense_flags_wedged_mind(monkeypatch, tmp_path):
@@ -1157,7 +1157,7 @@ def test_wedge_sense_no_suspects(monkeypatch, tmp_path):
     result = discovery._mind_wedge_suspects()
     assert result["state"] == "verified"
     assert result["suspects"] == []
-    assert result["sample"] == "suspects=0 panes=2 with_log=1"
+    assert result["sample"] == "suspects=0 panes=2 with_log=1 foreign=0"
     assert result["panes"] == 2
     assert result["with_log"] == 1
 
@@ -1181,7 +1181,7 @@ def test_wedge_sense_no_logs_is_unknown(monkeypatch):
     monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
     result = discovery._mind_wedge_suspects()
     assert result["state"] == "unknown"
-    assert result["sample"] == "suspects=0 panes=2 with_log=0"
+    assert result["sample"] == "suspects=0 panes=2 with_log=0 foreign=0"
     assert result["with_log"] == 0
 
 
@@ -1200,7 +1200,7 @@ def test_wedge_chain_counts_all_continue_sources(monkeypatch, tmp_path):
                                   "stream-stall-continue": 1,
                                   "todo-reminder": 1},
                       "cause": "none",
-                      "last_error_ts": None, "error_count": 0}
+                      "last_error_ts": None, "error_count": 0, "foreign": 0}
 
 
 def test_wedge_chain_only_success_resets(monkeypatch, tmp_path):
@@ -1216,7 +1216,7 @@ def test_wedge_chain_only_success_resets(monkeypatch, tmp_path):
     result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
     assert result == {"chain": 2, "span_minutes": 60.0,
                       "sources": {"automatic-retry": 2}, "cause": "none",
-                      "last_error_ts": None, "error_count": 0}
+                      "last_error_ts": None, "error_count": 0, "foreign": 0}
 
 
 def test_wedge_chain_records_sourceless_continue(monkeypatch, tmp_path):
@@ -1234,7 +1234,7 @@ def test_wedge_chain_records_sourceless_continue(monkeypatch, tmp_path):
     result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
     assert result == {"chain": 3, "span_minutes": 60.0,
                       "sources": {"unknown": 3}, "cause": "none",
-                      "last_error_ts": None, "error_count": 0}
+                      "last_error_ts": None, "error_count": 0, "foreign": 0}
 
 
 def _provider_error(timestamp: str, status: int | None = None,
@@ -1422,7 +1422,7 @@ def test_wedge_r2_sense_fresh_error_not_flagged(monkeypatch, tmp_path):
     result = discovery._mind_wedge_suspects()
     assert result["state"] == "verified"
     assert result["suspects"] == []
-    assert result["sample"] == "suspects=0 panes=2 with_log=1"
+    assert result["sample"] == "suspects=0 panes=2 with_log=1 foreign=0"
 
 
 def test_wedge_r2_sense_success_after_error_not_flagged(monkeypatch, tmp_path):
@@ -1442,7 +1442,7 @@ def test_wedge_r2_sense_success_after_error_not_flagged(monkeypatch, tmp_path):
     result = discovery._mind_wedge_suspects()
     assert result["state"] == "verified"
     assert result["suspects"] == []
-    assert result["sample"] == "suspects=0 panes=2 with_log=1"
+    assert result["sample"] == "suspects=0 panes=2 with_log=1 foreign=0"
 
 
 def test_wedge_chain_excludes_a_provider_error_from_another_model(monkeypatch, tmp_path):
@@ -1460,7 +1460,7 @@ def test_wedge_chain_excludes_a_provider_error_from_another_model(monkeypatch, t
     result = discovery._omp_continue_chain(
         12345, _WEDGE_NOW, "opencode-go/longcat-2.5-preview-free")
     assert result == {"chain": 0, "span_minutes": 0.0, "sources": {},
-                      "cause": "none", "last_error_ts": None, "error_count": 0}
+                      "cause": "none", "last_error_ts": None, "error_count": 0, "foreign": 2}
 
 
 def test_wedge_chain_keeps_the_panes_own_model_error(monkeypatch, tmp_path):
@@ -1494,6 +1494,14 @@ def test_wedge_chain_keeps_a_provider_error_it_cannot_attribute(monkeypatch, tmp
     assert attributed["error_count"] == 2
 
 
+def test_pane_mind_model_reads_none_for_a_malformed_model_flag(monkeypatch):
+    # A launcher with no usable --model value must not be authoritative: the
+    # reader reads "cannot attribute" and counts, rather than hides, a failure.
+    monkeypatch.setattr(discovery.omp_pane, "command_line",
+                        lambda pid: ["omp", "--model="])
+    assert discovery._pane_mind_model(12345) is None
+
+
 def test_wedge_r2_foreign_model_error_is_not_a_suspect(monkeypatch, tmp_path):
     # The live false positive: research-methods' pane log held only its title
     # generator's 429s, so a healthy pane read as a provider-error wedge.
@@ -1515,7 +1523,8 @@ def test_wedge_r2_foreign_model_error_is_not_a_suspect(monkeypatch, tmp_path):
     result = discovery._mind_wedge_suspects()
     assert result["state"] == "verified"
     assert result["suspects"] == []
-    assert result["sample"] == "suspects=0 panes=2 with_log=1"
+    assert result["sample"] == "suspects=0 panes=2 with_log=1 foreign=1"
+    assert result["foreign"] == 1
 
 
 def _write_patch(home: Path, name: str, record: object) -> None:

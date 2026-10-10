@@ -174,7 +174,7 @@ def senses(home: Path) -> str:
         provenance = space.get("provenance", {})
         lines.append(f"UNKNOWN SPACE: phone/host clock agreement unverified; "
                      f"boundary_state={space['state']} reason={space['reason']} "
-                     f"source={provenance.get('source', 'unknown')} "
+                     f"provenance={provenance.get('source', 'unknown')} "
                      f"session={provenance.get('session', 'unknown')} "
                      f"retained_historical_event={space.get('event_id') or 'none'}; "
                      "baseline/restart/recovery are not physical transitions")

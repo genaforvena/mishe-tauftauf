@@ -46,8 +46,8 @@ UNKNOWN while retaining the separate scan-attempt evidence; valid historical
 DRIFT remains visible, with stale reads displayed as UNKNOWN.
 
 The space-light reader consumes the owned Note3's atomic `SITE/body/space.json`
-boundary without starting another collector. It keeps lux, source, session and
-original sample/receipt times visible. Freshness is conditional on unverified
+boundary without starting another collector. It keeps lux, provenance (source
+and session) and original sample/receipt times visible.
 phone/host clock agreement, capped at 30 seconds or the producer's shorter
 validity; polling or rendering cannot extend it. Missing, broken, delayed or
 expired evidence is UNKNOWN. Retained measured light changes are history, not

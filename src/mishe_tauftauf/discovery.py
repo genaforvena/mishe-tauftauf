@@ -813,6 +813,9 @@ def _omp_continue_chain(pid: int, now: datetime,
     counting it would accuse a healthy mind's pane. A record with no model, or
     a pane whose model could not be read, is still counted — the reader must
     not hide a failure it cannot attribute.
+
+    ``foreign`` counts the records the reader excluded for naming another model,
+    so that suppression is visible in the reading rather than silent.
     """
     log_path = _omp_log_path(pid)
     if log_path is None:
@@ -822,6 +825,7 @@ def _omp_continue_chain(pid: int, now: datetime,
     error_classes: dict[str, int] = {}
     last_error_ts: datetime | None = None
     error_count: int = 0
+    foreign: int = 0
     try:
         text = log_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -851,7 +855,9 @@ def _omp_continue_chain(pid: int, now: datetime,
             if (mind_model is not None and isinstance(record_model, str) and record_model
                     and not omp_pane.same_model(record_model, mind_model)):
                 # A subagent or the title generator failed on its own model, not
-                # the mind's: counting it would accuse a healthy pane.
+                # the mind's: counting it would accuse a healthy pane. The
+                # exclusion is counted so the suppression is visible.
+                foreign += 1
                 continue
             error_class = _provider_error_class(record)
             error_classes[error_class] = error_classes.get(error_class, 0) + 1
@@ -864,6 +870,7 @@ def _omp_continue_chain(pid: int, now: datetime,
             error_classes = {}
             last_error_ts = None
             error_count = 0
+            foreign = 0
     cause = "none"
     if error_classes:
         dominant = sorted(error_classes.items(), key=lambda item: (-item[1], item[0]))[0][0]
@@ -872,7 +879,7 @@ def _omp_continue_chain(pid: int, now: datetime,
     return {"chain": len(continues), "span_minutes": round(span, 1),
             "sources": sources, "cause": cause,
             "last_error_ts": last_error_ts.isoformat() if last_error_ts else None,
-            "error_count": error_count}
+            "error_count": error_count, "foreign": foreign}
 
 def _mind_wedge_suspects() -> dict:
     """Flag minds whose omp session log indicates a wedge.
@@ -915,6 +922,7 @@ def _mind_wedge_suspects() -> dict:
     suspects = []
     panes = 0
     with_log = 0
+    foreign = 0
     for line in result.stdout.splitlines():
         parts = line.split("|", 1)
         if len(parts) != 2:
@@ -929,6 +937,7 @@ def _mind_wedge_suspects() -> dict:
         if chain is None:
             continue
         with_log += 1
+        foreign += chain["foreign"]
         if (chain["chain"] >= WEDGE_CHAIN_THRESHOLD
                 and chain["span_minutes"] >= WEDGE_SPAN_THRESHOLD_MINUTES):
             suspects.append({"window": window_name, "pid": pid, **chain})
@@ -959,11 +968,11 @@ def _mind_wedge_suspects() -> dict:
         sample = "suspects=" + " ".join(parts)
     else:
         sample = "suspects=0"
-    sample += f" panes={panes} with_log={with_log}"
+    sample += f" panes={panes} with_log={with_log} foreign={foreign}"
     state = "verified" if with_log else "unknown"
     return {"id": "sense.mind.wedge-suspect", "state": state,
             "sample": sample, "suspects": suspects,
-            "panes": panes, "with_log": with_log, "kind": "read"}
+            "panes": panes, "with_log": with_log, "foreign": foreign, "kind": "read"}
 
 LEDGER_DV_PHASES = frozenset({
     "applied", "review-refused", "reverted", "revert-failed",
@@ -2780,7 +2789,7 @@ def _space_light(data: object, now: float) -> dict:
         row.update(state="unknown", reason=reason, current_lux=None, event_id=None,
                    sample=f"Note3 light UNKNOWN: {reason}"
                           + (f" {detail}" if detail else "")
-                          + f"; source={SPACE_SOURCE}")
+                          + f"; provenance={SPACE_SOURCE}")
         return row
 
     try:
@@ -2831,7 +2840,7 @@ def _space_light(data: object, now: float) -> dict:
                    expires_epoch_s=min(times) + validity,
                    sample=(f"Note3 {light['lux']:g}lux #{light['sequence']} fresh-clock-conditional; "
                            f"phone={_space_stamp(phone)} receipt={_space_stamp(receipt)}; "
-                           f"validity={validity:g}s source={node['source']} session={node['session']}"))
+                           f"validity={validity:g}s provenance={node['source']} session={node['session']}"))
         event = node.get("last_light_transition")
         if isinstance(event, dict):
             try:
@@ -2862,7 +2871,7 @@ def _space_light(data: object, now: float) -> dict:
                     f"historical measured light change #{start['sequence']} {start['lux']:g}lux"
                     f" -> #{end['sequence']} {end['lux']:g}lux; "
                     f"phone={_space_stamp(start_phone)}->{_space_stamp(end_phone)}; "
-                    f"fresh-clock-conditional source={node['source']} session={node['session']}")
+                    f"fresh-clock-conditional provenance={node['source']} session={node['session']}")
             except (KeyError, TypeError, ValueError, AttributeError, OverflowError):
                 row["event_reason"] = "invalid-or-expired-historical-transition"
         return row

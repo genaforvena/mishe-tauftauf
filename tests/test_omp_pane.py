@@ -33,6 +33,14 @@ def test_model_absent_reads_none() -> None:
     assert omp_pane.model(["omp", "--cwd", "/x"]) is None
 
 
+def test_model_without_a_usable_value_reads_none() -> None:
+    # A malformed launcher: the flag last, an empty value, or another option as
+    # the value. None is "cannot attribute", so the reader counts, not hides.
+    assert omp_pane.model(["omp", "--model"]) is None
+    assert omp_pane.model(["omp", "--model="]) is None
+    assert omp_pane.model(["omp", "--model", "--thinking"]) is None
+
+
 def test_same_model_matches_qualified_and_bare_names() -> None:
     assert omp_pane.same_model("opencode-go/longcat-2.5-preview-free",
                                "longcat-2.5-preview-free")
