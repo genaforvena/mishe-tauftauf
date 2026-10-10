@@ -14,7 +14,7 @@ import sys
 import subprocess
 import tempfile
 
-DEFAULT_MODEL = "openai-codex/gpt-6-luna"
+DEFAULT_MODEL = "opencode-go/longcat-2.5-preview-free"
 DEFAULT_TIMEOUT = 240
 MAX_EMPTY_RETRIES = 3
 

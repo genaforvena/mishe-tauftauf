@@ -29,7 +29,7 @@ class OmpMindTests(unittest.TestCase):
             env.update({
                 "PATH": str(tmp) + os.pathsep + env.get("PATH", ""),
                 "MISHE_TAUFTAUF_WORKSPACE": str(tmp),
-                "MISHE_TAUFTAUF_MODEL": "openai-codex/gpt-6-luna",
+                "MISHE_TAUFTAUF_MODEL": "opencode-go/longcat-2.5-preview-free",
             })
             result = subprocess.run(
                 [sys.executable, str(adapter)],
@@ -43,7 +43,7 @@ class OmpMindTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             args = json.loads(args_file.read_text(encoding="utf-8"))
             self.assertEqual(args.count("--model"), 1)
-            self.assertEqual(args[args.index("--model") + 1], "openai-codex/gpt-6-luna")
+            self.assertEqual(args[args.index("--model") + 1], "opencode-go/longcat-2.5-preview-free")
             self.assertTrue({"--print", "--no-session", "--no-extensions", "--cwd"}.issubset(args))
 
     def test_hung_omp_child_returns_timeout_status(self):
