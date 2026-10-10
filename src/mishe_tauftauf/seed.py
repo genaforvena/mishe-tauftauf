@@ -72,10 +72,20 @@ def _wedge_evidence(home: Path) -> tuple[list[dict], str | None]:
 
 
 def _fresh_wedge_suspect(home: Path, role: str, pid: str) -> bool:
-    """Return true only for valid fresh evidence bound to this live pane."""
+    """Return true only for valid fresh wedge evidence bound to this live pane.
+
+    A ``provider-error`` suspect is not wedge evidence for recovery. The witness
+    already holds it rather than flagging a wedge, because the same reading can
+    name a pane that is still working: an omp session log carries its title
+    generator's and subagents' provider errors too, so a failure on another
+    agent's model (e.g. the title generator's) appears beside a healthy mind's
+    turn. Respawn is destructive, so it requires an open retry chain, which
+    cannot end by itself.
+    """
     suspects, unavailable = _wedge_evidence(home)
     return unavailable is None and any(
-        suspect["window"] == role and str(suspect["pid"]) == pid for suspect in suspects)
+        suspect["window"] == role and str(suspect["pid"]) == pid
+        and suspect.get("rule") != "provider-error" for suspect in suspects)
 
 
 def _mind_pane_wedged(home: Path, session: str, role: str) -> bool:

@@ -27,6 +27,28 @@ def test_seed_recovers_only_a_fresh_wedge_bound_to_live_pane(tmp_path, monkeypat
     assert not seed._mind_pane_wedged(home, "owned-session", "genome")
 
 
+def test_seed_does_not_recover_a_provider_error_suspect(tmp_path, monkeypatch):
+    # A provider-error suspect can name a working pane: omp's session log also
+    # carries the title generator's and subagents' provider errors. Only an open
+    # retry chain, which cannot end by itself, justifies a destructive respawn.
+    from subprocess import CompletedProcess
+    home = tmp_path / "site"
+    discovery_dir = home / "discovery"
+    discovery_dir.mkdir(parents=True)
+    created = datetime.now(timezone.utc).isoformat()
+    (discovery_dir / "scan-1.json").write_text(json.dumps({
+        "created": created,
+        "observations": [{"id": "sense.mind.wedge-suspect", "state": "verified",
+                          "suspects": [{"window": "genome", "pid": 42, "chain": 0,
+                                        "rule": "provider-error",
+                                        "cause": "provider-error:429"}]}],
+    }))
+    monkeypatch.setattr(seed, "_tmux", lambda *a, **k:
+                        CompletedProcess(a, 0, b"0 42\n", b""))
+    assert not seed._mind_pane_wedged(home, "owned-session", "genome")
+
+
+
 def test_seed_uses_newest_scan_timestamp_not_filename_order(tmp_path, monkeypatch):
     from datetime import timedelta
     from subprocess import CompletedProcess
