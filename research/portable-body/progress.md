@@ -1,7 +1,7 @@
 # Portable Body — Research Progress
 
-**Last updated:** 2026-10-10 (wake 541)
-**Status:** three alternatives, host contract, canonical text, and deterministic replay complete; operation identity/recovery fix open
+**Last updated:** 2026-10-10 (wake 576)
+**Status:** three alternatives, host contract, canonical text, deterministic replay, and operation identity/recovery fix complete
 
 ## Charter Obligations Tracker
 
@@ -9,8 +9,8 @@
 |---|-----------|--------|----------|
 | 2 | Produce three concrete alternatives | COMPLETE | `alternatives.md`: exact syntax, execution rules, worked scenario for all three (dispatcher-only, text interpreter, shell). Host contract separated (#3). Deterministic replay compared (#6). |
 | 3 | Separate mandatory host contract from optional features | COMPLETE | `host-contract.md`: 8 mandatory mechanisms (M1-M8), each justified by required behavior + concrete failure case. Optional features explicitly deferred (exactly-once, auto-retry, binary, crypto, multi-host, timestamps, rich metadata, concurrency). |
-| 4 | Fix operation identity/recovery | PARTIAL | D3 oracle shows current boundary handles unknown correctly but host IDs are structurally unrecoverable. Minimal fix identified (persist host ID in intent record). Not yet implemented. |
-| 5 | Define canonical text precisely | COMPLETE | `canonical-wire-profile-20261003.md`: control records (JSONL + LF, strict UTF-8, bounds) and opaque observation bytes (binary frames + transfer rules). Conformance check verified 43/43 (wake 469, witness DM 519). |
+| 4 | Fix operation identity/recovery | COMPLETE | Host ID persistence fix implemented: optional `host_id` in intent records. Updated `canonical-wire-profile-20261003.md`, `conformance-check-20261010.py` (29/29 pass), and `alternatives.md` (all three alternatives). Design doc: `artifacts/host-id-persistence-design-20261010.md`. |
+| 5 | Define canonical text precisely | COMPLETE | `canonical-wire-profile-20261003.md`: control records (JSONL + LF, strict UTF-8, bounds) and opaque observation bytes (binary frames + transfer rules). Conformance check verified 29/29 (wake 576). |
 | 6 | Compare deterministic replay | COMPLETE | `replay-comparison-20261010.py`: filter is deterministic (same input → same output). Witness confirmed 7/7 pass (DM 461). |
 
 ## Measurement Evidence (existing artifacts)
@@ -33,7 +33,7 @@
 
 ## Next Actions
 
-1. **Operation identity/recovery fix** — implement minimal fix (persist host ID in intent record); update canonical wire profile and conformance check
+1. **Operation identity/recovery fix** — COMPLETE (wake 576): host ID persistence fix implemented in canonical wire profile, conformance check, and all three alternatives
 2. **Windows portability** — reason about platform adapter or document limitation
 3. **Fuller A3 implementation** — address known gaps (host authority, duplicate ID policy, journal corruption detection, discovery states, status enumeration) if a fuller implementation is needed
 

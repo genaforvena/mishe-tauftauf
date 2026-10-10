@@ -44,9 +44,14 @@ on one line (JSONL).
 
 ```json
 {"type":"intent","operation_id":"op-001","writer_id":"body-001",
- "capability":"file.write","request":{"path":"/tmp/target.txt","content":"hello"},
+ "host_id":"host-mesh-01","capability":"file.write",
+ "request":{"path":"/tmp/target.txt","content":"hello"},
  "timestamp":"2026-10-10T12:00:00Z"}
 ```
+
+The `host_id` field is optional. If present, it identifies the host that
+will execute the operation. This allows recovery to correlate operations
+with hosts even if the process crashes before the start record is written.
 
 **Start record** (written when execution begins):
 
@@ -216,7 +221,7 @@ Append-only text file, one record per line. Same intent/start/outcome
 structure as Alternative 1, but in a simpler text encoding (not JSON):
 
 ```
-intent op-001 file.write path=/tmp/hello.txt content=hello ts=2026-10-10T12:00:00Z
+intent op-001 file.write host=host-mesh-01 path=/tmp/hello.txt content=hello ts=2026-10-10T12:00:00Z
 start op-001 host=local pid=12345 ts=2026-10-10T12:00:01Z
 outcome op-001 status=completed result.bytes_written=5 ts=2026-10-10T12:00:01Z
 ```
@@ -367,7 +372,7 @@ write_file() {
 allocate() {
     local capability="$1" request="$2"
     local op_id="op-$(date +%s%N | md5sum | head -c 8)"
-    echo "intent $op_id $capability $request ts=$(date -Iseconds)" >> "$JOURNAL"
+    echo "intent $op_id $capability host=local $request ts=$(date -Iseconds)" >> "$JOURNAL"
     echo "$op_id"
 }
 
