@@ -91,7 +91,7 @@ def cmd_wall(args) -> int:
     if args.wall_command == "show":
         print(wall.context(args.home, args.owner))
     elif args.wall_command == "write":
-        wall.write(args.home, args.owner, args.file.read_text())
+        wall.write(args.home, args.owner, args.file.read_text(), source_path=str(args.file))
     elif args.wall_command == "dm":
         text = args.file.read_text() if args.file else args.text
         print(wall.message(args.home, args.source, args.to, text).sequence)

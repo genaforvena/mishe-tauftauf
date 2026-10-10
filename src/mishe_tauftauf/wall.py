@@ -20,6 +20,29 @@ WALL_MAX_LINES = 200
 
 
 
+def _audit_log(home: Path, role: str, source_path: str | None, wall_path: Path) -> None:
+    """Append a wall-write audit entry so clobbers are diagnosable after the fact.
+
+    Logs: timestamp, role, source notes path (if known), destination wall path,
+    and post-write mtime. Writes to ``logs/wall-write-audit.jsonl`` under the
+    ignored site. Never raises — audit logging must not break wall delivery.
+    """
+    try:
+        logs_dir = home / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "role": role,
+            "source": str(source_path) if source_path else None,
+            "wall": str(wall_path),
+            "mtime": datetime.fromtimestamp(wall_path.stat().st_mtime, tz=timezone.utc).isoformat(),
+        }
+        with open(logs_dir / "wall-write-audit.jsonl", "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
+
+
 def _bound_evidence_paths(home: Path) -> set[str]:
     """Derive post-clause event bindings, failing closed on incomplete coverage."""
     from .discovery import EVIDENCE_BINDING_CLAUSE_TIME
@@ -135,7 +158,7 @@ def limits(home: Path) -> tuple[int, int]:
     return chosen[0], chosen[1]
 
 
-def write(home: Path, role: str, text: str) -> None:
+def write(home: Path, role: str, text: str, source_path: str | None = None) -> None:
     from .observations import validate_home, validate_slug
     from .seed import _write_handoff
     validate_home(home)
@@ -153,7 +176,9 @@ def write(home: Path, role: str, text: str) -> None:
             "wall_max_bytes/wall_max_lines in coordination-mode.json only when the bound is "
             "genuinely too small."
         )
-    _write_handoff(home / "walls" / f"{role}.md", text)
+    wall_path = home / "walls" / f"{role}.md"
+    _write_handoff(wall_path, text)
+    _audit_log(home, role, source_path, wall_path)
 
 
 def message(home: Path, source: str, recipient: str, text: str):
