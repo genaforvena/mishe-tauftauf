@@ -8,8 +8,10 @@ External dialects, all read-only and bounded:
 
 The decoder returns ordinary Python values and never mutates a radio. A missing
 adapter, an unreadable file or a command that does not return inside the bound is
-reported as an explicit error, so the consumer can keep the reading UNKNOWN
-rather than let absence read as calm.
+reported as an explicit error — ``None`` for a value that could not be read, a
+named error for a failed command — so the consumer keeps the reading UNKNOWN
+rather than letting absence read as calm. ``rfkill_unreadable`` exposes the
+switches ``rfkill_switches`` omits, so a short list is not read as "no switch".
 """
 
 from __future__ import annotations
@@ -71,11 +73,11 @@ def operstate(name: str, root: Path = NET_ROOT) -> str | None:
 
 
 def rfkill_switches(root: Path = RFKILL_ROOT) -> list[dict[str, str]]:
-    """Every rfkill switch as ``{'type', 'soft', 'hard'}``.
+    """Every readable rfkill switch as ``{'type', 'soft', 'hard'}``.
 
     A switch whose files are unreadable is skipped rather than reported as an
-    absent switch; the caller sees a shorter list and must not read that as
-    "no switch exists".
+    absent switch; ``rfkill_unreadable`` names the skipped ones, so a caller must
+    not read a shorter list as "no switch exists".
     """
     try:
         slots = sorted(root.glob("rfkill*"))
@@ -88,6 +90,24 @@ def rfkill_switches(root: Path = RFKILL_ROOT) -> list[dict[str, str]]:
             continue
         switches.append({"type": kind, "soft": soft, "hard": hard})
     return switches
+
+
+def rfkill_unreadable(root: Path = RFKILL_ROOT) -> list[str]:
+    """The ``type`` of every switch ``rfkill_switches`` had to skip.
+
+    A slot whose ``type`` is itself unreadable is reported as ``unknown`` rather
+    than guessed. Empty when every slot reads.
+    """
+    try:
+        slots = sorted(root.glob("rfkill*"))
+    except OSError:
+        return []
+    unreadable = []
+    for slot in slots:
+        kind, soft, hard = _text(slot / "type"), _text(slot / "soft"), _text(slot / "hard")
+        if kind is None or soft is None or hard is None:
+            unreadable.append(kind if kind is not None else "unknown")
+    return unreadable
 
 
 def rfkill_verdict(switches: list[dict[str, str]], kind: str) -> str | None:

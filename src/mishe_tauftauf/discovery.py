@@ -21,7 +21,8 @@ from . import omp_pane
 from .feed import Feed, parse_feed
 from .host_radio import (BLUETOOTH_ROOT, COMMAND_TIMEOUT_SECONDS, NET_ROOT, RFKILL_ROOT,
                          bluetooth_controllers, controller_state, operstate,
-                         rfkill_switches, rfkill_verdict, wireless_interfaces)
+                         rfkill_switches, rfkill_unreadable, rfkill_verdict,
+                         wireless_interfaces)
 from .outcome_events import classify_outcomes
 from .runtime_source import source_for
 from .scan_freshness import age_bounds, classify_age, endpoint
@@ -2908,18 +2909,31 @@ def _space_new_event(previous: dict | None, current: dict) -> bool:
                 and current.get("event_sequence", -1) > previous.get("sequence", -1))
 
 
+def _switch_label(kind: str, verdict: str | None, unreadable: list[str]) -> str:
+    """``blocked``/``unblocked``, or ``unread`` for a switch that would not read."""
+    if verdict is not None:
+        return verdict
+    return "unread" if kind in unreadable else "absent"
+
+
 def _host_radio_read() -> dict:
     """Sample this host's BLE/Wi-Fi adapter state for the space programme.
 
     Consumer: the space-perception programme's host half, which must know whether
     the owned radio pair is present and usable before a bounded experiment. A
-    missing adapter or an unreadable controller stays UNKNOWN — absence and a
-    hang are not calm. A radio that is ``down`` or rfkill-blocked is a verified
-    state, and the sample names it.
+    missing adapter, an unreadable sysfs value or an unreadable controller stays
+    UNKNOWN — absence, an unread file and a hang are not calm. A radio that is
+    ``down`` or rfkill-blocked is a verified state, and the sample names it.
+
+    ``adv-instances`` is BlueZ's advertising instance counter (active /
+    supported): a userspace count, not a capability. Advertisement registration
+    is unexercised by this read and fails at the kernel on this controller
+    (discover wake 64945), so the field must not be read as "advertising works".
     """
     controllers = bluetooth_controllers()
     interfaces = wireless_interfaces()
     switches = rfkill_switches()
+    unreadable_switches = rfkill_unreadable()
     ble_switch = rfkill_verdict(switches, "bluetooth")
     wlan_switch = rfkill_verdict(switches, "wlan")
     problems: list[str] = []
@@ -2932,20 +2946,34 @@ def _host_radio_read() -> dict:
             ble = f"BLE {','.join(controllers)} powered={'yes' if controller['powered'] else 'no'}"
             advertising = controller["advertising"]
             if advertising and advertising["supported"] is not None:
-                ble += f" adv={advertising['active']}/{advertising['supported']}"
+                ble += f" adv-instances={advertising['active']}/{advertising['supported']}"
+            elif controller["powered"]:
+                ble += " adv-instances=unread"
     else:
         problems.append("no-bluetooth-controller")
         ble = "BLE absent"
     if ble_switch == "blocked":
         ble += " rfkill-blocked"
     if interfaces:
-        wifi = "wifi " + ",".join(f"{name}={operstate(name) or 'unread'}" for name in interfaces)
+        states = []
+        for name in interfaces:
+            value = operstate(name)
+            if value is None:
+                problems.append(f"operstate-unread:{name}")
+                states.append(f"{name}=unread")
+            else:
+                states.append(f"{name}={value}")
+        wifi = "wifi " + ",".join(states)
     else:
         problems.append("no-wifi-interface")
         wifi = "wifi absent"
     if wlan_switch == "blocked":
         wifi += " rfkill-blocked"
-    sample = (f"{ble}; {wifi}; rfkill bt={ble_switch or 'absent'} wlan={wlan_switch or 'absent'}")
+    if unreadable_switches:
+        problems.append("rfkill-unreadable:" + ",".join(sorted(set(unreadable_switches))))
+    rfkill = (f"rfkill bt={_switch_label('bluetooth', ble_switch, unreadable_switches)}"
+              f" wlan={_switch_label('wlan', wlan_switch, unreadable_switches)}")
+    sample = f"{ble}; {wifi}; {rfkill}"
     if problems:
         sample = f"host radio UNKNOWN {','.join(problems)}; " + sample
     return {"id": "sense.space.host-radio", "kind": "read",
