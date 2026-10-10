@@ -26,9 +26,10 @@ try {
  const input = requests();
  const first = await input.next();
  const open = first.value;
- if (first.done || !open || open.type !== 'open' || typeof open.selector !== 'string' || typeof open.sessionId !== 'string') throw new Error('open request required');
- let closed = false;
- await withNativeSession(open.selector,open.sessionId, async session => {
+if (first.done || !open || open.type !== 'open' || typeof open.selector !== 'string' || typeof open.sessionId !== 'string') throw new Error('open request required');
+const reasoning = typeof open.reasoning === 'string' ? open.reasoning : 'medium';
+let closed = false;
+await withNativeSession(open.selector, open.sessionId, async session => {
   emit({type:'ready'});
   let next = 1;
   for await (const request of input) {

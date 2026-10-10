@@ -6,7 +6,8 @@ import {restoreCheckpoint, exportCheckpoint, isContinuation} from './native-chec
 // One owned subprocess lifetime. Bootstrap rejection is fatal to its caller;
 // never reacquire/retry in that process (pre-return auth acquisition gap).
 export async function withNativeSession<T>(selector: string, sessionId: string,
- consume: (session: {turn: (context: Context, signal?: AbortSignal, checkpoint?: unknown) => Promise<unknown>}) => Promise<T>): Promise<T> {
+ consume: (session: {turn: (context: Context, signal?: AbortSignal, checkpoint?: unknown) => Promise<unknown>}) => Promise<T>,
+ reasoning: string = 'medium'): Promise<T> {
  if (typeof sessionId !== 'string' || !sessionId.trim() || sessionId !== sessionId.trim()) throw new Error('normalized stable sessionId required');
  return withNativeModel(selector, async ({registry, model}) => {
   const state = new Map<string, ProviderSessionState>();
@@ -35,7 +36,7 @@ export async function withNativeSession<T>(selector: string, sessionId: string,
   const stream = streamSimple(model, context, {
    apiKey: registry.resolver(model, sessionId),
    sessionId: sessionId,
-   reasoning: 'medium',
+   reasoning: reasoning,
    providerSessionState: state,
    preferWebsockets: false, // Checkpoints cover exact full-history SSE only.
    signal: controller.signal,
