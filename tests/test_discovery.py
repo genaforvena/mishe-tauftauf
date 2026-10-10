@@ -1238,9 +1238,10 @@ def test_wedge_chain_records_sourceless_continue(monkeypatch, tmp_path):
 
 
 def _provider_error(timestamp: str, status: int | None = None,
-                    message: str = "Upstream request failed.") -> str:
+                    message: str = "Upstream request failed.",
+                    model: str = "longcat-2.5-preview-free") -> str:
     fields = {"level": "warn", "provider": "opencode-go",
-              "model": "longcat-2.5-preview-free", "errorMessage": message}
+              "model": model, "errorMessage": message}
     if status is not None:
         fields["errorStatus"] = status
     return _omp_log_line(timestamp, "agent turn ended with provider error", **fields)
@@ -1432,6 +1433,79 @@ def test_wedge_r2_sense_success_after_error_not_flagged(monkeypatch, tmp_path):
     ])
     monkeypatch.setattr(discovery, "_omp_log_path",
                         lambda pid: log if pid == 12345 else None)
+    _wedge_clock(monkeypatch)
+
+    class FakeResult:
+        returncode = 0
+        stdout = "docs|12345\nbody-research|67890"
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
+    result = discovery._mind_wedge_suspects()
+    assert result["state"] == "verified"
+    assert result["suspects"] == []
+    assert result["sample"] == "suspects=0 panes=2 with_log=1"
+
+
+def test_wedge_chain_excludes_a_provider_error_from_another_model(monkeypatch, tmp_path):
+    # A pane's omp session log also carries its title generator's and subagents'
+    # turns; a failure on their model is not the mind's wedge.
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _provider_error("2026-10-06T13:25:00+00:00", 429,
+                        model="muse-spark-1.3-contributor"),
+        _provider_error("2026-10-06T13:35:00+00:00", 429,
+                        model="opencode-go/muse-spark-1.3-contributor"),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
+    _wedge_clock(monkeypatch)
+    result = discovery._omp_continue_chain(
+        12345, _WEDGE_NOW, "opencode-go/longcat-2.5-preview-free")
+    assert result == {"chain": 0, "span_minutes": 0.0, "sources": {},
+                      "cause": "none", "last_error_ts": None, "error_count": 0}
+
+
+def test_wedge_chain_keeps_the_panes_own_model_error(monkeypatch, tmp_path):
+    # A launcher writes the provider-qualified name and the log records the bare
+    # one; they are the same model, so the mind's own failure must still count.
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [_provider_error("2026-10-06T13:25:00+00:00", 403)])
+    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
+    _wedge_clock(monkeypatch)
+    result = discovery._omp_continue_chain(
+        12345, _WEDGE_NOW, "opencode-go/longcat-2.5-preview-free")
+    assert result["cause"] == "provider-error:403"
+    assert result["error_count"] == 1
+
+
+def test_wedge_chain_keeps_a_provider_error_it_cannot_attribute(monkeypatch, tmp_path):
+    # An unreadable command line (no mind model) and a record with no model field
+    # both stay counted: the reader must not hide a failure it cannot attribute.
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _provider_error("2026-10-06T13:25:00+00:00", 500),
+        _omp_log_line("2026-10-06T13:35:00+00:00",
+                      "agent turn ended with provider error", level="warn"),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
+    _wedge_clock(monkeypatch)
+    assert discovery._omp_continue_chain(12345, _WEDGE_NOW)["error_count"] == 2
+    attributed = discovery._omp_continue_chain(
+        12345, _WEDGE_NOW, "opencode-go/longcat-2.5-preview-free")
+    assert attributed["cause"] == "provider-error:500"
+    assert attributed["error_count"] == 2
+
+
+def test_wedge_r2_foreign_model_error_is_not_a_suspect(monkeypatch, tmp_path):
+    # The live false positive: research-methods' pane log held only its title
+    # generator's 429s, so a healthy pane read as a provider-error wedge.
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _provider_error("2026-10-06T13:25:00+00:00", 429,
+                        model="muse-spark-1.3-contributor"),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path",
+                        lambda pid: log if pid == 12345 else None)
+    monkeypatch.setattr(discovery, "_pane_mind_model",
+                        lambda pid: "opencode-go/longcat-2.5-preview-free")
     _wedge_clock(monkeypatch)
 
     class FakeResult:

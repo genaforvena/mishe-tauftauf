@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from . import omp_pane
 from .feed import Feed, parse_feed
 from .outcome_events import classify_outcomes
 from .runtime_source import source_for
@@ -769,7 +770,23 @@ def _provider_error_class(record: dict) -> str:
     return "unknown"
 
 
-def _omp_continue_chain(pid: int, now: datetime) -> dict | None:
+def _pane_mind_model(pid: int) -> str | None:
+    """The model a pane's own process runs, or None when it cannot be read.
+
+    An omp session log carries provider errors from every agent the pane hosts,
+    including the title generator and spawned subagents, whose model differs
+    from the mind's. Only a record whose model is the pane's own can name the
+    mind's turn, so the reader must know which model that is. The live command
+    line is authoritative for the running process and is per-pane, so it also
+    resolves a pane belonging to another site. An unreadable command line reads
+    None, which the caller treats as "cannot attribute" rather than "no error".
+    """
+    argv = omp_pane.command_line(pid)
+    return omp_pane.model(argv) if argv is not None else None
+
+
+def _omp_continue_chain(pid: int, now: datetime,
+                        mind_model: str | None = None) -> dict | None:
     """Open continue chain for one pane pid from its omp session log.
 
     The chain is the count of ``agent.continue scheduled`` events of *any*
@@ -789,6 +806,13 @@ def _omp_continue_chain(pid: int, now: datetime) -> dict | None:
     newest such record in the open chain (None when there is none) and
     ``error_count`` the number of them; rule R2 reads both to flag a pane whose
     turn fails instantly with no retry scheduled.
+
+    ``mind_model`` is the model the pane's own process runs, when it is known.
+    A provider error whose record names a *different* model belongs to another
+    agent the pane hosts (its title generator, a subagent) and does not count:
+    counting it would accuse a healthy mind's pane. A record with no model, or
+    a pane whose model could not be read, is still counted — the reader must
+    not hide a failure it cannot attribute.
     """
     log_path = _omp_log_path(pid)
     if log_path is None:
@@ -823,6 +847,12 @@ def _omp_continue_chain(pid: int, now: datetime) -> dict | None:
             key = source if isinstance(source, str) and source else "unknown"
             sources[key] = sources.get(key, 0) + 1
         elif message == "agent turn ended with provider error":
+            record_model = record.get("model")
+            if (mind_model is not None and isinstance(record_model, str) and record_model
+                    and not omp_pane.same_model(record_model, mind_model)):
+                # A subagent or the title generator failed on its own model, not
+                # the mind's: counting it would accuse a healthy pane.
+                continue
             error_class = _provider_error_class(record)
             error_classes[error_class] = error_classes.get(error_class, 0) + 1
             last_error_ts = ts
@@ -860,6 +890,13 @@ def _mind_wedge_suspects() -> dict:
     (``panes=N with_log=M``), and a pane set with no log at all reads UNKNOWN
     rather than a clean bill, so a log format or path change cannot silently
     pass as healthy.
+
+    A provider error counts only when its record names the model the pane's own
+    process runs (read from the live command line): an omp session log also
+    carries its title generator's and subagents' turns, whose model differs, and
+    a failure there does not mean the mind is wedged. An unreadable command line
+    or a record with no model is still counted, so a failure that cannot be
+    attributed is never hidden.
     """
     now = datetime.now(timezone.utc)
     try:
@@ -888,7 +925,7 @@ def _mind_wedge_suspects() -> dict:
         except ValueError:
             continue
         panes += 1
-        chain = _omp_continue_chain(pid, now)
+        chain = _omp_continue_chain(pid, now, _pane_mind_model(pid))
         if chain is None:
             continue
         with_log += 1
