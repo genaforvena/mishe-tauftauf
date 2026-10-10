@@ -1432,11 +1432,35 @@ def _unit_names_checkout(unit: str, root: Path) -> bool:
             return True
     return False
 
+def _unit_description(unit: str) -> str:
+    """The unit's Description property, or empty when it cannot be read."""
+    environment = os.environ.copy()
+    environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    try:
+        result = subprocess.run(["systemctl", "--user", "show", unit, "-p", "Description"],
+                                capture_output=True, text=True, timeout=5, env=environment)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if result.returncode:
+        return ""
+    for row in result.stdout.splitlines():
+        if row.startswith("Description="):
+            return row[len("Description="):]
+    return ""
+
 
 def _foreign_checkout_consumers(units: list[str], root: Path) -> dict[str, str]:
-    """Unattributed units whose ExecStart names this plant's checkout, by unit."""
+    """Unattributed units whose ExecStart names this plant's checkout, by unit.
+
+    A unit whose description names the checkout root is a plant-level service
+    of this site, not a foreign consumer: the description is systemd's own
+    attribution, so it outranks the script-text heuristic.
+    """
     consumers: dict[str, str] = {}
     for unit in units:
+        description = _unit_description(unit)
+        if description and root.name in description:
+            continue
         if _unit_names_checkout(unit, root):
             consumers[unit] = str(root)
     return consumers
