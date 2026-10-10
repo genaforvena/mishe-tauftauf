@@ -103,8 +103,10 @@ writing a new artifact and citing it in a new outcome; the earlier outcome canno
 be rebound, so an in-place edit drops it from the count permanently. The three
 requirements are independent:
 a file can be unedited yet sit outside `artifacts/`, or be cited by a second
-outcome, and is ineligible for that reason alone. Being inside `artifacts/` is
-not sufficient by itself either — wake notes and other working files that a later
+outcome, and is ineligible for that reason alone — a binding-eligibility
+violation the sense audits, not a removal from the evidenced count, which
+follows the bound digest: only a later edit or removal drops an outcome.
+Being inside `artifacts/` is not sufficient by itself either — wake notes and other working files that a later
 turn may edit are ineligible even there. `wall outcome` applies the write-once
 rule from the clause time onward: it refuses a path another post-clause outcome
 already bound, and it fails rather than skipping the check when the bound set
