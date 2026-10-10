@@ -328,7 +328,10 @@ Local baselines and experiment reports belong under the ignored site.
 
 High-risk, high-reward initiatives are welcome within granted owned scope.
 Name a falsifiable prediction, affected consumers, observation interval and
-keep/revise/revert decision. Apply the checked activation and recovery procedure
+keep/revise/revert decision; `mishe-tauftauf --home SITE predict ROLE` records it
+on the tape. A prediction needs exactly one whole
+`Check at: YYYY-MM-DDTHH:MM:SSZ` line naming when it will be judged, and
+`--replaces SEQUENCE` supersedes an active prediction for the same role.
 above to running code, including independent reading and visible failures.
 These checks enable experimentation; they are not a routine approval gate.
 Keep accepted experiments canonical, revise what needs work and remove
