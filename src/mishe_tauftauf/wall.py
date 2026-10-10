@@ -177,8 +177,36 @@ def write(home: Path, role: str, text: str, source_path: str | None = None) -> N
             "genuinely too small."
         )
     wall_path = home / "walls" / f"{role}.md"
+    _reject_peer_wall_copy(home, role, text)
     _write_handoff(wall_path, text)
     _audit_log(home, role, source_path, wall_path)
+
+
+def _reject_peer_wall_copy(home: Path, role: str, text: str) -> None:
+    """Reject notes byte-identical to another role's wall.
+
+    A restore/context document renders every peer wall undelimited into one
+    text. A mind that pastes a peer section into its own notes produces a
+    byte-identical cross-role wall, which ``wall write``/``seed yield`` then
+    accept with no ownership cross-check — the class that clobbered three
+    walls with research-methods' content on 2026-10-10 22:01-22:23Z. Exact
+    cross-role duplication has no legitimate use under per-role wall
+    ownership; rewriting a wall with unchanged own content is unaffected.
+    """
+    from .activity import roles
+    data = text.encode("utf-8")
+    peers = set(roles(home)) - {role}
+    if role != "operator" and (home / "walls" / "operator.md").is_file():
+        peers.add("operator")
+    for name in sorted(peers):
+        path = home / "walls" / f"{name}.md"
+        if path.is_file() and path.read_bytes() == data:
+            raise ValueError(
+                f"refusing to write wall {role}: notes are byte-identical to peer wall {name}. "
+                "The restore document renders every role's wall in one text — copy from your "
+                "own wall section only, or rewrite your current plan from your own evidence. "
+                f"If {name} needs this content, {name} writes it."
+            )
 
 
 def message(home: Path, source: str, recipient: str, text: str):
@@ -225,7 +253,8 @@ def context(home: Path, role: str) -> str:
     for name in sorted(peers):
         path = home / "walls" / f"{name}.md"
         if path.is_file():
-            sections.append(f"WALL {name}\n{path.read_text()}")
+            sections.append(f"PEER WALL {name} — reference only; never copy into your own wall\n"
+                            f"{path.read_text()}")
     entries = Feed(home).entries()
     inbox = [e for e in entries if addressed(e, role)][-12:]
     sections.append("ADDRESSED MESSAGES (shared tape, not private)\n" + "\n".join(
