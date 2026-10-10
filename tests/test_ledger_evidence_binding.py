@@ -117,3 +117,50 @@ def test_evidence_binding_violating_row_outside_home_shows_stored_path(tmp_path)
     result = discovery._ledger_evidence_binding(home)
     assert result["state"] == "drift"
     assert f"alice@2026-10-06T17:00:00Z:{outside}(A)" in result["sample"]
+
+def test_evidence_binding_names_count_excluded_beside_all_bad(tmp_path):
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "walls").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    # alice's bound file was edited after record (B); bob's evidence sits
+    # outside artifacts/ (A). The trial count drops only the B row.
+    edited = home / "artifacts" / "edited.md"
+    edited.write_text("original\n")
+    edited_digest = _write_evidenced_outcome(home, "alice", edited)
+    edited.write_text("edited after record\n")
+    wall_file = home / "walls" / "bob.md"
+    wall_file.write_text("wall file\n")
+    bob_digest = _write_evidenced_outcome(home, "bob", wall_file)
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "alice",
+         f"[record] records/{edited_digest}.json sha256={edited_digest}\n"),
+        (2, "2026-10-06T17:30:00Z", "bob",
+         f"[record] records/{bob_digest}.json sha256={bob_digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    assert result["state"] == "drift"
+    assert result["all_bad"] == 2
+    assert result["count_excluded"] == 1
+    assert "all_bad=2 count_excluded=1" in result["sample"]
+
+
+def test_evidence_binding_stamps_live_bad_roles_last_outcome_time(tmp_path):
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "walls").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    # codex's only outcome is three days old: the live window is the latest
+    # outcome per role over the whole post-clause set, so the row stands and
+    # the stamp is what reads it as stale rather than current.
+    wall_file = home / "walls" / "codex.md"
+    wall_file.write_text("wall file\n")
+    digest = _write_evidenced_outcome(home, "codex", wall_file)
+    _binding_tape(home, [
+        (1, "2026-10-07T18:33:03Z", "codex",
+         f"[record] records/{digest}.json sha256={digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    assert result["latest_bad_roles"] == ["codex(A)"]
+    assert result["latest_bad_last"] == ["codex@2026-10-07T18:33:03Z"]
+    assert "latest_bad_last=codex@2026-10-07T18:33:03Z" in result["sample"]

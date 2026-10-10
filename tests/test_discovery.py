@@ -2111,6 +2111,28 @@ def test_evidence_binding_clean_store(tmp_path):
     assert result["latest_bad"] == 0
     assert result["all_bad"] == 0
 
+def test_notify_scan_labels_non_verified_readings_by_state(tmp_path):
+    readings = [
+        {"id": "sense.a", "kind": "read", "state": "verified", "sample": "ok"},
+        {"id": "sense.b", "kind": "read", "state": "drift", "sample": "measured violation"},
+        {"id": "sense.c", "kind": "read", "state": "unknown", "sample": "no source"},
+        {"id": "sense.d", "kind": "read", "state": "unavailable", "sample": "absent source"},
+        {"id": "command.x", "kind": "declaration", "state": "available",
+         "sample": "declared"},
+    ]
+    discovery._notify_scan(tmp_path, {"created": "2026-10-10T12:00:00Z",
+                                      "node": "test", "observations": readings},
+                            None, tmp_path / "sample.json")
+    body = Feed(tmp_path).entries()[-1].body
+    assert "Verified readings: sense.a = ok." in body
+    assert "Drift readings: sense.b — measured violation." in body
+    assert "Unknown readings: sense.c — no source." in body
+    assert "Unavailable readings: sense.d — absent source." in body
+    # A measured violation is not printed on the line labelled unknown.
+    unknown_line = next(line for line in body.splitlines()
+                        if line.startswith("Unknown readings:"))
+    assert "sense.b" not in unknown_line
+
 
 def test_evidence_binding_flags_mutated_evidence(tmp_path):
     home = tmp_path / "site"
