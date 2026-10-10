@@ -27,9 +27,12 @@ yields no pid rather than a guess.
 space-perception sense: the kernel sysfs ABI for `/sys/class/bluetooth`,
 `/sys/class/rfkill` and `/sys/class/net` (one newline-terminated value per file),
 and the human-readable `bluetoothctl show` report. It returns ordinary Python
-values and never mutates a radio. A missing adapter, an unreadable file or a
-command that does not return inside its bound is an explicit error value, so the
-consumer keeps the reading UNKNOWN instead of reading absence or a hang as calm.
+values and never mutates a radio. A missing adapter or a `bluetoothctl` read that
+fails or does not return inside its bound is an explicit problem value, so the
+consumer keeps the reading UNKNOWN rather than reading absence or a hang as calm.
+An unreadable sysfs value is named `unread` rather than dropped, and an unreadable
+rfkill switch is omitted from the decoded list: a caller must not read a short
+list as a radio that is absent.
 
 `chat_protocol.py` interprets historical wake, yield and clear receipts. A
 seed-sourced receipt's first line supplies the lifecycle kind and header fields;
