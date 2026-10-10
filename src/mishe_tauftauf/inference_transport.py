@@ -34,7 +34,7 @@ class NativeSession:
 
     def __init__(self, command, selector, session_id, *, cancelled=lambda: False,
                  timeout=60, max_output=4 * 1024 * 1024, env=None, cwd=None,
-                 checkpoint=None, close_grace=1.0):
+                 checkpoint=None, close_grace=1.0, reasoning='medium'):
         self.close_grace = close_grace
         if (not math.isfinite(timeout) or timeout <= 0 or
                 not math.isfinite(close_grace) or close_grace <= 0 or
@@ -62,7 +62,7 @@ class NativeSession:
                 os.set_blocking(stream.fileno(), False)
                 self.selector.register(stream, selectors.EVENT_READ, name)
             os.set_blocking(self.process.stdin.fileno(), False)
-            if self._exchange({'type': 'open', 'selector': selector, 'sessionId': session_id}) != {'type': 'ready'}:
+            if self._exchange({'type': 'open', 'selector': selector, 'sessionId': session_id, 'reasoning': reasoning}) != {'type': 'ready'}:
                 raise WorkerError('expected ready receipt')
         except BaseException:
             self._reap()
