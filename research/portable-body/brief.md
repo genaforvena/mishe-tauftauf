@@ -1,155 +1,125 @@
-# Portable Body — Research Brief
+# Mishe portable bodies: bounded design brief
 
-**Status:** preliminary hypothesis, not accepted research
-**Created:** 2026-10-10 (wake 168)
-**Owner:** body-research
+**Purpose.** Investigate how a Mishe can arrive, discover what a host actually exposes, observe, act and communicate with the mesh while asking little of the host. This edited brief separates preliminary hypotheses from the current evidence-led decision; it is not a deployed universal protocol. A VM is optional: choosing none is a valid result.
 
-## Question
+**Evidence labels.** **Documented** means stated by a primary specification/project/OS vendor source linked below. **Inferred** is a design implication, not a measured result. **Measured** means observed in an executed experiment. The initial brief preceded experiments; retained Linux fixtures now supply bounded measurements, not Windows, firmware, universal arrival or total-deployment/RAM results.
 
-What is the smallest useful portable substrate through which Mishe can discover a host body, observe, transform, act, and communicate — requiring little from the host?
+**Current decision — 2026-10-07 / Body49527.** Dispatcher-first for observed owned Linux work; reuse the maintained durable host boundary, do not promote a research evaluator. [Exact decision and separated costs](../../artifacts/body-49190-substrate-decision.md), independently KEEP by Witness49316/DM49395; [current minimum/optional contract and distinct recovery policies](host-contract.md), independently KEEP OFFLINE by Witness49429/DM49491. Both readings are FULFILLED, not live-delivery acceptance. Current continuation is in [progress.md](progress.md). The original brief is retained byte-for-byte at `../../artifacts/body-49527-brief-before.md` (25107 bytes, SHA256 `acdea50cf059d364f6082275af9153be64c367ac89b9f4e8ddc70988eec47575`).
 
-## Scope
+## 1. Questions and success criteria
 
-**In scope:**
-- A portable core (program + data) that can run on minimal hosts
-- Host capability discovery (what can this host do?)
-- Observation (reading host state)
-- Transformation (changing host state)
-- Communication (text boundary between portable core and host)
-- Operation identity and recovery (what happened? what is the state?)
-- Disconnection behavior (what happens when the host or transport disappears?)
+Questions: What is the smallest dependable arrival path? Which work benefits from running locally? How should discovery avoid assumptions? How are authority and irreversible effects explicit? Can the same portable program run over textual transport while preserving arbitrary bytes and useful failure information? Where does upload-and-launch end and firmware integration begin?
 
-**Out of scope:**
-- Universal native binary or firmware deployment
-- Replacement for the existing inference harness
-- New VM or language implementation (unless evidence demands it)
-- Production deployment to real hosts
+Success criteria for a first real evaluation:
 
-## Non-goals
+- **Executable size:** report compressed and installed bytes for each host adapter/runner and program separately. No numeric target is defensible before choosing compiler, libc, features and security posture.
+- **RAM:** report peak resident bytes for resident runner and program separately, plus input/output buffers and largest single response. No numeric target set yet.
+- **Semantic complexity:** a reviewer can read the normative core in one sitting; every operation is discoverable, bounded, typed, attributable to a grant, and has partial/uncertain outcomes.
+- **Porting cost:** count platform-specific source/build files, OS calls, test hours, and dependencies; distinguish reuse of portable code from host bindings.
+- **Dependencies:** report required OS facilities, runtime/toolchain, shell/SSH, network, package manager, permissions, firmware hooks, and external libraries; test a no-runtime host.
+- **Behavior:** unknown-first discovery; observations precede assumptions; one identical program and text protocol; replayable deterministic transformation traces; explicit ambiguity after interrupted actions.
 
-- Do NOT presume Uxn, Forth, WASM, or any VM is the answer
-- Do NOT build a large service; prefer the smallest thing that works
-- Do NOT merge with inference-research's continuity objectives
-- Do NOT introduce a universal runtime because vocabulary overlaps
+These are metrics to collect, not achieved targets. Prioritize cheap porting and inspectable observation/action over VM instruction count or Turing completeness.
 
-## Preliminary Hypotheses
+## 2. Concrete journeys
 
-### H1: Dispatcher-only is sufficient
+1. **Arrival:** a person uploads a matching native runner/program and launches it over SSH, or a local broker invokes it. This works only if architecture/ABI, execute permission, policy and transport permit it. SSH is a possible carrier, not a requirement.
+2. **Discovery:** the selected host profile exposes capabilities, versions, schemas, bounds and explicit available/absent/denied/unknown states. Discovery is not a grant and must not probe by trying the requested effects.
+3. **Observation:** request only listed, currently authorized capabilities. A host may offer system/process/rooted-file operations, but these are not mandatory names. Reads can disclose information or affect special devices; host policy determines authority, not a caller's `read` label.
+4. **Action:** use caller-known pre-effect identity and current host authority. Durable recovery is optional unless promised; absent or incomplete retained history is UNKNOWN, never automatic permission to repeat. Native append/process-crash fixtures were later executed; they are not universal filesystem or exactly-once guarantees.
+5. **Communication:** `mesh.send` is an ordinary named capability with destination, size and delivery acknowledgment semantics; it may be absent. Local computation can queue a plan or compress/analyze observations while disconnected, but delivery remains pending, never implied.
+6. **Failure:** distinguish rejected-before-start, completed, partial, and outcome-unknown. If a stream breaks, use declared retained recovery when available; absent recovery cannot prove nonexecution or permit an ambiguous repeat. Bound requests, responses, work, memory and any promised queue.
 
-The existing dispatcher composition (5 Python modules, 113,370 B) already provides the minimal substrate. It can discover capabilities, execute effects, and maintain durable state. The "portable body" is just this composition plus a thin host adapter.
+## 3. Architecture choices
 
-**Evidence for:** Body63603 measured the zipapp at 115,467 B with no external imports. Wake 84 confirmed POSIX-only platform surface. Wake 65214 measured runtime RSS at ~33.9 MiB steady-state.
+| Choice | Computation, boundary and wire | Dependencies/memory assumptions | Failure and porting | What it buys |
+|---|---|---|---|---|
+| **Dispatcher only (baseline)** | Fixed orchestration and transforms execute in the broker/coordinator wherever it is placed. A local broker can transform retained complete inputs while disconnected; no general target-side program language is required. Canonical wire is a separate profile. | Needs a broker and transport/host bindings; parsing, buffering, policy and any promised history still cost resources. No measured minimum standalone runner or whole-deployment/RAM cost. | Adapters remain platform specific. Interrupted calls need pre-effect identity and truthful UNKNOWN; recovery needs declared retained evidence. | Default for the observed fixed job. Disconnection alone does not select an interpreter: useful local work depends on placement, surviving process/input and required behavior. |
+| **Small local interpreter** | A deliberately tiny line/record evaluator performs deterministic filtering, branching, sequencing and trace updates; all world access remains named host calls. Suggested semantic types are JSON-like values and opaque byte strings. | Requires one runner binary per OS/ABI or embedding as firmware. RAM bounded by explicit values and streams. No shell required after launch. | Small spec to own, but custom parser/runtime and every port must conform. Checkpoints allow continuation after disconnect. | Offline transforms, batching, local policy and newly delivered programs without recompiling host adapter. |
+| **Existing VM plus bindings (WASM/WASI, Uxn/Varvara, Forth)** | Separates portable computation from host API only if imports/devices are constrained. Wire remains an independent protocol, not VM memory or host ABI. | Adds runner/runtime, loader, feature profile and host imports; WASM linear memory and runtime costs, Uxn fixed machine model; Forth system dependencies vary. | Mature semantics/tests aid code portability, but bindings and runtime availability dominate host effort. Traps/limits need mapping to protocol outcomes. | Broader language/compiler ecosystem, richer local computation, safe execution sandbox potential, and code reuse across hosts.
 
-**Evidence against:** The composition is Python-only (requires Python 3.12+). Windows portability is UNKNOWN. The dispatcher assumes a full Python runtime, which may not be available on minimal hosts.
+**Recommendation (inferred, current):** keep dispatcher-first for the observed fixed jobs and the capability boundary engine-neutral. Stop matched pure-transform comparisons; equal bytes do not establish a need for a language or VM. Reopen evaluator selection only for a named consumer needing independently delivered local behavior, with a prospective discriminator and whole-deployment/resource/maintenance/arrival evidence. Uxn remains the executed existing-machine alternative; the record DAG is not ordered term rewriting. WASM/WASI, Forth and other survey entries below remain primary-source hypotheses, not measured winners.
 
-### H2: A minimal text/record interpreter is smaller and more portable
+## 4. Technology survey (source-grounded)
 
-A simple interpreter that reads text commands (e.g., `observe host`, `transform file`, `act process`) and returns text observations would be smaller than the full dispatcher and could run on hosts without Python.
+| Technology | Execution semantics / device boundary | Authority, wire, memory and dependencies | Failure / portability reading |
+|---|---|---|---|
+| **Uxn / Varvara** | Uxn is a byte-oriented stack VM, with working and return stacks; Varvara maps device ports and event vectors. **Documented:** fixed 256-byte stacks and device-port model. [Uxn stacks](https://wiki.xxiivv.com/site/uxntal_stacks.html), [devices](https://wiki.xxiivv.com/site/uxntal_devices.html). | Device ports, not named host capability schemas. Wire representation must be added separately. A small machine model can simplify implementation but port behavior/device set matters. | **Inferred:** attractive for inspectable constrained programs and deterministic event traces; host binding/security semantics must be designed independently. Uxn community docs are primary for Uxn but not a standards body. |
+| **Forth** | Standard defines language/program interface and word sets; cell size and some environmental details are implementation-defined. [Forth 2012 introduction](https://forth-standard.org/standard/intro), [portability guide](https://forth-standard.org/standard/port). | No single canonical wire format or host authority system. Can expose only a small word set, but hosts differ in core/environmental extensions. Resource profile is implementation choice. | **Inferred:** tiny interpreters and interactive inspection are strengths; restricted profile plus conformance tests needed for cheap porting. Existing installed Forth cannot be assumed. |
+| **WebAssembly core / WASI** | Core Wasm specifies validated portable VM code and deliberately does not define host interaction; WASI is layered separately. [W3C core spec](https://webassembly.github.io/spec/core/), [WASI design principles](https://github.com/WebAssembly/WASI/blob/main/docs/DesignPrinciples.md). | WASI capability design has no ambient authority; host explicitly grants handles/functions. WASI releases and API profiles vary; stdin/stdout can carry an application protocol, but don't equal semantic capability discovery. | **Documented:** sandboxing and portable computation. **Inferred:** strongest general standard boundary, but not zero-cost: runtime availability, linear memory, imports and WASI version are dependencies. Core Wasm alone cannot observe the host. |
+| **wasm3** | C interpreter/runtime library; project documents gas metering, tracing and constrained memory options. [upstream project](https://github.com/wasm3/wasm3). | Bindings are supplied by embedder; WASI support is a feature rather than an automatic semantic fit. Project reports broad architecture/embed targets but has entered minimal maintenance (upstream notice). | **Inferred:** low-friction C embedding and resource knobs merit evaluation, but maintenance risk and actual per-target builds/RAM are unknown. No size/RAM facts measured here. |
+| **WAMR** | Configurable Wasm runtime: interpreter, AOT and JIT modes; WASI and native APIs. [upstream project](https://github.com/wasm-micro-runtime/wasm-micro-runtime). | Embedding/bindings and feature selection required; Linux/macOS/Android/Windows and embedded targets are documented. ESP component registry lists ESP32 variants [here](https://components.espressif.com/components/espressif/wasm-micro-runtime/versions/2.2.0~3?language=en). | **Documented:** broad port set and small-footprint design goal; **not** a promise of universal executable or fixed numeric cost. Runtime/feature versions and build effort remain per-target. |
+| **Tiny custom evaluator / term rewriting** | A small AST/record rewrite machine can define only values, conditionals, loops/steps and capability calls. Maude is a formal rewriting-language system, but much larger in scope than a tiny embedded evaluator. [Maude overview](https://maude.cs.illinois.edu/overview). | Wire is independent. A minimal evaluator can use bounded UTF-8 text plus byte payloads and no OS assumptions. Custom semantics means custom implementation and verifier. | **Inferred:** easiest core to make one-sitting readable if intentionally narrow; cheapest semantics, not necessarily cheapest maintenance or port. Require reference traces/conformance fixtures. |
+| **Lua (alternative high-level VM)** | Official manual describes lightweight embeddable C implementation, bytecode VM and GC. [Lua 5.4 manual](https://www.lua.org/manual/5.4/manual.html). | Richer tables/strings/coroutines, but runtime + memory manager and host bindings; no standard capability authority or wire format. | **Inferred:** better application authoring, more semantics and memory policy than needed for observation-first portable bodies. |
+| **Shell as execution substrate** | POSIX shell/utility ecosystem is specified for conforming systems, but shells, commands, flags and installed versions vary. [POSIX shell language](https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap02.html). | Text pipelines are natural but escaping, command injection, utility availability and binary data are hazards. No shell or POSIX assumptions can be universal. | **Inferred:** excellent optional SSH-host adapter, not semantic core or fallback for shell-less systems. |
 
-**Evidence for:** Text is the most portable boundary. A minimal interpreter could be <10 KB. No external dependencies.
+### Text-native is unresolved
 
-**Evidence against:** The interpreter would need to reimplement operation identity, journaling, and recovery — which the dispatcher already provides. Risk of duplicating existing functionality.
+Compare two meanings:
 
-### H3: An existing machine (e.g., shell, awk, coreutils) is sufficient
+- **Canonical text at boundaries, structured computation internally (preferred experiment baseline):** UTF-8 JSON Lines for control records; bounded line lengths; one record per request/reply; binary represented as explicit base64 chunks or separately length-framed bytes. JSON escaping is only for strings, never a way to smuggle arbitrary file bytes. Require request ID, sequence, `more`, result status and byte counts. Reject malformed/truncated records; preserve already completed records as partial output. On EOF mid-frame, return transport-incomplete and consult operation status. Text enables transcript inspection but adds escaping, parser, encoding and size overhead.
+- **Computation over text:** programs manipulate raw textual records/strings. This is easiest to inspect and rewrite, but text normalization/Unicode and escaping rules become semantics; binary must remain opaque or be encoded; ad hoc shell quoting is unsafe. Transformation determinism requires exact UTF-8, newline and canonicalization rules.
 
-The host already has tools (shell, awk, file utilities). The "portable body" is just a set of scripts that use these tools. No new interpreter needed.
+For both: impose max frame/request/response and chunk bytes; stream large values; do not silently truncate; return explicit `truncated` with continuation token if supported. Keep traces as `(step, input hash/summary, operation ID, result status)` and redact secrets. “Deterministic” applies only to local transformation over recorded inputs, not clocks, process lists or external action completion.
 
-**Evidence for:** Zero new code. Uses existing host capabilities. Maximum portability (every Unix host has shell).
+## 5. Minimum host contract — current canonical boundary
 
-**Evidence against:** Shell is not a semantic core — it's a command dispatcher. Operation identity and recovery would be ad-hoc. Hard to test deterministically.
+[host-contract.md](host-contract.md) owns the current mandatory/optional split. Required behavior: bounded correlated schema and byte completeness; explicit discovery states; host-owned call-time authority; caller-known pre-effect operation identity and declared duplicate policy; truthful partial/error/UNKNOWN outcomes without ambiguous repeat; and limits preserving completed independent results. It gives concrete failure rationale for each.
 
-## Existing Evidence
+Recovery/history/result retention, query service, communication/queues, clocks, concurrency, cancellation, interpreter/VM and encoding are optional unless the selected consumer promises them. No mandatory shell, SSH, network, session ID, grant token, filesystem/process inventory or universal status service follows from this brief.
 
-### Body63603 — Zipapp composition measurement
-- 5 modules, 113,302 B source (excluding `__init__.py`)
-- Zipapp: 115,467 B, 21,504 KiB import RSS
-- No external dependencies beyond Python stdlib
-- Platform-specific: `fcntl` (Linux-only)
+The historical seam refuses reused execution IDs without request digests. The maintained boundary binds content: matching pending intent can be reused, conflicting pending content is rejected, completed allocation/binding raises `AlreadyExecuted`, and `reconcile` reads retained outcomes or UNKNOWN without executing. Low-level completed `dispatch` returns a stored outcome before fresh binding validation; it is not a resend API. Neither policy implies exactly-once, physical delivery or general host restart safety.
 
-### Wake 84 — Runtime cost inventory
-- 113,370 B total source (including 68 B `__init__.py`)
-- Platform surface: `fcntl` + `signal`/`os.killpg` (POSIX-only)
-- Journal: 0 B initial, 324 B after one `allocate()`
-- Zipapp overhead: +1.9% bytes, +15.1% import RSS vs source tree
+The former draft's detailed session/API inventory is preserved in the original brief archive, not normative current guidance. Capability names such as `system.info`, `process.list`, rooted `fs.read`, `fs.write` and `mesh.send` are optional examples; discovery and authority cannot imply availability.
 
-### Wake 65214 — Runtime process-tree measurement
-- 200 bounded dispatches: no RSS growth (34,724 KiB steady-state)
-- Journal: ~940 B/operation (intent 488 + start 119 + outcome 333)
-- Single process, no children spawned
-- Python-only; Windows UNKNOWN
+## 6. Historical semantic strawman (non-normative proposal)
 
-### Wake 65146 — D3 oracle
-- Derived expected `recover`/`reconcile` status replies for canary scenarios
-- Scenarios B/C (crash after effect, before receipt) produce identical durable state
-- Host IDs are structurally unrecoverable today (no field in outcome record)
-- Boundary already handles unknown correctly (no silent re-execution)
+A program is a UTF-8 document containing one ordered list of steps. Values are null, booleans, signed integers, UTF-8 strings, lists, maps with string keys, or opaque bytes. It has no implicit host variables, clock, filesystem, network or process access. The only effects are named `observe` or explicitly granted `act` calls. Each step consumes prior named results. Local operators are a small set: equality, presence test, bounded list/map projection, integer comparison, and conditional branch. No user-defined recursion, floating point, dynamic module loading, or implicit retries in version 0. Steps have a declared maximum count and value/byte budget. Every operator has one deterministic result or structured error. The evaluator emits a trace before/after each step. Unknown/missing values remain tagged unknown; code cannot coerce unknown to false.
 
-## Research Obligations (from charter)
+Example *shape*, not a committed syntax:
 
-1. **Inspect primary specifications and implementation code** — not search snippets alone. Record precise source/version/file references.
-2. **Produce three concrete alternatives** — dispatcher-only, minimal text/record interpreter, existing-machine. Give exact syntax, complete execution rules, and the same worked scenario.
-3. **Separate mandatory host contract from optional features** — justify every mandatory mechanism using required behavior or a concrete failure case.
-4. **Fix operation identity/recovery** — identifier known before effect, lost response, process restart, retained history, honest unknown.
-5. **Define canonical text precisely** — enough for conformance. Handle binary observations without abandoning the all-text boundary.
-6. **Compare deterministic replay** — on identical recorded inputs, not equality of live observations.
+```text
+program v0
+step 1 observe system.info {}
+step 2 observe process.list {limit: 64}
+step 3 observe fs.read {root: "shared", path: "status.txt", max_bytes: 4096}
+step 4 emit {system: result(1), processes: result(2), status: result(3)}
+```
 
-## Three Alternatives (to be developed)
+This strawman is an initial hypothesis, not a committed grammar or executable alternative. The later [common scenario](common-scenario-48020.md) supplies concrete dispatcher/record-DAG/Uxn syntax and fixtures; [ordered rewrite proposal](rewrite-machine-program-20261003.md) remains separate and has no measured compiled core. See the exact decision for frozen-versus-repaired parser distinctions and synthetic-versus-native host boundaries. Host responses remain the source of truth; no caller `observe`/`act` spelling grants authority.
 
-### Alternative 1: Dispatcher-only
+## 7. Portability boundary assessment
 
-The existing dispatcher composition IS the portable body. The host adapter is a thin Python module that:
-- Discovers host capabilities (what Python version, what modules, what OS)
-- Executes effects via the dispatcher
-- Maintains the journal
+| Environment | Upload-and-launch | Firmware/loader integration | Portability note |
+|---|---|---|---|
+| Linux x86_64 / ARM64 | Plausible with matching ELF/ABI, execute permissions and policy; native per-architecture or cross-compiled pair. | Usually not needed for user-space runner; restricted containers may prohibit exec. | Shared source is plausible, one native executable is not implied. Dynamic libc and CPU baseline affect portability. |
+| macOS | Mach-O per architecture or universal x86_64+arm64 binary; signing/quarantine policy may affect launch. Apple documents universal binaries. | App sandbox/device APIs need entitlements and bindings. | Universal binary is one file with multiple slices, not architecture-neutral code. |
+| Windows | PE binary, console process or host service; pipes are documented via process API but require platform adapter. | Service/device drivers or app permissions for deeper capabilities. | No POSIX shell assumed; stdio semantics can be adapted at host boundary. |
+| Android / Termux | Termux offers a userland route if present; generic app installation/exec depends on app sandbox, ABI and permissions. Android NDK packages ABI-specific native code. | Camera/GPS and app permissions typically require Android framework integration; portable process binary alone cannot inherit arbitrary app privileges. | Termux is an optional host, not an Android universal assumption. Validate actual loader/exec constraints on devices. |
+| SBCs | Linux SBCs often resemble Linux case; architecture, libc and storage differ. | GPIO/I2C/SPI access requires board-specific binding/permissions. | Good early embedded target after desktop contract. |
+| ESP32 | A conventional uploaded desktop executable is generally not the model; ESP-IDF component/firmware integration is typical. Espressif publishes WAMR components for ESP32 variants. | Firmware build, loader/runtime integration, flash/RAM, tasking and driver bindings required. | Not a generic per-user upload-and-launch host; Wasm can package computation if the firmware includes a compatible runtime. |
+| SSH host lacking runtimes | A native runner upload may work only if a matching executable/loader/ABI and launch permission already exist. No assumed shell/Python/Go/package manager. | Often impossible without administrator-managed deployment. | Probe arrival prerequisites; do not mistake SSH access for code execution rights. Fallback can be remote orchestration via an existing broker/session. |
+| Shell-less systems | Stdin/stdout may exist in an API but no command line; device APIs may invoke a callback or task. | Usually requires firmware/loader integration. | Model transport interface abstractly; no shell syntax in semantic core. |
+| Minimal/hostile containers | Runner may be unavailable, read-only FS, no network, seccomp restrictions, or tight memory/CPU quotas. | Capability broker must constrain mounts, syscalls and resource budgets. | Unknown/denied is normal. Wasm sandbox is defense in depth, not a substitute for correct runtime configuration or OS isolation.
 
-**Where orchestration executes:** In the Python interpreter on the host. The dispatcher is the orchestration engine.
+**Boundary conclusion (inferred):** port the *contract* everywhere; port a small host adapter per OS family/device framework. Distinguish (a) one portable program and protocol, (b) native executable builds per ABI, (c) universal multi-slice package where supported, and (d) firmware-integrated runtime. “One universal executable” is not a reasonable universal requirement. A native runner with stdin/stdout reduces dependencies only after a loader can start it and a host adapter can map exposed capabilities.
 
-**Portability:** Requires Python 3.12+. Windows needs a platform adapter for `fcntl`/`signal`.
+## 8. Historical two-host observation proposal — this exact plan UNEXECUTED
 
-### Alternative 2: Minimal text/record interpreter
+**Question:** Could one identical program make useful observations on Linux and Windows through a minimal host dispatcher, with measurable platform-specific code? This remains an unexecuted portability proposal, not the current first-experiment gate. Deterministic replay compares identical recorded inputs; live OS values/timestamps/process lists need not match.
 
-A new, small interpreter that:
-- Reads text commands from stdin or a file
-- Parses them into operations (observe, transform, act)
-- Executes them via host calls
-- Returns text observations
-- Maintains a journal for recovery
+**Expose exactly:** `system.info`, `fs.read` (read-only, one explicitly granted fixture root, byte cap), and `process.list` (bounded count; common fields only). No `fs.write`, network, camera, GPS, motors, `mesh.send`, shell escape hatch or arbitrary path.
 
-**Portability:** Could be written in C (<10 KB) or even awk. No Python dependency.
+**Method:** prepare equivalent test fixture and harmless process on both OSes; implement a broker/adapter for each platform and a transport carrying the same UTF-8 line-framed request/replies. Run the identical textual program requesting discovery, system info, one fixture file including a binary fixture through explicit byte framing, and bounded process list. Make no claim yet that stdin/stdout is available on both untouched hosts; the experiment harness may provide transport, but separately inventory host prerequisites and dependencies. Compare values only in shared fields; record OS-native extras rather than normalize them away.
 
-### Alternative 3: Existing machine (shell + coreutils)
+**Record if this plan is selected:** executable bytes by platform (runner, adapter, program separately; compressed/uncompressed); peak RAM for runner, adapter and largest response; input/output bytes and frame counts; platform-specific LOC/modules/syscalls/dependencies; build/run effort; latency; deterministic replay on identical recorded inputs; discovery accuracy; denied/missing/encoding/limit/truncation/termination behavior and native field deltas. The exact two-host plan has no results. Separately executed Linux fixtures are linked above, not evidence that Windows was run.
 
-A set of shell scripts that:
-- Use `awk` for text processing
-- Use `file`, `ps`, `df`, etc. for observation
-- Use `>` and `>>` for transformation
-- Use a simple file-based journal for recovery
+**Pass criteria:** identical program bytes and protocol; each observation either returns comparable data or an explicit named platform distinction; no undiscovered capability used; binary fixture round-trips byte-for-byte; bounds enforced; interrupted observation marked partial/unknown with completed records retained; platform adapter cost fully enumerated. Size/RAM are reported as a curve/table, not forced into an unsubstantiated threshold.
 
-**Portability:** Every Unix host has shell. Maximum portability, minimum code.
+**Later evidence, not a pending first-action prerequisite:** retained authority48965 and native append/process-crash recovery49052 exercise current policy, pre-effect identity, lost outcomes, retained result, missing/corrupt history and deliberate duplicate failure across the shared placements; Witness49099/49230 independently ACCEPT their bounded claims. Generalized47705/histogram47902 test identical recorded-byte transforms and actual EOF-before-work. These are not the complete two-host plan, network delivery, whole-host/power-loss or universal arrival proof.
 
-## Worked Scenario (to be developed for each alternative)
+## 9. Open unknowns and recommendation
 
-**Capability discovery:** Host boots. Portable body starts. What can this host do?
+Unknowns: true smallest useful runner and RAM on each target; whether local program delivery is permitted on typical SSH-only devices; Windows binary/stdio harness effort; exact WASI profile compatibility among selected runtimes; resource limits and support on ESP32 class devices; discovery schemas and permission/grant UX; binary transport choice; long-term maintenance capacity for a custom evaluator; effect of signed binaries and endpoint security; behavior under lost acknowledgments.
 
-**Transformation:** Host has a file. Portable body transforms it. What is the state after?
-
-**Absent capability:** Host lacks a capability. Portable body requests it. What happens?
-
-**Connection loss:** Portable body is disconnected mid-operation. What is the state? What happens on reconnect?
-
-## Next Steps
-
-1. Develop each alternative with exact syntax and execution rules
-2. Give the worked scenario for each
-3. Compare on: size, portability, testability, operation identity, disconnection behavior
-4. Choose the smallest one that works (or reject all three)
-5. Build a bounded prototype of the winner
-6. Test it on this host (Linux) and reason about Windows
-
-## Open Questions
-
-- Is Python 3.12+ a reasonable requirement for the target hosts?
-- Can the dispatcher be made Windows-compatible with a thin platform adapter?
-- Is a text boundary sufficient, or do we need binary observations?
-- What is the minimum journal format that supports recovery?
-- How do we test deterministic replay without a reference implementation?
+**Next decision-relevant work:** characterize the dispatcher composition's actual host/Python/policy/IPC/history dependencies and costs before comparing evaluator footprints as deployments. Begin with a bounded read-only inventory from the retained49052 composition; keep native binary sizes, source bytes, staging, persistent history and process memory separate. Then choose an actual arrival/port experiment on available owned resources. Windows remains UNKNOWN, not a gate on Linux/conformance work. Reopen local-language selection only on changed named consumer/arrival evidence, not another matched filter.

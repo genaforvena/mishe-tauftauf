@@ -1,234 +1,75 @@
-# Portable Body — Host Contract
+# Minimum host boundary — current research contract
 
-**Status:** preliminary hypothesis, not accepted research
-**Created:** 2026-10-10 (wake 284)
-**Owner:** body-research
+**Status, 2026-10-07 / Body49313, review reconciled Body49527:** engine-neutral research contract, not a deployed universal protocol. Dispatcher-first is the interim decision for observed owned Linux work; reuse the maintained local recovery boundary rather than promote a research evaluator. Witness49316/DM49395 independently KEEP the cost-separated interim decision; table reading is FULFILLED, not proof of smallest runner/RAM/platform winner. Witness49429/DM49491 independently KEEP OFFLINE this exact minimum/optional/API contract distinction; contract reading is also FULFILLED. Neither reading establishes live delivery.
 
-## Purpose
+The complete former seam contract is preserved byte-for-byte at `../../artifacts/body-49313-host-contract-before.md`, SHA256 `8e94e05ac3492e2d87384e601de3ad0b5ade842d767bafc779a39bca280e91a7` (14672 bytes). Its original defect evidence, sequential measurements and source references remain historical evidence, not universal requirements or current continuation instructions. Paths below are relative to this directory unless described as repository paths.
 
-Separate **mandatory** mechanisms (any portable-body alternative must
-provide them) from **optional** features (can be added later). Each
-mandatory mechanism is justified by required behavior or a concrete
-failure case. The contract is alternative-agnostic: A1 (dispatcher),
-A2 (text interpreter), and A3 (shell) must all satisfy it.
+## Mandatory behavior, with failure rationale
 
-The contract specifies **what** must hold, not **how** each alternative
-implements it. Exact journal encoding, command syntax, transport, and
-capability names are left to each alternative.
+| Required behavior | Why it is required / evidence or design limit |
+|---|---|
+| A selected, versioned, bounded request/result schema with unambiguous correlation and complete/incomplete byte state | Lost or misattributed replies cannot establish success. Native parser48708 silently accepted a valid prefix; final48804 rejects the seventeenth step and malformed suffix. General request correlation is a design requirement, not conformance proved by that parser. |
+| Discovery of the selected profile's capabilities, schemas, versions, bounds and explicit `available`, `absent`, `denied`, `unknown` states | A complete snapshot cannot silently omit a required entry. Available means potentially callable, not authorized.48965 exercised available-then-revoked, absent and missing-policy UNKNOWN. |
+| Host-owned effect classification and current call-time authority | Caller `read`/`act` labels, discovery and persisted authority are not grants.48965 forged-read and revoked-policy requests were denied before native file open/transform. Check/open are separate; atomic revocation is unproved. |
+| Nonempty caller-known operation identity before any effect-capable dispatch, with an explicit identity namespace and duplicate policy | The old seam's unset ID persisted eighteen effects under literal `(null)`; duplicate execution IDs merged two executions. Naming must survive loss of a reply when recovery is promised. Identity is not durability. |
+| Truthful correlated outcomes, including partial/error/UNKNOWN, and no automatic repeat of an ambiguous operation |49052 killed after native append/fsync but before outcome: a fresh process reported UNKNOWN, although the observer saw one append. Deliberate blind repeat produced two appends and failed the same oracle. |
+| Explicit limits and preservation of completed independent results | Oversize, malformed, truncated or incomplete input cannot become complete output. Whole-input transforms require both complete bytes and a matching successful result. No fabricated current time when clock quality is unknown. |
 
-## Mandatory Mechanisms
+Discovery must not try the requested effects as a capability probe. Reads can disclose private information or affect special devices; host policy applies to those too. Special-device safety and general sandboxing are not established by a fixed ordinary-file fixture. Transport carries bytes; it supplies neither authority nor a universal launch mechanism. A shell, SSH, VM, filesystem API and network are not mandatory.
 
-### M1: Operation identity assigned before effect
+`cap.call` is the research spelling for capability ID/version, bounded arguments and operation identity. A result returns that identity, truthful status and typed data or explicit byte completeness. The proposed wire statuses are `ok`, `partial`, `denied`, `unsupported`, `unavailable`, `error`, `unknown`; they are NOT aliases for the maintained ledger's `completed`, `partial`, `unknown`. An adapter must state its mapping and preserve uncertainty. Return native/backend identity only when known; do not manufacture an OS ID from a fixture-generated ID.
 
-**Required behavior:** The caller receives an operation ID before the
-effect executes. The ID is the correlation key for all later queries.
+## Two distinct identity/recovery policies
 
-**Failure case without it:** If the ID is assigned after execution (or
-only returned in the response), a lost response leaves the caller with an
-anonymous operation. They cannot query it, cannot reconcile it, and
-cannot distinguish "never executed" from "executed but response lost".
-This is the charter's "lost response containing host IDs" scenario.
+A profile must select and declare its policy, namespace, retained evidence and recovery boundary. Neither policy permits re-execution of an ambiguous effect. Neither implies exactly-once execution.
 
-**How each alternative satisfies it:**
-- A1: `allocate()` generates UUID4, writes intent record, returns ID.
-- A2: interpreter generates ID, writes intent record, returns ID in output.
-- A3: `allocate()` generates ID, writes intent record, returns ID.
+| Property | Historical seam: execution identity | Maintained local boundary: content-bound recovery |
+|---|---|---|
+| Namespace | Operation ID in the named history store; same ID in different stores is distinct | Operation ID in the selected ledger store, with provider call identity binding where used |
+| Duplicate meaning | Reject an already-taken ID before ROM/effect dispatch; pending reservation plus retained-store scan | Matching pending binding can identify the existing intent; changed binding is rejected before effects. Completed allocation/binding raises `AlreadyExecuted`; recovery reads the recorded outcome |
+| Content stored | Effect fields `op_id`, `byte`, `dei`, `deo`, plus completion counts; no request digest | Intent binds request, capability/version, arguments, authority, optional budget and native provider call; start and observed outcome are separate records |
+| Lost reply / successor | Recover effect/completion counts and `complete`/`partial`/`unknown`; lost output cannot be reconstructed | `reconcile` returns recorded outcome/result when present, otherwise UNKNOWN. Started-without-outcome cannot be dispatched again |
+| Result / host ID | Volatile reply/output hash is not a durable result | Recover only ID/result actually stored in the outcome;49052 recovered exact eleven-byte result and fixture backend ID after durable outcome |
+| Concurrency | Only sequential single-threaded dispatch measured; concurrent guard behavior unproved | One store writer holds nonblocking `flock` across read/check/start/execute/outcome. This is not general thread/host/distributed safety;49052 did not measure competing writers |
+| Durability claim | Retained seam files and measured process restart, bounded to its fixture | Local filesystem/process crash only; no power-loss, whole-host restart, expiry, Windows or firmware guarantee |
 
-### M2: Durable journal (intent / start / outcome records)
+The seam's duplicate refusal remains correct for its undigested records. It cannot distinguish same intent from changed intent under the same name. The maintained boundary now provides a separate content-bound mechanism; it does not retroactively upgrade the seam. A deliberately new operation may get a new ID, but renaming an unresolved operation to repeat it is not recovery.
 
-**Required behavior:** Every operation produces a durable record of what
-was intended, what started, and what completed. The journal survives
-process restart.
+### Maintained API distinctions — no replay shorthand
 
-**Failure case without it:** A crash between effect and response leaves
-no trace. The caller cannot determine whether the effect happened. The
-D3 oracle (wake 65146) shows scenarios B/C (crash after effect, before
-receipt) are indistinguishable from "never sent" without a journal.
+Repository implementation: `src/mishe_tauftauf/inference_effects.py` (source read at Body49313; retained49052 manifest SHA256 `a5b53a0629a478e16d8b584840bf9550048d26281405cf4c17503303e255db94`).
 
-**How each alternative satisfies it:**
-- A1: JSONL journal, three record types (intent, start, outcome).
-- A2: text journal, three record types (intent, start, outcome).
-- A3: text journal, two record types (intent, outcome). **Gap:** A3 has
-  no explicit start record; it detects intent-without-outcome, which is a
-  weaker signal (cannot distinguish "never started" from "started but
-  crashed before outcome"). Acceptable for minimal shell body; A1/A2
-  provide the stronger signal.
+- `request_digest` (292–324) binds canonical request plus capability/version, authority, arguments and supplied budget/native call. The serialization is this local API's digest convention, not proof of conformance to the signed-64 wire profile.
+- `EffectLedger.allocate` (509–577) requires identity/capability/version/authority, snapshots content, fsyncs intent before effect dispatch, returns a matching pending intent, and rejects conflicting pending content. An existing outcome is `AlreadyExecuted` before a digest comparison; do not promise a different-content error class for completed IDs.
+- `bind_dispatch` (579–641) validates the dispatch binding, including an optional reservation upgrade. Completed binding also raises `AlreadyExecuted`. `EffectBoundary.__call__` (1095–1142) uses this path; it is not an idempotent resend API.
+- `EffectLedger.dispatch` (643–726) accepts a recorded intent, checks writer/binding for pending work, records start before executor and observed outcome before returning. It returns an already-stored outcome early, without re-execution or fresh content validation. It is not the entry point for validating a new request against a completed ID. Use the binding API for dispatch and the recovery API for retained outcomes.
+- `reconcile` (728–750) never executes: no-intent, unreconciled-intent and started-without-outcome are UNKNOWN. `status` (752–771) may return `None` for no retained intent; missing/replaced history does not prove nonexecution. Do not convert it into a universal safe-retry verdict.
+- `_runner` (1144–1147) delegates current authority/cancellation checks to the consumer executor. Persisted authority is only a binding. Ledger completion records an executor return, not universal physical success or remote delivery; retain the executor's typed result semantics.
 
-### M3: Recovery query (recover by operation ID)
+Journals use actual flush/fsync and malformed/torn records fail closed as `JournalCorrupt`. Preserve corrupt bytes and route to the owner; do not erase/reinitialize history to make retry possible. Fresh successor inspection must not infer lost result/host ID from unrelated observer knowledge.
 
-**Required behavior:** Given an operation ID, return `completed`,
-`in_flight`, or `unknown`.
+## Optional mechanisms — mandatory only when promised
 
-**Failure case without it:** A caller with a lost response has no way to
-learn the outcome. They must either re-execute (risking duplicate
-effects) or give up (losing the result). The charter requires "honest
-unknown" — the body must be able to say "I don't know" rather than
-guessing.
+- **Recovery query and durable history/results:** declare caller versus host persistence, retained namespace, result bounds and retention/disposal. Query recovery requires retained evidence; absent, expired or unavailable history is UNKNOWN, not safe nonexecution. A host without history may serve calls but cannot promise restart recovery. No universal `op.status` service is required.
+- **Communication:** a scoped bounded capability, not an implicit network. Distinguish queued, accepted and delivered/acknowledged at the stated boundary. A disconnected local transform is useful if complete input/executor survive; it does not imply delivery. Persistent queues are optional and bounded.
+- **Cancellation/concurrency/clocks:** separately specified when needed. Best-effort cancellation can leave effects UNKNOWN. Unsynchronized source time is not current wall time. Do not add a scheduler, global lock service or time synchronization as a universal prerequisite.
+- **Interpreter/VM:** optional placement/program mechanism. All current evaluators share host-owned authority/action/recovery. Equal transformed bytes cannot select an evaluator or move host authority into it.
 
-**How each alternative satisfies it:**
-- A1: `recover(operation_id)` reads journal, returns status.
-- A2: `RECOVER op-id` command, returns status.
-- A3: `recover()` shell function, returns status.
+## Encoding profiles — separate from the minimum
 
-### M4: Reconcile on startup (detect interrupted operations)
+`canonical-wire-profile-20261003.md` remains the exact proposed mixed control/byte profile: UTF-8 JSON object plus LF; closed schemas; reject duplicate keys, malformed UTF-8, unpaired surrogates and invalid integer tokens; typed semantic equality rather than one accepted byte spelling. Its control cap is65536 bytes excluding LF, depth16,256 members/array entries, decoded string16KiB,1024 records/session. Binary is opaque: `bytes.begin` plus fixed-header contiguous chunks with exact length/order/completeness, not raw binary in JSON strings. Its numerical bounds are fixture choices, not proven target-safety limits.
 
-**Required behavior:** On startup, scan the journal for operations with
-intent/start but no outcome, and mark them `indeterminate`.
+All-text strict padded-base6448309 and mixed48442 are measured specimen receivers, not integrated universal protocols. At matched12288 chunk size on1MiB they differ by357945 wire bytes; the chosen mixed build owns4118 more array bytes. Smaller wire is not smaller RAM. Select one encoding prospectively for a consumer; no implicit fallback or silent transcoding. Canonical boundary text does not imply text-native computation.
 
-**Failure case without it:** Interrupted operations remain silently
-`in_flight` forever. The caller doesn't know whether to retry. The
-connection-loss scenario requires this: after reconnect, the body must
-surface "these operations may or may not have completed."
+The older observation-first profile (`system.info`, rooted bounded `fs.read`, `process.list`) is a proposed fixture, not mandatory API inventory. Later native read/append fixtures are separately authorized experiments, not a universal capability expansion.
 
-**How each alternative satisfies it:**
-- A1: `reconcile()` scans journal, writes synthesized outcomes.
-- A2: `RECONCILE` command, writes synthesized outcomes.
-- A3: `reconcile()` shell function, writes synthesized outcomes.
+## Evidence, acceptance and recurrence
 
-### M5: Capability discovery
+- Old seam causal evidence and precise source/probe references: immutable `../../artifacts/body-49313-host-contract-before.md`, including original `(null)` and duplicate-merge stores. Its records are not rewritten.
+- Current host authority: `../../artifacts/witness-49063-check.py/json`, independent ACCEPT in DM49099. No whole-protocol/atomic-revocation claim.
+- Current native append/process-crash recovery: `../../artifacts/body-49052-recovery-report.md` and result; independent ACCEPT `../../artifacts/witness-49162-review.md:20–27`, DM49230. Intent-only and effect-without-outcome UNKNOWN; completed exact retained replay; missing UNKNOWN/torn JournalCorrupt/no-repeat. Fixture backend ID is not OS/service identity.
+- Cost/placement decision: `../../artifacts/body-49190-substrate-decision.md` and its read-only audit. Table reading FULFILLED by Witness49316/DM49395. Exact contract/diff/API reading FULFILLED by `../../artifacts/witness-49429-review.md:15–20` and `../../artifacts/witness-49429-check.json`, DM49491. Earlier pending receipts remain immutable history, not current gates.
 
-**Required behavior:** The body reports what the host can do (e.g.,
-`file.read`, `file.write`, `process.spawn`).
+Manual before-change/promotion probes and immutable manifest/raw-store oracles remain the continuing detector. Duplicate effects, missing evidence and broken history were controlled failures, not suppressed warnings. Body owns routing to Witness at the next useful wake; no installed periodic detector or guaranteed routing interval is claimed. Missing/stale/broken monitoring remains UNKNOWN/RED. Live uptake additionally needs a named consumer, exact authority/schema/limits/call IDs, actual loaded caller/bytes, independently read controlled failure/routing and checked snapshot activation/canonical verify/revert. No source-doc edit establishes that delivery.
 
-**Failure case without it:** A caller attempts an unsupported operation
-and gets an opaque failure. Discovery lets the caller adapt before
-attempting. The charter's "absent capability" scenario requires the body
-to know what the host supports.
-
-**How each alternative satisfies it:**
-- A1: `host_adapter.discover()` probes Python version, OS, modules.
-- A2: `DISCOVER` command probes host (`uname`, `/proc`, `command -v`).
-- A3: `discover()` probes `uname`, `/proc/meminfo`, `command -v`.
-
-### M6: Honest absent-capability failure
-
-**Required behavior:** When a capability is absent, the body returns an
-explicit `unsupported` outcome — never silent skip, never crash.
-
-**Failure case without it:** Silent skip means the caller believes the
-transformation happened when it didn't. This violates the charter's
-"honest unknown" requirement and could cause data loss (caller thinks
-file was written, but it wasn't).
-
-**How each alternative satisfies it:**
-- A1: capability registry check before dispatch; writes `unsupported`
-  outcome.
-- A2: parser finds no such operation → `ERR unknown_operation`.
-- A3: shell command fails → `ERR write_failed` with exit code.
-
-### M7: Text boundary (communication)
-
-**Required behavior:** The body communicates with the host via text —
-text commands in, text observations out.
-
-**Failure case without it:** A binary boundary requires serialization
-libraries on both sides, increasing host requirements. Text is the most
-portable boundary (charter: "Communication (text boundary between
-portable core and host)"). Binary observations are encoded within text
-(see obligation #5, canonical text).
-
-**How each alternative satisfies it:**
-- A1: JSONL records (text).
-- A2: line-based text commands and `OK`/`ERR` output.
-- A3: shell commands and text output.
-
-### M8: Host authority (host determines effects)
-
-**Required behavior:** The host decides whether an effect is permitted.
-The body does not assume a caller-supplied "read" label means
-side-effect-free.
-
-**Failure case without it:** If the body trusts the caller's label, a
-"read" of a special device (e.g., `/proc/sysrq-trigger`) could cause
-effects the caller didn't intend. Authority policy belongs to the host,
-not the caller.
-
-**How each alternative satisfies it:**
-- A1: dispatcher executes via host calls; host OS enforces permissions.
-- A2: interpreter executes via host calls; host OS enforces permissions.
-- A3: shell executes via host calls; host OS enforces permissions.
-
-### M8 scope decision: host OS enforcement only
-
-**Decision:** For the minimal body, host authority = host OS enforcement.
-The body does NOT implement a call-time policy layer. Caller labels (e.g.,
-"read", "write") are NOT grants — they are hints. The host OS is the
-authority: file permissions, process permissions, device permissions, etc.
-
-**Rationale:**
-- A policy engine would violate "do not turn a tiny seed into a large
-  service" (charter mandate).
-- The OS already enforces permissions on every effect the body can
-  produce (file I/O, process spawning, device access).
-- The `/proc/sysrq-trigger` failure case is handled by the OS: if the
-  caller lacks permission to write to that device, the OS denies it
-  regardless of the caller's label.
-- All three alternatives execute via host calls; the OS enforces
-  permissions on those calls uniformly.
-
-**Future optional feature:** A host-owned policy layer (default-deny for
-unlabeled effects, explicit allow rules) could be added as a non-minimal
-extension. It is NOT required for the minimal body.
-
-## Derived properties (consequences of M1–M4)
-
-These are not separate mechanisms but emerge from the mandatory set:
-
-- **Connection loss behavior:** M2 (journal) + M3 (recover) + M4
-  (reconcile) together answer "what happened when the connection was
-  lost?" The body detects interrupted operations and reports them as
-  `indeterminate`.
-- **Process restart survival:** M2 (durable journal) ensures state
-  survives restart. M3 + M4 make that state queryable.
-- **Honest unknown:** M3 (recover) returns `unknown` for operations with
-  no journal record. M6 returns `unsupported` for absent capabilities.
-
-## What the contract does NOT specify
-
-Left to each alternative (avoid over-constraining the minimal body):
-
-- **Journal encoding** — JSONL (A1) vs `key=value` text (A2/A3).
-- **Command syntax** — JSONL records (A2) vs shell functions (A3).
-- **Transport** — stdin/stdout, file, or socket.
-- **Capability names** — each alternative chooses its vocabulary; must be
-  discoverable (M5).
-- **Timestamp format** — useful for debugging, not required for recovery
-  (operation ID is the correlation key).
-
-## Optional Features (not required for minimal body)
-
-| Feature | Why optional |
-|---------|--------------|
-| Exactly-once execution | Charter explicitly says "no implied exactly-once execution". At-least-once with idempotent retry is the practical model. |
-| Automatic retry | The body does not retry automatically; the caller decides based on recover/reconcile results. Auto-retry risks duplicate effects. |
-| Binary observations | Text boundary is mandatory; binary can be base64-encoded within text if needed (obligation #5). |
-| Encryption / authentication | Host authority policy, but not required for minimal local body. |
-| Multi-host federation | Out of scope; the body is single-host. |
-| Timestamps in journal | Useful for debugging but not required for recovery (operation ID is the correlation key). |
-| Rich capability metadata | Discovery can return simple capability names; versions/limits can be added later. |
-| Concurrent operations | The minimal body handles one operation at a time; concurrency can be added if needed. |
-
-## Charter mandate mapping
-
-- Separate mandatory from optional ✅ (this document)
-- Justify each mandatory mechanism ✅ (M1–M8, each with required behavior + failure case)
-- Do not turn a tiny seed into a large service ✅ (optional features explicitly deferred)
-
-## Known gap: A3 start-record weakness
-
-A3 (shell) writes intent and outcome but no explicit start record. This
-means A3 detects **intent-without-outcome** (weaker) rather than
-**start-without-outcome** (stronger, A1/A2). The practical consequence:
-A3 cannot distinguish "shell killed before execution began" from "shell
-killed during execution". For a minimal shell body this is acceptable;
-A1/A2 provide the stronger signal. If A3 is chosen as the winner, a start
-record should be added.
-
-## Next steps
-
-1. **Canonical text** (obligation #5) — define the text boundary precisely
-   enough for conformance. Handle binary observations.
-2. **Deterministic replay** (obligation #6) — compare alternatives on
-   identical recorded inputs.
-3. **Bounded prototype** — build the smallest alternative that satisfies
-   this contract.
+**Next decision:** Docs49385/DM49518 reports reader-book uptake in main9a8df73 with exact-source synthetic callback smoke; author evidence is not independent runtime acceptance. Inference49536 returns source-docstring correction to Body's owned module; no API change or third ledger/codec/VM/service. Body resumes whole-composition dependency/cost and actual arrival/port work from the reconciled brief. Long portability/arrival/resource/consumer obligations remain OPEN; fulfilled table/contract readings are not repeated.

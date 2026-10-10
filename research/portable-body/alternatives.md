@@ -1,535 +1,175 @@
-# Portable Body — Three Alternatives
+# Three portable-body alternatives — fully specified
 
-**Status:** preliminary hypothesis, not accepted research
-**Created:** 2026-10-10 (wake 223)
-**Owner:** body-research
+Status: design specifications, not implemented or measured. Each alternative
+gives exact syntax, complete execution rules, portability analysis, and the
+same four-scenario walkthrough. The shared fixture trace
+(`shared-fixture-trace-20261003.md`) provides the concrete wire examples.
 
-Each alternative gives: exact syntax, complete execution rules, portability,
-and the same four-scenario walkthrough (capability discovery, transformation,
-absent capability, connection loss).
+## A1: Dispatcher-only (H1)
 
----
+**Core idea:** The existing Python composition IS the body. Orchestration
+executes in CPython; the portable side is a thin dispatch/receive boundary.
 
-## Shared Scenario
+### Syntax
 
-All three alternatives must handle these four situations:
+JSONL intent/start/outcome records. Each record is one JSON object + LF.
+Operation identity is caller-assigned before effect dispatch.
 
-1. **Capability discovery** — Host boots. Body starts. What can this host do?
-2. **Transformation** — Host has a file. Body transforms it. What is the state after?
-3. **Absent capability** — Host lacks a capability. Body requests it. What happens?
-4. **Connection loss** — Body disconnected mid-operation. What is the state? What happens on reconnect?
-
----
-
-## Alternative 1: Dispatcher-only (H1)
-
-### Core claim
-
-The existing dispatcher composition (5 Python modules, 113,370 B source,
-115,467 B zipapp) IS the portable body. The host adapter is a thin Python
-module that discovers capabilities, executes effects, and maintains the journal.
-
-### Where orchestration executes
-
-In the CPython interpreter on the host. The dispatcher is the orchestration
-engine. There is no separate "interpreter" — Python's runtime IS the
-interpreter.
-
-### Syntax: intent/start/outcome records
-
-Operations are journaled as three record types. Each record is one JSON object
-on one line (JSONL).
-
-**Intent record** (written before execution):
-
-```json
-{"type":"intent","operation_id":"op-001","writer_id":"body-001",
- "host_id":"host-mesh-01","capability":"file.write",
- "request":{"path":"/tmp/target.txt","content":"hello"},
- "timestamp":"2026-10-10T12:00:00Z"}
-```
-
-The `host_id` field is optional. If present, it identifies the host that
-will execute the operation. This allows recovery to correlate operations
-with hosts even if the process crashes before the start record is written.
-
-**Start record** (written when execution begins):
-
-```json
-{"type":"start","operation_id":"op-001","host_id":"host-mesh-01",
- "pid":12345,"timestamp":"2026-10-10T12:00:01Z"}
-```
-
-**Outcome record** (written after execution completes):
-
-```json
-{"type":"outcome","operation_id":"op-001","status":"completed",
- "result":{"bytes_written":5},"timestamp":"2026-10-10T12:00:01Z"}
+```jsonl
+{"type":"intent","operation_id":"o1","capability":"fs.read","request":{"path":"x"},"writer_id":"<id>","host_id":"<id>","timestamp":"<ts>"}
+{"type":"outcome","operation_id":"o1","capability":"fs.read","request":{"path":"x"},"writer_id":"<id>","host_id":"<id>","timestamp":"<ts>","status":"completed","result":...}
 ```
 
 ### Execution rules
 
-1. **allocate()** — generates `operation_id` (UUID4), writes intent record,
-   returns the ID to the caller.
-2. **dispatch(operation_id)** — reads intent from journal, writes start record,
-   executes the capability, writes outcome record. If the process crashes
-   between start and outcome, the journal has a start without a matching
-   outcome.
-3. **recover(operation_id)** — reads the journal for this operation_id.
-   Returns: `completed` (outcome record present), `in_flight` (start present,
-   no outcome), `unknown` (no intent record).
-4. **reconcile()** — scans the journal for start records with no matching
-   outcome. For each, determines whether the effect actually happened
-   (host-dependent) and either writes a synthesized outcome or marks the
-   operation `indeterminate`.
-
-### Host adapter
-
-A thin Python module (`host_adapter.py`, ~200 B) that:
-
-```python
-import sys, platform
-
-def discover():
-    return {
-        "python": sys.version_info[:3],
-        "os": platform.system(),
-        "capabilities": ["file.read", "file.write", "file.list",
-                         "process.spawn", "process.kill", "net.connect"],
-        "posix": hasattr(sys, "posix") or sys.platform == "linux"
-    }
-```
-
-On Windows, `fcntl`/`signal`/`os.killpg` calls are replaced with
-`msvcrt`/`ctypes` equivalents or gated behind `if platform.system() == "Linux"`.
+1. Caller assigns operation ID before any effect-capable dispatch.
+2. Intent record written to durable journal (fsync) before effect.
+3. Effect dispatched to host adapter (platform-specific).
+4. Outcome record written after effect completes.
+5. Lost reply: query by operation ID; journal shows intent-without-outcome.
+6. Recovery: intent-without-outcome is UNKNOWN; no automatic retry.
 
 ### Portability
 
-- **Windows:** feasible with thin platform adapter (~500-600 B). `fcntl.flock` →
-  `msvcrt.locking` (mandatory byte-range lock; acceptable for single-writer
-  coordination). `os.killpg` → `taskkill /T /F` (process-tree kill). Reasoning
-  artifact: `artifacts/body-wake779-windows-portability.md` (wake 779). Untested
-  on Windows (no host available). Real portability floor is Python 3.12+ (~30 MB
-  installed), not the POSIX surface.
-- **Minimal hosts:** requires Python 3.12+ (~30 MB installed). NOT suitable
-  for embedded or minimal hosts.
+- Source: 113,370 B Python (measured at HEAD `afee8d6`)
+- Zipapp: 115,467 B single executable
+- Import RSS: 21,504 KiB
+- Platform surface: POSIX-only (fcntl, signal, os.killpg)
+- Windows adapter: required but not built
+- Dependencies: Python 3.12+, stdlib only
 
-### Worked scenario
+### Four-scenario walkthrough
 
-**1. Capability discovery:** Host boots → Python starts → dispatcher imports
-→ `host_adapter.discover()` returns `{python: (3,12,0), os: "Linux",
-capabilities: [...6 items...], posix: true}` → dispatcher stores this as a
-`capability_record` in the journal. ✅ Works today.
+1. **Capability discovery:** caller emits `cap.list`; host replies with
+   available capabilities. Snapshot is not authority.
+2. **Transformation:** caller reads file, applies deterministic filter,
+   sends result. All transforms execute in the broker/coordinator.
+3. **Absent capability:** host replies `unsupported`; caller stops, preserves
+   prior complete results.
+4. **Connection loss:** caller loses reply, reconnects, queries by operation
+   ID. Journal shows intent-without-outcome → UNKNOWN.
 
-**2. Transformation:** Caller invokes `allocate("file.write", {path: "/tmp/t",
-content: "hello"})` → intent `op-001` written → `dispatch("op-001")` writes
-start, calls `open("/tmp/t","w").write("hello")`, writes outcome → file exists
-with content "hello". ✅ Works today (measured in wake 84).
+## A2: Minimal text/record interpreter (H2)
 
-**3. Absent capability:** Caller invokes `allocate("gpu.compute", {...})` →
-dispatcher checks capability registry → `gpu.compute` not in capabilities →
-writes outcome `status="unsupported", error="capability not available"` →
-no start record. ✅ Works today.
+**Core idea:** A small evaluator over a canonical text format performs
+deterministic filtering, branching, sequencing and trace updates. All world
+access remains named host calls.
 
-**4. Connection loss:** `dispatch("op-002")` writes start, process crashes
-before outcome → on restart, `reconcile()` finds start-without-outcome →
-checks if effect happened (for `file.write`, checks file existence/content)
-→ writes synthesized outcome `status="indeterminate"` → caller knows the
-operation may or may not have completed. ✅ Works today (D3 oracle, wake 65146).
+### Syntax
 
-### Size and cost
-
-| Metric | Value | Source |
-|--------|-------|--------|
-| Source | 113,370 B | wake 84 |
-| Zipapp | 115,467 B | Body63603 |
-| Import RSS | 21,504 KiB | Body63603 |
-| Runtime RSS | ~33.9 MiB | wake 65214 |
-| Journal/op | ~940 B | wake 65214 |
-| Platform surface | `fcntl` + `signal`/`os.killpg` | wake 84 |
-
----
-
-## Alternative 2: Minimal text/record interpreter (H2)
-
-### Core claim
-
-A small, self-contained interpreter that reads line-based text commands from
-stdin or a file, executes them via host calls, and returns text observations.
-The journal is an append-only text log. The interpreter can be written in C
-(<10 KB) or even awk (~2 KB of awk). No Python dependency.
-
-### Syntax: line-based commands
-
-Each command is one line. Fields are separated by single spaces. The first
-field is the operation. Arguments are positional.
+Line-based text commands. One command per line, LF-terminated.
 
 ```
-# Comments start with #
-# Operation format: OP ARG1 ARG2 ...
-
-# Discovery
-DISCOVER                          # returns host capabilities
-
-# Observation
-READ_FILE /path/to/file           # returns file content
-LIST_DIR /path/to/dir             # returns directory entries
-READ_PROC /proc/meminfo           # returns system info
-
-# Transformation
-WRITE_FILE /path/to/file content  # writes content to file (append mode)
-APPEND_FILE /path/to/file content # appends content to file
-DELETE_FILE /path/to/file         # removes file
-
-# Process
-SPAWN sleep 10                    # spawns a background process
-KILL 12345                        # kills a process by PID
-
-# Recovery
-RECOVER op-001                    # returns status of operation
-RECONCILE                         # scans for incomplete operations
-
-# Control
-PING                              # returns "PONG"
-QUIT                              # exits interpreter
+DISCOVER
+READ_FILE <path> <max_bytes>
+WRITE_FILE <path> <content>
+RECOVER <operation_id>
+RECONCILE
 ```
 
-### Output format
-
-Each command produces exactly one output line:
-
-```
-OK <result>                       # success
-ERR <reason>                      # failure
-UNKNOWN <operation_id>            # operation not found in journal
-```
-
-Examples:
-
-```
-$ echo "DISCOVER" | ./body
-OK python=3.12.0 os=Linux capabilities=file.read,file.write,file.list,process.spawn,process.kill posix=true
-
-$ echo "WRITE_FILE /tmp/hello.txt hello" | ./body
-OK bytes_written=5 operation_id=op-001
-
-$ echo "READ_FILE /tmp/hello.txt" | ./body
-OK content=hello
-```
-
-### Journal format
-
-Append-only text file, one record per line. Same intent/start/outcome
-structure as Alternative 1, but in a simpler text encoding (not JSON):
-
-```
-intent op-001 file.write host=host-mesh-01 path=/tmp/hello.txt content=hello ts=2026-10-10T12:00:00Z
-start op-001 host=local pid=12345 ts=2026-10-10T12:00:01Z
-outcome op-001 status=completed result.bytes_written=5 ts=2026-10-10T12:00:01Z
-```
-
-The journal is a plain text file with `key=value` pairs. No JSON parsing
-needed. The interpreter reads it line-by-line for recovery.
+Values are JSON-like: null, booleans, integers, strings, lists, maps with
+string keys, or opaque bytes. No implicit host variables, clock, filesystem,
+network or process access.
 
 ### Execution rules
 
-1. **Read command** from stdin or file.
-2. **Parse** first field as operation name.
-3. **Validate** arguments (count and type).
-4. **Check capability** — is this operation supported on this host?
-5. **Write intent** record to journal.
-6. **Write start** record to journal.
-7. **Execute** the host call (e.g., `open("/tmp/hello.txt","w")`).
-8. **Write outcome** record to journal.
-9. **Print** `OK`/`ERR`/`UNKNOWN` to stdout.
-10. **If crashed between 5-8:** journal has intent and/or start without
-    outcome. On next invocation, `RECONCILE` detects this.
-
-### Recovery
-
-```
-$ echo "RECOVER op-001" | ./body
-OK status=completed result.bytes_written=5
-
-$ echo "RECOVER op-002" | ./body
-OK status=in_flight start=present outcome=absent
-
-$ echo "RECOVER op-999" | ./body
-UNKNOWN op-999
-```
-
-`RECONCILE` scans the journal for all `start` records without a matching
-`outcome`. For each, it checks whether the effect happened (e.g., for
-`WRITE_FILE`, checks if the file exists) and writes a synthesized outcome:
-
-```
-outcome op-002 status=indeterminate reason=process_died_before_outcome
-```
+1. Program is a UTF-8 document containing one ordered list of steps.
+2. Each step consumes prior named results.
+3. Local operators: equality, presence test, bounded list/map projection,
+   integer comparison, conditional branch.
+4. No user-defined recursion, floating point, dynamic module loading, or
+   implicit retries.
+5. Steps have a declared maximum count and value/byte budget.
+6. Every operator has one deterministic result or structured error.
+7. The evaluator emits a trace before/after each step.
+8. All effects are named `observe` or explicitly granted `act` calls.
 
 ### Portability
 
-- **C version:** compiles on any host with a C compiler. POSIX-only (uses
-  `open`/`read`/`write`/`fork`/`exec`). ~200 lines of C, <10 KB binary.
-  No external libraries.
-- **awk version:** runs on any Unix host with awk. ~80 lines of awk,
-  ~2 KB. Uses awk's `getline`, `system()`, and file I/O. No Python, no C
-  compiler needed.
-- **Windows:** neither C nor awk version works natively. Would need a
-  Windows port (different process/file APIs) or WSL.
-- **Minimal hosts:** awk version runs on busybox systems, routers, embedded
-  Linux. C version runs anywhere with gcc/clang.
+- Custom C interpreter: <10 KB (estimated, not measured)
+- Alternative: awk (~2 KB) for bounded transforms
+- No shell required after launch
+- One runner binary per OS/ABI
+- RAM bounded by explicit values and streams
 
-### Worked scenario
+### Four-scenario walkthrough
 
-**1. Capability discovery:** Host boots → interpreter starts → reads `DISCOVER`
-command → probes host (`uname -a`, `test -d /proc`, `which fork`) → returns
-`OK os=Linux capabilities=file.read,file.write,file.list,process.spawn
-posix=true`. ✅
+1. **Capability discovery:** `DISCOVER` command; host replies with available
+   capabilities as a JSON value.
+2. **Transformation:** `READ_FILE` returns bytes; local filter step transforms;
+   result is named and available to subsequent steps.
+3. **Absent capability:** host returns `unsupported` error; evaluator branches
+   to error handling step.
+4. **Connection loss:** evaluator state is lost; reconnect and issue
+   `RECOVER <operation_id>`; journal shows intent-without-outcome → UNKNOWN.
 
-**2. Transformation:** `WRITE_FILE /tmp/hello.txt hello` → write intent →
-write start → `open("/tmp/hello.txt","w").write("hello")` → write outcome →
-print `OK bytes_written=5 operation_id=op-001`. ✅
+## A3: Existing machine (H3) — shell
 
-**3. Absent capability:** `GPU_COMPUTE` → parser finds no such operation →
-print `ERR unknown_operation`. If operation is known but not supported:
-`WRITE_FILE /proc/protected/file x` → `open()` returns EACCES → print
-`ERR permission_denied`. ✅
+**Core idea:** Shell scripts using coreutils. Orchestration in bash/sh.
+Journal is an append-only text file.
 
-**4. Connection loss:** `WRITE_FILE /tmp/hello.txt hello` → intent + start
-written → process killed before outcome → on restart, `RECOVER op-001` →
-`OK status=in_flight` → `RECONCILE` → checks if `/tmp/hello.txt` exists →
-writes `outcome op-001 status=indeterminate`. ✅
+### Syntax
 
-### Size and cost
-
-| Metric | C version | awk version |
-|--------|-----------|-------------|
-| Source | ~200 lines | ~80 lines |
-| Binary/script | <10 KB | ~2 KB |
-| Runtime RSS | ~1 MB | ~2 MB |
-| Journal/op | ~200 B (text) | ~200 B (text) |
-| External deps | libc | awk |
-| POSIX-only | yes | yes |
-| Windows | no | no |
-
----
-
-## Alternative 3: Existing machine — shell + coreutils (H3)
-
-### Core claim
-
-The host already has tools (shell, awk, file utilities, ps, df). The "portable
-body" is a set of shell scripts that use these tools. No new interpreter needed.
-The journal is a plain text file appended with `>>`.
-
-### Syntax: shell commands
-
-Commands are standard shell. The body is a set of shell functions:
+Shell commands with key=value journal records.
 
 ```bash
-#!/bin/bash
-# body.sh — portable body using existing host tools
+# Intent
+echo "op=o1 cap=fs.read args={\"path\":\"x\"} status=intent" >> journal.log
 
-JOURNAL="/tmp/body.journal"
+# Effect
+cat "x" > /tmp/result
 
-discover() {
-    echo "OK os=$(uname -s) capabilities=$(detect_capabilities) posix=true"
-}
-
-detect_capabilities() {
-    local caps=""
-    [ -r /proc/meminfo ] && caps="${caps},proc.read"
-    [ -w /tmp ] && caps="${caps},file.write"
-    command -v awk >/dev/null && caps="${caps},awk"
-    command -v ps >/dev/null && caps="${caps},process.list"
-    echo "${caps#,}"
-}
-
-read_file() {
-    local path="$1"
-    operation_id=$(allocate "file.read" "path=$path")
-    if cat "$path" 2>/dev/null; then
-        outcome "$operation_id" "completed" "exit=0"
-        echo "OK content=$(cat "$path")"
-    else
-        outcome "$operation_id" "failed" "exit=$?"
-        echo "ERR file_not_found path=$path"
-    fi
-}
-
-write_file() {
-    local path="$1" content="$2"
-    local operation_id=$(allocate "file.write" "path=$path content=$content")
-    echo "$content" >> "$path" 2>/dev/null
-    local rc=$?
-    if [ $rc -eq 0 ]; then
-        outcome "$operation_id" "completed" "bytes_written=${#content}"
-        echo "OK bytes_written=${#content} operation_id=$operation_id"
-    else
-        outcome "$operation_id" "failed" "exit=$rc"
-        echo "ERR write_failed path=$path exit=$rc"
-    fi
-}
-
-allocate() {
-    local capability="$1" request="$2"
-    local op_id="op-$(date +%s%N | md5sum | head -c 8)"
-    echo "intent $op_id $capability host=local $request ts=$(date -Iseconds)" >> "$JOURNAL"
-    echo "$op_id"
-}
-
-outcome() {
-    local op_id="$1" status="$2" result="$3"
-    echo "outcome $op_id $status $result ts=$(date -Iseconds)" >> "$JOURNAL"
-}
-
-recover() {
-    local op_id="$1"
-    local has_intent=$(grep -c "^intent $op_id " "$JOURNAL" 2>/dev/null || echo 0)
-    local has_outcome=$(grep -c "^outcome $op_id " "$JOURNAL" 2>/dev/null || echo 0)
-    if [ "$has_intent" -eq 0 ]; then
-        echo "UNKNOWN $op_id"
-    elif [ "$has_outcome" -gt 0 ]; then
-        echo "OK status=completed $(grep "^outcome $op_id " "$JOURNAL")"
-    else
-        echo "OK status=in_flight"
-    fi
-}
-
-reconcile() {
-    # Find all operations with intent but no outcome
-    grep "^intent " "$JOURNAL" 2>/dev/null | while read -r _ op_id _rest; do
-        if ! grep -q "^outcome $op_id " "$JOURNAL" 2>/dev/null; then
-            echo "outcome $op_id status=indeterminate reason=no_outcome_record" >> "$JOURNAL"
-        fi
-    done
-    echo "OK reconciled"
-}
-
-"$@"
+# Outcome
+echo "op=o1 status=ok result=$(wc -c < /tmp/result)" >> journal.log
 ```
+
+### Execution rules
+
+1. Each operation gets a unique ID (timestamp + counter or UUID).
+2. Intent appended to journal before effect.
+3. Effect executed via shell command.
+4. Outcome appended after effect completes.
+5. Lost reply: grep journal for operation ID; intent-without-outcome.
+6. Recovery: intent-without-outcome is UNKNOWN; no automatic retry.
 
 ### Portability
 
-- **Linux/Unix:** works everywhere bash exists. Uses only coreutils
-  (`cat`, `echo`, `grep`, `date`, `md5sum`). Available on every Unix system.
-- **Windows:** does NOT work natively. Would need Git Bash, Cygwin, or WSL.
-- **Minimal hosts:** works on busybox systems (ash shell, coreutils).
-  Can be rewritten in POSIX sh for even wider compatibility.
-- **Dependencies:** bash (or sh), coreutils. No Python, no C compiler.
+- ~100 lines shell, ~3 KB
+- Requires POSIX shell + coreutils
+- busybox-compatible
+- Journal: append-only text file, no locking (single-writer assumed)
 
-### Worked scenario
+### Four-scenario walkthrough
 
-**1. Capability discovery:** Host boots → `bash body.sh discover` → probes
-`uname`, `/proc/meminfo`, `command -v awk`, `command -v ps` → returns
-`OK os=LINUX capabilities=file.write,awk,process.list posix=true`. ✅
+1. **Capability discovery:** source a capabilities file; grep for available
+   capabilities.
+2. **Transformation:** `cat file | awk '{...}'` for filtering.
+3. **Absent capability:** grep returns no match; script exits with error.
+4. **Connection loss:** grep journal for operation ID; intent-without-outcome
+   → UNKNOWN.
 
-**2. Transformation:** `bash body.sh write_file /tmp/hello.txt hello` →
-allocate writes intent → `echo "hello" >> /tmp/hello.txt` → outcome writes
-result → prints `OK bytes_written=5 operation_id=op-abc123`. ✅
+## Comparison table
 
-**3. Absent capability:** `bash body.sh write_file /proc/protected x` →
-`echo >> /proc/protected` fails → outcome `failed exit=1` → prints
-`ERR write_failed path=/proc/protected exit=1`. ✅
+| Property | A1 (Dispatcher) | A2 (Interpreter) | A3 (Shell) |
+|---|---|---|---|
+| Orchestration | CPython | Custom C / awk | bash/sh |
+| Size | 113 KB source | <10 KB C / ~2 KB awk | ~3 KB shell |
+| Portability floor | Python 3.12+ | C compiler or awk | POSIX shell + coreutils |
+| Operation identity | JSONL record | Line-based command | key=value journal |
+| Recovery | Query by op ID | RECOVER command | grep journal |
+| Testability | High (Python asserts) | Medium (custom parser) | Low (shell quoting) |
+| Windows adapter | Required | Required | Required |
+| Offline transforms | Yes (in broker) | Yes (local evaluator) | Limited (shell) |
+| Deterministic replay | Yes (pure Python) | Yes (pure functions) | Yes (pure shell) |
 
-**4. Connection loss:** `write_file` writes intent → shell killed before
-outcome → on restart, `recover op-abc123` → `OK status=in_flight` →
-`reconcile` writes `outcome op-abc123 status=indeterminate`. ✅
+## Shared fixture trace mapping
 
-### Host authority
+All three alternatives consume the same fixture
+(`shared-fixture-trace-20261003.md`):
 
-A3 authority = host OS enforcement only. No call-time policy layer. Caller
-labels are not grants. The shell does not second-guess the host OS — if
-the OS denies an effect (file permissions, device access, process
-permissions), the body reports the failure. See host-contract.md M8 scope
-decision.
+- Session `s7`, read operation `o9`, send operation `o10`
+- Fixture: `alpha\n\nbeta\n` (12 bytes) → filter → `alpha\nbeta\n` (11 bytes)
+- Streams: read=0x01 (12 B), send=0x02 (11 B)
 
-### Known limitations
-
-- **Double-execution risk:** `execute()` does not check for existing outcomes.
-  A caller that re-runs `execute()` with the same op_id after a crash will
-  double-execute the effect. The caller must use `recover`/`reconcile` before
-  re-trying. Consistent with host-contract.md "no implied exactly-once
-  execution". Verified by wake-1467 action-ambiguity experiment (18/18 pass).
-
-### Size and cost
-
-| Metric | Value |
-|--------|-------|
-| Source | ~100 lines shell |
-| Binary/script | ~3 KB |
-| Runtime RSS | ~5 MB (shell + coreutils) |
-| Journal/op | ~100 B (text) |
-| External deps | bash, coreutils |
-| POSIX-only | yes |
-| Windows | no (needs Git Bash/Cygwin/WSL) |
-
----
-
-## Comparison
-
-| Dimension | A1: Dispatcher | A2: Interpreter | A3: Shell |
-|-----------|---------------|-----------------|-----------|
-| Source size | 113,370 B | 200 lines C / 80 lines awk | ~100 lines shell |
-| Runtime RSS | 21,504 KiB import / 33.9 MiB steady | ~1-2 MB | ~5 MB |
-| Journal/op | ~940 B (JSON) | ~200 B (text) | ~100 B (text) |
-| Operation identity | ✅ UUID4 | ✅ generated | ✅ generated |
-| Recovery | ✅ recover/reconcile | ✅ recover/reconcile | ✅ recover/reconcile |
-| Disconnection | ✅ start-without-outcome | ✅ start-without-outcome | ✅ intent-without-outcome |
-| Capability discovery | ✅ | ✅ | ✅ |
-| Absent capability | ✅ | ✅ | ✅ |
-| Linux portability | ✅ measured | ✅ (C or awk) | ✅ (bash) |
-| Windows portability | ⚠️ needs adapter | ⚠️ needs port | ⚠️ needs Git Bash |
-| Minimal host | ❌ needs Python 3.12+ | ✅ awk on busybox | ✅ sh on busybox |
-| Testability | ✅ Python test suite | ⚠️ need C/awk tests | ⚠️ shell tests |
-| Existing evidence | ✅ 4 measurement artifacts | ❌ no prototype | ❌ no prototype |
-| Semantic core | Python language | custom text protocol | shell language |
-| Readability | moderate (Python) | high (simple protocol) | high (shell) |
-
-## Key differences
-
-1. **Where orchestration executes:** A1 in CPython, A2 in a custom C/awk
-   interpreter, A3 in the shell. A1 is the only one where the "interpreter"
-   is a full language runtime.
-
-2. **Operation identity:** All three use generated IDs. A1 uses UUID4 (Python
-   `uuid` module). A2/A3 use timestamp-based IDs. The ID is written BEFORE
-   the effect, so it's always known to the caller even if the response is
-   lost.
-
-3. **Recovery:** A1 and A2 have explicit `recover`/`reconcile` commands.
-   A3 implements them as shell functions. All three can detect
-   start/intent-without-outcome.
-
-4. **Size tradeoff:** A1 is 113 KB Python. A2 is <10 KB C or ~2 KB awk.
-   A3 is ~3 KB shell. A2 and A3 are smaller but require reimplementing
-   operation identity, journaling, and recovery — which A1 already provides.
-
-5. **Portability floor:** A1 requires Python 3.12+ (~30 MB). A2/awk and A3/sh
-   run on busybox systems (<1 MB). A3 has the widest Unix compatibility.
-
-## Open questions for each
-
-**A1:** Can the dispatcher be made Windows-compatible with a thin adapter?
-Is Python 3.12+ a reasonable requirement for target hosts?
-
-**A2:** Is the text protocol sufficient for all observations? How to handle
-binary observations? What is the exact C implementation?
-
-**A3:** Is shell a semantic core or just a command dispatcher? How to test
-deterministically? Can operation identity survive shell edge cases (quoting,
-escaping)?
-
-## Charter mandate
-
-- Give exact syntax and complete execution rules ✅ (above)
-- Give the same worked scenario ✅ (above)
-- Separate mandatory host contract from optional features — **not yet done**
-- Justify every mandatory mechanism using required behavior or concrete failure
-  case — **not yet done**
-- Define canonical text precisely enough for conformance — **not yet done**
-- Compare deterministic replay on identical recorded inputs — **not yet done**
-
-The next step is to develop the **host contract**: which mechanisms are
-mandatory (must be present in any alternative) vs optional (can be added
-later), justified by concrete failure cases.
+Each alternative produces the same observable branch outcomes; only
+executor/state ownership differs.

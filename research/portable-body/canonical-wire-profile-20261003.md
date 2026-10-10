@@ -1,185 +1,25 @@
-# Canonical Wire Profile — Portable Body Text Boundary
+# Canonical boundary text and opaque observations — 2026-10-03
 
-**Status:** preliminary hypothesis, not accepted research
-**Created:** 2026-10-03 (wake 315)
-**Updated:** 2026-10-10 (wake 576) — added optional `host_id` to intent records
-**Owner:** body-research
+Status: proposed conformance profile, not implemented or measured. This narrows the JSONL shorthand in `progress.md` lines 81–83; it does not settle whether text-native computation is preferable.
 
-## Purpose
+## Control record bytes
 
-Define the text boundary between the portable core and the host precisely
-enough for conformance testing. This is the canonical profile that all
-alternatives must satisfy.
+A control record is exactly one JSON object encoded as strict UTF-8, followed by one LF byte (`0x0a`). The LF is framing and is not part of the JSON text. EOF before LF is an incomplete record, not a record to parse. Reject an initial UTF-8 BOM, any raw CR byte (`0x0d`) anywhere in a record (including otherwise-legal JSON whitespace), malformed UTF-8, invalid JSON, duplicate object member names at any depth, non-finite numeric extensions, integers outside signed 64-bit range, and decoded strings containing unpaired surrogates. No parser recovery, line-ending conversion, replacement characters, or silent truncation. A receiver consumes through the next LF even when the record is malformed, then reports one record error; it must not reinterpret suffix bytes as a fresh record. The bounded profile sets a maximum of 65,536 bytes before LF; exceeding it is an explicit oversized-record error.
 
-## Scope
+Semantic values use null, booleans, signed 64-bit integers, Unicode-scalar strings, arrays, and objects with unique string keys. Object order and JSON escape spelling are not semantic; equality is equality of decoded typed values, with object members compared by key. Thus there is one canonical *semantic* control value, not one required byte spelling. Producers SHOULD emit compact UTF-8 JSON with no insignificant whitespace and deterministic object-key order (Unicode scalar-value lexicographic order); receivers MUST accept any otherwise-valid spelling under this profile. This avoids claiming byte-level canonicality where the accepted grammar allows equivalent spellings.
 
-- **Control records**: JSONL + LF, strict UTF-8, bounds
-- **Observation bytes**: binary frames + transfer rules (opaque to the core)
-- **Text boundary**: all communication is text (charter mandate)
+The 65,536-byte bound includes UTF-8 JSON bytes but excludes the LF. For the first conformance fixture, also cap nesting depth at 16 (top-level object is depth 1), object members at 256 per object, array elements at 256 per array, decoded UTF-8 string length at 16 KiB, and control records at 1,024 per session. Each excess is an explicit record/session error; never truncate, recover into success, or reinterpret bytes. These are proposed fixture limits, not measured target-safety claims or universal host requirements; rationale and boundary-test discriminator are in `json-parser-bounds-20261003.md`. JSON integer syntax is further constrained to base-10 integer tokens without fraction or exponent, within `[-9223372036854775808, 9223372036854775807]`. Receivers MUST preserve each integer token exactly until syntax and signed-64 range validation are complete; a lossy numeric representation (including IEEE-754 binary64) MUST NOT be used to validate or construct semantic integer values. Receivers MUST reject an integer when exact token recovery is unavailable. The token `-0` decodes to integer zero and is semantically equal to `0`.
 
-## Control Records
+## Opaque observation bytes
 
-### Format
+Arbitrary bytes are not JSON strings. A control `bytes.begin` record identifies the transfer (`stream`, owning request/operation ID, exact unsigned total byte length, and maximum chunk size); subsequent binary frames contain stream ID, zero-based sequence number, and payload length in a fixed-width, network-byte-order header followed by exactly that many opaque octets. The transfer is complete only after exactly the declared total number of octets arrives in contiguous sequence; zero-length payload chunks, duplicate/reordered chunks, wrong stream IDs, excess bytes, early EOF, or a declared length above the receiver's cap fail the transfer explicitly. The consumer must not expose a partial value as complete. Chunk metadata and octets are not JSON-encoded or base64-expanded.
 
-Each control record is one JSON object on one line (JSONL). Lines are
-terminated by LF (`\n`, 0x0A). No CR, no BOM.
+For the first fixture profile, cap one completed observation at 1 MiB and one binary chunk at 16 KiB; reject larger values rather than silently switching representation. This is an experiment bound, not a universal host requirement. A future text-only transport can carry bytes as base64 only as a separately versioned encoding with explicit decoded-size cap and identical incomplete-transfer semantics; it is not equivalent in measured wire/RAM cost and is not the baseline.
+Binary frame layout is exactly `stream_id[16] || sequence[4] || payload_length[2] || payload[payload_length]`, with unsigned big-endian integers, a 128-bit stream ID, 32-bit sequence number starting at zero, and 16-bit payload length. A transport must preserve frame boundaries or use this length to read exactly one frame; no padding or trailing bytes are permitted. The JSON `bytes.begin` carries the stream ID as 32 lowercase hexadecimal digits and `total_length` as an unsigned decimal integer; the receiver requires `chunk_max` in `1..=16384`. The final chunk may be shorter; every non-final chunk must equal `chunk_max`. Empty observations contain no binary frames and complete immediately after `bytes.begin` validation.
 
-### Record types
 
-Three record types: `intent`, `start`, `outcome`.
+## Evidence and unresolved tradeoff
 
-#### Intent record
+RFC 8259 (2017), §§4, 6, 8.1–8.3, 9–10, requires UTF-8 for interoperable exchange, warns that duplicate names produce unpredictable receiver behavior, permits implementation limits, and notes interoperability risk for malformed Unicode surrogate data. JSON Lines framing, duplicate rejection, raw-CR rejection, integer restriction, LF completion semantics, and byte-stream framing above are protocol rules, not claims made by RFC 8259. Primary source: https://www.rfc-editor.org/rfc/rfc8259 .
 
-Written before execution. Contains the operation ID, writer ID, optional
-host ID, capability, request, and timestamp.
-
-```json
-{"type":"intent","operation_id":"op-001","writer_id":"body-001",
- "host_id":"host-mesh-01","capability":"file.write",
- "request":{"path":"/tmp/target.txt","content":"hello"},
- "timestamp":"2026-10-10T12:00:00Z"}
-```
-
-**Fields:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `type` | string | yes | Must be `"intent"` |
-| `operation_id` | string | yes | Unique operation identifier (non-empty) |
-| `writer_id` | string | yes | Identifier of the writer (non-empty) |
-| `host_id` | string | no | Host identifier (1–64 chars, DNS-like label) |
-| `capability` | string | yes | Capability name (non-empty) |
-| `request` | object | yes | Request parameters (may be empty) |
-| `timestamp` | string | yes | ISO 8601 timestamp |
-
-**`host_id` validation:**
-- Optional (may be absent)
-- If present, must be a non-empty string (1–64 chars)
-- Must match `^[a-zA-Z0-9][a-zA-Z0-9._-]*$` (DNS-like label)
-
-#### Start record
-
-Written when execution begins. Contains the operation ID, host ID, PID, and
-timestamp.
-
-```json
-{"type":"start","operation_id":"op-001","host_id":"host-mesh-01",
- "pid":12345,"timestamp":"2026-10-10T12:00:01Z"}
-```
-
-**Fields:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `type` | string | yes | Must be `"start"` |
-| `operation_id` | string | yes | Matches intent record |
-| `host_id` | string | yes | Host identifier |
-| `pid` | integer | yes | Process ID |
-| `timestamp` | string | yes | ISO 8601 timestamp |
-
-#### Outcome record
-
-Written after execution completes. Contains the operation ID, status, result,
-and timestamp.
-
-```json
-{"type":"outcome","operation_id":"op-001","status":"completed",
- "result":{"bytes_written":5},"timestamp":"2026-10-10T12:00:01Z"}
-```
-
-**Fields:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `type` | string | yes | Must be `"outcome"` |
-| `operation_id` | string | yes | Matches intent/start records |
-| `status` | string | yes | `completed`, `failed`, `unsupported`, `indeterminate` |
-| `result` | object | yes | Result data (may be empty) |
-| `timestamp` | string | yes | ISO 8601 timestamp |
-
-### Bounds
-
-- **Record size**: ≤ 65,536 bytes (excluding LF terminator)
-- **Session**: ≤ 1,024 records
-- **String values**: ≤ 16,384 bytes
-- **Object depth**: ≤ 16 levels
-- **Object members**: ≤ 256 per object
-- **Array elements**: ≤ 256 per array
-
-### Rejection rules
-
-A record is rejected (and the session terminated) if:
-1. Not valid JSON
-2. Not a JSON object
-3. Missing required fields
-4. Field has wrong type
-5. `type` is not one of `intent`, `start`, `outcome`
-6. `operation_id` is empty or not a string
-7. `host_id` is present but invalid (empty, too long, or bad characters)
-8. Record exceeds size bounds
-9. Session exceeds record count
-
-## Observation Bytes (Binary)
-
-Binary observations are opaque to the core. They are transferred as framed
-bytes within the text boundary.
-
-### Frame format
-
-Each frame is a 22-byte header followed by payload bytes.
-
-```
-Offset  Size  Description
-0       16    Stream ID (32 lowercase hex chars, UTF-8)
-16      2     Chunk index (big-endian uint16, 0-based)
-18      2     Total chunks (big-endian uint16, 1-based)
-20      2     Payload length (big-endian uint16, 0–16384)
-22       N     Payload bytes (opaque)
-```
-
-### Transfer rules
-
-- **Chunk size**: ≤ 16,384 bytes per chunk
-- **Total observation**: ≤ 1 MiB (1,048,576 bytes)
-- **Chunk count**: 1–65,535
-- **Stream ID**: 32 lowercase hex characters (0-9, a-f)
-- **Contiguity**: chunks must arrive in order (index 0, 1, 2, ...)
-- **Completeness**: all chunks must be received before the observation is complete
-- **Duplicate chunks**: rejected (same index received twice)
-- **Out-of-order chunks**: rejected (index > expected next index)
-
-### Rejection rules
-
-A frame is rejected if:
-1. Header is not exactly 22 bytes
-2. Stream ID is not 32 lowercase hex chars
-3. Chunk index ≥ total chunks
-4. Total chunks = 0 or > 65,535
-5. Payload length > 16,384
-6. Payload length ≠ actual payload bytes
-7. Chunk index < expected next index (out of order)
-8. Chunk index = expected next index but already received (duplicate)
-9. Total observation exceeds 1 MiB
-
-## Session lifecycle
-
-1. **Open**: session begins, journal is opened for append
-2. **Allocate**: intent record written, operation ID returned
-3. **Dispatch**: start record written, effect executed, outcome record written
-4. **Recover**: query journal for operation status
-5. **Reconcile**: scan journal for incomplete operations
-6. **Close**: session ends, journal is closed
-
-## Conformance
-
-A conforming implementation must:
-1. Accept all valid records (per this profile)
-2. Reject all invalid records (per rejection rules)
-3. Handle binary observations (per frame format and transfer rules)
-4. Maintain session bounds (per bounds section)
-5. Support recovery and reconcile (per session lifecycle)
-
-## Change log
-
-- **2026-10-03**: Initial version (wake 315)
-- **2026-10-10**: Added optional `host_id` to intent records (wake 576)
+This profile keeps control text inspectable while preserving arbitrary observations byte-exactly. It adds a second framing mode and therefore does not establish that all-text is cheaper or simpler; compare a transport with binary chunks against a text-only/base64 transport using the same fixtures before selecting one.
