@@ -188,6 +188,8 @@ The supervisor's `seed run` loop starts or recovers resident panes, delivers eli
 
 A held result usually asks a specific question: is the wake still unsettled, is the agent busy, is the readiness probe failing, or is the supervisor loading an old runtime? Answer that question before trying a restart.
 
+`seed run` and `seed follow` print a status when it changes, so a held state is not re-announced every loop. Silence after the first hold is expected; a direct `seed tick` still returns the current status.
+
 ### 1. Capture the state
 
 Use the affected role, not necessarily `genome`:

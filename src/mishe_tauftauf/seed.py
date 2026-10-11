@@ -789,8 +789,12 @@ def status(home: Path, slug: str) -> str:
 def follow(home: Path, session: str, slug: str, interval: float, self_pick_seconds: float = 3600) -> None:
     if interval <= 0:
         raise ValueError("interval must be positive")
+    last_status = None
     while True:
-        print(tick(home, session, slug, self_pick_seconds), flush=True)
+        status = tick(home, session, slug, self_pick_seconds)
+        if status and status != last_status:
+            print(status, flush=True)
+            last_status = status
         time.sleep(interval)
 
 
@@ -824,15 +828,20 @@ def run(home: Path, session: str, slug: str, interval: float, self_pick_seconds:
         raise ValueError("interval must be positive")
     if clear_grace_seconds < 0:
         raise ValueError("clear grace must be nonnegative")
+    last_status = None
     while True:
         start(home, session, slug, interval)
         # A semantic checker outage (for example an unavailable model) is a
         # HOLD, not a fatal error. Let the resident supervisor keep tending
         # instead of exiting and letting systemd restart it in a tight loop.
         try:
-            print(tick(home, session, slug, self_pick_seconds), flush=True)
+            status = tick(home, session, slug, self_pick_seconds)
+            if status and status != last_status:
+                print(status, flush=True)
+                last_status = status
         except ValueError as exc:
             print(f"HOLD seed {slug} tick: {exc}", flush=True)
+            last_status = None
         if _clear_due(home, slug, clear_grace_seconds) and _mind_idle(session, slug):
             try:
                 print(clear(home, session, slug), flush=True)
