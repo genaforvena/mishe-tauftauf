@@ -393,8 +393,10 @@ def _pane_roots(home: Path, pane_rows: list[tuple[str, str, str, str]]) -> tuple
     that reading outranks every classified one: an unobserved pane must not
     hide behind a classified neighbour. The first PYTHONPATH component
     decides, as every launcher here exports a single root. A dead pane is the
-    WINDOWS check's, and a pane with no PYTHONPATH and no launcher is a plain
-    shell that carries no root to compare. A site without a pin has no pinned
+    WINDOWS check's. A pane whose process is not a mind — an operator shell,
+    a log tail, an interactive bash left in a window — carries no root to
+    compare whether or not a launcher exported PYTHONPATH into its environment:
+    the pane's cmdline decides, not its environ. A site without a pin has no pinned
     byte-set to compare against and skips the check, the way a camera-less
     node skips the camera line.
     """
@@ -415,12 +417,15 @@ def _pane_roots(home: Path, pane_rows: list[tuple[str, str, str, str]]) -> tuple
     for window, _index, state, pid in pane_rows:
         if state != "0":
             continue
+        if "mishe_tauftauf" not in proc_table.read_pane_cmdline(pid):
+            # Not a mind pane (operator shell, log tail, interactive bash): no
+            # byte-set to compare, even when its environ carries a PYTHONPATH.
+            continue
         components = proc_table.read_pane_pythonpath(pid)
         if not components:
             # A mind launcher exports PYTHONPATH for the pane it raises, so a
             # mind window reading no root is missing evidence rather than a
-            # healthy pane. A window without a launcher (the operator shell,
-            # the log tail) is a plain shell: no root, nothing to compare.
+            # healthy pane.
             if (home / "minds" / window).is_file():
                 unread.append(window)
             continue

@@ -128,6 +128,22 @@ def read_pane_pythonpath(pid: str) -> list[str]:
         return []
     return pane_environ_pythonpath(raw)
 
+def read_pane_cmdline(pid: str) -> str:
+    """The pane process's ``/proc/<pid>/cmdline`` as a single string.
+
+    The pane pid is the process the launcher raised, so the cmdline says
+    whether the pane runs a mind (``python -m mishe_tauftauf …``) or a
+    plain shell that only carries a launcher's exported PYTHONPATH. A
+    vanished or unreadable pid yields "" rather than a guess.
+    """
+    if not pid:
+        return ""
+    try:
+        raw = Path("/proc", pid, "cmdline").read_bytes()
+    except OSError:
+        return ""
+    return raw.replace(b"\0", b" ").decode("utf-8", "replace").strip()
+
 
 def pane_root(component: str) -> str:
     """The import root a PYTHONPATH component names, without its ``src`` leaf.
