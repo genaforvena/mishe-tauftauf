@@ -1779,28 +1779,6 @@ def _command_pythonpath(command: str) -> list[str]:
     return value.split(os.pathsep)
 
 
-def _pane_pythonpath(pid: str) -> list[str]:
-    """PYTHONPATH components from a pane process's live environment.
-
-    The pane watcher's environment is what ``run_renderer`` copies into the
-    renderer, so an inherited renderer's effective root is this value, not the
-    start command text: tmux adds the server global environment and any
-    ``-e``/``respawn-pane`` override at pane creation, neither of which the
-    stored start command shows.
-    """
-    if not pid:
-        return []
-    try:
-        raw = Path("/proc", pid, "environ").read_bytes()
-    except OSError:
-        return []
-    prefix = b"PYTHONPATH="
-    for field in raw.split(b"\0"):
-        if field.startswith(prefix):
-            return field[len(prefix):].decode("utf-8", "replace").split(os.pathsep)
-    return []
-
-
 def _conditional_export(text: str, match: re.Match) -> bool:
     """Whether a script's PYTHONPATH assignment may not decide the root.
 
@@ -2065,7 +2043,7 @@ def _renderer_coverage(home: Path) -> dict[str, object]:
         if source == "inherited":
             resolved = False
             if pane is not None:
-                for component in (*_pane_pythonpath(pane[2]), *_command_pythonpath(pane[0])):
+                for component in (*proc_table.read_pane_pythonpath(pane[2]), *_command_pythonpath(pane[0])):
                     candidate = _import_root(component)
                     if candidate:
                         effective_root = candidate
@@ -2116,7 +2094,7 @@ def _renderer_coverage(home: Path) -> dict[str, object]:
         if (home / "mishe_tauftauf").is_dir():
             effective_root = str(home)
         elif pane is not None:
-            for component in (*_pane_pythonpath(pane[2]), *_command_pythonpath(pane[0])):
+            for component in (*proc_table.read_pane_pythonpath(pane[2]), *_command_pythonpath(pane[0])):
                 candidate = _import_root(component)
                 if candidate:
                     effective_root = candidate

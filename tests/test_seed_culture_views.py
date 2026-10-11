@@ -67,7 +67,7 @@ def test_health_detects_dead_top_even_when_bottom_is_alive(tmp_path: Path, monke
 
     def run(argv, **_kwargs):
         if argv[0] == "tmux":
-            return subprocess.CompletedProcess(argv, 0, "health 0 1\nhealth 1 0\n", "")
+            return subprocess.CompletedProcess(argv, 0, "health 0 1 9001\nhealth 1 0 9002\n", "")
         return subprocess.CompletedProcess(argv, 0, "PASS doctor\n", "")
 
     monkeypatch.setattr("mishe_tauftauf.seed_culture_views.subprocess.run", run)
@@ -91,7 +91,7 @@ def test_health_detects_dead_mind_pane_when_renderer_is_alive(tmp_path: Path, mo
 
     def run(argv, **_kwargs):
         if argv[0] == "tmux":
-            return subprocess.CompletedProcess(argv, 0, "health 0 0\nhealth 1 1\n", "")
+            return subprocess.CompletedProcess(argv, 0, "health 0 0 9001\nhealth 1 1 9002\n", "")
         return subprocess.CompletedProcess(argv, 0, "PASS doctor\n", "")
 
     monkeypatch.setattr("mishe_tauftauf.seed_culture_views.subprocess.run", run)
@@ -113,7 +113,7 @@ def test_health_ignores_a_dead_bottom_pane_without_a_mind_launcher(tmp_path: Pat
 
     def run(argv, **_kwargs):
         if argv[0] == "tmux":
-            return subprocess.CompletedProcess(argv, 0, "permissions 0 0\npermissions 1 1\n", "")
+            return subprocess.CompletedProcess(argv, 0, "permissions 0 0 9001\npermissions 1 1 9002\n", "")
         return subprocess.CompletedProcess(argv, 0, "PASS doctor\n", "")
 
     monkeypatch.setattr("mishe_tauftauf.seed_culture_views.subprocess.run", run)
@@ -138,7 +138,7 @@ def test_health_flags_a_frozen_renderer_lease_as_red(tmp_path: Path, monkeypatch
             return subprocess.CompletedProcess(
                 argv, 0, f"-- pane live {stamp} · refresh 5s · ticks every frame --\n", "")
         if argv[0] == "tmux":
-            return subprocess.CompletedProcess(argv, 0, "health 0 0\n", "")
+            return subprocess.CompletedProcess(argv, 0, "health 0 0 9001\n", "")
         return subprocess.CompletedProcess(argv, 0, "PASS doctor\n", "")
 
     monkeypatch.setattr("mishe_tauftauf.seed_culture_views.subprocess.run", run)
@@ -167,7 +167,7 @@ def test_health_reports_linked_site_inactive_service_as_red(tmp_path: Path, monk
 
     def run(argv, **_kwargs):
         if argv[0] == "tmux":
-            return subprocess.CompletedProcess(argv, 0, "health 0 0\n", "")
+            return subprocess.CompletedProcess(argv, 0, "health 0 0 9001\n", "")
         if argv[0] == "systemctl":
             return subprocess.CompletedProcess(argv, 3, "inactive\n", "")
         return subprocess.CompletedProcess(argv, 0, "PASS doctor\n", "")
@@ -192,7 +192,7 @@ def test_health_reports_missing_linked_site_services_as_unknown(tmp_path: Path, 
 
     def run(argv, **_kwargs):
         if argv[0] == "tmux":
-            return subprocess.CompletedProcess(argv, 0, "health 0 0\n", "")
+            return subprocess.CompletedProcess(argv, 0, "health 0 0 9001\n", "")
         return subprocess.CompletedProcess(argv, 0, "PASS doctor\n", "")
 
     monkeypatch.setattr("mishe_tauftauf.seed_culture_views.subprocess.run", run)
@@ -240,7 +240,7 @@ def test_health_linked_service_verdicts(tmp_path: Path, monkeypatch, fault) -> N
 
     def run(argv, **_kwargs):
         if argv[0] == "tmux":
-            return subprocess.CompletedProcess(argv, 0, "health 0 0\n", "")
+            return subprocess.CompletedProcess(argv, 0, "health 0 0 9001\n", "")
         if argv[0] == "systemctl":
             if "show" in argv:
                 return subprocess.CompletedProcess(
@@ -749,7 +749,7 @@ def test_health_reports_invalid_local_services_manifest_as_unknown(
 
     def run(argv, **_kwargs):
         if argv[0] == "tmux":
-            return subprocess.CompletedProcess(argv, 0, "health 0 0\n", "")
+            return subprocess.CompletedProcess(argv, 0, "health 0 0 9001\n", "")
         return subprocess.CompletedProcess(argv, 0, "PASS doctor\n", "")
 
     monkeypatch.setattr("mishe_tauftauf.seed_culture_views.subprocess.run", run)
@@ -772,7 +772,7 @@ def _service_home(tmp_path: Path, units: list[str]) -> Path:
 def _fake_systemctl(monkeypatch, show: str, *, rc: int = 0) -> None:
     def run(argv, **_kwargs):
         if argv[0] == "tmux":
-            return subprocess.CompletedProcess(argv, 0, "health 0 0\n", "")
+            return subprocess.CompletedProcess(argv, 0, "health 0 0 9001\n", "")
         if argv[0] == "systemctl":
             return subprocess.CompletedProcess(argv, rc, show, "")
         return subprocess.CompletedProcess(argv, 0, "PASS doctor\n", "")
@@ -856,7 +856,7 @@ def test_health_falls_back_to_the_recorded_session(tmp_path: Path, monkeypatch) 
 
     def run(argv, **_kwargs):
         if argv[0] == "tmux":
-            return subprocess.CompletedProcess(argv, 0, "health 0 0\nhealth 1 0\n", "")
+            return subprocess.CompletedProcess(argv, 0, "health 0 0 9001\nhealth 1 0 9002\n", "")
         if argv[0] == "systemctl":
             return subprocess.CompletedProcess(
                 argv, 0, "Id=steady.service\nActiveState=active\nSubState=running\nNRestarts=0\n", "")
@@ -925,7 +925,7 @@ def test_health_keeps_a_real_window_mismatch_red(tmp_path: Path, monkeypatch) ->
 
     def run(argv, **_kwargs):
         if argv[0] == "tmux":
-            return subprocess.CompletedProcess(argv, 0, "health 0 0\n", "")
+            return subprocess.CompletedProcess(argv, 0, "health 0 0 9001\n", "")
         return subprocess.CompletedProcess(argv, 0, "PASS doctor\n", "")
 
     monkeypatch.setattr("mishe_tauftauf.seed_culture_views.subprocess.run", run)
@@ -947,6 +947,8 @@ def test_health_names_runtime_import_root_drift_as_a_cause(tmp_path: Path, monke
                                  "SubState=running\nNRestarts=0\n"
                                  f"Environment=PYTHONPATH={other}/src\n")
     monkeypatch.setattr(runtime_source, "source_for", lambda h, default: pinned)
+    monkeypatch.setattr("mishe_tauftauf.proc_table.read_pane_pythonpath",
+                        lambda _pid: [f"{pinned}/src"])
     rendered = health(home)
     report = (home / "observations" / "health").read_text(encoding="utf-8")
     assert report.startswith("FAIL health internal check") and "runtime-drift" in report
@@ -957,6 +959,84 @@ def test_health_names_runtime_import_root_drift_as_a_cause(tmp_path: Path, monke
                                  f"Environment=PYTHONPATH={pinned}/src\n")
     health(home)
     assert "runtime-drift" not in (home / "observations" / "health").read_text(encoding="utf-8")
+
+
+def _pinned_pane_site(tmp_path: Path, monkeypatch, panes: dict[str, str | None]) -> Path:
+    """A pinned site whose pane pids resolve to the given roots.
+
+    ``panes`` maps each fake pane pid to the PYTHONPATH a live process would
+    name; ``None`` is a pid whose environment reads empty, the mind-window
+    UNKNOWN branch. Both windows ship a mind launcher so a rootless pane is
+    missing evidence rather than a plain shell.
+    """
+    home = _service_home(tmp_path, ["steady.service"])
+    (home / "health" / "windows.json").write_text('["health", "peer"]', encoding="utf-8")
+    (home / "health" / "runtime-release.json").write_text("{}", encoding="utf-8")
+    (home / "minds").mkdir(parents=True, exist_ok=True)
+    for window in ("health", "peer"):
+        (home / "minds" / window).write_text("#!/bin/sh\n", encoding="utf-8")
+    pinned = tmp_path / "pinned"
+    stale = home / "releases" / "94092ecd9b6a83c72d09b851f7cce3b4a53bf0a0"
+    stale.mkdir(parents=True)
+    readings = {"9001": f"{pinned}/src", "9002": f"{pinned}/src",
+                "9003": f"{pinned}/src", **panes}
+    monkeypatch.setattr("mishe_tauftauf.runtime_source.source_for", lambda h, default: pinned)
+    monkeypatch.setattr("mishe_tauftauf.proc_table.read_pane_pythonpath",
+                        lambda pid: [readings[pid]] if readings.get(pid) else [])
+
+    def run(argv, **_kwargs):
+        if argv[0] == "tmux":
+            rows = ["health 0 0 9001\nhealth 1 0 9002\npeer 0 0 9003\npeer 1 0 9004\n"]
+            return subprocess.CompletedProcess(argv, 0, "".join(rows), "")
+        if argv[0] == "systemctl":
+            return subprocess.CompletedProcess(argv, 0, "Id=steady.service\nActiveState=active\n"
+                                             "SubState=running\nNRestarts=0\nEnvironment=\n\n", "")
+        return subprocess.CompletedProcess(argv, 0, "PASS doctor\n", "")
+
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.subprocess.run", run)
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.ci_line", lambda _home: "CI: PASS")
+    monkeypatch.setenv("MISHE_SEED_SESSION", "test-session")
+    return home
+
+
+def test_health_passes_pane_roots_on_the_pin(tmp_path: Path, monkeypatch) -> None:
+    """A pane whose environment names the pin reads on-pin, and no fault folds."""
+    home = _pinned_pane_site(tmp_path, monkeypatch, {"9004": f"{tmp_path}/pinned/src"})
+    rendered = health(home)
+    assert "PANE ROOTS: PASS pin=pinned on-pin=2" in rendered
+    assert "STATE: GREEN" in rendered
+
+
+def test_health_names_a_pane_root_that_missed_a_promotion_as_stale(tmp_path: Path, monkeypatch) -> None:
+    """A pane still importing a superseded release stays visible without a RED:
+    rotating onto the pin is that mind's own wake, not a state fault."""
+    home = _pinned_pane_site(
+        tmp_path, monkeypatch,
+        {"9004": str(tmp_path / "site" / "releases"
+                     / "94092ecd9b6a83c72d09b851f7cce3b4a53bf0a0" / "src")})
+    rendered = health(home)
+    assert "PANE ROOTS: STALE pin=pinned on-pin=1 stale=peer:94092ecd9b6a" in rendered
+    assert "STATE: GREEN" in rendered
+    assert "pane-roots-drift" not in (home / "observations" / "health").read_text(encoding="utf-8")
+
+
+def test_health_flags_a_pane_root_off_the_release_tree_as_drift(tmp_path: Path, monkeypatch) -> None:
+    """A pane importing the checkout or a foreign root is drift, named in the report."""
+    home = _pinned_pane_site(tmp_path, monkeypatch, {"9004": f"{tmp_path}/src"})
+    rendered = health(home)
+    assert f"PANE ROOTS: DRIFT pin=pinned on-pin=1 drift=peer:{tmp_path}" in rendered
+    assert "STATE: RED" in rendered
+    assert f"pane-roots-drift=peer:{tmp_path}" in (home / "observations" / "health").read_text(encoding="utf-8")
+
+
+def test_health_reports_an_unreadable_pane_environment_as_unknown(tmp_path: Path, monkeypatch) -> None:
+    """A live mind pane whose environment reads no root is missing evidence, not PASS."""
+    home = _pinned_pane_site(tmp_path, monkeypatch, {"9004": None})
+    rendered = health(home)
+    assert "PANE ROOTS: UNKNOWN — pane environments unreadable unread=peer" in rendered
+    assert "STATE: UNKNOWN — pane root data unavailable" in rendered
+    assert (home / "observations" / "health").read_text(encoding="utf-8").startswith(
+        "UNKNOWN health pane root data unavailable at ")
 
 
 def _camera_site(tmp_path: Path, monkeypatch, *, state, artifact_age_s, events, journal=(), journal_rc=0):
@@ -977,7 +1057,7 @@ def _camera_site(tmp_path: Path, monkeypatch, *, state, artifact_age_s, events, 
 
     def run(argv, **_kwargs):
         if argv[0] == "tmux":
-            return subprocess.CompletedProcess(argv, 0, "health 0 0\n", "")
+            return subprocess.CompletedProcess(argv, 0, "health 0 0 9001\n", "")
         if argv[0] == "systemctl":
             return subprocess.CompletedProcess(argv, 0, "Id=mesh-cam-watch.service\n"
                                              "ActiveState=active\nSubState=running\n"

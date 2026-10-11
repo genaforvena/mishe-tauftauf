@@ -4136,7 +4136,7 @@ def test_renderer_coverage_prefers_the_pane_environment_over_the_command() -> No
     try:
         with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
                 patch("mishe_tauftauf.discovery._pane_info", return_value=pane), \
-                patch("mishe_tauftauf.discovery._pane_pythonpath", return_value=[f"{env_root}/src"]):
+                patch("mishe_tauftauf.proc_table.read_pane_pythonpath", return_value=[f"{env_root}/src"]):
             reading = discovery._renderer_coverage(home)
     finally:
         shutil.rmtree(pin)
@@ -4144,31 +4144,6 @@ def test_renderer_coverage_prefers_the_pane_environment_over_the_command() -> No
         shutil.rmtree(cmd_root)
     assert reading["state"] == "verified"
     assert reading["identity"]["drift"] == []
-
-
-def test_pane_pythonpath_reads_a_live_process_environment() -> None:
-    from mishe_tauftauf import discovery
-
-    # Wait for the child to exec before reading /proc/<pid>/environ: at fork
-    # the kernel still reports the parent's environment, so an immediate read
-    # is a race, not evidence.
-    proc = subprocess.Popen(
-        [sys.executable, "-c",
-         "import sys, time; sys.stdout.write('ready'); sys.stdout.flush(); time.sleep(5)"],
-        stdout=subprocess.PIPE, env={**os.environ, "PYTHONPATH": "/srv/live/src"})
-    try:
-        assert proc.stdout is not None and proc.stdout.read(5) == b"ready"
-        assert discovery._pane_pythonpath(str(proc.pid)) == ["/srv/live/src"]
-    finally:
-        proc.kill()
-        proc.wait()
-
-
-def test_pane_pythonpath_returns_empty_for_an_unreadable_pid() -> None:
-    from mishe_tauftauf import discovery
-
-    assert discovery._pane_pythonpath("") == []
-    assert discovery._pane_pythonpath("not-a-pid") == []
 
 
 def test_service_import_roots_parses_and_deduplicates_pythonpath() -> None:

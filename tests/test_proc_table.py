@@ -6,7 +6,9 @@ than discovered by a caller that then reaps the wrong process.
 """
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
 import unittest
 from unittest import mock
 
@@ -80,6 +82,53 @@ class ProcessTableTests(unittest.TestCase):
                 "mishe-tauftauf|x|env A=1|/srv/site\n\n"),
             [("mishe-tauftauf", "4242", "env A=1", "/srv/site|/extra"),
              ("mishe-tauftauf", "4244", "env A=1", "/srv/site")])
+
+    def test_pane_windows_decode_window_index_dead_pid(self):
+        self.assertEqual(
+            proc_table.pane_windows("health 0 0 4242\nhealth 1 0 4243\ntail 0 1 4244\n"),
+            [("health", "0", "0", "4242"), ("health", "1", "0", "4243"), ("tail", "0", "1", "4244")])
+
+    def test_pane_windows_skip_junk_truncated_and_non_decimal_pid(self):
+        self.assertEqual(
+            proc_table.pane_windows("health 0 0\nhealth 0 0 x\n\njunk row here now\n"),
+            [])
+
+    def test_pane_environ_pythonpath_splits_nul_fields(self):
+        self.assertEqual(
+            proc_table.pane_environ_pythonpath(b"HOME=/srv\0PYTHONPATH=/srv/pin/src\0TERM=xterm\0"),
+            ["/srv/pin/src"])
+        self.assertEqual(
+            proc_table.pane_environ_pythonpath(b"PYTHONPATH=/a:/b\0\0"), ["/a", "/b"])
+        self.assertEqual(proc_table.pane_environ_pythonpath(b"HOME=/srv\0TERM=xterm\0"), [])
+
+    def test_pane_environ_pythonpath_replaces_undecodable_bytes(self):
+        self.assertEqual(
+            proc_table.pane_environ_pythonpath(b"PYTHONPATH=/srv/\xff/src\0"), ["/srv/\ufffd/src"])
+
+    def test_read_pane_pythonpath_reads_a_live_process_environment(self):
+        # Wait for the child to exec before reading /proc/<pid>/environ: at fork
+        # the kernel still reports the parent's environment, so an immediate read
+        # is a race, not evidence.
+        proc = subprocess.Popen(
+            [sys.executable, "-c",
+             "import sys, time; sys.stdout.write('ready'); sys.stdout.flush(); time.sleep(5)"],
+            stdout=subprocess.PIPE, env={**os.environ, "PYTHONPATH": "/srv/live/src"})
+        try:
+            self.assertIsNotNone(proc.stdout)
+            self.assertEqual(proc.stdout.read(5), b"ready")
+            self.assertEqual(proc_table.read_pane_pythonpath(str(proc.pid)), ["/srv/live/src"])
+        finally:
+            proc.kill()
+            proc.wait()
+
+    def test_read_pane_pythonpath_returns_empty_for_an_unreadable_pid(self):
+        self.assertEqual(proc_table.read_pane_pythonpath(""), [])
+        self.assertEqual(proc_table.read_pane_pythonpath("not-a-pid"), [])
+
+    def test_pane_root_drops_the_src_leaf_only(self):
+        self.assertEqual(proc_table.pane_root("/srv/pin/src"), "/srv/pin")
+        self.assertEqual(proc_table.pane_root("/srv/pin"), "/srv/pin")
+        self.assertEqual(proc_table.pane_root("/srv/srcpad"), "/srv/srcpad")
 
 
 if __name__ == "__main__":
