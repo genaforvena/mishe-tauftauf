@@ -536,9 +536,11 @@ def init(home: Path, slug: str, engine_command: str = "codex") -> str:
 
 
 def _mind_launch_argv(home: Path, slug: str) -> tuple[str, ...]:
-    from .runtime_source import python_search_path
-    package_root = str(Path(__file__).resolve().parents[1])
-    python_path = python_search_path(package_root, os.environ.get("PYTHONPATH", ""))
+    from .runtime_source import pane_python_path
+    # The mind pane follows the home's pin like every other pane of this home, so
+    # a supervisor raised from a scratch tree keeps the resident mind on the
+    # declared byte-set instead of handing it the tree that respawned it.
+    python_path = pane_python_path(home, Path(__file__).resolve().parents[2])
     site_bin = str(home / "bin")
     inherited_path = os.environ.get("PATH", "/usr/bin:/bin")
     path_tail = [entry for entry in inherited_path.split(os.pathsep) if entry != site_bin]
@@ -676,11 +678,11 @@ def start(home: Path, session: str, slug: str, interval: float) -> str:
     _tmux("set-option", "-p", "-t", f"{target}.0", "remain-on-exit", "on")
     _tmux("set-option", "-p", "-t", f"{target}.1", "remain-on-exit", "on")
     _tmux("select-layout", "-t", target, "even-vertical")
-    from .runtime_source import python_search_path
-    package_root = str(Path(__file__).resolve().parents[1])
-    python_path = python_search_path(package_root, os.environ.get("PYTHONPATH", ""))
-    top_cmd = ("env", f"MISHE_SEED_SESSION={session}", f"PYTHONPATH={python_path}",
-               *_python_command("--home", str(home), "pain", "watch", slug, "--interval", str(interval)))
+    # The pane's byte-set is the one this home pins; `_python_command` carries
+    # it, so a supervisor running out of a scratch tree no longer hands the
+    # plant's own renderer that tree's code (the 04:25Z nine-renderer drift).
+    top_cmd = ("env", f"MISHE_SEED_SESSION={session}",
+               *_python_command(home, "--home", str(home), "pain", "watch", slug, "--interval", str(interval)))
     top_dead = _tmux("display-message", "-p", "-t", f"{target}.0", "#{pane_dead}").stdout.decode().strip() == "1"
     if created or new_window or top_dead:
         _tmux("respawn-pane", "-k", "-t", f"{target}.0", *top_cmd)

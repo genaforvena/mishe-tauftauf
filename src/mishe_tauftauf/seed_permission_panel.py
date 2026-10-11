@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import argparse
-import os
 import shlex
 import sys
 import time
 from pathlib import Path
 
-from .runtime_source import python_search_path
+from .runtime_source import pane_python_path
 from .tmux import _python_command, _tmux, await_owned
 
 
@@ -86,13 +85,14 @@ def ensure(home: Path, session: str, interval: float = 5) -> str:
         # server's environment, which keeps whatever release the server was
         # started with: the selector imports that stale code for as long as the
         # pane lives, and only the plant's idle refresh can correct it later.
-        # Pass this process's own import root, the same one the mind panes get.
-        package_root = str(Path(__file__).resolve().parents[1])
-        python_path = python_search_path(package_root, os.environ.get("PYTHONPATH", ""))
+        # Pass the byte-set this home pins, the same one every other pane of
+        # this home gets, so the panel follows the pin rather than whoever
+        # happened to respawn it.
+        python_path = pane_python_path(home, Path(__file__).resolve().parents[2])
     if created or top_dead:
         _tmux("respawn-pane", "-k", "-t", f"{target}.0", "env", f"MISHE_SEED_SESSION={session}",
               f"PYTHONPATH={python_path}",
-              *_python_command("--home", str(home), "pain", "watch", "permissions", "--interval", str(interval)))
+              *_python_command(home, "--home", str(home), "pain", "watch", "permissions", "--interval", str(interval)))
     if created or bottom_dead:
         _tmux("respawn-pane", "-k", "-t", f"{target}.1", "env", f"PYTHONPATH={python_path}", str(shell))
     if acted or created or top_dead or bottom_dead:

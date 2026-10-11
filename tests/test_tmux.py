@@ -245,7 +245,7 @@ class TmuxTests(unittest.TestCase):
                 _tmux("split-window", "-v", "-t", f"{session}:docs", "-c", str(home), "sh")
                 _tmux("set-option", "-p", "-t", f"{session}:docs.1", "remain-on-exit", "on")
                 command = ("env", f"MISHE_SEED_SESSION={session}",
-                           *_python_command("--home", str(home), "pain", "watch", "docs", "--interval", "0.2"))
+                           *_python_command(home, "--home", str(home), "pain", "watch", "docs", "--interval", "0.2"))
                 _tmux("respawn-pane", "-k", "-t", f"{session}:docs.0", *command)
                 for _ in range(40):
                     if "-- pane live " in capture_raw(session, "docs"):
