@@ -13,7 +13,15 @@ Hypotheses are not conclusions. The programme proceeds through bounded experimen
 Replace the external agent loop with an internal Mishe mechanism: tight
 integration of the model/tool loop into Mishe (provider-only adapter, no
 external agent loop), earned through evidence-led process independence.
-Role/identity removal is a separate test.
+Minds migrate gradually, one bounded work class at a time, with the existing
+harness route retained as fallback until parity is evidenced for that class.
+
+An internal loop owns decisions the external harness currently hides:
+per-call capability/tool selection, result checking against the obligation
+before continuing, budget and continuation judgments, and a defined seam for
+System 1 semantic advice that never replaces an available deterministic
+check. Each capability is adopted only with measured evidence and
+independent reading. Role/identity removal is a separate test.
 
 ## Approach
 

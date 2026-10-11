@@ -41,8 +41,42 @@ A transient session can reconstruct enough context from persistent state (wall, 
 
 Not yet executed.
 
-## Future experiments (not yet planned)
+## Experiment 2: gradual migration — one bounded work class on the internal loop
 
-- Named identity test
-- Perspective test
-- Role/identity removal (separate test per brief)
+### Hypothesis
+
+Minds can migrate off the external agent loop one bounded work class at a
+time, with each class adopting the internal loop only after evidenced
+parity. Owning the loop unlocks capabilities the harness hides: per-call
+tool selection scoped to the obligation, result checking before
+continuation, budget/continuation judgments with durable records, and a
+System 1 advice seam that never replaces a deterministic check.
+
+### Method
+
+1. Name one finite obligation class (default: exact-commit CI/publication
+   reconciliation — it has an independent oracle).
+2. Freeze identical inputs; run baseline (harness route) and candidate
+   (internal loop, same provider/model where feasible).
+3. Record per-call evidence: tool selections and rationale, result checks,
+   tokens/usage, elapsed time, retries, fallback and human intervention.
+4. Independent reading of correctness, context relevance and crash
+   recovery; adopt the class only on evidenced parity, keep fallback.
+
+### Constraints
+
+- One class at a time; never migrate every role at once.
+- A failed/incomplete candidate is not cheaper success; UNKNOWN stays UNKNOWN.
+- System 1 advice is residual semantic judgment only, with explicit
+  uncertainty — never a substitute for an available deterministic check.
+
+### Acceptance
+
+- Compact outcome/cost/recovery table per class; next class named on the wall.
+- Fallback retained until parity is evidenced; `applied` alone is not delivery.
+
+### Status
+
+Planned, not yet executed.
+
+## Future experiments (not yet planned)
