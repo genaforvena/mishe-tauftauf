@@ -2487,8 +2487,15 @@ retained, and ``nested_truncated`` marks the count as a lower bound."""
 
 GHOST_WORK_LIMIT = 50_000
 """Directory and file names inspected across all ghost trees before the scan
-stops with ``work_truncated`` set, so a tree of empty or directory-only
+stops with ``work_truncated`` set. Each name is charged as it is yielded by a
+directory scan, not per materialized list, so a tree of empty or directory-only
 entries cannot stretch one reading without bound."""
+
+GHOST_SCAN_LIMIT = 512
+"""Checkout-root names inspected per scan: every entry charges this budget
+whether or not it is reserved, so a long non-reserved prefix cannot stretch one
+reading. A truncated enumeration that examined no ghost tree cannot claim
+absence, and a retained root count stays a lower bound."""
 
 
 def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]:
@@ -2510,6 +2517,10 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
     capped and counts are exact only while every cap holds: a truncated tree
     count, nested count or name budget leaves its lower-bound marker on the
     sample line, so an uncapped scale never reads as a clean complete count.
+    Work is bounded at the point of inspection — the checkout scan charges
+    one budget name per entry it yields, and a walked tree charges the shared
+    name budget per entry a directory scan yields — and a truncated
+    enumeration that examined no ghost tree cannot claim a clean zero.
 
     A broken enumeration reads UNKNOWN naming the unreadable tree: a partial
     count must never read as a clean zero. Directory symlinks inside a tree
@@ -2519,15 +2530,23 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
         now = time.time()
     site = Path(home).resolve()
     checkout = site.parent
+    checkout_truncated = False
     try:
         # Enumeration is bounded by name, not by materializing the whole
-        # directory: the scan stops once it has seen more reserved roots than
-        # one reading walks, and the excess is counted rather than examined.
-        # Determinism comes from sorting the retained names, not from reading
-        # every entry first, so a large checkout cannot stretch one sample.
+        # directory: every checkout-root entry charges one budget name whether
+        # or not it is reserved, so a long non-reserved prefix cannot stretch
+        # one sample, and the scan also stops once it has seen more reserved
+        # roots than one reading walks. The excess is counted rather than
+        # examined; determinism comes from sorting the retained names, not
+        # from reading everything first.
         with os.scandir(checkout) as scan:
             found: list = []
+            inspected = 0
             for item in scan:
+                inspected += 1
+                if inspected > GHOST_SCAN_LIMIT:
+                    checkout_truncated = True
+                    break
                 if reserved_home_name(item.name):
                     found.append(item)
                     if len(found) > GHOST_ROOT_LIMIT:
@@ -2566,40 +2585,42 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
         ghosts.append(entry.name)
         failures: list[OSError] = []
 
-        def record(error: OSError) -> None:
-            failures.append(error)
-
         files = 0
         newest_at: float | None = None
-        for dirpath, dirnames, filenames in os.walk(tree, onerror=record):
-            for name in dirnames:
-                names_left -= 1
-                if names_left <= 0:
-                    work_truncated = True
-                    break
-                if not reserved_home_name(name):
-                    continue
-                if len(nested) < GHOST_IDENTITY_LIMIT:
-                    nested.append(f"{entry.name}/{str(Path(dirpath, name).relative_to(tree))}")
-                else:
-                    nested_truncated = True
-            if work_truncated:
-                break
-            for name in filenames:
-                names_left -= 1
-                if names_left <= 0:
-                    work_truncated = True
-                    break
-                if total + files >= GHOST_FILE_LIMIT:
-                    capped = True
-                    break
-                files += 1
-                try:
-                    mtime = Path(dirpath, name).stat().st_mtime
-                except OSError:
-                    continue
-                if newest_at is None or mtime > newest_at:
-                    newest_at = mtime
+        # Walk one directory scan at a time, charging the shared name budget as
+        # each entry is yielded: a directory with more entries than the budget
+        # can never materialize them all, and each pushed directory already
+        # charged its name, so the pending stack is within the same budget.
+        pending: list = [tree]
+        while pending:
+            dirpath = pending.pop()
+            try:
+                with os.scandir(dirpath) as walk_scan:
+                    for item in walk_scan:
+                        names_left -= 1
+                        if names_left <= 0:
+                            work_truncated = True
+                            break
+                        if item.is_dir(follow_symlinks=False):
+                            if reserved_home_name(item.name):
+                                if len(nested) < GHOST_IDENTITY_LIMIT:
+                                    nested.append(f"{entry.name}/{str(Path(item.path).relative_to(tree))}")
+                                else:
+                                    nested_truncated = True
+                            pending.append(item.path)
+                            continue
+                        if total + files >= GHOST_FILE_LIMIT:
+                            capped = True
+                            break
+                        files += 1
+                        try:
+                            mtime = item.stat().st_mtime
+                        except OSError:
+                            continue
+                        if newest_at is None or mtime > newest_at:
+                            newest_at = mtime
+            except OSError as exc:
+                failures.append(exc)
             if capped or work_truncated:
                 break
         if failures:
@@ -2614,7 +2635,11 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
         (holding if files else empty).append(entry.name)
         if capped or work_truncated:
             break  # identity lists hold at most the examined trees
-    roots_at_least = over_cap > 0 or capped or work_truncated
+    if checkout_truncated and not ghosts:
+        return {"id": "sense.site.ghost-homes", "state": "unknown", "kind": "read",
+                "sample": (f"checkout enumeration truncated at {GHOST_SCAN_LIMIT} names: "
+                           f"{checkout}; ghost absence not established")}
+    roots_at_least = over_cap > 0 or capped or work_truncated or checkout_truncated
     newest_by_age = sorted(newest.items(), key=lambda item: (-item[1][0], item[0]))
     newest_text = (f"{name} age={_space_age(now - mtime)}"
                    for name, (mtime, _stamp) in newest_by_age[:1])
@@ -2631,6 +2656,8 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
     parts.append(f"nested={len(nested)}{'+' if nested_truncated else ''}")
     if work_truncated:
         parts.append("names-truncated")
+    if checkout_truncated:
+        parts.append("checkout-truncated")
     parts.append("newest=" + (next(newest_text, "none")))
     sample = " ".join(parts)
     state = "verified" if not ghosts else "drift"
@@ -2642,6 +2669,7 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
             "roots_at_least": roots_at_least,
             "nested_truncated": nested_truncated,
             "work_truncated": work_truncated,
+            "checkout_truncated": checkout_truncated,
             "newest": {name: {"stamp": stamp, "age_s": round(now - mtime)}
                        for name, (mtime, stamp) in sorted(newest.items())}}
 
