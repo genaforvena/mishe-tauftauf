@@ -5,6 +5,7 @@
     "src/mishe_tauftauf/feed.py",
     "src/mishe_tauftauf/host_radio.py",
     "src/mishe_tauftauf/inference_effects.py",
+    "src/mishe_tauftauf/native_gate.py",
     "src/mishe_tauftauf/observations.py",
     "src/mishe_tauftauf/omp_pane.py",
     "src/mishe_tauftauf/operator_view.py",

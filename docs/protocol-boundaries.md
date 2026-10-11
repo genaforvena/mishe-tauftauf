@@ -53,6 +53,20 @@ body-research and research-methods panes sit inside quoted tape records, which
 rotate as the tape does rather than growing with a reading, so the scope limit
 is recorded without an observed churn.
 
+`native_gate.py` decodes the readiness probe's external inputs for a
+native-loop mind: the tmux pane report (`pane_dead pane_current_command`), the
+probe script's exit status, and this site's own verdict JSON. It returns
+ordinary Python values and never pastes into a pane. The decoded engine name is
+matched against every python name this site runs (`python`, `python3`,
+`python3.12`) and the three TUI engines, so the gate literal cannot silently
+narrow to the one interpreter the probe was written beside. A pane report that
+tmux cannot answer, a probe that fails or times out, or an unreadable verdict
+file are explicit problem values: the consumer keeps the reading UNKNOWN or
+classifies a correct not-ready, and only an alive non-TUI pane the probe rejects
+while the role's lifecycle shows a live mind reads RED. The verdict is recorded
+per role at `checks/native-gate-<role>.json`, so a repaired gate and a slipping
+one leave different durable evidence.
+
 `wall_text.py` decides wall-note ownership for the wall guard. The restore
 document renders every peer wall undelimited into one text, so a mind's notes
 can reproduce a peer's wall byte for byte and the write would otherwise be

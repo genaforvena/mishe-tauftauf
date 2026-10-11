@@ -175,11 +175,19 @@ The `permissions` display refreshes in its own top pane even in a manual setup; 
 The launcher accepts a shell-quoted command string, for example `--engine-command 'omp --model YOUR_MODEL'`; substitute the arguments your installed agent actually supports. Existing `SITE/minds/ROLE` launchers are preserved, so changing this flag on a repeat plant does not replace them.
 
 Codex, OMP, and OpenCode have built-in idle-prompt recognition. Another agent needs an executable readiness probe at `SITE/checks/mind-ready/ROLE` for each supervised role. The probe must exit zero **only when the role's lower pane can accept a complete prompt**, not merely when the process exists. It receives:
-
 - `MISHE_SEED_SESSION`: the tmux session;
 - `MISHE_SEED_ROLE`: the channel name;
 - `MISHE_SEED_PANE`: the lower-pane target, such as `SESSION:discover.1`.
 
 The probe has a two-second timeout. Missing, non-executable, failing, or timed-out probes hold delivery. Do not use an always-successful probe to make the status look cheerful. A changed pane PID proves rotation; readiness separately decides whether the next prompt can safely be delivered.
+
+A native Python loop keeps its canonical probe in tracked source. Install or repair it with:
+
+```bash
+env PYTHONPATH=src python3 -m mishe_tauftauf.native_gate \
+  --home "$SITE" --session "$SESSION" --role "$ROLE" --install
+```
+
+Its engine test accepts every python name this site runs — `python`, `python3`, `python3.12` — because the measured defect was a single literal: a live native pane whose launcher ran `python` read not-ready while its lifecycle showed a live mind, and the delivery hold reported the same `mind busy` as a TUI mid-turn. The probe reads the pane's foreground command, its dead flag and the launcher's own busy file, and exits. Read the readiness branch with the same module (`--record` persists a changed verdict at `SITE/checks/native-gate-ROLE.json`); a RED verdict names a live mind the gate rejects, and UNKNOWN names evidence the branch could not read.
 
 Next: [inspect and recover the plant](operating.md), or read [the runtime model](how-it-works.md).
