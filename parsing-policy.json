@@ -9,6 +9,7 @@
     "src/mishe_tauftauf/observations.py",
     "src/mishe_tauftauf/omp_pane.py",
     "src/mishe_tauftauf/operator_view.py",
+    "src/mishe_tauftauf/outcome_publication.py",
     "src/mishe_tauftauf/proc_table.py",
     "src/mishe_tauftauf/records.py",
     "src/mishe_tauftauf/unit_properties.py",
@@ -429,21 +430,6 @@
     "src/mishe_tauftauf/laya_review.py": {
       "5a5f5e6068ac8767f2606e006f97522fbe40ce63e3f56cd47c8edb7537f5148a": 1,
       "ed7f4001f679ade05801e1b896182ce286c345823b0beac82c8c3013e47e2089": 1
-    },
-    "src/mishe_tauftauf/outcome_events.py": {
-      "37eda065ef0271c41d3083acd368ab3c93ce24fd4a287d227c1f3479a23663ec": 1,
-      "387eb895c8a53e10f92c018f2ce11514d8f14bc203b164952011162e198e512a": 1,
-      "3f90ab8a7e1595d75f3535e8714561217a3a2c90aa02274571b9c31de65108d6": 1,
-      "71d6bb241ac1d7bdc3d5a041bd6319b5357d0d1a4b9b3cce5e6f389bcf37c2b2": 1,
-      "890b4036dbdfc73bf670bc2910d9a2f3c550ca91a3174e60bfd1857e51fdea66": 1,
-      "8b162d92854536e01ca0c6ade8b81f262388998ebe0efc5632eeb0b0fe298fe6": 1,
-      "969329012172e409d03546f6a3a40d175fafd6967d6356b44f7164a962d71fea": 1,
-      "99b50926e5ea15ef1b2a168988034a8ef6c03c42b6ce29589da58c3151e75b65": 1,
-      "c8bb169bfe7722431f5e98d8b669b90d3c9fd3cd03fcc7e53eadd12d9fd540fb": 1,
-      "d0bd07dbd720dce3aeb49149c20f9d55f96ca28f51f80ae2b3aac0c37e6c7701": 1,
-      "dc08d8966eb33191b2f2fb120d6b77cef8fd5d8d8b247900581cec604247346d": 1,
-      "f394bb98d7aa445ee8d7a227692ef77f0787421e5533db0e1ba0a6a5bfbde4b4": 1,
-      "f62290cb9f1af4f4b3fffa3adf95f675269800bcb34de2fb1230f43af1a86b30": 1
     },
     "src/mishe_tauftauf/permission_menu.py": {
       "19c366f607ff9d960d1b2e8f2776a5c5fe8c67f75d803de49a7ed8bd2ac8fdb4": 1,
@@ -890,21 +876,12 @@
       "ff86f89ed0ea6316e2068a303b555eb6962e151f77ed829fc6dc2cc8a141377d": 1
     },
     "src/mishe_tauftauf/witness_analysis.py": {
-      "1547268b587d4e6aa6b47263a59a5f9f28137181a65db071f8f3c33ddb986305": 1,
       "2c2ed9ab71a4431ce1b7da6eeedfa21eec3ddb385b79ddd090f8ec2d26ee84c1": 3,
       "2e9dd99cc98b1e269557caafff2e78cb8859c713f0808c4165eac29d3449dc7c": 1,
-      "3423a2a6a3d7e2ac8f5ef609150d0b73a2d062679b6a892596bf583fc72df401": 1,
-      "3f90ab8a7e1595d75f3535e8714561217a3a2c90aa02274571b9c31de65108d6": 1,
       "4394fc475d6cbbcd8ff8388513ba98004bad5a4f8572a02b04c84deadac76764": 1,
-      "4d1afaa0ec8a6b48c22ad805d033fcfede77897797c5cb1e7ea576a68bf0dfd3": 1,
       "5246d14749ab409afc6249120f18d0b6d4350176f32f004c41a46ad7406b6481": 1,
-      "5fb1cfeed49d654d1d07a873f2bf6459c236d59f882ce10ced7890a39f7a5d07": 1,
       "95ffd9b1effff0321d3904d3188e8fc4f25b07ba3e60510b7082ef5c640793b0": 1,
-      "a1fb2c2e0c8942bf3f975eaa1b4fade09a102aad104a3224c6ecee28bc003ef5": 1,
-      "a6c4b900c37c6388318d403f0615c2321fced9c067de32ec7f74dc8707658476": 1,
-      "c8bb169bfe7722431f5e98d8b669b90d3c9fd3cd03fcc7e53eadd12d9fd540fb": 1,
-      "ed7f4001f679ade05801e1b896182ce286c345823b0beac82c8c3013e47e2089": 1,
-      "edf470eefc4c8305521293476ecdb666cf361eb44dce2f622330ac6ef68fb3f5": 1
+      "ed7f4001f679ade05801e1b896182ce286c345823b0beac82c8c3013e47e2089": 1
     }
   },
   "version": 1

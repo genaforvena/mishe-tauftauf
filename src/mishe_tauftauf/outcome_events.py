@@ -3,14 +3,22 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-import re
 
 from . import records
 from .feed import parse_feed
-
-OUTCOME_KINDS = ('accepted', 'blocker-resolved', 'blocker-retired', 'hypothesis-changed')
-_HEADER = re.compile(r'Wall outcome (' + '|'.join(OUTCOME_KINDS) + r') by ([a-z0-9-]+)\Z')
-_DIGEST = re.compile(r'[0-9a-f]{64}\Z')
+from .outcome_publication import (
+    body_lines,
+    decode_evidence,
+    decode_text,
+    decode_timestamp,
+    first_significant_line,
+    has_outcome_prefix,
+    parse_header,
+    publication_prose,
+    reference_digest,
+    reference_lines,
+    sole_final_reference,
+)
 
 
 def classify_outcomes(home: Path, clause_time: datetime) -> dict:
@@ -19,6 +27,10 @@ def classify_outcomes(home: Path, clause_time: datetime) -> dict:
     Reserved first significant headers are candidates even when damaged. A
     standalone unresolved reference is a coverage gap until proven non-outcome.
     Known reference-only citations and ordinary inline citations are not events.
+
+    The publication dialect is decoded by ``outcome_publication``; what stays
+    here is the eligibility policy — which publications count as outcomes, and
+    why a damaged one is a gap rather than an event.
     """
     home = home.resolve()
     events, incomplete = [], []
@@ -32,21 +44,21 @@ def classify_outcomes(home: Path, clause_time: datetime) -> dict:
     if not (home / 'records').is_dir():
         return {'events': events, 'incomplete': incomplete, 'unavailable': 'outcome store unavailable'}
     for entry in entries:
-        lines = entry.body.splitlines()
-        first = next((line for line in lines if line.strip()), '')
-        reserved = first.lstrip().startswith('Wall outcome ')
-        refs = [line for line in lines if line.lstrip().startswith('[record]')]
+        lines = body_lines(entry.body)
+        first = first_significant_line(lines)
+        reserved = has_outcome_prefix(first)
+        refs = reference_lines(lines)
         if not reserved and not refs:
             continue
         try:
-            timestamp = datetime.fromisoformat(entry.timestamp.replace('Z', '+00:00'))
+            timestamp = decode_timestamp(entry.timestamp)
             if timestamp < clause_time:
                 continue
         except (ValueError, TypeError) as exc:
             incomplete.append({'sequence': entry.sequence, 'reason': f'invalid event time: {exc}'})
             continue
         try:
-            if len(refs) != 1 or not lines or refs[0] != lines[-1]:
+            if len(refs) != 1 or sole_final_reference(lines) is None:
                 raise ValueError('publication requires one standalone final record reference')
             envelope = records.envelope(entry)
             if not reserved and envelope['kind'] != 'wall-outcome':
@@ -55,26 +67,24 @@ def classify_outcomes(home: Path, clause_time: datetime) -> dict:
                 continue
             if envelope['kind'] != 'wall-outcome':
                 raise ValueError('reserved publication has wrong envelope kind')
-            header = _HEADER.fullmatch(lines[0])
+            header = parse_header(lines[0])
             if header is None:
                 raise ValueError('malformed, displaced or replaced outcome header')
             payload = envelope['payload']
-            if payload.get('role') != entry.source or payload.get('role') != header.group(2):
+            if payload.get('role') != entry.source or payload.get('role') != header[1]:
                 raise ValueError('outcome source/header/payload role mismatch')
-            if payload.get('kind') != header.group(1):
+            if payload.get('kind') != header[0]:
                 raise ValueError('outcome header/payload kind mismatch')
             text = payload.get('text')
-            if not isinstance(text, str) or not text.strip() or '\n'.join(lines[1:-1]) != text:
+            if decode_text(text) is None or publication_prose(lines) != text:
                 raise ValueError('outcome reported text mismatch')
-            evidence = payload.get('evidence')
-            if (not isinstance(evidence, dict) or not isinstance(evidence.get('path'), str)
-                    or not evidence['path'] or not isinstance(evidence.get('sha256'), str)
-                    or _DIGEST.fullmatch(evidence['sha256']) is None):
+            evidence = decode_evidence(payload.get('evidence'))
+            if evidence is None:
                 raise ValueError('invalid outcome evidence binding')
         except (OSError, ValueError, TypeError) as exc:
             incomplete.append({'sequence': entry.sequence, 'reason': str(exc)})
             continue
-        digest = records.REFERENCE_RE.fullmatch(refs[0]).group(1)
+        digest = reference_digest(refs[0])
         events.append({'site': str(home), 'sequence': entry.sequence,
                        'timestamp': entry.timestamp, 'record_sha256': digest,
                        'role': payload['role'], 'evidence': evidence})

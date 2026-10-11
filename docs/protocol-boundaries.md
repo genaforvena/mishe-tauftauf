@@ -10,9 +10,10 @@ control logic the new site's language. This does not require strict typing or a
 single predetermined schema: ordinary Python values are sufficient.
 
 The literal approved adapter files are in `parsing-policy.json`. They cover chat
-lifecycle decoding, feed framing, immutable record envelopes, external
-renderer/filter input, CLI arguments, the human operator view and the durable
-effect ledger. The ledger reads its append-only UTF-8 JSONL journals as a boundary:
+lifecycle decoding, feed framing, immutable record envelopes, the wall-outcome
+publication text, external renderer/filter input, CLI arguments, the human
+operator view and the durable effect ledger. The ledger reads its append-only
+UTF-8 JSONL journals as a boundary:
 invalid encoding or malformed records fail closed and remain intact as evidence.
 The checker is also a boundary: it reads Python source and policy files. New
 adapters require an explicit, reviewed addition of their exact path; a
@@ -76,6 +77,21 @@ peer's document ignoring trailing blank lines — a paste that ends on a
 different blank-line count is still the peer's document — while any other
 difference is the writer's own text. `wall.py` acts on the answer alone.
 
+`outcome_publication.py` decodes the wall-outcome publication: a reserved
+header, the mind's prose and one immutable record reference. Recognition and
+validation are separate answers on purpose. A publication a mind quoted inside
+its own evidence still starts with the reserved prefix, so the coverage
+classifier in `outcome_events.py` recognizes a candidate that way and then
+validates it — a damaged publication is reported as a coverage gap instead of
+being dropped as an event. The advisor's previous-context reader in
+`witness_analysis.py` needs the whole publication or nothing, so
+`decode_publication_body` returns one decoded publication or `None`, and the
+comparison against the immutable record stays in the consumer. Both read the
+same header grammar, the same reference line and the same prose span, so a
+displaced header or a second reference cannot mean one thing to each. The
+remaining `witness_analysis.py` budget reads its own local advice files and
+command line, not the publication dialect.
+
 `chat_protocol.py` interprets historical wake, yield and clear receipts. A
 seed-sourced receipt's first line supplies the lifecycle kind and header fields;
 for yields, the decoder also extracts a reported result from a subsequent line
@@ -112,9 +128,13 @@ no internal parsing. Legacy exceptions remain in the policy; remove their budget
 when migrating the corresponding consumer. Do not regenerate the legacy budget
 to make a failing change pass. Each migration must identify the external dialect,
 move its interpretation into an adapter, test malformed/unknown input and keep
-the internal consumer on decoded values. The next concrete migration is outcome
-publication interpretation shared by `outcome_events.py` and
-`witness_analysis.py`. Retain damaged publication evidence and coverage gaps.
+the internal consumer on decoded values. The outcome publication dialect —
+the reserved header, the prose and the immutable record reference —
+completed that migration into `outcome_publication.py`: the coverage
+classifier in `outcome_events.py` recognizes a candidate by prefix and validates
+it, while the advisor's previous-context reader in `witness_analysis.py` decodes
+the whole publication or treats it as absent. Retain damaged publication
+evidence and coverage gaps.
 
 The checker conservatively treats some formatting operations as parsing. It
 cannot prove that arbitrary Python implements no parser: indexing, loops,

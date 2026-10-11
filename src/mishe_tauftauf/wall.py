@@ -11,7 +11,8 @@ import shlex
 
 from .feed import Feed
 from .chat_protocol import decode_lifecycle
-from .outcome_events import OUTCOME_KINDS, classify_outcomes
+from .outcome_events import classify_outcomes
+from .outcome_publication import OUTCOME_KINDS
 
 WALL_MAX_BYTES = 16384
 """Hard byte bound for one edited wall; walls are bounded prose, unlike chat.log."""
