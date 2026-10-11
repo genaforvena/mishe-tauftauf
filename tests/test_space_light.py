@@ -336,6 +336,93 @@ def test_null_streak_origin_survives_the_render_cadence(tmp_path):
     assert json.loads(record_path.read_text())["read_epoch_s"] == aged
 
 
+def null_gap_now(home: Path) -> dict:
+    """A site publishing a null lux sample now, plus the reader's first row.
+
+    The notification re-read compares against the reader's own clock, so its
+    boundary carries current timestamps rather than the shared fixture's.
+    """
+    data = boundary()
+    now = time.time()
+    data["generated_at_utc"] = stamp(now)
+    data["nodes"][0]["last_poll_utc"] = stamp(now)
+    data["nodes"][0]["light"].update(lux=None, status="stale",
+                                     phone_sample_epoch_s=now - 20,
+                                     consumer_receipt_epoch_s=now - 2)
+    (home / "body").mkdir(parents=True, exist_ok=True)
+    (home / "body" / "space.json").write_text(json.dumps(data), encoding="utf-8")
+    return discovery._space_light_read(home)
+
+
+def retain_null_streak(record_path: Path, **overrides) -> str:
+    """Rewrite the retained null observation and return the stored bytes."""
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    record.update(overrides)
+    stored = json.dumps(record)
+    record_path.write_text(stored, encoding="utf-8")
+    return stored
+
+
+def unknown_reading_line(body: str) -> str:
+    """The feed line that carries the non-verified readings' samples."""
+    return next(line for line in body.splitlines()
+                if line.startswith("Unknown readings:"))
+
+
+def test_notification_recheck_names_a_sustained_freeze(tmp_path):
+    """The notification re-read is the second consumer of the duration class.
+    It names a freeze, and it never renews the streak's origin: scan() notifies
+    every few seconds, so a write here would hold the measured interval below
+    the freeze threshold for the whole life of the stream."""
+    row = null_gap_now(tmp_path)
+    assert row["reason"] == "light-null-gap"
+    record_path = tmp_path / "discovery" / "space-light-stream.json"
+    stored = retain_null_streak(
+        record_path, read_epoch_s=time.time() - discovery.SPACE_FROZEN_MIN_SECONDS - 1)
+    notify(tmp_path, row, row, now=time.time())
+    line = unknown_reading_line(Feed(tmp_path).entries()[-1].body)
+    assert "light-stream-frozen" in line
+    assert "light-null-gap" not in line
+    # A freeze still says how old the gap is.
+    assert "last-phone=" in line and "age=" in line
+    assert record_path.read_text(encoding="utf-8") == stored
+
+
+def test_notification_recheck_keeps_a_seconds_wide_gap_a_gap(tmp_path):
+    """A recent retained observation, or an advancing cursor, keeps the
+    single-read name through the notification re-read as well."""
+    row = null_gap_now(tmp_path)
+    record_path = tmp_path / "discovery" / "space-light-stream.json"
+    for overrides in ({"read_epoch_s": time.time() - 5}, {"cursor": 11}):
+        retain_null_streak(record_path, **overrides)
+        notify(tmp_path, row)
+        line = unknown_reading_line(Feed(tmp_path).entries()[-1].body)
+        assert "light-null-gap" in line
+        assert "light-stream-frozen" not in line
+
+
+def test_gap_to_freeze_reports_a_duration_class_change(tmp_path):
+    """The same absent coverage judged for longer is a duration class, not a
+    light change and not an availability baseline."""
+    row = null_gap_now(tmp_path)
+    retain_null_streak(tmp_path / "discovery" / "space-light-stream.json",
+                       read_epoch_s=time.time() - discovery.SPACE_FROZEN_MIN_SECONDS - 1)
+    notify(tmp_path, row, row, now=time.time())
+    assert ("sense.space.light gap duration class light-null-gap -> "
+            "light-stream-frozen") in Feed(tmp_path).entries()[-1].body
+
+
+def test_freeze_to_gap_reports_a_duration_class_change(tmp_path):
+    """A resuming stream that still publishes no value narrows the duration
+    class instead of shifting the baseline."""
+    row = null_gap_now(tmp_path)
+    frozen = {**row, "reason": "light-stream-frozen",
+              "sample": "Note3 light UNKNOWN: light-stream-frozen last-phone=x age=1h31m"}
+    notify(tmp_path, row, frozen, now=time.time())
+    assert ("sense.space.light gap duration class light-stream-frozen -> "
+            "light-null-gap") in Feed(tmp_path).entries()[-1].body
+
+
 @pytest.fixture
 def current_endpoint(monkeypatch):
     """A recent clock endpoint so the pane's freshness gate passes."""
