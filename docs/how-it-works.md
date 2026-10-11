@@ -545,15 +545,22 @@ roots.
 The panes can therefore name both gap classes, and a frame naming one was
 composed 79 seconds after the repoint (`light-null-gap`,
 2026-10-11T03:43:04Z, discover's and senses' panes, independently
-re-read that morning; gap-class frames recur — 53 of the 190 rendered
-frames since the repoint named one, my own 05:01Z census over the same
+re-read that morning; gap-class frames recur — 62 of the 210 rendered
+frames since the repoint named one, my own 05:14Z census over the same
 stored records). The panes re-derive the light line from a direct
 boundary read each refresh, so a class appears at refresh cadence rather
 than scan cadence, and a short null can still render as the prior
 sample's class. `light-stream-frozen` still waits on a null streak held
 past a minute under one identity, which has not occurred: every observed
 window closes when the sequence advances, so the identity the freeze
-class needs never holds while the producer keeps publishing. Check a pane
+class needs never holds while the producer keeps publishing. Measured at
+the boundary rather than inferred from the frames: polling
+`body/space.json` every two seconds for 178 seconds read 90 samples
+under 36 distinct identities, one of them published without a lux value,
+that null held zero seconds, and no identity held a minute (discover,
+2026-10-11T05:00Z). The class names a genuine producer stall, so while
+the phone keeps publishing the reader cannot reach it by coverage
+sampling. Check a pane
 process's own import root, and the script it execs, before claiming pane
 wording.
 Retained measured light changes are history, not room occupancy or human
