@@ -3104,6 +3104,37 @@ def _space_light_freeze_record(home: Path) -> dict | None:
     return space_text.decode_stream_record(text)
 
 
+def _space_light_append_freeze_event(home: Path, written: dict,
+                                     superseded: object) -> None:
+    """Append one onset event to the retained freeze log.
+
+    The onset record names the current streak in place, so each new streak
+    replaces the previous event's bytes with its own. This log keeps every
+    onset: the entry is the onset record at its naming, plus the superseded
+    record's last read when a previous freeze it replaces had been observed,
+    so an earlier event's span stays visible after its record is gone. One
+    line per onset — a continuing streak names again without a second line,
+    and the log lives under the same publication lock as the record.
+
+    The log is audit evidence, not a reading input, so a failing append must
+    not fail the reading: the onset record and the routed event remain, and a
+    later onset appends again.
+    """
+    entry = dict(written)
+    if isinstance(superseded, dict):
+        last_read = superseded.get("last_read_epoch_s")
+        if _space_number(last_read):
+            entry["superseded_last_read_epoch_s"] = last_read
+    try:
+        path = home / "discovery" / "space-light-freeze-history.jsonl"
+        with path.open("a", encoding="utf-8") as log:
+            log.write(space_text.encode_stream_record(entry))
+    except OSError:
+        # Losing an audit line must not lose the reading or the route; the next
+        # onset appends again, and the record above is the naming's evidence.
+        pass
+
+
 def _space_light_record_freeze(home: Path, row: dict, previous: dict | None,
                                now: float) -> None:
     """Record a freeze onset once per streak and route it once.
@@ -3115,6 +3146,10 @@ def _space_light_record_freeze(home: Path, row: dict, previous: dict | None,
     same streak only advance the last-read epoch. A recurrence then cannot end
     before the event is routed, and the detection interval is the naming
     cadence rather than the stored-scan cadence, whose gaps are unbounded.
+    Each onset is also appended to the append-only
+    ``space-light-freeze-history.jsonl`` log, because naming a new streak
+    overwrites the previous onset record in place; the log is the retained
+    audit trail of every event, one line per onset.
 
     Deciding, recording and routing share one publication lock: two panes can
     name the same streak in the same second, and the once-per-streak guarantee
@@ -3153,6 +3188,7 @@ def _space_light_record_freeze(home: Path, row: dict, previous: dict | None,
             return
         if continuing:
             return
+        _space_light_append_freeze_event(home, written, record)
 
         def epoch_token(value: object) -> str:
             return _space_stamp(value) if _space_number(value) else "unrecorded"

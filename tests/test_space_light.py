@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 
 from mishe_tauftauf import discovery
+from mishe_tauftauf import space_text
 from mishe_tauftauf.feed import Feed
 from mishe_tauftauf.seed_culture_views import _observation_reading, discover, senses
 
@@ -435,6 +436,13 @@ def freeze_dms(home: Path) -> list:
             and entry.body.splitlines()[0] == "[dm] to=research-methods"]
 
 
+def freeze_history(home: Path) -> list[dict]:
+    """The retained append-only onset log."""
+    path = home / "discovery" / "space-light-freeze-history.jsonl"
+    return space_text.decode_stream_log(
+        path.read_text() if path.exists() else "")
+
+
 def test_first_freeze_naming_records_the_onset_and_routes_one_event(tmp_path):
     record = null_record()
     null_gap_fixture(tmp_path, record)
@@ -487,6 +495,111 @@ def test_second_freeze_streak_re_arms_the_onset_route(tmp_path):
     second = freeze_record(tmp_path)
     assert second["sequence"] == 13
     assert second["onset_epoch_s"] > first["onset_epoch_s"]
+    assert len(freeze_dms(tmp_path)) == 2
+
+
+def test_freeze_history_retains_every_onset_event(tmp_path):
+    """The onset record is written in place, so naming a second streak replaces
+    the first event's bytes. The append-only log keeps both onsets: each line is
+    the onset record at its naming, and a replacing entry names the superseded
+    record's last read so the earlier span survives its own record's removal."""
+    null_gap_fixture(tmp_path, null_record())
+    assert discovery._space_light_read(tmp_path)["reason"] == "light-stream-frozen"
+    first = freeze_record(tmp_path)
+    first_last_read = first["last_read_epoch_s"]
+    assert freeze_history(tmp_path) == [
+        {"class": "light-stream-frozen", "session": "session-a", "cursor": 12,
+         "sequence": 12, "onset_epoch_s": first["onset_epoch_s"],
+         "named_epoch_s": first["named_epoch_s"],
+         "last_read_epoch_s": first_last_read, "age_token": first["age_token"]}]
+    data = json.loads((tmp_path / "body" / "space.json").read_text())
+    data["nodes"][0]["light"]["sequence"] = 13
+    (tmp_path / "body" / "space.json").write_text(json.dumps(data), encoding="utf-8")
+    retain_null_streak(tmp_path / "discovery" / "space-light-stream.json",
+                       sequence=13,
+                       read_epoch_s=time.time() - discovery.SPACE_FROZEN_MIN_SECONDS - 1)
+    assert discovery._space_light_read(tmp_path)["reason"] == "light-stream-frozen"
+    second = freeze_record(tmp_path)
+    history = freeze_history(tmp_path)
+    assert len(history) == 2
+    # The overwritten record no longer names the first event; the log does.
+    assert history[0]["sequence"] == 12
+    assert history[1]["sequence"] == 13
+    assert history[1]["onset_epoch_s"] == second["onset_epoch_s"]
+    assert history[1]["superseded_last_read_epoch_s"] == first_last_read
+    assert len(freeze_dms(tmp_path)) == 2
+
+
+def test_freeze_history_holds_one_line_per_streak(tmp_path):
+    """A continuing streak is named on every read; the log records the onset
+    once, so a long streak cannot grow an entry per render."""
+    null_gap_fixture(tmp_path, null_record())
+    for _ in range(3):
+        assert discovery._space_light_read(tmp_path)["reason"] == "light-stream-frozen"
+    history = freeze_history(tmp_path)
+    assert len(history) == 1
+    assert len(freeze_dms(tmp_path)) == 1
+    # A re-naming advances the record's last read without a second entry.
+    row = null_gap_now(tmp_path)
+    notify(tmp_path, row, row, now=time.time())
+    assert len(freeze_history(tmp_path)) == 1
+    assert freeze_record(tmp_path)["last_read_epoch_s"] >= history[0]["last_read_epoch_s"]
+
+
+def test_freeze_log_append_failure_keeps_the_reading_and_the_record(tmp_path):
+    """The log is audit evidence, not a reading input: a filesystem that refuses
+    the append still leaves the onset record, the reading and the route."""
+    null_gap_fixture(tmp_path, null_record())
+    real_open = Path.open
+
+    def refuse_append(self, *args, **kwargs):
+        if args and args[0] == "a":
+            raise OSError("read-only directory")
+        return real_open(self, *args, **kwargs)
+
+    with patch.object(Path, "open", refuse_append):
+        row = discovery._space_light_read(tmp_path)
+    assert row["reason"] == "light-stream-frozen"
+    assert freeze_record(tmp_path)["session"] == "session-a"
+    assert not (tmp_path / "discovery" / "space-light-freeze-history.jsonl").exists()
+    assert len(freeze_dms(tmp_path)) == 1
+
+
+def test_stream_log_decode_skips_unreadable_lines():
+    """One torn line hides only that line; a log's value is the events it holds."""
+    text = ('{"class": "light-stream-frozen", "sequence": 12}\n'
+            "{not json\n"
+            '"a string, not a record"\n'
+            '{"class": "light-stream-frozen", "sequence": 13}\n')
+    assert space_text.decode_stream_log(text) == [
+        {"class": "light-stream-frozen", "sequence": 12},
+        {"class": "light-stream-frozen", "sequence": 13}]
+    assert space_text.decode_stream_log("") == []
+
+
+def test_onset_record_still_routes_and_rewrites_when_history_absent(tmp_path):
+    """A site that carried the record but never the log — every pre-log streak —
+    gains the log at the next onset without re-routing the open streak."""
+    null_gap_fixture(tmp_path, null_record())
+    assert discovery._space_light_read(tmp_path)["reason"] == "light-stream-frozen"
+    open_record = freeze_record(tmp_path)
+    history = tmp_path / "discovery" / "space-light-freeze-history.jsonl"
+    history.unlink()
+    row = null_gap_now(tmp_path)
+    notify(tmp_path, row, row, now=time.time())
+    assert not history.exists()
+    assert len(freeze_dms(tmp_path)) == 1
+    data = json.loads((tmp_path / "body" / "space.json").read_text())
+    data["nodes"][0]["light"]["sequence"] = 14
+    (tmp_path / "body" / "space.json").write_text(json.dumps(data), encoding="utf-8")
+    retain_null_streak(tmp_path / "discovery" / "space-light-stream.json",
+                       sequence=14,
+                       read_epoch_s=time.time() - discovery.SPACE_FROZEN_MIN_SECONDS - 1)
+    assert discovery._space_light_read(tmp_path)["reason"] == "light-stream-frozen"
+    entries = freeze_history(tmp_path)
+    assert len(entries) == 1
+    assert entries[0]["sequence"] == 14
+    assert entries[0]["superseded_last_read_epoch_s"] >= open_record["last_read_epoch_s"]
     assert len(freeze_dms(tmp_path)) == 2
 
 
