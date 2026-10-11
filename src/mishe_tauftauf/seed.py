@@ -20,7 +20,7 @@ from pathlib import Path
 from .feed import Feed
 from .records import payload as record_payload
 from . import discovery
-from .observations import executable, strip_owned_chrome, validate_home, validate_slug
+from .observations import executable, redact_display_age, strip_owned_chrome, validate_home, validate_slug
 from .tmux import OWNED_OPTION, _pane_stopped_or_dead, _python_command, _tmux, await_owned, capture_raw, lease_value, owns_session
 
 
@@ -280,7 +280,13 @@ def _observation_text(slug: str, frame: str) -> str:
     prefixes = ("STATE:", "UNKNOWN ", "UNAVAILABLE command.", "AVAILABLE command.",
                 "PERMISSION REQUESTS:", "REQUEST ") if slug == "discover" else (
                     "STATE:", "UNKNOWN ", "DRIFT ")
-    return "\n".join(line for line in frame.splitlines() if line.startswith(prefixes))
+    # A rendered display age (``age=19m17s``) grows on every refresh while the
+    # reading's meaning is unchanged; the boundary adapter redacts it so the
+    # digest tracks meaning. The gap class, ``last-phone`` stamp and STATE
+    # line still separate digests.
+    lines = (redact_display_age(line)
+             for line in frame.splitlines() if line.startswith(prefixes))
+    return "\n".join(lines)
 
 def stale_pends(entries, *, now: datetime | None = None, timeout: float = 600):
     """Find roles whose pending wake has not yielded within the timeout."""

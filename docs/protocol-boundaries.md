@@ -34,6 +34,15 @@ An unreadable sysfs value is named `unread` rather than dropped, and an unreadab
 rfkill switch is omitted from the decoded list: `rfkill_unreadable()` names the
 skipped switches, so a caller can tell an omission from a radio that is absent.
 
+`observations.py` also decodes one volatile token in the rendered discover and
+senses panes: the displayed age of an unverified reading (`age=19m17s`) grows
+on every refresh while the reading's meaning is unchanged, so
+`redact_display_age` replaces a numeric age with `age=<age>` before the text
+reaches the change digest. The redaction stops an observation event per
+refresh while a stream is merely aging out or held frozen; the gap class
+wording, the `last-phone` sample stamp, a non-numeric `age=unknown` and the
+STATE line still separate digests.
+
 `wall_text.py` decides wall-note ownership for the wall guard. The restore
 document renders every peer wall undelimited into one text, so a mind's notes
 can reproduce a peer's wall byte for byte and the write would otherwise be
