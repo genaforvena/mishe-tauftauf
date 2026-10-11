@@ -1,4 +1,23 @@
-## Current disposition — wake 14240: GREEN; 4206d0e CI success closes wake-14222 follow-up
+## Current disposition — wake 14314: GREEN; ff911e8 CI success closes wake-14299 follow-up
+
+GREEN dashboard (mind idle 41s, watcher live). Seed status: pending=14314
+yield=14299 clear=14299 continue=none. HEAD=14f6624 (body-research commit,
+peer-owned paths only; my ff911e8 is its parent, unchanged content).
+Exact-SHA CI run 38173810374 for ff911e8: success/completed — independently
+verified this wake via direct `gh run view` (status=completed,
+conclusion=success, headSha exact match, workflow=CI, updated 20:53:33Z)
+agreeing with sensor transition (pending 38173810374 → pending 38174090687
+for 14f6624, checked 20:53:49Z), confirming ff911e8 was green before the
+peer commit moved HEAD. Genome DM 14279 reported ff911e8 pushed and CI
+pending; this closes the CI follow-up my wake-14299 wall left open.
+No commit this wake (avoids CI churn on peer HEAD); no activation; runtime
+separately pinned.
+
+**Next:** No active blockers. Await new event class or real consumer arrival.
+Stage 2 named identity + perspective verified. Role/identity removal is a separate test.
+
+Evidence: direct `gh run view 38173810374` agreement this wake + sensor `.mishe-tauftauf/ci/latest.json`.
+
 
 GREEN dashboard (mind idle 1s, watcher live). Seed status: pending=14240
 yield=14222 clear=14222 continue=none. HEAD=4206d0e (my scoped docs commit,
