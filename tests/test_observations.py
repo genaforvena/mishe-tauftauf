@@ -6,6 +6,16 @@ from mishe_tauftauf.observations import run_renderer
 
 from mishe_tauftauf.observations import compose_frame
 
+from mishe_tauftauf.observations import reserved_home_name
+
+
+def test_reserved_home_name_matches_only_the_reserved_prefix() -> None:
+    assert reserved_home_name(".mishe-tauftauf")
+    assert reserved_home_name(".mishe-")
+    assert not reserved_home_name("mishe-tauftauf")
+    assert not reserved_home_name(".mishe")
+    assert not reserved_home_name(".mesh")
+
 
 def test_compose_frame_role_aware_budget(tmp_path: Path, monkeypatch) -> None:
     """compose_frame with timeout=None uses the role-aware budget."""

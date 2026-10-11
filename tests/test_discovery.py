@@ -3986,6 +3986,127 @@ def test_branch_inventory_unknown_when_the_remote_is_unreadable(tmp_path):
     assert reading["sample"] == "remote heads unreadable"
 
 
+def _ghost_tree(root: Path, name: str, files: dict[str, str], mtime: float) -> None:
+    ghost = root / name
+    ghost.mkdir(parents=True, exist_ok=True)
+    for relative, text in files.items():
+        path = ghost / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        os.utime(path, (mtime, mtime))
+
+
+def test_ghost_site_homes_verified_when_only_the_site_home_exists(tmp_path):
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / ".mishe-plant"
+    home.mkdir(parents=True)
+    reading = discovery._ghost_site_homes(home)
+    assert reading["state"] == "verified"
+    assert reading["sample"] == ("ghost-homes=0 files=0 holding=none nested=0 "
+                                 "newest=none")
+    assert reading["ghosts"] == []
+
+
+def test_ghost_site_homes_drift_names_a_reserved_home_that_is_not_this_site(tmp_path):
+    from mishe_tauftauf import discovery
+
+    # The live shape: the site home is itself reserved-named, so the reader must
+    # resolve paths rather than skip every `.mishe-*` entry by name.
+    home = tmp_path / ".mishe-tauftauf"
+    home.mkdir(parents=True)
+    _ghost_tree(tmp_path, ".mishe-tauftauft", {"walls/senses.md": "ghost wall\n"}, 1_000.0)
+    reading = discovery._ghost_site_homes(home, now=1_000.0 + 7_200)
+    assert reading["state"] == "drift"
+    assert reading["ghosts"] == [".mishe-tauftauft"]
+    assert reading["holding"] == [".mishe-tauftauft"]
+    assert reading["files"] == {".mishe-tauftauft": 1}
+    assert reading["total"] == 1
+    assert reading["nested"] == []
+    assert reading["newest"][".mishe-tauftauft"]["age_s"] == 7_200
+    assert "ghost-homes=1 files=1 holding=.mishe-tauftauft nested=0" in reading["sample"]
+    assert "newest=.mishe-tauftauft age=2h0m" in reading["sample"]
+    assert reading["files_at_least"] is False
+
+
+def test_ghost_site_homes_counts_nested_ghost_directories(tmp_path):
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir(parents=True)
+    _ghost_tree(tmp_path, ".mishe-tauftauft", {
+        "walls/discover.md": "snapshot\n",
+        ".mishe-tauftauf/research/note.md": "nested\n",
+    }, 2_000.0)
+    reading = discovery._ghost_site_homes(home, now=2_000.0 + 60)
+    assert reading["state"] == "drift"
+    assert reading["total"] == 2
+    assert reading["nested"] == [".mishe-tauftauft/.mishe-tauftauf"]
+    assert "nested=1" in reading["sample"]
+
+
+def test_ghost_site_homes_reports_empty_ghost_directories_without_files(tmp_path):
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir(parents=True)
+    (tmp_path / ".mishe-tauftauftau").mkdir()
+    reading = discovery._ghost_site_homes(home)
+    assert reading["state"] == "drift"
+    assert reading["ghosts"] == [".mishe-tauftauftau"]
+    assert reading["empty"] == [".mishe-tauftauftau"]
+    assert reading["holding"] == []
+    assert reading["total"] == 0
+    assert "holding=none empty=.mishe-tauftauftau" in reading["sample"]
+
+
+def test_ghost_site_homes_caps_the_enumeration_to_a_lower_bound(tmp_path, monkeypatch):
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir(parents=True)
+    monkeypatch.setattr(discovery, "GHOST_FILE_LIMIT", 2)
+    _ghost_tree(tmp_path, ".mishe-tauftauft", {
+        "a.md": "1\n", "b.md": "2\n", "c.md": "3\n"}, 3_000.0)
+    reading = discovery._ghost_site_homes(home)
+    assert reading["state"] == "drift"
+    assert reading["files_at_least"] is True
+    assert reading["files"] == {".mishe-tauftauft": 2}
+    assert "files>=2" in reading["sample"]
+
+
+def test_ghost_site_homes_unknown_when_a_ghost_tree_cannot_be_walked(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir(parents=True)
+    (tmp_path / ".mishe-tauftauft").mkdir()
+
+    def refusing_walk(top, onerror=None):
+        onerror(PermissionError(13, "Permission denied", "", ""))
+        return iter([])
+
+    monkeypatch.setattr(discovery.os, "walk", refusing_walk)
+    reading = discovery._ghost_site_homes(home)
+    assert reading["state"] == "unknown"
+    assert "ghost home unreadable: .mishe-tauftauft" in reading["sample"]
+    assert "count" not in reading
+
+
+def test_ghost_site_homes_ignores_non_reserved_entries(tmp_path):
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir(parents=True)
+    (tmp_path / "src").mkdir()
+    (tmp_path / ".gitignore").write_text(".mishe-*\n", encoding="utf-8")
+    (tmp_path / ".mesh").mkdir()
+    (tmp_path / "loose.md").write_text("note\n", encoding="utf-8")
+    reading = discovery._ghost_site_homes(home)
+    assert reading["state"] == "verified"
+    assert reading["ghosts"] == []
+
+
 def test_top_pain_roots_marks_a_conditional_export_unresolved() -> None:
     from mishe_tauftauf import discovery
 
