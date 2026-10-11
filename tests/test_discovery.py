@@ -4156,11 +4156,14 @@ def test_ghost_site_homes_unknown_when_a_ghost_tree_cannot_be_walked(monkeypatch
     home.mkdir(parents=True)
     (tmp_path / ".mishe-tauftauft").mkdir()
 
-    def refusing_walk(top, onerror=None):
-        onerror(PermissionError(13, "Permission denied", "", ""))
-        return iter([])
+    real_scandir = os.scandir
 
-    monkeypatch.setattr(discovery.os, "walk", refusing_walk)
+    def refusing_scan(path):
+        if Path(path).name == ".mishe-tauftauft":
+            raise PermissionError(13, "Permission denied", "")
+        return real_scandir(path)
+
+    monkeypatch.setattr(discovery.os, "scandir", refusing_scan)
     reading = discovery._ghost_site_homes(home)
     assert reading["state"] == "unknown"
     assert "ghost home unreadable: .mishe-tauftauft" in reading["sample"]
@@ -4231,7 +4234,7 @@ def test_ghost_site_homes_stops_enumerating_the_checkout_at_the_root_cap(tmp_pat
             return item
 
     def counting_scandir(root):
-        return CountingScan(real_scandir(root), root == str(tmp_path))
+        return CountingScan(real_scandir(root), os.fspath(root) == str(tmp_path))
 
     monkeypatch.setattr(discovery.os, "scandir", counting_scandir)
     reading = discovery._ghost_site_homes(home)
@@ -4266,6 +4269,138 @@ def test_ghost_site_homes_unknown_when_the_checkout_cannot_be_enumerated(monkeyp
     assert reading["state"] == "unknown"
     assert "checkout root unreadable" in reading["sample"]
     assert "count" not in reading
+
+
+def test_ghost_site_homes_caps_total_checkout_names_inspected(tmp_path, monkeypatch):
+    """Total checkout-root names inspected are bounded, reserved or not.
+
+    Charging only reserved names leaves the scan unbounded in the checkout's
+    own size: arbitrarily many ordinary entries before the reserved ones are
+    still inspected, and the reading never marks the truncation. The budget
+    must cover every inspected name and stop the enumeration itself.
+    """
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir(parents=True)
+    monkeypatch.setattr(discovery, "GHOST_SCAN_LIMIT", 8)
+    for index in range(8):
+        (tmp_path / f"ordinary{index}").write_text("x\n", encoding="utf-8")
+    for index in range(10):
+        _ghost_tree(tmp_path, f".mishe-ghost{index}", {"walls/a.md": "x\n"}, 1_000.0)
+    seen: list[str] = []
+    real_scandir = os.scandir
+
+    class CountingScan:
+        def __init__(self, entries, is_checkout):
+            self._entries = iter(entries)
+            self._is_checkout = is_checkout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            item = next(self._entries)
+            if self._is_checkout:
+                seen.append(item.name)
+            return item
+
+    def counting_scandir(path):
+        return CountingScan(real_scandir(path), os.fspath(path) == str(tmp_path))
+
+    monkeypatch.setattr(discovery.os, "scandir", counting_scandir)
+    reading = discovery._ghost_site_homes(home)
+    # The scan stopped one name past the budget instead of walking every
+    # checkout-root entry, whatever their order and reservation class.
+    assert len(seen) == discovery.GHOST_SCAN_LIMIT + 1
+    # Only one root entry is non-reserved, so at least the budget minus one
+    # ghost trees were examined before the truncation: presence is established
+    # and the retained count stays an explicit lower bound.
+    assert reading["state"] == "drift"
+    assert reading["roots_at_least"] is True
+    assert reading["checkout_truncated"] is True
+    assert "checkout-truncated" in reading["sample"]
+
+
+def test_ghost_site_homes_unknown_when_truncation_leaves_absence_unestablished(tmp_path, monkeypatch):
+    """A truncated enumeration that examined no ghost tree reads UNKNOWN.
+
+    Reading a clean zero from a partially inspected checkout is exactly the
+    false-negative class this detector exists to make visible, so absence is
+    claimed only from an enumeration that finished within its budget.
+    """
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir(parents=True)
+    monkeypatch.setattr(discovery, "GHOST_SCAN_LIMIT", 8)
+    for index in range(20):
+        (tmp_path / f"ordinary{index}").write_text("x\n", encoding="utf-8")
+    reading = discovery._ghost_site_homes(home)
+    assert reading["state"] == "unknown"
+    assert "truncated" in reading["sample"]
+    assert "ghost absence not established" in reading["sample"]
+    assert "count" not in reading
+
+
+def test_ghost_site_homes_charges_the_work_budget_per_yielded_entry(tmp_path, monkeypatch):
+    """The tree budget is charged per yielded entry, not per materialized list.
+
+    A walk that builds a directory's full name list before charging the budget
+    lets one high-fanout directory exceed the advertised work bound during
+    materialization; the scan must stop requesting entries once the shared
+    name budget runs out, so total entries inspected stays within it.
+    """
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir(parents=True)
+    monkeypatch.setattr(discovery, "GHOST_WORK_LIMIT", 10)
+    ghost = tmp_path / ".mishe-ghost"
+    (ghost / "many").mkdir(parents=True)
+    for index in range(600):
+        (ghost / "many" / f"entry{index:04d}").mkdir()
+    seen: list[str] = []
+    real_scandir = os.scandir
+
+    class CountingScan:
+        def __init__(self, entries):
+            self._entries = iter(entries)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            item = next(self._entries)
+            seen.append(item.name)
+            return item
+
+    def counting_scandir(path):
+        return CountingScan(real_scandir(path))
+
+    monkeypatch.setattr(discovery.os, "scandir", counting_scandir)
+    reading = discovery._ghost_site_homes(home)
+    assert reading["state"] == "drift"
+    assert reading["work_truncated"] is True
+    assert reading["files_at_least"] is True
+    assert "names-truncated" in reading["sample"]
+    # Every entry inspected anywhere in the scan charged the shared budget, so
+    # the enumeration itself — not a later truncation of a materialized list —
+    # is what stopped it: of the 600 names in the high-fanout directory, only
+    # the budget plus the entry that revealed the truncation were yielded.
+    assert sum(1 for name in seen if name.startswith("entry")) <= discovery.GHOST_WORK_LIMIT + 1
 
 
 def test_ghost_site_homes_ignores_non_reserved_entries(tmp_path):
