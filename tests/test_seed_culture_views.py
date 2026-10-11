@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from mishe_tauftauf.access import decide, request
+from mishe_tauftauf.access import decide, recover, request, resolve_recovery
 from mishe_tauftauf.discovery import scan
 from mishe_tauftauf.seed_culture_views import discover, health, permissions, senses
 
@@ -27,6 +27,28 @@ def test_views_show_real_scan_and_scoped_request_without_clock_churn(tmp_path: P
     assert "senses/keyboard" in pending
     decide(home, "keyboard-count", "granted")
     assert "keyboard-count GRANTED" in permissions(home)
+
+
+def test_discover_view_does_not_count_a_retired_request_as_pending(tmp_path: Path) -> None:
+    """A retired permission request must not read pending on the discover pane."""
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    evidence = home / "artifacts" / "evidence.md"
+    evidence.write_text("controlled fixture\n", encoding="utf-8")
+    recover(home, "bt-leak-fixture", owner="discover", task="clear-stuck-advertising",
+            resolver="health", missing="root authority for a bluetoothd restart",
+            action="restart bluetooth", alternatives=["wait for the next restart"],
+            cutoff="2099-01-01T00:00:00+00:00", evidence=evidence,
+            capability="host-service-restart", unblocks=["site"],
+            reason="restore prior host BT state")
+    live = discover(home)
+    assert "PERMISSION REQUESTS: 1 pending" in live
+    assert "REQUEST bt-leak-fixture" in live
+    resolve_recovery(home, "bt-leak-fixture", evidence,
+                     checked_action="wait for the next restart", via_alternative=True)
+    rendered = discover(home)
+    assert "PERMISSION REQUESTS: 0 pending" in rendered
+    assert "REQUEST bt-leak-fixture" not in rendered
 
 
 
