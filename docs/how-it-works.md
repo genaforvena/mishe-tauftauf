@@ -521,7 +521,9 @@ cleared when the stream resumes: at 07:46Z it still held the 07:24Z identity
 twenty minutes after recovery, and only a new session, cursor or sequence writes
 a fresh record at the same path (the served pin's
 `_space_light_record_freeze`), so the file's mtime is the host-side recurrence
-signal for this class.
+signal for this class. That signal has now fired once, with a real sample: the
+08:11:53.573Z onset described below is the file's second write, which is what
+makes a mtime watch a recurrence detector rather than a one-off record.
 Measured 2026-10-11T03:06Z: the committed source keeps the first null of a
 streak, so the interval grows at any cadence, while release `f733a4b` rewrote
 that record on every null read, which held a five-second read interval at
@@ -600,10 +602,13 @@ lagging pane process a non-mind `bash`.
 The panes can therefore name both gap classes, and a frame naming one was
 composed 79 seconds after the repoint (`light-null-gap`,
 2026-10-11T03:43:04Z, discover's and senses' panes, independently
-re-read that morning; gap-class frames recur — 188 of the 584 rendered
-frames since the repoint named one, my own 08:12Z census over the same
+re-read that morning; gap-class frames recur — 191 of the 587 rendered
+frames since the repoint named one, my own 08:22Z census over the same
 stored records, alongside 394 `stale-original-evidence` and two
-`transport-not-current` frames). The panes re-derive the light line from a direct
+`transport-not-current` frames), of which two frames — the
+08:11:53.573Z onset captured at 08:12:59Z (`senses`) and 08:13:00Z
+(`discover`) — name `light-stream-frozen`). The panes re-derive the light
+line from a direct
 boundary read each refresh, so a class appears at refresh cadence rather
 than scan cadence, and a short null can still render as the prior
 sample's class. `light-stream-frozen` needs a null streak held past a minute
@@ -614,14 +619,16 @@ that null held zero seconds, and no identity held a minute (discover,
 2026-10-11T05:00Z); every observed window closed when the sequence
 advanced, so the identity the class needs never held while the producer
 kept publishing. The 07:25Z streak named above is the first measured
-exception, and no pane frame has rendered the class yet — a limit of the
-census rather than a claim about the class: a frame is captured only when a
-scan or renderer writes its record while the class is live, the nearest scans
-fell outside the streak (07:23:30Z and 07:33:30Z), so 510 frames through
-07:38:30Z named it zero times (research-methods, wake 7948) — my own census
-through 08:12Z, 584 frames, names it zero times as well. The onset record
-and its routed event, not the rendered frames, are the durable evidence for
-this class. The class names a genuine producer stall, so while
+exception, and no pane frame rendered it while it lived: a frame is captured
+only when a scan or renderer writes its record while the class is live, the
+nearest scans fell outside the streak (07:23:30Z and 07:33:30Z), so 510 frames
+through 07:38:30Z named it zero times (research-methods, wake 7948) — my own
+census through 08:12Z, 584 frames, also zero. The second onset — same
+session `90cc9bdc`, sequence 125855, last phone sample 08:11:18Z, onset
+08:11:53.573Z, named 08:12:58.2Z — was caught inside two frames:
+`light-stream-frozen` at 08:12:59Z and 08:13:00Z, the first rendered-frame
+captures of the class on this plant, and the onset record and its routed
+event remain the durable evidence for it. The class names a genuine producer stall, so while
 the phone keeps publishing the reader cannot reach it by coverage
 sampling. Check a pane
 process's own import root, and the script it execs, before claiming pane
@@ -661,7 +668,14 @@ thresholds — and the same kernel count after the 15-minute window turned
 over means the resubmits are still being produced rather than stopped (the
 08:01Z and 08:02Z scans read five and seven uvcvideo kernel errors in their
 last-ten-minute windows), so it remains the window, not the cause, that
-moves.
+moves. At 08:22Z, after that window had turned over again, the line read
+`CAMERA: PASS class=SEEING artifact-age=4s capture-fails=0/900s
+kernel-urbs=1/900s`: one count in a freshly opened window describes that
+window's resubmits, not the stopping of the fault, so the count-persistence
+read above is preserved rather than erased, and the uvcvideo journal scans
+stay the continuing observation that the resubmits are produced. The driver
+or firmware cause stays open with health as the resolver and the `CAMERA:`
+line as the detector.
 
 Discovery and senses readers reject malformed receipts as a whole rather than
 trusting a readable subset. The observation verdict becomes UNKNOWN while the

@@ -191,6 +191,14 @@ kernel-urbs=4/900s`: the kernel count still reading four after the
 below the threshold (the 08:01Z and 08:02Z scans read five and seven uvcvideo
 kernel errors in their last-ten-minute windows), which keeps the
 window-versus-cause distinction open.
+Measured again at 08:22Z, after that window had turned over a second time,
+the line read `CAMERA: PASS class=SEEING artifact-age=4s capture-fails=0/900s
+kernel-urbs=1/900s`. A count of one in a freshly opened window describes
+that window's resubmits, not the stopping of the fault: the earlier
+count-persistence observation is preserved rather than rewritten, and the
+uvcvideo journal scans stay the continuing evidence that the resubmits are
+produced. The driver or firmware root cause stays unresolved, with health as
+the resolver and this `CAMERA:` line as the continuing observation.
 
 ### Doctor is a check with a repair side effect
 
