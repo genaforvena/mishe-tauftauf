@@ -1,4 +1,5 @@
 from datetime import datetime, timezone, timedelta
+import hashlib
 import json
 import os
 import subprocess
@@ -206,6 +207,114 @@ def test_peer_copy_guard_accepts_a_paste_differing_beyond_trailing_lines(tmp_pat
     wall.write(tmp_path, "genome", "Line one.\n\nLine two.")
     wall.write(tmp_path, "witness", "Line one.\nLine two.\n\n")
     assert (tmp_path / "walls" / "witness.md").read_text() == "Line one.\nLine two.\n\n"
+
+
+def test_wall_write_audit_records_content_digest(tmp_path):
+    """The audit digest is the normalized document, matching the peer-copy rule."""
+    setup_wall(tmp_path)
+    from mishe_tauftauf import wall
+    wall.write(tmp_path, "genome", "Digest probe notes.\n\n")
+    entry = json.loads((tmp_path / "logs" / "wall-write-audit.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert entry["digest"] == hashlib.sha256("Digest probe notes.".encode("utf-8")).hexdigest()
+
+
+def test_wall_write_projects_the_handoff_beside_the_wall(tmp_path):
+    """The handoff projection must carry the same bytes as the wall it mirrors."""
+    setup_wall(tmp_path)
+    from mishe_tauftauf import wall
+    wall.write(tmp_path, "genome", "Wake 8405 notes; handoff must match.")
+    assert (tmp_path / "handoffs" / "genome.md").read_text(encoding="utf-8") == "Wake 8405 notes; handoff must match."
+
+
+def test_wall_write_replaces_a_stale_handoff_projection(tmp_path):
+    """A wall write must not leave the previous wake's handoff in place."""
+    setup_wall(tmp_path)
+    from mishe_tauftauf import wall
+    (tmp_path / "handoffs").mkdir()
+    (tmp_path / "handoffs" / "genome.md").write_text("previous wake notes", encoding="utf-8")
+    wall.write(tmp_path, "genome", "current wake notes")
+    assert (tmp_path / "handoffs" / "genome.md").read_text(encoding="utf-8") == "current wake notes"
+
+
+def test_wall_write_refuses_stale_peer_document_from_audit_history(tmp_path):
+    """A peer's superseded wall cannot pass the live-wall comparison unnoticed."""
+    setup_wall(tmp_path)
+    from mishe_tauftauf import wall
+    wall.write(tmp_path, "witness", "Wake 7899 findings; later superseded.")
+    wall.write(tmp_path, "witness", "Wake 8219 findings; current.")
+    with pytest.raises(ValueError, match="identical to a document witness wrote"):
+        wall.write(tmp_path, "discover", "Wake 7899 findings; later superseded.")
+    assert not (tmp_path / "walls" / "discover.md").exists()
+    assert (tmp_path / "walls" / "witness.md").read_text() == "Wake 8219 findings; current."
+
+
+def test_wall_write_allows_own_unchanged_rewrite_against_history(tmp_path):
+    """Own earlier digests must not block rewriting a wall with unchanged content."""
+    setup_wall(tmp_path)
+    from mishe_tauftauf import wall
+    wall.write(tmp_path, "witness", "Steady plan carried forward.")
+    wall.write(tmp_path, "witness", "Steady plan carried forward.")
+    assert (tmp_path / "walls" / "witness.md").read_text() == "Steady plan carried forward."
+
+
+def test_wall_write_resolves_relative_notes_against_walls_first(tmp_path, monkeypatch):
+    """A relative notes path names SITE_HOME/walls first, whatever the cwd."""
+    setup_wall(tmp_path)
+    from mishe_tauftauf import cli
+    (tmp_path / "walls").mkdir()
+    (tmp_path / "walls" / "NOTES").write_text("canonical staging notes", encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "NOTES").write_text("same-named file in the working directory", encoding="utf-8")
+    monkeypatch.chdir(elsewhere)
+    code = cli.main(["--home", str(tmp_path), "wall", "write", "--owner", "genome", "--file", "NOTES"])
+    assert code == 0
+    assert (tmp_path / "walls" / "genome.md").read_text(encoding="utf-8") == "canonical staging notes"
+    entry = json.loads((tmp_path / "logs" / "wall-write-audit.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert entry["source"] == str(tmp_path / "walls" / "NOTES")
+
+
+def test_wall_write_falls_back_to_cwd_when_notes_absent_from_walls(tmp_path, monkeypatch):
+    """Site-root-relative and repo-root-relative staging paths keep their meaning."""
+    setup_wall(tmp_path)
+    from mishe_tauftauf import cli
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "notes.md").write_text("working-directory notes", encoding="utf-8")
+    monkeypatch.chdir(elsewhere)
+    code = cli.main(["--home", str(tmp_path), "wall", "write", "--owner", "genome", "--file", "notes.md"])
+    assert code == 0
+    assert (tmp_path / "walls" / "genome.md").read_text(encoding="utf-8") == "working-directory notes"
+
+
+def test_wall_write_accepts_absolute_notes_path(tmp_path, monkeypatch):
+    """An absolute staging path is never re-anchored."""
+    setup_wall(tmp_path)
+    from mishe_tauftauf import cli
+    staged = tmp_path / "staged-notes.md"
+    staged.write_text("absolute notes", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    code = cli.main(["--home", str(tmp_path), "wall", "write", "--owner", "genome", "--file", str(staged)])
+    assert code == 0
+    assert (tmp_path / "walls" / "genome.md").read_text(encoding="utf-8") == "absolute notes"
+
+
+def test_wall_dm_resolves_relative_file_against_walls_first(tmp_path, monkeypatch):
+    """The dm message path reads the same canonical staging notes."""
+    setup_wall(tmp_path)
+    from mishe_tauftauf import cli
+    from mishe_tauftauf.feed import Feed
+    (tmp_path / "walls").mkdir()
+    (tmp_path / "walls" / "MESSAGE").write_text("canonical message text", encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "MESSAGE").write_text("same-named file in the working directory", encoding="utf-8")
+    monkeypatch.chdir(elsewhere)
+    code = cli.main(["--home", str(tmp_path), "wall", "dm", "--source", "health", "--to", "genome",
+                     "--file", "MESSAGE"])
+    assert code == 0
+    entry = Feed(tmp_path).entries()[-1]
+    assert entry.source == "health" and "canonical message text" in entry.body
 
 
 

@@ -20,12 +20,16 @@ WALL_MAX_LINES = 200
 
 
 
-def _audit_log(home: Path, role: str, source_path: str | None, wall_path: Path) -> None:
+def _audit_log(home: Path, role: str, source_path: str | None, wall_path: Path, digest: str) -> None:
     """Append a wall-write audit entry so clobbers are diagnosable after the fact.
 
     Logs: timestamp, role, source notes path (if known), destination wall path,
-    and post-write mtime. Writes to ``logs/wall-write-audit.jsonl`` under the
-    ignored site. Never raises — audit logging must not break wall delivery.
+    post-write mtime, and the written document's digest (trailing newlines
+    normalized, matching ``wall_text.is_peer_copy``). The digest lets the
+    peer-copy guard refuse a paste of another role's *superseded* wall, which
+    no current wall file can show. Writes to ``logs/wall-write-audit.jsonl``
+    under the ignored site. Never raises — audit logging must not break wall
+    delivery.
     """
     try:
         logs_dir = home / "logs"
@@ -36,6 +40,7 @@ def _audit_log(home: Path, role: str, source_path: str | None, wall_path: Path) 
             "source": str(source_path) if source_path else None,
             "wall": str(wall_path),
             "mtime": datetime.fromtimestamp(wall_path.stat().st_mtime, tz=timezone.utc).isoformat(),
+            "digest": digest,
         }
         with open(logs_dir / "wall-write-audit.jsonl", "a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry) + "\n")
@@ -177,24 +182,25 @@ def write(home: Path, role: str, text: str, source_path: str | None = None) -> N
             "genuinely too small."
         )
     wall_path = home / "walls" / f"{role}.md"
-    _reject_peer_wall_copy(home, role, text)
+    from .wall_text import document_digest
+    digest = document_digest(text)
+    _reject_peer_wall_copy(home, role, text, digest)
     _write_handoff(wall_path, text)
     # handoffs/<role>.md is the launcher-facing projection of these same notes:
-    # runtime.py:_context reads it as CURRENT HANDOFF, and wall.settle's
+    # runtime.py:_context reads it as CURRENT HANDOFF and wall.settle's
     # already-settled branch compares both files against the settle text.
     # Writing only the wall left the projection at the previous wake's content,
     # so a mind that edited its wall directly handed the next invocation a stale
     # handoff and a same-wake re-settle failed the file match for good
-    # (android-body's genome wake 35129 stayed pending 07:23-08:03Z 2026-10-11
-    # until health repaired the projection by hand; body-research wake 8405
-    # reproduces the class in artifacts/body-wake8405-handoff-desync-repro.json).
-    # Project it here so the two files cannot diverge; _write_handoff skips an
-    # identical rewrite.
+    # (android-body genome wake 35129 stuck pending 07:23-08:03Z 2026-10-11,
+    # repaired by hand at 08:03Z; body-research wake 8405 reproduces the class in
+    # artifacts/body-wake8405-handoff-desync-repro.json). Project it here so the
+    # two files cannot diverge; _write_handoff skips an identical rewrite.
     _write_handoff(home / "handoffs" / f"{role}.md", text)
-    _audit_log(home, role, source_path, wall_path)
+    _audit_log(home, role, source_path, wall_path, digest)
 
 
-def _reject_peer_wall_copy(home: Path, role: str, text: str) -> None:
+def _reject_peer_wall_copy(home: Path, role: str, text: str, digest: str) -> None:
     """Reject notes identical to another role's wall.
 
     A restore/context document renders every peer wall undelimited into one
@@ -206,6 +212,12 @@ def _reject_peer_wall_copy(home: Path, role: str, text: str) -> None:
     unchanged own content is unaffected. Comparison ignores trailing newlines,
     so the paste class cannot slip through by ending on a different blank-line
     count; any other difference still reads as the writer's own.
+
+    The live-wall comparison sees only each peer's current document, so a paste
+    of a peer's *superseded* wall — the class that put witness content on
+    android-body's discover wall on 2026-10-11 07:5xZ — matches nothing current
+    and used to pass. The write audit records a digest per accepted write, so
+    the same document is also refused when any other role wrote it earlier.
     """
     from .activity import roles
     from .wall_text import is_peer_copy
@@ -220,6 +232,46 @@ def _reject_peer_wall_copy(home: Path, role: str, text: str) -> None:
                 "The restore document renders every role's wall in one text — copy from your "
                 "own wall section only, or rewrite your current plan from your own evidence. "
                 f"If {name} needs this content, {name} writes it."
+            )
+    _reject_peer_history_copy(home, role, digest)
+
+
+_AUDIT_HISTORY_LIMIT = 4000
+"""How many recent audit entries the history guard reads; bounded so a write stays cheap."""
+
+
+def _recent_audit_entries(home: Path) -> list[dict]:
+    """Tail of the wall-write audit, oldest first; a missing log reads empty.
+
+    Decoding the log's text form is the wall-text boundary's job; this only
+    reads bytes and bounds how much history one write consults.
+    """
+    from .wall_text import decode_audit_entries
+    try:
+        text = (home / "logs" / "wall-write-audit.jsonl").read_text(encoding="utf-8")
+    except OSError:
+        return []
+    return decode_audit_entries(text)[-_AUDIT_HISTORY_LIMIT:]
+
+
+def _reject_peer_history_copy(home: Path, role: str, digest: str) -> None:
+    """Refuse notes whose digest matches a document another role wrote earlier.
+
+    The live-wall guard cannot see a peer wall that has since been replaced, so
+    the audit history is the continuing observation of that failure class. Own
+    rewrites of unchanged content match the writer's own earlier digests and are
+    unaffected; blank notes carry no document to confuse and are skipped.
+    """
+    for entry in reversed(_recent_audit_entries(home)):
+        if entry.get("role") == role or not entry.get("digest"):
+            continue
+        if entry["digest"] == digest:
+            raise ValueError(
+                f"refusing to write wall {role}: notes are identical to a document "
+                f"{entry['role']} wrote at {entry.get('ts', 'an unrecorded time')}. "
+                "The restore document and every peer wall share one undelimited text — "
+                "copy from your own wall section only, or rewrite your current plan from "
+                "your own evidence. If that role needs this content, it writes it."
             )
 
 

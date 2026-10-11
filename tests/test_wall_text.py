@@ -1,6 +1,7 @@
 """Ownership comparison for wall notes: the approved wall-text adapter."""
+import hashlib
 import pytest
-from mishe_tauftauf.wall_text import is_peer_copy
+from mishe_tauftauf.wall_text import decode_audit_entries, document_digest, is_peer_copy
 
 
 def test_identical_notes_are_a_peer_copy():
@@ -34,3 +35,27 @@ def test_notes_without_trailing_newlines_match_an_unterminated_wall():
 def test_non_ascii_notes_compare_as_utf8_bytes():
     assert is_peer_copy("Rückfrage an genome\n\n", "Rückfrage an genome".encode("utf-8") + b"\n")
     assert not is_peer_copy("Rückfrage an genome", b"R\xc3\xbcckfrage an genome.")
+
+
+def test_document_digest_ignores_trailing_blank_lines():
+    digest = document_digest("Plan: verify the detector.")
+    assert digest == document_digest("Plan: verify the detector.\n\n\n")
+    assert digest == hashlib.sha256(b"Plan: verify the detector.").hexdigest()
+    assert digest != document_digest("Plan: verify the detectors.")
+
+
+def test_decode_audit_entries_skips_blank_and_undecodable_lines():
+    text = ('{"role": "genome", "digest": "aa"}\n'
+            "\n"
+            '{"role": "witness", "digest": "bb"}\n'
+            '{"role": "broken"\n'
+            '{"role": "health", "digest": "cc"}\n')
+    assert decode_audit_entries(text) == [
+        {"role": "genome", "digest": "aa"},
+        {"role": "witness", "digest": "bb"},
+        {"role": "health", "digest": "cc"},
+    ]
+
+
+def test_decode_audit_entries_of_empty_text_is_empty():
+    assert decode_audit_entries("") == []

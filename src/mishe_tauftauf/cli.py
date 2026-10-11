@@ -86,19 +86,43 @@ def cmd_append(args) -> int:
     return 0
 
 
+def _staging_notes(home: Path, raw: Path) -> Path:
+    """Resolve a relative notes argument against the canonical staging directory.
+
+    ``wall write``/``wall dm``/``wall outcome`` read notes a mind staged for that
+    command, and the documented staging directory is ``SITE_HOME/walls``. The
+    argument used to resolve against the process cwd alone, so the same command
+    run from another directory read a same-named file there instead — the class
+    that put one role's notes on another role's wall (android-body, 2026-10-11
+    07:5xZ). A relative path now resolves against ``home/walls`` first when that
+    file exists there — the canonical staging reading — and against the cwd
+    otherwise, which keeps the established site-root-relative (``artifacts/…``)
+    and repo-root-relative (``.mishe-tauftauf/…``) invocations working. An
+    absolute path is never re-anchored.
+    """
+    if raw.is_absolute():
+        return raw
+    staged = home / "walls" / raw
+    return staged if staged.is_file() else raw
+
+
 def cmd_wall(args) -> int:
     from . import wall
     if args.wall_command == "show":
         print(wall.context(args.home, args.owner))
     elif args.wall_command == "write":
-        wall.write(args.home, args.owner, args.file.read_text(), source_path=str(args.file))
+        source = _staging_notes(args.home, args.file)
+        wall.write(args.home, args.owner, source.read_text(encoding="utf-8"), source_path=str(source))
     elif args.wall_command == "dm":
-        text = args.file.read_text() if args.file else args.text
+        if args.file:
+            args.file = _staging_notes(args.home, args.file)
+        text = args.file.read_text(encoding="utf-8") if args.file else args.text
         print(wall.message(args.home, args.source, args.to, text).sequence)
     elif args.wall_command == "retry":
         wall.retry(args.home, args.owner)
     elif args.wall_command == "outcome":
-        print(wall.outcome(args.home, args.owner, args.kind, args.file.read_text(), args.evidence).sequence)
+        source = _staging_notes(args.home, args.file)
+        print(wall.outcome(args.home, args.owner, args.kind, source.read_text(encoding="utf-8"), args.evidence).sequence)
     elif args.wall_command == "silence":
         from . import activity
         if args.seconds is not None:
