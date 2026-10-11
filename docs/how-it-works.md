@@ -478,9 +478,13 @@ namings of the same streak only advance the last-read epoch; a new cursor or
 sequence re-arms the record. Measured 2026-10-11T04:12Z on the live boundary
 with a nulled lux: the first naming wrote the live identity's onset record and
 routed one event, the retained origin survived, and a reader whose onset-record
-write fails still names the freeze without routing. The code is committed
-on `main` as `3c2f110` and unpushed, so live delivery waits on the push,
-exact-SHA CI and promotion rather than promotion alone, and the pane
+write fails still names the freeze without routing. The code was committed on
+`main` as `3c2f110` and delivered through the whole chain rather than by
+promotion alone: push, exact-SHA CI (`de1445c`, run 38112540728 reported
+pass) and promotion to `SITE/releases/de1445c…` at 04:55Z, read back from the
+pane processes' own `PYTHONPATH`. No sustained freeze has occurred since that
+promotion, so `discovery/space-light-freeze.json` is still absent and the live
+routing path has not been exercised by a real streak. The pane
 acceptance of the wording is half measured: a pane named `light-null-gap`
 at 03:43:04Z, while `light-stream-frozen` still waits on the next
 sustained null block.
@@ -492,18 +496,22 @@ ten-minute stored scan reached the minute threshold. The pin has kept the
 null origin since `808dbe0`: measured 2026-10-11T03:43Z, the served pin
 `94092ec` names `light-stream-frozen` on a freeze fixture and sustains it at
 the five-second pane cadence (4/4, retention age 315 s), and its stored scans
-and the CLI read name both gap classes. Which byte-set a pane loads decides
+and the CLI read name both gap classes. The promoted `de1445c` keeps it: its
+own light tests name a null persisting across reads as the frozen stream (71
+passed, run 05:01Z). Which byte-set a pane loads decides
 what a pane says — a loaded-bytes question, not a reading one.
 Measured 2026-10-11T03:22Z, re-measured 03:40Z and again after the pane
 renderer repoint at 03:41Z: this plant's resident panes loaded two byte-sets,
-one per stage, until that repoint; both stages now load the pin (my own
-recheck 04:07Z: all eleven `pain watch` processes on
-`releases/94092ecd…/src`, the seven scripts exporting nothing, and stored
-frames' `DEPLOYED:` line naming that release). The long-lived process is
+one per stage, until that repoint; both stages now load the release the pane
+watcher was respawned from, which is the promoted release rather than a fixed
+commit (my own rechecks: 04:07Z all eleven `pain watch` processes on
+`releases/94092ecd…/src`, then after the 04:55Z promotion of `de1445c` the
+same eleven processes on `releases/de1445c…/src` with the seven scripts still
+exporting nothing and stored frames' `DEPLOYED:` line naming that release). The long-lived process is
 `pain watch <role>` under the
-pinned release — `0c5b0e4` at the first measurement, `94092ec` at the
-later ones — and that stage runs the service, heartbeat, feed and
-seed-state logic. The frame itself is composed once per refresh by that
+release it was respawned from — `0c5b0e4` at the first measurement, `94092ec` at
+the later ones, `de1445c` after the 04:55Z promotion — and that stage runs the
+service, heartbeat, feed and seed-state logic. The frame itself is composed once per refresh by that
 watcher's `observations.run_renderer`, which execs `top-pains/<role>`.
 Until 03:41Z the seven role scripts (discover, docs, genome, health,
 research-methods, senses, witness) each exported the 2026-10-01 trial
@@ -520,15 +528,25 @@ carried neither class name — both occur zero times in its light reader —
 and on the same freeze fixture it reads `malformed-boundary` at any
 cadence, so a pane could not name either gap class; the snapshot survives
 only as patch and revert material. The seven scripts now
-export no root and inherit the pane watcher's release, so a respawn follows
-the pin. Measured after the change: the live `sense.runtime.renderer-coverage`
-reading names ten renderers, all on `releases/94092ecd…/src`, with no
-drift, and a frame composed then names that release on its `DEPLOYED:`
-line. The panes can therefore name both gap classes, and a frame naming one was
+export no root and inherit the pane watcher's release, so a watcher respawn
+follows the promotion the plant serves; read a pane's own
+`/proc/<pid>/environ` before trusting its wording. Measured after the change:
+the live `sense.runtime.renderer-coverage` reading named ten renderers on
+`releases/94092ecd…/src` with no drift at 04:15Z, and reads the same ten on
+`releases/de1445c…/src` after the 04:55Z promotion (my 05:01Z scan), while a
+frame composed then names that release on its `DEPLOYED:` line. That reading is
+a session-wide pane lookup, so a scratch or foreign tmux pane sharing a role
+name can name a root no manifest owns: it read `drift` at 04:25:58Z against
+`/tmp/ci-2edab75`, a peer's CI worktree, and returned to verified at 04:33:50Z.
+A drift row naming a root you do not own is a reader question before it is a
+pane defect. The renderers' roots move with each promotion, while the minds'
+own panes can lag several releases behind — no reading currently sees those
+roots.
+The panes can therefore name both gap classes, and a frame naming one was
 composed 79 seconds after the repoint (`light-null-gap`,
 2026-10-11T03:43:04Z, discover's and senses' panes, independently
-re-read that morning; gap-class frames recur — 45 of the 167 rendered
-frames since the repoint named one, my own 04:48Z census over the same
+re-read that morning; gap-class frames recur — 53 of the 190 rendered
+frames since the repoint named one, my own 05:01Z census over the same
 stored records). The panes re-derive the light line from a direct
 boundary read each refresh, so a class appears at refresh cadence rather
 than scan cadence, and a short null can still render as the prior

@@ -350,11 +350,17 @@ leaves the service roots unread, so the line reports `services=UNKNOWN`, not
 pane. Moving the pin is not a push or a CI result; keep source, CI and running
 code as separate evidence.
 
-A wall-mode site's panes render from the snapshot named in
-`coordination-mode.json` (`runtime`), not from the pin, so moving the pin alone
+A wall-mode site's panes render from whichever root their `top-pains/<role>`
+scripts select — the pin, the checkout when unpinned, or a separate runtime
+snapshot the site names in `coordination-mode.json` — so moving the pin alone
 leaves those renderer bytes stale: the panes show old logic while the services
-import the new release. Rebind the snapshot's package to the release before or
-with the advance — copy `<release>/src/mishe_tauftauf/` over
+import the new release. Read what a pane actually loads before deciding: this
+plant's seven role scripts exported the 2026-10-01 wall snapshot until
+2026-10-11T03:41:46Z and export nothing since, inheriting the pane watcher's
+release, so its renderers follow each promotion while `coordination-mode.json`
+still names that snapshot for wall settings and `wall_patch` targets only. Where
+a script still exports its own root, rebind the snapshot's package to the release
+before or with the advance — copy `<release>/src/mishe_tauftauf/` over
 `<snapshot>/src/mishe_tauftauf/`, after saving the old package under the ignored
 site — and let `sense.runtime.renderer-coverage` confirm it: the sense hashes
 each renderer's import closure in the renderer root and in the pin and reports
@@ -426,6 +432,12 @@ pane's cwd is checked for a
 `mishe_tauftauf/` package that would shadow the `PYTHONPATH` root, since
 `python -m` inserts the cwd before `PYTHONPATH` in `sys.path`. `unavailable`
 means no renderer runs a package module at all.
+The pane lookup is session-wide, not home-scoped: a scratch or foreign pane
+whose start command names `pain watch <role>` can redefine that role's renderer
+root, so a `drift` row naming a root no manifest owns is a reader question
+before it is a pane defect — measured 04:25:58Z against `/tmp/ci-2edab75`, a
+peer's CI worktree, with recovery to `verified` at 04:33:50Z. Reading the pane
+process's own `/proc/<pid>/environ` separates the two cases.
 The covered services' imported roots are also compared with the pin's sensor
 set by `sense.runtime.sensor-coverage`: it parses each root's `discovery.py`
 for the `sense.*` ids that root can emit and names `missing=` or `added=` per
