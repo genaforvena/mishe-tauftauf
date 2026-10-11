@@ -423,6 +423,147 @@ def test_freeze_to_gap_reports_a_duration_class_change(tmp_path):
             "light-null-gap") in Feed(tmp_path).entries()[-1].body
 
 
+def freeze_record(home: Path) -> dict:
+    """The reader's own freeze onset record."""
+    return json.loads((home / "discovery" / "space-light-freeze.json").read_text())
+
+
+def freeze_dms(home: Path) -> list:
+    """The addressed onset events the reader routed for this site."""
+    return [entry for entry in Feed(home).entries()
+            if entry.source == "discover"
+            and entry.body.splitlines()[0] == "[dm] to=research-methods"]
+
+
+def test_first_freeze_naming_records_the_onset_and_routes_one_event(tmp_path):
+    record = null_record()
+    null_gap_fixture(tmp_path, record)
+    row = discovery._space_light_read(tmp_path)
+    assert row["reason"] == "light-stream-frozen"
+    onset = freeze_record(tmp_path)
+    assert onset["class"] == "light-stream-frozen"
+    assert (onset["session"], onset["cursor"], onset["sequence"]) == ("session-a", 12, 12)
+    # The onset is the streak's first read, retained before the freeze was named.
+    assert onset["onset_epoch_s"] == record["read_epoch_s"]
+    assert onset["named_epoch_s"] > onset["onset_epoch_s"]
+    assert onset["last_read_epoch_s"] == onset["named_epoch_s"]
+    assert "last-phone=" in onset["age_token"] and "age=" in onset["age_token"]
+    events = freeze_dms(tmp_path)
+    assert len(events) == 1
+    assert "light-stream-frozen onset" in events[0].body
+    assert onset["age_token"] in events[0].body
+    assert f"session={onset['session']}" in events[0].body
+
+
+def test_streak_namings_route_once_and_advance_the_last_read(tmp_path):
+    null_gap_fixture(tmp_path, null_record())
+    assert discovery._space_light_read(tmp_path)["reason"] == "light-stream-frozen"
+    first = freeze_record(tmp_path)
+    assert discovery._space_light_read(tmp_path)["reason"] == "light-stream-frozen"
+    second = freeze_record(tmp_path)
+    assert len(freeze_dms(tmp_path)) == 1
+    assert second["onset_epoch_s"] == first["onset_epoch_s"]
+    assert second["named_epoch_s"] == first["named_epoch_s"]
+    assert second["last_read_epoch_s"] > first["last_read_epoch_s"]
+    # The notification re-read names the same streak and still routes once.
+    row = null_gap_now(tmp_path)
+    notify(tmp_path, row, row, now=time.time())
+    assert len(freeze_dms(tmp_path)) == 1
+    assert freeze_record(tmp_path)["last_read_epoch_s"] >= second["last_read_epoch_s"]
+
+
+def test_second_freeze_streak_re_arms_the_onset_route(tmp_path):
+    null_gap_fixture(tmp_path, null_record())
+    assert discovery._space_light_read(tmp_path)["reason"] == "light-stream-frozen"
+    first = freeze_record(tmp_path)
+    # A later stoppage advances the stream identity: a new streak, not a longer one.
+    data = json.loads((tmp_path / "body" / "space.json").read_text())
+    data["nodes"][0]["light"]["sequence"] = 13
+    (tmp_path / "body" / "space.json").write_text(json.dumps(data), encoding="utf-8")
+    retain_null_streak(tmp_path / "discovery" / "space-light-stream.json",
+                       sequence=13,
+                       read_epoch_s=time.time() - discovery.SPACE_FROZEN_MIN_SECONDS - 1)
+    assert discovery._space_light_read(tmp_path)["reason"] == "light-stream-frozen"
+    second = freeze_record(tmp_path)
+    assert second["sequence"] == 13
+    assert second["onset_epoch_s"] > first["onset_epoch_s"]
+    assert len(freeze_dms(tmp_path)) == 2
+
+
+def test_unreadable_onset_record_routes_as_a_first_onset(tmp_path):
+    null_gap_fixture(tmp_path, null_record())
+    (tmp_path / "discovery" / "space-light-freeze.json").write_text("{not json",
+                                                                    encoding="utf-8")
+    row = discovery._space_light_read(tmp_path)
+    assert row["reason"] == "light-stream-frozen"
+    assert freeze_record(tmp_path)["session"] == "session-a"
+    assert len(freeze_dms(tmp_path)) == 1
+
+
+def test_onset_record_write_failure_keeps_the_reading_and_routes_nothing(tmp_path):
+    null_gap_fixture(tmp_path, null_record())
+    with patch("mishe_tauftauf.discovery.os.replace", side_effect=OSError("read-only")):
+        row = discovery._space_light_read(tmp_path)
+    assert row["reason"] == "light-stream-frozen"
+    assert not (tmp_path / "discovery" / "space-light-freeze.json").exists()
+    assert freeze_dms(tmp_path) == []
+
+
+def test_onset_routing_failure_keeps_the_record_and_the_reading(tmp_path):
+    null_gap_fixture(tmp_path, null_record())
+    with patch("mishe_tauftauf.wall.message", side_effect=ValueError("feed closed")):
+        row = discovery._space_light_read(tmp_path)
+    # The record is written before the route, so a routing failure leaves the
+    # onset as local evidence while the reading itself keeps naming the freeze.
+    assert row["reason"] == "light-stream-frozen"
+    assert freeze_record(tmp_path)["class"] == "light-stream-frozen"
+    assert freeze_record(tmp_path)["named_epoch_s"] > 0
+    assert freeze_dms(tmp_path) == []
+
+
+def test_readable_non_freeze_record_does_not_suppress_the_onset_route(tmp_path):
+    """A decoded dict carrying the identity but not the freeze class — the
+    retention record's shape — is not a live onset for the streak."""
+    null_gap_fixture(tmp_path, null_record())
+    (tmp_path / "discovery" / "space-light-freeze.json").write_text(json.dumps(
+        {"session": "session-a", "cursor": 12, "sequence": 12,
+         "reason": "light-null-gap", "read_epoch_s": time.time() - 500}),
+        encoding="utf-8")
+    assert discovery._space_light_read(tmp_path)["reason"] == "light-stream-frozen"
+    assert freeze_record(tmp_path)["class"] == "light-stream-frozen"
+    assert len(freeze_dms(tmp_path)) == 1
+
+
+def test_non_int_sequence_freeze_still_records_and_routes(tmp_path):
+    """The retention rule compares sequences with plain equality, so a JSON
+    number sequence must still record and route, not silently drop."""
+    null_gap_fixture(tmp_path, null_record(sequence=12.0))
+    data = json.loads((tmp_path / "body" / "space.json").read_text())
+    data["nodes"][0]["light"]["sequence"] = 12.0
+    (tmp_path / "body" / "space.json").write_text(json.dumps(data), encoding="utf-8")
+    row = discovery._space_light_read(tmp_path)
+    assert row["reason"] == "light-stream-frozen"
+    assert freeze_record(tmp_path)["sequence"] == 12.0
+    assert len(freeze_dms(tmp_path)) == 1
+
+
+def test_pane_renders_of_one_streak_route_one_onset_event(
+        tmp_path: Path, current_endpoint) -> None:
+    """Each pane names the row twice per render; one streak still routes once,
+    and rendering it again routes nothing."""
+    home = tmp_path / "site"
+    null_gap_fixture(home, None)
+    _write_scan(home, [])
+    (home / "discovery" / "space-light-stream.json").write_text(json.dumps(
+        null_record(read_epoch_s=time.time() - discovery.SPACE_FROZEN_MIN_SECONDS - 1)),
+        encoding="utf-8")
+    assert "light-stream-frozen" in discover(home)
+    assert "light-stream-frozen" in senses(home)
+    assert len(freeze_dms(home)) == 1
+    assert "light-stream-frozen" in senses(home)
+    assert len(freeze_dms(home)) == 1
+
+
 @pytest.fixture
 def current_endpoint(monkeypatch):
     """A recent clock endpoint so the pane's freshness gate passes."""

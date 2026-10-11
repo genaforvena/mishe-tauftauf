@@ -18,7 +18,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from . import omp_pane, proc_table, space_text
-from .feed import Feed, parse_feed
+from .feed import Feed, parse_feed, publication_lock
 from .host_radio import (BLUETOOTH_ROOT, COMMAND_TIMEOUT_SECONDS, NET_ROOT, RFKILL_ROOT,
                          admin_up, bluetooth_controllers, controller_state, operstate,
                          rfkill_switches, rfkill_unreadable, rfkill_verdict,
@@ -2990,7 +2990,8 @@ def _space_light_stream_record(home: Path) -> dict | None:
 
 def _space_light_name_freeze(home: Path, row: dict, now: float) -> dict:
     """Name a sustained freeze in place; the age detail of the gap is kept."""
-    if not _space_light_frozen(row, _space_light_stream_record(home), now):
+    previous = _space_light_stream_record(home)
+    if not _space_light_frozen(row, previous, now):
         return row
     light = row["boundary"]["nodes"][0]["light"]
     detail = _space_light_age(light, now)
@@ -2998,7 +2999,112 @@ def _space_light_name_freeze(home: Path, row: dict, now: float) -> dict:
                sample="Note3 light UNKNOWN: light-stream-frozen"
                       + (f" {detail}" if detail else "")
                       + f"; provenance={SPACE_SOURCE}")
+    _space_light_record_freeze(home, row, previous, now)
     return row
+
+
+def _space_light_identity(row: dict) -> tuple | None:
+    """The streak identity a naming belongs to, or None if the row carries none.
+
+    The identity is the triple the retention rule already compares, so a null
+    streak whose cursor or sequence advanced is a new streak rather than a
+    longer freeze, and a second freeze instance re-arms the onset record.
+    """
+    provenance = row.get("provenance") or {}
+    nodes = (row.get("boundary") or {}).get("nodes") or [{}]
+    node = nodes[0] if nodes else {}
+    session = provenance.get("session")
+    cursor = node.get("cursor")
+    sequence = (node.get("light") or {}).get("sequence")
+    # The retention rule compares the identity with plain equality, so a JSON
+    # number sequence must remain recordable; only values that cannot name a
+    # freeze at all are rejected.
+    if (not isinstance(session, str)
+            or not _space_number(cursor) or not _space_number(sequence)):
+        return None
+    return session, cursor, sequence
+
+
+def _space_light_freeze_record(home: Path) -> dict | None:
+    """The reader's own freeze onset record, or None.
+
+    A missing or unreadable record means no onset has been recorded, so the
+    naming episode routes as a first onset rather than as a continuation.
+    """
+    try:
+        text = (home / "discovery" / "space-light-freeze.json").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    return space_text.decode_stream_record(text)
+
+
+def _space_light_record_freeze(home: Path, row: dict, previous: dict | None,
+                               now: float) -> None:
+    """Record a freeze onset once per streak and route it once.
+
+    A sustained freeze is named on every read of the stopped stream, so the
+    onset record is keyed by the streak identity. The first naming of a streak
+    writes the onset epochs beside the retention record and routes one
+    addressed event naming the class and the age token; later namings of the
+    same streak only advance the last-read epoch. A recurrence then cannot end
+    before the event is routed, and the detection interval is the naming
+    cadence rather than the stored-scan cadence, whose gaps are unbounded.
+
+    Deciding, recording and routing share one publication lock: two panes can
+    name the same streak in the same second, and the once-per-streak guarantee
+    must not depend on which write lands first.
+    """
+    identity = _space_light_identity(row)
+    if identity is None:
+        return
+    session, cursor, sequence = identity
+    onset = previous.get("read_epoch_s") if isinstance(previous, dict) else None
+    detail = _space_light_age(row["boundary"]["nodes"][0]["light"], now)
+    root = home / "discovery"
+    with publication_lock(home):
+        record = _space_light_freeze_record(home)
+        continuing = (isinstance(record, dict)
+                      and record.get("class") == "light-stream-frozen"
+                      and record.get("session") == session
+                      and record.get("cursor") == cursor
+                      and record.get("sequence") == sequence)
+        if continuing:
+            record.update(last_read_epoch_s=now, age_token=detail)
+            written = record
+        else:
+            written = {"class": "light-stream-frozen", "session": session,
+                       "cursor": cursor, "sequence": sequence,
+                       "onset_epoch_s": onset, "named_epoch_s": now,
+                       "last_read_epoch_s": now, "age_token": detail}
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+            temporary = root / f".space-light-freeze-{os.getpid()}.tmp"
+            temporary.write_text(space_text.encode_stream_record(written), encoding="utf-8")
+            os.replace(temporary, root / "space-light-freeze.json")
+        except OSError:
+            # The reader's own note failing must not fail the reading; the naming
+            # is already visible in the stored scan and the pane.
+            return
+        if continuing:
+            return
+
+        def epoch_token(value: object) -> str:
+            return _space_stamp(value) if _space_number(value) else "unrecorded"
+
+        from . import wall
+        body = (f"Note3 light-stream-frozen onset: session={session} cursor={cursor} "
+                f"sequence={sequence}; first read={epoch_token(onset)}; "
+                f"named={epoch_token(now)}; age token: {detail or 'unavailable'}. "
+                "One event per streak at the naming cadence; the onset record is "
+                "discovery/space-light-freeze.json and the class needs the same "
+                "identity unmoving for a minute, so a seconds-wide dropout never "
+                "routes.")
+        try:
+            wall.message(home, "discover", "research-methods", body)
+        except (OSError, ValueError):
+            # Routing failing leaves the onset record as the local evidence; the
+            # next naming of a new streak routes again.
+            pass
 
 
 def _space_light_read(home: Path) -> dict:
