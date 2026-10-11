@@ -24,10 +24,25 @@ export async function withNativeModel<T>(selector: string, consume: (route: {
   const registry = new ModelRegistry(auth, join(agentDir, 'models.yml'), {
    settings, cacheDbPath: getModelDbPath(agentDir),
   });
-  await registry.hydrateCredentialScopedModelCaches();
-  const model = registry.find(provider, id);
-  if (!model || model.provider !== provider || model.id !== id) throw new Error(`exact model unavailable: ${selector}`);
-  return await consume({registry, model, settings, agentDir});
+    await registry.hydrateCredentialScopedModelCaches();
+    // Trigger full snapshot so dynamically-discovered models (from credential-
+    // scoped caches) are visible to find(); hydrate alone only refreshes overlays.
+    registry.getAll();
+    // The CLI does not validate --model from the offline hydration alone: it
+    // arms refreshInBackground after the session is built and resolves the
+    // model once that settles. This bounded worker has no such pass, so a
+    // discovery-backed selector can miss here even though the provider serves
+    // it (observed 2026-10-10T23:51Z: find(opencode-go, step-5-preview-free)
+    // => undefined after hydrate). One online catalog fetch closes that gap.
+    // It never mints credentials: refreshCommandCredentials stays unset.
+    let model = registry.find(provider, id);
+    if (!model) {
+      await registry.refresh('online');
+      model = registry.find(provider, id);
+    }
+    if (!model || model.provider !== provider || model.id !== id) throw new Error(`exact model unavailable: ${selector}`);
+    console.error(`[native-bootstrap] resolved ${provider}/${id} => ${model.api} ${model.baseUrl}`);
+    return await consume({registry, model, settings, agentDir});
  } finally {
   auth.close();
  }
