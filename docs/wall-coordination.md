@@ -20,11 +20,14 @@ renderer lease remain in health's continuing coverage. With services disabled,
 planting supplies only the initial dashboard.
 
 `wall write --owner ROLE --file NOTES` replaces a wall — the single file
-`SITE_HOME/walls/<role>.md`. A relative `--file` names the canonical staging
-directory first: it resolves against `SITE_HOME/walls` when a file exists there
-and against the working directory otherwise, so an invocation from another
-directory can no longer read a same-named file there instead of the staged
-notes; an absolute path is never re-anchored. A wall write also updates
+`SITE_HOME/walls/<role>.md`. A bare `--file` name (`NOTES`, `MESSAGE`) resolves
+to the writer's own staging anchor `SITE_HOME/walls/<role>-<name>`; without that
+anchor the command fails closed rather than reading a same-named file from the
+shared directory or the working directory, so one role can never read another
+role's staged notes (class: genome's content on docs' wall, 2026-10-11). A
+relative `--file` with a directory component (`artifacts/…`, `walls/…`) keeps
+its working-directory meaning; an absolute path is never re-anchored. `seed
+yield --slug ROLE --file NOTES` resolves the same way. A wall write also updates
 `SITE_HOME/handoffs/<role>.md` — the projection the launcher reads as CURRENT
 HANDOFF and one of the two files `seed yield` compares when re-settling a wake it
 already settled — so a wall edit can never leave a stale handoff behind (class:

@@ -690,6 +690,47 @@ def test_seed_resident_channel_observes_repairs_and_restores(tmp_path: Path) -> 
         cli(home, "stop", "--session", session)
 
 
+def test_seed_yield_resolves_bare_file_to_role_staging_anchor(tmp_path: Path, monkeypatch) -> None:
+    """seed yield resolves a bare --file like wall write: the role's own anchor.
+
+    The handoff a role settles is the notes it staged for itself; a bare name
+    must not read a same-named file from the working directory or the shared
+    staging directory (class: docs' stale repo-root pointer, 2026-10-11).
+    """
+    home = seeded_home(tmp_path)
+    (home / "top-pains").mkdir(parents=True)
+    (home / "minds").mkdir(parents=True)
+    (home / "walls").mkdir()
+    (home / "chat.log").touch()
+    (home / "walls" / "NOTES").write_text("shared staging notes", encoding="utf-8")
+    (home / "walls" / "genome-NOTES").write_text("genome's own handoff", encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "NOTES").write_text("stale working-directory pointer", encoding="utf-8")
+    monkeypatch.chdir(elsewhere)
+    from mishe_tauftauf import cli
+    wake = Feed(home).append("seed", "seed wake genome observation=1\nRead your wall.").sequence
+    code = cli.main(["--home", str(home), "seed", "yield", "--slug", "genome",
+                     "--wake", str(wake), "--file", "NOTES", "--result", "changed"])
+    assert code == 0
+    assert (home / "walls" / "genome.md").read_text(encoding="utf-8") == "genome's own handoff"
+
+
+def test_seed_yield_fails_closed_without_role_staging_anchor(tmp_path: Path) -> None:
+    """Without the role's own anchor the yield is refused, not re-anchored."""
+    home = seeded_home(tmp_path)
+    (home / "top-pains").mkdir(parents=True)
+    (home / "minds").mkdir(parents=True)
+    (home / "walls").mkdir()
+    (home / "chat.log").touch()
+    (home / "walls" / "NOTES").write_text("shared staging notes", encoding="utf-8")
+    from mishe_tauftauf import cli
+    wake = Feed(home).append("seed", "seed wake genome observation=1\nRead your wall.").sequence
+    code = cli.main(["--home", str(home), "seed", "yield", "--slug", "genome",
+                     "--wake", str(wake), "--file", "NOTES", "--result", "changed"])
+    assert code == 2
+    assert not (home / "walls" / "genome.md").exists()
+
 def test_seed_follow_drives_a_checked_repair_without_a_judge(tmp_path: Path) -> None:
     home = seeded_home(tmp_path)
     session = f"mishe-tauftauf-test-{os.getpid()}-{uuid.uuid4().hex[:10]}"

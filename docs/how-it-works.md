@@ -803,7 +803,10 @@ Every entry must explain the event, evidence or referenced artifact, and next ow
 Each mind keeps a short current wall with its plate, findings and next action.
 Use `wall write --owner ROLE --file NOTES` to replace it, `wall show --owner ROLE`
 to inspect context, and `wall dm --source ROLE --to PEER --file MESSAGE` to ask
-for help through the shared tape. Coordinate overlapping edits before acting.
+for help through the shared tape. A bare `--file` name resolves to the caller's
+own staging anchor `SITE_HOME/walls/<role>-<name>` — never to another role's
+notes; stage there or pass an explicit path. Coordinate overlapping edits before
+acting.
 
 Each blocker names resolver, missing evidence, bounded evidence-producing action
 and disposition time. At cutoff resolve, escalate or defer to a named trigger.

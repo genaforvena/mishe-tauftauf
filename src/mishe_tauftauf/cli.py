@@ -86,24 +86,31 @@ def cmd_append(args) -> int:
     return 0
 
 
-def _staging_notes(home: Path, raw: Path) -> Path:
-    """Resolve a relative notes argument against the canonical staging directory.
+def _staging_notes(home: Path, role: str, raw: Path) -> Path:
+    """Resolve a relative notes argument to the role's own staging anchor.
 
-    ``wall write``/``wall dm``/``wall outcome`` read notes a mind staged for that
-    command, and the documented staging directory is ``SITE_HOME/walls``. The
-    argument used to resolve against the process cwd alone, so the same command
-    run from another directory read a same-named file there instead — the class
-    that put one role's notes on another role's wall (android-body, 2026-10-11
-    07:5xZ). A relative path now resolves against ``home/walls`` first when that
-    file exists there — the canonical staging reading — and against the cwd
-    otherwise, which keeps the established site-root-relative (``artifacts/…``)
-    and repo-root-relative (``.mishe-tauftauf/…``) invocations working. An
-    absolute path is never re-anchored.
+    ``wall write``/``wall dm``/``wall outcome`` and ``seed yield`` read the
+    notes a role staged for that command. A bare name (``NOTES``, ``MESSAGE``)
+    resolves to ``SITE_HOME/walls/<role>-<name>`` — a per-role anchor, so one
+    role can never read another role's staged notes. The earlier shared
+    ``walls/NOTES`` anchor was the cross-role contamination vector that put
+    genome's staged content on docs' wall (2026-10-11, audit digest 5fd23b39).
+    Without the anchor the command fails closed instead of silently reading a
+    same-named file from the shared directory or the working directory. A path
+    with a directory component (``artifacts/…``, ``walls/…``) keeps its
+    working-directory meaning, and an absolute path is never re-anchored.
     """
     if raw.is_absolute():
         return raw
-    staged = home / "walls" / raw
-    return staged if staged.is_file() else raw
+    if len(raw.parts) > 1:
+        return raw
+    anchor = home / "walls" / f"{role}-{raw.name}"
+    if anchor.is_file():
+        return anchor
+    raise ValueError(
+        f"no staged notes for role '{role}': expected {anchor} "
+        f"(or pass an explicit relative or absolute path)"
+    )
 
 
 def cmd_wall(args) -> int:
@@ -111,17 +118,17 @@ def cmd_wall(args) -> int:
     if args.wall_command == "show":
         print(wall.context(args.home, args.owner))
     elif args.wall_command == "write":
-        source = _staging_notes(args.home, args.file)
+        source = _staging_notes(args.home, args.owner, args.file)
         wall.write(args.home, args.owner, source.read_text(encoding="utf-8"), source_path=str(source))
     elif args.wall_command == "dm":
         if args.file:
-            args.file = _staging_notes(args.home, args.file)
+            args.file = _staging_notes(args.home, args.source, args.file)
         text = args.file.read_text(encoding="utf-8") if args.file else args.text
         print(wall.message(args.home, args.source, args.to, text).sequence)
     elif args.wall_command == "retry":
         wall.retry(args.home, args.owner)
     elif args.wall_command == "outcome":
-        source = _staging_notes(args.home, args.file)
+        source = _staging_notes(args.home, args.owner, args.file)
         print(wall.outcome(args.home, args.owner, args.kind, source.read_text(encoding="utf-8"), args.evidence).sequence)
     elif args.wall_command == "silence":
         from . import activity
@@ -396,7 +403,7 @@ def cmd_seed(args) -> int:
         seed.run(args.home, args.session, args.slug, args.interval, args.self_pick_seconds, args.clear_grace_seconds)
         return 0
     elif action == "yield":
-        result = seed.yield_wake(args.home, args.slug, args.wake, args.file, args.continue_task, args.result)
+        result = seed.yield_wake(args.home, args.slug, args.wake, _staging_notes(args.home, args.slug, args.file), args.continue_task, args.result)
     elif action == "clear":
         result = seed.clear(args.home, args.session, args.slug)
     else:

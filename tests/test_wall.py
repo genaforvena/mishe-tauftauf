@@ -257,34 +257,63 @@ def test_wall_write_allows_own_unchanged_rewrite_against_history(tmp_path):
     assert (tmp_path / "walls" / "witness.md").read_text() == "Steady plan carried forward."
 
 
-def test_wall_write_resolves_relative_notes_against_walls_first(tmp_path, monkeypatch):
-    """A relative notes path names SITE_HOME/walls first, whatever the cwd."""
+def test_wall_write_resolves_bare_notes_to_role_staging_anchor(tmp_path, monkeypatch):
+    """A bare notes name resolves to the writer's own staging anchor only.
+
+    The shared walls/NOTES and a same-named file in the working directory are
+    both ignored: the anchor is role-scoped so one role can never read another
+    role's staged notes (class: genome's content on docs' wall, 2026-10-11).
+    """
     setup_wall(tmp_path)
     from mishe_tauftauf import cli
     (tmp_path / "walls").mkdir()
-    (tmp_path / "walls" / "NOTES").write_text("canonical staging notes", encoding="utf-8")
+    (tmp_path / "walls" / "NOTES").write_text("genome's shared staging notes", encoding="utf-8")
+    (tmp_path / "walls" / "docs-NOTES").write_text("docs' own staging notes", encoding="utf-8")
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     (elsewhere / "NOTES").write_text("same-named file in the working directory", encoding="utf-8")
     monkeypatch.chdir(elsewhere)
-    code = cli.main(["--home", str(tmp_path), "wall", "write", "--owner", "genome", "--file", "NOTES"])
+    code = cli.main(["--home", str(tmp_path), "wall", "write", "--owner", "docs", "--file", "NOTES"])
     assert code == 0
-    assert (tmp_path / "walls" / "genome.md").read_text(encoding="utf-8") == "canonical staging notes"
+    assert (tmp_path / "walls" / "docs.md").read_text(encoding="utf-8") == "docs' own staging notes"
     entry = json.loads((tmp_path / "logs" / "wall-write-audit.jsonl").read_text(encoding="utf-8").splitlines()[-1])
-    assert entry["source"] == str(tmp_path / "walls" / "NOTES")
+    assert entry["source"] == str(tmp_path / "walls" / "docs-NOTES")
 
 
-def test_wall_write_falls_back_to_cwd_when_notes_absent_from_walls(tmp_path, monkeypatch):
-    """Site-root-relative and repo-root-relative staging paths keep their meaning."""
+def test_wall_write_fails_closed_without_role_staging_anchor(tmp_path, monkeypatch):
+    """Without the writer's own anchor the write is refused, not re-anchored.
+
+    Falling back to a same-named file in the shared directory or the working
+    directory is the contamination vector; the command must fail loudly.
+    """
     setup_wall(tmp_path)
     from mishe_tauftauf import cli
+    (tmp_path / "walls").mkdir()
+    (tmp_path / "walls" / "NOTES").write_text("another role's staged notes", encoding="utf-8")
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
-    (elsewhere / "notes.md").write_text("working-directory notes", encoding="utf-8")
+    (elsewhere / "NOTES").write_text("same-named file in the working directory", encoding="utf-8")
     monkeypatch.chdir(elsewhere)
-    code = cli.main(["--home", str(tmp_path), "wall", "write", "--owner", "genome", "--file", "notes.md"])
+    code = cli.main(["--home", str(tmp_path), "wall", "write", "--owner", "docs", "--file", "NOTES"])
+    assert code == 2
+    assert not (tmp_path / "walls" / "docs.md").exists()
+
+
+def test_wall_write_explicit_relative_path_resolves_from_cwd(tmp_path, monkeypatch):
+    """A relative --file with a directory component keeps its cwd meaning."""
+    setup_wall(tmp_path)
+    from mishe_tauftauf import cli
+    (tmp_path / "walls").mkdir()
+    (tmp_path / "walls" / "genome-NOTES").write_text("staged anchor", encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "artifacts").mkdir()
+    (elsewhere / "artifacts" / "notes.md").write_text("explicit relative notes", encoding="utf-8")
+    monkeypatch.chdir(elsewhere)
+    code = cli.main(["--home", str(tmp_path), "wall", "write", "--owner", "genome",
+                     "--file", "artifacts/notes.md"])
     assert code == 0
-    assert (tmp_path / "walls" / "genome.md").read_text(encoding="utf-8") == "working-directory notes"
+    assert (tmp_path / "walls" / "genome.md").read_text(encoding="utf-8") == "explicit relative notes"
 
 
 def test_wall_write_accepts_absolute_notes_path(tmp_path, monkeypatch):
@@ -299,13 +328,14 @@ def test_wall_write_accepts_absolute_notes_path(tmp_path, monkeypatch):
     assert (tmp_path / "walls" / "genome.md").read_text(encoding="utf-8") == "absolute notes"
 
 
-def test_wall_dm_resolves_relative_file_against_walls_first(tmp_path, monkeypatch):
-    """The dm message path reads the same canonical staging notes."""
+def test_wall_dm_resolves_bare_file_to_sender_staging_anchor(tmp_path, monkeypatch):
+    """The dm message path reads the sender's own staging anchor."""
     setup_wall(tmp_path)
     from mishe_tauftauf import cli
     from mishe_tauftauf.feed import Feed
     (tmp_path / "walls").mkdir()
-    (tmp_path / "walls" / "MESSAGE").write_text("canonical message text", encoding="utf-8")
+    (tmp_path / "walls" / "MESSAGE").write_text("shared message text", encoding="utf-8")
+    (tmp_path / "walls" / "health-MESSAGE").write_text("health's own message text", encoding="utf-8")
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     (elsewhere / "MESSAGE").write_text("same-named file in the working directory", encoding="utf-8")
@@ -314,7 +344,23 @@ def test_wall_dm_resolves_relative_file_against_walls_first(tmp_path, monkeypatc
                      "--file", "MESSAGE"])
     assert code == 0
     entry = Feed(tmp_path).entries()[-1]
-    assert entry.source == "health" and "canonical message text" in entry.body
+    assert entry.source == "health" and "health's own message text" in entry.body
+
+
+def test_wall_outcome_resolves_bare_notes_to_role_staging_anchor(tmp_path):
+    """The outcome path reads the recording role's own staging anchor."""
+    setup_wall(tmp_path)
+    from mishe_tauftauf import cli
+    (tmp_path / "walls").mkdir()
+    (tmp_path / "walls" / "NOTES").write_text("another role's staged notes", encoding="utf-8")
+    (tmp_path / "walls" / "genome-NOTES").write_text("genome's own outcome notes", encoding="utf-8")
+    evidence = tmp_path / "evidence.txt"
+    evidence.write_text("evidence bytes", encoding="utf-8")
+    code = cli.main(["--home", str(tmp_path), "wall", "outcome", "--owner", "genome",
+                     "--kind", "accepted", "--file", "NOTES", "--evidence", str(evidence)])
+    assert code == 0
+    entry = Feed(tmp_path).entries()[-1]
+    assert "genome's own outcome notes" in entry.body
 
 
 
