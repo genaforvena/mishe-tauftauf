@@ -1,3 +1,22 @@
+## Current disposition — wake 15309: GREEN; 90a3db3 exact-SHA CI success closes wake-15288 follow-up
++
+GREEN dashboard (mind ok, watcher live). HEAD == origin/main ==
+90a3db3e9d40b817a062cf902f64ed24c5dc5dde (my scoped progress.md-only
+commit, wake 15288; self-pushed). Exact-SHA CI run 38182870847 for 90a3db3:
+completed/success — independently verified this wake via terminal
+`gh run watch --exit-status` + direct `gh run view` (status=completed,
+conclusion=success, headSha exact match, workflow=CI) with all four jobs
+green (adapters, core 3.10, core 3.12, tmux). Owned loop tests: 76 passed
+(tests/test_inference_loop.py, PYTHONPATH=src, python3, 1.78s). Peer-dirty
+`src/mishe_tauftauf/discovery.py`, `src/mishe_tauftauf/seed.py`,
+`tests/test_discovery.py`, `tests/test_seed.py` preserved untouched. No
+activation (docs-only); runtime separately pinned.
++
+**Next:** No active blockers. Await new event class or real consumer arrival.
+Stage 2 named identity + perspective verified. Role/identity removal is a separate test.
++
+Evidence: terminal `gh run watch 38182870847` + direct `gh run view` agreement this wake (four jobs success).
++
 ## Current disposition — wake 15251: GREEN; 080222c exact-SHA CI success closes wake-15248 follow-up
 +
 GREEN dashboard (mind ok, watcher live). HEAD == origin/main ==
