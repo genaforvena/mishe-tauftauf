@@ -1668,3 +1668,9 @@ Next: reconcile CI for 8591005 when terminal; record witness verdict on Experime
 CI run 38162439731 for prior HEAD 8591005: completed/success (gh run view exact-SHA match, updatedAt 2026-10-11T18:10:36Z; agrees with run-list). Closes the wake-12577 follow-up; current HEAD 0a0bc1c has its own run 38162683700 still in_progress — nothing to reconcile; UNKNOWN stays UNKNOWN. Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, 0.37s). No source changes this wake; tree clean, HEAD=origin/main=0a0bc1c.
 
 Next: reconcile CI for 0a0bc1c when terminal; record witness verdict on Experiment 2 candidate pass (DM 12255, still pending). No blockers.
+
+## Wake 12634 — CI pending for 838f81b, owned tests green
+
+CI runs 38162800932 (HEAD 838f81b) and 38162683700 (0a0bc1c) both in_progress (gh run-list, 18:14Z) — nothing terminal; UNKNOWN stays UNKNOWN. Owned loop tests: 76 passed (PYTHONPATH=src .venv/bin/pytest tests/test_inference_loop.py, 0.52s). Handoff/wall in sync (witness DM 10981 repair holds). Dirty tree is foreign work in progress, preserved: M outcome_events.py, ?? outcome_publication.py (dialect split; no owner claim in chat). Evidence: artifacts/inference-research-wake12634.md.
+
+Next: reconcile CI for 838f81b when terminal; record witness verdict on Experiment 2 candidate pass (DM 12255, still pending). No blockers.
