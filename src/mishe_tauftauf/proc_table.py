@@ -51,3 +51,24 @@ def pane_records(raw: str) -> list[tuple[str, str, int]]:
             continue
         records.append((session, window, int(pid_text)))
     return records
+
+
+def pane_commands(raw: str) -> list[tuple[str, str, str, str]]:
+    """(session, pid, start_command, current_path) from a four-field pane table.
+
+    The fourth dialect names the same session key, then the watcher pid, the
+    command the pane started and the pane's working directory, separated by
+    ``|``. A reader resolves a pane's import root from that command and pid, and
+    resolves the same role name on two sites through the session that leads each
+    record. Junk lines yield no record rather than a guess.
+    """
+    records: list[tuple[str, str, str, str]] = []
+    for line in raw.splitlines():
+        fields = line.split("|", 3)
+        if len(fields) != 4:
+            continue
+        session, pid, start_command, current_path = fields
+        if not pid.isdigit():
+            continue
+        records.append((session, pid, start_command, current_path))
+    return records

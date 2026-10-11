@@ -3470,6 +3470,112 @@ def test_renderer_coverage_flags_a_script_resolving_to_a_foreign_root() -> None:
         {"root": str(other), "entry": "feed", "modules": ["feed"]}]
 
 
+def _pane_line(session: str, pid: str, home: Path, role: str) -> str:
+    return (f"{session}|{pid}|env PYTHONPATH={home}/src python -m mishe_tauftauf "
+            f"--home {home} pain watch {role} --interval 5|{home}")
+
+
+def test_pane_info_takes_the_pane_the_reading_home_owns() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    other = tmp_site_with_services()
+    panes = [
+        _pane_line("other-site", "101", other, "senses"),
+        _pane_line("this-site", "102", home, "senses"),
+        _pane_line("this-site", "103", home, "docs"),
+        _pane_line("unknown-site", "104", home, "witness"),
+    ]
+    try:
+        with patch("mishe_tauftauf.discovery.subprocess.run",
+                   return_value=_completed("\n".join(panes))), \
+                patch("mishe_tauftauf.tmux.session_owner",
+                      side_effect=lambda session: {"this-site": str(home.resolve()),
+                                                   "other-site": str(other.resolve())}.get(session)):
+            info = discovery._pane_info(home)
+        # Both sites watch `senses`, so a last-match-wins map would hand this
+        # site the other site's pane and, with it, its import root. The session
+        # this home owns decides the role instead.
+        assert info["senses"][2] == "102"
+        assert info["docs"][2] == "103"
+        # A lone watcher in a session no home has claimed cannot be another
+        # site's pane, so it stays this site's watcher for the role.
+        assert info["witness"][2] == "104"
+    finally:
+        shutil.rmtree(home)
+        shutil.rmtree(other)
+
+
+def test_pane_info_leaves_a_role_several_sessions_watch_unresolved() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    other = tmp_site_with_services()
+    panes = [
+        _pane_line("other-site", "101", other, "senses"),
+        _pane_line("another-site", "102", other, "senses"),
+    ]
+    try:
+        with patch("mishe_tauftauf.discovery.subprocess.run",
+                   return_value=_completed("\n".join(panes))), \
+                patch("mishe_tauftauf.tmux.session_owner",
+                      side_effect=lambda session: str(other.resolve())):
+            info = discovery._pane_info(home)
+        # Neither session belongs to this home and the role has two watchers,
+        # so no reading can tell which root this site's renderer imports:
+        # unresolved rather than a root this site never ran.
+        assert info == {}
+    finally:
+        shutil.rmtree(home)
+        shutil.rmtree(other)
+
+
+def test_renderer_coverage_resolves_each_site_renderer_from_its_own_pane() -> None:
+    from mishe_tauftauf import discovery
+
+    home = tmp_site_with_services()
+    other = tmp_site_with_services()
+    pin = _renderer_root(Path("/tmp") / f"twosite-pin-{os.getpid()}",
+                         {"wall_view": "VALUE = 1\n"})
+    stale = _renderer_root(Path("/tmp") / f"twosite-stale-{os.getpid()}",
+                           {"wall_view": "VALUE = 2\n"})
+    for site in (home, other):
+        _top_pain(site, "senses", "exec python -m mishe_tauftauf.wall_view\n")
+    watchers = {
+        "this-site": _pane_line("this-site", "102", pin, "senses"),
+        "other-site": _pane_line("other-site", "101", stale, "senses"),
+    }
+    owners = {"this-site": str(home.resolve()),
+              "other-site": str(other.resolve())}
+    try:
+        for lines in ([watchers["other-site"], watchers["this-site"]],
+                      [watchers["this-site"], watchers["other-site"]]):
+            readings = []
+            for site in (home, other):
+                with patch("mishe_tauftauf.discovery._pinned_root",
+                           return_value=(str(pin), None)), \
+                        patch("mishe_tauftauf.discovery.subprocess.run",
+                              return_value=_completed("\n".join(lines))), \
+                        patch("mishe_tauftauf.tmux.session_owner",
+                              side_effect=owners.get):
+                    readings.append(discovery._renderer_coverage(site))
+            here, there = readings
+            # The other site's renderer really runs a stale root, and that is
+            # its own drift row, not this site's. This site reads verified
+            # either way round, so a pane's position in the table cannot
+            # decide which bytes the reading was taken against.
+            assert here["state"] == "verified"
+            assert here["sample"] == "renderers=1"
+            assert there["state"] == "drift"
+            assert there["identity"]["drift"] == [
+                {"root": str(stale), "entry": "wall_view", "modules": ["wall_view"]}]
+    finally:
+        shutil.rmtree(pin)
+        shutil.rmtree(stale)
+        shutil.rmtree(home)
+        shutil.rmtree(other)
+
+
 def test_renderer_coverage_script_chain_skipped_without_a_pane() -> None:
     from mishe_tauftauf import discovery
 
@@ -3521,22 +3627,28 @@ def test_renderer_coverage_reports_drift_even_when_a_sibling_root_is_unresolved(
 def test_pane_info_reads_role_names_from_start_commands() -> None:
     from mishe_tauftauf import discovery
     stdout = (
-        "%0|4101|env PYTHONPATH=/srv/pin/src python -m mishe_tauftauf pain watch senses --interval 5|/srv/site\n"
-        "%1|4102|env PYTHONPATH=/srv/pin/src python -m mishe_tauftauf pain watch health --interval 5|/srv/site\n"
-        "%2|4103||/srv/site\n"
+        "mishe-tauftauf|4101|env PYTHONPATH=/srv/pin/src python -m mishe_tauftauf --home /srv/site pain watch senses --interval 5|/srv/site\n"
+        "mishe-tauftauf|4102|env PYTHONPATH=/srv/pin/src python -m mishe_tauftauf --home /srv/site pain watch health --interval 5|/srv/site\n"
+        "mishe-tauftauf|4103||/srv/site\n"
+        "mishe-tauftauf|4104|env PYTHONPATH=/srv/pin/src python -m mishe_tauftauf --home /srv/site pain watch senses --interval 5|/srv/site\n"
     )
-    with patch("mishe_tauftauf.discovery.subprocess.run", return_value=_completed(stdout)):
-        info = discovery._pane_info()
+    with patch("mishe_tauftauf.discovery.subprocess.run",
+               return_value=_completed(stdout)), \
+            patch("mishe_tauftauf.tmux.session_owner",
+                  side_effect=lambda session: "/srv/site" if session == "mishe-tauftauf" else None):
+        info = discovery._pane_info(Path("/srv/site"))
+    # One site watches both roles, and the session it owns decides each one, so
+    # a respawned duplicate pane is the live pane without hiding the role.
     assert info == {
-        "senses": ("env PYTHONPATH=/srv/pin/src python -m mishe_tauftauf pain watch senses --interval 5", "/srv/site", "4101"),
-        "health": ("env PYTHONPATH=/srv/pin/src python -m mishe_tauftauf pain watch health --interval 5", "/srv/site", "4102"),
+        "senses": ("env PYTHONPATH=/srv/pin/src python -m mishe_tauftauf --home /srv/site pain watch senses --interval 5", "/srv/site", "4104"),
+        "health": ("env PYTHONPATH=/srv/pin/src python -m mishe_tauftauf --home /srv/site pain watch health --interval 5", "/srv/site", "4102"),
     }
 
 
 def test_pane_info_returns_empty_when_tmux_fails() -> None:
     from mishe_tauftauf import discovery
     with patch("mishe_tauftauf.discovery.subprocess.run", return_value=_completed("", returncode=1)):
-        assert discovery._pane_info() == {}
+        assert discovery._pane_info(Path("/srv/site")) == {}
 
 
 def test_renderer_coverage_resolves_inherited_renderer_from_pane() -> None:

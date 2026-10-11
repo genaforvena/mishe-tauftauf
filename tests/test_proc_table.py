@@ -58,6 +58,29 @@ class ProcessTableTests(unittest.TestCase):
             proc_table.pane_records("mishe-tauftauf|senses\nmishe-tauftauf|senses|x\n\n"),
             [])
 
+    def test_pane_commands_decode_session_pid_command_and_cwd(self):
+        self.assertEqual(
+            proc_table.pane_commands(
+                "mishe-tauftauf|4242|env PYTHONPATH=/srv/pin/src pain watch senses|/srv/site\n"
+                "android-body|4243|env PYTHONPATH=/tmp/ci/src pain watch senses|/tmp/ci\n"),
+            [("mishe-tauftauf", "4242",
+              "env PYTHONPATH=/srv/pin/src pain watch senses", "/srv/site"),
+             ("android-body", "4243",
+              "env PYTHONPATH=/tmp/ci/src pain watch senses", "/tmp/ci")])
+
+    def test_pane_commands_skip_junk_and_truncated_rows(self):
+        # The separator is not quoted, so a command carrying one pushes the
+        # cwd into the fourth field: only a truncated row or a pid that is not
+        # a number is junk.
+        self.assertEqual(
+            proc_table.pane_commands(
+                "mishe-tauftauf|4242|env A=1|/srv/site|/extra\n"
+                "mishe-tauftauf|4243\n"
+                "mishe-tauftauf|4244|env A=1|/srv/site\n"
+                "mishe-tauftauf|x|env A=1|/srv/site\n\n"),
+            [("mishe-tauftauf", "4242", "env A=1", "/srv/site|/extra"),
+             ("mishe-tauftauf", "4244", "env A=1", "/srv/site")])
+
 
 if __name__ == "__main__":
     unittest.main()
