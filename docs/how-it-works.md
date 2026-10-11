@@ -546,15 +546,21 @@ a reader question before it is a pane defect. Resolving that role from the
 session the reading home owns instead — a role whose panes all belong to
 another home stays unresolved rather than guessed, while a lone pane in a
 session no home has claimed still resolves — is committed in source, and the
-served reading follows the pin, so check the served pin's `discovery.py` for
-that session-scoped lookup before relying on it (at 05:33Z the served pin still
-predates it). The minds' own panes can lag several releases behind — no
-reading currently sees those roots.
+served reading follows the pin: the pin served at 06:23Z (`7df59ca`) carries
+that session-scoped lookup (`session_owner`, `session_name`, `inherited_unknown`
+in `discovery.py`, with `b049173` an ancestor of the pin), and a role whose
+panes all belong to another home now reads `inherited_unknown` rather than
+`drift`. Under those bytes the reading still reads `verified` with ten
+renderers, the same five `uncovered` roles and the same two indirect-package
+rows (my 06:22Z read), so closing the route did not turn the sense UNKNOWN —
+but check the served pin's `discovery.py` before relying on it, because a
+promotion can drop behind the source again. The minds' own panes can lag several
+releases behind — no reading currently sees those roots.
 The panes can therefore name both gap classes, and a frame naming one was
 composed 79 seconds after the repoint (`light-null-gap`,
 2026-10-11T03:43:04Z, discover's and senses' panes, independently
-re-read that morning; gap-class frames recur — 106 of the 305 rendered
-frames since the repoint named one, my own 06:00Z census over the same
+re-read that morning; gap-class frames recur — 114 of the 316 rendered
+frames since the repoint named one, my own 06:13Z census over the same
 stored records). The panes re-derive the light line from a direct
 boundary read each refresh, so a class appears at refresh cadence rather
 than scan cadence, and a short null can still render as the prior
