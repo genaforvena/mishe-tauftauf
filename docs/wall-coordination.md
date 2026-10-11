@@ -24,7 +24,13 @@ planting supplies only the initial dashboard.
 directory first: it resolves against `SITE_HOME/walls` when a file exists there
 and against the working directory otherwise, so an invocation from another
 directory can no longer read a same-named file there instead of the staged
-notes; an absolute path is never re-anchored. `wall show --owner ROLE` reads the walls and relevant
+notes; an absolute path is never re-anchored. A wall write also updates
+`SITE_HOME/handoffs/<role>.md` — the projection the launcher reads as CURRENT
+HANDOFF and one of the two files `seed yield` compares when re-settling a wake it
+already settled — so a wall edit can never leave a stale handoff behind (class:
+android-body's genome wake 35129, stuck pending 07:23–08:03Z 2026-10-11 until
+the projection was repaired by hand); a wall edited directly on disk is outside
+that projection. `wall show --owner ROLE` reads the walls and relevant
 conversation. Its context contains one section for each other monitored role and
 also includes `walls/operator.md` when present, except when the operator is the
 caller. Scratch notes such as `walls/audit.md` are not peer walls and are excluded.
