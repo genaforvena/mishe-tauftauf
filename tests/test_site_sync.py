@@ -106,7 +106,10 @@ def test_sync_holds_dirty_target_without_planting(tmp_path: Path, monkeypatch) -
         if args == ("rev-parse", "--show-toplevel"):
             return str(workspace)
         if args == ("status", "--porcelain"):
-            return " M AGENTS.md" if dirty and workspace == target.parent else ""
+            # Multi-file dirty set: the hold must name every unlanded path,
+            # not just the first porcelain line (witness DM 11125).
+            return (" M AGENTS.md\n?? new-tool.py\n M docs/verification.md"
+                    if dirty and workspace == target.parent else "")
         raise AssertionError(args)
 
     monkeypatch.setattr(site_sync, "_git", git)
@@ -115,7 +118,10 @@ def test_sync_holds_dirty_target_without_planting(tmp_path: Path, monkeypatch) -
     result = site_sync.sync_registered_sites(core_home, {"state": "pass", "sha": sha})
     assert len(result) == 1 and result[0].startswith("held ")
     assert site_sync._load(core_home)[0]["sha"] == "old"
-    assert "unlanded changes" in site_sync._load(core_home)[0]["error"]
+    error = site_sync._load(core_home)[0]["error"]
+    assert "unlanded changes" in error
+    for path in ("AGENTS.md", "new-tool.py", "docs/verification.md"):
+        assert path in error
     assert any(home == target and body.startswith("[task] kernel-sync-") for home, body in FakeFeed.events)
 
     dirty = False
