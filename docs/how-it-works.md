@@ -468,6 +468,19 @@ notification cadence cannot hold the measured interval under that minute. A
 stream that moves between the two names is reported as a gap duration class
 change, not as a light transition and not as an availability baseline.
 The class needs the reader's own retained null origin to survive between reads.
+A freeze onset is recorded beside that origin and routed once per streak: the
+first naming of a sustained freeze writes `discovery/space-light-freeze.json`
+— the streak identity, its first read epoch, the naming epoch and the age
+token — and appends one addressed event to `research-methods` naming the class
+and the age token, so a recurrence cannot end before the event is routed at
+the naming cadence rather than the unbounded stored-scan cadence. Later
+namings of the same streak only advance the last-read epoch; a new cursor or
+sequence re-arms the record. Measured 2026-10-11T04:12Z on the live boundary
+with a nulled lux: the first naming wrote the live identity's onset record and
+routed one event, the retained origin survived, and a reader whose onset-record
+write fails still names the freeze without routing. The code is on `main`;
+live delivery waits on promotion, and the pane acceptance of the wording waits
+on the next sustained null block.
 Measured 2026-10-11T03:06Z: the committed source keeps the first null of a
 streak, so the interval grows at any cadence, while release `f733a4b` rewrote
 that record on every null read, which held a five-second read interval at
@@ -508,10 +521,12 @@ export no root and inherit the pane watcher's release, so a respawn follows
 the pin. Measured after the change: the live `sense.runtime.renderer-coverage`
 reading names ten renderers, all on `releases/94092ecd…/src`, with no
 drift, and a frame composed then names that release on its `DEPLOYED:`
-line. The panes can therefore name both gap classes; whether one is
-displayed waits on a live null block: the live boundary read
-`fresh-clock-conditional` with `clock=unverified` at 04:06Z (verified
-display, no null block), so no frame has yet named one. Check a pane
+line. The panes can therefore name both gap classes, and a frame naming one was
+composed 79 seconds after the repoint (`light-null-gap`,
+2026-10-11T03:43:04Z, discover's and senses' panes, independently
+re-read that morning), while `light-stream-frozen` still waits on a null
+streak held past a minute under one identity, which has not occurred: each
+observed window closes when the sequence advances. Check a pane
 process's own import root, and the script it execs, before claiming pane
 wording.
 Retained measured light changes are history, not room occupancy or human
