@@ -220,7 +220,10 @@ window had turned over and both counts fell below their thresholds, the capture
 failures from four to one and the kernel count to zero. A bounded recovery, not
 a repair — the window moved, not the cause — so the readings above stand and
 the uvcvideo journal scans stay the continuing evidence that the resubmits are
-produced.
+produced. Read again at 09:52:42Z the line read `CAMERA: PASS class=SEEING
+artifact-age=1s capture-fails=0/900s kernel-urbs=0/900s`, so the capture
+failure that had tripped the 09:03Z reading aged out without recurring and the
+recovery has held across a second window roll.
 
 ### Doctor is a check with a repair side effect
 
@@ -457,7 +460,10 @@ is attributed to the plant instead, so the class rests on that one read
 succeeding: measured at 09:17:20Z the cleaner coordinator read
 `foreign=mishe-cleaner-recovered.service@mishe-tauftauf` between two scans, at
 09:16:46Z and 09:27:28Z, that read it `unattributed`, its script naming the
-checkout while its description attributes it to the plant.
+checkout while its description attributes it to the plant. It read
+`unattributed=mishe-cleaner-recovered.service` again at 09:57Z, with the same
+byte-set serving both answers, so the claim follows the description read and not
+the bytes.
 An unattributed unit whose import root and whose
 own declared `ExecStart`, `WorkingDirectory` and `Environment` paths name no
 site's checkout or home is a host tool beside the sites, named

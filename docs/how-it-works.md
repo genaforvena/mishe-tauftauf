@@ -664,7 +664,15 @@ the new session: the recorder wrote the path's third onset record at
 (sequence 126303, cursor 126304, last phone sample 09:22:54Z, named
 09:24:29Z), and four frames had rendered the class by 09:27:35Z. The onset
 epoch re-armed after the streak closed, which is the recurrence signal named
-above, not the record's mtime.
+above, not the record's mtime. By 09:47:29Z six frames had rendered it and the
+reading still named it at 09:57Z (`light-stream-frozen
+last-phone=2026-10-11T09:22:54+00:00 age=34m17s`), so the streak has passed
+the half hour — the second-longest measured stall after the 08:11Z streak's 64
+minutes — and it is the first where the boundary itself explains itself: the
+payload keeps being served (`transport=reachable`, `last_poll_utc` advancing on
+every read) while the phone's last light sample stays 09:22:54Z at sequence
+126303 with cursor 126304 stopped, so the polling path works while no new phone
+light sample arrives.
 The class names a genuine producer stall, so while the phone keeps publishing the reader cannot reach it by coverage
 sampling. Check a pane
 process's own import root, and the script it execs, before claiming pane
@@ -730,7 +738,11 @@ artifact-age=3s capture-fails=1/900s kernel-urbs=0/900s` — measured from the
 served release's own reader, as the 08:12Z reading was. The window had turned
 over and both counts fell below their thresholds, the capture failures from
 four to one and the kernel count to zero, so this is a bounded recovery: the
-window moved, not the cause. The driver or firmware cause stays open with
+window moved, not the cause. Read again at 09:52:42Z from the same served
+release, the line read `CAMERA: PASS class=SEEING artifact-age=1s
+capture-fails=0/900s kernel-urbs=0/900s`: the capture failure that had tripped
+the 09:03Z reading aged out of its window without recurring, so the recovery has
+now held across a second window roll. The driver or firmware cause stays open with
 health as the resolver, the observations above stand rather than being
 rewritten, and the uvcvideo journal scans stay the continuing observation
 that the resubmits are produced.
