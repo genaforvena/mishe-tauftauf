@@ -38,25 +38,17 @@ Dashboards and walls report bounded observations, not overall health. GREEN
 covers only the named checks; missing, failed and stale readings stay unresolved,
 and a live pane or lease proves only that it renders, not that its content is
 current or correct.
-Terminal panes rotate explicitly numbered continuations when the full report
-does not fit; `pain read ROLE --launcher dashboard` remains the complete evidence.
-Discovery readers reject malformed receipts as a whole rather than trusting a
-readable subset. Discover and senses then replace their observation verdict with
-UNKNOWN while retaining the separate scan-attempt evidence; valid historical
-DRIFT remains visible, with stale reads displayed as UNKNOWN.
+A rotating pane shows part of a long report; `pain read ROLE --launcher
+dashboard` remains the complete evidence. A reader that cannot decode a record
+rejects the record whole rather than trusting a readable subset, and the
+affected verdict reads UNKNOWN with the scan attempt retained
+([operating the plant](operating.md), [how it works](how-it-works.md)).
 
-The space-light reader consumes the owned Note3's atomic `SITE/body/space.json`
-boundary without starting another collector. It keeps lux, provenance (source
-and session) and original sample/receipt times visible. Freshness is conditional
-on unverified phone/host clock agreement, capped at 30 seconds or the producer's
-shorter validity; polling or rendering cannot extend it. Missing, broken, delayed
-or expired evidence is UNKNOWN. Retained measured light changes are history, not
-room occupancy or human attendance; startup and recovery are not physical events.
-The Android publisher and each core caller need their own checked activation —
-source support alone does not establish a working live feed. The host-radio sense
-reads this host's own BLE and Wi-Fi adapter state through the kernel sysfs ABI and
-`bluetoothctl`, keeping a missing adapter or a read that does not return UNKNOWN
-while a `down` or rfkill-blocked radio is a named verified state.
+Two owned sensors are read, not collected: the Note3 light feed through an
+atomic boundary file with a bounded freshness window, and this host's own
+Bluetooth and Wi-Fi adapter state. Each keeps a missing, unreadable or broken
+read visibly UNKNOWN rather than calm; the reading rules and their limits are
+in [how it works](how-it-works.md).
 
 Repairs start with causal investigation and leave failures observable. Preserve
 what failed, explain why, and test that recurrence still reaches a mind able to
