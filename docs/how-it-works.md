@@ -628,9 +628,8 @@ stored records, alongside 410 `stale-original-evidence` and two
 (`discover`), at 08:22:45Z in both panes and at 08:32:48Z, 08:43:12Z,
 08:52:53Z, 09:02:59Z and 09:13:10Z (`senses`) and at 09:15:59Z and 09:16:01Z
 in both panes —
-name `light-stream-frozen`). The panes re-derive the light
-line from a direct
-boundary read each refresh, so a class appears at refresh cadence rather
+name `light-stream-frozen`). The panes re-derive the light line from a
+direct boundary read each refresh, so a class appears at refresh cadence rather
 than scan cadence, and a short null can still render as the prior
 sample's class. `light-stream-frozen` needs a null streak held past a minute
 under one identity: measured at the boundary, that had never happened —
