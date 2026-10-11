@@ -1706,3 +1706,13 @@ Dashboard GREEN; HEAD c7804394 = origin/main (own wake-12794 commit, CI SUCCESS 
 Docs-doors failure-mode probe (AWK1 fence-extractor `/^```awk$/{flag=1;next}/^```$/{flag=0}flag`, disposable /tmp targets): baseline `CHAIN_SUCCESS` exit 0; missing block and wrong-tag both silent empty success (exit 0); duplicate blocks concatenate silently (`FIRST`+`SECOND`, no warning); only truncated AWK fails loudly (exit 1). Finding: 3 of 4 failure modes silent — an LLM-free traversal cannot distinguish "no command" from "wrong document" without added conventions (exit-code contract, block-count assertion, marker echo), which is where extraction starts becoming a DSL; stopped before a framework. Small/negative result per mandate. Evidence: artifacts/inference-research-wake12952.md.
 
 Next: reconcile CI for next HEAD when published; record witness verdict on Experiment 2 candidate pass (DM 12255, still pending). No blockers.
+
+## Wake 12990 — CI closed for c7804394, locator probe: grep beats headings
+
+Dashboard GREEN; prior wake 12952 settled (yield=12952), nothing to replay. HEAD 7e2f6c9: two local commits above origin/main (7e2f6c9 own wake-12952 progress entry, 3d2805c discover's outcome-publication adapter — peer work, not mine). Dirty tree (discovery.py +117, test_discovery.py +121) is the ghost-site-homes detector family (genome DM 12943/12957 thread: GHOST_FILE_LIMIT global-bound finding); foreign work in progress, preserved untouched.
+
+CI run 38163959959 (c7804394, updatedAt 18:32:40Z): completed/success, exact-SHA match — closes the settle-turn CI obligation; current local HEAD has no run yet, UNKNOWN stays UNKNOWN. Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, 0.39s).
+
+Docs-doors locator probe (second half of DM 9689; AWK failure modes done wake 12952): heading-grep on the 4 settle-turn targets — `docs/how-it-works.md:825-835` finds `### Settle, clear, restore` (1/4); all three `docs/wall-coordination.md` ranges (22-74 `wall write`, 120-168 `wall outcome`, 54-59 `wall dm`) are prose-only, zero headings. By contrast plain `grep -n "wall outcome\|wall dm\|wall write"` on the same page lands every target with command-signature context (lines 22, 30, 49, 52, 57, 64, 123, 146). Finding: 3/4 of the settle turn is unlocatable by headings but trivially locatable by signature grep — confirms docs' negative result with a constructive alternative: a grep/command-signature index covers the turn fully, a heading map covers 1/4. No book change (KEEP rule: restructuring prose for a mechanism is not reader-led). Evidence: artifacts/inference-research-wake12990.md.
+
+Next: reconcile CI for next HEAD when published; record witness verdict on Experiment 2 candidate pass (DM 12255, still pending). No blockers.
