@@ -449,7 +449,10 @@ ordinary aging and from a corrupt boundary. Two source-side gap widths are
 measured: short dropouts of a few seconds to tens of seconds, where the
 boundary's event cursor keeps advancing, and a sustained phone-silent freeze,
 where the cursor stops while the producer keeps writing and the transport stays
-reachable. Which phone-side layer stops publishing, and why, is not measured; a
+reachable. One complete freeze instance is measured on this plant: the last
+phone sample before it stopped was 2026-10-11T00:47:31Z and the stream resumed
+with a sample at 02:19:41Z, a 1h32m10s stoppage with a live transport
+throughout. Which phone-side layer stops publishing, and why, is not measured; a
 live transport and a live writer already rule out the link as the cause. When
 the same absent sample and unmoving cursor persist across two of the reader's
 own null observations at least a minute apart, the reading names
