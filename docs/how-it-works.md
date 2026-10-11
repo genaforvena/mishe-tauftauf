@@ -474,13 +474,24 @@ streak, so the interval grows at any cadence, while the pinned release
 pane interval at zero and reports `light-null-gap` throughout a freeze; only
 its roughly ten-minute stored scan reaches the minute threshold. Which byte-set
 a pane loads is a loaded-bytes question, not a reading one.
-Measured 2026-10-11T03:06Z: this plant's resident panes run
-`pain watch <role>` under the pinned release `f733a4b`, which carries both
-class names, and each pane's start command names the same release, so a
-respawn keeps it; the earlier stage recorded at 01:59Z, where panes served a
-2026-10-01 trial runtime and only the operator pane served the pinned
-release, was superseded when the pin advanced and the panes restarted
-(02:04:44Z). Check the pane process's own import root before claiming pane
+Measured 2026-10-11T03:22Z: this plant's resident panes load two byte-sets,
+one per stage. The long-lived process is `pain watch <role>` under the pinned
+release — `0c5b0e4` at the measurement, and each pane's start command names
+the same release, so a respawn keeps it — and that stage runs the service,
+heartbeat, feed and seed-state logic. The frame itself is composed once per
+refresh by that watcher's `observations.run_renderer`, which execs
+`top-pains/<role>`; seven of those scripts (discover, docs, genome, health,
+research-methods, senses, witness) export the 2026-10-01 trial runtime as
+their `PYTHONPATH`, written at trial install, and inherited by no other
+root, while the remaining scripts export nothing and inherit the release
+environment. Both stages are observed directly: a transient `wall_view`
+process (PID 494745) carried the trial runtime in its environment, and every
+stored dashboard frame's `DEPLOYED:` line reads
+`root=…/artifacts/wall-trial-20261001/runtime`, emitted from the composing
+process's own `__file__`. The trial runtime predates both class names and
+shows the same sample as `light-not-current-or-delayed`. Which byte-set a
+pane loads is a loaded-bytes question, not a reading one; check a pane
+process's own import root, and the script it execs, before claiming pane
 wording.
 Retained measured light changes are history, not room occupancy or human
 attendance, and startup or recovery is not a physical event.
