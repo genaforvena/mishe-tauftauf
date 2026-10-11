@@ -184,6 +184,13 @@ thresholds of three capture fails and ten kernel URB resubmits in the
 900-second window; the kernel resubmits keep occurring (one uvcvideo error in
 the last ten minutes on the 07:43Z scan), so it is still the window that moves
 rather than the cause.
+Measured again at 08:12Z under the promoted runtime pin the line read
+`CAMERA: PASS class=SEEING artifact-age=1s capture-fails=0/900s
+kernel-urbs=4/900s`: the kernel count still reading four after the
+15-minute window turned over means the URB resubmits are still occurring
+below the threshold (the 08:01Z and 08:02Z scans read five and seven uvcvideo
+kernel errors in their last-ten-minute windows), which keeps the
+window-versus-cause distinction open.
 
 ### Doctor is a check with a repair side effect
 

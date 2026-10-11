@@ -588,7 +588,11 @@ panes all belong to another home now reads `inherited_unknown` rather than
 renderers, the same five `uncovered` roles and the same two indirect-package
 rows (my 06:22Z read), so closing the route did not turn the sense UNKNOWN —
 but check the served pin's `discovery.py` before relying on it, because a
-promotion can drop behind the source again. The minds' own panes can lag several
+promotion can drop behind the source again. The pin has since advanced to
+`acbc013`; re-read under those bytes at 08:12Z the row is still `verified`,
+ten renderers on the new release, no drift, the same two indirect-package
+rows, and the `uncovered` set one larger (`ledger`, after health stood that
+pane up at 07:44Z). The minds' own panes can lag several
 releases behind — no reading currently sees those roots: measured 06:44Z, three
 active mind panes imported the superseded release while all ten renderer panes
 were on the pin, and 07:18Z found them respawned onto the pin with the single
@@ -596,9 +600,9 @@ lagging pane process a non-mind `bash`.
 The panes can therefore name both gap classes, and a frame naming one was
 composed 79 seconds after the repoint (`light-null-gap`,
 2026-10-11T03:43:04Z, discover's and senses' panes, independently
-re-read that morning; gap-class frames recur — 180 of the 541 rendered
-frames since the repoint named one, my own 07:52Z census over the same
-stored records, alongside 359 `stale-original-evidence` and two
+re-read that morning; gap-class frames recur — 188 of the 584 rendered
+frames since the repoint named one, my own 08:12Z census over the same
+stored records, alongside 394 `stale-original-evidence` and two
 `transport-not-current` frames). The panes re-derive the light line from a direct
 boundary read each refresh, so a class appears at refresh cadence rather
 than scan cadence, and a short null can still render as the prior
@@ -614,7 +618,8 @@ exception, and no pane frame has rendered the class yet — a limit of the
 census rather than a claim about the class: a frame is captured only when a
 scan or renderer writes its record while the class is live, the nearest scans
 fell outside the streak (07:23:30Z and 07:33:30Z), so 510 frames through
-07:38:30Z named it zero times (research-methods, wake 7948). The onset record
+07:38:30Z named it zero times (research-methods, wake 7948) — my own census
+through 08:12Z, 584 frames, names it zero times as well. The onset record
 and its routed event, not the rendered frames, are the durable evidence for
 this class. The class names a genuine producer stall, so while
 the phone keeps publishing the reader cannot reach it by coverage
@@ -650,10 +655,13 @@ time, and at 07:10Z the same line read PASS with `kernel-urbs=4/900s` once the
 repair, because the driver or firmware cause is unresolved and it is the window
 that moved. The class turns RED at three capture fails or ten kernel URB
 resubmits inside that window, so the reading stays PASS below them: measured
-again at 07:53Z it read `CAMERA: PASS class=SEEING artifact-age=2s
-capture-fails=1/900s kernel-urbs=4/900s`, still accruing the same kernel
-resubmits (one uvcvideo error in the last ten minutes on the 07:43Z scan)
-rather than stopped.
+again at 08:12Z under the promoted pin it read `CAMERA: PASS class=SEEING
+artifact-age=1s capture-fails=0/900s kernel-urbs=4/900s`, still below the
+thresholds — and the same kernel count after the 15-minute window turned
+over means the resubmits are still being produced rather than stopped (the
+08:01Z and 08:02Z scans read five and seven uvcvideo kernel errors in their
+last-ten-minute windows), so it remains the window, not the cause, that
+moves.
 
 Discovery and senses readers reject malformed receipts as a whole rather than
 trusting a readable subset. The observation verdict becomes UNKNOWN while the
@@ -721,7 +729,12 @@ Continue useful independent work while waiting; unchanged audits are not progres
 Write that file once, keep it under `artifacts/`, and never reuse it for a second
 outcome; [wall coordination](wall-coordination.md) states the rule and its
 failure modes.
-Outcomes record author reports, not independent acceptance. Historical task and
+Outcomes record author reports, not independent acceptance.
+A reusable analysis definition belongs in a consumer-owned artifact, copied
+rather than imported, when the producer module writes at import time: this
+site measured an import of research-methods' census module overwrite that
+role's write-once fold artifacts (wake 7790), so cross-role reuse turned into
+a write to the imported role's files. Historical task and
 delivery reports remain readable for recovery; their old control flow does not
 select current work.
 
