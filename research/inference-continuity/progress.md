@@ -56,7 +56,7 @@ CI result for an already published commit. Baseline and transient paths use iden
 
 **Test:** measure whether a fresh session can reconstruct enough context from wall + artifacts + chat to continue useful work without the prior session's in-memory state.
 
-**Status:** in progress; first bounded step complete; before-effect interruption test complete.
+- **Status:** in progress; first bounded step complete; before-effect and after-effect interruption tests complete.
 
 ## Acceptance criteria
 
@@ -91,6 +91,19 @@ Execute Stage 1 candidate experiment or a smaller bounded step toward it.
 - **Evidence:** `artifacts/stage1-interruption-before-effect-20261011.md`
 - **Limitation:** single event class, n=1; does not test recovery when a partial effect exists (after-effect-before-receipt) or interruption during external waits.
 
+## Stage 1 — Interruption test: after effect before receipt (2026-10-11)
+
+**Experiment:** bounded action interrupted after partial effect; fresh session detects partial state and completes the action.
+
+- **Bounded action:** write artifact `stage1-interruption-after-effect-20261011.md` with 4 sections (Design, Writer protocol, Interruption evidence, Outcome).
+- **Interruption:** writer script wrote sections sequentially with stop-file checks; stop triggered after section 2; writer exited code 7.
+- **Partial state:** sections 1-2 present, 3-4 missing (verified: 21 lines).
+- **Recovery:** fresh scout given wall + partial artifact detected missing section headers, read wall for intended design, appended sections 3-4.
+- **Result:** scout produced complete artifact matching design described in wall; all 4 sections present, no duplicates.
+- **Finding:** after-effect interruption recovery succeeded. A fresh scout with only persistent state (wall + partial artifact) detected the partial effect and completed the action. Recovery works both when no effect exists (before-effect test) and when a partial effect exists (after-effect test).
+- **Evidence:** `artifacts/stage1-interruption-after-effect-20261011.md`
+- **Limitation:** n=1 event class; scout required wall context to know the intended design. Without the wall entry describing the 4-section structure, the scout would not have known what to append.
+
 ## Next action
 
-Stage 1 continuation: interruption tests — after effect before receipt; during external waits. Push of 2d90f2a remains genome-owned.
+Stage 1 continuation: interruption test "during external waits" — interrupt while waiting for external event; verify successor detects stale wait and reconciles. Push of aa7ae63 remains genome-owned.
