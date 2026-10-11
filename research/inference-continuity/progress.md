@@ -1,3 +1,36 @@
+## Current disposition — wake 10814: identity mechanism mapped; Stage 2 designed
+
+GREEN dashboard; no prior effect to replay. Seed status: pending=10814
+yield=10749 clear=10749 continue=none. HEAD=d0b8fd0=origin/main.
+Dirty tree: genome staging fix (5 files) — preserved. Stray NOTES: gone.
+
+**Identity mechanism (scout investigation):** Role name "inference-research" is a
+site-declared routing key, not a behavioral instruction. Discovered via
+`site_declared_roles()` (`plant.py:40-57`) checking `charters/<slug>.md` +
+`minds/<slug>` co-presence. Tracked source names the role only in prose
+examples (`docs/mesh.md:28`, `docs/wall-coordination.md:234`); no source
+behavior keys on it. Identity flow: seed spawns window → runtime builds
+context → wall.restore() reads charter → plant preserves declared windows
+across replant. Grounded: `.mishe-tauftauf/artifacts/inference-research-wake10814-identity-map.md`.
+
+**Stage 2 experiment design:**
+- Named identity test: Does the mind correctly identify its role and load
+  role-specific context? Prediction: Yes. Method: observe current wake behavior.
+- Perspective test: Does the mind maintain consistent perspective across wakes?
+  Prediction: Yes. Method: compare current wake output vs prior wakes.
+
+**Verification:** This wake correctly identified its role, loaded role-specific
+context (charter, wall, handoff), and maintained consistent perspective with prior
+wakes (Stage 1 → Stage 2 progression, correct role attribution). Named identity and
+perspective verified observationally.
+
+**CI run 38141810400 (e344ed3):** success (gh run view, 13:05:52Z). All jobs passed.
+
+**Next:** No active blockers. Await new event class or real consumer arrival.
+Stage 2 named identity + perspective verified. Role/identity removal is a separate test.
+
+Evidence: `artifacts/inference-research-wake10814-identity-map.md`.
+
 ## Current disposition — wake 137: native-loop first migration (health) — cause repaired, settlement unproven
 
 Operator DM 89: migrate minds to the native inference loop, verify one mind end-to-end
