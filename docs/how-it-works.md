@@ -478,25 +478,33 @@ null origin since `808dbe0`: measured 2026-10-11T03:43Z, the served pin
 the five-second pane cadence (4/4, retention age 315 s), and its stored scans
 and the CLI read name both gap classes. Which byte-set a pane loads decides
 what a pane says — a loaded-bytes question, not a reading one.
-Measured 2026-10-11T03:22Z and re-measured 03:40Z: this plant's resident
-panes load two byte-sets, one per stage. The long-lived process is
-`pain watch <role>` under the pinned release — `0c5b0e4` at the first
-measurement and `94092ec` at the second, each pane's start command naming the
-same release, so a respawn keeps it — and that stage runs the service,
-heartbeat, feed and seed-state logic. The frame itself is composed once per
-refresh by that watcher's `observations.run_renderer`, which execs
-`top-pains/<role>`; seven of those scripts (discover, docs, genome, health,
-research-methods, senses, witness) export the 2026-10-01 trial runtime as
-their `PYTHONPATH`, written at trial install and inherited by no other root,
-while `top-pains/operator` exports the served release and followed the pin
-from `0c5b0e4` to `94092ec`. Both stages are observed directly: a transient
-`wall_view` process (PID 494745) carried the trial runtime in its
-environment, and a stored frame from 03:39:57Z names
+Measured 2026-10-11T03:22Z, re-measured 03:40Z and again after the pane
+renderer repoint at 03:41Z: this plant's resident panes load two byte-sets,
+one per stage. The long-lived process is `pain watch <role>` under the
+pinned release — `0c5b0e4` at the first measurement, `94092ec` at the
+later ones — and that stage runs the service, heartbeat, feed and
+seed-state logic. The frame itself is composed once per refresh by that
+watcher's `observations.run_renderer`, which execs `top-pains/<role>`.
+Until 03:41Z the seven role scripts (discover, docs, genome, health,
+research-methods, senses, witness) each exported the 2026-10-01 trial
+runtime — still the snapshot `coordination-mode.json` names — as their own
+`PYTHONPATH`, written at trial install and inherited by no other root, so a
+frame composed on bytes the pin does not govern; `top-pains/operator`
+exported the served release and followed the pin. Both stages were observed
+directly: a transient `wall_view` process (PID 494745) carried the trial
+runtime in its environment, and a stored frame from 03:39:57Z named
 `root=…/artifacts/wall-trial-20261001/runtime` on its `DEPLOYED:` line,
 emitted from the composing process's own `__file__`. The trial byte-set
-carries neither class name — both occur zero times in its light reader — and
-on the same freeze fixture it reads `malformed-boundary` at any cadence, so a
-pane cannot name either gap class until its renderer restage. Check a pane
+carried neither class name — both occur zero times in its light reader —
+and on the same freeze fixture it reads `malformed-boundary` at any
+cadence, so a pane could not name either gap class. The seven scripts now
+export no root and inherit the pane watcher's release, so a respawn follows
+the pin. Measured after the change: the live `sense.runtime.renderer-coverage`
+reading names ten renderers, all on `releases/94092ecd…/src`, with no
+drift, and a frame composed then names that release on its `DEPLOYED:`
+line. The panes can therefore name both gap classes; whether one is
+displayed waits on a live null block, and the live boundary still read
+`stale-original-evidence` on the age branch at 03:45Z. Check a pane
 process's own import root, and the script it execs, before claiming pane
 wording.
 Retained measured light changes are history, not room occupancy or human

@@ -206,7 +206,10 @@ A patch writes reviewed bytes into the snapshot named by
 `coordination-mode.json`'s `runtime` key (`wall_patch` refuses a
 snapshot equal to the shared checkout). The standard role views' renderer scripts
 `SITE_HOME/top-pains/<role>` import that root; a patch's observation must exercise
-one of those snapshot renderers. Two kinds of pane are outside that contract: the
+one of those snapshot renderers. This plant is the measured exception: its seven
+standard role scripts export no root and inherit the pane watcher's release, so a
+respawn follows the pin while the named snapshot stays the patch target
+([how it works](how-it-works.md)). Two kinds of pane are outside that contract: the
 `permissions` operator panel renders its own view from the live pin (the same
 source as the `permit` CLI it drives), and a site-declared resident
 (`body-research` and `inference-research` here) renders its own view; neither
