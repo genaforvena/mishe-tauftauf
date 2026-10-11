@@ -24,6 +24,7 @@ from .host_radio import (BLUETOOTH_ROOT, COMMAND_TIMEOUT_SECONDS, NET_ROOT, RFKI
                          rfkill_switches, rfkill_unreadable, rfkill_verdict,
                          wireless_interfaces)
 from .outcome_events import classify_outcomes
+from .observations import reserved_home_name
 from .runtime_source import source_for
 from .scan_freshness import age_bounds, classify_age, endpoint
 
@@ -2471,6 +2472,122 @@ def _repo_branch_inventory(home: Path) -> dict[str, object]:
             "strays": strays,
             "drift": drift_names}
 
+GHOST_FILE_LIMIT = 10_000
+"""Enumeration bound across ghost-home trees: an exact count to the limit, then
+a lower bound with ``files_at_least`` set, so a scan stays bounded while a
+present tree never reads as none."""
+
+
+def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]:
+    """Enumerate ``.mishe-*`` site directories under the checkout that are not
+    this site's home, with their files and newest-file age.
+
+    Only this site's home is a sanctioned ``.mishe-*`` directory in a plant's
+    checkout, and ``validate_home`` rejects any other one that lacks the
+    initialized runtime layout, so a second such directory cannot come from
+    the CLI: it is a mind's own file write against a corrupted site literal.
+    That write lands where no renderer, ``wall show``, feed reader, peer, diff
+    or CI can read it — ``.gitignore`` matches ``.mishe-*``, so even Git never
+    stages it — and a mind can believe a note landed where peers read it while
+    the canonical wall silently stays stale. The reading turns that silent
+    class of loss into a visible one: it counts the ghost trees and their
+    files, names the nested ghosts inside a ghost tree, and ages the newest
+    file so a lane can prioritize counsel. Presence of a ghost directory is
+    itself the violation; the file count quantifies it. The identity keeps the
+    full lists; the sample names at most three of each class.
+
+    A broken enumeration reads UNKNOWN naming the unreadable tree: a partial
+    count must never read as a clean zero. Directory symlinks inside a tree
+    are not followed, so the count cannot walk out and double-count.
+    """
+    if now is None:
+        now = time.time()
+    site = Path(home).resolve()
+    checkout = site.parent
+    try:
+        entries = sorted(checkout.iterdir(), key=lambda item: item.name)
+    except OSError as exc:
+        return {"id": "sense.site.ghost-homes", "state": "unknown", "kind": "read",
+                "sample": f"checkout root unreadable: {exc}"}
+    ghosts: list[str] = []
+    holding: list[str] = []
+    empty: list[str] = []
+    nested: list[str] = []
+    files_per_ghost: dict[str, int] = {}
+    newest: dict[str, tuple[float, str]] = {}
+    total = 0
+    capped = False
+    for entry in entries:
+        if not reserved_home_name(entry.name):
+            continue
+        try:
+            if entry.resolve() == site:
+                continue
+        except OSError:
+            pass  # an unresolvable name is still reported, never silently skipped
+        if not entry.is_dir():
+            continue
+        ghosts.append(entry.name)
+        failures: list[OSError] = []
+
+        def record(error: OSError) -> None:
+            failures.append(error)
+
+        files = 0
+        newest_at: float | None = None
+        for dirpath, dirnames, filenames in os.walk(entry, onerror=record):
+            for name in dirnames:
+                if reserved_home_name(name):
+                    nested.append(f"{entry.name}/{str(Path(dirpath, name).relative_to(entry))}")
+            for name in filenames:
+                if total + files >= GHOST_FILE_LIMIT:
+                    capped = True
+                    break
+                files += 1
+                try:
+                    mtime = Path(dirpath, name).stat().st_mtime
+                except OSError:
+                    continue
+                if newest_at is None or mtime > newest_at:
+                    newest_at = mtime
+            if capped:
+                break
+        if failures:
+            return {"id": "sense.site.ghost-homes", "state": "unknown", "kind": "read",
+                    "sample": f"ghost home unreadable: {entry.name}: {failures[0]}"}
+        files_per_ghost[entry.name] = files
+        total += files
+        if newest_at is not None:
+            newest[entry.name] = (newest_at,
+                                  datetime.fromtimestamp(newest_at, timezone.utc)
+                                  .isoformat(timespec="seconds"))
+        (holding if files else empty).append(entry.name)
+    newest_by_age = sorted(newest.items(), key=lambda item: (-item[1][0], item[0]))
+    newest_text = (f"{name} age={_space_age(now - mtime)}"
+                   for name, (mtime, _stamp) in newest_by_age[:1])
+
+    def named(values: list[str]) -> str:
+        return (",".join(values[:3]) + (f" +{len(values) - 3}more" if len(values) > 3 else "")
+                if values else "none")
+
+    parts = [f"ghost-homes={len(ghosts)}"]
+    parts.append(f"files>={total}" if capped else f"files={total}")
+    parts.append("holding=" + named(holding))
+    if empty:
+        parts.append("empty=" + named(empty))
+    parts.append(f"nested={len(nested)}")
+    parts.append("newest=" + (next(newest_text, "none")))
+    sample = " ".join(parts)
+    state = "verified" if not ghosts else "drift"
+    return {"id": "sense.site.ghost-homes", "state": state, "sample": sample,
+            "kind": "read", "checkout": str(checkout),
+            "ghosts": sorted(ghosts), "files": files_per_ghost, "total": total,
+            "holding": sorted(holding), "empty": sorted(empty),
+            "nested": sorted(nested), "files_at_least": capped,
+            "newest": {name: {"stamp": stamp, "age_s": round(now - mtime)}
+                       for name, (mtime, stamp) in sorted(newest.items())}}
+
+
 DM_TO_RE = re.compile(r"^\[dm\] to=([A-Za-z0-9_.-]+)")
 RECORD_REF_RE = re.compile(r"\[record\] records/([0-9a-f]{64})\.json sha256=[0-9a-f]{64}")
 DM_DISPOSITION_WINDOW_SECONDS = 6 * 3600
@@ -3561,6 +3678,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_runtime_drift_across_sites(home))
     observed.append(_runtime_pin_lag(home))
     observed.append(_repo_branch_inventory(home))
+    observed.append(_ghost_site_homes(home))
     observed.append(_coord_dm_disposition_age(home))
     observed.append(_seed_settle_result_mix(home))
     return {"created": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),

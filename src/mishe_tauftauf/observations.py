@@ -58,6 +58,18 @@ def validate_home(home: Path) -> Path:
     return home
 
 
+def reserved_home_name(name: str) -> bool:
+    """Whether one directory name is a reserved ``.mishe-`` site-home name.
+
+    Site homes carry the reserved prefix, and the shared checkout's ignore
+    rule matches it: a directory with this name that is not a site's own home
+    is invisible to Git, the renderers and every peer, so readers that must
+    tell a site home from a corrupted site literal decide it here rather than
+    each repeating the prefix test where a parsing boundary does not exist.
+    """
+    return name.startswith(".mishe-")
+
+
 def executable(path: Path) -> bool:
     return path.is_file() and os.access(path, os.X_OK)
 
