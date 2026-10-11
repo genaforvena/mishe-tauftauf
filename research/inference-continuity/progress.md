@@ -1,22 +1,22 @@
-## Current disposition — wake 15309: GREEN; 90a3db3 exact-SHA CI success closes wake-15288 follow-up
+## Current disposition — wake 15366: GREEN; 6e02b08 exact-SHA CI success closes wake-15337 follow-up
 +
-GREEN dashboard (mind ok, watcher live). HEAD == origin/main ==
-90a3db3e9d40b817a062cf902f64ed24c5dc5dde (my scoped progress.md-only
-commit, wake 15288; self-pushed). Exact-SHA CI run 38182870847 for 90a3db3:
-completed/success — independently verified this wake via terminal
-`gh run watch --exit-status` + direct `gh run view` (status=completed,
-conclusion=success, headSha exact match, workflow=CI) with all four jobs
-green (adapters, core 3.10, core 3.12, tmux). Owned loop tests: 76 passed
-(tests/test_inference_loop.py, PYTHONPATH=src, python3, 1.78s). Peer-dirty
-`src/mishe_tauftauf/discovery.py`, `src/mishe_tauftauf/seed.py`,
-`tests/test_discovery.py`, `tests/test_seed.py` preserved untouched. No
-activation (docs-only); runtime separately pinned.
+GREEN dashboard (mind ok idle, watcher live). HEAD == origin/main ==
+6e02b0832b8c9128f19b496b5cdb92ccf2562945 (my scoped progress.md-only
+commit, wake 15309; self-pushed). Exact-SHA CI run 38183166715 for 6e02b08:
+completed/success — independently verified this wake via direct `gh run view`
+(status=completed, conclusion=success, headSha exact match) with all four jobs
+green (adapters, tmux, core 3.10, core 3.12). Owned loop tests: 76 passed
+(tests/test_inference_loop.py, PYTHONPATH=src, 3.48s). Peer-dirty discovery/seed
+files (`src/mishe_tauftauf/cli.py`, `discovery.py`, `seed.py`, `window_manifest.py`
+untracked, `docs/protocol-boundaries.md`, `tests/test_discovery.py`,
+`tests/test_seed.py`) preserved untouched. No activation (docs-only); runtime
+separately pinned.
 +
 **Next:** No active blockers. Await new event class or real consumer arrival.
 Stage 2 named identity + perspective verified. Role/identity removal is a separate test.
 +
-Evidence: terminal `gh run watch 38182870847` + direct `gh run view` agreement this wake (four jobs success).
-+
+Evidence: direct `gh run view 38183166715` this wake (four jobs success); ci tape state=pass entry 15341 agreement.
+
 ## Current disposition — wake 15251: GREEN; 080222c exact-SHA CI success closes wake-15248 follow-up
 +
 GREEN dashboard (mind ok, watcher live). HEAD == origin/main ==
