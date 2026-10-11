@@ -15,7 +15,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from mishe_tauftauf.feed import Feed
-from mishe_tauftauf.records import REFERENCE_RE, payload
+from mishe_tauftauf.outcome_publication import (
+    OUTCOME_KINDS,
+    decode_excerpt,
+    decode_publication_body,
+    decode_text,
+    decode_work_handoff,
+    starts_outcome_publication,
+)
+from mishe_tauftauf.records import payload
 
 QUESTION = 'Which witness analysis would be most useful now?'
 ANALYSES = {
@@ -57,8 +65,8 @@ def _write(path, value):
 
 def _previous_context(home: Path, entries) -> dict | None:
     previous = next((e for e in reversed(entries) if
-                     (e.source == 'seed' and e.body.startswith('[work] channel=witness ')) or
-                     (e.source == 'witness' and e.body.startswith('Wall outcome '))), None)
+                     (e.source == 'seed' and decode_work_handoff(e.body) is not None) or
+                     (e.source == 'witness' and starts_outcome_publication(e.body))), None)
     if previous is None:
         return None
     context = {'sequence': previous.sequence, 'source': previous.source,
@@ -67,22 +75,21 @@ def _previous_context(home: Path, entries) -> dict | None:
                'status': 'UNKNOWN', 'semantic_acceptance': 'UNKNOWN',
                'text': '', 'omitted_characters': 0}
     if previous.source == 'seed':
-        text = previous.body.split('HANDOFF:\n', 1)[-1]
+        text = decode_work_handoff(previous.body)
         context.update(status='legacy-author-report', text=text[:240],
                        omitted_characters=max(0, len(text) - 240))
         return context
     try:
-        references = [line for line in previous.body.splitlines() if line.startswith('[record]')]
-        if len(references) != 1 or not REFERENCE_RE.fullmatch(references[0]):
+        publication = decode_publication_body(previous.body)
+        if publication is None:
             raise ValueError('missing or invalid immutable outcome reference')
-        context['reference'] = references[0]
+        context['reference'] = publication.reference
         data = payload(previous)
         text = data['text']
         kind = data['kind']
-        if (data['role'] != 'witness' or
-                kind not in {'accepted', 'blocker-resolved', 'blocker-retired', 'hypothesis-changed'} or
-                not isinstance(text, str) or not text.strip() or
-                previous.body != f'Wall outcome {kind} by witness\n{text}\n{references[0]}'):
+        if (data['role'] != 'witness' or publication.role != 'witness' or
+                kind not in OUTCOME_KINDS or
+                decode_text(text) is None or text != publication.text):
             raise ValueError('outcome prose or role does not match immutable record')
         evidence = data['evidence']
         path = Path(evidence['path']).resolve()
@@ -111,7 +118,7 @@ def snapshot(home: Path, cutoff: int) -> dict:
     for entry in candidates[-6:]:
         # For framed task state JSON, use the producer's readable explanation;
         # the complete source remains available by sequence and body hash.
-        text = '\n'.join(line for line in entry.body.splitlines() if not line.startswith('{'))
+        text = decode_excerpt(entry.body)
         excerpt = text[:160]
         excerpts.append({'sequence': entry.sequence, 'source': entry.source,
                          'text': excerpt, 'body_sha256': _hash(entry.body.encode()),
