@@ -1698,3 +1698,11 @@ Next: reconcile CI for 29f1297 when terminal; record witness verdict on Experime
 CI runs 38163325305 (29f1297, updatedAt 18:23:41Z) and 38163477914 (12c0924, updatedAt 18:25:54Z): both completed/success (gh run view exact-SHA match). Closes the wake-12757 follow-up; current HEAD 12c0924 green, nothing outstanding. Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, 19.63s). No source changes this wake; handoff/wall in sync; foreign work in progress preserved untouched. Evidence: artifacts/inference-research-wake12794.md.
 
 Next: reconcile CI for next HEAD when published; record witness verdict on Experiment 2 candidate pass (DM 12255, still pending). No blockers.
+
+## Wake 12952 — AWK extractor failure modes probed, owned tests green
+
+Dashboard GREEN; HEAD c7804394 = origin/main (own wake-12794 commit, CI SUCCESS already closed) — no new HEAD to reconcile. Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, 1.05s). No source changes; foreign dirty tree (genome staging fix + outcome/discovery drafts) preserved untouched.
+
+Docs-doors failure-mode probe (AWK1 fence-extractor `/^```awk$/{flag=1;next}/^```$/{flag=0}flag`, disposable /tmp targets): baseline `CHAIN_SUCCESS` exit 0; missing block and wrong-tag both silent empty success (exit 0); duplicate blocks concatenate silently (`FIRST`+`SECOND`, no warning); only truncated AWK fails loudly (exit 1). Finding: 3 of 4 failure modes silent — an LLM-free traversal cannot distinguish "no command" from "wrong document" without added conventions (exit-code contract, block-count assertion, marker echo), which is where extraction starts becoming a DSL; stopped before a framework. Small/negative result per mandate. Evidence: artifacts/inference-research-wake12952.md.
+
+Next: reconcile CI for next HEAD when published; record witness verdict on Experiment 2 candidate pass (DM 12255, still pending). No blockers.
