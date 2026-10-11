@@ -1453,6 +1453,37 @@ def _unit_description(unit: str) -> str:
     return ""
 
 
+def _unit_declared_paths(unit: str) -> list[str] | None:
+    """Absolute paths a unit's own declaration names, or None if unreadable.
+
+    ``systemctl show`` reports the *effective* unit, so a drop-in overriding the
+    base unit cannot hide a path. The rendered property text is decoded by the
+    :mod:`mishe_tauftauf.unit_properties` boundary; a unit whose properties
+    cannot be read is unjudgeable, which is different from a unit that declares
+    no site path.
+    """
+    environment = os.environ.copy()
+    environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    try:
+        result = subprocess.run(["systemctl", "--user", "show", unit,
+                                 "-p", "ExecStart,WorkingDirectory,Environment"],
+                                capture_output=True, text=True, timeout=5,
+                                env=environment)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode:
+        return None
+    from .unit_properties import declared_paths
+    return declared_paths(result.stdout)
+
+
+def _declares_site_path(path: str, site_roots: list[Path]) -> bool:
+    """Whether one declared path lies inside a site's checkout or its home."""
+    candidate = Path(path)
+    return any(root == candidate or root in candidate.parents
+               for root in site_roots)
+
+
 def _foreign_checkout_consumers(units: list[str], root: Path) -> dict[str, str]:
     """Unattributed units whose ExecStart names this plant's checkout, by unit.
 
@@ -1485,7 +1516,12 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
     consumes this plant's checkout — observed in its import root or declared in
     the script its ``ExecStart`` runs — the sample names the coupling as
     ``foreign=<unit>@<checkout>`` and stays ``unknown`` rather than hiding it in
-    an anonymous coverage gap. The release coordinator's declared checkout root
+    an anonymous coverage gap. A unit that names no site in anything it imports
+    or declares is a host tool beside the sites, so the sample names it
+    ``host-scope=<unit>`` and the reading is ``verified``: the question the
+    sense answers is settled for it, and an unattributed UNKNOWN is left for
+    the units whose declaration could not be read or whose declared paths do
+    name a site. The release coordinator's declared checkout root
     is not a stale release, so it is skipped rather than reported against the
     pin; only a registry whose site list is unreadable is unknown.
     """
@@ -1546,6 +1582,7 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
     uninspectable: list[str] = []
     unpinned: list[str] = []
     unattributed: list[str] = []
+    host_scope: list[str] = []
     parts = [f"sites={len(site_by_prefix)} running={len(active)}"]
     for unit in active:
         session = session_of[unit]
@@ -1577,6 +1614,26 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
                 # (coordination/site_sync.py skips the same unit when verifying).
                 continue
             stale[unit] = root
+    # A unit no session names can still be judged. When nothing it imports and
+    # nothing its declaration names lies inside any site's checkout or home,
+    # the unit is a host tool beside the sites: naming it `host-scope` answers
+    # the reading's question instead of leaving an UNKNOWN readers learn to
+    # skip. A unit that declares a path inside a site, or whose declaration
+    # cannot be read, stays an anonymous gap — the sensor cannot yet say the
+    # unit is irrelevant, so it does not claim it.
+    site_roots = [Path(site_home) for site_home in site_by_prefix.values()]
+    site_roots += [Path(site_home).resolve().parent
+                   for site_home in site_by_prefix.values()]
+    for unit in list(unattributed):
+        declared = _unit_declared_paths(unit)
+        if not declared:
+            continue
+        if any(_declares_site_path(path, site_roots) for path in declared):
+            continue
+        host_scope.append(unit)
+        unattributed.remove(unit)
+    if host_scope:
+        parts.append("host-scope=" + ",".join(sorted(host_scope)))
     if foreign:
         parts.append("foreign=" + ",".join(
             f"{unit}@{checkout_root.name}" for unit in sorted(foreign)))
@@ -1593,7 +1650,7 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
             "sample": " ".join(parts), "kind": "read",
             "identity": {"sites": sorted(site_by_prefix), "stale": stale,
                          "unpinned": unpinned, "unattributed": unattributed,
-                         "foreign": foreign,
+                         "foreign": foreign, "host_scope": host_scope,
                          "uninspectable": uninspectable, "running": active}}
 
 

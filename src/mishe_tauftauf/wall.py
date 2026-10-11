@@ -179,6 +179,18 @@ def write(home: Path, role: str, text: str, source_path: str | None = None) -> N
     wall_path = home / "walls" / f"{role}.md"
     _reject_peer_wall_copy(home, role, text)
     _write_handoff(wall_path, text)
+    # handoffs/<role>.md is the launcher-facing projection of these same notes:
+    # runtime.py:_context reads it as CURRENT HANDOFF, and wall.settle's
+    # already-settled branch compares both files against the settle text.
+    # Writing only the wall left the projection at the previous wake's content,
+    # so a mind that edited its wall directly handed the next invocation a stale
+    # handoff and a same-wake re-settle failed the file match for good
+    # (android-body's genome wake 35129 stayed pending 07:23-08:03Z 2026-10-11
+    # until health repaired the projection by hand; body-research wake 8405
+    # reproduces the class in artifacts/body-wake8405-handoff-desync-repro.json).
+    # Project it here so the two files cannot diverge; _write_handoff skips an
+    # identical rewrite.
+    _write_handoff(home / "handoffs" / f"{role}.md", text)
     _audit_log(home, role, source_path, wall_path)
 
 

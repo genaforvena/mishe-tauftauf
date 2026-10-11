@@ -9,6 +9,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 import pytest
 
@@ -4320,6 +4321,7 @@ def test_drift_across_sites_falls_back_to_seed_raised_for_own_session(
             patch.object(discovery, "_unit_import_roots",
                          return_value={units[0]: str(own_pin)}), \
             patch.object(discovery, "_foreign_checkout_consumers", return_value={}), \
+            patch.object(discovery, "_unit_declared_paths", return_value=None), \
             patch.dict(os.environ, {}, clear=True):
         row = discovery._runtime_drift_across_sites(home)
     assert row["state"] == "unknown"
@@ -4468,6 +4470,110 @@ def test_drift_across_sites_keeps_a_foreign_unit_off_the_checkout_unattributed(
     assert row["state"] == "unknown"
     assert row["identity"]["unattributed"] == [unit]
     assert row["identity"]["foreign"] == {}
+
+
+def test_drift_across_sites_names_an_unattributed_unit_no_site_names(
+        tmp_path: Path) -> None:
+    # A host tool beside the sites settles the reading's question: nothing it
+    # imports and nothing its declaration names lies inside a site, so it is
+    # named host-scope instead of leaving the reading UNKNOWN.
+    pinned_sha: list[str] = []
+    other_pin = tmp_path / "releases" / "other"
+    _release_tree(other_pin, pinned_sha)
+    other = tmp_path / "site-other"
+    _pin(other, other_pin, pinned_sha[0], "mishe-other")
+    home = tmp_path / "plant"
+    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
+                             "sha": pinned_sha[0]}])
+    unit = "mishe-cleaner-recovered.service"
+    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
+            patch.object(discovery, "_unit_import_roots", return_value={}), \
+            patch.object(discovery, "_foreign_checkout_consumers", return_value={}), \
+            patch.object(discovery, "_unit_declared_paths",
+                         return_value=["/usr/bin/python3",
+                                       "/home/host/scripts/mesh-cleaner-run",
+                                       "/home/host/work"]), \
+            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
+        row = discovery._runtime_drift_across_sites(home)
+    assert row["state"] == "verified"
+    assert f"host-scope={unit}" in row["sample"]
+    assert row["identity"]["host_scope"] == [unit]
+    assert row["identity"]["unattributed"] == []
+
+
+def test_drift_across_sites_keeps_a_site_coupled_unit_unattributed(
+        tmp_path: Path) -> None:
+    # A declared path inside a site's own home is a coupling this sensor cannot
+    # wave away, so the unit stays an anonymous gap rather than host scope.
+    pinned_sha: list[str] = []
+    other_pin = tmp_path / "releases" / "other"
+    _release_tree(other_pin, pinned_sha)
+    other = tmp_path / "site-other"
+    _pin(other, other_pin, pinned_sha[0], "mishe-other")
+    home = tmp_path / "plant"
+    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
+                             "sha": pinned_sha[0]}])
+    unit = "mishe-unlisted.service"
+    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
+            patch.object(discovery, "_unit_import_roots", return_value={}), \
+            patch.object(discovery, "_foreign_checkout_consumers", return_value={}), \
+            patch.object(discovery, "_unit_declared_paths",
+                         return_value=["/usr/bin/python3",
+                                       str(other / "bin" / "tool")]), \
+            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
+        row = discovery._runtime_drift_across_sites(home)
+    assert row["state"] == "unknown"
+    assert "host-scope" not in row["sample"]
+    assert row["identity"]["unattributed"] == [unit]
+    assert row["identity"]["host_scope"] == []
+
+
+def test_drift_across_sites_keeps_an_unreadable_unit_unattributed(
+        tmp_path: Path) -> None:
+    # A unit whose declaration cannot be read is unjudgeable, which is not the
+    # same as a unit declaring no site path; the gap stays visible.
+    pinned_sha: list[str] = []
+    other_pin = tmp_path / "releases" / "other"
+    _release_tree(other_pin, pinned_sha)
+    other = tmp_path / "site-other"
+    _pin(other, other_pin, pinned_sha[0], "mishe-other")
+    home = tmp_path / "plant"
+    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
+                             "sha": pinned_sha[0]}])
+    unit = "mishe-unlisted.service"
+    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
+            patch.object(discovery, "_unit_import_roots", return_value={}), \
+            patch.object(discovery, "_foreign_checkout_consumers", return_value={}), \
+            patch.object(discovery, "_unit_declared_paths", return_value=None), \
+            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
+        row = discovery._runtime_drift_across_sites(home)
+    assert row["state"] == "unknown"
+    assert row["identity"]["unattributed"] == [unit]
+    assert row["identity"]["host_scope"] == []
+
+
+def test_unit_declared_paths_reads_the_effective_unit_text() -> None:
+    # systemd renders ExecStart, WorkingDirectory and Environment in one show;
+    # every absolute path is collected, including the colon-separated entries
+    # an Environment value names.
+    text = ("ExecStart={ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 "
+            "/home/host/scripts/tool follow ; ignore_errors=no }\n"
+            "WorkingDirectory=/home/host/work\n"
+            "Environment=PATH=/usr/bin:/bin MESH_HOME=/home/host/state\n")
+    with patch.object(discovery.subprocess, "run",
+                      return_value=SimpleNamespace(returncode=0, stdout=text)):
+        paths = discovery._unit_declared_paths("mishe-cleaner-recovered.service")
+    assert paths == ["/usr/bin/python3", "/home/host/scripts/tool",
+                     "/home/host/work", "/usr/bin", "/bin",
+                     "/home/host/state"]
+
+
+def test_unit_declared_paths_is_none_when_the_unit_cannot_be_read() -> None:
+    with patch.object(discovery.subprocess, "run",
+                      return_value=SimpleNamespace(returncode=1, stdout="")):
+        assert discovery._unit_declared_paths("mishe-unlisted.service") is None
+    with patch.object(discovery.subprocess, "run", side_effect=OSError()):
+        assert discovery._unit_declared_paths("mishe-unlisted.service") is None
 
 
 def test_drift_across_sites_still_latches_drift_with_a_foreign_consumer(
