@@ -559,8 +559,8 @@ releases behind — no reading currently sees those roots.
 The panes can therefore name both gap classes, and a frame naming one was
 composed 79 seconds after the repoint (`light-null-gap`,
 2026-10-11T03:43:04Z, discover's and senses' panes, independently
-re-read that morning; gap-class frames recur — 114 of the 316 rendered
-frames since the repoint named one, my own 06:13Z census over the same
+re-read that morning; gap-class frames recur — 127 of the 366 rendered
+frames since the repoint named one, my own 06:33Z census over the same
 stored records). The panes re-derive the light line from a direct
 boundary read each refresh, so a class appears at refresh cadence rather
 than scan cadence, and a short null can still render as the prior
@@ -592,6 +592,16 @@ administrative flag: an enabled radio that has not associated reads
 before the admin token both rendered `=down` so an enabled idle radio could not
 be told from an absent one. An interface whose `flags` or `operstate` will not
 read is `=unread` with a named problem, which is UNKNOWN rather than a state.
+
+The camera reading is a fault reading, not a picture: `mesh-cam-watch` keeps a
+class line and the latest artifact, and the health view reads that artifact's
+age, `CAPTURE-FAIL` onsets and kernel URB resubmit failures in a 15-minute
+window. A node declares its camera with `health/camera.json`, so a plant
+without a webcam skips the check instead of inheriting its neighbour's faults,
+and an unreadable source on a declared node reads UNKNOWN rather than PASS. On
+this host the reading is RED while the lens still sees a scene — the artifact
+refreshes on time and the fault counted is the kernel's, which is why the
+check counts as observation of an unresolved cause rather than as a repair.
 
 Discovery and senses readers reject malformed receipts as a whole rather than
 trusting a readable subset. The observation verdict becomes UNKNOWN while the

@@ -156,6 +156,24 @@ legacy report files. A `tmux` read that fails or times out is reported as
 missing; only a readable pane list can raise `windows-missing` or
 `windows-extra`.
 
+The camera fault surface has no reader of its own: `mesh-cam-watch` records a
+class line and the latest artifact, and the UVC function can stall
+intermittently — v4l2 read timeouts, kernel URB resubmit failures — with
+nothing reading them. The health view reads that surface directly and prints a
+`CAMERA:` line: artifact age against the bound `mesh-cam-watch` itself declares
+(120 s), `CAPTURE-FAIL` onsets and kernel URB resubmit failures inside a
+15-minute window. A node declares its camera with `health/camera.json`, so a
+plant without a webcam skips the check instead of inheriting its neighbour's
+surface; a declaration that cannot be read, or a source that cannot be read on
+a declared node, reads UNKNOWN rather than PASS, because deleted monitoring
+must stay visible. The class word is informational — a covered lens is not a
+fault.
+Measured on this host at 06:40Z: `CAMERA: RED class=SEEING
+artifact-age=0s capture-fails=3/900s kernel-urbs=13/900s`, with the artifact
+refreshing on time and the lens seeing a scene. The recurrence signal is a RED
+verdict naming a camera cause; the camera driver or firmware root cause is
+unresolved, so the check is the continuing observation, not a fix.
+
 ### Doctor is a check with a repair side effect
 
 `doctor` checks feed framing, executable local programs, the site's Git boundary, and optional adapters. It can also **rebuild missing or mismatched handoff projections from the tape**. It is not strictly read-only:

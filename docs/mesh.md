@@ -44,9 +44,10 @@ rejects the record whole rather than trusting a readable subset, and the
 affected verdict reads UNKNOWN with the scan attempt retained
 ([operating the plant](operating.md), [how it works](how-it-works.md)).
 
-Two owned sensors are read, not collected: the Note3 light feed through an
-atomic boundary file with a bounded freshness window, and this host's own
-Bluetooth and Wi-Fi adapter state. Each keeps a missing, unreadable or broken
+Three owned surfaces are read, not collected: the Note3 light feed through an
+atomic boundary file with a bounded freshness window, this host's own
+Bluetooth and Wi-Fi adapter state, and this host's own camera fault state —
+faults, not a scene. Each keeps a missing, unreadable or broken
 read visibly UNKNOWN rather than calm; the reading rules and their limits are
 in [how it works](how-it-works.md).
 
