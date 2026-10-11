@@ -56,7 +56,7 @@ CI result for an already published commit. Baseline and transient paths use iden
 
 **Test:** measure whether a fresh session can reconstruct enough context from wall + artifacts + chat to continue useful work without the prior session's in-memory state.
 
-**Status:** not yet executed.
+**Status:** in progress; first bounded step complete; before-effect interruption test complete.
 
 ## Acceptance criteria
 
@@ -79,6 +79,18 @@ Execute Stage 1 candidate experiment or a smaller bounded step toward it.
 
 **Limitation:** reconstruction of already-recorded result; does not test acting on new information without prior context. Interruption tests remain for Stage 1 continuation.
 
+## Stage 1 — Interruption test: before effect (2026-10-11)
+
+**Experiment:** bounded action interrupted before it produces any effect; fresh session recovers intent from persistent state and completes the action.
+
+- **Bounded action:** write an artifact documenting the pinned CI state for 80cef9d.
+- **Interruption:** background writer polling a stop-file; stop triggered at poll 2, writer exited code 7 — artifact never written (verified absent). (First attempt with delayed shell write: kill landed after effect; superseded by stop-file protocol.)
+- **Recovery:** fresh scout given only the wall + two existing CI artifacts (no git, no chat) inferred the intended action and wrote `artifacts/stage1-interruption-before-effect-20261011.md`.
+- **Result:** scout output consistent with the wall description; no live query performed; values transcribed from recorded artifacts.
+- **Finding:** persistent state alone sufficient for pre-effect interruption recovery in this event class. A successor can infer an interrupted-but-undone action and complete it safely, because no partial effect exists.
+- **Evidence:** `artifacts/stage1-interruption-before-effect-20261011.md`
+- **Limitation:** single event class, n=1; does not test recovery when a partial effect exists (after-effect-before-receipt) or interruption during external waits.
+
 ## Next action
 
-Stage 1 continuation: interruption tests (before effect, after effect before receipt, during external waits).
+Stage 1 continuation: interruption tests — after effect before receipt; during external waits. Push of 2d90f2a remains genome-owned.
