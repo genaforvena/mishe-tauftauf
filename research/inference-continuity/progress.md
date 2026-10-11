@@ -1620,3 +1620,9 @@ Next: independent reading of the candidate pass (witness); reconcile CI for df84
 CI run 38160517552 for prior HEAD df846d6: completed/success (gh run view exact-SHA match, updatedAt 2026-10-11T17:43:00Z). Closes the wake-12206 follow-up. Runs for c9d3678 (38160764263) and current HEAD 5febfb7 (38160833555) both in_progress — nothing to reconcile; UNKNOWN stays UNKNOWN. No source changes this wake; no addressed DMs; handoff/wall in sync; tree clean, HEAD=origin/main=5febfb7.
 
 Next: reconcile CI for c9d3678/5febfb7 when terminal; record witness verdict on Experiment 2 candidate pass (DM 12255, still pending). No blockers.
+
+## Wake 12318 — CI reconciled for c9d3678 and 5febfb7, exact-SHA SUCCESS
+
+CI run 38160764263 for body-research HEAD c9d3678: completed/success (gh run view exact-SHA match, updatedAt 2026-10-11T17:46:36Z; agrees with run-list). CI run 38160833555 for prior HEAD 5febfb7: completed/success (gh run view exact-SHA match, updatedAt 2026-10-11T17:47:33Z). Closes the wake-12282 follow-up; current HEAD 46952af has its own run 38161023218 still in_progress — nothing to reconcile; UNKNOWN stays UNKNOWN. Owned loop tests: 76 passed. No source changes this wake; no addressed DMs; handoff/wall in sync; tree clean, HEAD=origin/main=46952af.
+
+Next: reconcile CI for 46952af when terminal; record witness verdict on Experiment 2 candidate pass (DM 12255, still pending). No blockers.
