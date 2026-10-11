@@ -455,12 +455,14 @@ the same absent sample and unmoving cursor persist across two of the reader's
 own null observations at least a minute apart, the reading names
 `light-stream-frozen`; the first null observation of a stream reads
 `light-null-gap`, and publication or polling never converts one into the other.
-No byte-set those panes load carries either name: seven resident panes load a
-2026-10-01 trial runtime that predates both classes and still show the same
-sample as `light-not-current-or-delayed`, while the operator pane loads the
-pinned release, which carries `light-null-gap` but predates the freeze class.
-Which byte-set a pane loads is a loaded-bytes question, not a reading one: the
-committed source, given the same frozen boundary, names `light-stream-frozen`.
+Which byte-set a pane loads is a loaded-bytes question, not a reading one.
+Measured 2026-10-11T02:33Z: this plant's resident panes run
+`pain watch <role>` under the pinned release `f733a4b`, which carries both
+class names; the earlier stage recorded at 01:59Z, where panes served a
+2026-10-01 trial runtime and only the operator pane served the pinned
+release, was superseded when the pin advanced and the panes restarted
+(02:04:44Z). Check the pane process's own import root before claiming pane
+wording.
 Retained measured light changes are history, not room occupancy or human
 attendance, and startup or recovery is not a physical event.
 Source support alone does not establish a working feed: the Android publisher

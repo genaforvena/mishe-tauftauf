@@ -46,9 +46,12 @@ panes: `_observation_text` returns any other role's frame untouched, so a
 growing numeric age on another role's pane still reads as a new event. One
 such token is reachable — the health view's
 `PANE LEASE: RED stale=window(age=Ns>limit=Ms)` line grows on every refresh
-while a top-pane renderer stays stale — but no resident pane outside discover
-and senses currently carries a numeric age, so this records the adapter's
-scope rather than an observed churn.
+while a top-pane renderer stays stale. Measured 2026-10-11T02:29Z on the
+published pane frames, no resident pane outside discover and senses carries a
+live age that grows per refresh: the numeric ages on the genome, witness,
+body-research and research-methods panes sit inside quoted tape records, which
+rotate as the tape does rather than growing with a reading, so the scope limit
+is recorded without an observed churn.
 
 `wall_text.py` decides wall-note ownership for the wall guard. The restore
 document renders every peer wall undelimited into one text, so a mind's notes
