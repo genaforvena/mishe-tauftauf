@@ -449,11 +449,11 @@ at 2026-10-11T03:06Z, a verified sample took 23 seconds from phone collection
 to consumer receipt and 26 seconds to the read, against the 30-second cap, so
 the margin is seconds rather than minutes. A published sample without a lux
 value reads UNKNOWN as its own reason (`light-null-gap`), so a dropout stays
-distinguishable from ordinary aging and from a corrupt boundary. Two source-side gap widths are
-measured: short dropouts of a few seconds to tens of seconds, where the
-boundary's event cursor keeps advancing, and a sustained phone-silent freeze,
-where the cursor stops while the producer keeps writing and the transport stays
-reachable. One complete freeze instance is measured on this plant: the last
+distinguishable from ordinary aging and from a corrupt boundary. Two source-side
+gap widths are measured: short dropouts of a few seconds to tens of seconds,
+where the boundary's event cursor keeps advancing, and a sustained phone-silent
+freeze, where the cursor stops while the producer keeps writing and the transport
+stays reachable. One complete freeze instance is measured on this plant: the last
 phone sample before it stopped was 2026-10-11T00:47:31Z and the stream resumed
 with a sample at 02:19:41Z, a 1h32m10s stoppage with a live transport
 throughout. Which phone-side layer stops publishing, and why, is not measured; a
@@ -467,10 +467,17 @@ rechecks and, like the scan read, never renews the streak's origin, so the
 notification cadence cannot hold the measured interval under that minute. A
 stream that moves between the two names is reported as a gap duration class
 change, not as a light transition and not as an availability baseline.
-Which byte-set a pane loads is a loaded-bytes question, not a reading one.
-Measured 2026-10-11T02:33Z: this plant's resident panes run
+The class needs the reader's own retained null origin to survive between reads.
+Measured 2026-10-11T03:06Z: the committed source keeps the first null of a
+streak, so the interval grows at any cadence, while the pinned release
+`f733a4b` rewrites that record on every null read, which holds its five-second
+pane interval at zero and reports `light-null-gap` throughout a freeze; only
+its roughly ten-minute stored scan reaches the minute threshold. Which byte-set
+a pane loads is a loaded-bytes question, not a reading one.
+Measured 2026-10-11T03:06Z: this plant's resident panes run
 `pain watch <role>` under the pinned release `f733a4b`, which carries both
-class names; the earlier stage recorded at 01:59Z, where panes served a
+class names, and each pane's start command names the same release, so a
+respawn keeps it; the earlier stage recorded at 01:59Z, where panes served a
 2026-10-01 trial runtime and only the operator pane served the pinned
 release, was superseded when the pin advanced and the panes restarted
 (02:04:44Z). Check the pane process's own import root before claiming pane
