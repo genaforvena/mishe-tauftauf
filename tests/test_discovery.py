@@ -4075,6 +4075,80 @@ def test_ghost_site_homes_caps_the_enumeration_to_a_lower_bound(tmp_path, monkey
     assert "files>=2" in reading["sample"]
 
 
+def test_ghost_site_homes_caps_tree_count_and_marks_the_lower_bound(tmp_path, monkeypatch):
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir(parents=True)
+    monkeypatch.setattr(discovery, "GHOST_ROOT_LIMIT", 2)
+    for index in range(6):
+        _ghost_tree(tmp_path, f".mishe-ghost{index}", {"walls/a.md": "x\n"}, 1_000.0)
+    reading = discovery._ghost_site_homes(home)
+    assert reading["state"] == "drift"
+    assert len(reading["ghosts"]) == 2  # identity holds at most the examined trees
+    assert reading["total"] == 2  # no later tree was walked
+    assert reading["roots_at_least"] is True
+    assert reading["work_truncated"] is False
+    assert "ghost-homes=2+" in reading["sample"]
+    assert "files=2" in reading["sample"]
+
+
+def test_ghost_site_homes_bounds_work_on_a_directory_only_tree(tmp_path, monkeypatch):
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir(parents=True)
+    monkeypatch.setattr(discovery, "GHOST_WORK_LIMIT", 8)
+    tree = tmp_path / ".mishe-deep"
+    # A tree of directories and no files: unbounded names, zero counted files.
+    cursor = tree
+    for level in range(30):
+        cursor = cursor / f"level{level:02d}"
+        cursor.mkdir(parents=True)
+    reading = discovery._ghost_site_homes(home)
+    assert reading["state"] == "drift"
+    assert reading["work_truncated"] is True
+    assert reading["roots_at_least"] is True
+    assert reading["total"] == 0
+    assert "names-truncated" in reading["sample"]
+    assert "files>=0" in reading["sample"]  # a partial count still never reads clean
+    assert "empty=.mishe-deep" in reading["sample"]  # the walked tree stays listed
+
+
+def test_ghost_site_homes_caps_nested_identity_and_marks_the_lower_bound(tmp_path, monkeypatch):
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir(parents=True)
+    monkeypatch.setattr(discovery, "GHOST_IDENTITY_LIMIT", 2)
+    tree = tmp_path / ".mishe-tauftauft"
+    tree.mkdir(parents=True)
+    for index in range(5):
+        (tree / f".mishe-lane{index}").mkdir()
+    reading = discovery._ghost_site_homes(home)
+    assert reading["state"] == "drift"
+    assert len(reading["nested"]) == 2  # identity is capped, not full
+    assert reading["nested_truncated"] is True
+    assert "nested=2+" in reading["sample"]
+    assert reading["files_at_least"] is False
+    assert "files=0" in reading["sample"]
+
+
+def test_ghost_site_homes_stays_exact_under_every_cap(tmp_path):
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir(parents=True)
+    _ghost_tree(tmp_path, ".mishe-tauftauft", {
+        "walls/a.md": "1\n", ".mishe-other/b.md": "2\n"}, 4_000.0)
+    reading = discovery._ghost_site_homes(home, now=4_000.0 + 60)
+    assert reading["roots_at_least"] is False
+    assert reading["nested_truncated"] is False
+    assert reading["work_truncated"] is False
+    assert reading["sample"].endswith("newest=.mishe-tauftauft age=1m0s")
+    assert reading["nested"] == [".mishe-tauftauft/.mishe-other"]
+
+
 def test_ghost_site_homes_unknown_when_a_ghost_tree_cannot_be_walked(monkeypatch, tmp_path):
     from mishe_tauftauf import discovery
 
