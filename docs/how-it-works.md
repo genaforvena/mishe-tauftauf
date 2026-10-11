@@ -478,9 +478,12 @@ namings of the same streak only advance the last-read epoch; a new cursor or
 sequence re-arms the record. Measured 2026-10-11T04:12Z on the live boundary
 with a nulled lux: the first naming wrote the live identity's onset record and
 routed one event, the retained origin survived, and a reader whose onset-record
-write fails still names the freeze without routing. The code is on `main`;
-live delivery waits on promotion, and the pane acceptance of the wording waits
-on the next sustained null block.
+write fails still names the freeze without routing. The code is committed
+on `main` as `3c2f110` and unpushed, so live delivery waits on the push,
+exact-SHA CI and promotion rather than promotion alone, and the pane
+acceptance of the wording is half measured: a pane named `light-null-gap`
+at 03:43:04Z, while `light-stream-frozen` still waits on the next
+sustained null block.
 Measured 2026-10-11T03:06Z: the committed source keeps the first null of a
 streak, so the interval grows at any cadence, while release `f733a4b` rewrote
 that record on every null read, which held a five-second read interval at
@@ -524,7 +527,9 @@ drift, and a frame composed then names that release on its `DEPLOYED:`
 line. The panes can therefore name both gap classes, and a frame naming one was
 composed 79 seconds after the repoint (`light-null-gap`,
 2026-10-11T03:43:04Z, discover's and senses' panes, independently
-re-read that morning), while `light-stream-frozen` still waits on a null
+re-read that morning; the panes re-derive the light line from a direct
+boundary read each refresh, so a class appears at refresh cadence rather
+than scan cadence), while `light-stream-frozen` still waits on a null
 streak held past a minute under one identity, which has not occurred: each
 observed window closes when the sequence advances. Check a pane
 process's own import root, and the script it execs, before claiming pane
