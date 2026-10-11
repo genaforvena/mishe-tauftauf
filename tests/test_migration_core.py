@@ -45,6 +45,18 @@ class MigrationCoreTests(unittest.TestCase):
             self.assertEqual(populated_status, 0)
             self.assertIn("PASS executable top-pains", populated_output.getvalue())
 
+    def test_doctor_allows_data_files_in_minds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); initialize(home)
+            executable(home / "top-pains" / "sensor", "printf 'DESIRED STATE: healthy\\n'\n")
+            (home / "minds" / "engines.txt").write_text("opencode-go/longcat-2.5-preview-free\n", encoding="utf-8")
+            output = StringIO()
+            with redirect_stdout(output):
+                status = main(["--home", str(home), "doctor"])
+            self.assertEqual(status, 0)
+            self.assertIn("PASS executable minds", output.getvalue())
+            self.assertNotIn("HOLD non-executable minds", output.getvalue())
+
     def test_projected_observation_and_judgment_never_persist_raw_pane(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory); initialize(home)

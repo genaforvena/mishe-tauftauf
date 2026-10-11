@@ -579,7 +579,7 @@ def cmd_doctor(args) -> int:
             print(f"HOLD missing-directory: {directory}")
             failures += 1
             continue
-        bad = [path.name for path in directory.iterdir() if path.is_file() and not executable(path) and not path.name.startswith(".")]
+        bad = [path.name for path in directory.iterdir() if path.is_file() and not executable(path) and not path.name.startswith(".") and path.suffix not in (".txt", ".json", ".yaml", ".yml", ".cfg", ".conf")]
         if bad:
             print(f"HOLD non-executable {kind}: {', '.join(sorted(bad))}")
             failures += 1
