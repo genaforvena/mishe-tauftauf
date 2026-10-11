@@ -63,7 +63,10 @@ it whole and rejects a notes file over the hard limit (default 16384 bytes / 200
 lines) with an error naming the actual size and the limit. The bound keeps a wall
 readable and current — it must not accumulate stale detail, and superseded claims
 or past mistakes must not be carried forward to mislead the next reader. Rewrite
-the wall down instead of appending. A replacement also closes the plate the old
+the wall down instead of appending. Over-growth is normally a stale-data signal:
+read it as a prompt to cut superseded claims, not as a reason to raise the bound
+or open a second window — either requires naming what is new and current, not
+what is old. A replacement also closes the plate the old
 wall named: carry any unfinished obligation or unconfirmed-effect marker into the
 new text or dispose of it explicitly, since only the current wall carries work to
 a successor — [Where work survives](how-it-works.md#where-work-survives) states

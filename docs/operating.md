@@ -40,6 +40,15 @@ cat "$SITE/health/services.json"
 
 `.seed-raised` records the session name and tmux session identity. A receipt lost, mismatched or unreadable while the owned session lives is re-derived from that session on the next `seed run` pass, so the readers that fall back to it — senses, the CLI's default session, headless renderer probes and `seed stop`'s ownership guard — recover instead of reading `UNKNOWN` indefinitely. If the session is absent, use the known site's marker and launch output; a missing session is a fault to diagnose, not permission to adopt another one. The runtime refuses a session whose `@mishe-tauftauf-home` ownership marker does not match the resolved site path. A session that exists without a marker yet is not foreign: a concurrent raise creates the session before recording its owner, so the runtime waits up to 15 seconds for the owner to appear and refuses at once only when a different home is recorded or the wait expires.
 `health/windows.json` is reconciled during planting: required role windows are always expected, previously recorded extra windows remain expected only while live, and retired names are dropped. Replant after renaming or closing an extra window so the health check no longer treats it as required.
+Over-growth in a presentation lane is normally a stale-data signal: the owning
+mind prunes superseded lines first and records the prune on its own wall. Wall
+over-growth is the wall author's own prune, bounded by `wall write` (16384 bytes /
+200 lines) with every accepted write audited to `logs/wall-write-audit.jsonl`;
+top-pane over-growth belongs to the renderer's role (health for the health
+dashboard, the operator-view supervisor for the operator dashboard). A new window
+requires a `health/windows.json` manifest entry — WINDOWS audits
+missing/extra/dead — and the entry plus a wall note record the decision.
+Delivered context is bounded at 1 MiB per wake prompt, enforced at read time.
 
 The launcher automatically searches for resident markers in `.mishe-seed` and `.mishe-tauftauf`, reuses a sole resident site, and reads its recorded session. Multiple candidates require explicit `--home` and `--session`. A custom-named site should always be addressed explicitly when replanting; it is not part of that automatic search.
 
