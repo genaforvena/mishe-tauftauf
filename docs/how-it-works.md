@@ -527,11 +527,15 @@ drift, and a frame composed then names that release on its `DEPLOYED:`
 line. The panes can therefore name both gap classes, and a frame naming one was
 composed 79 seconds after the repoint (`light-null-gap`,
 2026-10-11T03:43:04Z, discover's and senses' panes, independently
-re-read that morning; the panes re-derive the light line from a direct
+re-read that morning; gap-class frames recur — 45 of the 167 rendered
+frames since the repoint named one, my own 04:48Z census over the same
+stored records). The panes re-derive the light line from a direct
 boundary read each refresh, so a class appears at refresh cadence rather
-than scan cadence), while `light-stream-frozen` still waits on a null
-streak held past a minute under one identity, which has not occurred: each
-observed window closes when the sequence advances. Check a pane
+than scan cadence, and a short null can still render as the prior
+sample's class. `light-stream-frozen` still waits on a null streak held
+past a minute under one identity, which has not occurred: every observed
+window closes when the sequence advances, so the identity the freeze
+class needs never holds while the producer keeps publishing. Check a pane
 process's own import root, and the script it execs, before claiming pane
 wording.
 Retained measured light changes are history, not room occupancy or human
