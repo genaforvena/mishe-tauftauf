@@ -309,10 +309,11 @@ def test_sync_verifies_advancing_leases_and_allows_unrelated_window(tmp_path: Pa
 
 
 def test_sync_allows_one_refresh_cycle_after_a_pane_respawn(tmp_path: Path, monkeypatch) -> None:
-    # A promotion or replant respawns every watcher pane, and the pane it
-    # recreates can still carry the footer of the process it replaced. The first
-    # lease read therefore fails while the new renderer is starting, and the
-    # site must not be recorded as frozen on that evidence.
+    # A promotion or replant respawns every watcher pane; the pane it recreates
+    # keeps the replaced process's footer until its own first frame lands. The
+    # first lease read therefore fails while the new renderer is starting, and
+    # the site must not be recorded as frozen on that evidence. The stamps below
+    # model a first frame that lands 12s after the respawn: one renderer frame.
     _core_home, target = setup_sites(tmp_path, monkeypatch)
     (target / "health").mkdir()
     (target / "health" / "windows.json").write_text(
@@ -320,7 +321,6 @@ def test_sync_allows_one_refresh_cycle_after_a_pane_respawn(tmp_path: Path, monk
         encoding="utf-8")
     (target / "health" / "services.json").write_text("[]", encoding="utf-8")
     (target / "chat.log").write_text("", encoding="utf-8")
-    names = set(site_sync.ROLES) & {"genome", "witness", "discover", "senses", "health", "permissions"}
     rows = [f"{name} 0 0" for name in site_sync.ROLES]
     rows += [f"{name} 1 0" for name in site_sync.ROLES]
     monkeypatch.setattr(site_sync, "_tmux",
@@ -346,8 +346,10 @@ def test_sync_allows_one_refresh_cycle_after_a_pane_respawn(tmp_path: Path, monk
 
 
 def test_sync_still_fails_a_frozen_renderer_after_one_refresh_cycle(tmp_path: Path, monkeypatch) -> None:
-    # The tolerance is bounded: a renderer that never publishes a fresh footer
-    # still ends the refresh as a hold, so the repair hides no failure.
+    # The tolerance is bounded: a renderer whose footer never becomes fresh fails
+    # the re-raised read on the second attempt, so the repair hides no failure.
+    # The stub has to raise, because the real reader refuses any age outside
+    # [0, 20] and a frozen renderer never produces a stamp it would return.
     _core_home, target = setup_sites(tmp_path, monkeypatch)
     (target / "health").mkdir()
     (target / "health" / "windows.json").write_text(
@@ -355,19 +357,53 @@ def test_sync_still_fails_a_frozen_renderer_after_one_refresh_cycle(tmp_path: Pa
         encoding="utf-8")
     (target / "health" / "services.json").write_text("[]", encoding="utf-8")
     (target / "chat.log").write_text("", encoding="utf-8")
-    names = set(site_sync.ROLES) & {"genome", "witness", "discover", "senses", "health", "permissions"}
     rows = [f"{name} 0 0" for name in site_sync.ROLES]
     rows += [f"{name} 1 0" for name in site_sync.ROLES]
     monkeypatch.setattr(site_sync, "_tmux",
                         lambda *_args: subprocess.CompletedProcess([], 0, "\n".join(rows).encode(), b""))
     monkeypatch.setattr(site_sync.time, "sleep", lambda _seconds: None)
-    frozen = datetime.now(timezone.utc) - timedelta(seconds=90)
-    monkeypatch.setattr(site_sync, "_leases",
-                        lambda _session, leased: {name: frozen for name in leased})
-    # The frozen renderer now fails in the advancing check, one cycle later than
-    # the first stale read: the hold is still produced inside one refresh window.
-    with pytest.raises(RuntimeError, match="top-pane lease did not advance"):
+    reads = 0
+
+    def leases(_session, leased):
+        nonlocal reads
+        reads += 1
+        raise RuntimeError("linked site top-pane lease is stale: example:genome age=41.0s")
+
+    monkeypatch.setattr(site_sync, "_leases", leases)
+    with pytest.raises(RuntimeError, match="top-pane lease is stale"):
         site_sync._verify(target, "example")
+    assert reads == 2, "a frozen renderer must be re-read once before the hold"
+
+
+def test_sync_respawn_tolerance_waits_a_full_renderer_frame(tmp_path: Path, monkeypatch) -> None:
+    # One frame is the bounded probe (10s, 20s for the witness role) plus its
+    # retry backoff and 5s sleep, so a short grace is not enough: the recreated
+    # pane can still show the replaced footer and the site would be held.
+    _core_home, target = setup_sites(tmp_path, monkeypatch)
+    (target / "health").mkdir()
+    (target / "health" / "windows.json").write_text(
+        '["genome", "witness", "discover", "senses", "health", "permissions"]',
+        encoding="utf-8")
+    (target / "health" / "services.json").write_text("[]", encoding="utf-8")
+    (target / "chat.log").write_text("", encoding="utf-8")
+    rows = [f"{name} 0 0" for name in site_sync.ROLES]
+    rows += [f"{name} 1 0" for name in site_sync.ROLES]
+    monkeypatch.setattr(site_sync, "_tmux",
+                        lambda *_args: subprocess.CompletedProcess([], 0, "\n".join(rows).encode(), b""))
+    waited: list[float] = []
+    monkeypatch.setattr(site_sync.time, "sleep", lambda seconds: waited.append(seconds))
+    calls = 0
+
+    def leases(_session, leased):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("linked site top-pane lease is stale: example:genome age=41.0s")
+        return {name: datetime.now(timezone.utc) + timedelta(seconds=calls) for name in leased}
+
+    monkeypatch.setattr(site_sync, "_leases", leases)
+    site_sync._verify(target, "example")
+    assert waited[0] == site_sync.RENDERER_FRAME >= 27.0, waited
 
 
 def test_follower_ignores_stale_or_malformed_ci_readings(tmp_path: Path, monkeypatch) -> None:
