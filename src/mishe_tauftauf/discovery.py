@@ -1710,33 +1710,61 @@ PANE_ROLE = re.compile(r"\bpain watch ([A-Za-z0-9_-]+)")
 """The role name a pane watcher runs, extracted from its start command."""
 
 
-def _pane_info() -> dict[str, tuple[str, str, str]]:
+def _pane_info(home: Path) -> dict[str, tuple[str, str, str]]:
     """Map each pane's role name to its (start_command, current_path, pid).
 
     Reads ``tmux list-panes -a`` once; returns empty when tmux is unavailable
     or no session is running. The role name is the token after ``pain watch``
     in the pane's start command, matching the Top Pain script name. The pid is
     the pane's watcher process, whose environment the renderer inherits.
+
+    Two sites can share a host, and then one role name owns two panes, one per
+    session. Taking whichever pane tmux lists last resolves the role from the
+    other site's watcher, so the reading would name bytes this site never ran.
+    A session the reading home owns decides the role; a role whose panes all
+    live in sessions another home owns stays unresolved, so the caller reports
+    that renderer's root unread rather than guessing it. A lone pane in a
+    session no home has claimed has no competing candidate, so it stays this
+    site's only watcher for the role.
     """
     try:
         result = subprocess.run(
             ["tmux", "list-panes", "-a", "-F",
-             "#{pane_id}|#{pane_pid}|#{pane_start_command}|#{pane_current_path}"],
+             "#{session_name}|#{pane_pid}|#{pane_start_command}|#{pane_current_path}"],
             capture_output=True, text=True, timeout=5
         )
     except (OSError, subprocess.TimeoutExpired):
         return {}
     if result.returncode != 0:
         return {}
-    info: dict[str, tuple[str, str, str]] = {}
-    for line in result.stdout.splitlines():
-        parts = line.split("|", 3)
-        if len(parts) != 4:
-            continue
-        _, pid, start_command, current_path = parts
+    from .tmux import session_owner
+    candidates: dict[str, list[tuple[str, tuple[str, str, str]]]] = {}
+    for session, pid, start_command, current_path in proc_table.pane_commands(
+            result.stdout):
         match = PANE_ROLE.search(start_command)
         if match:
-            info[match.group(1)] = (start_command, current_path, pid)
+            candidates.setdefault(match.group(1), []).append(
+                (session, (start_command, current_path, pid)))
+    wanted = str(Path(home).resolve())
+    owners: dict[str, str | None] = {}
+
+    def owner(session: str) -> str | None:
+        """The home a session's owner option names, read once per session."""
+        if session not in owners:
+            owners[session] = session_owner(session)
+        return owners[session]
+
+    info: dict[str, tuple[str, str, str]] = {}
+    for role, panes in candidates.items():
+        owned = [pane for session, pane in panes if owner(session) == wanted]
+        if owned:
+            # Several panes of this home may watch one role, as a respawn does;
+            # the last one listed is the live pane, as it was before the filter.
+            info[role] = owned[-1]
+        elif len(panes) == 1 and owner(panes[0][0]) is None:
+            info[role] = panes[0][1]
+        # Several sites watch this role, or a recorded owner names another
+        # home: no reading here can say which pane renders this site.
     return info
 
 
@@ -1966,7 +1994,10 @@ def _renderer_coverage(home: Path) -> dict[str, object]:
     comparison never sees, so a stale snapshot there shows old logic in a pane
     while the dashboard still read verified. A renderer that inherits its root
     from the pane watcher's environment is resolved from the watcher process's
-    live environment, falling back to the pane's start command. Each renderer's
+    live environment, falling back to the pane's start command, and only from a
+    pane in a session the reading home owns: two sites can share a host, and a
+    watcher belonging to the other one would otherwise supply this site's root.
+    Each renderer's
     package closure is hashed in its effective root and in the pin; a module
     that differs, is missing from the renderer root, or is missing from the pin
     is drift. A conditional export or an unresolvable inherited root is unknown
@@ -2013,7 +2044,7 @@ def _renderer_coverage(home: Path) -> dict[str, object]:
     inherited_unknown: list[str] = []
     conditional_unknown: list[str] = []
     export_unknown: list[str] = []
-    pane_info = _pane_info()
+    pane_info = _pane_info(home)
     identity_renderers: list[str] = []
     for root, entry, source, role in pairs:
         effective_root = root
