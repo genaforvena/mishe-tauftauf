@@ -983,6 +983,8 @@ def _pinned_pane_site(tmp_path: Path, monkeypatch, panes: dict[str, str | None])
     monkeypatch.setattr("mishe_tauftauf.runtime_source.source_for", lambda h, default: pinned)
     monkeypatch.setattr("mishe_tauftauf.proc_table.read_pane_pythonpath",
                         lambda pid: [readings[pid]] if readings.get(pid) else [])
+    monkeypatch.setattr("mishe_tauftauf.proc_table.read_pane_cmdline",
+                        lambda pid: f"/venv/bin/python -m mishe_tauftauf pain watch {pid}")
 
     def run(argv, **_kwargs):
         if argv[0] == "tmux":
@@ -1037,6 +1039,25 @@ def test_health_reports_an_unreadable_pane_environment_as_unknown(tmp_path: Path
     assert "STATE: UNKNOWN — pane root data unavailable" in rendered
     assert (home / "observations" / "health").read_text(encoding="utf-8").startswith(
         "UNKNOWN health pane root data unavailable at ")
+
+def test_health_excludes_a_plain_shell_that_carries_a_pythonpath(tmp_path: Path, monkeypatch) -> None:
+    """A shell pane with a stale PYTHONPATH is no mind: no root to compare.
+
+    The permissions window's bottom pane is an interactive bash whose environ
+    still names a superseded release; counting it keeps PANE ROOTS STALE
+    forever. The pane's process, not its environment, decides.
+    """
+    home = _pinned_pane_site(
+        tmp_path, monkeypatch,
+        {"9004": str(tmp_path / "site" / "releases"
+                     / "94092ecd9b6a83c72d09b851f7cce3b4a53bf0a0" / "src")})
+    monkeypatch.setattr(
+        "mishe_tauftauf.proc_table.read_pane_cmdline",
+        lambda pid: ("bash --noprofile --norc -i" if pid == "9004"
+                      else "/venv/bin/python -m mishe_tauftauf pain watch peer"))
+    rendered = health(home)
+    assert "PANE ROOTS: PASS pin=pinned on-pin=2" in rendered
+    assert "STATE: GREEN" in rendered
 
 
 def _camera_site(tmp_path: Path, monkeypatch, *, state, artifact_age_s, events, journal=(), journal_rc=0):
