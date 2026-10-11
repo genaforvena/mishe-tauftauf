@@ -14,7 +14,8 @@ from pathlib import Path
 
 from .access import list_requests, recoveries, retired_requests
 from .ci_watch import line as ci_line
-from .discovery import latest, producer_label, scan_attempt, _space_light, _space_light_read
+from .discovery import (latest, producer_label, scan_attempt, _space_light,
+                        _space_light_name_freeze, _space_light_read)
 from . import scan_freshness
 from .seed import recorded_session
 
@@ -32,10 +33,22 @@ def _scan_reading(snapshot: dict[str, object]) -> tuple[str, str]:
             scan_freshness.utc_consistency(snapshot))
 
 
-def _attempt_reading(home: Path, snapshot: dict[str, object] | None) -> tuple[str, bool]:
+def _attempt_reading(home: Path, snapshot: dict[str, object] | None) -> tuple[str, str | None]:
+    """Classify the durable attempt record against the sample on the pane.
+
+    Only a recorded failure is a scan failure, so it is the only reading that
+    flips the STATE line. A ``running`` record is an in-flight scan whose
+    sample is not published yet: the pane's sample is the last published
+    snapshot, which stays valid, so the STATE line holds and the ATTEMPT line
+    names the live stage outside the change digest. A ``succeeded`` record
+    with a different ``scan_id`` means the pane read the snapshot before that
+    scan published, which scan freshness already covers. An unreadable or
+    absent record cannot be checked at all, so it is its own UNKNOWN class
+    rather than a silent success.
+    """
     attempt = scan_attempt(home)
     if attempt is None:
-        return "ATTEMPT: UNKNOWN — no durable scan attempt", False
+        return "ATTEMPT: UNKNOWN — no durable scan attempt", "unavailable"
     status = str(attempt.get("status", "unknown"))
     stage = str(attempt.get("stage", "unknown"))
     identity = attempt.get("scan_id")
@@ -48,7 +61,11 @@ def _attempt_reading(home: Path, snapshot: dict[str, object] | None) -> tuple[st
         line += f" error={attempt['error']}"
     if status == "succeeded" and not matches:
         line += " sample_match=unknown"
-    return line, status == "succeeded" and matches
+    if status == "failed":
+        return line, "failed"
+    if status not in {"running", "succeeded"}:
+        return line, "unavailable"
+    return line, None
 
 
 def _journal_bounds_valid(item: dict[str, object]) -> bool:
@@ -67,14 +84,22 @@ def _journal_bounds_valid(item: dict[str, object]) -> bool:
         return False
 
 
-def _observation_reading(item: dict[str, object], freshness: str) -> tuple[str, str]:
+def _observation_reading(item: dict[str, object], freshness: str,
+                         home: Path | None = None) -> tuple[str, str]:
     source_state = str(item.get("state", "unknown"))
     state = source_state if freshness == "recent" or source_state == "unavailable" else "unknown"
     identity = str(item.get("id", "unknown"))
     sample = str(item.get("sample", "unknown"))
     if identity == "sense.space.light":
-        current = (_space_light(item["boundary"], datetime.now(timezone.utc).timestamp())
+        now = datetime.now(timezone.utc).timestamp()
+        current = (_space_light(item["boundary"], now)
                    if "boundary" in item else item)
+        if home is not None and current.get("reason") == "light-null-gap":
+            # The render-time re-derivation restates the single read from the
+            # boundary frame; the duration class is a reader-side fact carried
+            # in the retention record, so it is applied again here rather than
+            # re-derived and lost.
+            current = _space_light_name_freeze(home, current, now)
         state = current["state"]
         detail = (f"{current['sample']} source_state={source_state}; "
                   f"display_state={current['state']}; clock=unverified")
@@ -108,7 +133,7 @@ def _observation_reading(item: dict[str, object], freshness: str) -> tuple[str, 
 def discover(home: Path) -> str:
     lines = ["DESIRED STATE: useful reads have a real sample, honest status, and an owned next step"]
     snapshot = latest(home)
-    attempt_line, attempt_succeeded = _attempt_reading(home, snapshot)
+    attempt_line, attempt_failure = _attempt_reading(home, snapshot)
     lines.append(attempt_line)
     if snapshot is None:
         lines.append("STATE: UNKNOWN — no discovery scan yet")
@@ -122,15 +147,18 @@ def discover(home: Path) -> str:
         observations.append(_space_light_read(home))
         unknown = 0
         for item in observations:
-            state, line = _observation_reading(item, freshness)
+            state, line = _observation_reading(item, freshness, home)
             unknown += state not in {"verified", "unavailable", "available"}
             lines.append(line)
         if freshness != "recent":
             lines.append(f"STATE: UNKNOWN — scan freshness {freshness}; renew the read")
             verdict = f"UNKNOWN discover scan freshness {freshness}"
-        elif not attempt_succeeded:
-            lines.append("STATE: UNKNOWN — latest scan attempt not succeeded for this sample")
-            verdict = "UNKNOWN discover latest attempt not succeeded"
+        elif attempt_failure == "failed":
+            lines.append("STATE: UNKNOWN — latest scan attempt failed for this sample")
+            verdict = "UNKNOWN discover latest attempt failed"
+        elif attempt_failure is not None:
+            lines.append("STATE: UNKNOWN — scan attempt record unavailable")
+            verdict = "UNKNOWN discover scan attempt record unavailable"
         elif unknown:
             lines.append(f"STATE: UNKNOWN — {unknown} source reads unverified")
             verdict = f"UNKNOWN discover {unknown} source reads unverified"
@@ -155,7 +183,7 @@ def senses(home: Path) -> str:
              "PURSUIT: wire useful reads, reproduce hollow or failed checks, and own reusable fixes through review, branch CI and ready integration",
              "NEXT: pursue a new useful read when an UNKNOWN has a documented retry condition; verify its live sample"]
     snapshot = latest(home)
-    attempt_line, attempt_succeeded = _attempt_reading(home, snapshot)
+    attempt_line, attempt_failure = _attempt_reading(home, snapshot)
     lines.append(attempt_line)
     if snapshot is None:
         verdict = "UNKNOWN senses no discovery sample"
@@ -170,7 +198,7 @@ def senses(home: Path) -> str:
         unknown = 0
         unavailable = 0
         for item in senses_rows:
-            state, line = _observation_reading(item, freshness)
+            state, line = _observation_reading(item, freshness, home)
             unknown += state not in {"verified", "unavailable"}
             unavailable += state == "unavailable"
             lines.append(line)
@@ -186,9 +214,12 @@ def senses(home: Path) -> str:
         if freshness != "recent":
             verdict = f"UNKNOWN senses scan freshness {freshness}"
             lines.append(f"STATE: UNKNOWN — scan freshness {freshness}; renew the read")
-        elif not attempt_succeeded:
-            verdict = "UNKNOWN senses latest attempt not succeeded"
-            lines.append("STATE: UNKNOWN — latest scan attempt not succeeded for this sample")
+        elif attempt_failure == "failed":
+            verdict = "UNKNOWN senses latest attempt failed"
+            lines.append("STATE: UNKNOWN — latest scan attempt failed for this sample")
+        elif attempt_failure is not None:
+            verdict = "UNKNOWN senses scan attempt record unavailable"
+            lines.append("STATE: UNKNOWN — scan attempt record unavailable")
         elif unknown:
             verdict = f"UNKNOWN senses {unknown} unverified"
             lines.append(f"STATE: UNKNOWN — {unknown} senses need a checked read or honest unavailable claim")

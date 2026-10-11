@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
 
+from mishe_tauftauf import discovery
 from mishe_tauftauf.access import decide, recover, request, resolve_recovery
 from mishe_tauftauf.discovery import scan
+from mishe_tauftauf.seed import _observation_text
 from mishe_tauftauf.seed_culture_views import discover, health, permissions, senses
 
 
@@ -513,48 +516,148 @@ def test_recent_acquisition_does_not_verify_unknown_journal_source(
 
 @pytest.mark.parametrize("pane", [discover, senses])
 @pytest.mark.parametrize("status,stage,error", [
-    ("running", "acquisition", None), ("failed", "acquisition", "probe failed"),
-    ("failed", "publication", "write failed"), ("failed", "notification", "feed append failed"),
-    (None, "acquisition", None),
+    ("failed", "acquisition", "probe failed"),
+    ("failed", "publication", "write failed"),
+    ("failed", "notification", "feed append failed"),
 ])
-def test_incomplete_attempt_remains_visible_without_downgrading_acquired_source(
+def test_recorded_attempt_failure_remains_visible_without_downgrading_acquired_source(
         tmp_path: Path, current_endpoint, pane, status, stage, error) -> None:
     home = tmp_path / "site"
     _write_scan(home, [
         {"id": "sense.proc.loadavg", "state": "verified", "sample": "1.23", "kind": "read"},
     ], status=status, stage=stage, error=error)
     rendered = pane(home)
-    assert f"ATTEMPT: {(status or 'unknown').upper()}" in rendered
-    if status is not None:
-        assert f"stage={stage}" in rendered
-    if error is not None:
-        assert error in rendered
+    assert f"ATTEMPT: {status.upper()}" in rendered
+    assert f"stage={stage}" in rendered
+    assert error in rendered
     assert "VERIFIED sense.proc.loadavg" in rendered
     assert "freshness=recent" in rendered
-    assert "STATE: UNKNOWN" in rendered
+    assert "STATE: UNKNOWN — latest scan attempt failed for this sample" in rendered
     assert (home / "observations" / pane.__name__).read_text(encoding="utf-8").startswith("UNKNOWN ")
 
 
 @pytest.mark.parametrize("pane", [discover, senses])
-@pytest.mark.parametrize("marker", ["unreadable", "different-scan"])
-def test_attempt_unknown_or_for_another_sample_cannot_claim_success(
+def test_running_attempt_is_in_flight_not_a_failed_read(
+        tmp_path: Path, current_endpoint, pane) -> None:
+    home = tmp_path / "site"
+    _write_scan(home, [
+        {"id": "sense.proc.loadavg", "state": "verified", "sample": "1.23", "kind": "read"},
+    ], status="running", stage="acquisition")
+    rendered = pane(home)
+    assert "ATTEMPT: RUNNING stage=acquisition" in rendered
+    assert "VERIFIED sense.proc.loadavg" in rendered
+    assert "freshness=recent" in rendered
+    assert "latest scan attempt failed" not in rendered
+    assert "scan attempt record unavailable" not in rendered
+    report = (home / "observations" / pane.__name__).read_text(encoding="utf-8")
+    assert "latest attempt failed" not in report
+    assert "scan attempt record unavailable" not in report
+
+
+@pytest.mark.parametrize("pane", [discover, senses])
+@pytest.mark.parametrize("marker", ["absent", "unreadable"])
+def test_unreadable_or_absent_attempt_record_is_its_own_unknown(
         tmp_path: Path, current_endpoint, pane, marker) -> None:
+    home = tmp_path / "site"
+    _write_scan(home, [
+        {"id": "sense.proc.loadavg", "state": "verified", "sample": "1.23", "kind": "read"},
+    ], status=None if marker == "absent" else "succeeded")
+    if marker == "unreadable":
+        (home / "discovery" / "attempt.json").write_text("{", encoding="utf-8")
+    rendered = pane(home)
+    assert "VERIFIED sense.proc.loadavg" in rendered
+    assert "freshness=recent" in rendered
+    assert "STATE: UNKNOWN — scan attempt record unavailable" in rendered
+    assert (home / "observations" / pane.__name__).read_text(encoding="utf-8").startswith("UNKNOWN ")
+
+
+@pytest.mark.parametrize("pane", [discover, senses])
+def test_succeeded_attempt_for_a_newer_scan_keeps_the_sample_state(
+        tmp_path: Path, current_endpoint, pane) -> None:
+    """The pane read the snapshot before that scan published; freshness covers the age."""
     home = tmp_path / "site"
     _write_scan(home, [
         {"id": "sense.proc.loadavg", "state": "verified", "sample": "1.23", "kind": "read"},
     ])
     path = home / "discovery" / "attempt.json"
-    if marker == "unreadable":
-        path.write_text("{", encoding="utf-8")
-    else:
-        attempt = json.loads(path.read_text(encoding="utf-8"))
-        attempt["scan_id"] = "another-scan"
-        path.write_text(json.dumps(attempt), encoding="utf-8")
+    attempt = json.loads(path.read_text(encoding="utf-8"))
+    attempt["scan_id"] = "another-scan"
+    path.write_text(json.dumps(attempt), encoding="utf-8")
     rendered = pane(home)
-    assert "ATTEMPT: UNKNOWN" in rendered if marker == "unreadable" else "sample_match=unknown" in rendered
+    assert "sample_match=unknown" in rendered
     assert "VERIFIED sense.proc.loadavg" in rendered
-    assert "STATE: UNKNOWN" in rendered
+    assert "latest scan attempt failed" not in rendered
+    assert "scan attempt record unavailable" not in rendered
+
+
+def test_scan_in_flight_never_renders_a_failed_attempt(tmp_path: Path, current_endpoint) -> None:
+    """Frames rendered while a scan runs must not read as a failed read.
+
+    The pane reads ``latest.json`` and ``attempt.json`` separately, so a scan
+    that starts or commits between the two reads used to flip the STATE line
+    to "not succeeded" while the published sample was unchanged. A recorded
+    failure still flips it, which the next test keeps checking.
+    """
+    home = tmp_path / "site"
+    scan(home)
+    stop = threading.Event()
+
+    def scanner() -> None:
+        while not stop.is_set():
+            scan(home)
+
+    thread = threading.Thread(target=scanner, daemon=True)
+    thread.start()
+    try:
+        frames = [senses(home) for _ in range(15)]
+    finally:
+        stop.set()
+        thread.join(timeout=60)
+    assert frames
+    for frame in frames:
+        assert "not succeeded" not in frame
+        assert "latest scan attempt failed" not in frame
+        assert "scan attempt record unavailable" not in frame
+
+
+@pytest.mark.parametrize("pane", [discover, senses])
+def test_controlled_scan_failure_still_flips_the_state(tmp_path: Path, pane, monkeypatch) -> None:
+    """A scan that raises keeps its failure visible on the pane.
+
+    The pane's freshness gate follows the live endpoint here, so the sample
+    from the first scan is recent and the STATE line names the recorded
+    failure rather than staleness.
+    """
+    home = tmp_path / "site"
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.scan_freshness.endpoint",
+                        discovery.endpoint)
+    scan(home)
+    def raise_probe(failed_home: Path):
+        raise RuntimeError("probe failed")
+    monkeypatch.setattr("mishe_tauftauf.discovery.sample", raise_probe)
+    with pytest.raises(RuntimeError):
+        scan(home)
+    rendered = pane(home)
+    assert "freshness=recent" in rendered
+    assert "ATTEMPT: FAILED stage=acquisition " in rendered
+    assert "error=RuntimeError: probe failed" in rendered
+    assert "STATE: UNKNOWN — latest scan attempt failed for this sample" in rendered
     assert (home / "observations" / pane.__name__).read_text(encoding="utf-8").startswith("UNKNOWN ")
+
+
+def test_in_flight_attempt_does_not_change_the_observation_digest(
+        tmp_path: Path, current_endpoint) -> None:
+    """The digest tracks meaning: a scan starting must not flip it."""
+    home = tmp_path / "site"
+    _write_scan(home, [
+        {"id": "sense.proc.loadavg", "state": "verified", "sample": "1.23", "kind": "read"},
+    ])
+    settled = _observation_text("senses", senses(home))
+    path = home / "discovery" / "attempt.json"
+    attempt = json.loads(path.read_text(encoding="utf-8"))
+    attempt.update(status="running", stage="acquisition")
+    path.write_text(json.dumps(attempt), encoding="utf-8")
+    assert _observation_text("senses", senses(home)) == settled
 
 
 @pytest.mark.parametrize("pane", [discover, senses])
