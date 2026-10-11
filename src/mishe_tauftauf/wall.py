@@ -183,26 +183,28 @@ def write(home: Path, role: str, text: str, source_path: str | None = None) -> N
 
 
 def _reject_peer_wall_copy(home: Path, role: str, text: str) -> None:
-    """Reject notes byte-identical to another role's wall.
+    """Reject notes identical to another role's wall.
 
     A restore/context document renders every peer wall undelimited into one
     text. A mind that pastes a peer section into its own notes produces a
-    byte-identical cross-role wall, which ``wall write``/``seed yield`` then
-    accept with no ownership cross-check — the class that clobbered three
-    walls with research-methods' content on 2026-10-10 22:01-22:23Z. Exact
-    cross-role duplication has no legitimate use under per-role wall
-    ownership; rewriting a wall with unchanged own content is unaffected.
+    cross-role wall, which ``wall write``/``seed yield`` then accept with no
+    ownership cross-check — the class that clobbered three walls with
+    research-methods' content on 2026-10-10 22:01-22:23Z. Cross-role duplication
+    has no legitimate use under per-role wall ownership; rewriting a wall with
+    unchanged own content is unaffected. Comparison ignores trailing newlines,
+    so the paste class cannot slip through by ending on a different blank-line
+    count; any other difference still reads as the writer's own.
     """
     from .activity import roles
-    data = text.encode("utf-8")
+    from .wall_text import is_peer_copy
     peers = set(roles(home)) - {role}
     if role != "operator" and (home / "walls" / "operator.md").is_file():
         peers.add("operator")
     for name in sorted(peers):
         path = home / "walls" / f"{name}.md"
-        if path.is_file() and path.read_bytes() == data:
+        if path.is_file() and is_peer_copy(text, path.read_bytes()):
             raise ValueError(
-                f"refusing to write wall {role}: notes are byte-identical to peer wall {name}. "
+                f"refusing to write wall {role}: notes are identical to peer wall {name}. "
                 "The restore document renders every role's wall in one text — copy from your "
                 "own wall section only, or rewrite your current plan from your own evidence. "
                 f"If {name} needs this content, {name} writes it."
