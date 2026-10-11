@@ -427,7 +427,17 @@ A unit no session names that imports this plant's checkout — observed in its
 environment or declared in the script its `ExecStart` runs — is named
 `foreign=<unit>@<checkout>` instead of left anonymous, and stays `unknown`,
 never `verified`, because a foreign consumer of the moving source is a live
-coupling rather than a coverage gap.
+coupling rather than a coverage gap. Systemd's own `Description` of the unit
+outranks the script rule: a unit whose description names this checkout belongs
+to this plant, so the class rests on one `systemctl` read succeeding. Measured
+here, the cleaner coordinator read
+`foreign=mishe-cleaner-recovered.service@mishe-tauftauf` at 09:17:20Z and
+`unattributed=` at 09:16:46Z and again at 09:27:28Z — its `ExecStart` script
+names the checkout while its description (`mishe-tauftauf report-only cleaner
+coordinator`) attributes it to the plant, and those two answers are that one
+guard apart. Reproducible by reading the unit's declaration: with the
+description readable the unit is not a consumer, and with the description
+unreadable it is named one.
 
 An unattributed unit whose imports and whose own declaration — `ExecStart`,
 `WorkingDirectory` and `Environment` paths — name no site's checkout or home is
@@ -610,13 +620,14 @@ lagging pane process a non-mind `bash`.
 The panes can therefore name both gap classes, and a frame naming one was
 composed 79 seconds after the repoint (`light-null-gap`,
 2026-10-11T03:43:04Z, discover's and senses' panes, independently
-re-read that morning; gap-class frames recur — 196 of the 592 rendered
-frames since the repoint named one, my own 09:02Z census over the same
-stored records, alongside 394 `stale-original-evidence` and two
-`transport-not-current` frames), of which seven frames — the
+re-read that morning; gap-class frames recur — 208 of the 620 rendered
+frames since the repoint named one, my own 09:27Z census over the same
+stored records, alongside 410 `stale-original-evidence` and two
+`transport-not-current` frames), of which fifteen frames — the
 08:11:53.573Z onset captured at 08:12:59Z (`senses`) and 08:13:00Z
-(`discover`), at 08:22:45Z in both panes and at 08:32:48Z, 08:43:12Z
-and 08:52:53Z (`senses`) —
+(`discover`), at 08:22:45Z in both panes and at 08:32:48Z, 08:43:12Z,
+08:52:53Z, 09:02:59Z and 09:13:10Z (`senses`) and at 09:15:59Z and 09:16:01Z
+in both panes —
 name `light-stream-frozen`). The panes re-derive the light
 line from a direct
 boundary read each refresh, so a class appears at refresh cadence rather
@@ -633,18 +644,28 @@ exception, and no pane frame rendered it while it lived: a frame is captured
 only when a scan or renderer writes its record while the class is live, the
 nearest scans fell outside the streak (07:23:30Z and 07:33:30Z), so 510 frames
 through 07:38:30Z named it zero times (research-methods, wake 7948) — my own
-census through 08:12Z, 584 frames, also zero. The second onset — same
+census through 08:12Z, 584 frames, also zero. The 08:11Z onset — same
 session `90cc9bdc`, sequence 125855, last phone sample 08:11:18Z, onset
 08:11:53.573Z, named 08:12:58.2Z — was caught inside two frames:
 `light-stream-frozen` at 08:12:59Z and 08:13:00Z, the first rendered-frame
 captures of the class on this plant, and the onset record and its routed
-event remain the durable evidence for it. That streak held one identity
-past 51 minutes: the phone's last sample stayed 08:11:18Z with cursor
-125856 stopped, and five further frames rendered the class at 08:22:45Z
-(both panes) and 08:32:48Z, 08:43:12Z and 08:52:53Z (`senses`) — the
+event remain the durable evidence for it. That streak held one identity for 64 minutes: the phone's last sample stayed
+08:11:18Z with cursor
+125856 stopped until the phone published again at 09:16:13Z, and ten further
+frames rendered the class at 08:22:45Z
+(both panes) and 08:32:48Z, 08:43:12Z, 08:52:53Z, 09:02:59Z and 09:13:10Z
+(`senses`) and at 09:15:59Z and 09:16:01Z
+in both panes, the last two twelve seconds before the streak closed — the
 onset record's onset epoch still read 08:11:53.573Z with the same session,
-cursor and sequence at 09:02:29Z, so this is one streak, not a recurrence
-— so seven frames name it in my 09:02Z census.
+cursor and sequence at 09:16:03Z, so this is one streak, not a recurrence
+— so eleven frames name it in my 09:27Z census. The recovery rotated the
+phone-side session (`90cc9bdc` to `dd96004f`), and the stall recurred under
+the new session: the recorder wrote the path's third onset record at
+09:23:26.983Z
+(sequence 126303, cursor 126304, last phone sample 09:22:54Z, named
+09:24:29Z), and four frames had rendered the class by 09:27:35Z. The onset
+epoch re-armed after the streak closed, which is the recurrence signal named
+above, not the record's mtime.
 The class names a genuine producer stall, so while the phone keeps publishing the reader cannot reach it by coverage
 sampling. Check a pane
 process's own import root, and the script it execs, before claiming pane
@@ -704,7 +725,16 @@ The window had turned over and the kernel count fell back to one while the
 capture failures crossed their three-fault threshold, so the red reading
 continues through a different count. Whether the two productions share one
 cause or one leads the other is unresolved; the count-persistence reads
-above are preserved, not superseded.
+above are preserved, not superseded. At 09:32Z, under the promoted pin
+`03be433`, the same line read `CAMERA: PASS class=SEEING
+artifact-age=3s capture-fails=1/900s kernel-urbs=0/900s` — measured from the
+served release's own reader, as the 08:12Z reading was. The window had turned
+over and both counts fell below their thresholds, the capture failures from
+four to one and the kernel count to zero, so this is a bounded recovery: the
+window moved, not the cause. The driver or firmware cause stays open with
+health as the resolver, the observations above stand rather than being
+rewritten, and the uvcvideo journal scans stay the continuing observation
+that the resubmits are produced.
 
 Discovery and senses readers reject malformed receipts as a whole rather than
 trusting a readable subset. The observation verdict becomes UNKNOWN while the

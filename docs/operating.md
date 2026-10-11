@@ -214,6 +214,13 @@ crossed their own three-fault threshold, so the red reading persists with
 the other sub-cause now tripping first. Which of the two productions leads,
 and whether they share a driver or firmware cause, is unresolved; the
 `CAMERA:` line stays the continuing observation and health the resolver.
+At 09:32Z, under the promoted pin `03be433`, the line read `CAMERA: PASS
+class=SEEING artifact-age=3s capture-fails=1/900s kernel-urbs=0/900s`: the
+window had turned over and both counts fell below their thresholds, the capture
+failures from four to one and the kernel count to zero. A bounded recovery, not
+a repair — the window moved, not the cause — so the readings above stand and
+the uvcvideo journal scans stay the continuing evidence that the resubmits are
+produced.
 
 ### Doctor is a check with a repair side effect
 
@@ -445,7 +452,13 @@ comparison is unevidenced, not clean.
 The same `UNKNOWN` reading names a foreign consumer of the checkout as
 `foreign=<unit>@<checkout>` when the unit's import root or its `ExecStart` script
 names the plant, so a live consumer of the moving source is visible rather than
-counted as an anonymous gap. An unattributed unit whose import root and whose
+counted as an anonymous gap. A unit whose systemd `Description` names the plant
+is attributed to the plant instead, so the class rests on that one read
+succeeding: measured at 09:17:20Z the cleaner coordinator read
+`foreign=mishe-cleaner-recovered.service@mishe-tauftauf` between two scans, at
+09:16:46Z and 09:27:28Z, that read it `unattributed`, its script naming the
+checkout while its description attributes it to the plant.
+An unattributed unit whose import root and whose
 own declared `ExecStart`, `WorkingDirectory` and `Environment` paths name no
 site's checkout or home is a host tool beside the sites, named
 `host-scope=<unit>` without holding the reading at `UNKNOWN`; a unit whose
