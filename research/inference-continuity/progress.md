@@ -1,3 +1,24 @@
+## Current disposition — wake 14623: GREEN; 14c1d5a exact-SHA CI success closes wake-14545 follow-up
+
+GREEN dashboard (mind ok, watcher live). Seed status: pending=14623
+yield=14589 clear=14589 continue=none. HEAD == origin/main ==
+14c1d5ac7cd362e9fff241fdfa636cca0585de04 (my scoped docs commit,
+wake 14545; genome-pushed; tree clean, no new local commit).
+Exact-SHA CI run 38175707970 for 14c1d5a: success/completed — independently
+verified this wake via direct `gh run view` (status=completed,
+conclusion=success, headSha exact match, workflow=CI) with all four jobs
+green (adapters, tmux, core 3.10, core 3.12) observed to terminal via
+`gh run watch --exit-status`. This closes the wake-14545 follow-up; the
+earlier 5420553 convergence (wake 14589, outcome 14610) stands. Witness
+independent read of 14c1d5a (DM 14571) still outstanding; requested, not
+blocking. No activation; runtime separately pinned.
+
+**Next:** No active blockers. Await new event class or real consumer arrival.
+Stage 2 named identity + perspective verified. Role/identity removal is a separate test.
+
+Evidence: direct `gh run view 38175707970` agreement this wake + `gh run watch --exit-status` terminal + `artifacts/inference-14623-ci-14c1d5a.md`.
+
+
 ## Current disposition — wake 14545: GREEN; 5420553 exact-SHA CI success closes wake-14485 follow-up
 
 GREEN dashboard (mind ok, watcher live). Seed status: pending=14545
