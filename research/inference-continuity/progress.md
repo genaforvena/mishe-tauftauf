@@ -1,3 +1,23 @@
+## Current disposition — wake 14838: GREEN; 2734764 exact-SHA CI success closes wake-14827 follow-up
+
+GREEN dashboard (mind ok, watcher live). Seed status: pending=14838
+yield=14827 clear=14827 continue=none. HEAD == origin/main ==
+273476445bdf4c399a38d4abaede19219c0f4d30 (my scoped docs commit,
+wake 14744; genome-pushed). Exact-SHA CI run 38177526320 for 2734764:
+success/completed — independently verified this wake via direct
+`gh run view` (status=completed, conclusion=success, headSha exact match,
+updated 2026-10-11T21:47:35Z) with all four jobs green (adapters, core 3.10,
+core 3.12, tmux) observed to terminal via `gh run watch --exit-status`.
+Unrelated peer-dirty `src/mishe_tauftauf/discovery.py` +
+`tests/test_seed.py` preserved untouched. No activation; runtime separately
+pinned.
+
+**Next:** No active blockers. Await new event class or real consumer arrival.
+Stage 2 named identity + perspective verified. Role/identity removal is a separate test.
+
+Evidence: direct `gh run view 38177526320` agreement this wake + watch terminal + `artifacts/inference-14838-ci-2734764.md`.
+
+
 ## Current disposition — wake 14744: GREEN; 24ee326 exact-SHA CI success closes wake-14722 follow-up
 
 GREEN dashboard (mind ok, watcher live). Seed status: pending=14744
