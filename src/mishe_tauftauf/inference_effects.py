@@ -91,10 +91,13 @@ class ConcurrentClaim(RuntimeError):
 
 
 class StoreUnavailable(RuntimeError):
-    """Another writer holds the store, or the store is not a private regular file.
+    """The store cannot be opened: another writer holds it, the store is not a
+    private regular file, or the host cannot provide a writable journal location.
 
     Distinct from a concurrent *claim*: the store lock is exclusive, so a peer
-    that cannot take it never reads or writes at all.
+    that cannot take it never reads or writes at all. Raised at construction
+    when the store directory or a journal cannot be created, so a host missing
+    one writable location fails named before any effect.
     """
 
 
@@ -347,7 +350,17 @@ class EffectLedger:
             raise ValueError("writer_id is required")
         self.store_dir = Path(store_dir)
         self.writer_id = writer_id
-        self.store_dir.mkdir(parents=True, exist_ok=True)
+        # Construction fails before any effect, so a host that cannot provide a
+        # writable journal location must fail with the boundary's own signal:
+        # a raw OSError would name the host, not the store, and a caller that
+        # already distinguishes StoreUnavailable from host failures would miss
+        # this one. The permission error is chained for the host-level detail.
+        try:
+            self.store_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise StoreUnavailable(
+                f"cannot create the store directory {self.store_dir}: "
+                f"{exc}") from exc
         self.intents_path = self.store_dir / "intents.jsonl"
         self.starts_path = self.store_dir / "starts.jsonl"
         self.outcomes_path = self.store_dir / "outcomes.jsonl"
@@ -356,7 +369,11 @@ class EffectLedger:
         self._parsed: dict[str, tuple[Any, ...]] = {}
         for path in (self.intents_path, self.starts_path, self.outcomes_path):
             if not path.exists():
-                path.touch()
+                try:
+                    path.touch()
+                except OSError as exc:
+                    raise StoreUnavailable(
+                        f"cannot create the journal {path}: {exc}") from exc
 
     # -- journal primitives ------------------------------------------------
 

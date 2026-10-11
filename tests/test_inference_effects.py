@@ -163,6 +163,42 @@ def test_store_lock_rejects_overlapping_writers_in_one_process(tmp_path):
                 pass
 
 
+def test_store_creation_failure_is_a_named_signal(tmp_path):
+    """A host that cannot provide a writable store location fails named.
+
+    Wake 3368's arrival experiment: with a read-only cwd and the store inside
+    it, construction raised a raw PermissionError. Store creation is a
+    host-contract failure, so it must surface as StoreUnavailable — the signal
+    a caller already handles — still before any effect, with no store directory
+    or journal left behind.
+    """
+    host = tmp_path / "ro"
+    host.mkdir()
+    os.chmod(host, 0o500)
+    executed = []
+    try:
+        with pytest.raises(StoreUnavailable) as raised:
+            EffectLedger(host / "effects", writer_id="loop-1")
+        assert isinstance(raised.value.__cause__, OSError)
+        assert not (host / "effects").exists()
+        with pytest.raises(StoreUnavailable):
+            EffectBoundary(host / "effects", writer_id="loop-1",
+                           obligation={"source": "arrival-experiment"},
+                           execute=lambda call: executed.append(call),
+                           authority="arrival:probe-owned-evidence")
+        assert executed == []
+    finally:
+        os.chmod(host, 0o700)
+
+
+def test_store_path_blocked_by_a_regular_file_is_a_named_signal(tmp_path):
+    """A path component that cannot be a directory is the same host failure."""
+    (tmp_path / "effects").write_text("not a directory")
+    with pytest.raises(StoreUnavailable) as raised:
+        EffectLedger(tmp_path / "effects", writer_id="loop-1")
+    assert isinstance(raised.value.__cause__, OSError)
+
+
 @pytest.mark.parametrize("failed_journal", ["intents.jsonl", "starts.jsonl"])
 def test_journal_write_failure_never_reaches_the_capability(
         tmp_path, monkeypatch, failed_journal):
