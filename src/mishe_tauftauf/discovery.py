@@ -2858,11 +2858,16 @@ def _space_light(data: object, now: float) -> dict:
             return unknown("invalid-validity")
         validity = min(validity, SPACE_VALIDITY_SECONDS)
         row["validity_seconds"] = validity
+        if light["units"] != "lux":
+            return unknown("invalid-light-units")
+        if light["lux"] is None:
+            # A published sample without a lux value is a source coverage gap,
+            # not a corrupt file: keep it distinguishable so a dropout reads as
+            # itself instead of "malformed-boundary".
+            return unknown("light-null-gap", _space_light_age(light, now))
         if (light["status"] != "fresh-clock-conditional"
                 or light["delayed_at_receipt"] is not False):
             return unknown("light-not-current-or-delayed", _space_light_age(light, now))
-        if light["units"] != "lux":
-            return unknown("invalid-light-units")
         phone, receipt = _space_endpoint(light, validity)
         if node["cursor"] < light["sequence"]:
             return unknown("invalid-sequence")

@@ -219,3 +219,23 @@ def test_unknown_without_valid_phone_epoch_omits_age():
     row = discovery._space_light(data, NOW + 5)
     assert row["reason"] == "light-not-current-or-delayed"
     assert "last-phone=" not in row["sample"]
+
+
+def test_published_sample_without_lux_names_a_null_gap_not_a_corrupt_file():
+    data = boundary()
+    data["nodes"][0]["light"]["lux"] = None
+    row = discovery._space_light(data, NOW)
+    assert row["state"] == "unknown"
+    assert row["reason"] == "light-null-gap"
+    assert row["current_lux"] is None
+    assert "last-phone=" in row["sample"] and stamp(NOW - 20) in row["sample"]
+    assert row["sample"].startswith("Note3 light UNKNOWN: light-null-gap")
+
+
+def test_null_lux_gap_outranks_the_delayed_status_flag():
+    data = boundary()
+    data["nodes"][0]["light"].update(lux=None, status="stale", delayed_at_receipt=True)
+    row = discovery._space_light(data, NOW)
+    # A value the source published as absent is a coverage gap; naming it beats
+    # letting the sample-age flag describe it, so a dropout reads as itself.
+    assert row["reason"] == "light-null-gap"
