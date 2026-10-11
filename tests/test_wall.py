@@ -149,6 +149,39 @@ def test_wall_write_allows_unchanged_own_wall_rewrite(tmp_path):
     assert (tmp_path / "walls" / "genome.md").read_text() == "Steady state; nothing new."
 
 
+def test_wall_write_projects_the_launcher_handoff(tmp_path):
+    """The wall and its launcher-facing projection are one document.
+
+    runtime._context reads handoffs/<role>.md as CURRENT HANDOFF for the next
+    invocation, so a wall edit that leaves the projection behind hands that
+    invocation the previous wake's notes.
+    """
+    setup_wall(tmp_path)
+    from mishe_tauftauf import wall
+    wall.write(tmp_path, "genome", "Plate: resume the margin measurement.")
+    assert (tmp_path / "handoffs" / "genome.md").read_text() == "Plate: resume the margin measurement."
+    wall.write(tmp_path, "genome", "Plate: park it; evidence is in.")
+    assert (tmp_path / "handoffs" / "genome.md").read_text() == "Plate: park it; evidence is in."
+
+
+def test_same_wake_resettles_after_a_direct_wall_edit(tmp_path):
+    """A mind may edit its wall and still settle the wake it is holding.
+
+    android-body's genome wake 35129 stayed pending 07:23-08:03Z on 2026-10-11:
+    the wall wrote new notes directly, the handoff projection kept the settled
+    wake's text, and the re-settle's file comparison raised for good. Settling
+    the same wake after a direct wall edit must not wedge the mind.
+    """
+    setup_wall(tmp_path)
+    from mishe_tauftauf import wall
+    wake = Feed(tmp_path).append("seed", "seed wake genome observation=1\nRead your wall.")
+    wall.settle(tmp_path, "genome", wake.sequence, "First notes for the held wake.", False, "changed")
+    wall.write(tmp_path, "genome", "Corrected notes for the held wake.", source_path=None)
+    wall.settle(tmp_path, "genome", wake.sequence, "Corrected notes for the held wake.", False, "changed")
+    assert (tmp_path / "handoffs" / "genome.md").read_text() == "Corrected notes for the held wake."
+    assert (tmp_path / "walls" / "genome.md").read_text() == "Corrected notes for the held wake."
+
+
 def test_peer_copy_guard_ignores_trailing_blank_lines(tmp_path):
     """The paste class cannot pass by ending on a different blank-line count."""
     setup_wall(tmp_path)
