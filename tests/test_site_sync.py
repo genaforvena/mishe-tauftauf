@@ -22,6 +22,9 @@ class FakeFeed:
     def tail_sequence(self) -> int:
         return 0
 
+    def entries(self):
+        return []
+
 
 def test_checked_sync_uses_detached_release_and_preserves_development_dirt(tmp_path, monkeypatch):
     kernel = tmp_path / "kernel"
@@ -124,6 +127,46 @@ def test_sync_holds_dirty_target_without_planting(tmp_path: Path, monkeypatch) -
         f"synced {target.parent} {sha[:12]}"]
     assert len(calls) == 1
     assert any(home == target and body.startswith("[done] kernel-sync-") for home, body in FakeFeed.events)
+
+
+def test_replant_closes_superseded_sync_task_for_same_site(tmp_path, monkeypatch) -> None:
+    """A hold at an older green sha must not leave its kernel-sync task open
+    after a later sha replants the same site (witness 2026-10-11 finding)."""
+    core_home, target = setup_sites(tmp_path, monkeypatch)
+    old_sha = "b" * 40
+    new_sha = "d" * 40
+    dirty = True
+
+    def git(workspace, *args):
+        if args == ("rev-parse", "HEAD"):
+            return new_sha
+        if args == ("rev-parse", "--show-toplevel"):
+            return str(workspace)
+        if args == ("status", "--porcelain"):
+            return " M AGENTS.md" if dirty and workspace == target.parent else ""
+        raise AssertionError(args)
+
+    monkeypatch.setattr(site_sync, "_git", git)
+    site_sync._save(core_home, [{"home": str(target), "session": "example", "sha": "old"}])
+    monkeypatch.setattr(site_sync.subprocess, "run", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not plant")))
+    # Hold at the older green sha opens kernel-sync-<old>-<site>.
+    site_sync.sync_registered_sites(core_home, {"state": "pass", "sha": old_sha})
+    held = [body.splitlines()[0] for home, body in FakeFeed.events
+            if home == core_home and body.startswith("[task] kernel-sync-")]
+    assert held == [f"[task] kernel-sync-{old_sha[:12]}-{target.parent.name} owner=genome source=ci"]
+
+    # The green sha advances before the blocker clears; the replant succeeds.
+    dirty = False
+    monkeypatch.setattr(site_sync.subprocess, "run", lambda argv, **_kwargs: (
+        subprocess.CompletedProcess(argv, 0, "plant ready", "")))
+    monkeypatch.setattr(site_sync, "_verify", lambda *_args: None)
+    monkeypatch.setattr(site_sync, "task_states",
+                         lambda _entries: {old_sha[:12]: type("State", (), {"identity": f"kernel-sync-{old_sha[:12]}-{target.parent.name}"})()})
+    assert site_sync.sync_registered_sites(core_home, {"state": "pass", "sha": new_sha}) == [
+        f"synced {target.parent.name and target.parent} {new_sha[:12]}"]
+    done = [body.splitlines()[0] for _, body in FakeFeed.events
+            if body.startswith(f"[done] kernel-sync-{old_sha[:12]}-")]
+    assert done == [f"[done] kernel-sync-{old_sha[:12]}-{target.parent.name}"]
 
 
 def test_failed_live_verification_keeps_old_sha_for_retry(tmp_path: Path, monkeypatch) -> None:

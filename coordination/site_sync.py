@@ -15,6 +15,7 @@ from pathlib import Path
 from mishe_tauftauf.ci_watch import latest, read
 from mishe_tauftauf.feed import Feed
 from mishe_tauftauf.observations import FOOTER_LEASE_RE
+from mishe_tauftauf.task_state import states as task_states
 from mishe_tauftauf.tmux import _tmux, owns_session
 
 KERNEL = Path(__file__).resolve().parents[1]
@@ -230,6 +231,37 @@ def _release_source(core_home: Path, sha: str) -> Path:
     return checked_source(release, sha)[0]
 
 
+def _close_stale_sync_tasks(core_home: Path, target: Path, task: str) -> None:
+    """Close older kernel-sync tasks for this site superseded by a replant.
+
+    A hold opens kernel-sync-<old sha>-<site>. If the green core sha advances
+    before the blocker clears, the eventual replant closes the new-sha task
+    only and the old-sha task would stay open forever. The successful replant
+    satisfies that obligation, so close every other open kernel-sync task for
+    this site.
+    """
+    prefix = "kernel-sync-"
+    suffix = f"-{target.parent.name}"
+    try:
+        open_ids = {state.identity for state in
+                    task_states(Feed(core_home).entries()).values()
+                    if identity_matches_site(state.identity, prefix, suffix)}
+    except (OSError, ValueError):
+        return
+    open_ids.discard(task)
+    sha_label = task[len(prefix):len(task) - len(suffix)]
+    for identity in sorted(open_ids):
+        Feed(core_home).append("sync", f"[done] {identity}\n"
+                               f"Superseded: {target.parent} was replanted from core "
+                               f"{sha_label} by this sync cycle.")
+
+
+def identity_matches_site(identity: str, prefix: str, suffix: str) -> bool:
+    """True when a task identity is `kernel-sync-<sha>-<site>` for this site."""
+    return (len(identity) > len(prefix) + len(suffix)
+            and identity[:len(prefix)] == prefix
+            and identity[-len(suffix):] == suffix)
+
 def sync_registered_sites(core_home: Path, ci: dict[str, str], *, runtime_only: bool = False) -> list[str]:
     """Apply the exact green local commit to clean, owned sites; retry later on a hold."""
     if core_home.parent.resolve() != KERNEL or ci.get("state") != "pass":
@@ -271,6 +303,7 @@ def sync_registered_sites(core_home: Path, ci: dict[str, str], *, runtime_only: 
                 if _git(release, "rev-parse", "HEAD") != sha or _git(release, "status", "--porcelain"):
                     raise RuntimeError("release changed during linked-site refresh")
                 _update_site(core_home, target, sha=sha, error=None)
+                _close_stale_sync_tasks(core_home, target, task)
                 detail = f"Replanted {target.parent} from core {sha}; expected top panes and resident services are live."
                 core_tag = f"[done] {task}" if row.get("error") else f"[sync] core sha={sha}"
                 Feed(core_home).append("sync", f"{core_tag}\n{detail}")
