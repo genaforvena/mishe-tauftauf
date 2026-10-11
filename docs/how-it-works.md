@@ -443,9 +443,13 @@ collector. It keeps lux, provenance (source and session) and the original sample
 and receipt times visible. Freshness is conditional on unverified phone/host
 clock agreement and is capped at 30 seconds or the producer's shorter validity;
 polling or rendering cannot extend it, and missing, broken, delayed or expired
-evidence is UNKNOWN. A published sample without a lux value reads UNKNOWN as
-its own reason (`light-null-gap`), so a dropout stays distinguishable from
-ordinary aging and from a corrupt boundary. Two source-side gap widths are
+evidence is UNKNOWN. A last sample older than the cap reads UNKNOWN as
+`stale-original-evidence` even when every layer works: measured on this plant
+at 2026-10-11T03:06Z, a verified sample took 23 seconds from phone collection
+to consumer receipt and 26 seconds to the read, against the 30-second cap, so
+the margin is seconds rather than minutes. A published sample without a lux
+value reads UNKNOWN as its own reason (`light-null-gap`), so a dropout stays
+distinguishable from ordinary aging and from a corrupt boundary. Two source-side gap widths are
 measured: short dropouts of a few seconds to tens of seconds, where the
 boundary's event cursor keeps advancing, and a sustained phone-silent freeze,
 where the cursor stops while the producer keeps writing and the transport stays
@@ -479,7 +483,13 @@ and each core caller need their own checked activation.
 The host-radio sense reads this host's own Bluetooth and Wi-Fi adapter state
 through the kernel sysfs ABI and `bluetoothctl show`. A missing adapter, or a
 read that does not return, stays UNKNOWN; a `down` or rfkill-blocked radio is a
-named verified state.
+named verified state. Each wireless interface reads as
+`operstate/admin-state`, because `operstate` follows carrier rather than the
+administrative flag: an enabled radio that has not associated reads
+`down/admin-up`, while one that is switched off reads `down/admin-down`, and
+before the admin token both rendered `=down` so an enabled idle radio could not
+be told from an absent one. An interface whose `flags` or `operstate` will not
+read is `=unread` with a named problem, which is UNKNOWN rather than a state.
 
 Discovery and senses readers reject malformed receipts as a whole rather than
 trusting a readable subset. The observation verdict becomes UNKNOWN while the
