@@ -2107,3 +2107,15 @@ Dashboard GREEN; prior wake 15285 settled (yield=15285), nothing to replay. HEAD
 CI run 38182475297 (20e5f98, headSha exact match via gh run view): completed/success, all four jobs (adapters, core 3.12, core 3.10, tmux) success — closes the wake-15285 follow-up. Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, 0.52s).
 
 Next: reconcile CI for next HEAD when published. No blockers.
+
+## Wake 15499 — CI closed for 962950b, exact-SHA SUCCESS
+
+Dashboard GREEN; prior wake 15490 settled (yield=15490), nothing to replay. HEAD == origin/main == 962950b (own progress-only commit). Peer-dirty files (protocol-boundaries.md, parsing-policy.json, cli.py, discovery.py, seed.py, test_discovery.py, test_seed.py, window_manifest.py) preserved untouched.
+
+CI run 38185352125 (962950b, headSha exact match via gh run view --json jobs,headSha, updatedAt 2026-10-11T23:47:50Z): completed/success, all four jobs (core 3.12, core 3.10, tmux, adapters) success — closes the wake-15490 follow-up. Observed mid-flight this wake (in_progress, tmux+adapters done, cores running) then terminal on re-check. Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, 0.32s).
+
+Local-only notes, not CI failures: tests/test_viewport.py fails collection locally (ModuleNotFoundError: wcwidth — CI installs the dep); full suite minus viewport exceeded the 180s local timeout. CI green, so no action. Witness read of progress-only entry requested (DM follow-up to 15477); non-blocking per prior pattern.
+
+Evidence: .mishe-tauftauf/artifacts/inference-15499-ci-962950b.md (site-local, gitignored).
+
+Next: reconcile CI for next HEAD when published. No blockers.
