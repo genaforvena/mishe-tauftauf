@@ -469,28 +469,34 @@ stream that moves between the two names is reported as a gap duration class
 change, not as a light transition and not as an availability baseline.
 The class needs the reader's own retained null origin to survive between reads.
 Measured 2026-10-11T03:06Z: the committed source keeps the first null of a
-streak, so the interval grows at any cadence, while the pinned release
-`f733a4b` rewrites that record on every null read, which holds its five-second
-pane interval at zero and reports `light-null-gap` throughout a freeze; only
-its roughly ten-minute stored scan reaches the minute threshold. Which byte-set
-a pane loads is a loaded-bytes question, not a reading one.
-Measured 2026-10-11T03:22Z: this plant's resident panes load two byte-sets,
-one per stage. The long-lived process is `pain watch <role>` under the pinned
-release — `0c5b0e4` at the measurement, and each pane's start command names
-the same release, so a respawn keeps it — and that stage runs the service,
+streak, so the interval grows at any cadence, while release `f733a4b` rewrote
+that record on every null read, which held a five-second read interval at
+zero and reported `light-null-gap` throughout a freeze; only its roughly
+ten-minute stored scan reached the minute threshold. The pin has kept the
+null origin since `808dbe0`: measured 2026-10-11T03:43Z, the served pin
+`94092ec` names `light-stream-frozen` on a freeze fixture and sustains it at
+the five-second pane cadence (4/4, retention age 315 s), and its stored scans
+and the CLI read name both gap classes. Which byte-set a pane loads decides
+what a pane says — a loaded-bytes question, not a reading one.
+Measured 2026-10-11T03:22Z and re-measured 03:40Z: this plant's resident
+panes load two byte-sets, one per stage. The long-lived process is
+`pain watch <role>` under the pinned release — `0c5b0e4` at the first
+measurement and `94092ec` at the second, each pane's start command naming the
+same release, so a respawn keeps it — and that stage runs the service,
 heartbeat, feed and seed-state logic. The frame itself is composed once per
 refresh by that watcher's `observations.run_renderer`, which execs
 `top-pains/<role>`; seven of those scripts (discover, docs, genome, health,
 research-methods, senses, witness) export the 2026-10-01 trial runtime as
-their `PYTHONPATH`, written at trial install, and inherited by no other
-root, while the remaining scripts export nothing and inherit the release
-environment. Both stages are observed directly: a transient `wall_view`
-process (PID 494745) carried the trial runtime in its environment, and every
-stored dashboard frame's `DEPLOYED:` line reads
-`root=…/artifacts/wall-trial-20261001/runtime`, emitted from the composing
-process's own `__file__`. The trial runtime predates both class names and
-shows the same sample as `light-not-current-or-delayed`. Which byte-set a
-pane loads is a loaded-bytes question, not a reading one; check a pane
+their `PYTHONPATH`, written at trial install and inherited by no other root,
+while `top-pains/operator` exports the served release and followed the pin
+from `0c5b0e4` to `94092ec`. Both stages are observed directly: a transient
+`wall_view` process (PID 494745) carried the trial runtime in its
+environment, and a stored frame from 03:39:57Z names
+`root=…/artifacts/wall-trial-20261001/runtime` on its `DEPLOYED:` line,
+emitted from the composing process's own `__file__`. The trial byte-set
+carries neither class name — both occur zero times in its light reader — and
+on the same freeze fixture it reads `malformed-boundary` at any cadence, so a
+pane cannot name either gap class until its renderer restage. Check a pane
 process's own import root, and the script it execs, before claiming pane
 wording.
 Retained measured light changes are history, not room occupancy or human
