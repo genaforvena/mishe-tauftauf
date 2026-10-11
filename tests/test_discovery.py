@@ -3996,6 +3996,44 @@ def _ghost_tree(root: Path, name: str, files: dict[str, str], mtime: float) -> N
         os.utime(path, (mtime, mtime))
 
 
+def _ordered_checkout_scan(checkout: Path, ordered: list[SimpleNamespace]):
+    """A ``scandir`` factory yielding ``ordered`` entries at the checkout root.
+
+    A bound on inspected names is only meaningfully tested when the order of
+    the checkout's own entries is fixed: the real directory yields them in
+    filesystem order, so whether a reserved root sits before or behind an
+    ordinary prefix is left to chance. Everything outside the checkout scan
+    keeps the real directory, so only one reading path is shaped.
+    """
+    seen: list[str] = []
+    real_scandir = os.scandir
+
+    class OrderedScan:
+        def __init__(self, entries):
+            self._entries = iter(entries)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            item = next(self._entries)
+            seen.append(item.name)
+            return item
+
+    def ordered_scandir(path):
+        if os.fspath(path) == str(checkout):
+            return OrderedScan(ordered)
+        return real_scandir(path)
+
+    return ordered_scandir, seen
+
+
 def test_ghost_site_homes_verified_when_only_the_site_home_exists(tmp_path):
     from mishe_tauftauf import discovery
 
@@ -4319,9 +4357,9 @@ def test_ghost_site_homes_caps_total_checkout_names_inspected(tmp_path, monkeypa
     # The scan stopped one name past the budget instead of walking every
     # checkout-root entry, whatever their order and reservation class.
     assert len(seen) == discovery.GHOST_SCAN_LIMIT + 1
-    # Only one root entry is non-reserved, so at least the budget minus one
-    # ghost trees were examined before the truncation: presence is established
-    # and the retained count stays an explicit lower bound.
+    # Nine of the nineteen checkout-root entries are ordinary, so eight
+    # inspected names reach a ghost before the budget runs out: presence is
+    # established and the retained count stays an explicit lower bound.
     assert reading["state"] == "drift"
     assert reading["roots_at_least"] is True
     assert reading["checkout_truncated"] is True
@@ -4347,6 +4385,82 @@ def test_ghost_site_homes_unknown_when_truncation_leaves_absence_unestablished(t
     assert "truncated" in reading["sample"]
     assert "ghost absence not established" in reading["sample"]
     assert "count" not in reading
+
+
+def test_ghost_site_homes_stops_the_checkout_scan_at_the_budget_before_any_reserved_root(
+        tmp_path, monkeypatch):
+    """The budget bounds inspected names, not reserved roots the scan hopes to find.
+
+    Charging only reserved roots makes the bound depend on where a ghost
+    name happens to sit: an ordinary prefix longer than the budget exhausts
+    the scan before any reserved entry is reached, so the claimed bound holds
+    only for checkouts whose ghost roots come first. The enumeration itself
+    has to stop at the budget and leave absence unestablished.
+    """
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir(parents=True)
+    monkeypatch.setattr(discovery, "GHOST_SCAN_LIMIT", 8)
+    ghost = tmp_path / ".mishe-tauftauft"
+    ghost.mkdir(parents=True)
+    # The ghost tree sits behind every ordinary name, so a budget charged per
+    # reserved root would walk the whole prefix and still claim its bound.
+    ordered = [SimpleNamespace(name=f"ordinary{index:03d}",
+                               path=str(tmp_path / f"ordinary{index:03d}"))
+               for index in range(600)]
+    ordered.append(SimpleNamespace(name=".mishe-tauftauft", path=str(ghost)))
+    ordered_scandir, seen = _ordered_checkout_scan(tmp_path, ordered)
+    monkeypatch.setattr(discovery.os, "scandir", ordered_scandir)
+    reading = discovery._ghost_site_homes(home)
+    # The inspection stopped one name past the budget: the reserved root
+    # behind the prefix was never inspected, so no ghost is reported.
+    assert len(seen) == discovery.GHOST_SCAN_LIMIT + 1
+    assert all(name.startswith("ordinary") for name in seen)
+    assert reading["state"] == "unknown"
+    assert "checkout enumeration truncated" in reading["sample"]
+    assert "ghost absence not established" in reading["sample"]
+    assert "count" not in reading
+
+
+def test_ghost_site_homes_reaches_a_reserved_root_behind_an_ordinary_prefix(
+        tmp_path, monkeypatch):
+    """A bounded scan that does reach a ghost reads drift, not a clean count.
+
+    The same budget, the same stop point, a different order: with the reserved
+    root inside the inspected window the scan walks it and reports the count
+    as an explicit lower bound, so the reading neither hides the ghost nor
+    claims a complete count it never made.
+    """
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir(parents=True)
+    monkeypatch.setattr(discovery, "GHOST_SCAN_LIMIT", 8)
+    ghost = tmp_path / ".mishe-tauftauft"
+    _ghost_tree(tmp_path, ".mishe-tauftauft", {"walls/mind.md": "ghost wall\n"}, 1_000.0)
+    ordered = [SimpleNamespace(name=f"ordinary{index}",
+                               path=str(tmp_path / f"ordinary{index}"))
+               for index in range(4)]
+    ordered.append(SimpleNamespace(name=".mishe-tauftauft", path=str(ghost)))
+    ordered.extend(SimpleNamespace(name=f"later{index}",
+                                   path=str(tmp_path / f"later{index}"))
+                   for index in range(600))
+    ordered_scandir, seen = _ordered_checkout_scan(tmp_path, ordered)
+    monkeypatch.setattr(discovery.os, "scandir", ordered_scandir)
+    reading = discovery._ghost_site_homes(home, now=1_000.0 + 60)
+    # Four ordinary names, the ghost root and four more ordinary names: the
+    # ninth inspected name is where the scan stops, past the ghost.
+    assert len(seen) == discovery.GHOST_SCAN_LIMIT + 1
+    assert seen[-1] == "later3"
+    assert reading["state"] == "drift"
+    assert reading["ghosts"] == [".mishe-tauftauft"]
+    assert reading["files"] == {".mishe-tauftauft": 1}
+    assert reading["roots_at_least"] is True
+    assert reading["checkout_truncated"] is True
+    assert "ghost-homes=1+" in reading["sample"]
+    assert "checkout-truncated" in reading["sample"]
+    assert "newest=.mishe-tauftauft age=1m0s" in reading["sample"]
 
 
 def test_ghost_site_homes_charges_the_work_budget_per_yielded_entry(tmp_path, monkeypatch):
