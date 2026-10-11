@@ -4167,6 +4167,107 @@ def test_ghost_site_homes_unknown_when_a_ghost_tree_cannot_be_walked(monkeypatch
     assert "count" not in reading
 
 
+def test_ghost_site_homes_carries_one_name_budget_across_every_tree(tmp_path, monkeypatch):
+    """Aggregate name work is one scan-wide budget, not one per ghost tree.
+
+    Per-tree budgets let a checkout with many modest ghost trees spend
+    limit * trees names while each tree stays far under its own bound, so the
+    scan-wide reading advertises a bound it never enforces.
+    """
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir(parents=True)
+    monkeypatch.setattr(discovery, "GHOST_WORK_LIMIT", 10)
+    for index in range(6):
+        _ghost_tree(tmp_path, f".mishe-lane{index}", {
+            f"d{level:02d}/keep.md": "x\n" for level in range(3)}, 1_000.0)
+    reading = discovery._ghost_site_homes(home)
+    assert reading["state"] == "drift"
+    assert reading["work_truncated"] is True
+    assert reading["roots_at_least"] is True
+    assert "names-truncated" in reading["sample"]
+    # No tree is walked to completion once the shared budget runs out, so the
+    # file count is a lower bound rather than an exact total.
+    assert reading["total"] < 6 * 6
+    assert reading["files_at_least"] is True
+
+
+def test_ghost_site_homes_stops_enumerating_the_checkout_at_the_root_cap(tmp_path, monkeypatch):
+    """Checkout enumeration is bounded, not materialized then truncated.
+
+    Reading every directory entry before applying the root cap leaves the
+    scan unbounded in the checkout's own size; the bound must stop the
+    enumeration itself and mark the count as a lower bound.
+    """
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir(parents=True)
+    monkeypatch.setattr(discovery, "GHOST_ROOT_LIMIT", 2)
+    for index in range(6):
+        _ghost_tree(tmp_path, f".mishe-ghost{index}", {"walls/a.md": "x\n"}, 1_000.0)
+    seen: list[str] = []
+    real_scandir = os.scandir
+
+    class CountingScan:
+        def __init__(self, entries, is_checkout):
+            self._entries = iter(entries)
+            self._is_checkout = is_checkout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            item = next(self._entries)
+            if self._is_checkout:
+                seen.append(item.name)
+            return item
+
+    def counting_scandir(root):
+        return CountingScan(real_scandir(root), root == str(tmp_path))
+
+    monkeypatch.setattr(discovery.os, "scandir", counting_scandir)
+    reading = discovery._ghost_site_homes(home)
+    assert reading["state"] == "drift"
+    assert len(reading["ghosts"]) == 2
+    assert reading["roots_at_least"] is True
+    # Enumeration stopped once the cap was exceeded instead of reading every
+    # directory entry: at most the capped roots plus the one that revealed
+    # the truncation were inspected, out of six reserved names.
+    assert len(seen) <= discovery.GHOST_ROOT_LIMIT + 1
+    assert "ghost-homes=2+" in reading["sample"]
+
+
+def test_ghost_site_homes_unknown_when_the_checkout_cannot_be_enumerated(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir(parents=True)
+
+    class RefusingScan:
+        def __enter__(self):
+            raise PermissionError(13, "Permission denied", "")
+
+        def __exit__(self, *exc):
+            return False
+
+    def refusing_scandir(path):
+        return RefusingScan()
+
+    monkeypatch.setattr(discovery.os, "scandir", refusing_scandir)
+    reading = discovery._ghost_site_homes(home)
+    assert reading["state"] == "unknown"
+    assert "checkout root unreadable" in reading["sample"]
+    assert "count" not in reading
+
+
 def test_ghost_site_homes_ignores_non_reserved_entries(tmp_path):
     from mishe_tauftauf import discovery
 

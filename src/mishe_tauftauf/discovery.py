@@ -2520,13 +2520,24 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
     site = Path(home).resolve()
     checkout = site.parent
     try:
+        # Enumeration is bounded by name, not by materializing the whole
+        # directory: the scan stops once it has seen more reserved roots than
+        # one reading walks, and the excess is counted rather than examined.
+        # Determinism comes from sorting the retained names, not from reading
+        # every entry first, so a large checkout cannot stretch one sample.
         with os.scandir(checkout) as scan:
-            entries = sorted((item for item in scan
-                              if reserved_home_name(item.name)),
-                             key=lambda item: item.name)
+            found: list = []
+            for item in scan:
+                if reserved_home_name(item.name):
+                    found.append(item)
+                    if len(found) > GHOST_ROOT_LIMIT:
+                        break
     except OSError as exc:
         return {"id": "sense.site.ghost-homes", "state": "unknown", "kind": "read",
                 "sample": f"checkout root unreadable: {exc}"}
+    found.sort(key=lambda item: item.name)
+    entries = found[:GHOST_ROOT_LIMIT]
+    over_cap = len(found) - len(entries)
     ghosts: list[str] = []
     holding: list[str] = []
     empty: list[str] = []
@@ -2537,7 +2548,7 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
     capped = False
     nested_truncated = False
     work_truncated = False
-    over_cap = 0
+    names_left = GHOST_WORK_LIMIT
     for entry in entries:
         if not reserved_home_name(entry.name):
             continue
@@ -2560,7 +2571,6 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
 
         files = 0
         newest_at: float | None = None
-        names_left = GHOST_WORK_LIMIT
         for dirpath, dirnames, filenames in os.walk(tree, onerror=record):
             for name in dirnames:
                 names_left -= 1
@@ -2628,7 +2638,7 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
             "kind": "read", "checkout": str(checkout),
             "ghosts": sorted(ghosts), "files": files_per_ghost, "total": total,
             "holding": sorted(holding), "empty": sorted(empty),
-            "nested": sorted(nested), "files_at_least": capped,
+            "nested": sorted(nested), "files_at_least": capped or work_truncated,
             "roots_at_least": roots_at_least,
             "nested_truncated": nested_truncated,
             "work_truncated": work_truncated,
