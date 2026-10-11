@@ -104,6 +104,25 @@ Execute Stage 1 candidate experiment or a smaller bounded step toward it.
 - **Evidence:** `artifacts/stage1-interruption-after-effect-20261011.md`
 - **Limitation:** n=1 event class; scout required wall context to know the intended design. Without the wall entry describing the 4-section structure, the scout would not have known what to append.
 
-## Next action
+## Stage 1 — Interruption test: during external waits (2026-10-11)
 
-Stage 1 continuation: interruption test "during external waits" — interrupt while waiting for external event; verify successor detects stale wait and reconciles. Push of aa7ae63 remains genome-owned.
+**Experiment:** bounded action interrupted while blocking on external event; fresh successor detects interrupted wait, checks event arrival, completes action.
+
+- **Bounded action:** write artifact `stage1-interruption-during-wait-20261011.md` with 3 sections (Design, Interruption evidence, Outcome).
+- **Protocol:** write section 1, record wait sentinel, poll for trigger file (simulating external event like CI callback), write sections 2-3 after trigger.
+- **Interruption:** SIGTERM while writer in blocking wait. Trigger created post-kill, simulating event arriving after death.
+- **Partial state:** section 1 only (741 bytes); sentinel present; trigger exists post-kill.
+- **Recovery:** scout detects partial artifact, reads sentinel (writer in wait), checks trigger — exists, so wait condition satisfied. Appends sections 2-3.
+- **Result:** complete 3-section artifact produced; stale-but-satisfied wait correctly identified.
+- **Finding:** all three Stage 1 interruption tests pass. Persistent state (wall + artifact + sentinel + trigger) sufficient for recovery across before-effect, after-effect, and during-wait event classes. Sentinel+trigger protocol gives successors enough to distinguish stale vs satisfied waits.
+- **Evidence:** `artifacts/stage1-interruption-during-wait-20261011.md`
+- **Limitation:** n=1 per event class; synthetic trigger, not a real external system. Tests recovery mechanism, not real-world CI callback handling.
+
+## Stage 1 — Interruption tests: complete
+
+All three interruption scenarios pass with persistent-state recovery:
+1. **Before effect** — no partial state; scout infers intent from wall, completes action.
+2. **After effect before receipt** — partial state detected; scout completes missing sections.
+3. **During external waits** — interrupted wait detected via sentinel; trigger check distinguishes stale vs satisfied.
+
+Persistent state (wall + artifacts + sentinel + trigger file) sufficient for fresh-session recovery across all tested event classes.
