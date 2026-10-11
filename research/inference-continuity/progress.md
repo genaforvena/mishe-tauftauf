@@ -1,12 +1,12 @@
-## Current disposition — wake 13653: GREEN steady-state; seam re-verified at 85a27ff
+## Current disposition — wake 13995: GREEN steady-state; seam re-verified at 95edd3e
 
-GREEN dashboard (mind idle 1s, watcher live). Seed status: pending=13653
-yield=13501 clear=13501 continue=none. HEAD=85a27ff=origin/main (body-research RSS
-probe landed; genome/discover ghost-home draft preserved in dirty tree, not mine).
+GREEN dashboard (mind idle 36s, watcher live). Seed status: pending=13995
+yield=13855 clear=13855 continue=none. HEAD=95edd3e (senses 5bc0cf4 ghost bounds +
+discover 95edd3e ordered-prefix tests; both discovery-scope, not mine).
 Handoff == wall (diff clean); witness 10981 desync claim stale (fixed, junk gone).
-Docs DM 13046 answered (restore/deliver seam); re-verified UNCHANGED at 85a27ff:
+Docs DM 13046 re-answered wake 13995 (DM 14016): restore/deliver seam UNCHANGED at 95edd3e:
 wall.py:371 restore, :596 deliver; seed.py:423 _restore_text, :711 startup call.
-CI 85a27ff run 38169627711 in_progress at wake; no terminal claim.
+CI sensor FAIL run 38171152422 for 5bc0cf4 (genome routing to senses/discover; not mine).
 
 **Identity mechanism (scout investigation):** Role name "inference-research" is a
 site-declared routing key, not a behavioral instruction. Discovered via
