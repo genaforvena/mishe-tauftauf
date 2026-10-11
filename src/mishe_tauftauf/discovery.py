@@ -2174,6 +2174,14 @@ def _runtime_pin_lag(home: Path, now: datetime | None = None) -> dict[str, objec
     does a missing pin file or a git failure: the lag cannot be computed, so
     it must not read as zero. ``pin == HEAD`` reads ``lag=0`` verified: the
     checkout is exactly the pinned state.
+
+    The pin record also names the release directory the services import
+    (``source``). A process whose PYTHONPATH names a missing release silently
+    falls back to the checkout's editable install, so a real-syscall stat of
+    that directory is part of the reading: an absent source reads UNKNOWN with
+    the path named, even though the commit relation still computes. A record
+    without a usable ``source`` string cannot be stat-ed and is reported as
+    such rather than silently checked.
     """
     if now is None:
         now = datetime.now(timezone.utc)
@@ -2182,13 +2190,25 @@ def _runtime_pin_lag(home: Path, now: datetime | None = None) -> dict[str, objec
         return {"id": "sense.runtime.pin-lag", "state": "unknown",
                 "sample": "pin file unavailable", "kind": "read"}
     try:
-        pin = json.loads(pin_path.read_text(encoding="utf-8")).get("sha")
+        data = json.loads(pin_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {"id": "sense.runtime.pin-lag", "state": "unknown",
                 "sample": "pin file unreadable", "kind": "read"}
+    if not isinstance(data, dict):
+        return {"id": "sense.runtime.pin-lag", "state": "unknown",
+                "sample": "pin record not an object", "kind": "read"}
+    pin = data.get("sha")
     if not isinstance(pin, str) or not re.fullmatch(r"[0-9a-f]{7,40}", pin):
         return {"id": "sense.runtime.pin-lag", "state": "unknown",
                 "sample": "pin sha invalid", "kind": "read"}
+    source = data.get("source")
+    if not isinstance(source, str) or not source:
+        return {"id": "sense.runtime.pin-lag", "state": "unknown",
+                "sample": "pin release source unnamed", "pin": pin, "kind": "read"}
+    if not Path(source).is_dir():
+        return {"id": "sense.runtime.pin-lag", "state": "unknown",
+                "sample": f"pin={pin[:7]} release-source-missing path={source}",
+                "pin": pin, "source": source, "kind": "read"}
     checkout_root = Path(home).resolve().parent
     try:
         head = subprocess.run(["git", "rev-parse", "HEAD"],
@@ -2935,8 +2955,8 @@ def _space_light_frozen(row: dict, previous: dict | None, now: float) -> bool:
     A seconds-wide dropout resolves between two reads, so the next read of the
     same stream publishes a fresh sample; only a stopped producer keeps the same
     absent sequence and unmoving cursor across reads. The comparison is against
-    the reader's own previous null observation, never against publication or
-    polling activity, which cannot renew a sample.
+    the retained origin of the reader's own current null streak, never against
+    publication or polling activity, which cannot renew a sample.
     """
     if row.get("reason") != "light-null-gap" or not isinstance(previous, dict):
         return False
@@ -2982,6 +3002,17 @@ def _space_light_name_freeze(home: Path, row: dict, now: float) -> dict:
 
 
 def _space_light_read(home: Path) -> dict:
+    """Read the light boundary, naming a null read's duration class.
+
+    A null read is classified against the reader's own retained record of the
+    current null streak. The record holds the streak's *first* read, not the
+    latest one: the pane renders every few seconds, so refreshing the origin
+    on each render would keep the measured interval below the freeze
+    threshold and the class could never fire on a live stream. A fresh sample
+    leaves the record alone; a later null read with a new cursor or sequence
+    starts a new record, since an advancing stream cannot revisit an old
+    identity.
+    """
     path = home / "body" / "space.json"
     text = _read(path, 65536)
     try:
@@ -2996,18 +3027,25 @@ def _space_light_read(home: Path) -> dict:
         now = time.time()
         row = _space_light_name_freeze(home, row, now)
         node = row["boundary"]["nodes"][0]
-        record = {"session": (row.get("provenance") or {}).get("session"),
-                  "cursor": node.get("cursor"),
-                  "sequence": node["light"].get("sequence"),
-                  "reason": "light-null-gap", "read_epoch_s": now}
-        root = home / "discovery"
-        try:
-            root.mkdir(parents=True, exist_ok=True)
-            temporary = root / f".space-light-stream-{os.getpid()}.tmp"
-            temporary.write_text(space_text.encode_stream_record(record), encoding="utf-8")
-            os.replace(temporary, root / "space-light-stream.json")
-        except OSError:
-            pass
+        session = (row.get("provenance") or {}).get("session")
+        sequence = node["light"].get("sequence")
+        previous = _space_light_stream_record(home)
+        continuing = (isinstance(previous, dict)
+                      and previous.get("session") == session
+                      and previous.get("cursor") == node.get("cursor")
+                      and previous.get("sequence") == sequence)
+        if not continuing:
+            record = {"session": session, "cursor": node.get("cursor"),
+                      "sequence": sequence,
+                      "reason": "light-null-gap", "read_epoch_s": now}
+            root = home / "discovery"
+            try:
+                root.mkdir(parents=True, exist_ok=True)
+                temporary = root / f".space-light-stream-{os.getpid()}.tmp"
+                temporary.write_text(space_text.encode_stream_record(record), encoding="utf-8")
+                os.replace(temporary, root / "space-light-stream.json")
+            except OSError:
+                pass
     return row
 
 

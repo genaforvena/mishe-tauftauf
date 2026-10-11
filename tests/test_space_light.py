@@ -11,7 +11,7 @@ import pytest
 
 from mishe_tauftauf import discovery
 from mishe_tauftauf.feed import Feed
-from mishe_tauftauf.seed_culture_views import _observation_reading
+from mishe_tauftauf.seed_culture_views import _observation_reading, discover, senses
 
 NOW = 1791368000.0
 
@@ -313,6 +313,98 @@ def test_unreadable_retention_is_not_a_freeze(tmp_path):
     (tmp_path / "discovery" / "space-light-stream.json").write_text("{not json")
     row = discovery._space_light_read(tmp_path)
     assert row["reason"] == "light-null-gap"
+
+
+def test_null_streak_origin_survives_the_render_cadence(tmp_path):
+    """A pane renders every few seconds, so the origin must not be refreshed
+    per render or the measured interval never reaches the freeze threshold."""
+    null_gap_fixture(tmp_path, None)
+    assert discovery._space_light_read(tmp_path)["reason"] == "light-null-gap"
+    record_path = tmp_path / "discovery" / "space-light-stream.json"
+    origin = json.loads(record_path.read_text())["read_epoch_s"]
+    for _ in range(5):
+        assert discovery._space_light_read(tmp_path)["reason"] == "light-null-gap"
+        assert json.loads(record_path.read_text())["read_epoch_s"] == origin
+    # The same streak, older than the threshold with the origin preserved, is
+    # named a frozen stream; the frozen read still does not refresh the origin.
+    record = json.loads(record_path.read_text())
+    record["read_epoch_s"] = time.time() - discovery.SPACE_FROZEN_MIN_SECONDS - 1
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+    aged = record["read_epoch_s"]
+    row = discovery._space_light_read(tmp_path)
+    assert row["reason"] == "light-stream-frozen"
+    assert json.loads(record_path.read_text())["read_epoch_s"] == aged
+
+
+@pytest.fixture
+def current_endpoint(monkeypatch):
+    """A recent clock endpoint so the pane's freshness gate passes."""
+    current = {"clock": "CLOCK_BOOTTIME", "bounds_ns": [20_000_000_000, 20_000_000_100],
+               "boot_id": "12345678-1234-5678-1234-567812345678",
+               "time_namespace": "time:[4026531834]",
+               "offsets": {"monotonic": [0, 0], "boottime": [0, 0]},
+               "utc_ns": 1_700_000_000_000_000_000}
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.scan_freshness.endpoint",
+                        lambda: current)
+    return current
+
+
+def _write_scan(home: Path, observations: list[dict]) -> None:
+    """Publish one recent snapshot and its succeeded attempt record."""
+    snapshot = {"created": "2099-01-01T00:00:00Z", "scan_id": "sample-1", "node": "node",
+                "observations": observations,
+                "acquisition": {"start": _endpoint(10_000_000_000, 10_000_000_100),
+                                "end": _endpoint(11_000_000_000, 11_000_000_100,
+                                                 1_700_000_001_000_000_000)}}
+    directory = home / "discovery"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "latest.json").write_text(json.dumps(snapshot), encoding="utf-8")
+    (directory / "attempt.json").write_text(json.dumps(
+        {"status": "succeeded", "stage": "notification", "scan_id": "sample-1",
+         "created": "2023-11-14T22:13:20Z", "artifact": "sample-1.json"}), encoding="utf-8")
+
+
+def _endpoint(first: int, last: int, utc_ns: int = 1_700_000_000_000_000_000) -> dict:
+    return {"clock": "CLOCK_BOOTTIME", "bounds_ns": [first, last],
+            "boot_id": "12345678-1234-5678-1234-567812345678",
+            "time_namespace": "time:[4026531834]",
+            "offsets": {"monotonic": [0, 0], "boottime": [0, 0]}, "utc_ns": utc_ns}
+
+
+@pytest.mark.parametrize("pane", [discover, senses])
+def test_pane_names_a_sustained_freeze_it_re_derives_at_render_time(
+        tmp_path: Path, current_endpoint, pane) -> None:
+    """The pane re-derives the light row from the boundary frame at render
+    time; the reader-side duration class must survive that re-derivation or
+    the pane cannot name a freeze it is staring at."""
+    home = tmp_path / "site"
+    null_gap_fixture(home, None)
+    _write_scan(home, [])
+    # No retained observation yet: the first render of a null read is a gap.
+    assert "light-null-gap" in pane(home)
+    assert "light-stream-frozen" not in pane(home)
+    (home / "discovery" / "space-light-stream.json").write_text(json.dumps(
+        null_record(read_epoch_s=time.time() - discovery.SPACE_FROZEN_MIN_SECONDS - 1)),
+        encoding="utf-8")
+    rendered = pane(home)
+    assert "light-stream-frozen" in rendered
+    assert "light-null-gap" not in rendered
+
+
+@pytest.mark.parametrize("pane", [discover, senses])
+def test_pane_keeps_a_seconds_wide_gap_a_gap(tmp_path: Path, current_endpoint, pane) -> None:
+    """A retention record that is still recent, or whose cursor advanced,
+    keeps the single-read name on the pane."""
+    home = tmp_path / "site"
+    null_gap_fixture(home, None)
+    _write_scan(home, [])
+    for record in (null_record(read_epoch_s=time.time() - 5),
+                   null_record(cursor=11)):
+        (home / "discovery" / "space-light-stream.json").write_text(
+            json.dumps(record), encoding="utf-8")
+        rendered = pane(home)
+        assert "light-null-gap" in rendered
+        assert "light-stream-frozen" not in rendered
 
 
 def test_fresh_sample_is_not_retained_as_a_null_observation(tmp_path):
