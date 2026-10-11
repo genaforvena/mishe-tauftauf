@@ -34,6 +34,15 @@ An unreadable sysfs value is named `unread` rather than dropped, and an unreadab
 rfkill switch is omitted from the decoded list: `rfkill_unreadable()` names the
 skipped switches, so a caller can tell an omission from a radio that is absent.
 
+`wall_text.py` decides wall-note ownership for the wall guard. The restore
+document renders every peer wall undelimited into one text, so a mind's notes
+can reproduce a peer's wall byte for byte and the write would otherwise be
+accepted. Comparing two wall documents is an interpretation of external wall
+text and lives in the adapter: `is_peer_copy` reports whether the notes are a
+peer's document ignoring trailing blank lines — a paste that ends on a
+different blank-line count is still the peer's document — while any other
+difference is the writer's own text. `wall.py` acts on the answer alone.
+
 `chat_protocol.py` interprets historical wake, yield and clear receipts. A
 seed-sourced receipt's first line supplies the lifecycle kind and header fields;
 for yields, the decoder also extracts a reported result from a subsequent line

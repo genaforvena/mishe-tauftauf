@@ -1,15 +1,16 @@
 {
   "boundaries": [
     "src/mishe_tauftauf/chat_protocol.py",
-    "src/mishe_tauftauf/feed.py",
-    "src/mishe_tauftauf/records.py",
-    "src/mishe_tauftauf/observations.py",
     "src/mishe_tauftauf/cli.py",
-    "src/mishe_tauftauf/operator_view.py",
-    "src/mishe_tauftauf/inference_effects.py",
-    "src/mishe_tauftauf/omp_pane.py",
-    "src/mishe_tauftauf/proc_table.py",
+    "src/mishe_tauftauf/feed.py",
     "src/mishe_tauftauf/host_radio.py",
+    "src/mishe_tauftauf/inference_effects.py",
+    "src/mishe_tauftauf/observations.py",
+    "src/mishe_tauftauf/omp_pane.py",
+    "src/mishe_tauftauf/operator_view.py",
+    "src/mishe_tauftauf/proc_table.py",
+    "src/mishe_tauftauf/records.py",
+    "src/mishe_tauftauf/wall_text.py",
     "tools/check_parsing.py"
   ],
   "legacy": {

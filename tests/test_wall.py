@@ -131,11 +131,11 @@ def test_wall_write_audit_log_works_without_source_path(tmp_path):
     assert entry["source"] is None
 
 
-def test_wall_write_rejects_byte_identical_peer_wall(tmp_path):
+def test_wall_write_rejects_peer_wall_copy(tmp_path):
     setup_wall(tmp_path)
     from mishe_tauftauf import wall
     wall.write(tmp_path, "genome", "Wake 1494 verified. Phone light channel regular.")
-    with pytest.raises(ValueError, match="byte-identical to peer wall genome"):
+    with pytest.raises(ValueError, match="identical to peer wall genome"):
         wall.write(tmp_path, "witness", "Wake 1494 verified. Phone light channel regular.")
     assert not (tmp_path / "walls" / "witness.md").exists()
     assert (tmp_path / "walls" / "genome.md").read_text().startswith("Wake 1494")
@@ -149,12 +149,30 @@ def test_wall_write_allows_unchanged_own_wall_rewrite(tmp_path):
     assert (tmp_path / "walls" / "genome.md").read_text() == "Steady state; nothing new."
 
 
-def test_peer_copy_guard_requires_exact_bytes(tmp_path):
+def test_peer_copy_guard_ignores_trailing_blank_lines(tmp_path):
+    """The paste class cannot pass by ending on a different blank-line count."""
     setup_wall(tmp_path)
     from mishe_tauftauf import wall
-    wall.write(tmp_path, "genome", "Same evidence, new framing.\n")
-    wall.write(tmp_path, "witness", "Same evidence, new framing.")
-    assert "new framing" in (tmp_path / "walls" / "witness.md").read_text()
+    wall.write(tmp_path, "genome", "Same evidence, new framing.\n\n\n")
+    with pytest.raises(ValueError, match="identical to peer wall genome"):
+        wall.write(tmp_path, "witness", "Same evidence, new framing.")
+
+
+def test_peer_copy_guard_refuses_a_paste_without_trailing_newlines(tmp_path):
+    setup_wall(tmp_path)
+    from mishe_tauftauf import wall
+    wall.write(tmp_path, "genome", "Same evidence, new framing.")
+    with pytest.raises(ValueError, match="identical to peer wall genome"):
+        wall.write(tmp_path, "witness", "Same evidence, new framing.\n")
+
+
+def test_peer_copy_guard_accepts_a_paste_differing_beyond_trailing_lines(tmp_path):
+    """Only trailing newlines are normalized: an interior difference is own work."""
+    setup_wall(tmp_path)
+    from mishe_tauftauf import wall
+    wall.write(tmp_path, "genome", "Line one.\n\nLine two.")
+    wall.write(tmp_path, "witness", "Line one.\nLine two.\n\n")
+    assert (tmp_path / "walls" / "witness.md").read_text() == "Line one.\nLine two.\n\n"
 
 
 

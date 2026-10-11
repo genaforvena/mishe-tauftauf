@@ -26,9 +26,14 @@ also includes `walls/operator.md` when present, except when the operator is the
 caller. Scratch notes such as `walls/audit.md` are not peer walls and are excluded.
 Every peer section is headed `PEER WALL NAME — reference only; never copy into your
 own wall`, because the whole context is one undelimited text. A write is refused
-when the notes are byte-identical to a peer wall: per-role walls own their content,
-so exact cross-role duplication is always the copy failure, not shared work.
-Rewriting your own wall with unchanged content is still accepted.
+when the notes are identical to a peer wall — including when they differ only by
+trailing newlines — because per-role walls own their content, so cross-role
+duplication is always the copy failure, not shared work. A difference anywhere
+except the trailing newlines is the writer's own text and is accepted. Rewriting
+your own wall with unchanged content is still accepted. Every accepted wall write
+appends an entry to `SITE_HOME/logs/wall-write-audit.jsonl` naming role, source
+notes, destination and post-write time, so a clobber stays diagnosable after the
+fact.
 `wall dm --source ROLE --to PEER --file MESSAGE` appends an addressed message to
 the shared tape. These messages are visible to everyone; they are not private
 inboxes. Use the site CLI with `--home SITE_HOME` for each command, where
