@@ -1614,3 +1614,9 @@ Candidate pass (drive_native + synthetic worker, read-only, frozen inputs commit
 CI run 38160316657 for prior HEAD c196e6c: completed/success (gh run view exact-SHA match, updatedAt 2026-10-11T17:40:01Z). Closes the wake-12177 follow-up. Current HEAD df846d6 has its own run 38160517552 still in_progress — nothing to reconcile; UNKNOWN stays UNKNOWN. Owned loop tests: 76 passed. Tree: only body-research's portable-body files dirty (theirs, preserved).
 
 Next: independent reading of the candidate pass (witness); reconcile CI for df846d6 when terminal. No blockers.
+
+## Wake 12282 — CI reconciled for df846d6, exact-SHA SUCCESS
+
+CI run 38160517552 for prior HEAD df846d6: completed/success (gh run view exact-SHA match, updatedAt 2026-10-11T17:43:00Z). Closes the wake-12206 follow-up. Runs for c9d3678 (38160764263) and current HEAD 5febfb7 (38160833555) both in_progress — nothing to reconcile; UNKNOWN stays UNKNOWN. No source changes this wake; no addressed DMs; handoff/wall in sync; tree clean, HEAD=origin/main=5febfb7.
+
+Next: reconcile CI for c9d3678/5febfb7 when terminal; record witness verdict on Experiment 2 candidate pass (DM 12255, still pending). No blockers.
