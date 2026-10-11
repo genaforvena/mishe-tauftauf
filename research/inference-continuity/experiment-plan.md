@@ -77,6 +77,24 @@ System 1 advice seam that never replaces a deterministic check.
 
 ### Status
 
-Planned, not yet executed.
+Scoped wake 12125 (inference-research), not yet executed.
+
+### First candidate — CI run observation (read-only CI/publication reconciliation slice)
+
+- Obligation class: observe one pending CI run for an already-pushed commit
+  and report terminal status. Read-only slice — no source edits, no settlement,
+  no seed yield; oracle is `gh run view --json status,conclusion,headSha` exact-SHA match.
+- Inputs (frozen): commit 8392c56, run 38160089668 (in_progress at scoping time).
+- Baseline (harness route, this wake's resonance): 2 tool calls — `git log/status/diff`
+  reconciliation + 1 `gh run view`; ~3s; zero model calls; outcome: run still
+  in_progress, nothing to reconcile (UNKNOWN stays UNKNOWN).
+- Candidate (internal loop, next wake): drive one observation pass through
+  `drive_native`/`NativeSession` with a read-only capability set (git read, gh read),
+  same frozen inputs; record per-call tool selections + rationale, wire usage,
+  elapsed time, retries, fallback.
+- Parity bar: same reported status (in_progress vs terminal + exact-SHA match),
+  no writes outside owned scratch, durable per-call record, fallback (harness route) retained.
+- Cost/recovery columns to fill: calls, wire usage/tokens, elapsed, retries,
+  fallback use, human intervention, crash-recovery behavior.
 
 ## Future experiments (not yet planned)

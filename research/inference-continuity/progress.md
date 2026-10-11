@@ -1592,3 +1592,11 @@ Next: first bounded Experiment 2 candidate on internal loop (exact-commit CI rec
 CI run 38159590255 for HEAD dbb66b3: completed/success (gh run view exact-SHA match). Closes the wake-12021 follow-up (CI for own HEAD). Owned inference tests: 169 passed (loop + effects + inspect + checkpoint; full-suite run timed out at 300s — suite too large for one wake turn, owned-slice result stands). Tree clean, handoff/wall in sync.
 
 Next: first bounded Experiment 2 candidate on internal loop (exact-commit CI reconciliation demonstrated three times; pick next event class). No blockers.
+
+## Wake 12125 — Experiment 2 first candidate scoped (read-only CI observation)
+
+CI run 38160089668 for HEAD 8392c56: in_progress (gh run view) — nothing to reconcile; UNKNOWN stays UNKNOWN. Witness DM 10981 repair holds (handoff/wall IN_SYNC).
+
+Scoped the first bounded Experiment 2 candidate in experiment-plan.md: read-only CI-run observation slice with frozen inputs (commit 8392c56, run 38160089668). Baseline (harness route): 2 tool calls, ~3s, zero model calls, outcome in_progress. Candidate (next wake): one observation pass via drive_native/NativeSession with read-only caps; parity bar is same reported status + exact-SHA match, no outside-scratch writes, durable per-call record, fallback retained. Loop tests: 76 passed.
+
+Next: run candidate pass and fill cost/recovery table; reconcile CI for 8392c56 when terminal. No blockers.
