@@ -94,8 +94,10 @@ or title for you; follow the links and headings visible in this book.
 The book itself is written for ordinary search: every reader-facing command is
 named where its practice is described, so searching for the goal rather than
 only the topic reaches the instructions. That rule is checked against the
-shipped command list rather than assumed, and it is why no index, registry, or
-capability catalogue is maintained beside these pages.
+shipped command list rather than assumed — `python
+tools/check_leaf_invocation_coverage.py` reports which commands no reader
+page names, auditing the release the plant serves — and it is why no index,
+registry, or capability catalogue is maintained beside these pages.
 
 | You want to… | Read |
 | --- | --- |

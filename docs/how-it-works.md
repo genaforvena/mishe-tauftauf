@@ -610,12 +610,13 @@ lagging pane process a non-mind `bash`.
 The panes can therefore name both gap classes, and a frame naming one was
 composed 79 seconds after the repoint (`light-null-gap`,
 2026-10-11T03:43:04Z, discover's and senses' panes, independently
-re-read that morning; gap-class frames recur — 194 of the 590 rendered
-frames since the repoint named one, my own 08:38Z census over the same
+re-read that morning; gap-class frames recur — 196 of the 592 rendered
+frames since the repoint named one, my own 09:02Z census over the same
 stored records, alongside 394 `stale-original-evidence` and two
-`transport-not-current` frames), of which five frames — the
+`transport-not-current` frames), of which seven frames — the
 08:11:53.573Z onset captured at 08:12:59Z (`senses`) and 08:13:00Z
-(`discover`), at 08:22:45Z in both panes and at 08:32:48Z (`senses`) —
+(`discover`), at 08:22:45Z in both panes and at 08:32:48Z, 08:43:12Z
+and 08:52:53Z (`senses`) —
 name `light-stream-frozen`). The panes re-derive the light
 line from a direct
 boundary read each refresh, so a class appears at refresh cadence rather
@@ -637,10 +638,13 @@ session `90cc9bdc`, sequence 125855, last phone sample 08:11:18Z, onset
 08:11:53.573Z, named 08:12:58.2Z — was caught inside two frames:
 `light-stream-frozen` at 08:12:59Z and 08:13:00Z, the first rendered-frame
 captures of the class on this plant, and the onset record and its routed
-event remain the durable evidence for it. That streak held one identity past
-half an hour: the phone's last sample stayed 08:11:18Z with cursor 125856
-stopped, and three further frames rendered the class at 08:22:45Z (both
-panes) and 08:32:48Z (`senses`), so five frames name it in my 08:38Z census.
+event remain the durable evidence for it. That streak held one identity
+past 51 minutes: the phone's last sample stayed 08:11:18Z with cursor
+125856 stopped, and five further frames rendered the class at 08:22:45Z
+(both panes) and 08:32:48Z, 08:43:12Z and 08:52:53Z (`senses`) — the
+onset record's onset epoch still read 08:11:53.573Z with the same session,
+cursor and sequence at 09:02:29Z, so this is one streak, not a recurrence
+— so seven frames name it in my 09:02Z census.
 The class names a genuine producer stall, so while the phone keeps publishing the reader cannot reach it by coverage
 sampling. Check a pane
 process's own import root, and the script it execs, before claiming pane
@@ -693,7 +697,14 @@ cause `camera-kernel-urb=10`: the freshly opened window that had counted one
 climbed back to the ten-resubmit threshold within minutes, so the resubmits
 recur inside one window. The driver
 or firmware cause stays open with health as the resolver and the `CAMERA:`
-line as the detector.
+line as the detector. At 09:03Z the line still read `CAMERA: RED
+class=SEEING artifact-age=3s` with the other sub-cause now tripping first:
+`capture-fails=4/900s kernel-urbs=1/900s`, named `camera-capture-fail=4`.
+The window had turned over and the kernel count fell back to one while the
+capture failures crossed their three-fault threshold, so the red reading
+continues through a different count. Whether the two productions share one
+cause or one leads the other is unresolved; the count-persistence reads
+above are preserved, not superseded.
 
 Discovery and senses readers reject malformed receipts as a whole rather than
 trusting a readable subset. The observation verdict becomes UNKNOWN while the
@@ -804,6 +815,23 @@ state, not a tracked checkout path.
 A general lesson becomes shared behavior only through deliberate promotion into tracked source. Authors commit their own scoped work on the single `main` branch; there are no publication or candidate branches. Genome pushes `main` and checks the pushed commit's CI and live consumers; it does not gate another mind's commit. The author verifies final CI and deployed consumers. Delivery remains incomplete until live verification succeeds; blockers need a resolver and disposition time. Kernel changes also need to reach active sites and their live services, not merely the checkout.
 
 The local agent contract is [AGENTS.md](../AGENTS.md). Durable rules come from [seed_doctrine.md](../src/mishe_tauftauf/seed_doctrine.md), read from tracked source at restore and mirrored into `SITE/doctrine.md` during planting. The [mesh culture mapping](../instructions/mesh-culture.md) records the source rules and the narrower boundaries this seed carries.
+
+### The book names its commands
+
+A reader-facing capability carries the vocabulary a reader's goal will use:
+name the command, not only the practice. The book therefore keeps ordinary
+maintained Markdown plus ordinary search and maintains no index, registry,
+or generated catalogue beside these pages. That disposition was chosen on
+cost — in every reader pair measured, ordinary search was the cheaper
+traversal — not because a catalogue would be unimportant.
+
+The rule is checked rather than assumed. `python
+tools/check_leaf_invocation_coverage.py` walks the command tree of the
+release this plant serves and reports which leaf invocations no reader page
+names, as coverage rows rather than a failure count. It resolves the release
+from the site's served-release record and refuses to audit any other tree,
+so the check cannot quietly measure a retired release. An uncovered row
+names a gap to consider, not a defect to suppress.
 
 ## Where this fits
 

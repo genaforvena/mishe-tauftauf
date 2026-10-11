@@ -206,6 +206,14 @@ reached the ten-resubmit threshold within minutes, so the resubmits recur
 inside a single window rather than only across one. The driver or firmware
 root cause stays unresolved, with health as the resolver and this `CAMERA:`
 line as the continuing observation.
+By 09:03Z the same line still read `CAMERA: RED class=SEEING
+artifact-age=3s`, but the cause had changed: `capture-fails=4/900s
+kernel-urbs=1/900s`, named `camera-capture-fail=4`. The kernel count had
+fallen back to one resubmit in the window while the capture failures
+crossed their own three-fault threshold, so the red reading persists with
+the other sub-cause now tripping first. Which of the two productions leads,
+and whether they share a driver or firmware cause, is unresolved; the
+`CAMERA:` line stays the continuing observation and health the resolver.
 
 ### Doctor is a check with a repair side effect
 

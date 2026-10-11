@@ -14,7 +14,8 @@
     "src/mishe_tauftauf/unit_properties.py",
     "src/mishe_tauftauf/wall_text.py",
     "src/mishe_tauftauf/space_text.py",
-    "tools/check_parsing.py"
+    "tools/check_parsing.py",
+    "tools/check_leaf_invocation_coverage.py"
   ],
   "legacy": {
     "coordination/launcher.py": {
