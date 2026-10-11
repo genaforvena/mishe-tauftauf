@@ -128,9 +128,13 @@ def _publication_lines(home):
 def _mind_pane_live(session: str, role: str) -> bool:
     """True when ``role``'s mind pane exists, is alive, and runs a mind engine.
 
-    Mirrors the engine set ``seed._mind_ready`` accepts. A missing pane, a dead
-    pane, or a foreign foreground command is not a live mind, so its settled wake
-    cannot be a rotation the supervisor is holding.
+    Delegates to the engine set ``seed._mind_ready`` accepts: the three TUI
+    engines by their foreground command, and a native-loop pane (its launcher
+    process, not a TUI) through the site's ``checks/mind-ready/<role>`` gate.
+    A native pane runs ``python3``, so an allow-list of TUI commands alone
+    reports it as no mind at all and turns a live, mid-turn mind's held wake
+    into a witness RED. A dead or foreign pane still fails that gate, so the
+    fault stays visible rather than hidden.
     """
     from . import seed
     probe = seed._tmux("display-message", "-p", "-t", f"{session}:{role}.1",
@@ -138,7 +142,14 @@ def _mind_pane_live(session: str, role: str) -> bool:
     if probe.returncode:
         return False
     fields = probe.stdout.decode("utf-8", "replace").split()
-    return len(fields) == 2 and fields[0] == "0" and fields[1] in {"omp", "codex", "opencode"}
+    if len(fields) != 2 or fields[0] != "0":
+        return False
+    if fields[1] in {"omp", "codex", "opencode"}:
+        return True
+    try:
+        return seed._mind_ready(session, role)
+    except (OSError, RuntimeError):
+        return False
 
 
 def _mind_not_idle(session: str, role: str) -> bool:

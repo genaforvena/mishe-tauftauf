@@ -232,6 +232,48 @@ def test_live_mind_pane_accepts_every_ready_engine(monkeypatch):
     assert not view._mind_pane_live('session', 'docs')
 
 
+def test_live_mind_pane_accepts_a_native_readiness_gate(monkeypatch):
+    """A native-loop pane runs its launcher, not a TUI engine.
+
+    `checks/mind-ready/<role>` is that pane's readiness engine, so liveness must
+    follow the gate: ready means live, a failed gate (dead pane, busy busy file,
+    foreign engine) still reports no live mind.
+    """
+    import mishe_tauftauf.seed as seed
+    import mishe_tauftauf.seed_witness_view as view
+
+    def pane(value):
+        return lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=value.encode())
+
+    monkeypatch.setattr(seed, '_tmux', pane('0 python3'))
+    monkeypatch.setattr(seed, '_mind_ready', lambda session, slug: True)
+    assert view._mind_pane_live('session', 'health')
+
+    for ready in (False,):
+        monkeypatch.setattr(seed, '_mind_ready', lambda session, slug: ready)
+        assert not view._mind_pane_live('session', 'health')
+
+
+def test_stale_pend_holds_a_native_mind_that_is_still_working(tmp_path, monkeypatch):
+    """A native mind's held wake is a rotation, not a witness RED.
+
+    Before the readiness gate was wired into `_mind_pane_live`, health's native
+    pane (`python3` + a busy health-native.busy file) read as no mind at all,
+    so an outstanding wake stayed STALE PEND: RED with owner=witness on every
+    scan while the mind was mid-turn in its journal.
+    """
+    import mishe_tauftauf.seed as seed
+    import mishe_tauftauf.seed_witness_view as view
+    entries = [entry(1, 'seed', 'seed wake health observation=2')]
+    wire(tmp_path, monkeypatch, entries)
+    monkeypatch.setattr(view, '_mind_pane_live', lambda session, role: True)
+    monkeypatch.setattr(seed, '_mind_idle', lambda session, slug: False)
+    output = render(tmp_path)
+    assert 'STALE PEND: HELD health wake=2 pending=1' in output
+    assert 'STALE PEND: RED' not in output
+    assert 'owner=witness' not in output
+
+
 def wedge_scan(tmp_path, suspects, created=None):
     """Publish a discovery scan carrying a `sense.mind.wedge-suspect` reading."""
     from datetime import datetime, timezone
