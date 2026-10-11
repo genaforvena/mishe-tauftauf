@@ -440,10 +440,14 @@ clock agreement and is capped at 30 seconds or the producer's shorter validity;
 polling or rendering cannot extend it, and missing, broken, delayed or expired
 evidence is UNKNOWN. A published sample without a lux value reads UNKNOWN as
 its own reason (`light-null-gap`), so a dropout stays distinguishable from
-ordinary aging and from a corrupt boundary; recurrences have been observed and
-their source-side cadence and cause are not yet measured. Retained measured
-light changes are history, not room occupancy or human attendance, and startup
-or recovery is not a physical event.
+ordinary aging and from a corrupt boundary. Two source-side gap widths are
+measured: short dropouts of a few seconds to tens of seconds, where the
+boundary's event cursor keeps advancing, and a sustained phone-silent freeze,
+where the cursor stops while the producer keeps writing and the transport stays
+reachable. Which phone-side layer stops publishing, and why, is not measured; a
+live transport and a live writer already rule out the link as the cause.
+Retained measured light changes are history, not room occupancy or human
+attendance, and startup or recovery is not a physical event.
 Source support alone does not establish a working feed: the Android publisher
 and each core caller need their own checked activation.
 
