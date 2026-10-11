@@ -482,12 +482,16 @@ write fails still names the freeze without routing. The code was committed on
 `main` as `3c2f110` and delivered through the whole chain rather than by
 promotion alone: push, exact-SHA CI (`de1445c`, run 38112540728 reported
 pass) and promotion to `SITE/releases/de1445c…` at 04:55Z, read back from the
-pane processes' own `PYTHONPATH`. No sustained freeze has occurred since that
-promotion, so `discovery/space-light-freeze.json` is still absent and the live
-routing path has not been exercised by a real streak. The pane
-acceptance of the wording is half measured: a pane named `light-null-gap`
-at 03:43:04Z, while `light-stream-frozen` still waits on the next
-sustained null block.
+pane processes' own `PYTHONPATH`. A real streak has now exercised that routing
+path: 2026-10-11T07:25:16Z the reader's own null observations of session
+`90cc9bdc` (cursor 122846, sequence 122845) stayed a minute apart, the first
+naming at 07:26:27Z wrote `discovery/space-light-freeze.json` — the streak
+identity, first read, naming epoch and the age token
+(`last-phone=07:24:14Z age=2m13s`) — and appended one addressed event to
+`research-methods`. No pane frame had rendered the class by 07:37Z: the naming
+came from the scan's re-read, the cadence the routing rule names, and the first
+frames after the streak still read `light-null-gap`. So the pane acceptance of
+the wording stays half measured, and one streak is not a recurrence.
 Measured 2026-10-11T03:06Z: the committed source keeps the first null of a
 streak, so the interval grows at any cadence, while release `f733a4b` rewrote
 that record on every null read, which held a five-second read interval at
@@ -555,24 +559,27 @@ renderers, the same five `uncovered` roles and the same two indirect-package
 rows (my 06:22Z read), so closing the route did not turn the sense UNKNOWN —
 but check the served pin's `discovery.py` before relying on it, because a
 promotion can drop behind the source again. The minds' own panes can lag several
-releases behind — no reading currently sees those roots.
+releases behind — no reading currently sees those roots: measured 06:44Z, three
+active mind panes imported the superseded release while all ten renderer panes
+were on the pin, and 07:18Z found them respawned onto the pin with the single
+lagging pane process a non-mind `bash`.
 The panes can therefore name both gap classes, and a frame naming one was
 composed 79 seconds after the repoint (`light-null-gap`,
 2026-10-11T03:43:04Z, discover's and senses' panes, independently
-re-read that morning; gap-class frames recur — 138 of the 418 rendered
-frames since the repoint named one, my own 06:56Z census over the same
+re-read that morning; gap-class frames recur — 169 of the 504 rendered
+frames since the repoint named one, my own 07:37Z census over the same
 stored records). The panes re-derive the light line from a direct
 boundary read each refresh, so a class appears at refresh cadence rather
 than scan cadence, and a short null can still render as the prior
-sample's class. `light-stream-frozen` still waits on a null streak held
-past a minute under one identity, which has not occurred: every observed
-window closes when the sequence advances, so the identity the freeze
-class needs never holds while the producer keeps publishing. Measured at
-the boundary rather than inferred from the frames: polling
-`body/space.json` every two seconds for 178 seconds read 90 samples
+sample's class. `light-stream-frozen` needs a null streak held past a minute
+under one identity: measured at the boundary, that had never happened —
+polling `body/space.json` every two seconds for 178 seconds read 90 samples
 under 36 distinct identities, one of them published without a lux value,
 that null held zero seconds, and no identity held a minute (discover,
-2026-10-11T05:00Z). The class names a genuine producer stall, so while
+2026-10-11T05:00Z); every observed window closed when the sequence
+advanced, so the identity the class needs never held while the producer
+kept publishing. The 07:25Z streak named above is the first measured
+exception, and no pane frame has rendered the class yet. The class names a genuine producer stall, so while
 the phone keeps publishing the reader cannot reach it by coverage
 sampling. Check a pane
 process's own import root, and the script it execs, before claiming pane
@@ -599,9 +606,12 @@ age, `CAPTURE-FAIL` onsets and kernel URB resubmit failures in a 15-minute
 window. A node declares its camera with `health/camera.json`, so a plant
 without a webcam skips the check instead of inheriting its neighbour's faults,
 and an unreadable source on a declared node reads UNKNOWN rather than PASS. On
-this host the reading is RED while the lens still sees a scene — the artifact
-refreshes on time and the fault counted is the kernel's, which is why the
-check counts as observation of an unresolved cause rather than as a repair.
+this host the reading is a fault reading while the lens still sees a scene: at
+06:38Z it read RED with `kernel-urbs=14/900s` and the artifact refreshing on
+time, and at 07:10Z the same line read PASS with `kernel-urbs=4/900s` once the
+15-minute window rolled past the kernel's failures — a bounded recovery, not a
+repair, because the driver or firmware cause is unresolved and it is the window
+that moved.
 
 Discovery and senses readers reject malformed receipts as a whole rather than
 trusting a readable subset. The observation verdict becomes UNKNOWN while the

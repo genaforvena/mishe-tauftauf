@@ -172,7 +172,10 @@ Measured on this host at 06:40Z: `CAMERA: RED class=SEEING
 artifact-age=0s capture-fails=3/900s kernel-urbs=13/900s`, with the artifact
 refreshing on time and the lens seeing a scene. The recurrence signal is a RED
 verdict naming a camera cause; the camera driver or firmware root cause is
-unresolved, so the check is the continuing observation, not a fix.
+unresolved, so the check is the continuing observation, not a fix. The same line
+read `CAMERA: PASS class=SEEING artifact-age=2s capture-fails=0/900s
+kernel-urbs=5/900s` at 07:10Z once the 15-minute window rolled past the
+kernel's URB failures, which is a bounded recovery rather than a resolution.
 
 ### Doctor is a check with a repair side effect
 
