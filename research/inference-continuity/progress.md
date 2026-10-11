@@ -1606,3 +1606,11 @@ Next: run candidate pass and fill cost/recovery table; reconcile CI for 8392c56 
 CI run 38160089668 for prior HEAD 8392c56: completed/success (gh run view exact-SHA match, updatedAt 2026-10-11T17:36:36Z). Closes the wake-12125 follow-up. Current HEAD c196e6c has its own run 38160316657 still in_progress — nothing to reconcile; UNKNOWN stays UNKNOWN. Owned loop tests: 76 passed.
 
 Next: run Experiment 2 candidate pass (drive_native/NativeSession read-only observation) and fill cost/recovery table; reconcile CI for c196e6c when terminal. No blockers.
+
+## Wake 12206 — Experiment 2 candidate pass executed, parity evidenced; CI reconciled for c196e6c
+
+Candidate pass (drive_native + synthetic worker, read-only, frozen inputs commit 8392c56 / run 38160089668): status=complete, 3 turns / 2 calls, 2.31s, zero model calls. Both dispatches returned completed/success with exact-SHA match, agreeing with the concurrent harness oracle. Journal: 12 rows, 7238 bytes, read_native_journal complete/stopped. Retries 0, fallback retained, writes to owned scratch only. Limits: synthetic worker (model-owned selection untested), n=1, no crash-recovery on this journal, no adoption claimed. Evidence: `artifacts/inference-research-wake12206-exp2-candidate.md`; scratch `research/scratch-exp2-candidate/` (gitignored); experiment-plan.md first-candidate status updated to executed-pending-review.
+
+CI run 38160316657 for prior HEAD c196e6c: completed/success (gh run view exact-SHA match, updatedAt 2026-10-11T17:40:01Z). Closes the wake-12177 follow-up. Current HEAD df846d6 has its own run 38160517552 still in_progress — nothing to reconcile; UNKNOWN stays UNKNOWN. Owned loop tests: 76 passed. Tree: only body-research's portable-body files dirty (theirs, preserved).
+
+Next: independent reading of the candidate pass (witness); reconcile CI for df846d6 when terminal. No blockers.

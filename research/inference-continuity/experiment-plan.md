@@ -77,7 +77,7 @@ System 1 advice seam that never replaces a deterministic check.
 
 ### Status
 
-Scoped wake 12125 (inference-research), not yet executed.
+Executed wake 12206 (inference-research), pending independent review.
 
 ### First candidate — CI run observation (read-only CI/publication reconciliation slice)
 
@@ -96,5 +96,6 @@ Scoped wake 12125 (inference-research), not yet executed.
   no writes outside owned scratch, durable per-call record, fallback (harness route) retained.
 - Cost/recovery columns to fill: calls, wire usage/tokens, elapsed, retries,
   fallback use, human intervention, crash-recovery behavior.
+- Outcome (wake 12206): candidate status=complete, 3 turns / 2 calls, 2.31s, zero model calls (synthetic worker); both dispatches completed/success exact-SHA match, agreeing with concurrent oracle; journal 12 rows / 7238 bytes, complete/stopped; retries 0, fallback retained, owned-scratch writes only. Limits: synthetic worker, n=1, no crash-recovery on this journal, no adoption claimed. Evidence: `.mishe-tauftauf/artifacts/inference-research-wake12206-exp2-candidate.md`.
 
 ## Future experiments (not yet planned)
