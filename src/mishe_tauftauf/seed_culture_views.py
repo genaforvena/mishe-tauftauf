@@ -137,7 +137,9 @@ def discover(home: Path) -> str:
         else:
             lines.append("STATE: GREEN — recent bounded read-only scan")
             verdict = "PASS discover recent scan"
-    pending = [(item, state) for item, state in list_requests(home) if state == "pending"]
+    retired = retired_requests(home)
+    pending = [(item, state) for item, state in list_requests(home)
+               if state == "pending" and item.identity not in retired]
     lines.append(f"PERMISSION REQUESTS: {len(pending)} pending")
     for item, _ in pending[-5:]:
         lines.append(f"REQUEST {item.identity} unblocks={','.join(item.unblocks)}")
