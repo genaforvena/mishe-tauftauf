@@ -455,6 +455,11 @@ the same absent sample and unmoving cursor persist across two of the reader's
 own null observations at least a minute apart, the reading names
 `light-stream-frozen`; the first null observation of a stream reads
 `light-null-gap`, and publication or polling never converts one into the other.
+The notification-time re-read applies the same class to the boundary it
+rechecks and, like the scan read, never renews the streak's origin, so the
+notification cadence cannot hold the measured interval under that minute. A
+stream that moves between the two names is reported as a gap duration class
+change, not as a light transition and not as an availability baseline.
 Which byte-set a pane loads is a loaded-bytes question, not a reading one.
 Measured 2026-10-11T02:33Z: this plant's resident panes run
 `pain watch <role>` under the pinned release `f733a4b`, which carries both

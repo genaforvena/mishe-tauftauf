@@ -3521,6 +3521,14 @@ def _notify_scan(home: Path, snapshot: dict[str, object],
         if name == "sense.space.light" and old_reading and new_reading:
             if _space_new_event(old_reading, new_reading):
                 change_details.append(f"{name} {new_reading['event_sample']}")
+            elif (old_reading.get("reason"), new_reading.get("reason")) in (
+                    ("light-null-gap", "light-stream-frozen"),
+                    ("light-stream-frozen", "light-null-gap")):
+                # The same absent coverage judged for longer is the reader's
+                # duration class, not a light change and not a baseline shift.
+                change_details.append(f"{name} gap duration class "
+                                      f"{old_reading['reason']} -> "
+                                      f"{new_reading['reason']}")
             else:
                 change_details.append(f"{name} availability/provenance baseline (not a physical transition)")
             continue
