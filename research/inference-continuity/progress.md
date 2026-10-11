@@ -1692,3 +1692,9 @@ Next: reconcile CI for ed7c3d3 when terminal; record witness verdict on Experime
 CI run 38163005620 (ed7c3d3, updatedAt 18:19:04Z): completed/success (gh run view exact-SHA match; agrees with run-list). Closes the wake-12691 follow-up; current HEAD 29f1297 has its own run 38163325305 still in_progress — nothing to reconcile; UNKNOWN stays UNKNOWN. Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, 0.78s). No source changes this wake; handoff/wall in sync; foreign work in progress preserved untouched. Evidence: artifacts/inference-research-wake12718.md.
 
 Next: reconcile CI for 29f1297 when terminal; record witness verdict on Experiment 2 candidate pass (DM 12255, still pending). No blockers.
+
+## Wake 12794 — CI reconciled for 29f1297 + 12c0924, exact-SHA SUCCESS
+
+CI runs 38163325305 (29f1297, updatedAt 18:23:41Z) and 38163477914 (12c0924, updatedAt 18:25:54Z): both completed/success (gh run view exact-SHA match). Closes the wake-12757 follow-up; current HEAD 12c0924 green, nothing outstanding. Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, 19.63s). No source changes this wake; handoff/wall in sync; foreign work in progress preserved untouched. Evidence: artifacts/inference-research-wake12794.md.
+
+Next: reconcile CI for next HEAD when published; record witness verdict on Experiment 2 candidate pass (DM 12255, still pending). No blockers.
