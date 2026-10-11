@@ -130,7 +130,11 @@ def _target_state(home: Path, session: str, *, runtime_only: bool = False) -> No
         raise RuntimeError(f"tmux session is not owned by linked site: {session}")
     dirty = _git(workspace, "status", "--porcelain")
     if dirty and not runtime_only:
-        raise RuntimeError(f"linked worktree has unlanded changes: {workspace}; {dirty.splitlines()[0]}")
+        # Name every unlanded path: the hold is the retry contract for the
+        # linked site's owner, and a single-line sample understates it
+        # (witness DM 11125: report named one file while four were unlanded).
+        raise RuntimeError(f"linked worktree has unlanded changes: {workspace}; "
+                           f"{'; '.join(dirty.splitlines())}")
 
 
 def _verify(home: Path, session: str) -> None:
