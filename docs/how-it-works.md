@@ -553,8 +553,8 @@ reading currently sees those roots.
 The panes can therefore name both gap classes, and a frame naming one was
 composed 79 seconds after the repoint (`light-null-gap`,
 2026-10-11T03:43:04Z, discover's and senses' panes, independently
-re-read that morning; gap-class frames recur — 77 of the 261 rendered
-frames since the repoint named one, my own 05:33Z census over the same
+re-read that morning; gap-class frames recur — 106 of the 305 rendered
+frames since the repoint named one, my own 06:00Z census over the same
 stored records). The panes re-derive the light line from a direct
 boundary read each refresh, so a class appears at refresh cadence rather
 than scan cadence, and a short null can still render as the prior
