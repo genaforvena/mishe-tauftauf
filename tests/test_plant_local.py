@@ -160,9 +160,10 @@ def test_normal_replant_keeps_installed_immutable_source(tmp_path):
         "version": 1, "source": str(release), "sha": sha, "session": "owned"}))
     assert f"Environment=PYTHONPATH={release / 'src'}" in plant.unit_text(home, "owned", "genome", "python3")
     argv = seed._mind_launch_argv(home, "genome")
-    # Supervisor-created consumers use the supervisor's actual imported root;
-    # generated services separately honour the checked release pin.
-    assert any(arg.startswith(f"PYTHONPATH={Path(seed.__file__).resolve().parents[1]}") for arg in argv)
+    # The mind pane follows the home's pin: the supervisor's own byte-set decides
+    # it only when the home names no pin, so a scratch tree respawning this
+    # plant's mind hands it the declared release instead of the tree.
+    assert any(arg.startswith(f"PYTHONPATH={release / 'src'}") for arg in argv)
     path_arg = next(arg for arg in argv if arg.startswith("PATH="))
     site_bin = str(home / "bin")
     path_entries = path_arg.removeprefix("PATH=").split(os.pathsep)
@@ -310,10 +311,50 @@ def test_python_search_path_keeps_order_and_collapses_duplicates() -> None:
 def test_python_command_does_not_repeat_the_package_root(monkeypatch) -> None:
     from mishe_tauftauf import tmux
 
-    root = str(Path(tmux.__file__).resolve().parents[1])
-    monkeypatch.setenv("PYTHONPATH", root)
-    command = tmux._python_command("--home", "site", "doctor")
-    assert f"PYTHONPATH={root}" in command
+    root = Path(tmux.__file__).resolve().parents[2]
+    monkeypatch.setenv("PYTHONPATH", str(root))
+    command = tmux._python_command(Path("site"), "--home", "site", "doctor")
+    assert f"PYTHONPATH={root / 'src'}" in command
+
+
+def test_python_command_names_the_home_pin_not_the_calling_tree(tmp_path, monkeypatch) -> None:
+    # The respawning process's own byte-set used to decide the pane's; a CI
+    # scratch tree respawning this plant's panes handed them its code. A home
+    # that names a pin must have its panes carry that pin instead.
+    import subprocess
+
+    from mishe_tauftauf import tmux
+
+    home = (tmp_path / "site").resolve()
+    release = (tmp_path / "release").resolve()
+    (release / "src" / "mishe_tauftauf").mkdir(parents=True)
+    (release / "src" / "mishe_tauftauf" / "__init__.py").write_text("")
+    subprocess.run(["git", "-C", str(release), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(release), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(release), "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "-qm", "release"], check=True)
+
+    from mishe_tauftauf.runtime_source import select_source
+    select_source(home, release, "probe")
+
+    monkeypatch.setenv("PYTHONPATH", "/scratch/ci-tree/src")
+    command = [str(part) for part in tmux._python_command(home, "--home", str(home), "doctor")]
+    assert f"PYTHONPATH={release / 'src'}" in command
+    assert not any("/scratch/ci-tree" in part for part in command)
+
+    # An unreadable pin must fail the respawn rather than silently hand the pane
+    # the respawner's tree, which is the drift this exists to stop.
+    (home / "health/runtime-release.json").write_text(
+        '{"version": 1, "source": "/nope/gone", "sha": "' + "a" * 40 + '"}', encoding="utf-8")
+    with pytest.raises(ValueError, match="runtime pin invalid"):
+        tmux._python_command(home, "--home", str(home), "doctor")
+
+    # A home that names no pin keeps the caller's byte-set: a scratch tree
+    # serving its own site must not be repointed at some other release.
+    (home / "health/runtime-release.json").unlink()
+    command = [str(part) for part in tmux._python_command(home, "--home", str(home), "doctor")]
+    assert f"PYTHONPATH={Path(tmux.__file__).resolve().parents[2] / 'src'}" in command
+    assert "/scratch/ci-tree" not in " ".join(command)
 
 
 def test_runtime_only_cli_preserves_dirty_application_and_contract(tmp_path: Path) -> None:

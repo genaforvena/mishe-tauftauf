@@ -28,6 +28,25 @@ def python_search_path(*values: object) -> str:
     return os.pathsep.join(parts)
 
 
+def pane_python_path(home: Path, running_root: Path) -> str:
+    """The ``PYTHONPATH`` a pane raised for ``home`` must import.
+
+    A respawn is an action on ``home``'s session, so the byte-set it hands a pane
+    is the one ``home`` declares, not the one the respawner happens to run: the
+    respawner is a development checkout or a CI scratch tree far more often than
+    it is the plant, and a pane that follows the respawner drifts off the pin
+    without any state change of its own. ``running_root`` is the repository root
+    of the code doing the respawning; it stays the answer only for a home that
+    names no pin, which is a scratch tree serving its own site. An unreadable pin
+    raises instead of falling back to the respawner's tree — the silent fallback
+    is the drift this exists to stop, and a respawn that cannot name the
+    declared byte-set is a repair-blocking condition, not a licence to import
+    freely. Generated units already carry the same single pinned entry
+    (``plant.unit_text``).
+    """
+    return str(source_for(home, running_root) / "src")
+
+
 def checked_source(source: Path, sha: str | None = None) -> tuple[Path, str]:
     source = source.resolve()
     if any(char.isspace() for char in str(source)):

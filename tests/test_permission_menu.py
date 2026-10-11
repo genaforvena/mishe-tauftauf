@@ -164,11 +164,10 @@ def test_new_permissions_bottom_pane_gets_its_own_import_root(tmp_path, monkeypa
     # A pane respawned without an explicit PYTHONPATH inherits the tmux
     # server's environment and imports whatever release that server started
     # with, so a freshly created selector would run stale code until the next
-    # plant. ensure() must pass its own import root when it makes the pane.
+    # plant. ensure() must pass the byte-set the home pins when it makes the pane.
     from pathlib import Path
 
     from mishe_tauftauf import seed_permission_panel
-    from mishe_tauftauf.runtime_source import python_search_path
 
     home = (tmp_path / "site").resolve()
     calls = []
@@ -192,8 +191,8 @@ def test_new_permissions_bottom_pane_gets_its_own_import_root(tmp_path, monkeypa
 
     assert seed_permission_panel.ensure(home, "probe") == "permissions panel ready in probe"
 
-    expected = python_search_path(Path(seed_permission_panel.__file__).resolve().parents[1],
-                                  "/stale/server/root")
+    # A home with no pin imports the calling byte-set, never the tmux server's.
+    expected = (Path(seed_permission_panel.__file__).resolve().parents[2] / "src").as_posix()
     bottom = [c for c in calls if c[0] == "respawn-pane" and c[-1].endswith("permissions-shell")]
     assert list(bottom[0]) == ["respawn-pane", "-k", "-t", "probe:permissions.1", "env",
                                f"PYTHONPATH={expected}", str(home / "bin" / "permissions-shell")]
