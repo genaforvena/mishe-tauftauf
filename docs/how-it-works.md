@@ -530,23 +530,31 @@ cadence, so a pane could not name either gap class; the snapshot survives
 only as patch and revert material. The seven scripts now
 export no root and inherit the pane watcher's release, so a watcher respawn
 follows the promotion the plant serves; read a pane's own
-`/proc/<pid>/environ` before trusting its wording. Measured after the change:
-the live `sense.runtime.renderer-coverage` reading named ten renderers on
-`releases/94092ecd…/src` with no drift at 04:15Z, and reads the same ten on
-`releases/de1445c…/src` after the 04:55Z promotion (my 05:01Z scan), while a
-frame composed then names that release on its `DEPLOYED:` line. That reading is
-a session-wide pane lookup, so a scratch or foreign tmux pane sharing a role
-name can name a root no manifest owns: it read `drift` at 04:25:58Z against
-`/tmp/ci-2edab75`, a peer's CI worktree, and returned to verified at 04:33:50Z.
-A drift row naming a root you do not own is a reader question before it is a
-pane defect. The renderers' roots move with each promotion, while the minds'
+`/proc/<pid>/environ` before trusting its wording. The live
+`sense.runtime.renderer-coverage` reading names its ten renderers against the
+release `identity.pin` names, with no `drift` — `verified`, ten renderers all
+on the pinned release, `uncovered=` five roles running no package module
+(my 05:23:51Z read) — while a frame composed under that pin names it on its
+`DEPLOYED:` line. The reading's own renderer count and `drift` list are the
+check, not a commit sha: the renderers' roots move with each promotion, so a
+sentence naming one release goes stale at the next promotion. The served
+reading matches a role to whichever pane its lookup resolves, so a scratch or
+foreign tmux pane sharing a role name can name a root no manifest owns: it read
+`drift` at 04:25:58Z against `/tmp/ci-2edab75`, a peer's CI worktree, and
+returned to verified at 04:33:50Z. A drift row naming a root you do not own is
+a reader question before it is a pane defect. Resolving that role from the
+session the reading home owns instead — a role whose panes all belong to
+another home stays unresolved rather than guessed, while a lone pane in a
+session no home has claimed still resolves — is committed in source and not
+yet in the served pin, so the served reading can still be named a foreign root
+until the promotion replaces it. The minds'
 own panes can lag several releases behind — no reading currently sees those
 roots.
 The panes can therefore name both gap classes, and a frame naming one was
 composed 79 seconds after the repoint (`light-null-gap`,
 2026-10-11T03:43:04Z, discover's and senses' panes, independently
-re-read that morning; gap-class frames recur — 62 of the 210 rendered
-frames since the repoint named one, my own 05:14Z census over the same
+re-read that morning; gap-class frames recur — 77 of the 261 rendered
+frames since the repoint named one, my own 05:33Z census over the same
 stored records). The panes re-derive the light line from a direct
 boundary read each refresh, so a class appears at refresh cadence rather
 than scan cadence, and a short null can still render as the prior

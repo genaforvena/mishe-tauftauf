@@ -432,12 +432,17 @@ pane's cwd is checked for a
 `mishe_tauftauf/` package that would shadow the `PYTHONPATH` root, since
 `python -m` inserts the cwd before `PYTHONPATH` in `sys.path`. `unavailable`
 means no renderer runs a package module at all.
-The pane lookup is session-wide, not home-scoped: a scratch or foreign pane
-whose start command names `pain watch <role>` can redefine that role's renderer
-root, so a `drift` row naming a root no manifest owns is a reader question
-before it is a pane defect — measured 04:25:58Z against `/tmp/ci-2edab75`, a
-peer's CI worktree, with recovery to `verified` at 04:33:50Z. Reading the pane
-process's own `/proc/<pid>/environ` separates the two cases.
+The served reading resolves a role from whichever pane its lookup matches, so
+a scratch or foreign pane whose start command names `pain watch <role>` can
+redefine that role's renderer root, and a `drift` row naming a root no manifest
+owns is a reader question before it is a pane defect — measured 04:25:58Z
+against `/tmp/ci-2edab75`, a peer's CI worktree, with recovery to `verified` at
+04:33:50Z. Reading the pane process's own `/proc/<pid>/environ` separates the
+two cases. Repairing that lookup to resolve a role from the session the reading
+home owns — a role whose panes all belong to another home stays unresolved
+rather than guessed, while a lone pane in a session no home has claimed still
+resolves — is committed in source and reaches the served reading at the next
+promotion.
 The covered services' imported roots are also compared with the pin's sensor
 set by `sense.runtime.sensor-coverage`: it parses each root's `discovery.py`
 for the `sense.*` ids that root can emit and names `missing=` or `added=` per
