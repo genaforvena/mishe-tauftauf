@@ -28,3 +28,23 @@ def decode_stream_record(text: str) -> dict | None:
 def encode_stream_record(record: dict) -> str:
     """The retained observation as one line of sorted-key JSON."""
     return json.dumps(record, sort_keys=True) + "\n"
+
+
+def decode_stream_log(text: str) -> list[dict]:
+    """The retained log's records, or the empty list for absent or unreadable text.
+
+    One unreadable line hides only that line: the log is an audit trail whose
+    value is the events it does hold, so a torn or hand-edited line is skipped
+    rather than failing the whole read.
+    """
+    records = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+    return records
