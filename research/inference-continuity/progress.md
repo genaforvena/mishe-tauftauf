@@ -1600,3 +1600,9 @@ CI run 38160089668 for HEAD 8392c56: in_progress (gh run view) — nothing to re
 Scoped the first bounded Experiment 2 candidate in experiment-plan.md: read-only CI-run observation slice with frozen inputs (commit 8392c56, run 38160089668). Baseline (harness route): 2 tool calls, ~3s, zero model calls, outcome in_progress. Candidate (next wake): one observation pass via drive_native/NativeSession with read-only caps; parity bar is same reported status + exact-SHA match, no outside-scratch writes, durable per-call record, fallback retained. Loop tests: 76 passed.
 
 Next: run candidate pass and fill cost/recovery table; reconcile CI for 8392c56 when terminal. No blockers.
+
+## Wake 12177 — CI reconciled for 8392c56, exact-SHA SUCCESS
+
+CI run 38160089668 for prior HEAD 8392c56: completed/success (gh run view exact-SHA match, updatedAt 2026-10-11T17:36:36Z). Closes the wake-12125 follow-up. Current HEAD c196e6c has its own run 38160316657 still in_progress — nothing to reconcile; UNKNOWN stays UNKNOWN. Owned loop tests: 76 passed.
+
+Next: run Experiment 2 candidate pass (drive_native/NativeSession read-only observation) and fill cost/recovery table; reconcile CI for c196e6c when terminal. No blockers.
