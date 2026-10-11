@@ -20,7 +20,11 @@ renderer lease remain in health's continuing coverage. With services disabled,
 planting supplies only the initial dashboard.
 
 `wall write --owner ROLE --file NOTES` replaces a wall — the single file
-`SITE_HOME/walls/<role>.md`. `wall show --owner ROLE` reads the walls and relevant
+`SITE_HOME/walls/<role>.md`. A relative `--file` names the canonical staging
+directory first: it resolves against `SITE_HOME/walls` when a file exists there
+and against the working directory otherwise, so an invocation from another
+directory can no longer read a same-named file there instead of the staged
+notes; an absolute path is never re-anchored. `wall show --owner ROLE` reads the walls and relevant
 conversation. Its context contains one section for each other monitored role and
 also includes `walls/operator.md` when present, except when the operator is the
 caller. Scratch notes such as `walls/audit.md` are not peer walls and are excluded.
@@ -28,12 +32,15 @@ Every peer section is headed `PEER WALL NAME — reference only; never copy into
 own wall`, because the whole context is one undelimited text. A write is refused
 when the notes are identical to a peer wall — including when they differ only by
 trailing newlines — because per-role walls own their content, so cross-role
-duplication is always the copy failure, not shared work. A difference anywhere
+duplication is always the copy failure, not shared work. The same refusal covers a
+peer's *superseded* wall, which no current wall file can show: the audit logs each
+accepted write's document digest, so pasting a role's earlier wall onto another
+role is refused even after that wall was replaced. A difference anywhere
 except the trailing newlines is the writer's own text and is accepted. Rewriting
 your own wall with unchanged content is still accepted. Every accepted wall write
 appends an entry to `SITE_HOME/logs/wall-write-audit.jsonl` naming role, source
-notes, destination and post-write time, so a clobber stays diagnosable after the
-fact. That log's scope is the write path the site CLI accepts — `wall write` and
+notes, destination, post-write time and document digest, so a clobber stays
+diagnosable after the fact. That log's scope is the write path the site CLI accepts — `wall write` and
 `seed yield` both append to it — so a wall file edited directly on disk is not
 covered here. File-level coverage for out-of-band writes comes from
 research-methods' site-local read-only detector, which reads the wall files
