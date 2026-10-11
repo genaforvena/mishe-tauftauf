@@ -4235,11 +4235,14 @@ def test_ghost_site_homes_carries_one_name_budget_across_every_tree(tmp_path, mo
 
 
 def test_ghost_site_homes_stops_enumerating_the_checkout_at_the_root_cap(tmp_path, monkeypatch):
-    """Checkout enumeration is bounded, not materialized then truncated.
+    """Checkout enumeration stops at the root cap instead of reading every entry.
 
     Reading every directory entry before applying the root cap leaves the
     scan unbounded in the checkout's own size; the bound must stop the
-    enumeration itself and mark the count as a lower bound.
+    enumeration itself and mark the count as a lower bound. The cap counts
+    reserved roots: ordinary entries around them are covered by the separate
+    total-name budget, so this bound must not be asserted over every name the
+    checkout happens to yield.
     """
     from mishe_tauftauf import discovery
 
@@ -4248,42 +4251,36 @@ def test_ghost_site_homes_stops_enumerating_the_checkout_at_the_root_cap(tmp_pat
     monkeypatch.setattr(discovery, "GHOST_ROOT_LIMIT", 2)
     for index in range(6):
         _ghost_tree(tmp_path, f".mishe-ghost{index}", {"walls/a.md": "x\n"}, 1_000.0)
-    seen: list[str] = []
-    real_scandir = os.scandir
-
-    class CountingScan:
-        def __init__(self, entries, is_checkout):
-            self._entries = iter(entries)
-            self._is_checkout = is_checkout
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            return False
-
-        def __iter__(self):
-            return self
-
-        def __next__(self):
-            item = next(self._entries)
-            if self._is_checkout:
-                seen.append(item.name)
-            return item
-
-    def counting_scandir(root):
-        return CountingScan(real_scandir(root), os.fspath(root) == str(tmp_path))
-
-    monkeypatch.setattr(discovery.os, "scandir", counting_scandir)
+    # Fixed order: an ordinary name, three reserved roots, an ordinary name,
+    # then the remaining reserved roots. The root cap counts reserved roots
+    # only, so the scan stops on the first reserved root past the cap no
+    # matter how many ordinary entries surround the reserved run.
+    ordered = [SimpleNamespace(name="ordinary0", path=str(tmp_path / "ordinary0"))]
+    ordered.extend(
+        SimpleNamespace(name=f".mishe-ghost{index}",
+                        path=str(tmp_path / f".mishe-ghost{index}"))
+        for index in range(3)
+    )
+    ordered.append(SimpleNamespace(name="ordinary1", path=str(tmp_path / "ordinary1")))
+    ordered.extend(
+        SimpleNamespace(name=f".mishe-ghost{index}",
+                        path=str(tmp_path / f".mishe-ghost{index}"))
+        for index in range(3, 6)
+    )
+    ordered_scandir, seen = _ordered_checkout_scan(tmp_path, ordered)
+    monkeypatch.setattr(discovery.os, "scandir", ordered_scandir)
     reading = discovery._ghost_site_homes(home)
     assert reading["state"] == "drift"
-    assert len(reading["ghosts"]) == 2
+    assert reading["ghosts"] == [".mishe-ghost0", ".mishe-ghost1"]
     assert reading["roots_at_least"] is True
-    # Enumeration stopped once the cap was exceeded instead of reading every
-    # directory entry: at most the capped roots plus the one that revealed
-    # the truncation were inspected, out of six reserved names.
-    assert len(seen) <= discovery.GHOST_ROOT_LIMIT + 1
     assert "ghost-homes=2+" in reading["sample"]
+    # Enumeration stopped once the cap was exceeded instead of reading every
+    # directory entry: exactly one reserved root past the cap was inspected,
+    # and the entries behind the stop point were never reached.
+    reserved_seen = [name for name in seen if name.startswith(".mishe-")]
+    assert len(reserved_seen) == discovery.GHOST_ROOT_LIMIT + 1
+    assert "ordinary1" not in seen
+    assert ".mishe-ghost3" not in seen
 
 
 def test_ghost_site_homes_unknown_when_the_checkout_cannot_be_enumerated(monkeypatch, tmp_path):
