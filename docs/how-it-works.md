@@ -450,6 +450,10 @@ the same absent sample and unmoving cursor persist across two of the reader's
 own null observations at least a minute apart, the reading names
 `light-stream-frozen`; the first null observation of a stream reads
 `light-null-gap`, and publication or polling never converts one into the other.
+No byte-set this plant serves those panes from carries either name yet — the
+pinned release and the panes' renderer runtime both predate them, so a live pane
+still shows the same sample as `light-not-current-or-delayed`. That gap is a
+loaded-bytes question, not a reading one.
 Retained measured light changes are history, not room occupancy or human
 attendance, and startup or recovery is not a physical event.
 Source support alone does not establish a working feed: the Android publisher
