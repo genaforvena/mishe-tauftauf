@@ -20,7 +20,7 @@ from uuid import uuid4
 from . import omp_pane, proc_table, space_text
 from .feed import Feed, parse_feed
 from .host_radio import (BLUETOOTH_ROOT, COMMAND_TIMEOUT_SECONDS, NET_ROOT, RFKILL_ROOT,
-                         bluetooth_controllers, controller_state, operstate,
+                         admin_up, bluetooth_controllers, controller_state, operstate,
                          rfkill_switches, rfkill_unreadable, rfkill_verdict,
                          wireless_interfaces)
 from .outcome_events import classify_outcomes
@@ -3078,6 +3078,14 @@ def _host_radio_read() -> dict:
     supported): a userspace count, not a capability. Advertisement registration
     is unexercised by this read and fails at the kernel on this controller
     (discover wake 64945), so the field must not be read as "advertising works".
+
+    A wireless interface reads as ``operstate/admin-state``. ``operstate``
+    follows carrier, so a radio that is administratively up but unassociated
+    reads ``down/admin-up`` while a radio that is switched off reads
+    ``down/admin-down``; before the admin token both rendered ``=down`` and an
+    enabled idle radio was indistinguishable from an absent one (discover, wake
+    4454). An interface whose flags or operstate will not read is ``=unread``
+    with a named problem, never a state.
     """
     controllers = bluetooth_controllers()
     interfaces = wireless_interfaces()
@@ -3110,8 +3118,13 @@ def _host_radio_read() -> dict:
             if value is None:
                 problems.append(f"operstate-unread:{name}")
                 states.append(f"{name}=unread")
-            else:
-                states.append(f"{name}={value}")
+                continue
+            admin = admin_up(name)
+            if admin is None:
+                problems.append(f"flags-unreadable:{name}")
+                states.append(f"{name}=unread")
+                continue
+            states.append(f"{name}={value}/admin-{'up' if admin else 'down'}")
         wifi = "wifi " + ",".join(states)
     else:
         problems.append("no-wifi-interface")

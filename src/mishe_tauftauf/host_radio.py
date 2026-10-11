@@ -74,6 +74,28 @@ def operstate(name: str, root: Path = NET_ROOT) -> str | None:
     return _text(root / name / "operstate")
 
 
+IFF_UP = 0x1
+"""The administrative-up bit of ``/sys/class/net/<name>/flags``."""
+
+
+def admin_up(name: str, root: Path = NET_ROOT) -> bool | None:
+    """Whether the netdev is administratively up, or ``None`` when it will not read.
+
+    ``operstate`` follows carrier, not the administrative flag: a radio that is
+    administratively up but has no association also reads ``down``, so the
+    ``flags`` bit is the only place the two states separate (discover, wake
+    4454). An unreadable or undecodable value reads as ``None``, which is "the
+    admin state did not read" and must not be reported as down.
+    """
+    value = _text(root / name / "flags")
+    if value is None:
+        return None
+    try:
+        return bool(int(value, 16) & IFF_UP)
+    except ValueError:
+        return None
+
+
 def rfkill_switches(root: Path = RFKILL_ROOT) -> list[dict[str, str]]:
     """Every readable rfkill switch as ``{'type', 'soft', 'hard'}``.
 
