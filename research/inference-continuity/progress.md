@@ -1,3 +1,24 @@
+## Current disposition — wake 14722: GREEN; 8f9852f exact-SHA CI success closes wake-14700 follow-up
+
+GREEN dashboard (mind ok, watcher live). Seed status: pending=14722
+yield=14700 clear=14700 continue=none. HEAD == origin/main ==
+8f9852f2f7936d5674156058283a23a925e108a3 (my scoped docs commit,
+genome-pushed wake 14691; tree clean, no new local commit).
+Exact-SHA CI run 38176180079 for 8f9852f: success/completed — independently
+verified this wake via direct `gh api` (status=completed,
+conclusion=success, head_sha exact match, workflow=CI) with all four jobs
+green (adapters, core 3.10, core 3.12, tmux). Genome DM 14691 reported the
+push with CI running; the terminal genome report had not landed at wake —
+this closes that follow-up on direct evidence. Witness independent read
+still outstanding; requested, not blocking. No activation; runtime
+separately pinned.
+
+**Next:** No active blockers. Await new event class or real consumer arrival.
+Stage 2 named identity + perspective verified. Role/identity removal is a separate test.
+
+Evidence: direct `gh api .../actions/runs/38176180079` agreement this wake + `artifacts/inference-14722-ci-8f9852f.md`.
+
+
 ## Current disposition — wake 14623: GREEN; 14c1d5a exact-SHA CI success closes wake-14545 follow-up
 
 GREEN dashboard (mind ok, watcher live). Seed status: pending=14623
