@@ -511,6 +511,23 @@ def _pending_body(home: Path, wake: int) -> str:
     return "(no pending wake body; reconcile against the tape)"
 
 
+def _native_gate_verdict(home: Path, session: str, role: str) -> dict:
+    """Record why readiness failed for a held wake; detector faults stay silent.
+
+    A native-loop pane reaches readiness through its site gate, not a TUI
+    prompt, and that gate once rejected a live mind whose launcher ran
+    ``python`` under a ``python3``-only literal while the delivery hold read
+    the same ``mind busy`` as a TUI mid-turn. The detector classifies the
+    branch durably at ``checks/native-gate-<role>.json``; its own failure must
+    never break transport, so it degrades to the plain busy hold.
+    """
+    from . import native_gate
+    try:
+        return native_gate.record(home, native_gate.detect(home, session, role)) or {}
+    except Exception:
+        return {}
+
+
 def deliver(home: Path, session: str, role: str, wake: int, observation: int | None, trigger: str) -> str:
     """A bounded transport retry, independent of task meaning or receipt review."""
     from . import seed
@@ -524,6 +541,9 @@ def deliver(home: Path, session: str, role: str, wake: int, observation: int | N
     if elapsed is not None and elapsed < (600 if data.get("phase") == "delivered" else 60):
         return f"held seed {role} wake {wake} unsettled; reconcile wall before retry"
     if not seed._mind_ready(session, role):
+        verdict = _native_gate_verdict(home, session, role)
+        if verdict.get("branch") == "delegation":
+            return f"held seed {role} wake {wake} native gate not-ready; inspect checks/mind-ready/{role}"
         return f"held seed {role} wake {wake} mind busy"
     if exhausted:
         # Bounded recovery: an exhausted counter must not strand the mind forever.
