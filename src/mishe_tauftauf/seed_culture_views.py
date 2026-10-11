@@ -16,6 +16,7 @@ from .access import list_requests, recoveries, retired_requests
 from .ci_watch import line as ci_line
 from .discovery import (latest, producer_label, scan_attempt, _space_light,
                         _space_light_name_freeze, _space_light_read)
+from .host_radio import decode_cam_events, decode_cam_manifest, decode_cam_state, decode_urb_failures
 from . import scan_freshness
 from .seed import recorded_session
 
@@ -270,6 +271,111 @@ def _service_readings(units: list[str], env: dict[str, str]) -> tuple[dict[str, 
 
 
 
+# The camera's fault surface has no detector of its own: mesh-cam-watch keeps a
+# class line in ~/.mesh/.cam-watch.state, and the UVC function can stall
+# intermittently (v4l2 read timeouts, kernel URB resubmit failures) with nothing
+# reading them. The bounds are the producers' own contracts: 120s is the
+# reflex-artifact age mesh-cam-watch declares for cam-prev.jpg, and a fault
+# repeated inside a 15-minute window is a fault rather than one self-healed
+# cycle. A node declares its camera with health/camera.json, so a plant without
+# a webcam skips the check instead of inheriting this node's surface; unreadable
+# sources on a declared node read UNKNOWN so the observation never silently
+# degrades to PASS.
+CAMERA_ARTIFACT_BOUND_S = 120.0
+CAMERA_WINDOW_S = 900.0
+CAMERA_CAPTURE_FAULTS = 3
+CAMERA_KERNEL_FAULTS = 10
+CAMERA_MANIFEST = "camera.json"
+_CAMERA_EVENTS_TAIL_B = 1 << 18
+
+
+def _camera_faults(home: Path, env: dict[str, str]) -> tuple[str, str, list[str]]:
+    """Read the node-local camera fault surface.
+
+    Returns the pane line, an UNKNOWN reason ("" when the sources read), and the
+    RED causes. A node that declares no camera (no ``health/camera.json``) is
+    skipped, not failed — a plant without a webcam must not inherit its
+    neighbor's fault surface. A declared manifest that cannot be read reads
+    UNKNOWN, so deleted monitoring stays visible instead of silent. The class
+    word from .cam-watch.state is informational: a covered lens is not a fault,
+    and the line must not imply one.
+    """
+    try:
+        declared = decode_cam_manifest(
+            (home / "health" / CAMERA_MANIFEST).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return "", "", []
+    except OSError:
+        return "CAMERA: UNKNOWN — camera manifest unreadable", "camera manifest unreadable", []
+    if not declared:
+        # A present manifest that is not a supported v1 declaration is monitoring
+        # drift, not absence: UNKNOWN, never a silent skip.
+        return ("CAMERA: UNKNOWN — camera manifest unsupported",
+                "camera manifest unsupported", [])
+    mesh_dir = Path.home() / ".mesh"
+    if not mesh_dir.is_dir():
+        return ("CAMERA: UNKNOWN — camera node without mesh artifacts",
+                "camera mesh artifacts missing", [])
+    causes: list[str] = []
+    unknown = ""
+    try:
+        klass = decode_cam_state((mesh_dir / ".cam-watch.state").read_text(
+            encoding="utf-8", errors="replace"))
+    except OSError:
+        klass = None
+        unknown = "camera state unreadable"
+    now = datetime.now(timezone.utc).timestamp()
+    try:
+        age_s = max(0.0, now - (mesh_dir / "cam-prev.jpg").stat().st_mtime)
+    except OSError:
+        age_s = None
+        causes.append("camera-artifact-stale")
+        unknown = unknown or "camera artifact missing"
+    else:
+        if age_s > CAMERA_ARTIFACT_BOUND_S:
+            causes.append("camera-artifact-stale")
+    try:
+        with (mesh_dir / "cam-events.log").open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, stream.tell() - _CAMERA_EVENTS_TAIL_B))
+            rows = decode_cam_events(stream.read())
+    except OSError:
+        rows = []
+        unknown = unknown or "camera events unreadable"
+    onsets = sum(1 for epoch, token in rows
+                 if token == "CAPTURE-FAIL" and 0 <= now - epoch <= CAMERA_WINDOW_S)
+    if onsets >= CAMERA_CAPTURE_FAULTS:
+        causes.append(f"camera-capture-fail={onsets}")
+    kernel = 0
+    since = datetime.fromtimestamp(now - CAMERA_WINDOW_S, timezone.utc).strftime(
+        "%Y-%m-%d %H:%M:%S")
+    try:
+        result = subprocess.run(["journalctl", "-k", "--since", since, "--no-pager"],
+                                capture_output=True, text=True, timeout=5, env=env)
+        if result.returncode == 0:
+            kernel = decode_urb_failures(result.stdout)
+        else:
+            unknown = unknown or "camera kernel log unreadable"
+    except (OSError, subprocess.TimeoutExpired):
+        unknown = unknown or "camera kernel log unreadable"
+    if kernel >= CAMERA_KERNEL_FAULTS:
+        causes.append(f"camera-kernel-urb={kernel}")
+    if causes:
+        state = "RED"
+    elif unknown:
+        state = "UNKNOWN"
+    else:
+        state = "PASS"
+    age_text = "missing" if age_s is None else f"{age_s:.0f}s"
+    line = (f"CAMERA: {state} " +
+            (f"class={klass} " if klass else "") +
+            f"artifact-age={age_text} capture-fails={onsets}/{CAMERA_WINDOW_S:.0f}s "
+            f"kernel-urbs={kernel}/{CAMERA_WINDOW_S:.0f}s")
+    if state == "UNKNOWN":
+        line += f" — {unknown}"
+    return line, unknown, causes
+
+
 def health(home: Path) -> str:
     lines = ["GOAL: keep this plant's panes, feed, and resident services working",
              "PURSUIT: repair internal failures from the live check; own reusable code delivery through ready integration",
@@ -374,6 +480,9 @@ def health(home: Path) -> str:
             restarts_path.write_text(json.dumps(current_restarts, sort_keys=True), encoding="utf-8")
         except OSError:
             pass
+    camera_line, camera_unknown, camera_fault_causes = _camera_faults(home, env)
+    if camera_line:
+        lines.append(camera_line)
     linked_unknown = []
     linked_failed = []
     linked_path = home / "health" / "linked-sites.json"
@@ -448,6 +557,7 @@ def health(home: Path) -> str:
     lease_lines, lease_state = pane_lease_lines(home)
     lines.extend(lease_lines)
     causes: list[str] = []
+    causes.extend(camera_fault_causes)
     if doctor.returncode:
         causes.append("doctor")
     if missing:
@@ -480,6 +590,11 @@ def health(home: Path) -> str:
     elif windows_unknown:
         verdict = f"UNKNOWN health {windows_unknown} at {at}"
         lines.append(f"STATE: UNKNOWN — {windows_unknown}")
+    elif camera_unknown:
+        # An unreadable camera source is broken monitoring, not a healthy pane:
+        # stay UNKNOWN until the producer or the read is repaired.
+        verdict = f"UNKNOWN health camera state unavailable at {at}"
+        lines.append("STATE: UNKNOWN — camera state unavailable")
     elif linked_unknown:
         verdict = f"UNKNOWN health linked-site data unavailable at {at}"
         lines.append("STATE: UNKNOWN — linked-site service data unavailable")

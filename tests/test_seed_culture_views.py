@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import threading
+import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -954,3 +957,137 @@ def test_health_names_runtime_import_root_drift_as_a_cause(tmp_path: Path, monke
                                  f"Environment=PYTHONPATH={pinned}/src\n")
     health(home)
     assert "runtime-drift" not in (home / "observations" / "health").read_text(encoding="utf-8")
+
+
+def _camera_site(tmp_path: Path, monkeypatch, *, state, artifact_age_s, events, journal=(), journal_rc=0):
+    """A camera node: mesh artifacts under HOME/.mesh, camera service active."""
+    home = _service_home(tmp_path, ["mesh-cam-watch.service"])
+    (home / "health" / "camera.json").write_text('{"version": 1}', encoding="utf-8")
+    mesh = tmp_path / ".mesh"
+    mesh.mkdir(parents=True, exist_ok=True)
+    if state is not None:
+        (mesh / ".cam-watch.state").write_text(state + "\n", encoding="utf-8")
+    if artifact_age_s is not None:
+        artifact = mesh / "cam-prev.jpg"
+        artifact.write_bytes(b"jpeg")
+        stamp = time.time() - artifact_age_s
+        os.utime(artifact, (stamp, stamp))
+    if events is not None:
+        (mesh / "cam-events.log").write_text("".join(events), encoding="utf-8")
+
+    def run(argv, **_kwargs):
+        if argv[0] == "tmux":
+            return subprocess.CompletedProcess(argv, 0, "health 0 0\n", "")
+        if argv[0] == "systemctl":
+            return subprocess.CompletedProcess(argv, 0, "Id=mesh-cam-watch.service\n"
+                                             "ActiveState=active\nSubState=running\n"
+                                             "NRestarts=0\nEnvironment=\n\n", "")
+        if argv[0] == "journalctl":
+            body = "".join(row + "\n" for row in journal)
+            return subprocess.CompletedProcess(argv, journal_rc, body, "")
+        return subprocess.CompletedProcess(argv, 0, "PASS doctor\n", "")
+
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.subprocess.run", run)
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.ci_line", lambda _home: "CI: PASS")
+    monkeypatch.setenv("MISHE_SEED_SESSION", "test-session")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    return home
+
+
+def _cam_onset(seconds_ago: float) -> str:
+    stamp = datetime.now(timezone.utc) - timedelta(seconds=seconds_ago)
+    return stamp.strftime("%Y-%m-%dT%H:%M:%SZ") + "  cam state SHUTTERED→CAPTURE-FAIL (dev=/dev/video0)\n"
+
+
+def test_health_passes_a_fresh_camera_node(tmp_path: Path, monkeypatch) -> None:
+    home = _camera_site(tmp_path, monkeypatch, state="SEEING|diff=1.2|mean=56|",
+                        artifact_age_s=30, events=(_cam_onset(1000),))
+    rendered = health(home)
+    assert ("CAMERA: PASS class=SEEING artifact-age=30s capture-fails=0/900s "
+            "kernel-urbs=0/900s") in rendered
+    assert "STATE: GREEN" in rendered
+
+
+def test_health_skips_the_camera_check_on_a_node_without_one(tmp_path: Path, monkeypatch) -> None:
+    home = _service_home(tmp_path, ["mesh-cam-watch.service"])
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _fake_systemctl(monkeypatch, "Id=mesh-cam-watch.service\nActiveState=active\n"
+                                 "SubState=running\nNRestarts=0\nEnvironment=\n\n")
+    rendered = health(home)
+    assert "CAMERA:" not in rendered
+    assert "STATE: GREEN" in rendered
+
+
+def test_health_skips_the_camera_check_without_a_declared_camera(tmp_path: Path, monkeypatch) -> None:
+    """A site that does not declare a camera never reads this node's ~/.mesh.
+
+    Live mesh artifacts exist but no health/camera.json declaration does, so the
+    check must not run: an undeclared plant cannot inherit a neighbor's camera
+    fault surface, and unmodified health tests stay isolated from the real node.
+    """
+    home = _service_home(tmp_path, ["mesh-cam-watch.service"])
+    mesh = tmp_path / ".mesh"
+    mesh.mkdir(parents=True)
+    (mesh / ".cam-watch.state").write_text("SEEING|diff=1.0|mean=50|\n", encoding="utf-8")
+    (mesh / "cam-prev.jpg").write_bytes(b"jpeg")
+    (mesh / "cam-events.log").write_text("", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _fake_systemctl(monkeypatch, "Id=mesh-cam-watch.service\nActiveState=active\n"
+                                 "SubState=running\nNRestarts=0\nEnvironment=\n\n")
+    rendered = health(home)
+    assert "CAMERA:" not in rendered
+    assert "STATE: GREEN" in rendered
+
+
+def test_health_flags_a_stale_camera_artifact_as_red(tmp_path: Path, monkeypatch) -> None:
+    """A cam-prev.jpg older than the daemon's declared 120s bound is a dead watch."""
+    home = _camera_site(tmp_path, monkeypatch, state="SHUTTERED|diff=1.0|mean=18|",
+                        artifact_age_s=400, events=())
+    rendered = health(home)
+    assert "CAMERA: RED class=SHUTTERED artifact-age=400s" in rendered
+    assert "STATE: RED" in rendered
+    report = (home / "observations" / "health").read_text(encoding="utf-8")
+    assert "camera-artifact-stale" in report
+
+
+def test_health_flags_repeated_camera_capture_failures_as_red(tmp_path: Path, monkeypatch) -> None:
+    """Three CAPTURE-FAIL onsets inside 15 minutes are a fault, not a self-healed cycle."""
+    events = [_cam_onset(120), _cam_onset(600), _cam_onset(800)]
+    home = _camera_site(tmp_path, monkeypatch, state="SHUTTERED|diff=1.0|mean=18|",
+                        artifact_age_s=5, events=events)
+    rendered = health(home)
+    assert "CAMERA: RED class=SHUTTERED artifact-age=5s capture-fails=3/900s" in rendered
+    report = (home / "observations" / "health").read_text(encoding="utf-8")
+    assert "camera-capture-fail=3" in report
+
+
+def test_health_flags_camera_kernel_resubmit_failures_as_red(tmp_path: Path, monkeypatch) -> None:
+    kernel = ["kernel: uvcvideo 1-6:1.1: Failed to resubmit video URB (-1)."] * 11
+    home = _camera_site(tmp_path, monkeypatch, state="SEEING|diff=1.2|mean=56|",
+                        artifact_age_s=5, events=(_cam_onset(1000),), journal=kernel)
+    rendered = health(home)
+    assert "CAMERA: RED class=SEEING" in rendered and "kernel-urbs=11/900s" in rendered
+    report = (home / "observations" / "health").read_text(encoding="utf-8")
+    assert "camera-kernel-urb=11" in report
+
+
+def test_health_reports_an_unreadable_camera_source_as_unknown(tmp_path: Path, monkeypatch) -> None:
+    """Broken monitoring stays UNKNOWN, and a non-zero journalctl read names it."""
+    home = _camera_site(tmp_path, monkeypatch, state=None, artifact_age_s=5, events=(), journal_rc=1)
+    rendered = health(home)
+    assert "CAMERA: UNKNOWN" in rendered and "camera state unreadable" in rendered
+    assert "STATE: UNKNOWN — camera state unavailable" in rendered
+    report = (home / "observations" / "health").read_text(encoding="utf-8")
+    assert report.startswith("UNKNOWN health camera state unavailable at ")
+
+
+def test_health_passes_a_camera_node_below_the_fault_thresholds(tmp_path: Path, monkeypatch) -> None:
+    """Two recent onsets and nine kernel errors stay below the recorded bounds."""
+    events = [_cam_onset(60), _cam_onset(600), _cam_onset(1000)]
+    kernel = ["kernel: uvcvideo 1-6:1.1: Failed to resubmit video URB (-1)."] * 9
+    home = _camera_site(tmp_path, monkeypatch, state="SEEING|diff=1.2|mean=56|",
+                        artifact_age_s=119, events=events, journal=kernel)
+    rendered = health(home)
+    assert ("CAMERA: PASS class=SEEING artifact-age=119s capture-fails=2/900s "
+            "kernel-urbs=9/900s") in rendered
+    assert "STATE: GREEN" in rendered

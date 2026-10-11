@@ -4,7 +4,11 @@ External dialects, all read-only and bounded:
 
 * the kernel sysfs ABI, one newline-terminated value per file under
   ``/sys/class/bluetooth``, ``/sys/class/rfkill`` and ``/sys/class/net``;
-* the human-readable ``bluetoothctl show`` report.
+* the human-readable ``bluetoothctl show`` report;
+* the camera reflex's own class word and transition log, and the kernel's UVC
+  messages for the webcam (``~/.mesh/.cam-watch.state``,
+  ``~/.mesh/cam-events.log``, journald), which carry the same read-only,
+  external-text character.
 
 The decoder returns ordinary Python values and never mutates a radio. A missing
 adapter, an unreadable file or a command that does not return inside the bound is
@@ -16,9 +20,11 @@ switches ``rfkill_switches`` omits, so a short list is not read as "no switch".
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 BLUETOOTH_ROOT = Path("/sys/class/bluetooth")
@@ -182,3 +188,72 @@ def controller_state(command: str = "bluetoothctl",
     state["advertising"] = {"active": int(active.group(1)) if active else None,
                             "supported": int(supported.group(1)) if supported else None}
     return state
+
+
+# The camera's fault surface is host hardware state of the same read-only kind:
+# the class word the motion daemon writes, its transition log, and the kernel's
+# UVC messages. The producer's stats after the first separator and a truncated
+# tail are opaque: a row or line that does not decode is skipped, never guessed.
+
+_CAM_STATE_CLASS = re.compile(r"^\s*([A-Z][A-Z-]*)")
+_CAM_EVENT_ROW = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})Z\s+cam state (\S+)→(\S+)")
+_URB_FAILURE = re.compile(r"uvcvideo.*Failed to resubmit video URB")
+
+
+def decode_cam_state(text: str) -> str | None:
+    """The class word from a ``.cam-watch.state`` line, or None when absent.
+
+    ``SHUTTERED|diff=1.19|mean=20|span=4|sd=1.41`` decodes to ``SHUTTERED``; the
+    stats past the separator belong to the producer and are not decoded here.
+    A covered lens is a class, not a fault: the consumer decides.
+    """
+    match = _CAM_STATE_CLASS.search(text)
+    return match.group(1) if match else None
+
+
+def decode_cam_events(raw: bytes) -> list[tuple[float, str]]:
+    """``cam-events.log`` rows as (epoch seconds, transition token).
+
+    ``2026-10-11T02:25:24Z  cam state SHUTTERED→CAPTURE-FAIL (dev=/dev/video0)``
+    decodes to ``(epoch, "CAPTURE-FAIL")``, the class the row transitions to. A
+    row that does not decode — a truncated tail, a foreign dialect — is skipped
+    rather than guessed, and undecodable bytes are replaced when splitting lines.
+    """
+    rows: list[tuple[float, str]] = []
+    for line in raw.decode("utf-8", errors="replace").split("\n"):
+        match = _CAM_EVENT_ROW.search(line)
+        if match is None:
+            continue
+        try:
+            stamp = datetime.strptime(match.group(1), "%Y-%m-%dT%H:%M:%S")
+        except ValueError:
+            continue
+        rows.append((stamp.replace(tzinfo=timezone.utc).timestamp(), match.group(3)))
+    return rows
+
+
+def decode_urb_failures(text: str) -> int:
+    """Count of ``uvcvideo ... Failed to resubmit video URB`` lines in journald text.
+
+    The kernel's own wording is the dialect; lines that do not carry both parts
+    are not failures of this class.
+    """
+    return sum(1 for line in text.split("\n") if _URB_FAILURE.search(line))
+
+
+def decode_cam_manifest(text: str) -> bool | None:
+    """Whether a ``health/camera.json`` text declares this node's camera.
+
+    ``{"version": 1}`` decodes True. Text that decodes as JSON with another
+    version, or does not decode at all, returns None: a present manifest that is
+    not a usable declaration is monitoring drift, which the caller must surface
+    as UNKNOWN rather than read as absence. A missing file is the caller's I/O
+    failure, not something to guess at here.
+    """
+    try:
+        manifest = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(manifest, dict) or manifest.get("version") != 1:
+        return None
+    return True

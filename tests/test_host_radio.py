@@ -314,3 +314,26 @@ def test_host_radio_powered_without_advertising_counters_names_them_unread(monke
 
     assert row["state"] == "verified"
     assert "adv-instances=unread" in row["sample"]
+
+
+def test_cam_decoders_read_the_producer_dialect_and_skip_opaque_rows() -> None:
+    """A covered lens is a class, not a fault; truncated rows are never onsets."""
+    assert host_radio.decode_cam_state("SHUTTERED|diff=1.19|mean=20|span=4|sd=1.41") == "SHUTTERED"
+    assert host_radio.decode_cam_state("") is None
+    assert host_radio.decode_cam_state("lowercase|stats") is None
+    rows = host_radio.decode_cam_events(
+        b"2026-10-11T02:25:24Z  cam state SHUTTERED\xe2\x86\x92CAPTURE-FAIL (dev=/dev/video0)\n"
+        b"2026-10-11T02:26:27Z  cam state CAPTURE-FAIL\xe2\x86\x92SHUTTERED (diff=0.54)\n"
+        b"2026-10-11T02:25  cam state truncated tail\n")
+    assert len(rows) == 2
+    assert rows[0][1] == "CAPTURE-FAIL"
+    assert rows[1][1] == "SHUTTERED"
+    assert host_radio.decode_urb_failures(
+        "kernel: uvcvideo 1-6:1.1: Failed to resubmit video URB (-1).\n"
+        "kernel: uvcvideo 1-6:1.1: something else\n"
+        "kernel: rtw_8822bu: unrelated\n") == 1
+    assert host_radio.decode_urb_failures("") == 0
+    assert host_radio.decode_cam_manifest('{"version": 1}') is True
+    assert host_radio.decode_cam_manifest('{"version": 2}') is None
+    assert host_radio.decode_cam_manifest("not json") is None
+    assert host_radio.decode_cam_manifest('{"version": 1, "extra": true}') is True
