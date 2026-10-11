@@ -2477,6 +2477,19 @@ GHOST_FILE_LIMIT = 10_000
 a lower bound with ``files_at_least`` set, so a scan stays bounded while a
 present tree never reads as none."""
 
+GHOST_ROOT_LIMIT = 64
+"""Ghost trees examined per scan: reserved roots beyond this are counted, not
+walked, and ``roots_at_least`` marks the tree count as a lower bound."""
+
+GHOST_IDENTITY_LIMIT = 100
+"""Names retained per identity class: nested names beyond this are counted, not
+retained, and ``nested_truncated`` marks the count as a lower bound."""
+
+GHOST_WORK_LIMIT = 50_000
+"""Directory and file names inspected across all ghost trees before the scan
+stops with ``work_truncated`` set, so a tree of empty or directory-only
+entries cannot stretch one reading without bound."""
+
 
 def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]:
     """Enumerate ``.mishe-*`` site directories under the checkout that are not
@@ -2493,8 +2506,10 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
     class of loss into a visible one: it counts the ghost trees and their
     files, names the nested ghosts inside a ghost tree, and ages the newest
     file so a lane can prioritize counsel. Presence of a ghost directory is
-    itself the violation; the file count quantifies it. The identity keeps the
-    full lists; the sample names at most three of each class.
+    itself the violation; the file count quantifies it. Identity lists are
+    capped and counts are exact only while every cap holds: a truncated tree
+    count, nested count or name budget leaves its lower-bound marker on the
+    sample line, so an uncapped scale never reads as a clean complete count.
 
     A broken enumeration reads UNKNOWN naming the unreadable tree: a partial
     count must never read as a clean zero. Directory symlinks inside a tree
@@ -2505,7 +2520,10 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
     site = Path(home).resolve()
     checkout = site.parent
     try:
-        entries = sorted(checkout.iterdir(), key=lambda item: item.name)
+        with os.scandir(checkout) as scan:
+            entries = sorted((item for item in scan
+                              if reserved_home_name(item.name)),
+                             key=lambda item: item.name)
     except OSError as exc:
         return {"id": "sense.site.ghost-homes", "state": "unknown", "kind": "read",
                 "sample": f"checkout root unreadable: {exc}"}
@@ -2517,15 +2535,22 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
     newest: dict[str, tuple[float, str]] = {}
     total = 0
     capped = False
+    nested_truncated = False
+    work_truncated = False
+    over_cap = 0
     for entry in entries:
         if not reserved_home_name(entry.name):
             continue
+        if len(ghosts) >= GHOST_ROOT_LIMIT:
+            over_cap += 1  # counted by name only, never walked
+            continue
+        tree = Path(entry.path)
         try:
-            if entry.resolve() == site:
+            if tree.resolve() == site:
                 continue
         except OSError:
             pass  # an unresolvable name is still reported, never silently skipped
-        if not entry.is_dir():
+        if not tree.is_dir():
             continue
         ghosts.append(entry.name)
         failures: list[OSError] = []
@@ -2535,11 +2560,26 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
 
         files = 0
         newest_at: float | None = None
-        for dirpath, dirnames, filenames in os.walk(entry, onerror=record):
+        names_left = GHOST_WORK_LIMIT
+        for dirpath, dirnames, filenames in os.walk(tree, onerror=record):
             for name in dirnames:
-                if reserved_home_name(name):
-                    nested.append(f"{entry.name}/{str(Path(dirpath, name).relative_to(entry))}")
+                names_left -= 1
+                if names_left <= 0:
+                    work_truncated = True
+                    break
+                if not reserved_home_name(name):
+                    continue
+                if len(nested) < GHOST_IDENTITY_LIMIT:
+                    nested.append(f"{entry.name}/{str(Path(dirpath, name).relative_to(tree))}")
+                else:
+                    nested_truncated = True
+            if work_truncated:
+                break
             for name in filenames:
+                names_left -= 1
+                if names_left <= 0:
+                    work_truncated = True
+                    break
                 if total + files >= GHOST_FILE_LIMIT:
                     capped = True
                     break
@@ -2550,7 +2590,7 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
                     continue
                 if newest_at is None or mtime > newest_at:
                     newest_at = mtime
-            if capped:
+            if capped or work_truncated:
                 break
         if failures:
             return {"id": "sense.site.ghost-homes", "state": "unknown", "kind": "read",
@@ -2562,6 +2602,9 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
                                   datetime.fromtimestamp(newest_at, timezone.utc)
                                   .isoformat(timespec="seconds"))
         (holding if files else empty).append(entry.name)
+        if capped or work_truncated:
+            break  # identity lists hold at most the examined trees
+    roots_at_least = over_cap > 0 or capped or work_truncated
     newest_by_age = sorted(newest.items(), key=lambda item: (-item[1][0], item[0]))
     newest_text = (f"{name} age={_space_age(now - mtime)}"
                    for name, (mtime, _stamp) in newest_by_age[:1])
@@ -2570,12 +2613,14 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
         return (",".join(values[:3]) + (f" +{len(values) - 3}more" if len(values) > 3 else "")
                 if values else "none")
 
-    parts = [f"ghost-homes={len(ghosts)}"]
-    parts.append(f"files>={total}" if capped else f"files={total}")
+    parts = [f"ghost-homes={len(ghosts)}{'+' if roots_at_least else ''}"]
+    parts.append(f"files>={total}" if capped or work_truncated else f"files={total}")
     parts.append("holding=" + named(holding))
     if empty:
         parts.append("empty=" + named(empty))
-    parts.append(f"nested={len(nested)}")
+    parts.append(f"nested={len(nested)}{'+' if nested_truncated else ''}")
+    if work_truncated:
+        parts.append("names-truncated")
     parts.append("newest=" + (next(newest_text, "none")))
     sample = " ".join(parts)
     state = "verified" if not ghosts else "drift"
@@ -2584,6 +2629,9 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
             "ghosts": sorted(ghosts), "files": files_per_ghost, "total": total,
             "holding": sorted(holding), "empty": sorted(empty),
             "nested": sorted(nested), "files_at_least": capped,
+            "roots_at_least": roots_at_least,
+            "nested_truncated": nested_truncated,
+            "work_truncated": work_truncated,
             "newest": {name: {"stamp": stamp, "age_s": round(now - mtime)}
                        for name, (mtime, stamp) in sorted(newest.items())}}
 
