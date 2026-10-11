@@ -197,8 +197,15 @@ kernel-urbs=1/900s`. A count of one in a freshly opened window describes
 that window's resubmits, not the stopping of the fault: the earlier
 count-persistence observation is preserved rather than rewritten, and the
 uvcvideo journal scans stay the continuing evidence that the resubmits are
-produced. The driver or firmware root cause stays unresolved, with health as
-the resolver and this `CAMERA:` line as the continuing observation.
+produced.
+Measured again at 08:35Z and 08:38Z the line read `CAMERA: RED
+class=SEEING artifact-age=1s capture-fails=2/900s kernel-urbs=10/900s` and
+then `artifact-age=2s capture-fails=2/900s kernel-urbs=10/900s`, with the
+cause `camera-kernel-urb=10`: the freshly opened window that had counted one
+reached the ten-resubmit threshold within minutes, so the resubmits recur
+inside a single window rather than only across one. The driver or firmware
+root cause stays unresolved, with health as the resolver and this `CAMERA:`
+line as the continuing observation.
 
 ### Doctor is a check with a repair side effect
 

@@ -520,10 +520,18 @@ distinguishable. The onset record is keyed by the streak identity and is not
 cleared when the stream resumes: at 07:46Z it still held the 07:24Z identity
 twenty minutes after recovery, and only a new session, cursor or sequence writes
 a fresh record at the same path (the served pin's
-`_space_light_record_freeze`), so the file's mtime is the host-side recurrence
-signal for this class. That signal has now fired once, with a real sample: the
-08:11:53.573Z onset described below is the file's second write, which is what
-makes a mtime watch a recurrence detector rather than a one-off record.
+`_space_light_record_freeze`), so the record's **onset epoch and streak
+identity** — a new session, cursor or sequence, the fields that re-arm it —
+are the host-side recurrence signal for this class, not the file's mtime.
+Measured inside the 08:11Z streak: two reads six seconds apart (08:36:20.567Z
+and 08:36:26.202Z) saw the mtime advance and `last_read_epoch_s` move
+1791707780.568616 → 1791707786.202776 while `onset_epoch_s` held
+1791706313.5730414 and the identity stayed session `90cc9bdc`, cursor 125856,
+sequence 125855 — later namings of the same streak only advance the last-read
+epoch, so a mtime watch fires on every refresh. The 08:11:53.573Z onset
+described below is the path's second onset record (after the 07:24Z identity),
+and that onset change is the recurrence signal, which is what makes an
+onset-epoch watch a recurrence detector rather than a one-off record.
 Measured 2026-10-11T03:06Z: the committed source keeps the first null of a
 streak, so the interval grows at any cadence, while release `f733a4b` rewrote
 that record on every null read, which held a five-second read interval at
@@ -602,12 +610,13 @@ lagging pane process a non-mind `bash`.
 The panes can therefore name both gap classes, and a frame naming one was
 composed 79 seconds after the repoint (`light-null-gap`,
 2026-10-11T03:43:04Z, discover's and senses' panes, independently
-re-read that morning; gap-class frames recur — 191 of the 587 rendered
-frames since the repoint named one, my own 08:22Z census over the same
+re-read that morning; gap-class frames recur — 194 of the 590 rendered
+frames since the repoint named one, my own 08:38Z census over the same
 stored records, alongside 394 `stale-original-evidence` and two
-`transport-not-current` frames), of which two frames — the
+`transport-not-current` frames), of which five frames — the
 08:11:53.573Z onset captured at 08:12:59Z (`senses`) and 08:13:00Z
-(`discover`) — name `light-stream-frozen`). The panes re-derive the light
+(`discover`), at 08:22:45Z in both panes and at 08:32:48Z (`senses`) —
+name `light-stream-frozen`). The panes re-derive the light
 line from a direct
 boundary read each refresh, so a class appears at refresh cadence rather
 than scan cadence, and a short null can still render as the prior
@@ -628,8 +637,11 @@ session `90cc9bdc`, sequence 125855, last phone sample 08:11:18Z, onset
 08:11:53.573Z, named 08:12:58.2Z — was caught inside two frames:
 `light-stream-frozen` at 08:12:59Z and 08:13:00Z, the first rendered-frame
 captures of the class on this plant, and the onset record and its routed
-event remain the durable evidence for it. The class names a genuine producer stall, so while
-the phone keeps publishing the reader cannot reach it by coverage
+event remain the durable evidence for it. That streak held one identity past
+half an hour: the phone's last sample stayed 08:11:18Z with cursor 125856
+stopped, and three further frames rendered the class at 08:22:45Z (both
+panes) and 08:32:48Z (`senses`), so five frames name it in my 08:38Z census.
+The class names a genuine producer stall, so while the phone keeps publishing the reader cannot reach it by coverage
 sampling. Check a pane
 process's own import root, and the script it execs, before claiming pane
 wording.
@@ -673,7 +685,13 @@ moves. At 08:22Z, after that window had turned over again, the line read
 kernel-urbs=1/900s`: one count in a freshly opened window describes that
 window's resubmits, not the stopping of the fault, so the count-persistence
 read above is preserved rather than erased, and the uvcvideo journal scans
-stay the continuing observation that the resubmits are produced. The driver
+stay the continuing observation that the resubmits are produced. At 08:35Z
+and again at 08:38Z the line read `CAMERA: RED class=SEEING
+artifact-age=1s capture-fails=2/900s kernel-urbs=10/900s` then
+`artifact-age=2s capture-fails=2/900s kernel-urbs=10/900s`, with the named
+cause `camera-kernel-urb=10`: the freshly opened window that had counted one
+climbed back to the ten-resubmit threshold within minutes, so the resubmits
+recur inside one window. The driver
 or firmware cause stays open with health as the resolver and the `CAMERA:`
 line as the detector.
 
