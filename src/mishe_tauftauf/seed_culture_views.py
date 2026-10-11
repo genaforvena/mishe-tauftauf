@@ -17,6 +17,7 @@ from .ci_watch import line as ci_line
 from .discovery import (latest, producer_label, scan_attempt, _space_light,
                         _space_light_name_freeze, _space_light_read)
 from .host_radio import decode_cam_events, decode_cam_manifest, decode_cam_state, decode_urb_failures
+from . import proc_table
 from . import scan_freshness
 from .seed import recorded_session
 
@@ -376,6 +377,84 @@ def _camera_faults(home: Path, env: dict[str, str]) -> tuple[str, str, list[str]
     return line, unknown, causes
 
 
+def _pane_roots(home: Path, pane_rows: list[tuple[str, str, str, str]]) -> tuple[str, str, list[str]]:
+    """Compare every pane's live import root with the site pin.
+
+    A mind pane's byte-set is the pin as of the launcher that raised it, so a
+    promotion leaves panes importing superseded bytes with nothing reading
+    their root: the runtime sensor reads unit environments and the lease sensor
+    reads renderer panes, and a mind pane inherits neither. A root equal to
+    the pin is on the pin; a root under this site's releases directory is a
+    promotion the pane has not rotated onto yet, which reads stale and stays
+    visible without raising a state change, because a rotation is the owner's
+    own wake. Any other root — the development checkout, a foreign tree — is
+    drift the state line must name. A live mind pane whose environment reads
+    no root is missing evidence, not a healthy pane, so it reads UNKNOWN, and
+    that reading outranks every classified one: an unobserved pane must not
+    hide behind a classified neighbour. The first PYTHONPATH component
+    decides, as every launcher here exports a single root. A dead pane is the
+    WINDOWS check's, and a pane with no PYTHONPATH and no launcher is a plain
+    shell that carries no root to compare. A site without a pin has no pinned
+    byte-set to compare against and skips the check, the way a camera-less
+    node skips the camera line.
+    """
+    if not (home / "health" / "runtime-release.json").exists():
+        return "", "", []
+    if not pane_rows:
+        # No pane sample is no observation: the WINDOWS check names the read
+        # failure, and this check must not read PASS from an empty sample.
+        return "PANE ROOTS: UNKNOWN — pane sample empty", "pane sample empty", []
+    try:
+        from .runtime_source import source_for
+        pinned = source_for(home, Path(__file__).resolve().parents[2])
+    except (OSError, TypeError, ValueError) as exc:
+        return f"PANE ROOTS: UNKNOWN — pin unreadable: {exc}", "pane root pin unreadable", []
+    releases = (home / "releases").resolve()
+    roots: dict[str, list[str]] = {}
+    unread: list[str] = []
+    for window, _index, state, pid in pane_rows:
+        if state != "0":
+            continue
+        components = proc_table.read_pane_pythonpath(pid)
+        if not components:
+            # A mind launcher exports PYTHONPATH for the pane it raises, so a
+            # mind window reading no root is missing evidence rather than a
+            # healthy pane. A window without a launcher (the operator shell,
+            # the log tail) is a plain shell: no root, nothing to compare.
+            if (home / "minds" / window).is_file():
+                unread.append(window)
+            continue
+        roots.setdefault(window, []).append(proc_table.pane_root(components[0]))
+    on_pin = 0
+    stale: list[str] = []
+    drift: list[str] = []
+    for window, window_roots in sorted(roots.items()):
+        divergent = sorted({item for item in window_roots if Path(item).resolve() != pinned})
+        if not divergent:
+            on_pin += 1
+            continue
+        for root in divergent:
+            root_path = Path(root).resolve()
+            entry = f"{window}:{root_path.name[:12]}" if root_path.parent == releases else f"{window}:{root}"
+            if root_path.parent == releases:
+                stale.append(entry)
+            else:
+                drift.append(entry)
+    pin_text = pinned.name[:12]
+    if unread:
+        return (f"PANE ROOTS: UNKNOWN — pane environments unreadable "
+                f"unread={','.join(sorted(set(unread)))}", "pane environments unreadable", [])
+    if drift:
+        line = f"PANE ROOTS: DRIFT pin={pin_text} on-pin={on_pin} drift={','.join(drift)}"
+        if stale:
+            line += f" stale={','.join(stale)}"
+        return line, "", ["pane-roots-drift=" + ",".join(drift)]
+    if stale:
+        return (f"PANE ROOTS: STALE pin={pin_text} on-pin={on_pin} "
+                f"stale={','.join(stale)}", "", [])
+    return f"PANE ROOTS: PASS pin={pin_text} on-pin={on_pin}", "", []
+
+
 def health(home: Path) -> str:
     lines = ["GOAL: keep this plant's panes, feed, and resident services working",
              "PURSUIT: repair internal failures from the live check; own reusable code delivery through ready integration",
@@ -393,6 +472,7 @@ def health(home: Path) -> str:
         expected = set()
     windows_unknown = ""
     missing = extra = dead = []
+    pane_rows: list[tuple[str, str, str, str]] = []
     if not session:
         windows_unknown = "session unset"
         lines.append("WINDOWS: UNKNOWN — session unset")
@@ -400,7 +480,7 @@ def health(home: Path) -> str:
         try:
             result = subprocess.run(
                 ["tmux", "list-panes", "-s", "-t", session,
-                 "-F", "#{window_name} #{pane_index} #{pane_dead}"],
+                 "-F", "#{window_name} #{pane_index} #{pane_dead} #{pane_pid}"],
                 capture_output=True, text=True, timeout=2)
             read_ok = result.returncode == 0
         except (OSError, subprocess.TimeoutExpired):
@@ -413,10 +493,9 @@ def health(home: Path) -> str:
             lines.append("WINDOWS: UNKNOWN — pane read failed")
         else:
             pane_states = {}
-            for row in result.stdout.splitlines():
-                fields = row.split()
-                if len(fields) == 3:
-                    pane_states[(fields[0], fields[1])] = fields[2]
+            for window, index, state, _pid in proc_table.pane_windows(result.stdout):
+                pane_states[(window, index)] = state
+                pane_rows.append((window, index, state, _pid))
             actual = {name for name, _ in pane_states}
             missing = sorted(expected - actual)
             extra = sorted(actual - expected)
@@ -483,6 +562,9 @@ def health(home: Path) -> str:
     camera_line, camera_unknown, camera_fault_causes = _camera_faults(home, env)
     if camera_line:
         lines.append(camera_line)
+    pane_roots_line, pane_roots_unknown, pane_roots_causes = _pane_roots(home, pane_rows)
+    if pane_roots_line:
+        lines.append(pane_roots_line)
     linked_unknown = []
     linked_failed = []
     linked_path = home / "health" / "linked-sites.json"
@@ -558,6 +640,7 @@ def health(home: Path) -> str:
     lines.extend(lease_lines)
     causes: list[str] = []
     causes.extend(camera_fault_causes)
+    causes.extend(pane_roots_causes)
     if doctor.returncode:
         causes.append("doctor")
     if missing:
@@ -595,6 +678,11 @@ def health(home: Path) -> str:
         # stay UNKNOWN until the producer or the read is repaired.
         verdict = f"UNKNOWN health camera state unavailable at {at}"
         lines.append("STATE: UNKNOWN — camera state unavailable")
+    elif pane_roots_unknown:
+        # A pane pid whose environment cannot be read is unobserved, and a
+        # stale pane root stays visible on its own line without an UNKNOWN.
+        verdict = f"UNKNOWN health pane root data unavailable at {at}"
+        lines.append("STATE: UNKNOWN — pane root data unavailable")
     elif linked_unknown:
         verdict = f"UNKNOWN health linked-site data unavailable at {at}"
         lines.append("STATE: UNKNOWN — linked-site service data unavailable")

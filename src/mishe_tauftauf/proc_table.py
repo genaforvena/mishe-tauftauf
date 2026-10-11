@@ -1,14 +1,18 @@
 """Decode external tables of process ids.
 
-Two dialects name pids as text: ``ps -eo pid=,ppid=`` (one process per line, two
-whitespace-separated decimal columns) and ``tmux list-panes -F '#{pane_pid}'``
-(one pid per line). Internal consumers act on the decoded values, never on the
-columns. Unreadable or malformed output yields no pid rather than a guess, so a
-caller reaps only processes it can attribute to a known parent.
+Three dialects name pids as text: ``ps -eo pid=,ppid=`` (one process per line,
+two whitespace-separated decimal columns), ``tmux list-panes -F '#{pane_pid}'``
+(one pid per line), and the session/window/pid and watcher tables below.
+Internal consumers act on the decoded values, never on the columns. Unreadable
+or malformed output yields no pid rather than a guess, so a caller reaps only
+processes it can attribute to a known parent. A pane's live import root lives
+in its process environment, decoded by the same rule everywhere it is read.
 """
 from __future__ import annotations
 
+import os
 import subprocess
+from pathlib import Path
 
 
 def children_by_parent() -> dict[int, list[int]]:
@@ -72,3 +76,64 @@ def pane_commands(raw: str) -> list[tuple[str, str, str, str]]:
             continue
         records.append((session, pid, start_command, current_path))
     return records
+
+
+def pane_windows(raw: str) -> list[tuple[str, str, str, str]]:
+    """(window, index, dead, pid) from a four-field window table.
+
+    The fifth dialect extends the window/index/dead triple with the pane's
+    process id, so one sample carries both the window presence a caller checks
+    and the pid whose live environment it reads. Junk lines, and rows whose pid
+    is not decimal, yield no record rather than a guess.
+    """
+    records: list[tuple[str, str, str, str]] = []
+    for line in raw.splitlines():
+        fields = line.split()
+        if len(fields) != 4:
+            continue
+        window, index, dead, pid = fields
+        if not pid.isdigit():
+            continue
+        records.append((window, index, dead, pid))
+    return records
+
+
+def pane_environ_pythonpath(raw: bytes) -> list[str]:
+    """PYTHONPATH components from a pane process's ``/proc/<pid>/environ`` bytes.
+
+    The environment is NUL-separated ``KEY=VALUE`` fields; ``execve`` cannot
+    carry a repeated key, so the first PYTHONPATH entry is the value the
+    process runs with. Undecodable bytes are replaced, never guessed.
+    """
+    prefix = b"PYTHONPATH="
+    for field in raw.split(b"\0"):
+        if field.startswith(prefix):
+            return field[len(prefix):].decode("utf-8", "replace").split(os.pathsep)
+    return []
+
+
+def read_pane_pythonpath(pid: str) -> list[str]:
+    """PYTHONPATH components a pane process's live environment names.
+
+    The pane's environment is what the process actually imported from: tmux
+    adds the server global environment and any ``-e``/``respawn-pane``
+    override at pane creation, neither of which a stored start command shows.
+    A vanished or unreadable pid yields no components rather than a guess.
+    """
+    if not pid:
+        return []
+    try:
+        raw = Path("/proc", pid, "environ").read_bytes()
+    except OSError:
+        return []
+    return pane_environ_pythonpath(raw)
+
+
+def pane_root(component: str) -> str:
+    """The import root a PYTHONPATH component names, without its ``src`` leaf.
+
+    A release publishes ``<root>/src`` and a checkout the same leaf, while a
+    pin names the root itself, so both dialects compare equal only after this
+    normalization.
+    """
+    return component[:-4] if component.endswith("/src") else component
