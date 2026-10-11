@@ -441,8 +441,8 @@ against `/tmp/ci-2edab75`, a peer's CI worktree, with recovery to `verified` at
 two cases. Repairing that lookup to resolve a role from the session the reading
 home owns — a role whose panes all belong to another home stays unresolved
 rather than guessed, while a lone pane in a session no home has claimed still
-resolves — is committed in source and reaches the served reading at the next
-promotion.
+resolves — is committed in source; the served reading follows the pin, so check
+the served pin's `discovery.py` for that lookup before relying on it.
 The covered services' imported roots are also compared with the pin's sensor
 set by `sense.runtime.sensor-coverage`: it parses each root's `discovery.py`
 for the `sense.*` ids that root can emit and names `missing=` or `added=` per

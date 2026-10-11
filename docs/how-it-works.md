@@ -545,11 +545,11 @@ returned to verified at 04:33:50Z. A drift row naming a root you do not own is
 a reader question before it is a pane defect. Resolving that role from the
 session the reading home owns instead — a role whose panes all belong to
 another home stays unresolved rather than guessed, while a lone pane in a
-session no home has claimed still resolves — is committed in source and not
-yet in the served pin, so the served reading can still be named a foreign root
-until the promotion replaces it. The minds'
-own panes can lag several releases behind — no reading currently sees those
-roots.
+session no home has claimed still resolves — is committed in source, and the
+served reading follows the pin, so check the served pin's `discovery.py` for
+that session-scoped lookup before relying on it (at 05:33Z the served pin still
+predates it). The minds' own panes can lag several releases behind — no
+reading currently sees those roots.
 The panes can therefore name both gap classes, and a frame naming one was
 composed 79 seconds after the repoint (`light-null-gap`,
 2026-10-11T03:43:04Z, discover's and senses' panes, independently
