@@ -125,6 +125,14 @@ def _target_state(home: Path, session: str, *, runtime_only: bool = False) -> No
 
 
 def _verify(home: Path, session: str) -> None:
+    """Check a linked site's panes, feed, services and pin before recording it.
+
+    The checks are ordered cheapest-first so a hold names the first defect. The
+    lease read tolerates one refresh cycle: a promotion or replant respawns every
+    watcher pane, and the recreated pane can still show the footer of the process
+    it replaced, so a stale first read is not yet frozen evidence. The advancing
+    check below is what fails a frozen renderer, and it stays bounded.
+    """
     expected = set(json.loads((home / "health" / "windows.json").read_text(encoding="utf-8")))
     result = _tmux("list-panes", "-s", "-t", session,
                    "-F", "#{window_name} #{pane_index} #{pane_dead}")
@@ -137,7 +145,20 @@ def _verify(home: Path, session: str) -> None:
     if any(panes.get((name, "1")) != "0" for name in ROLES):
         raise RuntimeError(f"linked site has a missing or dead mind pane: {session}")
     leased = set(ROLES) & expected
-    first = _leases(session, leased)
+    # A promotion or replant respawns every watcher pane, and the pane the
+    # respawn recreates can still carry the footer of the process it replaced,
+    # so a first read can name a stale or absent lease for a renderer that is
+    # starting rather than frozen. Allow one bounded refresh cycle before such a
+    # reading is taken as frozen evidence; a frozen renderer still fails in the
+    # advancing check below, one cycle later.
+    for attempt in range(2):
+        try:
+            first = _leases(session, leased)
+            break
+        except RuntimeError:
+            if attempt:
+                raise
+            time.sleep(6)
     # A frame includes a bounded probe (up to 10s), then its 5s refresh sleep.
     # Allow that whole cycle while retaining a finite frozen-renderer failure.
     for _ in range(3):
