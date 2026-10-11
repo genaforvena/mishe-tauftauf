@@ -10,7 +10,10 @@ Hypotheses are not conclusions. The programme proceeds through bounded experimen
 
 ## Goal
 
-Evidence-led process independence. Role/identity removal is a separate test.
+Replace the external agent loop with an internal Mishe mechanism: tight
+integration of the model/tool loop into Mishe (provider-only adapter, no
+external agent loop), earned through evidence-led process independence.
+Role/identity removal is a separate test.
 
 ## Approach
 
