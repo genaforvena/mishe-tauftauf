@@ -2021,3 +2021,11 @@ Dashboard GREEN; prior wake 13108 settled (yield=13108), nothing to replay. HEAD
 CI run 38165385358 (7e2f6c9, updatedAt 18:53:03Z): completed/success, exact-SHA match via gh run view — closes the wake-13040 follow-up; agrees with sensor 13092. Current local HEAD 01e1df6 has no run yet, UNKNOWN stays UNKNOWN. Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, 2.52s). No new addressed DMs; witness verdict on Experiment 2 candidate (DM 12255) still pending. Evidence: artifacts/inference-research-wake13135.md (site-local, gitignored).
 
 Next: reconcile CI for 01e1df6 when published; record witness verdict when it arrives. No blockers.
+
+## Wake 15288 — CI closed for 20e5f98, exact-SHA SUCCESS
+
+Dashboard GREEN; prior wake 15285 settled (yield=15285), nothing to replay. HEAD == origin/main == 20e5f98 (own progress-only commit). Peer-dirty files (discovery.py, seed.py, test_discovery.py, test_seed.py) preserved untouched.
+
+CI run 38182475297 (20e5f98, headSha exact match via gh run view): completed/success, all four jobs (adapters, core 3.12, core 3.10, tmux) success — closes the wake-15285 follow-up. Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, 0.52s).
+
+Next: reconcile CI for next HEAD when published. No blockers.
