@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from . import omp_pane, proc_table
+from . import omp_pane, proc_table, space_text
 from .feed import Feed, parse_feed
 from .host_radio import (BLUETOOTH_ROOT, COMMAND_TIMEOUT_SECONDS, NET_ROOT, RFKILL_ROOT,
                          bluetooth_controllers, controller_state, operstate,
@@ -2768,6 +2768,11 @@ SPACE_SOURCE = "http://127.0.0.1:8765/node/note3"
 SPACE_PRODUCER = {"name": "android-body-perception", "entry_point": "watch.py",
                   "mode": "space", "contract": 1}
 SPACE_VALIDITY_SECONDS = 30.0
+# A null gap that persists across reads for at least this long, with the cursor
+# and sequence unmoving, is a sustained source freeze rather than a dropout.
+# The threshold sits in the gap between the measured widths: seconds-wide
+# dropouts resolve between reads, a stopped producer does not.
+SPACE_FROZEN_MIN_SECONDS = 60.0
 
 
 def _space_number(value: object) -> bool:
@@ -2924,6 +2929,58 @@ def _space_light(data: object, now: float) -> dict:
         return unknown("malformed-boundary")
 
 
+def _space_light_frozen(row: dict, previous: dict | None, now: float) -> bool:
+    """Whether a null sample has persisted as a sustained source freeze.
+
+    A seconds-wide dropout resolves between two reads, so the next read of the
+    same stream publishes a fresh sample; only a stopped producer keeps the same
+    absent sequence and unmoving cursor across reads. The comparison is against
+    the reader's own previous null observation, never against publication or
+    polling activity, which cannot renew a sample.
+    """
+    if row.get("reason") != "light-null-gap" or not isinstance(previous, dict):
+        return False
+    if previous.get("reason") != "light-null-gap":
+        return False
+    nodes = (row.get("boundary") or {}).get("nodes") or [{}]
+    node = nodes[0] if nodes else {}
+    session = (row.get("provenance") or {}).get("session")
+    try:
+        interval = now - float(previous.get("read_epoch_s"))
+    except (TypeError, ValueError):
+        return False
+    return (previous.get("session") == session
+            and previous.get("cursor") == node.get("cursor")
+            and previous.get("sequence") == (node.get("light") or {}).get("sequence")
+            and interval >= SPACE_FROZEN_MIN_SECONDS)
+
+
+def _space_light_stream_record(home: Path) -> dict | None:
+    """The reader's own previous null observation, or None.
+
+    A missing or unreadable record means the duration class cannot be judged, so
+    the reading keeps the single-read name rather than claiming a freeze.
+    """
+    try:
+        text = (home / "discovery" / "space-light-stream.json").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    return space_text.decode_stream_record(text)
+
+
+def _space_light_name_freeze(home: Path, row: dict, now: float) -> dict:
+    """Name a sustained freeze in place; the age detail of the gap is kept."""
+    if not _space_light_frozen(row, _space_light_stream_record(home), now):
+        return row
+    light = row["boundary"]["nodes"][0]["light"]
+    detail = _space_light_age(light, now)
+    row.update(reason="light-stream-frozen",
+               sample="Note3 light UNKNOWN: light-stream-frozen"
+                      + (f" {detail}" if detail else "")
+                      + f"; provenance={SPACE_SOURCE}")
+    return row
+
+
 def _space_light_read(home: Path) -> dict:
     path = home / "body" / "space.json"
     text = _read(path, 65536)
@@ -2935,6 +2992,22 @@ def _space_light_read(home: Path) -> dict:
     if data is None:
         row.update(reason="boundary-absent-or-corrupt",
                    sample=f"Note3 light UNKNOWN: boundary-absent-or-corrupt; file={path}")
+    elif row.get("reason") == "light-null-gap":
+        now = time.time()
+        row = _space_light_name_freeze(home, row, now)
+        node = row["boundary"]["nodes"][0]
+        record = {"session": (row.get("provenance") or {}).get("session"),
+                  "cursor": node.get("cursor"),
+                  "sequence": node["light"].get("sequence"),
+                  "reason": "light-null-gap", "read_epoch_s": now}
+        root = home / "discovery"
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+            temporary = root / f".space-light-stream-{os.getpid()}.tmp"
+            temporary.write_text(space_text.encode_stream_record(record), encoding="utf-8")
+            os.replace(temporary, root / "space-light-stream.json")
+        except OSError:
+            pass
     return row
 
 
@@ -3356,9 +3429,12 @@ def _notify_scan(home: Path, snapshot: dict[str, object],
                  previous: dict[str, object] | None, artifact: Path) -> None:
     readings = snapshot["observations"]
     # Recheck the original boundary at notification time, not the scan timestamp.
-    readings = [_space_light(item["boundary"], time.time())
-                if item.get("id") == "sense.space.light" and "boundary" in item else item
-                for item in readings]
+    def refreshed(item: dict[str, object]) -> dict[str, object]:
+        if item.get("id") == "sense.space.light" and "boundary" in item:
+            now = time.time()
+            return _space_light_name_freeze(home, _space_light(item["boundary"], now), now)
+        return item
+    readings = [refreshed(item) for item in readings]
     available = [str(item["id"]).removeprefix("command.") for item in readings
                  if item["kind"] == "declaration" and item["state"] == "available"]
     unavailable = [str(item["id"]).removeprefix("command.") for item in readings

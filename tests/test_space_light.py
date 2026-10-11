@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import json
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -239,3 +241,89 @@ def test_null_lux_gap_outranks_the_delayed_status_flag():
     # A value the source published as absent is a coverage gap; naming it beats
     # letting the sample-age flag describe it, so a dropout reads as itself.
     assert row["reason"] == "light-null-gap"
+
+
+def null_gap_fixture(home: Path, record: dict | None) -> Path:
+    """A site whose boundary publishes a null lux sample under the reader."""
+    data = boundary()
+    data["nodes"][0]["light"].update(lux=None, status="stale")
+    (home / "body").mkdir(parents=True, exist_ok=True)
+    (home / "body" / "space.json").write_text(json.dumps(data), encoding="utf-8")
+    if record is not None:
+        (home / "discovery").mkdir(parents=True, exist_ok=True)
+        (home / "discovery" / "space-light-stream.json").write_text(
+            json.dumps(record), encoding="utf-8")
+    return home
+
+
+def null_record(**overrides) -> dict:
+    record = {"session": "session-a", "cursor": 12, "sequence": 12,
+              "reason": "light-null-gap", "read_epoch_s": time.time() - 120}
+    record.update(overrides)
+    return record
+
+
+def test_null_sample_persisting_across_reads_is_named_a_frozen_stream(tmp_path):
+    null_gap_fixture(tmp_path, null_record())
+    row = discovery._space_light_read(tmp_path)
+    # Same session, cursor and sequence across reads long enough that a
+    # seconds-wide dropout would have resolved: the producer stopped publishing.
+    assert row["reason"] == "light-stream-frozen"
+    assert row["sample"].startswith("Note3 light UNKNOWN: light-stream-frozen")
+    # The gap's age detail survives the rename; a freeze still says how stale.
+    assert "last-phone=" in row["sample"] and "age=" in row["sample"]
+
+
+def test_null_sample_first_seen_stays_a_single_read_gap(tmp_path):
+    null_gap_fixture(tmp_path, None)
+    row = discovery._space_light_read(tmp_path)
+    assert row["reason"] == "light-null-gap"
+    # The observation is retained so the next read can judge the duration class.
+    kept = json.loads((tmp_path / "discovery" / "space-light-stream.json").read_text())
+    assert kept["reason"] == "light-null-gap" and kept["cursor"] == 12
+
+
+def test_advancing_cursor_between_reads_stays_a_dropout(tmp_path):
+    null_gap_fixture(tmp_path, null_record(cursor=11))
+    row = discovery._space_light_read(tmp_path)
+    # The boundary kept receiving frames between the reads: a momentary gap.
+    assert row["reason"] == "light-null-gap"
+
+
+def test_new_absent_sample_between_reads_stays_a_dropout(tmp_path):
+    null_gap_fixture(tmp_path, null_record(sequence=11))
+    row = discovery._space_light_read(tmp_path)
+    assert row["reason"] == "light-null-gap"
+
+
+def test_recent_previous_null_observation_does_not_name_a_freeze(tmp_path):
+    null_gap_fixture(tmp_path, null_record(read_epoch_s=time.time() - 5))
+    row = discovery._space_light_read(tmp_path)
+    assert row["reason"] == "light-null-gap"
+
+
+def test_session_change_drops_the_duration_class(tmp_path):
+    null_gap_fixture(tmp_path, null_record(session="session-other"))
+    row = discovery._space_light_read(tmp_path)
+    assert row["reason"] == "light-null-gap"
+
+
+def test_unreadable_retention_is_not_a_freeze(tmp_path):
+    null_gap_fixture(tmp_path, null_record())
+    (tmp_path / "discovery" / "space-light-stream.json").write_text("{not json")
+    row = discovery._space_light_read(tmp_path)
+    assert row["reason"] == "light-null-gap"
+
+
+def test_fresh_sample_is_not_retained_as_a_null_observation(tmp_path):
+    data = boundary()
+    now = time.time()
+    data["generated_at_utc"] = stamp(now)
+    data["nodes"][0]["last_poll_utc"] = stamp(now)
+    data["nodes"][0]["light"].update(phone_sample_epoch_s=now - 20,
+                                     consumer_receipt_epoch_s=now - 2)
+    (tmp_path / "body").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "body" / "space.json").write_text(json.dumps(data), encoding="utf-8")
+    row = discovery._space_light_read(tmp_path)
+    assert row["state"] == "verified"
+    assert not (tmp_path / "discovery" / "space-light-stream.json").exists()

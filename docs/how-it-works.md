@@ -445,7 +445,11 @@ measured: short dropouts of a few seconds to tens of seconds, where the
 boundary's event cursor keeps advancing, and a sustained phone-silent freeze,
 where the cursor stops while the producer keeps writing and the transport stays
 reachable. Which phone-side layer stops publishing, and why, is not measured; a
-live transport and a live writer already rule out the link as the cause.
+live transport and a live writer already rule out the link as the cause. When
+the same absent sample and unmoving cursor persist across two of the reader's
+own null observations at least a minute apart, the reading names
+`light-stream-frozen`; the first null observation of a stream reads
+`light-null-gap`, and publication or polling never converts one into the other.
 Retained measured light changes are history, not room occupancy or human
 attendance, and startup or recovery is not a physical event.
 Source support alone does not establish a working feed: the Android publisher
