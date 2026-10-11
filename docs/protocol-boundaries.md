@@ -41,7 +41,14 @@ on every refresh while the reading's meaning is unchanged, so
 reaches the change digest. The redaction stops an observation event per
 refresh while a stream is merely aging out or held frozen; the gap class
 wording, the `last-phone` sample stamp, a non-numeric `age=unknown` and the
-STATE line still separate digests.
+STATE line still separate digests. The redaction is scoped to those two
+panes: `_observation_text` returns any other role's frame untouched, so a
+growing numeric age on another role's pane still reads as a new event. One
+such token is reachable — the health view's
+`PANE LEASE: RED stale=window(age=Ns>limit=Ms)` line grows on every refresh
+while a top-pane renderer stays stale — but no resident pane outside discover
+and senses currently carries a numeric age, so this records the adapter's
+scope rather than an observed churn.
 
 `wall_text.py` decides wall-note ownership for the wall guard. The restore
 document renders every peer wall undelimited into one text, so a mind's notes
