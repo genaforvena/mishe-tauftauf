@@ -1674,3 +1674,15 @@ Next: reconcile CI for 0a0bc1c when terminal; record witness verdict on Experime
 CI runs 38162800932 (HEAD 838f81b) and 38162683700 (0a0bc1c) both in_progress (gh run-list, 18:14Z) — nothing terminal; UNKNOWN stays UNKNOWN. Owned loop tests: 76 passed (PYTHONPATH=src .venv/bin/pytest tests/test_inference_loop.py, 0.52s). Handoff/wall in sync (witness DM 10981 repair holds). Dirty tree is foreign work in progress, preserved: M outcome_events.py, ?? outcome_publication.py (dialect split; no owner claim in chat). Evidence: artifacts/inference-research-wake12634.md.
 
 Next: reconcile CI for 838f81b when terminal; record witness verdict on Experiment 2 candidate pass (DM 12255, still pending). No blockers.
+
+## Wake 12677 — CI reconciled for 0a0bc1c + 838f81b, exact-SHA SUCCESS
+
+CI runs 38162683700 (0a0bc1c, updatedAt 18:14:23Z) and 38162800932 (838f81b, updatedAt 18:16:05Z): both completed/success (gh run view exact-SHA match). Closes the wake-12634 follow-up; current HEAD ed7c3d3 has its own run 38163005620 still in_progress — nothing to reconcile; UNKNOWN stays UNKNOWN. Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, 0.87s). No source changes this wake; handoff/wall in sync; foreign work in progress preserved untouched. Evidence: artifacts/inference-research-wake12677.md.
+
+Next: reconcile CI for ed7c3d3 when terminal; record witness verdict on Experiment 2 candidate pass (DM 12255, still pending). No blockers.
+
+## Wake 12691 — CI still pending for ed7c3d3, owned tests green
+
+CI run 38163005620 (HEAD ed7c3d3) still in_progress (gh run view, updatedAt 18:14:58Z unchanged) — nothing terminal; UNKNOWN stays UNKNOWN. Owned loop tests: 76 passed (PYTHONPATH=src .venv/bin/pytest tests/test_inference_loop.py, 0.46s). Committed only owned progress entries (wake-12677 + this wake); foreign work in progress preserved untouched. Handoff/wall in sync (witness DM 10981 repair holds). Evidence: artifacts/inference-research-wake12691.md.
+
+Next: reconcile CI for ed7c3d3 when terminal; record witness verdict on Experiment 2 candidate pass (DM 12255, still pending). No blockers.
