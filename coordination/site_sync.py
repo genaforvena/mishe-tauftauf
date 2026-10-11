@@ -23,6 +23,14 @@ KERNEL = Path(__file__).resolve().parents[1]
 # site be recorded healthy while its docs mind pane was dead for hours.
 ROLES = ("genome", "witness", "discover", "senses", "health", "docs", "research-methods", "permissions")
 
+# One full renderer frame, the cycle a respawned pane needs before its own
+# footer replaces the replaced process's: the bounded probe budget
+# (`observations._RENDERER_TIMEOUTS`, 10s default and 20s for the witness role),
+# its one retry with a 2s backoff, and the 5s refresh sleep that follows. Keep
+# this at least as long as that cycle, or the first lease read after a promotion
+# still names the old footer and holds a site whose renderers are starting.
+RENDERER_FRAME = 20.0 + 2.0 + 5.0
+
 
 def resident_home() -> Path | None:
     homes = [KERNEL / name for name in (".mishe-seed", ".mishe-tauftauf")
@@ -128,10 +136,12 @@ def _verify(home: Path, session: str) -> None:
     """Check a linked site's panes, feed, services and pin before recording it.
 
     The checks are ordered cheapest-first so a hold names the first defect. The
-    lease read tolerates one refresh cycle: a promotion or replant respawns every
-    watcher pane, and the recreated pane can still show the footer of the process
-    it replaced, so a stale first read is not yet frozen evidence. The advancing
-    check below is what fails a frozen renderer, and it stays bounded.
+    lease read tolerates one full renderer frame (:data:`RENDERER_FRAME`): a
+    promotion or replant respawns every watcher pane, and the recreated pane
+    keeps the replaced process's footer until its own first frame lands, so a
+    stale first read is not yet frozen evidence. Both real freezes are still
+    held — one that never publishes a fresh footer by the re-raised read, one
+    that stops after a good read by the advancing check — and both stay bounded.
     """
     expected = set(json.loads((home / "health" / "windows.json").read_text(encoding="utf-8")))
     result = _tmux("list-panes", "-s", "-t", session,
@@ -146,11 +156,12 @@ def _verify(home: Path, session: str) -> None:
         raise RuntimeError(f"linked site has a missing or dead mind pane: {session}")
     leased = set(ROLES) & expected
     # A promotion or replant respawns every watcher pane, and the pane the
-    # respawn recreates can still carry the footer of the process it replaced,
-    # so a first read can name a stale or absent lease for a renderer that is
-    # starting rather than frozen. Allow one bounded refresh cycle before such a
-    # reading is taken as frozen evidence; a frozen renderer still fails in the
-    # advancing check below, one cycle later.
+    # respawn recreates is a new process whose first frame is one full renderer
+    # cycle; until it lands, the footer is still the replaced process's. Allow
+    # that cycle before such a reading is taken as frozen evidence. The two real
+    # freezes are both still held, one cycle later than before: a renderer that
+    # never publishes a fresh footer fails the re-raised stale read below, and
+    # one that stops after a good read fails the advancing check after it.
     for attempt in range(2):
         try:
             first = _leases(session, leased)
@@ -158,7 +169,7 @@ def _verify(home: Path, session: str) -> None:
         except RuntimeError:
             if attempt:
                 raise
-            time.sleep(6)
+            time.sleep(RENDERER_FRAME)
     # A frame includes a bounded probe (up to 10s), then its 5s refresh sleep.
     # Allow that whole cycle while retaining a finite frozen-renderer failure.
     for _ in range(3):
