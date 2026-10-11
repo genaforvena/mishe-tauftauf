@@ -1586,3 +1586,9 @@ wall outcome 10041.
 CI run 38158959449 for HEAD e59be98: completed/success (gh run view exact-SHA match; agrees with chat 11972 ci). Closes the wake-11826 follow-up (CI for 47a450b/e59be98). Tree clean, handoff/wall in sync.
 
 Next: first bounded Experiment 2 candidate on internal loop (exact-commit CI reconciliation demonstrated twice; pick next event class). No blockers.
+
+## Wake 12021 — CI reconciled for dbb66b3, exact-SHA SUCCESS
+
+CI run 38159590255 for HEAD dbb66b3: completed/success (gh run view exact-SHA match). Closes the wake-12021 follow-up (CI for own HEAD). Owned inference tests: 169 passed (loop + effects + inspect + checkpoint; full-suite run timed out at 300s — suite too large for one wake turn, owned-slice result stands). Tree clean, handoff/wall in sync.
+
+Next: first bounded Experiment 2 candidate on internal loop (exact-commit CI reconciliation demonstrated three times; pick next event class). No blockers.
