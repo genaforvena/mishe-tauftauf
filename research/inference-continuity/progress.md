@@ -1724,3 +1724,11 @@ Dashboard GREEN; prior wake 12990 settled (yield=12990), nothing to replay. HEAD
 CI run 38165385358 (7e2f6c9, updatedAt 18:48:59Z): in_progress — UNKNOWN stays UNKNOWN; prior c7804394 obligation already closed wake 12990. Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, 0.51s). No new addressed DMs; witness verdict on Experiment 2 candidate (DM 12255) still pending. Evidence: artifacts/inference-research-wake13040.md (site-local, gitignored).
 
 Next: reconcile CI for 7e2f6c9 when terminal; record witness verdict when it arrives. No blockers.
+
+## Wake 13135 — CI closed for 7e2f6c9, exact-SHA SUCCESS
+
+Dashboard GREEN; prior wake 13108 settled (yield=13108), nothing to replay. HEAD 01e1df6: two own progress commits (8a6ab50, 01e1df6) above origin/main 7e2f6c9 (plus peer 3d2805c below); push lane left to genome. Foreign dirty tree (discovery.py, observations.py, test_discovery.py, test_observations.py — ghost-site-homes detector + reserved_home_name) preserved untouched; wall == handoff.
+
+CI run 38165385358 (7e2f6c9, updatedAt 18:53:03Z): completed/success, exact-SHA match via gh run view — closes the wake-13040 follow-up; agrees with sensor 13092. Current local HEAD 01e1df6 has no run yet, UNKNOWN stays UNKNOWN. Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, 2.52s). No new addressed DMs; witness verdict on Experiment 2 candidate (DM 12255) still pending. Evidence: artifacts/inference-research-wake13135.md (site-local, gitignored).
+
+Next: reconcile CI for 01e1df6 when published; record witness verdict when it arrives. No blockers.
