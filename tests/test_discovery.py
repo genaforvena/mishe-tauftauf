@@ -1717,10 +1717,19 @@ def test_dv_binding_unreadable_record_keeps_detected_unbound(tmp_path):
     assert result["unbound"] == 1
 
 
-def _write_pin(home: Path, sha: str) -> None:
+def _write_pin(home: Path, sha: str, *, source: object = "auto") -> None:
+    """Write a runtime pin; ``source`` ``auto`` creates a present release dir,
+    a string is written as named (existing or not), and ``None`` omits it."""
     (home / "health").mkdir(parents=True, exist_ok=True)
+    record = {"version": 1, "sha": sha}
+    if source == "auto":
+        release = home / "releases"
+        release.mkdir(parents=True, exist_ok=True)
+        record["source"] = str(release)
+    elif source is not None:
+        record["source"] = source
     (home / "health" / "runtime-release.json").write_text(
-        json.dumps({"version": 1, "sha": sha}), encoding="utf-8")
+        json.dumps(record), encoding="utf-8")
 
 
 def _mock_pin_git(monkeypatch, head_sha: str, lag: int, oldest_time: str) -> None:
@@ -1800,6 +1809,58 @@ def test_pin_lag_git_error(tmp_path, monkeypatch):
     result = discovery._runtime_pin_lag(home)
     assert result["state"] == "unknown"
     assert "git error" in result["sample"]
+
+
+def test_pin_lag_release_source_missing_is_unknown(tmp_path, monkeypatch):
+    """The pinned release directory is the bytes the services import: a stat
+    miss is its own UNKNOWN even though the commit relation still computes."""
+    home = tmp_path / "site"
+    sha = "a" * 40
+    missing = home / "releases" / sha
+    _write_pin(home, sha, source=str(missing))
+    _mock_pin_git(monkeypatch, sha, 0, "")
+    result = discovery._runtime_pin_lag(home)
+    assert result["state"] == "unknown"
+    assert result["sample"] == f"pin={sha[:7]} release-source-missing path={missing}"
+    assert result["source"] == str(missing)
+
+
+def test_pin_lag_release_source_present_reads_the_lag(tmp_path, monkeypatch):
+    home = tmp_path / "site"
+    pin = "a" * 40
+    head = "b" * 40
+    present = tmp_path / "present-release"
+    present.mkdir()
+    _write_pin(home, pin, source=str(present))
+    _mock_pin_git(monkeypatch, head, 3, "2026-10-06T16:00:00+00:00")
+    now = datetime(2026, 10, 6, 18, 0, 0, tzinfo=timezone.utc)
+    result = discovery._runtime_pin_lag(home, now=now)
+    assert result["state"] == "verified"
+    assert result["sample"] == f"pin={pin[:7]} head={head[:7]} lag=3 age=2h00m"
+    assert result["lag"] == 3
+
+
+@pytest.mark.parametrize("marker", ["unnamed", "not-a-string", "empty"])
+def test_pin_lag_unstatable_release_source_is_unknown(tmp_path, marker):
+    """A pin record without a usable source string cannot be checked, so the
+    reading says so rather than silently skipping the stat."""
+    home = tmp_path / "site"
+    sha = "a" * 40
+    named = {"unnamed": None, "not-a-string": 42, "empty": ""}[marker]
+    _write_pin(home, sha, source=named)
+    result = discovery._runtime_pin_lag(home)
+    assert result["state"] == "unknown"
+    assert result["sample"] == "pin release source unnamed"
+    assert result["pin"] == sha
+
+
+def test_pin_lag_record_not_an_object_is_unknown(tmp_path):
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health" / "runtime-release.json").write_text("null", encoding="utf-8")
+    result = discovery._runtime_pin_lag(home)
+    assert result["state"] == "unknown"
+    assert result["sample"] == "pin record not an object"
 
 
 def _tape_entry(sequence: int, timestamp: str, source: str, body: str) -> bytes:
