@@ -162,7 +162,9 @@ intermittently — v4l2 read timeouts, kernel URB resubmit failures — with
 nothing reading them. The health view reads that surface directly and prints a
 `CAMERA:` line: artifact age against the bound `mesh-cam-watch` itself declares
 (120 s), `CAPTURE-FAIL` onsets and kernel URB resubmit failures inside a
-15-minute window. A node declares its camera with `health/camera.json`, so a
+15-minute window, with the class turning RED at three capture fails or ten URB
+resubmits in that window. A node declares its camera with `health/camera.json`,
+so a
 plant without a webcam skips the check instead of inheriting its neighbour's
 surface; a declaration that cannot be read, or a source that cannot be read on
 a declared node, reads UNKNOWN rather than PASS, because deleted monitoring
@@ -176,6 +178,12 @@ unresolved, so the check is the continuing observation, not a fix. The same line
 read `CAMERA: PASS class=SEEING artifact-age=2s capture-fails=0/900s
 kernel-urbs=5/900s` at 07:10Z once the 15-minute window rolled past the
 kernel's URB failures, which is a bounded recovery rather than a resolution.
+Measured again at 07:53Z the line read `CAMERA: PASS class=SEEING
+artifact-age=2s capture-fails=1/900s kernel-urbs=4/900s`, below the class
+thresholds of three capture fails and ten kernel URB resubmits in the
+900-second window; the kernel resubmits keep occurring (one uvcvideo error in
+the last ten minutes on the 07:43Z scan), so it is still the window that moves
+rather than the cause.
 
 ### Doctor is a check with a repair side effect
 
@@ -407,7 +415,12 @@ comparison is unevidenced, not clean.
 The same `UNKNOWN` reading names a foreign consumer of the checkout as
 `foreign=<unit>@<checkout>` when the unit's import root or its `ExecStart` script
 names the plant, so a live consumer of the moving source is visible rather than
-counted as an anonymous gap.
+counted as an anonymous gap. An unattributed unit whose import root and whose
+own declared `ExecStart`, `WorkingDirectory` and `Environment` paths name no
+site's checkout or home is a host tool beside the sites, named
+`host-scope=<unit>` without holding the reading at `UNKNOWN`; a unit whose
+declaration cannot be read, or that declares a path inside a site, stays
+unattributed.
 The scanning site's own units are read even when the registry lists no other
 sites, so a unit its manifest omits is still compared with its own pin rather
 than left unnamed. An empty site list is therefore not itself `UNKNOWN` as long

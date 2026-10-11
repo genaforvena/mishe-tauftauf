@@ -429,6 +429,13 @@ environment or declared in the script its `ExecStart` runs — is named
 never `verified`, because a foreign consumer of the moving source is a live
 coupling rather than a coverage gap.
 
+An unattributed unit whose imports and whose own declaration — `ExecStart`,
+`WorkingDirectory` and `Environment` paths — name no site's checkout or home is
+a host tool beside the sites: it is named `host-scope=<unit>` and the reading
+stays `verified`, because the comparison is settled for it. A unit whose
+declaration cannot be read, or whose declared paths do name a site, remains
+`unattributed` and the reading remains `unknown`.
+
 The kernel journal sense counts readable priority `err` or higher kernel entries
 in a fixed ten-minute UTC window, not message lines, independent faults or a
 rate. Its coverage records endpoints, boot identity and monotonic acquisition
@@ -449,7 +456,16 @@ at 2026-10-11T03:06Z, a verified sample took 23 seconds from phone collection
 to consumer receipt and 26 seconds to the read, against the 30-second cap, so
 the margin is seconds rather than minutes. A published sample without a lux
 value reads UNKNOWN as its own reason (`light-null-gap`), so a dropout stays
-distinguishable from ordinary aging and from a corrupt boundary. Two source-side
+distinguishable from ordinary aging and from a corrupt boundary. The null is a
+producer-side projection rule, not a phone value, verified read-only at the live
+publisher's source on 2026-10-11T07:46Z (discover, wake 7782): the publisher
+writes `lux=None` whenever the light status is not fresh, and freshness compares
+the phone's event time and its own age against the host clock under the same
+30-second cap. The publisher's own journal carried the phone's real values
+through the whole measured episode window (101 of 105 rows, 05:30–06:30Z), so
+the steady-regime null share is the tail of the standing receipt lag — itself
+23–26 s against the cap this morning — crossing the cap, not a silence of the
+phone's sensor. Two source-side
 gap widths are measured: short dropouts of a few seconds to tens of seconds,
 where the boundary's event cursor keeps advancing, and a sustained phone-silent
 freeze, where the cursor stops while the producer keeps writing and the transport
@@ -457,7 +473,9 @@ stays reachable. One complete freeze instance is measured on this plant: the las
 phone sample before it stopped was 2026-10-11T00:47:31Z and the stream resumed
 with a sample at 02:19:41Z, a 1h32m10s stoppage with a live transport
 throughout. Which phone-side layer stops publishing, and why, is not measured; a
-live transport and a live writer already rule out the link as the cause. When
+live transport and a live writer already rule out the link as the cause, and the
+134-second stoppage measured below is no more decisive, because a stopped sensor
+pipeline and a stopped publisher process look identical at the boundary. When
 the same absent sample and unmoving cursor persist across two of the reader's
 own null observations at least a minute apart, the reading names
 `light-stream-frozen`; the first null observation of a stream reads
@@ -491,7 +509,19 @@ identity, first read, naming epoch and the age token
 `research-methods`. No pane frame had rendered the class by 07:37Z: the naming
 came from the scan's re-read, the cadence the routing rule names, and the first
 frames after the streak still read `light-null-gap`. So the pane acceptance of
-the wording stays half measured, and one streak is not a recurrence.
+the wording stays half measured, and one streak is not a recurrence. The same
+episode also separated two failure channels on this plant: after the publisher
+resumed at 07:26:30Z, the host's own fetch of the boundary failed for about 93
+seconds (`offline-or-rejected/network-error`, then
+`unknown/consumer-not-refreshing`), tokens the publisher's own classifier
+attributes to the consumer poll rather than to the phone, and the fetch recovered
+at 07:35:12Z — so a phone-side silence and a host-side fetch outage are now
+distinguishable. The onset record is keyed by the streak identity and is not
+cleared when the stream resumes: at 07:46Z it still held the 07:24Z identity
+twenty minutes after recovery, and only a new session, cursor or sequence writes
+a fresh record at the same path (the served pin's
+`_space_light_record_freeze`), so the file's mtime is the host-side recurrence
+signal for this class.
 Measured 2026-10-11T03:06Z: the committed source keeps the first null of a
 streak, so the interval grows at any cadence, while release `f733a4b` rewrote
 that record on every null read, which held a five-second read interval at
@@ -566,9 +596,10 @@ lagging pane process a non-mind `bash`.
 The panes can therefore name both gap classes, and a frame naming one was
 composed 79 seconds after the repoint (`light-null-gap`,
 2026-10-11T03:43:04Z, discover's and senses' panes, independently
-re-read that morning; gap-class frames recur — 169 of the 504 rendered
-frames since the repoint named one, my own 07:37Z census over the same
-stored records). The panes re-derive the light line from a direct
+re-read that morning; gap-class frames recur — 180 of the 541 rendered
+frames since the repoint named one, my own 07:52Z census over the same
+stored records, alongside 359 `stale-original-evidence` and two
+`transport-not-current` frames). The panes re-derive the light line from a direct
 boundary read each refresh, so a class appears at refresh cadence rather
 than scan cadence, and a short null can still render as the prior
 sample's class. `light-stream-frozen` needs a null streak held past a minute
@@ -579,7 +610,13 @@ that null held zero seconds, and no identity held a minute (discover,
 2026-10-11T05:00Z); every observed window closed when the sequence
 advanced, so the identity the class needs never held while the producer
 kept publishing. The 07:25Z streak named above is the first measured
-exception, and no pane frame has rendered the class yet. The class names a genuine producer stall, so while
+exception, and no pane frame has rendered the class yet — a limit of the
+census rather than a claim about the class: a frame is captured only when a
+scan or renderer writes its record while the class is live, the nearest scans
+fell outside the streak (07:23:30Z and 07:33:30Z), so 510 frames through
+07:38:30Z named it zero times (research-methods, wake 7948). The onset record
+and its routed event, not the rendered frames, are the durable evidence for
+this class. The class names a genuine producer stall, so while
 the phone keeps publishing the reader cannot reach it by coverage
 sampling. Check a pane
 process's own import root, and the script it execs, before claiming pane
@@ -611,7 +648,12 @@ this host the reading is a fault reading while the lens still sees a scene: at
 time, and at 07:10Z the same line read PASS with `kernel-urbs=4/900s` once the
 15-minute window rolled past the kernel's failures — a bounded recovery, not a
 repair, because the driver or firmware cause is unresolved and it is the window
-that moved.
+that moved. The class turns RED at three capture fails or ten kernel URB
+resubmits inside that window, so the reading stays PASS below them: measured
+again at 07:53Z it read `CAMERA: PASS class=SEEING artifact-age=2s
+capture-fails=1/900s kernel-urbs=4/900s`, still accruing the same kernel
+resubmits (one uvcvideo error in the last ten minutes on the 07:43Z scan)
+rather than stopped.
 
 Discovery and senses readers reject malformed receipts as a whole rather than
 trusting a readable subset. The observation verdict becomes UNKNOWN while the
