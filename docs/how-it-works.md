@@ -365,6 +365,11 @@ publication, and notification failures separately from `latest.json`: a failed
 acquisition or pre-commit publication retains the previous sample; a failed
 notification retains the newly committed sample but cannot claim completed
 delivery. Historical scan artifacts are preserved.
+A `running` record is a scan in flight, not a failure: the pane's sample is the
+last published snapshot, so the STATE line holds and the `ATTEMPT` line names
+the live stage outside the change digest. Only a recorded `failed` attempt
+flips the pane to UNKNOWN, and an unreadable or absent attempt record is its own
+UNKNOWN rather than a silent success.
 Every receipt also records its `producer`: the package root and commit that ran
 the scan. The panes' `SCAN` line and the tape's `Producer` line name it against
 the site pin (`pin@<sha>`, `checkout@<sha>`, `other@<sha>`, or `unknown`), so a
@@ -450,10 +455,12 @@ the same absent sample and unmoving cursor persist across two of the reader's
 own null observations at least a minute apart, the reading names
 `light-stream-frozen`; the first null observation of a stream reads
 `light-null-gap`, and publication or polling never converts one into the other.
-No byte-set this plant serves those panes from carries either name yet — the
-pinned release and the panes' renderer runtime both predate them, so a live pane
-still shows the same sample as `light-not-current-or-delayed`. That gap is a
-loaded-bytes question, not a reading one.
+No byte-set those panes load carries either name: seven resident panes load a
+2026-10-01 trial runtime that predates both classes and still show the same
+sample as `light-not-current-or-delayed`, while the operator pane loads the
+pinned release, which carries `light-null-gap` but predates the freeze class.
+Which byte-set a pane loads is a loaded-bytes question, not a reading one: the
+committed source, given the same frozen boundary, names `light-stream-frozen`.
 Retained measured light changes are history, not room occupancy or human
 attendance, and startup or recovery is not a physical event.
 Source support alone does not establish a working feed: the Android publisher
