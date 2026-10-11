@@ -308,6 +308,68 @@ def test_sync_verifies_advancing_leases_and_allows_unrelated_window(tmp_path: Pa
             site_sync._verify(target, "example")
 
 
+def test_sync_allows_one_refresh_cycle_after_a_pane_respawn(tmp_path: Path, monkeypatch) -> None:
+    # A promotion or replant respawns every watcher pane, and the pane it
+    # recreates can still carry the footer of the process it replaced. The first
+    # lease read therefore fails while the new renderer is starting, and the
+    # site must not be recorded as frozen on that evidence.
+    _core_home, target = setup_sites(tmp_path, monkeypatch)
+    (target / "health").mkdir()
+    (target / "health" / "windows.json").write_text(
+        '["genome", "witness", "discover", "senses", "health", "permissions"]',
+        encoding="utf-8")
+    (target / "health" / "services.json").write_text("[]", encoding="utf-8")
+    (target / "chat.log").write_text("", encoding="utf-8")
+    names = set(site_sync.ROLES) & {"genome", "witness", "discover", "senses", "health", "permissions"}
+    rows = [f"{name} 0 0" for name in site_sync.ROLES]
+    rows += [f"{name} 1 0" for name in site_sync.ROLES]
+    monkeypatch.setattr(site_sync, "_tmux",
+                        lambda *_args: subprocess.CompletedProcess([], 0, "\n".join(rows).encode(), b""))
+    monkeypatch.setattr(site_sync.time, "sleep", lambda _seconds: None)
+    stamps = iter([
+        datetime.now(timezone.utc) - timedelta(seconds=40),  # first read: respawned pane
+        datetime.now(timezone.utc) - timedelta(seconds=4),   # second read: new renderer live
+        datetime.now(timezone.utc) + timedelta(seconds=2),   # advancing check
+    ])
+    reads = 0
+
+    def leases(_session, leased):
+        nonlocal reads
+        if reads == 0:
+            reads += 1
+            raise RuntimeError("linked site top-pane lease is stale: example:genome age=40.0s")
+        stamp = next(stamps)
+        return {name: stamp for name in leased}
+
+    monkeypatch.setattr(site_sync, "_leases", leases)
+    site_sync._verify(target, "example")
+
+
+def test_sync_still_fails_a_frozen_renderer_after_one_refresh_cycle(tmp_path: Path, monkeypatch) -> None:
+    # The tolerance is bounded: a renderer that never publishes a fresh footer
+    # still ends the refresh as a hold, so the repair hides no failure.
+    _core_home, target = setup_sites(tmp_path, monkeypatch)
+    (target / "health").mkdir()
+    (target / "health" / "windows.json").write_text(
+        '["genome", "witness", "discover", "senses", "health", "permissions"]',
+        encoding="utf-8")
+    (target / "health" / "services.json").write_text("[]", encoding="utf-8")
+    (target / "chat.log").write_text("", encoding="utf-8")
+    names = set(site_sync.ROLES) & {"genome", "witness", "discover", "senses", "health", "permissions"}
+    rows = [f"{name} 0 0" for name in site_sync.ROLES]
+    rows += [f"{name} 1 0" for name in site_sync.ROLES]
+    monkeypatch.setattr(site_sync, "_tmux",
+                        lambda *_args: subprocess.CompletedProcess([], 0, "\n".join(rows).encode(), b""))
+    monkeypatch.setattr(site_sync.time, "sleep", lambda _seconds: None)
+    frozen = datetime.now(timezone.utc) - timedelta(seconds=90)
+    monkeypatch.setattr(site_sync, "_leases",
+                        lambda _session, leased: {name: frozen for name in leased})
+    # The frozen renderer now fails in the advancing check, one cycle later than
+    # the first stale read: the hold is still produced inside one refresh window.
+    with pytest.raises(RuntimeError, match="top-pane lease did not advance"):
+        site_sync._verify(target, "example")
+
+
 def test_follower_ignores_stale_or_malformed_ci_readings(tmp_path: Path, monkeypatch) -> None:
     now = datetime.now(timezone.utc)
     sample = {"state": "pass", "sha": "a" * 40, "checked": now.isoformat().replace("+00:00", "Z")}
