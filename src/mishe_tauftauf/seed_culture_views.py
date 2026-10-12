@@ -664,6 +664,19 @@ def health(home: Path) -> str:
     runtime_state, _ = _runtime_state(home, Path(__file__).resolve().parents[2], service_roots)
     if runtime_state == "DRIFT":
         causes.append("runtime-drift")
+    # A dead tmux server or an unshielded one is a host failure Health owns:
+    # the guard loop re-shields within a minute, but a missing session needs
+    # a mind to raise it and verify the panes. Read the latest scan's
+    # session-stability sense; a fresh drift here turns Health RED so the
+    # wake routes to a resolver instead of waiting on the operator window.
+    try:
+        snapshot = latest(home)
+        stability = next((item for item in (snapshot.get("observations", []) if snapshot else [])
+                          if isinstance(item, dict) and item.get("id") == "sense.host.session-stability"), None)
+        if isinstance(stability, dict) and str(stability.get("state", "")) == "drift":
+            causes.append("session-stability=" + str(stability.get("sample", "drift"))[:160])
+    except (OSError, ValueError, AttributeError):
+        pass
     if linked_failed:
         causes.append("linked-sites=" + ",".join(linked_failed))
     if lease_state == "STALE":
