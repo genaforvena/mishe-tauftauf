@@ -1342,6 +1342,63 @@ def _mind_treadmill(home: Path) -> dict:
             "validity": {"sampled": sampled, "window_commits": TREADMILL_WINDOW_COMMITS,
                          "min_wakes": TREADMILL_MIN_WAKES}}
 
+LOOP_STALL_GATE_HOURS = 6.0
+"""Hours an open resolver gate may age before a treadmilling role reads stalled.
+
+Inference waited ~24h (pause 12:11Z to next-day cutoff); six hours catches the
+same shape early without firing on one quiet afternoon. The gate age comes
+from the oldest open DM to another role (the witness/senses legs); a role
+with no open outbound DM is pausing on its own, not stalled on a gate.
+"""
+
+def _mind_loop_stall(home: Path, now: datetime | None = None) -> dict[str, object]:
+    """Flag any role stuck in a record-only loop behind an aging resolver gate.
+
+    Generalizes inference-research DM 20438 (self-flagged 73/80 record-only,
+    5,0 stagnation, 24h gate-wait on senses + witness legs): the mind sensed
+    its own loop manually and waited a day for legs. This producer fires on
+    the same shape for any role without anyone self-flagging: treadmill
+    verdict watch-treadmill AND an open outbound DM older than the gate
+    bound. Either half alone is not a stall (steady-state record runs exist;
+    young gates resolve). State is drift when a role stalls, verified when
+    no role pairs both halves, unknown when the treadmill or tape is
+    unreadable. The sample names stalled roles with gate age so the wake
+    routes to the gate owner, not the stalled mind.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    treadmill = _mind_treadmill(home)
+    if treadmill.get("state") != "verified":
+        return {"id": "sense.mind.loop-stall", "state": "unknown",
+                "sample": "treadmill reading unavailable", "kind": "read"}
+    roles = treadmill.get("roles", {})
+    treadmilling = sorted(role for role, pair in roles.items()
+                          if isinstance(pair, dict) and pair.get("verdict") == "watch-treadmill")
+    if not treadmilling:
+        return {"id": "sense.mind.loop-stall", "state": "verified",
+                "sample": "stall=0 treadmilling=none", "kind": "read",
+                "stalled": []}
+    # Gate ages come from the disposition reader, not a second tape parse:
+    # _coord_dm_disposition_age already pairs each open DM with its target
+    # and age-gates stalls, so no new parse sites are needed here.
+    disp = _coord_dm_disposition_age(home, now)
+    if disp.get("state") != "verified":
+        return {"id": "sense.mind.loop-stall", "state": "unknown",
+                "sample": "disposition reading unavailable", "kind": "read"}
+    oldest = str(disp.get("oldest_open", ""))
+    stall_n = int(disp.get("stall", 0))
+    # oldest_open names target:age; the sample pairs treadmilling roles with
+    # the tape-wide gate head. Per-role outbound attribution would need a
+    # second tape parse; until then a treadmilling role beside any mature
+    # gate reads drift with the gate head named, so the resolver is visible
+    # even though the pairing is tape-wide, not per-role.
+    stalled = sorted(f"{role}@{oldest}" for role in treadmilling) if stall_n else []
+    state = "drift" if stalled else "verified"
+    return {"id": "sense.mind.loop-stall", "state": state,
+            "sample": f"stall={len(stalled)} " + ",".join(stalled) if stalled else "stall=0 gates-young",
+            "kind": "read", "stalled": stalled,
+            "treadmilling": treadmilling}
+
 LEDGER_DV_PHASES = frozenset({
     "applied", "review-refused", "reverted", "revert-failed",
     "revert-observation-failed",
@@ -4140,6 +4197,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_mind_wedge_suspects())
     observed.append(_mind_watch_wait(home))
     observed.append(_mind_treadmill(home))
+    observed.append(_mind_loop_stall(home))
     observed.append(_ledger_delivery_invariant(home))
     observed.append(_ledger_dv_binding(home))
     observed.append(_ledger_evidence_binding(home))
