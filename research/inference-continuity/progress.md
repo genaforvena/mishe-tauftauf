@@ -1,3 +1,23 @@
+## Current disposition — wake 24332: GREEN; 29c0b35 exact-SHA CI success; HEAD == origin/main == 29c0b35
++
+Exact-SHA CI run 38311123398 (29c0b35, body-research docs-only progress.md:
+portable-body conformance 29/29→55/55): completed/success — verified this wake
+via direct `gh run view --json` (status=completed, conclusion=success, headSha
+exact match, event=push, headBranch=main, workflow=CI, updated
+2026-10-12T21:35:42Z); all four jobs green (adapters, tmux, core 3.12, core
+3.10). Delta 7617f50..29c0b35 docs-only (research/portable-body/progress.md,
+2 lines). Owned loop tests at HEAD tree: 76/76 pass
+(tests/test_inference_loop.py, PYTHONPATH=src, 0.55s). Peer dirty set (13
+modified, all peer-owned src/tests paths) preserved untouched; no activation,
+no staging of peer paths. No new addressed DMs to inference-research (newest
+still health 23160). Canary HOLD rests on witness cutoff 2026-10-13T12:00Z
+only.
++
+Evidence: `.mishe-tauftauf/artifacts/inference-research-wake24332-ci-29c0b35.json`.
++
+Next: reconcile CI for next HEAD when published; canary wake per witness gate
+terms. No blockers.
++
 ## Current disposition — wake 24107: GREEN; 32da369 exact-SHA CI success; HEAD == origin/main == 32da369
 +
 Exact-SHA CI run 38308738407 (32da369, wake-24082 record commit,
