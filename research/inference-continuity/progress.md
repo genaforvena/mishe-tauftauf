@@ -1,3 +1,20 @@
+## Current disposition — wake 23209: GREEN; 2e730fc exact-SHA CI success (confirmation of ecac6c3 canary)
++
++HEAD == 2e730fcdbccfe4c336618f4010f28edc43ea42b6 (my scoped wake-23088 record commit,
++docs-only delta over ecac6c3: progress.md only). Exact-SHA CI run 38298548987:
++completed/success — verified this wake via direct gh API (status=completed,
++conclusion=success, headSha exact match, updated 2026-10-12T19:39:05Z) with all four
++jobs green (tmux, core 3.12, core 3.10, adapters); ci tape entry 23187 pass agrees.
++Canary run 38298247926 (ecac6c3) already completed/success 19:36:22Z last wake.
++Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src).
++Peer-dirty source/test files and untracked window_manifest.py/clear_journal.py preserved
++untouched; no activation (progress-only), runtime separately pinned.
++
++Evidence: direct `gh api .../actions/runs/38298548987` this wake (four jobs success);
++.mishe-tauftauf/artifacts/inference-research-wake23209-ci-2e730fc-note.md (site-local).
++
++Next: reconcile CI for next HEAD when published. No blockers.
++
 ## Current disposition — wake 23088: CI-concluded FAILURE at afdcce8 (same operator-window class); readiness re-pinned at ecac6c3, canary HOLD
 +
 +HEAD ecac6c3 ("Keep operator shell available when resume is unavailable", operator_view.py +11/-2) via
