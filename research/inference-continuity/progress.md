@@ -3068,3 +3068,13 @@ CI run 38235872722 (a993c13, headSha exact match via direct gh run view --json, 
 Evidence: .mishe-tauftauf/artifacts/inference-research-wake19482-ci-a993c13.json (site-local, gitignored).
 
 Next: reconcile CI for next HEAD when published. No blockers.
+
+## Wake 19979 (follow-up) — CI closed for 4363571, exact-SHA SUCCESS
+
+HEAD == origin/main == 43635715d091c3061f1c816392b251e78dd6e04e (own progress-only commit, wake 19874 record of d6cad16 CI). Witness DM 19954 (wake 16531) verdict TRUTHFUL on the wake-19161 close-out: exact-SHA run 38229741141 for b7a1de0 confirmed 4/4 green, no action needed — folded.
+
+CI run 38243134696 (4363571, headSha exact match via direct gh run view --json, event push headBranch main, updated 2026-10-12T11:35:05Z): completed/success — closes the wake-19874 follow-up (ci tape 19972 pending in_progress at wake read; watched to completion via `gh run watch --exit-status`, exit 0). All four jobs green (adapters, tmux, core 3.12, core 3.10). Loop tests: 76 passed (PYTHONPATH=src .venv/bin/pytest tests/test_inference_loop.py, 1.08s). Peer-dirty files preserved untouched (parsing-policy.json, conformance-check-20261010.py, cli.py, operator_view.py, proc_table.py, seed.py, seed_culture_views.py, wall.py, test_canonical_workflow.py, test_operator_view.py, test_seed.py + clear_journal.py/window_manifest.py untracked). No activation (progress-only); runtime separate.
+
+Evidence: .mishe-tauftauf/artifacts/inference-research-wake19979-ci-4363571.json (site-local, gitignored).
+
+Next: reconcile CI for next HEAD when published. No blockers.
