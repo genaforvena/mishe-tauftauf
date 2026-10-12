@@ -2,9 +2,13 @@
 """Conformance check for canonical-wire-profile-20261003.md against shared-fixture-trace-20261003.md.
 
 Validates:
-1. Control record framing (UTF-8 JSON + LF)
-2. Rejection rules (BOM, CR, duplicate keys, invalid UTF-8, etc.)
-3. Size/depth limits
+1. Control record framing (UTF-8 JSON + LF), including receiver-level rules:
+   EOF-before-LF is incomplete (not parsed), a malformed record is consumed
+   through its LF with exactly one error and no suffix reinterpretation, and
+   MAX_RECORDS_PER_SESSION is enforced behaviorally
+2. Rejection rules (BOM, CR, duplicate keys at any depth, invalid UTF-8,
+   invalid JSON, non-object top level, fraction/exponent integer tokens, ...)
+3. Size/depth/int64 limits, including boundary acceptance at both int64 ends
 4. Binary frame layout (stream_id[16] || sequence[4] || payload_length[2] || payload)
 5. Deterministic replay (filter transformation on identical inputs)
 
@@ -74,6 +78,12 @@ def validate_control_record(record_bytes: bytes, label: str) -> dict:
         raise ConformanceError(f"{label}: invalid JSON: {e}")
     except ValueError as e:
         raise ConformanceError(f"{label}: {e}")
+
+    # Profile: a control record is exactly one JSON object. A top-level array,
+    # string, number, boolean or null is not a control record.
+    if not isinstance(obj, dict):
+        raise ConformanceError(
+            f"{label}: control record must be a JSON object, got {type(obj).__name__}")
 
     # Check integer ranges and types
     def check_types(o, depth=0, path=""):
@@ -152,6 +162,66 @@ def validate_a3_schema(obj: dict, label: str) -> None:
 
 class ConformanceError(Exception):
     pass
+
+
+# --- Receiver framing (byte-stream level) ---
+
+INT64_MIN = -(2**63)
+INT64_MAX = 2**63 - 1
+
+
+def read_control_records(data: bytes, label: str = "session") -> tuple[list[dict], list[dict]]:
+    """Split a control-record byte stream per canonical-wire-profile.
+
+    Returns (records, errors). Each error is a dict with keys
+    ``kind`` (``record`` | ``incomplete`` | ``session``), ``offset``
+    (byte offset of the record's LF, or of the unterminated tail) and
+    ``message``.
+
+    Framing rules implemented (profile, "Control record bytes"):
+      * A record is exactly one JSON object followed by one LF. Bytes after
+        the last LF with no terminating LF are an INCOMPLETE record: not
+        parsed, exactly one error, and never combined with the next read.
+      * A malformed record is consumed through its LF and yields exactly one
+        record error. Suffix bytes are never reinterpreted as an extra record
+        or an extra error: splitting happens only on LF, never mid-record.
+      * A bare LF is a zero-byte record, which is not a JSON object, so it is
+        a record error. The profile states no empty-line exemption; the replay
+        filter (``apply_filter``) is a transformation, not this receiver.
+      * At most MAX_RECORDS_PER_SESSION records per session: the (N+1)-th
+        received record is refused with a session error. A malformed record
+        was still received, so it counts against the session budget.
+    """
+    records: list[dict] = []
+    errors: list[dict] = []
+    received = 0
+    offset = 0
+    total = len(data)
+    while offset < total:
+        lf = data.find(b'\x0a', offset)
+        if lf == -1:
+            errors.append({
+                "kind": "incomplete", "offset": offset,
+                "message": f"{label}: EOF before LF at offset {offset} "
+                           f"({total - offset} byte(s) retained, not parsed)",
+            })
+            break
+        segment = data[offset:lf]
+        received += 1
+        if received > MAX_RECORDS_PER_SESSION:
+            errors.append({
+                "kind": "session", "offset": lf,
+                "message": f"{label}: record {received} exceeds "
+                           f"MAX_RECORDS_PER_SESSION={MAX_RECORDS_PER_SESSION}",
+            })
+            offset = lf + 1
+            continue
+        try:
+            records.append(validate_control_record(segment, f"{label}#{received}"))
+        except ConformanceError as e:
+            errors.append({"kind": "record", "offset": lf, "message": str(e)})
+        offset = lf + 1
+    return records, errors
 
 
 # --- Binary frame validation ---
@@ -890,6 +960,72 @@ def main() -> int:
         print(f"  FAIL fixture-send-hex: {e}")
         failed += 1
         errors.append(str(e))
+    # 10. Receiver framing (byte-stream level) tests
+    print("\n--- Receiver Framing ---")
+
+    # 10a. Non-object top level is not a control record
+    try:
+        validate_control_record(b'[1,2]', "nonobject-test")
+        print("  FAIL nonobject-test: should have rejected top-level array")
+        failed += 1
+        errors.append("top-level array not rejected")
+    except ConformanceError:
+        print("  PASS nonobject-test: top-level array rejected")
+        passed += 1
+
+    # 10b. EOF before LF is incomplete: not parsed, exactly one error
+    recs, errs = read_control_records(b'{"v":1}\n{"v":2}\n{"v":3')
+    if len(recs) == 2 and len(errs) == 1 and errs[0]["kind"] == "incomplete":
+        print("  PASS framing-incomplete: 2 records + 1 incomplete error")
+        passed += 1
+    else:
+        print(f"  FAIL framing-incomplete: {len(recs)} records, {len(errs)} errors")
+        failed += 1
+        errors.append("EOF-before-LF framing wrong")
+
+    # 10c. Malformed record consumed through LF: one error, next record intact
+    recs, errs = read_control_records(b'{"v":BAD}\n{"v":4}\n')
+    if (len(recs) == 1 and recs[0] == {"v": 4}
+            and len(errs) == 1 and errs[0]["kind"] == "record"):
+        print("  PASS framing-malformed: 1 error, suffix record intact")
+        passed += 1
+    else:
+        print(f"  FAIL framing-malformed: {len(recs)} records, {len(errs)} errors")
+        failed += 1
+        errors.append("malformed-record framing wrong")
+
+    # 10d. Bare LF is a zero-byte record error, not an exemption
+    recs, errs = read_control_records(b'\n')
+    if len(recs) == 0 and len(errs) == 1 and errs[0]["kind"] == "record":
+        print("  PASS framing-bare-lf: bare LF yields one record error")
+        passed += 1
+    else:
+        print(f"  FAIL framing-bare-lf: {len(recs)} records, {len(errs)} errors")
+        failed += 1
+        errors.append("bare-LF framing wrong")
+
+    # 10e. int64 boundary acceptance at both ends
+    try:
+        validate_control_record(b'{"v":9223372036854775807}', "i64max-test")
+        validate_control_record(b'{"v":-9223372036854775808}', "i64min-test")
+        print("  PASS framing-i64-bounds: both int64 ends accepted")
+        passed += 1
+    except ConformanceError as e:
+        print(f"  FAIL framing-i64-bounds: {e}")
+        failed += 1
+        errors.append(str(e))
+
+    # 10f. Session cap enforced behaviorally: 1025th record refused
+    recs, errs = read_control_records(b'{"v":1}\n' * (MAX_RECORDS_PER_SESSION + 1))
+    if (len(recs) == MAX_RECORDS_PER_SESSION and len(errs) == 1
+            and errs[0]["kind"] == "session"):
+        print(f"  PASS framing-session-cap: {MAX_RECORDS_PER_SESSION} kept, 1 session error")
+        passed += 1
+    else:
+        print(f"  FAIL framing-session-cap: {len(recs)} records, {len(errs)} errors")
+        failed += 1
+        errors.append("session cap not enforced behaviorally")
+
 
     # Summary
     print("\n" + "=" * 60)
