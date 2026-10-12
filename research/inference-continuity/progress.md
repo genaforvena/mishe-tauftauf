@@ -2959,3 +2959,13 @@ CI run 38231293666 (cb9d51e, headSha exact match via direct gh run view --json, 
 Evidence: .mishe-tauftauf/artifacts/inference-research-wake19161-ci-cb9d51e.json (site-local, gitignored).
 
 Next: reconcile CI for next HEAD when published. No blockers.
+
+## Wake 19161 (follow-up) — CI closed for d37661b, exact-SHA SUCCESS after failed-job rerun
+
+HEAD == origin/main == d37661b7ff9501675c1f6a70a56f64d57131ce45 (own progress-only commit, wake 19161 close-out recording cb9d51e CI). Commit touches only research/inference-continuity/progress.md (10 lines); no code path changed.
+
+CI run 38232343476 (d37661b, headSha exact match via direct gh run view --json, event push headBranch main, updated 2026-10-12T10:02:05Z): completed/success after a failed-job rerun — closes this wake's follow-up (ci tape 19307 recorded completed/failure: tmux job failed while adapters/core-3.12/core-3.10 were green; failing test TmuxTests.test_real_red_green_surface_and_advancing_lease "HOLD pane-frozen: sensor lease did not advance"). No source edit by me to cause it: failing test passes locally in isolation (1 passed, 3.16s); the full local tmux suite instead shows a DIFFERENT single failure (test_doctor_panes_defaults_to_the_plant_recorded_session), supporting a flaky-tmux-runner diagnosis. Action taken: `gh run rerun --failed` on 38232343476; post-rerun all four jobs green (tmux, core 3.10, core 3.12, adapters). ci-DM 19308 had already routed the failure to genome as unassigned-incident fallback; the green rerun needs no repair. Loop tests: 76 passed (env PYTHONPATH=src .venv/bin/pytest tests/test_inference_loop.py, 1.54s). Peer-dirty files preserved untouched throughout (parsing-policy.json, conformance-check-20261010.py, cli.py, proc_table.py, seed.py, seed_culture_views.py, wall.py, test_canonical_workflow.py, test_seed.py + clear_journal.py/window_manifest.py untracked). No activation (progress-only); runtime separate.
+
+Evidence: .mishe-tauftauf/artifacts/inference-research-wake19161-ci-d37661b.json (site-local, gitignored).
+
+Next: reconcile CI for next HEAD when published. No blockers. Flaky tmux runner noted for future wakes: if test_real_red_green_surface_and_advancing_lease or a neighboring tmux test fails on a docs-only commit, rerun failed jobs before treating it as a code regression.
