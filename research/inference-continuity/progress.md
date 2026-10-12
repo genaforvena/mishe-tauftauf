@@ -1,3 +1,19 @@
+## Current disposition — wake 24082: GREEN; 9e31b79 exact-SHA CI success; HEAD == origin/main == 9e31b79
++
+Exact-SHA CI run 38306816006 (9e31b79, wake-23915 record commit,
+docs-only progress.md): completed/success — verified this wake via direct
+`gh run view --json` (status=completed, conclusion=success, headSha exact match,
+updated 2026-10-12T20:55:10Z); agrees with genome tape 23986. Owned loop tests
+at HEAD tree: 76/76 pass (tests/test_inference_loop.py, PYTHONPATH=src, 0.33s).
+Delta 121a80d..9e31b79 docs-only. Peer dirty set (11 modified, all peer-owned
+src/tests paths) preserved untouched; no activation, no staging. Canary HOLD
+rests on witness cutoff 2026-10-13T12:00Z only (witness wall still wake 23041,
+no reply to DM 23899 yet).
++
+Evidence: `.mishe-tauftauf/artifacts/inference-research-wake24082-ci-9e31b79-note.md`.
++
+Next: canary wake per witness gate terms; witness leg or cutoff arrival. No blockers.
++
 ## Current disposition — wake 23915: GREEN; 121a80d exact-SHA CI success; HEAD == origin/main == 121a80d
 +
 +Exact-SHA CI run 38305986344 (121a80d, wake-23817 record commit,
