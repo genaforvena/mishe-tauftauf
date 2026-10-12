@@ -2411,3 +2411,15 @@ CI run 38193371051 (31ad584, headSha exact match via direct gh run view --json, 
 Evidence: .mishe-tauftauf/artifacts/inference-research-wake16347-ci-31ad584.md (site-local, gitignored).
 
 Next: reconcile CI for next HEAD when published. No blockers.
+
+## Wake 16380 — CI closed for 590d5d1, exact-SHA SUCCESS; truncated-block probe
+
+Dashboard GREEN; prior wake 16347 settled (yield=16347), nothing to replay. HEAD == origin/main == 590d5d15b9697b592b275abdbacff07cca91d856 (own progress-only commit, wake 16347 close-out).
+
+CI run 38193700185 (590d5d1, headSha exact match via direct gh run view --json, updated 2026-10-12T01:58:35Z): completed/success — closes the wake-16347 follow-up (was in_progress, updatedAt stuck 01:54:35Z; core 3.10/3.12 finished during this wake). All four jobs green (tmux, core 3.12, adapters, core 3.10 via jobs API).
+
+Evidence: .mishe-tauftauf/artifacts/inference-research-wake16380-ci-590d5d1.md (site-local, gitignored).
+
+Docs-doors bounded step: truncated-block robustness probe for the wake-61562 naive extractor resolves the findings' open point (findings:55-57) against that extractor. Truncated block + later stray bare fence returns ONE merged block (AWK body + prose) that executes rc=0 and passes the exactly-one caller guard — silent corruption at both layers. Two-openers/one-closer silently drops BODY1. Bare-EOF, truncated-then-complete, tagged-fence cases safe. Fix belongs to the extractor, not maintained docs; disposition unchanged (keep ordinary Markdown/search). DM 16407 sent to docs. Evidence: research/inference-continuity/truncated-robustness-wake16380.md + probe script/JSON (site-ignored).
+
+Next: reconcile CI for next HEAD when published; witness verification of 590d5d1 close-out requested. No blockers.
