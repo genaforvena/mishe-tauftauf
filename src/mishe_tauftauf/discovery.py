@@ -417,8 +417,13 @@ def _journal_command(cmd: list[str], timeout: float = 10) -> bytes | None:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise subprocess.TimeoutExpired(cmd, timeout)
-        if process.wait(timeout=remaining) != 0:
-            return None
+        code = process.wait(timeout=remaining)
+        if code != 0:
+            # journalctl exits 1 with empty stdout when --grep matches nothing:
+            # a healthy empty window, not a failed acquisition. Any output
+            # alongside the nonzero exit stays a failure (ambiguous origin).
+            if code != 1 or output:
+                return None
         if output and not output.endswith(b"\n"):
             return None
         return bytes(output)

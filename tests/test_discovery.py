@@ -5863,6 +5863,19 @@ def test_session_restarts_unknown_on_acquisition_failure(monkeypatch, tmp_path):
     assert result["reason"] == "incomplete or failed acquisition"
 
 
+def test_session_restarts_verified_on_empty_acquisition(monkeypatch, tmp_path):
+    # Healthy session, zero rebirths: journalctl --grep exits 1 with empty
+    # stdout, which _journal_command now surfaces as b"" (not None).
+    from mishe_tauftauf import discovery
+    monkeypatch.setattr(discovery, "_journal_command", lambda cmd, timeout=10: b"")
+    monkeypatch.setattr(discovery, "_journal_boot", lambda: "boot-restart")
+    result = discovery._host_session_restarts(_stability_home(tmp_path))
+    assert result["state"] == "verified"
+    assert result["verdict"] == "steady"
+    assert result["reason"] == "no-births-in-window"
+    assert "births=0" in result["sample"]
+
+
 def test_authorship_fog_clean_tree_is_verified(monkeypatch, tmp_path):
     from mishe_tauftauf import discovery
 

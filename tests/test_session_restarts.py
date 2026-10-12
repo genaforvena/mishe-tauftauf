@@ -56,8 +56,19 @@ def test_foreign_lines_never_count():
                        (400_0000000, None), (500_0000000, 42))
     row = session_restarts.assess_restarts(entries, SESSION)
     assert row["births"] == 0
-    assert row["verdict"] == "unknown"
+    assert row["verdict"] == "steady"
     assert row["reason"] == "no-births-in-window"
+
+
+def test_empty_window_is_steady_not_unknown():
+    # Zero births over a well-formed window is the healthy case: the session
+    # was raised once and never re-raised. Regression: used to read unknown.
+    row = session_restarts.assess_restarts([], SESSION)
+    assert row["verdict"] == "steady"
+    assert row["reason"] == "no-births-in-window"
+    assert row["births"] == 0
+    assert session_restarts.decode_journal_entries(
+        b"", "boot1", "systemd", 0, 999_0000000) == []
 
 
 def test_unknown_on_missing_or_malformed_inputs():

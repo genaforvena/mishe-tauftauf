@@ -11,9 +11,10 @@ Contract:
 - Match: Python-side prefix test on MESSAGE for this plant's exact
   `<session>-session.scope` scope unit. Foreign sessions, services, and
   non-string lines never match.
-- Verdicts: `steady` (<3 births and no sub-10m gap), `churn` (>=3 births in
-  the trailing window OR any inter-birth gap under 10 minutes with >=2
-  births), `unknown` (session missing, empty input, malformed timestamps).
+- Verdicts: `steady` (0 births over a well-formed window, or <3 births and no
+  sub-10m gap), `churn` (>=3 births in the trailing window OR any inter-birth
+  gap under 10 minutes with >=2 births), `unknown` (session missing,
+  non-list input, malformed timestamps).
 - Consumer: Health RED cause; the guard's own `server cadence` log line is
   the outside-mishe witness that survives pane outages.
 - Sample: `births=N gaps=[..] under_30m=K` plus the drift clause; cadence
@@ -100,6 +101,7 @@ def assess_restarts(entries, session: str) -> dict:
     births = len(stamps)
     base["births"] = births
     if births == 0:
+        base["verdict"] = STEADY
         base["reason"] = "no-births-in-window"
         return base
     gaps = []
