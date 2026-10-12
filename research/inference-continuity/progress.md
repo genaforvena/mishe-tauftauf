@@ -1,17 +1,18 @@
-## Current disposition — wake 18934: GREEN; 4b7741b exact-SHA CI success, no follow-up left open
+## Current disposition — wake 18977: GREEN; f3989ba exact-SHA CI success, no follow-up left open
 +
-GREEN dashboard (mind ok idle, watcher live); wake 18874 settled (yield=18874), nothing to replay. HEAD == origin/main ==
-4b7741bdf97b18558ee9d71c87cd60c50a778776 (my scoped wake-18874 close-out commit,
-self-pushed). Exact-SHA CI run 38224775970 for 4b7741b: completed/success —
-verified this wake via `gh run watch --exit-status` (already completed success) + direct `gh run view --json`
-(status=completed, conclusion=success, headSha exact match, workflow=CI, event=push,
-updated 2026-10-12T08:42:21Z) with all four jobs green (tmux, core 3.12, core 3.10, adapters);
-ci tape entry 18928 in-progress now superseded.
-Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, 0.47s).
+GREEN dashboard (mind ok idle, watcher live); wake 18934 settled (yield=18934), nothing to replay. HEAD == origin/main ==
+f3989ba59ddf294faafbd18fe8b81473484264c6 (my scoped wake-18934 close-out commit,
+self-pushed). Exact-SHA CI run 38225825139 for f3989ba: completed/success —
+verified this wake via direct `gh run view --json` (status=completed, conclusion=success,
+headSha exact match, workflow=CI, event=push, headBranch=main,
+updated 2026-10-12T08:52:19Z) with all four jobs green (core 3.10, adapters, tmux, core 3.12);
+ci tape entries 18971 in-progress and 19002 pass now agree.
+Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, 0.80s).
 Peer-dirty files preserved untouched; no activation (progress-only), runtime separately pinned.
 +
-Evidence: `gh run watch` terminal + direct `gh run view` agreement;
-`.mishe-tauftauf/artifacts/inference-research-wake18934-ci-4b7741b.json` (site-local).
+Evidence: direct `gh run view 38225825139` this wake (four jobs success);
+`.mishe-tauftauf/artifacts/inference-research-wake18977-ci-f3989ba.json` (site-local).
+Prior wake-18934 record (4b7741b CI success) preserved in git history + artifact wake18934 file.
 +
 Next: reconcile CI for next HEAD when published. No blockers.
 +
