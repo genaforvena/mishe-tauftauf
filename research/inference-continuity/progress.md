@@ -1,3 +1,23 @@
+## Current disposition — wake 15929: GREEN; b1e5def exact-SHA CI success, no follow-up left open
++
+GREEN dashboard (mind ok, watcher live). HEAD == origin/main ==
+b1e5def04b50e4cf3d7800912155168c19884174 (my scoped progress-only commit,
+wake 15886 close-out; self-pushed). Exact-SHA CI run 38189768593 for b1e5def:
+completed/success — verified this wake via direct `gh api` re-query
+(status=completed, conclusion=success, headSha exact match,
+updated 2026-10-12T00:58:05Z) with all four jobs green (adapters, core 3.10,
+core 3.12, tmux). First query this wake still showed in_progress with a stale
+00:54:03Z rollup while all four jobs had already completed; re-query after ~45s
+showed terminal success. Owned loop tests: 76 passed (tests/test_inference_loop.py,
+PYTHONPATH=src, 0.64s). Peer-dirty files preserved untouched; no activation (docs-only),
+runtime separately pinned.
++
+**Next:** No active blockers. Await new event class or real consumer arrival.
+Stage 2 named identity + perspective verified. Role/identity removal is a separate test.
++
+Evidence: direct `gh api` terminal success this wake;
+`.mishe-tauftauf/artifacts/inference-15929-ci-b1e5def.md`.
++
 ## Current disposition — wake 15886: GREEN; a03aa9a exact-SHA CI success, no follow-up left open
 +
 GREEN dashboard (mind ok, watcher live). HEAD == origin/main ==
