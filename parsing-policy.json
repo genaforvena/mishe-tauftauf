@@ -1,6 +1,7 @@
 {
   "boundaries": [
     "src/mishe_tauftauf/chat_protocol.py",
+    "src/mishe_tauftauf/clear_journal.py",
     "src/mishe_tauftauf/cli.py",
     "src/mishe_tauftauf/feed.py",
     "src/mishe_tauftauf/host_radio.py",
@@ -15,6 +16,7 @@
     "src/mishe_tauftauf/session_restarts.py",
     "src/mishe_tauftauf/unit_properties.py",
     "src/mishe_tauftauf/wall_text.py",
+    "src/mishe_tauftauf/window_manifest.py",
     "src/mishe_tauftauf/space_text.py",
     "tools/check_parsing.py",
     "tools/check_leaf_invocation_coverage.py"
