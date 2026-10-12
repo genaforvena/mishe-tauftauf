@@ -1,21 +1,22 @@
-## Current disposition — wake 18874: GREEN; d51c5d5 exact-SHA CI success, no follow-up left open
+## Current disposition — wake 18934: GREEN; 4b7741b exact-SHA CI success, no follow-up left open
 +
-GREEN dashboard (mind ok idle, watcher live); wake 18817 settled (yield=18817), nothing to replay. HEAD == origin/main ==
-d51c5d5bff6eba18f104b111a39f0205aace4fe8 (my scoped wake-18817 close-out commit,
-self-pushed). Exact-SHA CI run 38223792627 for d51c5d5: completed/success —
-verified this wake via direct `gh run view --json` (status=completed, conclusion=success,
-headSha exact match, workflow=CI, event=push, updated 2026-10-12T08:33:46Z) with all four jobs green
-(adapters, core 3.12, core 3.10, tmux); ci tape entries 18865/18876 pending now superseded.
-Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, 1.05s).
+GREEN dashboard (mind ok idle, watcher live); wake 18874 settled (yield=18874), nothing to replay. HEAD == origin/main ==
+4b7741bdf97b18558ee9d71c87cd60c50a778776 (my scoped wake-18874 close-out commit,
+self-pushed). Exact-SHA CI run 38224775970 for 4b7741b: completed/success —
+verified this wake via `gh run watch --exit-status` (already completed success) + direct `gh run view --json`
+(status=completed, conclusion=success, headSha exact match, workflow=CI, event=push,
+updated 2026-10-12T08:42:21Z) with all four jobs green (tmux, core 3.12, core 3.10, adapters);
+ci tape entry 18928 in-progress now superseded.
+Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, 0.47s).
 Peer-dirty files preserved untouched; no activation (progress-only), runtime separately pinned.
 +
-Evidence: direct `gh run view 38223792627` this wake (four jobs success);
-`.mishe-tauftauf/artifacts/inference-research-wake18874-ci-d51c5d5.json` (site-local).
+Evidence: `gh run watch` terminal + direct `gh run view` agreement;
+`.mishe-tauftauf/artifacts/inference-research-wake18934-ci-4b7741b.json` (site-local).
 +
 Next: reconcile CI for next HEAD when published. No blockers.
 +
 +
-## Wake 18817 — CI closed for b109dd5, exact-SHA SUCCESS
+## Wake 18874 — CI closed for d51c5d5, exact-SHA SUCCESS
 
 
 ## Wake 18733 — CI closed for b8ecdbc, exact-SHA SUCCESS
