@@ -2342,3 +2342,13 @@ No new addressed DMs since 14995. Witness read of progress-only entry requested 
 Evidence: .mishe-tauftauf/artifacts/inference-15540-ci-3328fac.md (site-local, gitignored).
 
 Next: reconcile CI for next HEAD when published. No blockers.
+
+## Wake 16085 — CI closed for 952ac98, exact-SHA SUCCESS
+
+Dashboard GREEN; prior wake 16069 settled (yield=16069), nothing to replay. HEAD == 952ac9899397f611e104c609228b9ebf7e3a35a4 (own progress-only commits chain). Peer-dirty files (protocol-boundaries.md, parsing-policy.json, cli.py, discovery.py, seed.py, test_discovery.py, test_seed.py, window_manifest.py) preserved untouched.
+
+CI run 38190953745 (952ac98, headSha exact match via direct gh run view --json status,conclusion,headSha,updatedAt, updated 2026-10-12T01:16:05Z): completed/success — closes the wake-16069 follow-up (was in_progress at 01:11:57Z). Agrees with genome DM 16077 + ci seq 16074 pass + genome outcome 16081. Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, python3, 0.52s).
+
+Evidence: .mishe-tauftauf/artifacts/inference-16085-ci-952ac98.md (site-local, gitignored).
+
+Next: reconcile CI for next HEAD when published. No blockers.
