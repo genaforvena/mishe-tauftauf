@@ -64,8 +64,12 @@ def _ensure(home: Path, session: str, window: str, *, package_root: Path | None,
     if not await_owned(home, session):
         raise ValueError(f"session {session!r} is not owned by {home}")
     names = _tmux("list-windows", "-t", session, "-F", "#{window_name}").stdout.decode().splitlines()
+    trigger = ""
     if window not in names:
         _tmux("new-window", "-d", "-t", session, "-n", window, "-c", str(home.parent), "sh")
+        # Whole-window loss is the root cause here; keep it even though the
+        # dashboard install below would otherwise report a bare restore.
+        trigger = "missing-window"
     target = f"{session}:{window}"
     panes = _tmux("list-panes", "-t", target, "-F", "#{pane_id}").stdout.decode().splitlines()
     restored_shell = False
@@ -77,8 +81,12 @@ def _ensure(home: Path, session: str, window: str, *, package_root: Path | None,
                           "-t", panes[0], "-c", str(home.parent), "sh").stdout.decode().strip()
             panes.append(shell)
             restored_shell = True
+            # The dashboard survived alone; the shell underneath died.
+            trigger = trigger or "missing-shell"
+        elif marker:
+            # The recorded dashboard pane is gone; the lone pane is the shell.
+            trigger = trigger or "missing-top"
     dashboard = None
-    trigger = ""
     if len(panes) == 2:
         dashboard = _tmux("show-option", "-wqv", "-t", target,
                           "@mishe-operator-dashboard").stdout.decode().strip()
@@ -87,18 +95,19 @@ def _ensure(home: Path, session: str, window: str, *, package_root: Path | None,
         _tmux("set-option", "-p", "-t", dashboard, "remain-on-exit", "on")
         if not refresh:
             if _pane_stopped_or_dead(session, window):
-                trigger = "pane-stopped-or-dead"
+                trigger = trigger or "pane-stopped-or-dead"
             else:
                 from .dashboard import read
                 try:
                     read(home, window)
-                    return f"operator shell restored in {target}" if restored_shell else ""
+                    detail = f" (trigger: {trigger})" if trigger else ""
+                    return f"operator shell restored in {target}{detail}" if restored_shell else ""
                 except ValueError as exc:
                     # A live pane whose publication is unreadable, missing or stale is
                     # respawned here. Naming the check that fired separates "the renderer
                     # died" from "the supervisor killed a live renderer", which the shared
                     # tape otherwise cannot tell apart.
-                    trigger = f"publication: {exc}"
+                    trigger = trigger or f"publication: {exc}"
     elif len(panes) != 1:
         raise ValueError("operator window must contain a shell or a dashboard above a shell")
     for name in ("operator", "operator/brief.md", "operator/commands.md", "top-pains", f"top-pains/{window}"):

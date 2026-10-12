@@ -252,16 +252,41 @@ def test_failed_dashboard_marker_restores_publisher_and_only_removes_new_pane(tm
 @pytest.mark.parametrize("fault,expected", [
     ("dead", "(trigger: pane-stopped-or-dead)"),
     ("stale", "(trigger: publication: dashboard stale or future)"),
+    ("missing-window", "(trigger: missing-window)"),
+    ("missing-shell", "(trigger: missing-shell)"),
+    ("missing-top", "(trigger: missing-top)"),
 ])
 def test_recovery_message_names_the_check_that_fired(tmp_path, monkeypatch, fault, expected):
     """A dead renderer and a live renderer respawned for an unreadable, missing or
     stale publication must not read the same on the shared tape."""
     from mishe_tauftauf import operator_view
+    panes = {"%top": "%shell"}
+    windows = [] if fault == "missing-window" else ["operator"]
+    marker = {"missing-shell": "%top", "missing-top": "%gone"}.get(fault, "%top")
     def tmux(*args, **kw):
+        if args[0] == "list-windows":
+            return CompletedProcess(args, 0, ("\n".join(windows) + "\n").encode())
+        if args[0] == "new-window":
+            windows.append("operator")
+            panes.clear()
+            panes["%shell"] = "%fresh-shell"
+            return CompletedProcess(args, 0, b"")
         if args[0] == "list-panes":
+            if fault == "missing-window":
+                return CompletedProcess(args, 0, b"%shell\n" if windows else b"%top\n%shell\n")
+            if fault == "missing-shell":
+                return CompletedProcess(args, 0, b"%top\n")
+            if fault == "missing-top":
+                return CompletedProcess(args, 0, b"%shell\n")
             return CompletedProcess(args, 0, b"%top\n%shell\n")
         if args[0] == "show-option":
-            return CompletedProcess(args, 0, b"%top\n")
+            if fault == "missing-window" and windows:
+                return CompletedProcess(args, 0, b"\n")
+            return CompletedProcess(args, 0, (marker + "\n").encode())
+        if args[0] == "split-window":
+            if "%top" in panes:
+                panes["%top"] = "%new-shell"
+            return CompletedProcess(args, 0, b"%new-shell\n")
         return CompletedProcess(args, 0, b"")
     monkeypatch.setattr(operator_view, "await_owned", lambda *a: True)
     monkeypatch.setattr(operator_view, "_tmux", tmux)
