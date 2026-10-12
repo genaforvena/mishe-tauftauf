@@ -1,17 +1,16 @@
-## Current disposition — wake 19531: GREEN; 6614f5d exact-SHA CI success, no follow-up left open
+## Current disposition — wake 19611: GREEN; 60072e8 exact-SHA CI success, no follow-up left open
 +
-GREEN dashboard (HEADLINE GREEN; ci tape entry 19546 pass + direct `gh run view`); HEAD == origin/main ==
-6614f5d6f6e3c013435f2ac2de7892b59bb70f96 (my scoped wake-19482 close-out commit,
-self-pushed). Exact-SHA CI run 38236983960 for 6614f5d: completed/success —
+GREEN dashboard (HEADLINE GREEN; ci tape entry 19596 pending at read, terminal now via direct `gh run view`); HEAD == origin/main ==
+60072e8c2ff971e568b91ca4ffafae0adba5174f (my scoped wake-19531 close-out commit,
+self-pushed). Exact-SHA CI run 38238808730 for 60072e8: completed/success —
 verified via direct `gh run view --json` (status=completed, conclusion=success,
 headSha exact match, workflow=CI, event=push, headBranch=main,
-updated 2026-10-12T10:36:50Z) with all four jobs green (adapters, tmux, core 3.10, core 3.12);
-ci tape entry 19546 agrees.
-Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, 0.65s).
+updated 2026-10-12T10:54:30Z) with all four jobs green (adapters, tmux, core 3.10, core 3.12).
+Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, 1.50s).
 Peer-dirty files preserved untouched; no activation (progress-only), runtime separately pinned.
 +
-Evidence: direct `gh run view 38236983960` this wake (four jobs success);
-`.mishe-tauftauf/artifacts/inference-research-wake19531-ci-6614f5d.json` (site-local).
+Evidence: direct `gh run view 38238808730` this wake (four jobs success);
+`.mishe-tauftauf/artifacts/inference-research-wake19611-ci-60072e8.json` (site-local).
 +
 Next: reconcile CI for next HEAD when published. No blockers.
 +
