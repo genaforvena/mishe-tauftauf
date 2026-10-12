@@ -45,6 +45,10 @@ class ProcessTableTests(unittest.TestCase):
         with mock.patch.object(proc_table.subprocess, "run", side_effect=failure):
             self.assertEqual(proc_table.children_by_parent(), {})
 
+
+    def test_pane_pids_accepts_text_output(self):
+        self.assertEqual(proc_table.pane_pids("4242\njunk\n4243\n"), [4242, 4243])
+
     def test_pane_pids_decode_and_skip_junk(self):
         self.assertEqual(proc_table.pane_pids(b"4242\n4243\n"), [4242, 4243])
         self.assertEqual(proc_table.pane_pids(b"4242\n\nnot-a-pid\n"), [4242])
@@ -97,6 +101,9 @@ class ProcessTableTests(unittest.TestCase):
         self.assertEqual(
             proc_table.window_names(b"genome\nledger\ntail\n"),
             ["genome", "ledger", "tail"])
+
+    def test_window_names_accepts_text_output(self):
+        self.assertEqual(proc_table.window_names("genome\nledger\n"), ["genome", "ledger"])
 
     def test_window_names_skips_blank_lines(self):
         self.assertEqual(proc_table.window_names(b"genome\n\n   \nledger\n"), ["genome", "ledger"])

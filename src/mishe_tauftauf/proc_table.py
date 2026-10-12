@@ -31,18 +31,20 @@ def children_by_parent() -> dict[int, list[int]]:
     return children
 
 
-def pane_pids(raw: bytes) -> list[int]:
+def pane_pids(raw: bytes | str) -> list[int]:
     """Pids from ``tmux list-panes -F '#{pane_pid}'`` output; junk is skipped."""
-    return [int(value) for value in raw.decode("ascii", "replace").split() if value.isdigit()]
+    text = raw.decode("ascii", "replace") if isinstance(raw, bytes) else raw
+    return [int(value) for value in text.split() if value.isdigit()]
 
 
-def window_names(raw: bytes) -> list[str]:
+def window_names(raw: bytes | str) -> list[str]:
     """Window names from ``tmux list-windows -F '#{window_name}'`` output.
 
     One name per line; blank lines are unreadable input, not an empty name,
     so they are skipped rather than guessed.
     """
-    return [line for line in raw.decode("utf-8", "replace").splitlines() if line.strip()]
+    text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
+    return [line for line in text.splitlines() if line.strip()]
 
 
 def pane_records(raw: str) -> list[tuple[str, str, int]]:
