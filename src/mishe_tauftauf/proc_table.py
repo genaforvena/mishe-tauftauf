@@ -36,6 +36,15 @@ def pane_pids(raw: bytes) -> list[int]:
     return [int(value) for value in raw.decode("ascii", "replace").split() if value.isdigit()]
 
 
+def window_names(raw: bytes) -> list[str]:
+    """Window names from ``tmux list-windows -F '#{window_name}'`` output.
+
+    One name per line; blank lines are unreadable input, not an empty name,
+    so they are skipped rather than guessed.
+    """
+    return [line for line in raw.decode("utf-8", "replace").splitlines() if line.strip()]
+
+
 def pane_records(raw: str) -> list[tuple[str, str, int]]:
     """(session, window, pid) from ``tmux list-panes -a -F`` three-field output.
 
@@ -171,6 +180,33 @@ def read_pane_cmdline(pid: str) -> str:
         return ""
     return raw.replace(b"\0", b" ").decode("utf-8", "replace").strip()
 
+def read_process_comm(pid: str) -> str:
+    """The process's ``/proc/<pid>/comm`` name, or "" when unreadable.
+
+    The kernel truncates comm to 15 bytes, so callers match prefixes rather
+    than full argv words. A vanished pid yields "" rather than a guess.
+    """
+    if not pid:
+        return ""
+    try:
+        return Path("/proc", pid, "comm").read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+
+
+def is_tmux_server(pid: str) -> bool:
+    """Whether the pid is a tmux server process, by its own comm and cmdline.
+
+    The server's comm is "tmux: server", so pgrep -x misses it and pgrep -f
+    over-matches non-tmux wrappers whose arguments name a tmux session (rnsh
+    wrapping `tmux new-session -A`). Both checks live here so callers never
+    parse comm or cmdline inline.
+    """
+    if not pid:
+        return False
+    if not read_process_comm(pid).startswith("tmux"):
+        return False
+    return "new-session" in read_pane_cmdline(pid)
 
 def pane_root(component: str) -> str:
     """The import root a PYTHONPATH component names, without its ``src`` leaf.
