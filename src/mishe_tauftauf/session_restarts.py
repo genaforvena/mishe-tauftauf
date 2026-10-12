@@ -140,3 +140,54 @@ def sample_text(result: dict) -> str:
     if result.get("verdict") == CHURN:
         text += f" {result.get('reason', 'churn')}"
     return text
+
+
+def decode_journal_entries(raw, boot, identifier, lower, upper, seen=None) -> list | None:
+    """Decoded (epoch_us, MESSAGE) pairs from journalctl JSON output, or None.
+
+    This is the textual protocol boundary for the restart sense: journalctl
+    emits one JSON object per line with ``__CURSOR``, ``__REALTIME_TIMESTAMP``,
+    ``_BOOT_ID`` and ``SYSLOG_IDENTIFIER`` metadata plus the ``MESSAGE`` text.
+    Entries with missing, duplicate-cursor, or malformed metadata read as a
+    failed acquisition (None), never as a partial list: a partial list would
+    undercount births and read churn as steady. Timestamps outside the
+    caller-supplied microsecond window are dropped, not failed: journalctl
+    ``--since`` / ``--until`` are inclusive approximations and edge lines are
+    normal. Callers supply boot identity, identifier, window bounds, and an
+    optional seen-cursor set so this function stays pure and testable without
+    a live journal.
+    """
+    import json as _json
+    import re as _re
+    if not isinstance(raw, bytes):
+        return None
+    if not isinstance(boot, str) or not boot:
+        return None
+    if not isinstance(identifier, str) or not identifier:
+        return None
+    try:
+        lines = raw.decode("utf-8").splitlines()
+    except UnicodeError:
+        return None
+    cursors: set = set(seen) if isinstance(seen, set) else set()
+    entries: list = []
+    try:
+        for line in lines:
+            record = _json.loads(line)
+            if not isinstance(record, dict):
+                return None
+            cursor = record.get("__CURSOR")
+            timestamp = record.get("__REALTIME_TIMESTAMP")
+            if (not isinstance(cursor, str) or not cursor or cursor in cursors
+                    or record.get("_BOOT_ID") != boot
+                    or record.get("SYSLOG_IDENTIFIER") != identifier
+                    or not isinstance(timestamp, str)
+                    or not _re.fullmatch(r"[0-9]+", timestamp)):
+                return None
+            cursors.add(cursor)
+            stamp = int(timestamp)
+            if lower <= stamp <= upper:
+                entries.append((stamp, record.get("MESSAGE")))
+    except (ValueError, TypeError):
+        return None
+    return entries

@@ -677,6 +677,18 @@ def health(home: Path) -> str:
             causes.append("session-stability=" + str(stability.get("sample", "drift"))[:160])
     except (OSError, ValueError, AttributeError):
         pass
+    # A churning session (repeated births = repeated deaths + re-raises) is a
+    # host failure Health owns exactly like a missing session: the cadence
+    # shape names the resolver's next probe. Same snapshot-re-read shape as
+    # the stability block above; boring duplication over refactoring.
+    try:
+        snapshot = latest(home)
+        restarts = next((item for item in (snapshot.get("observations", []) if snapshot else [])
+                         if isinstance(item, dict) and item.get("id") == "sense.host.session-restarts"), None)
+        if isinstance(restarts, dict) and str(restarts.get("state", "")) == "drift":
+            causes.append("session-restarts=" + str(restarts.get("sample", "drift"))[:160])
+    except (OSError, ValueError, AttributeError):
+        pass
     # Autonomy loop health: fog/landing/gate drift means minds cannot close
     # their own audit loops. Surface each as a named cause so the wake routes
     # to the owning resolver (genome for landing, witness for gates) instead

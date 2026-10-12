@@ -12,6 +12,7 @@
     "src/mishe_tauftauf/outcome_publication.py",
     "src/mishe_tauftauf/proc_table.py",
     "src/mishe_tauftauf/records.py",
+    "src/mishe_tauftauf/session_restarts.py",
     "src/mishe_tauftauf/unit_properties.py",
     "src/mishe_tauftauf/wall_text.py",
     "src/mishe_tauftauf/space_text.py",

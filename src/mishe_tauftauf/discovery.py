@@ -2797,6 +2797,72 @@ def _host_session_stability(home: Path) -> dict[str, object]:
             "sample": f"live=[{','.join(live)}] servers={len(shields)} shielded",
             "live": live, "unshielded": unshielded, "kind": "read"}
 
+def _host_session_restarts(home: Path, past_minutes: int = 60) -> dict[str, object]:
+    """Count plant session-scope births over the trailing window; flag churn.
+
+    A session birth leaves ``Started <session>-session.scope`` in the journal
+    under the systemd identifier (seed.py raises the resident session with
+    ``systemd-run --unit <session>-session.scope``). One birth per boot is
+    healthy; repeated births mean the session keeps dying and being re-raised.
+    Journal bytes enter through the ``session_restarts`` boundary decoder;
+    this function owns acquisition (boot-pinned journalctl, epoch-change
+    guard) and cadence verdicts only. The priority selector is dropped:
+    ``Started`` lines are daemon info, so ``-p warning`` would blind the read.
+    """
+    from . import session_restarts
+    started = time.monotonic_ns()
+    boot = _journal_boot()
+    until = datetime.now(timezone.utc)
+    since = until - timedelta(minutes=past_minutes)
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+    def microseconds(value: datetime) -> int:
+        delta = value - epoch
+        return (delta.days * 86400 + delta.seconds) * 1000000 + delta.microseconds
+
+    lower, upper = microseconds(since), microseconds(until)
+    coverage = {"since": since.isoformat(), "until": until.isoformat(),
+                "boot_id": boot, "acquisition_started_ns": started}
+    unknown: dict[str, object] = {"id": "sense.host.session-restarts",
+                "state": "unknown",
+                "sample": "session-restart cadence unavailable", "kind": "read",
+                "coverage": coverage}
+    session = _plant_session(home)
+    if session is None:
+        unknown["reason"] = "plant session unavailable"
+        return unknown
+    if boot is None:
+        unknown["reason"] = "boot identity unavailable"
+        return unknown
+    output = _journal_command([
+        "journalctl", f"--boot={boot}", "-o", "json",
+        "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,_BOOT_ID,SYSLOG_IDENTIFIER,MESSAGE",
+        "--since", since.strftime("%Y-%m-%d %H:%M:%S.%f UTC"),
+        "--until", until.strftime("%Y-%m-%d %H:%M:%S.%f UTC"),
+        "--no-pager", "--quiet", "--case-sensitive=yes",
+        "--grep", f"^Started {session}-session\\.scope"])
+    after = _journal_boot()
+    finished = time.monotonic_ns()
+    coverage["acquisition_finished_ns"] = finished
+    if after != boot or finished < started:
+        unknown["reason"] = "acquisition epoch changed"
+        return unknown
+    if output is None:
+        unknown["reason"] = "incomplete or failed acquisition"
+        return unknown
+    entries = session_restarts.decode_journal_entries(
+        output, boot, "systemd", lower, upper)
+    if entries is None:
+        unknown["reason"] = "invalid journal entry metadata"
+        return unknown
+    verdict = session_restarts.assess_restarts(entries, session)
+    state = {"steady": "verified", "churn": "drift"}.get(str(verdict.get("verdict")), "unknown")
+    sample = f"last-{past_minutes}m " + session_restarts.sample_text(verdict)
+    return {"id": "sense.host.session-restarts", "state": state,
+            "sample": sample, "kind": "read", "session": session,
+            "verdict": verdict.get("verdict"), "reason": verdict.get("reason"),
+            "coverage": coverage}
+
 def _coord_authorship_fog(home: Path, now: datetime | None = None) -> dict[str, object]:
     """Name dirty-tree bytes no wall or chat line claims, so landing stops guessing.
 
@@ -4385,6 +4451,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append({"id": "sense.tmux.windows", "state": "verified" if names else "unknown",
                      "sample": names or "session unavailable", "kind": "read"})
     observed.append(_host_session_stability(home))
+    observed.append(_host_session_restarts(home))
     roots, _coverage_failure = _service_import_roots(home)
     observed.append(_sensor_coverage(home, roots))
     observed.append(_renderer_coverage(home))

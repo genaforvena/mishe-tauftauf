@@ -5800,6 +5800,69 @@ def test_session_stability_tmux_failure_is_unknown(monkeypatch, tmp_path):
     assert result["state"] == "unknown"
 
 
+def _restart_journal_output(*stamps):
+    import json
+    lines = []
+    for index, stamp in enumerate(stamps):
+        lines.append(json.dumps({
+            "__CURSOR": f"cursor-{index}", "__REALTIME_TIMESTAMP": str(stamp),
+            "_BOOT_ID": "boot-restart", "SYSLOG_IDENTIFIER": "systemd",
+            "MESSAGE": ("Started mishe-self-development-current-session.scope"
+                        " - Mishe resident session mishe-self-development-current.")}))
+    return ("\n".join(lines) + "\n").encode() if lines else b""
+
+
+def _restart_wiring(monkeypatch, stamps):
+    from mishe_tauftauf import discovery
+    output = _restart_journal_output(*stamps)
+
+    class Journal:
+        returncode = 0
+        stdout = output
+    monkeypatch.setattr(discovery, "_journal_command", lambda cmd, timeout=10: output)
+    monkeypatch.setattr(discovery, "_journal_boot", lambda: "boot-restart")
+    return discovery
+
+
+def test_session_restarts_drift_on_churn(monkeypatch, tmp_path):
+    from datetime import datetime, timedelta, timezone
+    from mishe_tauftauf import discovery
+    now = datetime.now(timezone.utc)
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    to_us = lambda value: int((value - epoch).total_seconds() * 1000000)
+    stamps = [to_us(now - timedelta(minutes=50)),
+              to_us(now - timedelta(minutes=30)),
+              to_us(now - timedelta(minutes=10))]
+    _restart_wiring(monkeypatch, stamps)
+    result = discovery._host_session_restarts(_stability_home(tmp_path))
+    assert result["id"] == "sense.host.session-restarts"
+    assert result["state"] == "drift"
+    assert result["verdict"] == "churn"
+    assert "births=3" in result["sample"]
+
+
+def test_session_restarts_verified_when_steady(monkeypatch, tmp_path):
+    from datetime import datetime, timedelta, timezone
+    from mishe_tauftauf import discovery
+    now = datetime.now(timezone.utc)
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    to_us = lambda value: int((value - epoch).total_seconds() * 1000000)
+    stamps = [to_us(now - timedelta(minutes=50))]
+    _restart_wiring(monkeypatch, stamps)
+    result = discovery._host_session_restarts(_stability_home(tmp_path))
+    assert result["state"] == "verified"
+    assert result["verdict"] == "steady"
+
+
+def test_session_restarts_unknown_on_acquisition_failure(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+    monkeypatch.setattr(discovery, "_journal_command", lambda cmd, timeout=10: None)
+    monkeypatch.setattr(discovery, "_journal_boot", lambda: "boot-restart")
+    result = discovery._host_session_restarts(_stability_home(tmp_path))
+    assert result["state"] == "unknown"
+    assert result["reason"] == "incomplete or failed acquisition"
+
+
 def test_authorship_fog_clean_tree_is_verified(monkeypatch, tmp_path):
     from mishe_tauftauf import discovery
 
