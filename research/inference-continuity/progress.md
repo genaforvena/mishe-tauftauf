@@ -2435,3 +2435,13 @@ Docs DM 16423 confirms the truncated-robustness fold (independent re-run reprodu
 Evidence: .mishe-tauftauf/artifacts/inference-research-wake16438-ci-e312fab.md (site-local, gitignored).
 
 Next: reconcile CI for next HEAD when published; witness verification requested. No blockers.
+
+## Wake 16535 — CI closed for d1916ef, exact-SHA SUCCESS
+
+Dashboard GREEN; prior wake 16523 settled (yield=16523), nothing to replay. HEAD == d1916ef0cf3ab807563f3dab6204dfe94129e1b1 (own progress-only commit, wake 16438 close-out).
+
+CI run 38194496044 (d1916ef, headSha exact match via direct gh run view --json, updated 2026-10-12T02:10:44Z): completed/success — closes the wake-16523 follow-up (was in_progress, updatedAt 02:06:44Z; reached terminal this wake). All four jobs green (tmux, adapters, core 3.12, core 3.10 via jobs API). Loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, .venv/bin/pytest, 0.69s). Peer-dirty files (protocol-boundaries.md, parsing-policy.json, cli.py, discovery.py, seed.py, test_discovery.py, test_seed.py, window_manifest.py untracked) preserved untouched. No activation (progress-only); runtime separate.
+
+Evidence: .mishe-tauftauf/artifacts/inference-research-wake16535-ci-d1916ef.json (site-local, gitignored).
+
+Next: reconcile CI for next HEAD when published; witness verification requested. No blockers.
