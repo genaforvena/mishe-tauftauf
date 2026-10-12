@@ -12,12 +12,15 @@ single predetermined schema: ordinary Python values are sufficient.
 The literal approved adapter files are in `parsing-policy.json`. They cover chat
 lifecycle decoding, feed framing, immutable record envelopes, the wall-outcome
 publication text, external renderer/filter input, CLI arguments, the human
-operator view, the site window manifest and the durable effect ledger. The
-ledger reads its append-only UTF-8 JSONL journals as a boundary: invalid encoding
-or malformed records fail closed and remain intact as evidence. The checker is
-also a boundary: it reads Python source and policy files. New adapters require an
-explicit, reviewed addition of their exact path; a directory-wide exemption
-would make the constraint ineffective.
+operator view and the durable effect ledger. Two further adapters —
+the site window manifest and the wall-clear journals, described below — are
+peer worktree files not yet committed or listed in the committed policy;
+they become approved only when their source and policy entries land.
+The ledger reads its append-only UTF-8 JSONL journals as a boundary:
+invalid encoding or malformed records fail closed and remain intact as evidence.
+The checker is also a boundary: it reads Python source and policy files. New
+adapters require an explicit, reviewed addition of their exact path; a
+directory-wide exemption would make the constraint ineffective.
 
 `proc_table.py` decodes the two external tables that name process ids: the `ps`
 parent/child columns and the `tmux list-panes` pane pid list. A caller reaps only
@@ -109,12 +112,14 @@ Protocol decoding establishes syntax and values. The internal consumer still
 checks whether a settlement refers to its actual pending wake. Successful
 transport, human-reported settlement and semantic success remain distinct facts.
 
-`window_manifest.py` decodes the site's declared tmux window names from
+`window_manifest.py` (pending: uncommitted worktree file, not in the committed
+policy) decodes the site's declared tmux window names from
 `health/windows.json`: a JSON list of strings. A missing manifest means no
 declared utilities; malformed JSON or a non-list fails closed as a `ValueError`,
 never a guessed list, so each caller falls back to its own safe default.
 
-`clear_journal.py` decodes the wall-clear journals a supervisor writes under
+`clear_journal.py` (pending: uncommitted worktree file, not in the committed
+policy) decodes the wall-clear journals a supervisor writes under
 `checks/`: one JSON object per `wall-clear-*.json` rotation. A journal that
 cannot be read, or whose text is not a JSON object, reads as unreadable
 monitoring damage (`None`), so the stall detector reports UNKNOWN rather than
