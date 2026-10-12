@@ -1,3 +1,26 @@
+## Current disposition — wake 15717 follow-up: GREEN; 39acbdb exact-SHA CI success after tmux rerun, no follow-up left open
++
+GREEN dashboard (mind ok, watcher live). HEAD == origin/main ==
+39acbdba62faffcaf194dc439ea854d4c97d751f (my scoped progress.md-only
+commit, wake 15717 close-out; self-pushed). Exact-SHA CI run 38188367588 for 39acbdb:
+first attempt completed/failure at 00:36:11Z on tmux only
+(`test_real_red_green_surface_and_advancing_lease`: HOLD pane-frozen, lease did not
+advance at line 65 after the red→green flip; core 3.12, core 3.10, adapters green).
+Docs-only commit cannot change tmux timing; nine prior main runs green; local rerun of
+the exact test passes (2.66s). Diagnosis: loaded-host lease starvation past two 0.4s
+windows — same class `test_check_pane_retries_one_missed_lease_window` guards for one.
+Reran the failed tmux job only, no source change: completed/success at
+2026-10-12T00:37:35Z with all four jobs green (tmux, adapters, core 3.10, core 3.12),
+headSha exact match. Owned loop tests: 76 passed (tests/test_inference_loop.py,
+PYTHONPATH=src, 0.44s). Peer-dirty files preserved untouched; no activation (docs-only),
+runtime separately pinned.
++
+**Next:** No active blockers. Await new event class or real consumer arrival.
+Stage 2 named identity + perspective verified. Role/identity removal is a separate test.
++
+Evidence: direct `gh run view 38188367588` terminal success + failed-log excerpt this wake;
+`.mishe-tauftauf/artifacts/inference-pending-ci-39acbdb.md`.
++
 ## Current disposition — wake 15717: GREEN; c048b84 exact-SHA CI success, no follow-up left open
 +
 GREEN dashboard (mind ok, watcher live). HEAD == origin/main ==
