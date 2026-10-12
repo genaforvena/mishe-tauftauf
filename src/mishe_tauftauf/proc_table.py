@@ -208,6 +208,21 @@ def is_tmux_server(pid: str) -> bool:
         return False
     return "new-session" in read_pane_cmdline(pid)
 
+def read_oom_score_adj(pid: str) -> str | None:
+    """The process's ``/proc/<pid>/oom_score_adj`` value, stripped, or None.
+
+    The kernel terminates the value with a newline; callers compare the
+    stripped text so a shielded server reads exactly "-900". Unreadable pids
+    yield None rather than a guess.
+    """
+    if not pid:
+        return None
+    try:
+        return Path("/proc", pid, "oom_score_adj").read_text(
+            encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return None
+
 def pane_root(component: str) -> str:
     """The import root a PYTHONPATH component names, without its ``src`` leaf.
 
