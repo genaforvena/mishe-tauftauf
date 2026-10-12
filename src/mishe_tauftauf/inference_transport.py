@@ -160,15 +160,9 @@ class NativeSession:
             completion = frame.get('frame')
             decoded = _decode(json.dumps(completion).encode())
             checkpoint = completion.get('checkpoint')
-            # Error/incomplete frames remain diagnostic history, never recovery
-            # evidence. Only a correlated completed response can checkpoint.
-            wire = completion.get('wire_terminal')
-            if (decoded.terminal == 'done' and isinstance(wire, dict)
-                    and wire.get('correlated') is True
-                    and wire.get('event') == 'response.completed'
-                    and not isinstance(checkpoint, dict)):
-                raise WorkerError('UNKNOWN: missing native logical checkpoint')
-            self.checkpoint = None
+            # No checkpoint on the openai-responses route: every turn replays
+            # full history. Null checkpoint on a correlated completed response
+            # is the expected shape, not a missing-checkpoint refusal.
             self.next_id += 1
             if self.process.poll() is not None:
                 # The worker is dead, so this receipt cannot prove the provider

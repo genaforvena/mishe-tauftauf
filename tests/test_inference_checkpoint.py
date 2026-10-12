@@ -34,14 +34,16 @@ def assert_reaped(session):
 
 
 @pytest.mark.parametrize("checkpoint", [None, "opaque", []])
-def test_completed_correlated_turn_requires_checkpoint(tmp_path, checkpoint):
+def test_completed_correlated_turn_accepts_null_checkpoint(tmp_path, checkpoint):
+    # No checkpoint on the openai-responses route (wake 20526): null is the
+    # expected shape on a correlated completed response, not a refusal.
     frame = {**FRAME, "checkpoint": checkpoint,
              "wire_terminal": {"event": "response.completed", "correlated": True}}
-    session = NativeSession(command(tmp_path, turn=
+    with NativeSession(command(tmp_path, turn=
         f"emit({{'type':'turn','id':request['id'],'frame':{frame!r}}})"),
-        "fixture/model", "session", timeout=3)
-    with pytest.raises(WorkerError, match="missing native logical checkpoint"):
-        session.turn({})
+        "fixture/model", "session", timeout=3) as session:
+        turn = session.turn({})
+        assert turn.terminal == "done" and turn.checkpoint == checkpoint
     assert_reaped(session)
 
 

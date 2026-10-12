@@ -1,7 +1,7 @@
 import {streamSimple} from '@oh-my-pi/pi-ai/stream';
 import type {Context, ProviderSessionState} from '@oh-my-pi/pi-ai/types';
 import {withNativeModel} from './native-bootstrap.ts';
-import {restoreCheckpoint, exportCheckpoint, isContinuation} from './native-checkpoint.ts';
+import {restoreCheckpoint} from './native-checkpoint.ts';
 
 // One owned subprocess lifetime. Bootstrap rejection is fatal to its caller;
 // never reacquire/retry in that process (pre-return auth acquisition gap).
@@ -79,8 +79,10 @@ export async function withNativeSession<T>(selector: string, sessionId: string,
    throw new Error('wire terminal response ID mismatch');
   }
   const correlated = Boolean(responseId && assistant.responseId === responseId);
-  const checkpoint = terminal === 'done' && correlated && observed?.event === 'response.completed'
-   ? exportCheckpoint(state, selector, sessionId, {...context,messages:[...context.messages,assistant]}) : null;
+  // No checkpoint on the openai-responses route: single-turn turns only.
+  // exportCheckpoint/restoreCheckpoint refuse loudly; continuation without a
+  // checkpoint is a fresh full-history turn, not a resumed provider turn.
+  const checkpoint = null;
   return {terminal, assistant, checkpoint, wire_usage: correlated ? wireUsage : null,
    wire_terminal: observed && {...observed, created_response_id: createdId,
     assistant_response_id: assistant.responseId ?? null, correlated, stop_reason: assistant.stopReason}};
@@ -90,7 +92,6 @@ export async function withNativeSession<T>(selector: string, sessionId: string,
    if (active) throw new Error('concurrent native turn prohibited');
    if (!context || !Array.isArray(context.messages)) throw new Error('native context messages required');
    if (checkpoint !== undefined) restoreCheckpoint(state, selector, sessionId, context, checkpoint);
-   else if (!state.size && isContinuation(context)) throw new Error('UNKNOWN: continuation requires logical checkpoint');
    const abort = () => {poisoned = true; controller.abort(signal?.reason);};
    if (signal?.aborted) {abort(); throw new Error('native turn cancelled');}
    signal?.addEventListener('abort', abort, {once:true});
