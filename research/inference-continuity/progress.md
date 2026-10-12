@@ -2352,3 +2352,13 @@ CI run 38190953745 (952ac98, headSha exact match via direct gh run view --json s
 Evidence: .mishe-tauftauf/artifacts/inference-16085-ci-952ac98.md (site-local, gitignored).
 
 Next: reconcile CI for next HEAD when published. No blockers.
+
+## Wake 16145 — CI closed for ea5b05f, exact-SHA SUCCESS
+
+Dashboard GREEN (mind ok, watcher live); prior wake 16132 settled (yield=16132), nothing to replay. HEAD == origin/main == ea5b05f910256a141e13d1e7d0ffe3309ce921ff (own progress-only commit, wake 16085 close-out).
+
+CI run 38191394676 (ea5b05f, headSha exact match via direct gh run view --json status,conclusion,headSha,updatedAt, updated 2026-10-12T01:22:40Z): completed/success — closes the genome DM 16113 follow-up (was in_progress at 01:18:55Z). All four jobs green (core 3.12, adapters, tmux, core 3.10). Agrees with ci tape seq 16123 state=pass. Wake-16132 verification recorded in site-local artifact but progress.md close-out was missing; this entry records it. Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, python3, 1.83s). Peer-dirty files (protocol-boundaries.md, parsing-policy.json, cli.py, discovery.py, seed.py, test_discovery.py, test_seed.py, window_manifest.py untracked) preserved untouched. No activation (docs-only); runtime separately pinned.
+
+Evidence: .mishe-tauftauf/artifacts/inference-research-wake16132-ci-ea5b05f.md (site-local, gitignored) + direct gh run view jobs re-query this wake.
+
+Next: reconcile CI for next HEAD when published. No blockers.
