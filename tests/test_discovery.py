@@ -5798,3 +5798,74 @@ def test_session_stability_tmux_failure_is_unknown(monkeypatch, tmp_path):
                         lambda *a, **kw: (_ for _ in ()).throw(OSError("no tmux")))
     result = discovery._host_session_stability(_stability_home(tmp_path))
     assert result["state"] == "unknown"
+
+
+def test_authorship_fog_clean_tree_is_verified(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    class Status:
+        returncode = 0
+        stdout = b""
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: Status())
+    home = tmp_path / "site"
+    home.mkdir()
+    result = discovery._coord_authorship_fog(home)
+    assert result["id"] == "sense.coord.authorship-fog"
+    assert result["state"] == "verified"
+    assert result["fog"] == []
+
+
+def test_authorship_fog_unclaimed_path_is_drift(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    class Status:
+        returncode = 0
+        stdout = b" M src/mishe_tauftauf/novel.py\n"
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: Status())
+    home = tmp_path / "site"
+    (home / "walls").mkdir(parents=True)
+    (home / "walls" / "health.md").write_text("nothing relevant here\n", encoding="utf-8")
+    (home / "chat.log").write_text("v1 1 2026-10-12T00:00:00Z seed ::\n .\n", encoding="utf-8")
+    result = discovery._coord_authorship_fog(home)
+    assert result["state"] == "drift"
+    assert any("novel.py" in p for p in result["fog"])
+
+
+def test_authorship_fog_claimed_path_is_verified(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    class Status:
+        returncode = 0
+        stdout = b" M src/mishe_tauftauf/novel.py\n"
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: Status())
+    home = tmp_path / "site"
+    (home / "walls").mkdir(parents=True)
+    (home / "walls" / "health.md").write_text("landing novel.py after review\n", encoding="utf-8")
+    result = discovery._coord_authorship_fog(home)
+    assert result["state"] == "verified"
+    assert result["fog"] == []
+
+
+def test_gate_latency_no_tape_is_unknown(tmp_path):
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir()
+    result = discovery._coord_gate_latency(home)
+    assert result["state"] == "unknown"
+
+
+def test_landing_block_clean_gate_verified(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    monkeypatch.setattr(discovery, "_coord_authorship_fog",
+                        lambda home: {"fog": [], "state": "verified"})
+    class Gate:
+        returncode = 0
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: Gate())
+    home = tmp_path / "site"
+    home.mkdir()
+    result = discovery._repo_landing_block(home)
+    assert result["id"] == "sense.repo.landing-block"
+    assert result["state"] == "verified"
+    assert result["blocks"] == []

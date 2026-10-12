@@ -2740,6 +2740,123 @@ def _host_session_stability(home: Path) -> dict[str, object]:
             "sample": f"live=[{','.join(live)}] servers={len(shields)} shielded",
             "live": live, "unshielded": unshielded, "kind": "read"}
 
+def _coord_authorship_fog(home: Path, now: datetime | None = None) -> dict[str, object]:
+    """Name dirty-tree bytes no wall or chat line claims, so landing stops guessing.
+
+    Every uncommitted path is checked against two claim sources: a wall file
+    naming the path, and a chat.log line naming it. A path claimed by neither
+    is fog: no mind can land it without risking another author's work.
+    State is drift when fog exists, verified when every dirty path is
+    claimed, unknown when git or the tape is unreadable.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    checkout = Path(home).resolve().parent
+    try:
+        status = subprocess.run(["git", "status", "--short"], capture_output=True,
+                                timeout=5, cwd=checkout)
+        if status.returncode != 0:
+            raise OSError("git status failed")
+        dirty = proc_table.window_names(status.stdout)
+    except (OSError, subprocess.TimeoutExpired):
+        return {"id": "sense.coord.authorship-fog", "state": "unknown",
+                "sample": "dirty set unreadable", "kind": "read"}
+    if not dirty:
+        return {"id": "sense.coord.authorship-fog", "state": "verified",
+                "sample": "dirty=0 fog=0", "kind": "read", "dirty": 0, "fog": [], "claimed": []}
+    walls_dir = Path(home) / "walls"
+    wall_text = ""
+    try:
+        for path in walls_dir.glob("*.md"):
+            try:
+                wall_text += path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+    except OSError:
+        pass
+    try:
+        tape = (Path(home) / "chat.log").read_text(encoding="utf-8", errors="replace")[-200000:]
+    except OSError:
+        tape = ""
+    fog: list[str] = []
+    claimed: list[str] = []
+    for line in dirty:
+        name = Path(line).name
+        if name in wall_text or name in tape:
+            claimed.append(line)
+        else:
+            fog.append(line)
+    state = "drift" if fog else "verified"
+    return {"id": "sense.coord.authorship-fog", "state": state,
+            "sample": f"dirty={len(dirty)} fog={len(fog)} " + ",".join(fog[:8]),
+            "kind": "read", "dirty": len(dirty), "fog": fog, "claimed": claimed}
+
+def _repo_landing_block(home: Path) -> dict[str, object]:
+    """Name what stops the dirty tree from landing, so a mind can unblock it.
+
+    Three block classes: fog paths (no wall/chat claim — see authorship-fog),
+    peer-overlap files (dirty paths also touched by another site's claim),
+    and test-gate state (whether focused suites pass on the working tree).
+    The test gate runs only the two fastest suites (proc_table + plant
+    focused names) with a hard timeout; a timeout reads unknown, never pass.
+    State is drift when any block exists, verified when the tree is clean or
+    every dirty path is claimed by exactly one author and the gate passes.
+    """
+    fog_reading = _coord_authorship_fog(home)
+    fog = fog_reading.get("fog", []) if isinstance(fog_reading.get("fog"), list) else []
+    checkout = Path(home).resolve().parent
+    try:
+        gate = subprocess.run(
+            ["env", "PYTHONPATH=src", ".venv/bin/pytest", "-q",
+             "tests/test_proc_table.py", "-x", "--no-header"],
+            capture_output=True, timeout=120, cwd=checkout)
+        gate_ok = gate.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        gate_ok = None
+    blocks: list[str] = []
+    if fog:
+        blocks.append(f"fog={len(fog)}")
+    if gate_ok is False:
+        blocks.append("gate=fail")
+    elif gate_ok is None:
+        blocks.append("gate=unknown")
+    state = "drift" if blocks else "verified"
+    sample = f"blocks=[{','.join(blocks) if blocks else 'none'}] fogpaths={len(fog)}"
+    return {"id": "sense.repo.landing-block", "state": state,
+            "sample": sample, "kind": "read", "blocks": blocks, "fog": fog,
+            "gate": gate_ok}
+
+def _coord_gate_latency(home: Path, now: datetime | None = None) -> dict[str, object]:
+    """Age the oldest unanswered resolver routing, so stalls wake their owner.
+
+    Reads the dm-disposition open set and reports the oldest open DM per
+    target role with its age: a resolver whose queue head is older than the
+    maturity bound is the bottleneck, named explicitly. State is drift when
+    any open DM is mature, verified when the queue is empty or all young,
+    unknown when the tape is unreadable.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    tape_path = Path(home) / "chat.log"
+    if not tape_path.exists():
+        return {"id": "sense.coord.gate-latency", "state": "unknown",
+                "sample": "chat tape unavailable", "kind": "read"}
+    try:
+        entries = parse_feed(tape_path.read_bytes(), home=home)
+    except (OSError, ValueError) as exc:
+        return {"id": "sense.coord.gate-latency", "state": "unknown",
+                "sample": f"chat tape unreadable: {exc}", "kind": "read"}
+    disp = _coord_dm_disposition_age(home, now)
+    if disp.get("state") != "verified":
+        return {"id": "sense.coord.gate-latency", "state": "unknown",
+                "sample": "disposition reading unavailable", "kind": "read"}
+    oldest = str(disp.get("oldest_open", ""))
+    stall = int(disp.get("stall", 0))
+    state = "drift" if stall else "verified"
+    return {"id": "sense.coord.gate-latency", "state": state,
+            "sample": f"stall={stall} oldest={oldest}",
+            "kind": "read", "stall": stall, "oldest_open": oldest}
+
 def _repo_branch_inventory(home: Path) -> dict[str, object]:
     """Report the checkout's branch inventory against the main-only regime.
 
@@ -4218,6 +4335,9 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_repo_branch_inventory(home))
     observed.append(_ghost_site_homes(home))
     observed.append(_coord_dm_disposition_age(home))
+    observed.append(_coord_authorship_fog(home))
+    observed.append(_repo_landing_block(home))
+    observed.append(_coord_gate_latency(home))
     observed.append(_seed_settle_result_mix(home))
     return {"created": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
             "node": os.uname().nodename, "observations": observed}
