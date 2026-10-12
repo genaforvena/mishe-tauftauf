@@ -2686,6 +2686,60 @@ def _runtime_pin_lag(home: Path, now: datetime | None = None) -> dict[str, objec
                 "sample": f"git error: {exc}", "kind": "read"}
 
 
+def _host_session_stability(home: Path) -> dict[str, object]:
+    """Detect tmux-server deaths and missing OOM shields so mishe self-heals.
+
+    A dead tmux server reads as every pane UNKNOWN and every supervisor
+    crash-looping; without this reading the operator window is the only
+    detector and the fix is manual. A session absent from the live list is
+    drift, not unknown: the receipt names the expected session. Live servers
+    report their oom_score_adj; anything above -900 means the host-guard
+    shield lapsed and the server is OOM-killable again. Unreadable tmux or
+    /proc reads stay unknown rather than reading as stability. All external
+    text enters through proc_table decoders, never inline parsing.
+    """
+    session = os.environ.get("MISHE_SEED_SESSION") or None
+    if not session:
+        from .seed import recorded_session
+        session = recorded_session(home)
+    try:
+        listed = subprocess.run(["tmux", "list-sessions", "-F", "#{session_name}"],
+                                capture_output=True, timeout=2)
+    except (OSError, subprocess.TimeoutExpired):
+        return {"id": "sense.host.session-stability", "state": "unknown",
+                "sample": "tmux enumeration unavailable", "kind": "read"}
+    if listed.returncode != 0:
+        live: list[str] = []
+    else:
+        live = sorted(proc_table.window_names(listed.stdout))
+    shields: dict[str, str] = {}
+    # The server's comm is "tmux: server", so pgrep -x misses it; match the
+    # full command line and keep only the new-session server processes.
+    try:
+        servers = subprocess.run(["pgrep", "-f", "tmux new-session"], capture_output=True, timeout=2)
+    except (OSError, subprocess.TimeoutExpired):
+        servers = None
+    if servers is not None and servers.returncode == 0:
+        for pid_text in proc_table.pane_pids(servers.stdout):
+            if not proc_table.is_tmux_server(str(pid_text)):
+                continue
+            adj = proc_table.read_oom_score_adj(str(pid_text))
+            if adj is None:
+                continue
+            shields[str(pid_text)] = adj
+    unshielded = sorted(pid for pid, adj in shields.items() if adj != "-900")
+    if session is not None and session not in live:
+        return {"id": "sense.host.session-stability", "state": "drift",
+                "sample": f"live=[{','.join(live)}] session-missing={session} unshielded=[{','.join(unshielded)}]",
+                "live": live, "session": session, "unshielded": unshielded, "kind": "read"}
+    if unshielded:
+        return {"id": "sense.host.session-stability", "state": "drift",
+                "sample": f"live=[{','.join(live)}] unshielded-servers={','.join(unshielded)}",
+                "live": live, "unshielded": unshielded, "kind": "read"}
+    return {"id": "sense.host.session-stability", "state": "verified",
+            "sample": f"live=[{','.join(live)}] servers={len(shields)} shielded",
+            "live": live, "unshielded": unshielded, "kind": "read"}
+
 def _repo_branch_inventory(home: Path) -> dict[str, object]:
     """Report the checkout's branch inventory against the main-only regime.
 
@@ -4155,6 +4209,7 @@ def sample(home: Path) -> dict[str, object]:
         names = []
     observed.append({"id": "sense.tmux.windows", "state": "verified" if names else "unknown",
                      "sample": names or "session unavailable", "kind": "read"})
+    observed.append(_host_session_stability(home))
     roots, _coverage_failure = _service_import_roots(home)
     observed.append(_sensor_coverage(home, roots))
     observed.append(_renderer_coverage(home))
