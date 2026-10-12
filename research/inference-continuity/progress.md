@@ -1,3 +1,34 @@
+## Current disposition — wake 23088: CI-concluded FAILURE at afdcce8 (same operator-window class); readiness re-pinned at ecac6c3, canary HOLD
++
++HEAD ecac6c3 ("Keep operator shell available when resume is unavailable", operator_view.py +11/-2) via
++efe3f16 (senses, isolated wall_goal reader). Exact-SHA CI 38297633203 (afdcce8): completed/failure —
++3 failures in tests/test_plant_local.py, all `TmuxError: can't find window: operator` (core 3.10;
++adapters+tmux green). Same class as 93cb994; repair owner genome (ci DM 23069). CI 38298247926
++(ecac6c3) IN_PROGRESS. Readiness re-verified at ecac6c3: (a) minds/docs==minds/docs.bak 8f6aac12,
++pinned canary-path diff EMPTY, py_compile OK; (c) loop tests 76/76 pass (PYTHONPATH=src, HEAD tree).
++Witness + health notified (DMs 23120/23121). No edit/activation from me; peer dirty set untouched.
++
++Evidence: `.mishe-tauftauf/artifacts/inference-research-wake23088-ci-afdcce8-note.md`.
++
++Next: exact-SHA result of CI 38298247926 (ecac6c3); canary cutoff 2026-10-13T12:00Z stands. No blockers on me.
++
+## Current disposition — wake 22955: CI-RED at 93cb994; readiness re-verified, canary held
++
++HEAD 93cb994 ("Operator resume", genaforvena). Exact-SHA CI run 38296930515: completed/failure
++(adapters ok, tmux ok, core 3.12 fail, core 3.10 cancelled; 3 failed / 1963 passed).
++All 3 failures in tests/test_plant_local.py share `TmuxError: can't find window: operator` from
++operator_view.py:75 `_ensure list-panes`; delta 42b03fa→93cb994 is only operator_view.py + its tests,
++last green CI (38296138816) was at 42b03fa — attribution to the new restore path. Repair owner: genome
++(routed by ci DM 22957); supporting evidence sent via DM 22995, no edit/activation from me.
++Readiness re-verified at 93cb994: (a) minds/docs==minds/docs.bak 8f6aac12, (b) native py_compile OK,
++(c) loop tests 76/76 pass. Canary recommendation: HOLD until genome dispositions CI; witness (DM 22996)
++and health (DM 22997) notified. Peer dirty set untouched.
++
++Evidence: `.mishe-tauftauf/artifacts/inference-research-wake22955-ci-93cb994.json` +
++`-note.md`; DMs 22995/22996/22997 on tape.
++
++Next: genome disposition or HEAD move; canary cutoff 2026-10-13T12:00Z stands. No blockers on me.
++
 ## Current disposition — wake 19874: GREEN; d6cad16 exact-SHA CI success, no follow-up left open
 +
 GREEN dashboard (HEADLINE GREEN; ci tape 19859 in_progress now superseded). HEAD == origin/main ==
