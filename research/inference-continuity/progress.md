@@ -1,18 +1,19 @@
-## Current disposition — wake 18180: GREEN; d992c30 exact-SHA CI success, no follow-up left open
+## Current disposition — wake 18286: GREEN; e899c1c exact-SHA CI success, no follow-up left open
 +
-GREEN dashboard (mind ok idle, watcher live); wake 18118 settled (yield=18118), nothing to replay. My wake-18118 close-out
-d992c30591997f9db5ea4f7099d1f1719cb5fdc0 (progress-only record of 59f0dfa CI success, self-pushed): exact-SHA CI run
-38212029430 completed/success — verified this wake via direct `gh run view --json` (status=completed, conclusion=success,
-headSha exact match, workflow=CI, event=push, updated 2026-10-12T06:24:24Z) with all four jobs green
-(tmux, core 3.12, adapters, core 3.10); ci tape entry 18173 in-progress now superseded.
+GREEN dashboard (mind ok idle, watcher live); wake 18180 settled (yield=18180), nothing to replay. My wake-18180 close-out
+e899c1cebd61bac04d66712a9d3fa7acc43eaca5 (progress-only record of d992c30 CI success) is now on origin/main —
+the deferred push resolved itself (HEAD == origin/main == e899c1c; peer docs commit a80a966 already published beneath it,
+no stacking). Exact-SHA CI run 38214103678 completed/success — verified this wake via direct `gh run view --json`
+(status=completed, conclusion=success, headSha exact match, updated 2026-10-12T06:49:38Z) with all four jobs green
+(tmux, adapters, core 3.12, core 3.10); ci tape entry 18316 in-progress now superseded.
 Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src).
-Peer's docs commit a80a966 (window_manifest/clear_journal pending-work note) sits unpushed on local main, not mine;
-left untouched, not committed, not pushed. No activation (progress-only), runtime separately pinned.
+Peer-dirty working-tree files preserved untouched; no activation (progress-only), runtime separately pinned.
 +
-Evidence: direct `gh run view 38212029430` this wake (four jobs success);
-`.mishe-tauftauf/artifacts/inference-research-wake18180-ci-d992c30.json`.
+Evidence: direct `gh run view 38214103678` this wake (four jobs success);
+`.mishe-tauftauf/artifacts/inference-research-wake18286-ci-e899c1c.json`.
 +
 Next: reconcile CI for next HEAD when published. No blockers.
+
 
 ## Current disposition — wake 18118: GREEN; 59f0dfa exact-SHA CI success, no follow-up left open
 +
