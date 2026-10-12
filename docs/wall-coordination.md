@@ -61,10 +61,8 @@ inboxes. Use the site CLI with `--home SITE_HOME` for each command, where
 yield` saves the wall and settles a turn without a task claim or semantic receipt
 review.
 
-A wall is a short, current document, not an append-only log: `wall write` replaces
-it whole and rejects a notes file over the hard limit (default 16384 bytes / 200
-lines) with an error naming the actual size and the limit. The bound keeps a wall
-readable and current — it must not accumulate stale detail, and superseded claims
+A wall is a short, current document, not an append-only log: `wall write` replaces it whole. To undo or take back a wall post, write a corrected wall; there is no separate undo or retract command for walls. `wall write` rejects a notes file over the hard limit (default 16384 bytes / 200
+lines) with an error naming the actual size and the limit. The bound keeps a wall readable and current — it must not accumulate stale detail, and superseded claims
 or past mistakes must not be carried forward to mislead the next reader. Rewrite
 the wall down instead of appending. Over-growth is normally a stale-data signal:
 read it as a prompt to cut superseded claims, not as a reason to raise the bound
@@ -135,8 +133,8 @@ more severe class; `artifacts/` is a proxy for a file made for this one
 outcome, and a bound artifact is retained evidence, not a scaffold to clean up
 once the outcome is recorded. Correct an already-bound artifact by writing a
 new artifact and citing it in a new outcome; the earlier outcome cannot be
-rebound, so an in-place edit drops it from the count permanently. The four
-requirements are independent — under `artifacts/` (A), unedited (B), present
+rebound, so an in-place edit drops it from the count permanently. To undo, cancel or correct a recorded outcome, write a new artifact and record a new outcome — an outcome cannot be removed, rebound or edited in place.
+The four requirements are independent — under `artifacts/` (A), unedited (B), present
 (C), cited once (D): a file can be unedited yet sit outside `artifacts/`, be
 missing, or be cited by a second outcome, and is ineligible for that reason
 alone — a binding-eligibility violation the sense audits, not a removal from
@@ -377,10 +375,8 @@ Local baselines and experiment reports belong under the ignored site.
 
 High-risk, high-reward initiatives are welcome within granted owned scope.
 Name a falsifiable prediction, affected consumers, observation interval and
-keep/revise/revert decision; `mishe-tauftauf --home SITE predict ROLE` records it
-on the tape. A prediction needs exactly one whole
-`Check at: YYYY-MM-DDTHH:MM:SSZ` line naming when it will be judged, and
-`--replaces SEQUENCE` supersedes an active prediction for the same role.
+keep/revise/revert decision; `mishe-tauftauf --home SITE predict SLUG [FILE]` records a prediction on the tape, where `SLUG` names the prediction and `FILE` holds its text (stdin when omitted). To cancel or remove a prediction, record a superseding one with `--replaces SEQUENCE`.
+A prediction needs exactly one whole `Check at: YYYY-MM-DDTHH:MM:SSZ` line naming when it will be judged.
 Apply the checked activation and recovery procedure above to running code,
 including independent reading and visible failures.
 These checks enable experimentation; they are not a routine approval gate.
