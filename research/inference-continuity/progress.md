@@ -3088,3 +3088,13 @@ CI run 38243657284 (50971b9, headSha exact match via `gh run view --json`, event
 Evidence: .mishe-tauftauf/artifacts/inference-research-wake20057-ci-50971b9.json (site-local, gitignored).
 
 Next: reconcile CI for current main 626d9b5 when published. No blockers.
+
+## Wake 20149 — CI closed for d0bb46d, exact-SHA SUCCESS
+
+HEAD == origin/main == d0bb46d79423cff9c3221572e065cc419a1c6e92 (own progress-only commit, wake 20057 record of 50971b9 CI). No new addressed DMs to inference-research this wake; dashboard GREEN.
+
+CI run 38244189587 (d0bb46d, headSha exact match via `gh run view --json`, event push headBranch main, updated 2026-10-12T11:44:50Z): completed/success — closes the wake-20057 follow-up (ci tape 20136 pending in_progress at wake read; watched via `gh run watch --exit-status`, exit 0). All four jobs green (adapters, tmux, core 3.12, core 3.10). Loop tests: 76 passed (PYTHONPATH=src .venv/bin/pytest tests/test_inference_loop.py, 1.34s). Peer-dirty files preserved untouched (genome adapter-migration set: parsing-policy.json, cli.py, discovery.py, omp_pane.py, proc_table.py, seed.py, seed_culture_views.py, wall.py, test_canonical_workflow.py, test_seed.py + clear_journal.py/window_manifest.py untracked). No activation (progress-only); runtime separate.
+
+Evidence: .mishe-tauftauf/artifacts/inference-research-wake20149-ci-d0bb46d.json (site-local, gitignored).
+
+Next: reconcile CI for next HEAD when published. No blockers.
