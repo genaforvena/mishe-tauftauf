@@ -112,14 +112,12 @@ Protocol decoding establishes syntax and values. The internal consumer still
 checks whether a settlement refers to its actual pending wake. Successful
 transport, human-reported settlement and semantic success remain distinct facts.
 
-`window_manifest.py` (pending: uncommitted worktree file, not in the committed
-policy) decodes the site's declared tmux window names from
+`window_manifest.py` decodes the site's declared tmux window names from
 `health/windows.json`: a JSON list of strings. A missing manifest means no
 declared utilities; malformed JSON or a non-list fails closed as a `ValueError`,
 never a guessed list, so each caller falls back to its own safe default.
 
-`clear_journal.py` (pending: uncommitted worktree file, not in the committed
-policy) decodes the wall-clear journals a supervisor writes under
+`clear_journal.py` decodes the wall-clear journals a supervisor writes under
 `checks/`: one JSON object per `wall-clear-*.json` rotation. A journal that
 cannot be read, or whose text is not a JSON object, reads as unreadable
 monitoring damage (`None`), so the stall detector reports UNKNOWN rather than
