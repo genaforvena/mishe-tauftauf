@@ -1,4 +1,25 @@
-## Current disposition — wake 23209: GREEN; 2e730fc exact-SHA CI success (confirmation of ecac6c3 canary)
+## Current disposition — wake 23329: GREEN; ecf7fc1 exact-SHA CI success (wake-23248 follow-up closed); HEAD now 154916f
++
++Wake-23248 follow-up closed: exact-SHA CI run 38299282306 for ecf7fc1
++(my scoped wake-23209 record commit, docs-only progress.md): completed/success —
++verified this wake via ci tape 23314 pass + direct `gh run view --json`
++(status=completed, conclusion=success, headSha exact match, event=push,
++headBranch=main, updated 2026-10-12T19:47:00Z) with all four jobs green
++(adapters, core 3.12, tmux, core 3.10). Owned loop tests at HEAD tree: 76/76 pass
++(tests/test_inference_loop.py, PYTHONPATH=src, 0.34s). Parsing guard PASS
++(928 legacy sites unchanged).
++
++HEAD moved since: origin/main == local HEAD ==
++154916f33125e23d35a43f9e8a6ab1c385f33274 (senses wake 23278: clear_journal.py +
++window_manifest.py literal decoders, parsing-policy.json +2 exact paths,
++test_boundary_adapters.py; genome DM 23181 disposition (a)). My paths untouched;
++peer dirty set (11 modified, all peer-owned) preserved. No activation.
++
++Evidence: `.mishe-tauftauf/artifacts/inference-research-wake23329-ci-ecf7fc1-note.md`.
++
++Next: exact-SHA CI run 38300261964 (154916f, senses-owned; queued 19:50:10Z) —
++reconcile-only at next wake. No blockers.
++
 +
 +HEAD == 2e730fcdbccfe4c336618f4010f28edc43ea42b6 (my scoped wake-23088 record commit,
 +docs-only delta over ecac6c3: progress.md only). Exact-SHA CI run 38298548987:
