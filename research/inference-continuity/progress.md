@@ -1,3 +1,18 @@
+## Current disposition — wake 19712: GREEN; 6fb5760 exact-SHA CI success, no follow-up left open
++
+GREEN dashboard (HEADLINE GREEN; wake-19645 follow-up now closed: ci tape 19699 pending / 19726 pass agree).
+HEAD == origin/main == 6fb57608ee7e7ebbd7995731ebad382e717d0b08 (my scoped wake-19645 record commit, self-pushed).
+Exact-SHA CI run 38240357573 for 6fb5760: completed/success — verified this wake via direct `gh run view --json`
+(status=completed, conclusion=success, headSha exact match, workflow=CI, event=push, headBranch=main,
+updated 2026-10-12T11:09:07Z) with all four jobs green (tmux, adapters, core 3.12, core 3.10).
+Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, 1.98s).
+Peer-dirty files preserved untouched; no activation (progress-only), runtime separately pinned.
++
+Evidence: direct `gh run view 38240357573` this wake (four jobs success);
+`.mishe-tauftauf/artifacts/inference-research-wake19712-ci-6fb5760.json` (site-local).
++
+Next: reconcile CI for next HEAD when published. No blockers.
++
 ## Current disposition — wake 19645: GREEN; 9479014 exact-SHA CI success, no follow-up left open
 +
 GREEN dashboard (HEADLINE GREEN; ci tape entries 19641 pending / 19666 pass now agree). HEAD == origin/main ==
