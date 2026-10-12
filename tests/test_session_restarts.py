@@ -79,3 +79,39 @@ def test_sample_text_names_cadence_shape():
         session_restarts.assess_restarts(_entries((500_0000000, BIRTH),), SESSION))
     assert "births=1" in steady
     assert "count" not in steady
+
+def _journal_line(cursor, stamp, boot, message):
+    import json
+    return json.dumps({"__CURSOR": cursor, "__REALTIME_TIMESTAMP": str(stamp),
+                       "_BOOT_ID": boot, "SYSLOG_IDENTIFIER": "systemd",
+                       "MESSAGE": message})
+
+
+def test_decode_journal_entries_passes_decoded_pairs():
+    raw = ("\n".join([
+        _journal_line("c1", 200_0000000, "boot1", BIRTH),
+        _journal_line("c2", 300_0000000, "boot1", FOREIGN),
+        _journal_line("c3", 999_0000000, "boot1", BIRTH),  # outside window: dropped
+    ]) + "\n").encode()
+    entries = session_restarts.decode_journal_entries(raw, "boot1", "systemd", 100_0000000, 400_0000000)
+    assert entries == [(200_0000000, BIRTH), (300_0000000, FOREIGN)]
+
+
+def test_decode_journal_entries_malformed_metadata_is_none():
+    good = _journal_line("c1", 200_0000000, "boot1", BIRTH)
+    # Duplicate cursor: partial lists would undercount births, so fail closed.
+    dup = "\n".join([good, good]) + "\n"
+    assert session_restarts.decode_journal_entries(
+        dup.encode(), "boot1", "systemd", 0, 999_0000000) is None
+    # Wrong boot: foreign-boot lines never merge into this boot's cadence.
+    foreign = _journal_line("c9", 200_0000000, "other-boot", BIRTH) + "\n"
+    assert session_restarts.decode_journal_entries(
+        foreign.encode(), "boot1", "systemd", 0, 999_0000000) is None
+    # Non-JSON line and bad timestamp likewise fail the whole acquisition.
+    assert session_restarts.decode_journal_entries(
+        b"not json\n", "boot1", "systemd", 0, 999_0000000) is None
+    bad_ts = _journal_line("c2", "yesterday", "boot1", BIRTH) + "\n"
+    assert session_restarts.decode_journal_entries(
+        bad_ts.encode(), "boot1", "systemd", 0, 999_0000000) is None
+    assert session_restarts.decode_journal_entries(
+        "not-bytes".encode().decode(), "boot1", "systemd", 0, 999_0000000) is None
