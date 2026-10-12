@@ -1187,6 +1187,68 @@ def test_wedge_sense_no_logs_is_unknown(monkeypatch):
     assert result["with_log"] == 0
 
 
+def test_watch_wait_sleep_pattern_with_still_content_is_watch_wait(monkeypatch):
+    monkeypatch.setattr(discovery, "_ci_run_state", lambda run_id: None)
+    result = discovery._watch_wait_verdict("$ sleep 150 ⠋ · 1s", "$ sleep 150 ⠙ · 4s", "now")
+    assert result["verdict"] == "watch-wait"
+    assert result["pattern"] == "sleep"
+    assert result["stable"] is True
+
+
+def test_watch_wait_ci_poll_confirmed_in_progress_is_watch_wait(monkeypatch):
+    monkeypatch.setattr(discovery, "_ci_run_state",
+                        lambda run_id: {"status": "in_progress", "conclusion": "",
+                                        "updated_at": "2026-10-12T11:31:03Z"})
+    result = discovery._watch_wait_verdict("$ gh run view 38242368632 ⠋ · 2m8s",
+                                           "$ gh run view 38242368632 ⠙ · 2m23s", "now")
+    assert result["verdict"] == "watch-wait"
+    assert result["run_id"] == "38242368632"
+
+
+def test_watch_wait_ci_poll_unreadable_state_is_unknown(monkeypatch):
+    monkeypatch.setattr(discovery, "_ci_run_state", lambda run_id: None)
+    result = discovery._watch_wait_verdict("$ gh run view 38242368632 ⠋ · 2m8s",
+                                           "$ gh run view 38242368632 ⠙ · 2m23s", "now")
+    assert result["verdict"] == "unknown"
+    assert result["run_id"] == "38242368632"
+
+
+def test_watch_wait_ci_poll_without_run_id_is_unknown(monkeypatch):
+    monkeypatch.setattr(discovery, "_ci_run_state", lambda run_id: None)
+    result = discovery._watch_wait_verdict("Waiting for CI poll result ⠋ · 1s",
+                                           "Waiting for CI poll result ⠙ · 4s", "now")
+    assert result["verdict"] == "unknown"
+    assert "names no run id" in result["detail"]
+
+
+def test_watch_wait_completed_run_is_suspect_not_excused(monkeypatch):
+    monkeypatch.setattr(discovery, "_ci_run_state",
+                        lambda run_id: {"status": "completed", "conclusion": "success",
+                                        "updated_at": "2026-10-12T11:31:03Z"})
+    result = discovery._watch_wait_verdict("$ gh run view 38242368632 ⠋ · 2m8s",
+                                           "$ gh run view 38242368632 ⠙ · 2m23s", "now")
+    assert result["verdict"] == "suspect"
+
+
+def test_watch_wait_growing_content_is_active(monkeypatch):
+    monkeypatch.setattr(discovery, "_ci_run_state", lambda run_id: None)
+    result = discovery._watch_wait_verdict("line one", "line one\nline two", "now")
+    assert result["verdict"] == "active"
+
+
+def test_watch_wait_empty_frames_are_pane_dead():
+    assert discovery._watch_wait_verdict("", "  \n ", "now")["verdict"] == "pane-dead"
+
+
+def test_watch_wait_tmux_failure_is_unknown(monkeypatch):
+    monkeypatch.setattr(discovery.subprocess, "run",
+                        lambda *a, **kw: type("R", (), {"returncode": 1, "stdout": ""})())
+    result = discovery._mind_watch_wait(Path("/tmp"))
+    assert result["id"] == "sense.mind.watch-wait"
+    assert result["state"] == "unknown"
+    assert result["panes"] == []
+
+
 def test_wedge_chain_counts_all_continue_sources(monkeypatch, tmp_path):
     log = tmp_path / "omp.2026-10-06.12345.log"
     _write_omp_log(log, [
