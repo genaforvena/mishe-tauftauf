@@ -66,7 +66,8 @@ def _ensure(home: Path, session: str, window: str, *, package_root: Path | None,
     names = _tmux("list-windows", "-t", session, "-F", "#{window_name}").stdout.decode().splitlines()
     trigger = ""
     if window not in names:
-        _tmux("new-window", "-d", "-t", session, "-n", window, "-c", str(home.parent), "sh")
+        _tmux("new-window", "-d", "-t", session, "-n", window, "-c", str(home.parent),
+              str(home / "bin" / "operator-shell"))
         # Whole-window loss is the root cause here; keep it even though the
         # dashboard install below would otherwise report a bare restore.
         trigger = "missing-window"
@@ -78,7 +79,8 @@ def _ensure(home: Path, session: str, window: str, *, package_root: Path | None,
                        "@mishe-operator-dashboard").stdout.decode().strip()
         if marker == panes[0]:
             shell = _tmux("split-window", "-d", "-v", "-l", "50%", "-P", "-F", "#{pane_id}",
-                          "-t", panes[0], "-c", str(home.parent), "sh").stdout.decode().strip()
+                          "-t", panes[0], "-c", str(home.parent),
+                          str(home / "bin" / "operator-shell")).stdout.decode().strip()
             panes.append(shell)
             restored_shell = True
             # The dashboard survived alone; the shell underneath died.
@@ -120,6 +122,24 @@ def _ensure(home: Path, session: str, window: str, *, package_root: Path | None,
         raise ValueError("selected runtime lacks the operator renderer; activate it before installation")
     directory = home / "operator"
     directory.mkdir(exist_ok=True)
+    # The human's lower pane resumes its omp thread after a tmux-server death:
+    # `omp --continue` reopens the previous session for the CWD, so a fresh
+    # shell starts where the conversation left off instead of empty. Only the
+    # operator window uses this; resident mind panes keep their own launchers.
+    # Written by ensure (not planted once) so a repaired checkout reaches the
+    # running supervisor without a replant; an operator-customized shell is
+    # preserved byte-for-byte.
+    shell_path = home / "bin" / "operator-shell"
+    shell_path.parent.mkdir(parents=True, exist_ok=True)
+    generated_shell = ("#!/bin/sh\n"
+                       "# mishe-generated operator resume shell\n"
+                       "exec /home/user/.local/bin/omp --cwd " +
+                       shlex.quote(str(home.parent.resolve())) + " --continue\n")
+    current_shell = shell_path.read_text(encoding="utf-8") if shell_path.exists() else None
+    if current_shell is None or (current_shell != generated_shell
+                                 and "# mishe-generated operator" in current_shell.splitlines()[1:3]):
+        shell_path.write_text(generated_shell, encoding="utf-8")
+        shell_path.chmod(0o755)
     defaults = {
         "brief.md": "Edit this page with the current human discussion and decisions.\n",
         "commands.md": (

@@ -298,3 +298,77 @@ def test_recovery_message_names_the_check_that_fired(tmp_path, monkeypatch, faul
     monkeypatch.setattr("mishe_tauftauf.dashboard.read", read)
     status = operator_view.ensure(tmp_path, "owned", "operator", refresh=False)
     assert expected in status
+
+
+def test_ensure_installs_resume_shell_and_uses_it_for_new_panes(tmp_path, monkeypatch):
+    from mishe_tauftauf import operator_view
+    calls = []
+    panes = ["%old-shell"]
+    def tmux(*args, **kwargs):
+        calls.append(args)
+        if args[0] == "list-panes":
+            return CompletedProcess(args, 0, ("\n".join(panes) + "\n").encode())
+        if args[0] == "split-window":
+            panes.insert(0, "%dashboard")
+            return CompletedProcess(args, 0, b"%dashboard\n")
+        if args[0] == "show-option":
+            return CompletedProcess(args, 0, b"%dashboard\n")
+        return CompletedProcess(args, 0, b"")
+    monkeypatch.setattr(operator_view, "await_owned", lambda *a: True)
+    monkeypatch.setattr(operator_view, "_tmux", tmux)
+    operator_view.ensure(tmp_path, "owned", "operator")
+    shell = tmp_path / "bin" / "operator-shell"
+    assert shell.is_file()
+    text = shell.read_text(encoding="utf-8")
+    assert "--continue" in text
+    assert "--cwd" in text
+    assert "operator" not in text.replace("operator-shell", "").replace("operator resume", "")
+    dashboard_split = next(a for a in calls if a[0] == "split-window")
+    assert str(shell) not in dashboard_split  # dashboard pane keeps its own renderer
+
+
+def test_ensure_missing_shell_respawn_uses_resume_shell(tmp_path, monkeypatch):
+    from mishe_tauftauf import operator_view
+    calls = []
+    panes = ["%dashboard"]
+    def tmux(*args, **kwargs):
+        calls.append(args)
+        if args[0] == "list-panes":
+            return CompletedProcess(args, 0, ("\n".join(panes) + "\n").encode())
+        if args[0] == "split-window":
+            panes.append("%new-shell")
+            return CompletedProcess(args, 0, b"%new-shell\n")
+        if args[0] == "show-option":
+            return CompletedProcess(args, 0, b"%dashboard\n")
+        return CompletedProcess(args, 0, b"")
+    monkeypatch.setattr(operator_view, "await_owned", lambda *a: True)
+    monkeypatch.setattr(operator_view, "_tmux", tmux)
+    operator_view.ensure(tmp_path, "owned", "operator")
+    shell = tmp_path / "bin" / "operator-shell"
+    assert shell.is_file()
+    splits = [a for a in calls if a[0] == "split-window"]
+    assert splits and str(shell) in splits[-1]
+
+
+def test_ensure_preserves_operator_customized_shell(tmp_path, monkeypatch):
+    from mishe_tauftauf import operator_view
+    custom = "#!/bin/sh\nexec bash -i\n"
+    shell = tmp_path / "bin" / "operator-shell"
+    shell.parent.mkdir(parents=True, exist_ok=True)
+    shell.write_text(custom, encoding="utf-8")
+    calls = []
+    panes = ["%old-shell"]
+    def tmux(*args, **kwargs):
+        calls.append(args)
+        if args[0] == "list-panes":
+            return CompletedProcess(args, 0, ("\n".join(panes) + "\n").encode())
+        if args[0] == "split-window":
+            panes.insert(0, "%dashboard")
+            return CompletedProcess(args, 0, b"%dashboard\n")
+        if args[0] == "show-option":
+            return CompletedProcess(args, 0, b"%dashboard\n")
+        return CompletedProcess(args, 0, b"")
+    monkeypatch.setattr(operator_view, "await_owned", lambda *a: True)
+    monkeypatch.setattr(operator_view, "_tmux", tmux)
+    operator_view.ensure(tmp_path, "owned", "operator")
+    assert shell.read_text(encoding="utf-8") == custom
