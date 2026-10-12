@@ -84,7 +84,8 @@ def test_silence_unit_follows_the_pinned_release(tmp_path: Path) -> None:
     text = plant.silence_unit_text(home, "core", "/usr/bin/python3")
     assert "mishe_tauftauf.activity --home " in text
     assert "--session core --interval 5" in text
-    assert f"Environment=PYTHONPATH={release / 'src'}" in text
+    # Supervisors survive memory pressure ahead of disposable workers.
+    assert "OOMScoreAdjust=-500" in text
     # The watcher does not take a pane, so it restarts on failure only.
     assert "Restart=on-failure" in text
     assert "Restart=always" not in text

@@ -93,6 +93,15 @@ class ProcessTableTests(unittest.TestCase):
             proc_table.pane_windows("health 0 0\nhealth 0 0 x\n\njunk row here now\n"),
             [])
 
+    def test_window_names_decode_one_name_per_line(self):
+        self.assertEqual(
+            proc_table.window_names(b"genome\nledger\ntail\n"),
+            ["genome", "ledger", "tail"])
+
+    def test_window_names_skips_blank_lines(self):
+        self.assertEqual(proc_table.window_names(b"genome\n\n   \nledger\n"), ["genome", "ledger"])
+
+
     def test_pane_environ_pythonpath_splits_nul_fields(self):
         self.assertEqual(
             proc_table.pane_environ_pythonpath(b"HOME=/srv\0PYTHONPATH=/srv/pin/src\0TERM=xterm\0"),
@@ -133,3 +142,24 @@ class ProcessTableTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_read_process_comm_returns_empty_for_unreadable_pid(self):
+        self.assertEqual(proc_table.read_process_comm(""), "")
+        self.assertEqual(proc_table.read_process_comm("not-a-pid"), "")
+
+    def test_is_tmux_server_rejects_non_tmux_wrappers(self):
+        # rnsh wraps `tmux new-session -A` in its arguments: comm is rnsh,
+        # not tmux, so it must not read as a server.
+        import subprocess
+        probe = subprocess.run(["pgrep", "-f", "tmux new-session"],
+                               capture_output=True, timeout=2)
+        if probe.returncode != 0:
+            self.skipTest("no tmux-argument processes live")
+        for pid_text in probe.stdout.decode().split():
+            if not pid_text.isdigit():
+                continue
+            comm = proc_table.read_process_comm(pid_text)
+            argv = proc_table.read_pane_cmdline(pid_text)
+            expected = comm.startswith("tmux") and "new-session" in argv
+            self.assertEqual(proc_table.is_tmux_server(pid_text), expected,
+                             f"pid={pid_text} comm={comm!r}")

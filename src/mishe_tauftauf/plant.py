@@ -220,6 +220,9 @@ def unit_text(home: Path, session: str, slug: str, python: str, *, operator_wind
                f"{python} -m mishe_tauftauf --home {home} seed run --session {session} "
                f"--slug {slug} --interval 5 --self-pick-seconds {self_pick_seconds} "
                "--clear-grace-seconds 30")
+    # Supervisors carry OOMScoreAdjust=-500 so memory pressure takes disposable
+    # one-shot workers first. Tmux servers are not units; the host-guard loop
+    # shields them with -900 at runtime.
     return (
         f"[Unit]\nDescription=Mishe {slug} resident channel\nAfter=default.target\n\n"
         "[Service]\nType=simple\n"
@@ -227,7 +230,8 @@ def unit_text(home: Path, session: str, slug: str, python: str, *, operator_wind
         f"Environment=PYTHONPATH={source / 'src'}\n"
         f"Environment=PATH={_service_search_path(home)}\n"
         f"ExecStart={command}\n"
-        "Restart=always\nRestartSec=15\n\n[Install]\nWantedBy=default.target\n"
+        "Restart=always\nRestartSec=15\n"
+        "OOMScoreAdjust=-500\n\n[Install]\nWantedBy=default.target\n"
     )
 
 def silence_unit_text(home: Path, session: str, python: str) -> str:
@@ -249,7 +253,8 @@ def silence_unit_text(home: Path, session: str, python: str) -> str:
         f"Environment=XDG_RUNTIME_DIR=/run/user/{os.getuid()}\n"
         f"ExecStart={python} -m mishe_tauftauf.activity --home {home} "
         f"--session {session} --interval 5\n"
-        "Restart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n"
+        "Restart=on-failure\nRestartSec=5\n"
+        "OOMScoreAdjust=-500\n\n[Install]\nWantedBy=default.target\n"
     )
 
 

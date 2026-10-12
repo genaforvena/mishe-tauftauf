@@ -5728,3 +5728,75 @@ def test_treadmill_mind_reading_names_pairs_and_head(monkeypatch, tmp_path):
     assert result["roles"]["inference-research"]["verdict"] == "watch-treadmill"
     assert result["roles"]["body-research"]["verdict"] == "clean"
     assert result["validity"]["min_wakes"] == 5
+
+
+def _stability_home(tmp_path, session="mishe-self-development-current"):
+    home = tmp_path / "site"
+    home.mkdir(exist_ok=True)
+    (home / ".seed-raised").write_text(f"{session} $abc\n", encoding="utf-8")
+    return home
+
+
+def test_session_stability_verified_when_live_and_shielded(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    class ListSessions:
+        returncode = 0
+        stdout = b"mishe-self-development-current\nandroid-body\n"
+    class Pgrep:
+        returncode = 0
+        stdout = b"111\n"
+    monkeypatch.setattr(discovery.subprocess, "run",
+                        lambda *a, **kw: ListSessions() if "list-sessions" in str(a) else Pgrep())
+    monkeypatch.setattr(discovery.proc_table, "read_pane_cmdline",
+                        lambda pid: "/usr/bin/tmux new-session -d -s x sh")
+    monkeypatch.setattr(discovery, "_read", lambda path, limit=65536: "-900")
+    result = discovery._host_session_stability(_stability_home(tmp_path))
+    assert result["id"] == "sense.host.session-stability"
+    assert result["state"] == "verified"
+    assert result["unshielded"] == []
+
+
+def test_session_stability_drift_when_session_missing(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    class ListSessions:
+        returncode = 0
+        stdout = b"android-body\n"
+    class Pgrep:
+        returncode = 1
+        stdout = b""
+    monkeypatch.setattr(discovery.subprocess, "run",
+                        lambda *a, **kw: ListSessions() if "list-sessions" in str(a) else Pgrep())
+    result = discovery._host_session_stability(_stability_home(tmp_path))
+    assert result["state"] == "drift"
+    assert result["session"] == "mishe-self-development-current"
+    assert "session-missing=mishe-self-development-current" in result["sample"]
+
+
+def test_session_stability_drift_when_server_unshielded(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    class ListSessions:
+        returncode = 0
+        stdout = b"mishe-self-development-current\n"
+    class Pgrep:
+        returncode = 0
+        stdout = b"222\n"
+    monkeypatch.setattr(discovery.subprocess, "run",
+                        lambda *a, **kw: ListSessions() if "list-sessions" in str(a) else Pgrep())
+    monkeypatch.setattr(discovery.proc_table, "read_pane_cmdline",
+                        lambda pid: "/usr/bin/tmux new-session -d -s x sh")
+    monkeypatch.setattr(discovery, "_read", lambda path, limit=65536: "200")
+    result = discovery._host_session_stability(_stability_home(tmp_path))
+    assert result["state"] == "drift"
+    assert result["unshielded"] == ["222"]
+
+
+def test_session_stability_tmux_failure_is_unknown(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    monkeypatch.setattr(discovery.subprocess, "run",
+                        lambda *a, **kw: (_ for _ in ()).throw(OSError("no tmux")))
+    result = discovery._host_session_stability(_stability_home(tmp_path))
+    assert result["state"] == "unknown"
