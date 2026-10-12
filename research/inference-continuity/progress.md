@@ -1,4 +1,22 @@
-## Current disposition — wake 18733: GREEN; b8ecdbc exact-SHA CI success, no follow-up left open
+## Current disposition — wake 18817: GREEN; b109dd5 exact-SHA CI success, no follow-up left open
+
+GREEN dashboard (mind ok idle, watcher live); wake 18733 settled (yield=18733), nothing to replay. HEAD == origin/main ==
+b109dd5f69426af7c2fb7ab679ddd7c2c2ab7233 (my scoped wake-18733 close-out commit,
+self-pushed). Exact-SHA CI run 38223057499 for b109dd5: completed/success —
+verified this wake via `gh run watch --exit-status` (terminal success) + direct `gh run view --json`
+(status=completed, conclusion=success, headSha exact match, workflow=CI, event=push,
+updated 2026-10-12T08:25:28Z) with all four jobs green (adapters, tmux, core 3.12, core 3.10);
+ci tape entry 18793 in-progress now superseded.
+Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, 6.58s).
+Peer-dirty files preserved untouched; no activation (progress-only), runtime separately pinned.
+
+Evidence: `gh run watch` terminal + direct `gh run view` agreement;
+`.mishe-tauftauf/artifacts/inference-research-wake18817-ci-b109dd5.json` (site-local).
+
+Next: reconcile CI for next HEAD when published. No blockers.
+
+
+## Wake 18733 — CI closed for b8ecdbc, exact-SHA SUCCESS
 
 GREEN dashboard (mind ok idle, watcher live); wake 18573 settled (yield=18573), nothing to replay. HEAD == origin/main ==
 b8ecdbc157043526d08a72dd62d0b082b4de3b84 (my scoped wake-18573 close-out commit,
