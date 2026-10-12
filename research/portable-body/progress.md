@@ -9,8 +9,8 @@
 |---|-----------|--------|----------|
 | 2 | Produce three concrete alternatives | COMPLETE | `alternatives.md`: exact syntax, execution rules, worked scenario for all three (dispatcher-only, text interpreter, shell). Host contract separated (#3). Deterministic replay compared (#6). |
 | 3 | Separate mandatory host contract from optional features | COMPLETE | `host-contract.md`: 8 mandatory mechanisms (M1-M8), each justified by required behavior + concrete failure case. Optional features explicitly deferred (exactly-once, auto-retry, binary, crypto, multi-host, timestamps, rich metadata, concurrency). |
-| 4 | Fix operation identity/recovery | COMPLETE | Host ID persistence fix implemented: optional `host_id` in intent records. Updated `canonical-wire-profile-20261003.md`, `conformance-check-20261010.py` (29/29 pass), and `alternatives.md` (all three alternatives). Design doc: `artifacts/host-id-persistence-design-20261010.md`. |
-| 5 | Define canonical text precisely | COMPLETE | `canonical-wire-profile-20261003.md`: control records (JSONL + LF, strict UTF-8, bounds) and opaque observation bytes (binary frames + transfer rules). Conformance check verified 29/29 (wake 576). |
+| 4 | Fix operation identity/recovery | COMPLETE | Host ID persistence fix implemented: optional `host_id` in intent records. Updated `canonical-wire-profile-20261003.md`, `conformance-check-20261010.py` (55/55 pass, wake 24278; 29/29 at wake 576, +26 receiver-framing checks in 626d9b5), and `alternatives.md` (all three alternatives). Design doc: `artifacts/host-id-persistence-design-20261010.md`. |
+| 5 | Define canonical text precisely | COMPLETE | `canonical-wire-profile-20261003.md`: control records (JSONL + LF, strict UTF-8, bounds) and opaque observation bytes (binary frames + transfer rules). Conformance check verified 55/55 (wake 24278; 29/29 at wake 576, +26 receiver-framing checks in 626d9b5). |
 | 6 | Compare deterministic replay | COMPLETE | `replay-comparison-20261010.py`: filter is deterministic (same input → same output). Witness confirmed 7/7 pass (DM 461). |
 
 ## Measurement Evidence (existing artifacts)
