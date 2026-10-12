@@ -4208,6 +4208,147 @@ def test_ghost_site_homes_unknown_when_a_ghost_tree_cannot_be_walked(monkeypatch
     assert "count" not in reading
 
 
+def test_ghost_site_homes_names_a_reserved_root_symlink_without_traversing_it(tmp_path):
+    """A reserved root symlink is checkout-scope evidence, never a traversal.
+
+    ``Path.is_dir()`` follows symlinks, so a reserved root pointing at a
+    directory outside the checkout used to be walked: its names, file counts
+    and newest-file ages were reported under a checkout name. The root name
+    itself is in scope, so it is recorded as a ghost and its file count is
+    left unmeasured rather than read as a clean zero.
+    """
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / ".mishe-plant"
+    home.mkdir(parents=True)
+    # An external target reachable only by crossing the symlink: nothing under
+    # it may be counted, named or dated by a checkout reading.
+    outside = tmp_path.parent / f"ghost-outside-{tmp_path.name}"
+    outside.mkdir()
+    try:
+        (outside / "external-file.md").write_text("external\n", encoding="utf-8")
+        (outside / "external-dir").mkdir()
+        os.symlink(outside, tmp_path / ".mishe-tauftauft")
+        reading = discovery._ghost_site_homes(home)
+    finally:
+        shutil.rmtree(outside, ignore_errors=True)
+
+    assert reading["state"] == "drift"
+    assert reading["ghosts"] == [".mishe-tauftauft"]
+    assert reading["symlinked"] == [".mishe-tauftauft"]
+    assert reading["symlinked_truncated"] is False
+    assert reading["files"] == {} and reading["total"] == 0
+    assert reading["holding"] == [] and reading["empty"] == []
+    assert reading["newest"] == {}
+    assert "external-file" not in reading["sample"]
+    assert "external-dir" not in reading["sample"]
+    # One unmeasured root makes the file count a lower bound, not an exact 0.
+    assert reading["files_at_least"] is True
+    assert ("ghost-homes=1 files>=0 holding=none nested=0 symlink=.mishe-tauftauft"
+            in reading["sample"])
+
+
+def test_ghost_site_homes_counts_one_tree_once_through_two_names(tmp_path):
+    """An in-checkout alias to another ghost tree is not a second tree.
+
+    Following the alias would walk the same tree twice and report its files
+    under both names, so the aliased root is recorded and never walked.
+    """
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir(parents=True)
+    _ghost_tree(tmp_path, ".mishe-tauftauft", {"walls/senses.md": "ghost\n"}, 6_000.0)
+    os.symlink(tmp_path / ".mishe-tauftauft", tmp_path / ".mishe-tauftauftau")
+    reading = discovery._ghost_site_homes(home, now=6_000.0 + 60)
+    assert reading["state"] == "drift"
+    assert reading["ghosts"] == [".mishe-tauftauft", ".mishe-tauftauftau"]
+    assert reading["symlinked"] == [".mishe-tauftauftau"]
+    assert reading["files"] == {".mishe-tauftauft": 1}
+    assert reading["total"] == 1
+    assert reading["files_at_least"] is True  # the alias's own count is unmeasured
+
+
+def test_ghost_site_homes_skips_a_reserved_root_symlink_to_this_site_home(tmp_path):
+    """An alias to this site's own home is this home, not a ghost.
+
+    The reserved name resolves to the site home, so the reading keeps its
+    clean zero instead of naming its own home as a second site directory.
+    """
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / ".mishe-tauftauf"
+    home.mkdir(parents=True)
+    (home / "walls").mkdir()
+    os.symlink(home, tmp_path / ".mishe-tauftauft")
+    reading = discovery._ghost_site_homes(home)
+    assert reading["state"] == "verified"
+    assert reading["ghosts"] == []
+    assert reading["symlinked"] == []
+    assert reading["sample"] == ("ghost-homes=0 files=0 holding=none nested=0 "
+                                "newest=none")
+
+
+def test_ghost_site_homes_caps_reserved_root_symlink_identity(tmp_path, monkeypatch):
+    """Symlink names are retained under the shared identity budget.
+
+    Every other identity class counts past its cap and marks the lower bound;
+    symlinked roots must not lose that marker just because they are not walked.
+    """
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir(parents=True)
+    outside = tmp_path.parent / f"ghost-outside-{tmp_path.name}"
+    outside.mkdir()
+    try:
+        monkeypatch.setattr(discovery, "GHOST_IDENTITY_LIMIT", 2)
+        for index in range(5):
+            os.symlink(outside, tmp_path / f".mishe-ghost{index}")
+        reading = discovery._ghost_site_homes(home)
+    finally:
+        shutil.rmtree(outside, ignore_errors=True)
+
+    assert reading["state"] == "drift"
+    assert len(reading["symlinked"]) == 2
+    assert reading["symlinked_truncated"] is True
+    assert "symlink=.mishe-ghost0,.mishe-ghost1+" in reading["sample"]
+    assert reading["files"] == {}
+
+
+def test_ghost_site_homes_refuses_to_walk_a_symlinked_nested_directory(tmp_path):
+    """Nested directory symlinks stay outside the file count and the age.
+
+    A symlinked directory inside a walked tree resolves outside the checkout.
+    Descending it was already refused; it also is no longer counted as a file
+    or stat'ed, so an external object's mtime cannot become this reading's
+    newest-file age.
+    """
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir(parents=True)
+    _ghost_tree(tmp_path, ".mishe-tauftauft", {"walls/keep.md": "ghost\n"}, 7_000.0)
+    outside = tmp_path.parent / f"ghost-outside-{tmp_path.name}"
+    outside.mkdir()
+    try:
+        (outside / "external-file.md").write_text("external\n", encoding="utf-8")
+        # A future external mtime would read as a negative age if it leaked.
+        os.utime(outside, (9_000.0, 9_000.0))
+        os.symlink(outside, tmp_path / ".mishe-tauftauft" / "linked-out")
+        reading = discovery._ghost_site_homes(home, now=7_000.0 + 60)
+    finally:
+        shutil.rmtree(outside, ignore_errors=True)
+
+    assert reading["state"] == "drift"
+    assert reading["files"] == {".mishe-tauftauft": 1}
+    assert reading["total"] == 1
+    assert reading["newest"][".mishe-tauftauft"]["age_s"] == 60
+    assert reading["symlinked"] == []
+    assert "external-file" not in reading["sample"]
+    assert reading["files_at_least"] is False
+
+
 def test_ghost_site_homes_carries_one_name_budget_across_every_tree(tmp_path, monkeypatch):
     """Aggregate name work is one scan-wide budget, not one per ghost tree.
 
