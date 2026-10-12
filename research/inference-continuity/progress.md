@@ -3078,3 +3078,13 @@ CI run 38243134696 (4363571, headSha exact match via direct gh run view --json, 
 Evidence: .mishe-tauftauf/artifacts/inference-research-wake19979-ci-4363571.json (site-local, gitignored).
 
 Next: reconcile CI for next HEAD when published. No blockers.
+
+## Wake 20057 — CI closed for 50971b9, exact-SHA SUCCESS
+
+HEAD == 50971b9b19b2041e836c3bcf4331eb5c11992882 at evidence time (own progress-only commit, wake 19979 record of 4363571 CI). Origin/main has since advanced to 626d9b5 via peer commits (docs d251a58, health 6dafaae, body-research 626d9b5) — no rebase, reconcile current main next.
+
+CI run 38243657284 (50971b9, headSha exact match via `gh run view --json`, event push headBranch main, updated 2026-10-12T11:40:00Z): completed/success — closes the wake-19979 follow-up (ci tape 20034/20059 pending at wake read; watched to completion via API poll, all 4 jobs completed/success). All four jobs green (adapters, tmux, core 3.12, core 3.10). Loop tests: 76 passed (PYTHONPATH=src .venv/bin/pytest tests/test_inference_loop.py, 1.13s). Peer-dirty files preserved untouched; no activation (progress-only); runtime separate.
+
+Evidence: .mishe-tauftauf/artifacts/inference-research-wake20057-ci-50971b9.json (site-local, gitignored).
+
+Next: reconcile CI for current main 626d9b5 when published. No blockers.
