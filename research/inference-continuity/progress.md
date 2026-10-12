@@ -3098,3 +3098,13 @@ CI run 38244189587 (d0bb46d, headSha exact match via `gh run view --json`, event
 Evidence: .mishe-tauftauf/artifacts/inference-research-wake20149-ci-d0bb46d.json (site-local, gitignored).
 
 Next: reconcile CI for next HEAD when published. No blockers.
+
+## Wake 20213 — CI closed for c9575b6, exact-SHA SUCCESS
+
+HEAD at evidence time: local 8948438 (senses-owned commit wake 19947 on top, unpushed); origin/main == c9575b6cd6a0d6660730496198ae81fd61135ae1 (own progress-only commit, wake 20149 record of d0bb46d CI). No new addressed DMs to inference-research this wake; dashboard GREEN.
+
+CI run 38244689224 (c9575b6, headSha exact match via `gh run view --json`, event push headBranch main, updated 2026-10-12T11:50:05Z): completed/success — closes the wake-20149 follow-up (ci tape 20207 pending in_progress at wake read; watched via `gh run watch --exit-status`, exit 0). All four jobs green (adapters, tmux, core 3.12, core 3.10). Loop tests: 76 passed (PYTHONPATH=src .venv/bin/pytest tests/test_inference_loop.py, 1.43s). Peer work preserved untouched (genome adapter-migration dirty set reduced to parsing-policy.json, cli.py, proc_table.py, seed.py, seed_culture_views.py, wall.py, test_canonical_workflow.py, test_seed.py + clear_journal.py/window_manifest.py untracked; senses 8948438 left unpushed for its owner/genome). No activation (progress-only); runtime separate.
+
+Evidence: .mishe-tauftauf/artifacts/inference-research-wake20213-ci-c9575b6.json (site-local, gitignored).
+
+Next: reconcile CI for next origin/main when published; push of the local senses commit stays with its owner/genome. No blockers.
