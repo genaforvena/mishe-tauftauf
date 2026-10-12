@@ -67,8 +67,15 @@ def _ensure(home: Path, session: str, window: str, *, package_root: Path | None,
     shell_path.parent.mkdir(parents=True, exist_ok=True)
     generated_shell = ("#!/bin/sh\n"
                        "# mishe-generated operator resume shell\n"
-                       "exec /home/mesh-home/.local/bin/omp --cwd " +
-                       shlex.quote(str(home.parent.resolve())) + " --continue\n")
+                       "if [ -x /home/mesh-home/.local/bin/omp ]; then\n"
+                       "    /home/mesh-home/.local/bin/omp --cwd " +
+                       shlex.quote(str(home.parent.resolve())) + " --continue\n"
+                       "    status=$?\n"
+                       "    printf 'omp --continue exited (%s); opening a shell\\n' \"$status\" >&2\n"
+                       "else\n"
+                       "    printf 'omp unavailable; opening a shell\\n' >&2\n"
+                       "fi\n"
+                       "exec \"${SHELL:-/bin/sh}\" -l\n")
     current_shell = shell_path.read_text(encoding="utf-8") if shell_path.exists() else None
     if current_shell is None or (current_shell != generated_shell
                                  and "# mishe-generated operator" in current_shell.splitlines()[1:3]):
