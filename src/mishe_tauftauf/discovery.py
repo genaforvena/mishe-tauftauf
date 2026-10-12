@@ -1177,6 +1177,171 @@ def _mind_watch_wait(home: Path) -> dict:
             "consumer": "witness pane rendering",
             "validity": {"sampled": now, "gap_seconds": WATCH_WAIT_SAMPLE_GAP_SECONDS}}
 
+
+TREADMILL_WINDOW_COMMITS = 60
+"""Newest commits each role's stagnation/change fold reads.
+
+Wide enough to hold five same-shape wakes for the slowest committer on this
+host (inference-research lands roughly one record commit per wake, and the
+paired fold needs five to name a chain), narrow enough that one bounded
+``git log --name-only`` stays inside the scan's subprocess budget. A role
+that cannot fill five commits stays UNKNOWN rather than reading clean.
+"""
+
+TREADMILL_MIN_WAKES = 5
+"""Consecutive same-shape wakes that name a treadmill.
+
+Five matches the DM spec's N: fewer would fire on one quiet week, more would
+outlast the 30-commit positive control's usefulness. Stagnation must reach
+this count while change stays zero.
+"""
+
+_TREADMILL_RECORD_FILE = "research/inference-continuity/progress.md"
+"""The owned record file a reconciliation record commit stands on.
+
+A record commit's subject names the role, wake and prior HEAD it reconciles
+(``<role> wake <N>: record <sha> CI success``): its only purpose is to close
+the previous wake's reconciliation obligation, which manufactures the next
+wake's identical obligation. The file + ``: record `` marker comparison
+below classifies that self-referential shape; no other subject shape counts
+as record-only.
+"""
+
+
+def _treadmill_class(files: list[str], subject: str) -> str:
+    """Name one commit's change class from decoded git values.
+
+    The inputs are already decoded: ``files`` is git's name-only list from
+    the ``proc_table`` boundary adapter, the subject is the ``%s`` line.
+    A commit touching only the role's own record file whose subject carries
+    the ``: record `` marker reads ``record-only``; a commit touching any
+    path outside ``research/`` reads ``source-change``; everything else
+    (docs, research drafts) reads ``other-change`` so the change accumulator
+    still counts it as movement without overstating it as implementation.
+    The comparisons are slicing and equality only — no text decoding here.
+    """
+    marker = ": record "
+    hit = False
+    for index in range(len(subject) - len(marker) + 1):
+        if subject[index:index + len(marker)].lower() == marker:
+            hit = True
+            break
+    if len(files) == 1 and files[0] == _TREADMILL_RECORD_FILE and hit:
+        return "record-only"
+    if any(name[:9] != "research/" for name in files):
+        return "source-change"
+    return "other-change"
+
+
+def _treadmill_fold(commits: list[dict]) -> dict:
+    """Fold one role's newest-first commit stream into stagnation + change.
+
+    Pure: no subprocess, no clock, no text parsing. Each entry carries
+    ``files`` (decoded name-only list) and ``subject`` (decoded ``%s``).
+    The stagnation accumulator counts the leading run of ``record-only``
+    commits; the change accumulator counts the leading run's complement:
+    any ``source-change``/``other-change`` entry inside the window. The
+    fold reads only the leading run so a stale record tail cannot mask a
+    recent implementation wake, and an implementation wake cannot be
+    averaged away by older record commits.
+    """
+    stagnation = 0
+    for entry in commits:
+        if _treadmill_class(entry.get("files", []), entry.get("subject", "")) == "record-only":
+            stagnation += 1
+        else:
+            break
+    window = commits[:TREADMILL_MIN_WAKES]
+    change = sum(1 for entry in window
+                 if _treadmill_class(entry.get("files", []), entry.get("subject", "")) != "record-only")
+    return {"stagnation": stagnation, "change": change}
+
+
+def _treadmill_commits(checkout: Path, role: str, limit: int = TREADMILL_WINDOW_COMMITS) -> list[dict] | None:
+    """Newest-first ``{subject, files}`` commits for one role, or None.
+
+    Role owns the commits its wake message names: the subject carries
+    ``<role> wake``. The log dialect is decoded once in the ``proc_table``
+    boundary adapter; this function only slices that decoded stream to the
+    role and bounds the subprocess read. ``None`` means the stream is
+    unreadable (no git, a non-work-tree checkout, a git failure): the
+    caller holds UNKNOWN rather than reading an unreadable stream as clean.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "log", "--format=SUBJECT:%s", "--name-only", f"-{limit}"],
+            capture_output=True, text=True, timeout=10, cwd=checkout)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    entries = proc_table.git_log_entries(result.stdout)
+    return [entry for entry in entries if role in entry["subject"]]
+
+
+def _mind_treadmill(home: Path) -> dict:
+    """Stagnation + change accumulators over each role's commit stream.
+
+    Rule T (treadmill): a role whose leading run holds at least
+    ``TREADMILL_MIN_WAKES`` consecutive ``record-only`` commits with zero
+    change in that run reads ``watch-treadmill`` — the turn manufactures
+    its successor's identical obligation with no implementation movement.
+    Any change-class commit inside the run, or a run shorter than five,
+    reads ``clean``. A role with fewer than one commit in the window, or a
+    checkout git cannot read, stays UNKNOWN: absence of evidence is not a
+    clean bill.
+
+    The sample names every role's ``stagnation``/``change`` pair; the
+    verdict that matters to witness/health rendering is the worst one.
+    Consumer is health's mishe-wide rollup (which roles treadmill this
+    window); each role's own pair is the per-mind reading the DM asked
+    to be universal. Validity is the sampled HEAD: a new commit
+    invalidates the fold.
+    """
+    checkout = Path(home).resolve().parent
+    try:
+        head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
+                              text=True, timeout=5, cwd=checkout)
+    except (OSError, subprocess.TimeoutExpired):
+        return {"id": "sense.mind.treadmill", "state": "unknown",
+                "sample": "checkout HEAD unreadable", "roles": {}, "kind": "read"}
+    if head.returncode != 0:
+        return {"id": "sense.mind.treadmill", "state": "unknown",
+                "sample": "not a git checkout", "roles": {}, "kind": "read"}
+    sampled = head.stdout[:40]
+    roles = ["inference-research", "body-research", "docs", "health", "senses",
+             "discover", "genome", "witness", "research-methods", "operator-view"]
+    pairs: dict[str, dict] = {}
+    unreadable = 0
+    worst = "clean"
+    for role in roles:
+        commits = _treadmill_commits(checkout, role)
+        if commits is None:
+            unreadable += 1
+            continue
+        if not commits:
+            pairs[role] = {"stagnation": 0, "change": 0, "verdict": "unknown",
+                           "detail": "no commits in window"}
+            continue
+        fold = _treadmill_fold(commits)
+        verdict = ("watch-treadmill" if fold["stagnation"] >= TREADMILL_MIN_WAKES
+                   and fold["change"] == 0 else "clean")
+        if verdict == "watch-treadmill":
+            worst = "watch-treadmill"
+        pairs[role] = {**fold, "verdict": verdict,
+                       "detail": f"leading record-only run over {len(commits)} commits"}
+    sample = "treadmill=" + worst + " " + " ".join(
+        f"{role}(stag={pairs[role]['stagnation']},change={pairs[role]['change']})"
+        for role in sorted(pairs))
+    if unreadable:
+        sample += f" unreadable={unreadable}"
+    state = "verified" if pairs else "unknown"
+    return {"id": "sense.mind.treadmill", "state": state, "sample": sample,
+            "roles": pairs, "verdict": worst, "kind": "read",
+            "consumer": "health mishe-wide treadmill rollup",
+            "validity": {"sampled": sampled, "window_commits": TREADMILL_WINDOW_COMMITS,
+                         "min_wakes": TREADMILL_MIN_WAKES}}
+
 LEDGER_DV_PHASES = frozenset({
     "applied", "review-refused", "reverted", "revert-failed",
     "revert-observation-failed",
@@ -3803,6 +3968,7 @@ def sample(home: Path) -> dict[str, object]:
                      **_journal_unit_failure_window(home)})
     observed.append(_mind_wedge_suspects())
     observed.append(_mind_watch_wait(home))
+    observed.append(_mind_treadmill(home))
     observed.append(_ledger_delivery_invariant(home))
     observed.append(_ledger_dv_binding(home))
     observed.append(_ledger_evidence_binding(home))

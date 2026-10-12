@@ -5634,3 +5634,97 @@ def atexit_register(home: Path) -> None:
         shutil.rmtree(path, ignore_errors=True)
 
     atexit.register(remove, home)
+
+
+def _record_commit(subject="inference-research wake 20213: record c9575b6 CI success"):
+    return {"subject": subject,
+            "files": ["research/inference-continuity/progress.md"]}
+
+
+def _impl_commit():
+    return {"subject": "body-research wake 20016: cover receiver framing "
+                       "with behavioral self-tests",
+            "files": ["research/portable-body/conformance-check-20261010.py"]}
+
+
+def test_treadmill_positive_control_is_record_only_chain():
+    commits = [_record_commit() for _ in range(7)]
+    fold = discovery._treadmill_fold(commits)
+    assert fold == {"stagnation": 7, "change": 0}
+
+
+def test_treadmill_negative_control_impl_breaks_stagnation():
+    commits = [_impl_commit()] + [_record_commit() for _ in range(4)]
+    fold = discovery._treadmill_fold(commits)
+    assert fold == {"stagnation": 0, "change": 1}
+
+
+def test_treadmill_short_run_below_threshold():
+    fold = discovery._treadmill_fold([_record_commit() for _ in range(3)])
+    assert fold == {"stagnation": 3, "change": 0}
+
+
+def test_treadmill_impl_inside_window_counts_change():
+    commits = [_record_commit() for _ in range(4)] + [_impl_commit()]
+    fold = discovery._treadmill_fold(commits)
+    assert fold == {"stagnation": 4, "change": 1}
+
+
+def test_treadmill_source_change_class():
+    assert discovery._treadmill_class(
+        ["src/mishe_tauftauf/discovery.py"], "senses wake: add sense") == "source-change"
+
+
+def test_treadmill_other_change_class():
+    assert discovery._treadmill_class(
+        ["research/notes.md"], "some notes") == "other-change"
+
+
+def test_treadmill_non_record_single_record_file_is_other_change():
+    assert discovery._treadmill_class(
+        ["research/inference-continuity/progress.md"],
+        "inference-research wake 1: notes") == "other-change"
+
+
+def test_treadmill_git_log_entries_groups_subjects_and_files():
+    from mishe_tauftauf import proc_table
+    raw = ("SUBJECT:inference-research wake 1: record abc CI success\n"
+           "\n"
+           "research/inference-continuity/progress.md\n"
+           "\n"
+           "SUBJECT:body-research wake 2: framing\n"
+           "\n"
+           "research/portable-body/conformance-check-20261010.py\n")
+    assert proc_table.git_log_entries(raw) == [
+        {"subject": "inference-research wake 1: record abc CI success",
+         "files": ["research/inference-continuity/progress.md"]},
+        {"subject": "body-research wake 2: framing",
+         "files": ["research/portable-body/conformance-check-20261010.py"]},
+    ]
+
+
+def test_treadmill_git_failure_is_unknown(monkeypatch, tmp_path):
+    monkeypatch.setattr(discovery.subprocess, "run",
+                        lambda *a, **kw: (_ for _ in ()).throw(OSError("no git")))
+    assert discovery._treadmill_commits(tmp_path, "senses") is None
+
+
+def test_treadmill_mind_reading_names_pairs_and_head(monkeypatch, tmp_path):
+    commits = {"inference-research": [_record_commit() for _ in range(6)],
+               "body-research": [_impl_commit()]}
+
+    class Head:
+        returncode = 0
+        stdout = "c3c6194\n"
+
+    monkeypatch.setattr(discovery.subprocess, "run",
+                        lambda *a, **kw: Head())
+    monkeypatch.setattr(discovery, "_treadmill_commits",
+                        lambda checkout, role, limit=60: list(commits.get(role, [])))
+    result = discovery._mind_treadmill(tmp_path)
+    assert result["id"] == "sense.mind.treadmill"
+    assert result["state"] == "verified"
+    assert result["verdict"] == "watch-treadmill"
+    assert result["roles"]["inference-research"]["verdict"] == "watch-treadmill"
+    assert result["roles"]["body-research"]["verdict"] == "clean"
+    assert result["validity"]["min_wakes"] == 5
