@@ -57,6 +57,33 @@ def pane_records(raw: str) -> list[tuple[str, str, int]]:
     return records
 
 
+def git_log_entries(raw: str) -> list[dict]:
+    """Newest-first ``{subject, files}`` entries from ``--name-only`` log output.
+
+    The sixth dialect groups each ``SUBJECT:``-prefixed subject line with
+    the non-blank file names that follow it until the next subject. Junk
+    lines yield no entry rather than a guess; a subject with no files still
+    records its empty file list so the caller can classify it.
+    """
+    entries: list[dict] = []
+    subject: str | None = None
+    files: list[str] = []
+
+    def flush() -> None:
+        if subject is not None:
+            entries.append({"subject": subject, "files": list(files)})
+
+    for line in raw.splitlines():
+        if line.startswith("SUBJECT:"):
+            flush()
+            subject = line[len("SUBJECT:"):]
+            files = []
+        elif line.strip():
+            files.append(line.strip())
+    flush()
+    return entries
+
+
 def pane_commands(raw: str) -> list[tuple[str, str, str, str]]:
     """(session, pid, start_command, current_path) from a four-field pane table.
 
