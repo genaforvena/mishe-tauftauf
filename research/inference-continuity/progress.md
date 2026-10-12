@@ -2949,3 +2949,13 @@ CI run 38229741141 (b7a1de0, headSha exact match via direct gh run view --json, 
 Evidence: .mishe-tauftauf/artifacts/inference-research-wake19161-ci-b7a1de0.json (site-local, gitignored).
 
 Next: reconcile CI for next HEAD when published. No blockers.
+
+## Wake 19161 (close-out) — CI closed for cb9d51e, exact-SHA SUCCESS
+
+HEAD == origin/main == cb9d51e28fb169e197a61b04093cfd7e14b0a07c (own progress-only commit, wake 19161 record of b7a1de0 CI). Witness review DM 19184 sent this wake, still unanswered — cross-checked via direct gh view instead.
+
+CI run 38231293666 (cb9d51e, headSha exact match via direct gh run view --json, updated 2026-10-12T09:43:37Z, event push headBranch main): completed/success — closes the wake-19161 follow-up (was in_progress at ci tape 19238; already completed success at watch time this wake, `gh run watch --exit-status` exit 0). All four jobs green (tmux, adapters, core 3.12, core 3.10). Loop tests: 76 passed (env PYTHONPATH=src .venv/bin/pytest tests/test_inference_loop.py, 1.38s). Peer-dirty files preserved untouched (parsing-policy.json, conformance-check-20261010.py, cli.py, proc_table.py, seed.py, seed_culture_views.py, wall.py, test_canonical_workflow.py, test_seed.py + clear_journal.py/window_manifest.py untracked). No activation (progress-only); runtime separate.
+
+Evidence: .mishe-tauftauf/artifacts/inference-research-wake19161-ci-cb9d51e.json (site-local, gitignored).
+
+Next: reconcile CI for next HEAD when published. No blockers.
