@@ -63,6 +63,17 @@ def _ensure(home: Path, session: str, window: str, *, package_root: Path | None,
     validate_slug(window)
     if not await_owned(home, session):
         raise ValueError(f"session {session!r} is not owned by {home}")
+    shell_path = home / "bin" / "operator-shell"
+    shell_path.parent.mkdir(parents=True, exist_ok=True)
+    generated_shell = ("#!/bin/sh\n"
+                       "# mishe-generated operator resume shell\n"
+                       "exec /home/mesh-home/.local/bin/omp --cwd " +
+                       shlex.quote(str(home.parent.resolve())) + " --continue\n")
+    current_shell = shell_path.read_text(encoding="utf-8") if shell_path.exists() else None
+    if current_shell is None or (current_shell != generated_shell
+                                 and "# mishe-generated operator" in current_shell.splitlines()[1:3]):
+        shell_path.write_text(generated_shell, encoding="utf-8")
+        shell_path.chmod(0o755)
     names = _tmux("list-windows", "-t", session, "-F", "#{window_name}").stdout.decode().splitlines()
     trigger = ""
     if window not in names:
@@ -129,17 +140,6 @@ def _ensure(home: Path, session: str, window: str, *, package_root: Path | None,
     # Written by ensure (not planted once) so a repaired checkout reaches the
     # running supervisor without a replant; an operator-customized shell is
     # preserved byte-for-byte.
-    shell_path = home / "bin" / "operator-shell"
-    shell_path.parent.mkdir(parents=True, exist_ok=True)
-    generated_shell = ("#!/bin/sh\n"
-                       "# mishe-generated operator resume shell\n"
-                       "exec /home/mesh-home/.local/bin/omp --cwd " +
-                       shlex.quote(str(home.parent.resolve())) + " --continue\n")
-    current_shell = shell_path.read_text(encoding="utf-8") if shell_path.exists() else None
-    if current_shell is None or (current_shell != generated_shell
-                                 and "# mishe-generated operator" in current_shell.splitlines()[1:3]):
-        shell_path.write_text(generated_shell, encoding="utf-8")
-        shell_path.chmod(0o755)
     defaults = {
         "brief.md": "Edit this page with the current human discussion and decisions.\n",
         "commands.md": (
