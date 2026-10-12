@@ -2524,7 +2524,11 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
 
     A broken enumeration reads UNKNOWN naming the unreadable tree: a partial
     count must never read as a clean zero. Directory symlinks inside a tree
-    are not followed, so the count cannot walk out and double-count.
+    are not followed, counted or stat'ed, so the count cannot walk out and
+    double-count, and no age is read from an object outside the checkout. A
+    reserved root that is itself a symlink is recorded by name and never
+    traversed either: its content lives outside the checkout, so reading its
+    names, counts and ages would report external state under a checkout name.
     """
     if now is None:
         now = time.time()
@@ -2561,11 +2565,13 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
     holding: list[str] = []
     empty: list[str] = []
     nested: list[str] = []
+    symlinked: list[str] = []
     files_per_ghost: dict[str, int] = {}
     newest: dict[str, tuple[float, str]] = {}
     total = 0
     capped = False
     nested_truncated = False
+    symlinked_truncated = False
     work_truncated = False
     names_left = GHOST_WORK_LIMIT
     for entry in entries:
@@ -2580,6 +2586,20 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
                 continue
         except OSError:
             pass  # an unresolvable name is still reported, never silently skipped
+        if os.path.islink(entry.path):
+            # A reserved root that is a symlink is a checkout-scope name whose
+            # content lives elsewhere: `Path.is_dir()` would follow it, so the
+            # walk below would read names, file counts and ages from outside
+            # the checkout and could count the same tree twice through two
+            # names. The root name itself is in-scope evidence of the hazard,
+            # so it is recorded as a ghost and never traversed, and its file
+            # count is left unmeasured rather than read as a clean zero.
+            ghosts.append(entry.name)
+            if len(symlinked) < GHOST_IDENTITY_LIMIT:
+                symlinked.append(entry.name)
+            else:
+                symlinked_truncated = True
+            continue
         if not tree.is_dir():
             continue
         ghosts.append(entry.name)
@@ -2608,6 +2628,15 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
                                 else:
                                     nested_truncated = True
                             pending.append(item.path)
+                            continue
+                        if item.is_symlink():
+                            # A name in the tree whose identity lives where the
+                            # link points: it is neither a checkout directory
+                            # to descend (already excluded above by
+                            # follow_symlinks=False) nor a checkout file, so it
+                            # is left out of both the count and the newest-file
+                            # age. Stat'ing it would read an external object's
+                            # mtime into this reading.
                             continue
                         if total + files >= GHOST_FILE_LIMIT:
                             capped = True
@@ -2649,11 +2678,15 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
                 if values else "none")
 
     parts = [f"ghost-homes={len(ghosts)}{'+' if roots_at_least else ''}"]
-    parts.append(f"files>={total}" if capped or work_truncated else f"files={total}")
+    parts.append(f"files>={total}"
+                 if capped or work_truncated or symlinked else f"files={total}")
     parts.append("holding=" + named(holding))
     if empty:
         parts.append("empty=" + named(empty))
     parts.append(f"nested={len(nested)}{'+' if nested_truncated else ''}")
+    if symlinked:
+        parts.append("symlink=" + named(symlinked)
+                     + ("+" if symlinked_truncated else ""))  # named, never walked
     if work_truncated:
         parts.append("names-truncated")
     if checkout_truncated:
@@ -2665,9 +2698,12 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
             "kind": "read", "checkout": str(checkout),
             "ghosts": sorted(ghosts), "files": files_per_ghost, "total": total,
             "holding": sorted(holding), "empty": sorted(empty),
-            "nested": sorted(nested), "files_at_least": capped or work_truncated,
+            "nested": sorted(nested),
+            "files_at_least": capped or work_truncated or bool(symlinked),
             "roots_at_least": roots_at_least,
             "nested_truncated": nested_truncated,
+            "symlinked": sorted(symlinked),
+            "symlinked_truncated": symlinked_truncated,
             "work_truncated": work_truncated,
             "checkout_truncated": checkout_truncated,
             "newest": {name: {"stamp": stamp, "age_s": round(now - mtime)}
