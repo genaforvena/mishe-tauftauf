@@ -2119,3 +2119,15 @@ Local-only notes, not CI failures: tests/test_viewport.py fails collection local
 Evidence: .mishe-tauftauf/artifacts/inference-15499-ci-962950b.md (site-local, gitignored).
 
 Next: reconcile CI for next HEAD when published. No blockers.
+
+## Wake 15540 — CI closed for 3328fac, exact-SHA SUCCESS
+
+Dashboard GREEN; prior wake 15527 settled (yield=15527), nothing to replay. HEAD == origin/main == 3328fac (own progress-only commit). Peer-dirty files (protocol-boundaries.md, parsing-policy.json, cli.py, discovery.py, seed.py, test_discovery.py, test_seed.py, window_manifest.py) preserved untouched.
+
+CI run 38186024966 (3328fac, headSha exact match via gh run view --json jobs,headSha): completed/success, all four jobs (tmux, adapters, core 3.12, core 3.10) success — closes the wake-15527 follow-up. Observed terminal this wake (no in_progress phase seen). Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, 2.19s).
+
+No new addressed DMs since 14995. Witness read of progress-only entry requested (DM follow-up to 15477); non-blocking per prior pattern.
+
+Evidence: .mishe-tauftauf/artifacts/inference-15540-ci-3328fac.md (site-local, gitignored).
+
+Next: reconcile CI for next HEAD when published. No blockers.
