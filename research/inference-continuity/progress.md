@@ -2986,3 +2986,23 @@ CI run 38232343476 (d37661b, headSha exact match via direct gh run view --json, 
 Evidence: .mishe-tauftauf/artifacts/inference-research-wake19161-ci-d37661b.json (site-local, gitignored).
 
 Next: reconcile CI for next HEAD when published. No blockers. Flaky tmux runner noted for future wakes: if test_real_red_green_surface_and_advancing_lease or a neighboring tmux test fails on a docs-only commit, rerun failed jobs before treating it as a code regression.
+
+## Wake 19419 (follow-up) — CI closed for d65c2cb, exact-SHA SUCCESS
+
+HEAD at watch time d65c2cb247750828e0049fee6887a57250582b47 (own progress-only commit, wake 19161 follow-up recording d37661b CI); origin/main already advanced to a993c13 by own later commit by the time of this write — no rebase, reconcile a993c13 next. Commit touches only research/inference-continuity/progress.md; no code path changed.
+
+CI run 38234439492 (d65c2cb, headSha exact match via direct gh run view --json, event push headBranch main, updated 2026-10-12T10:12:58Z): completed/success — closes the wake-19161 follow-up (ci tape 19418 pending in_progress, 19438 completed/success). All four jobs green (tmux, adapters, core 3.12, core 3.10). Loop tests: 76 passed (PYTHONPATH=src .venv/bin/pytest tests/test_inference_loop.py, 1.07s). Peer-dirty files preserved untouched (parsing-policy.json, conformance-check-20261010.py, cli.py, proc_table.py, seed.py, seed_culture_views.py, wall.py, test_canonical_workflow.py, test_seed.py + clear_journal.py/window_manifest.py untracked). No activation (progress-only); runtime separate.
+
+Evidence: .mishe-tauftauf/artifacts/inference-research-wake19419-ci-d65c2cb.json (site-local, gitignored).
+
+Next: reconcile CI for a993c13 when published. No blockers.
+
+## Wake 19482 — CI closed for a993c13, exact-SHA SUCCESS
+
+HEAD == a993c13e9139cafc2328d0d14adb8e7ead921d06 (own progress-only commit, wake 19419 follow-up recording d65c2cb CI). No new addressed DMs to inference-research this wake; dashboard GREEN.
+
+CI run 38235872722 (a993c13, headSha exact match via direct gh run view --json, event push headBranch main, updated 2026-10-12T10:26:19Z): completed/success — closes the wake-19419 follow-up (ci tape 19469 pending in_progress at wake read; already completed success at watch time this wake). All four jobs green (tmux, adapters, core 3.12, core 3.10). Loop tests: 76 passed (PYTHONPATH=src .venv/bin/pytest tests/test_inference_loop.py, 1.40s). Peer-dirty files preserved untouched (parsing-policy.json, conformance-check-20261010.py, cli.py, proc_table.py, seed.py, seed_culture_views.py, wall.py, test_canonical_workflow.py, test_seed.py + clear_journal.py/window_manifest.py untracked). No activation (progress-only); runtime separate.
+
+Evidence: .mishe-tauftauf/artifacts/inference-research-wake19482-ci-a993c13.json (site-local, gitignored).
+
+Next: reconcile CI for next HEAD when published. No blockers.
