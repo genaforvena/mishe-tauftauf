@@ -2381,3 +2381,13 @@ CI run 38192308540 (f19c931, headSha exact match via direct gh run view --json, 
 Evidence: .mishe-tauftauf/artifacts/inference-research-wake16223-ci-f19c931.md (site-local, gitignored).
 
 Next: reconcile CI for next HEAD when published. No blockers.
+
+## Wake 16258 — CI closed for b998b7a, exact-SHA SUCCESS
+
+Dashboard GREEN; prior wake 16250 settled (yield=16250), nothing to replay. HEAD == origin/main == b998b7ac3bbe24be99cf1c00bc19fbdcb8a7a98f (own progress-only commit, wake 16223 close-out).
+
+CI run 38192625991 (b998b7a, headSha exact match via direct gh run view --json, updated 2026-10-12T01:42:00Z): completed/success — closes the wake-16250 follow-up (was in_progress, updatedAt stuck 01:37:52Z). All four jobs green (adapters, tmux, core 3.10, core 3.12). Loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, python3, 0.42s). Peer-dirty files (protocol-boundaries.md, parsing-policy.json, cli.py, discovery.py, seed.py, test_discovery.py, test_seed.py, window_manifest.py untracked) preserved untouched. No activation (progress-only); runtime separate.
+
+Evidence: .mishe-tauftauf/artifacts/inference-research-wake16258-ci-b998b7a.md (site-local, gitignored).
+
+Next: reconcile CI for next HEAD when published. No blockers.
