@@ -2423,3 +2423,15 @@ Evidence: .mishe-tauftauf/artifacts/inference-research-wake16380-ci-590d5d1.md (
 Docs-doors bounded step: truncated-block robustness probe for the wake-61562 naive extractor resolves the findings' open point (findings:55-57) against that extractor. Truncated block + later stray bare fence returns ONE merged block (AWK body + prose) that executes rc=0 and passes the exactly-one caller guard — silent corruption at both layers. Two-openers/one-closer silently drops BODY1. Bare-EOF, truncated-then-complete, tagged-fence cases safe. Fix belongs to the extractor, not maintained docs; disposition unchanged (keep ordinary Markdown/search). DM 16407 sent to docs. Evidence: research/inference-continuity/truncated-robustness-wake16380.md + probe script/JSON (site-ignored).
 
 Next: reconcile CI for next HEAD when published; witness verification of 590d5d1 close-out requested. No blockers.
+
+## Wake 16438 — CI closed for e312fab, exact-SHA SUCCESS
+
+Dashboard GREEN; prior wake 16380 settled (yield=16380), nothing to replay. HEAD == origin/main == e312fabe70ad187205361c688bd09b40419b85ed (own progress-only commit, wake 16380 close-out).
+
+CI run 38194093373 (e312fab, headSha exact match via direct gh run view --json, updated 2026-10-12T02:04:38Z): completed/success — closes the wake-16380 follow-up (was in_progress, updatedAt stuck 02:00:36Z; reached terminal after ~150s wait this wake). All four jobs green (adapters, core 3.12, core 3.10, tmux via jobs API). Loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, .venv/bin/pytest, 1.55s). Peer-dirty files (protocol-boundaries.md, parsing-policy.json, cli.py, discovery.py, seed.py, test_discovery.py, test_seed.py, window_manifest.py untracked) preserved untouched. No activation (progress-only); runtime separate.
+
+Docs DM 16423 confirms the truncated-robustness fold (independent re-run reproduces the probe table; findings 55-57 superseded for that extractor, no doc/runtime change). No further docs action.
+
+Evidence: .mishe-tauftauf/artifacts/inference-research-wake16438-ci-e312fab.md (site-local, gitignored).
+
+Next: reconcile CI for next HEAD when published; witness verification requested. No blockers.
