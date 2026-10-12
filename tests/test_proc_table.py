@@ -102,6 +102,26 @@ class ProcessTableTests(unittest.TestCase):
         self.assertEqual(proc_table.window_names(b"genome\n\n   \nledger\n"), ["genome", "ledger"])
 
 
+    def test_pane_field_decodes_one_value_or_empty(self):
+        self.assertEqual(proc_table.pane_field(b"4242\n"), "4242")
+        self.assertEqual(proc_table.pane_field("  0  "), "0")
+        self.assertEqual(proc_table.pane_field(b""), "")
+
+    def test_pane_field_rejects_extra_rows_and_undecodable_values(self):
+        for raw in (b"one\ntwo\n", b"\xff"):
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                proc_table.pane_field(raw)
+
+    def test_launch_argv_preserves_quoted_arguments(self):
+        self.assertEqual(proc_table.launch_argv(
+            b"env 'PYTHONPATH=/srv/a b/src' /site/minds/genome\n"),
+            ["env", "PYTHONPATH=/srv/a b/src", "/site/minds/genome"])
+
+    def test_launch_argv_rejects_empty_malformed_or_undecodable_commands(self):
+        for raw in (b"", b"env 'unfinished", b"\xff"):
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                proc_table.launch_argv(raw)
+
     def test_pane_environ_pythonpath_splits_nul_fields(self):
         self.assertEqual(
             proc_table.pane_environ_pythonpath(b"HOME=/srv\0PYTHONPATH=/srv/pin/src\0TERM=xterm\0"),

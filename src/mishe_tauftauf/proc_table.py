@@ -233,3 +233,38 @@ def pane_root(component: str) -> str:
     normalization.
     """
     return component[:-4] if component.endswith("/src") else component
+def pane_field(raw: bytes | str) -> str:
+    """Decode one tmux format-field value; empty is valid for absent fields."""
+    if isinstance(raw, bytes):
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("tmux pane field is not UTF-8") from exc
+    else:
+        text = raw
+    fields = text.split()
+    if not fields:
+        return ""
+    if len(fields) != 1:
+        raise ValueError("tmux pane field is not one value")
+    return fields[0]
+
+
+def launch_argv(raw: bytes | str) -> list[str]:
+    """Decode tmux's pane_start_command as argv; malformed quoting is unknown."""
+    import shlex
+
+    if isinstance(raw, bytes):
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("tmux launch command is not UTF-8") from exc
+    else:
+        text = raw
+    try:
+        argv = shlex.split(text)
+    except ValueError as exc:
+        raise ValueError("tmux launch command has invalid quoting") from exc
+    if not argv:
+        raise ValueError("tmux launch command is empty")
+    return argv

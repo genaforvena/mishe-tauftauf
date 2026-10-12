@@ -22,10 +22,10 @@ The checker is also a boundary: it reads Python source and policy files. New
 adapters require an explicit, reviewed addition of their exact path; a
 directory-wide exemption would make the constraint ineffective.
 
-`proc_table.py` decodes the two external tables that name process ids: the `ps`
-parent/child columns and the `tmux list-panes` pane pid list. A caller reaps only
-processes it can attribute to a known parent; malformed or unreadable output
-yields no pid rather than a guess.
+`proc_table.py` decodes external process and tmux tables. It parses the `ps`
+parent/child columns, `tmux list-panes` pid list, and single tmux pane fields;
+`pane_start_command` is decoded as shell argv with quoting errors rejected. A
+caller acts only on decoded values; malformed or unreadable output is not guessed.
 
 `host_radio.py` decodes this host's BLE/Wi-Fi adapter state for the
 space-perception sense: the kernel sysfs ABI for `/sys/class/bluetooth`,
