@@ -5748,9 +5748,8 @@ def test_session_stability_verified_when_live_and_shielded(monkeypatch, tmp_path
         stdout = b"111\n"
     monkeypatch.setattr(discovery.subprocess, "run",
                         lambda *a, **kw: ListSessions() if "list-sessions" in str(a) else Pgrep())
-    monkeypatch.setattr(discovery.proc_table, "read_pane_cmdline",
-                        lambda pid: "/usr/bin/tmux new-session -d -s x sh")
-    monkeypatch.setattr(discovery, "_read", lambda path, limit=65536: "-900")
+    monkeypatch.setattr(discovery.proc_table, "is_tmux_server", lambda pid: True)
+    monkeypatch.setattr(discovery.proc_table, "read_oom_score_adj", lambda pid: "-900")
     result = discovery._host_session_stability(_stability_home(tmp_path))
     assert result["id"] == "sense.host.session-stability"
     assert result["state"] == "verified"
@@ -5785,9 +5784,8 @@ def test_session_stability_drift_when_server_unshielded(monkeypatch, tmp_path):
         stdout = b"222\n"
     monkeypatch.setattr(discovery.subprocess, "run",
                         lambda *a, **kw: ListSessions() if "list-sessions" in str(a) else Pgrep())
-    monkeypatch.setattr(discovery.proc_table, "read_pane_cmdline",
-                        lambda pid: "/usr/bin/tmux new-session -d -s x sh")
-    monkeypatch.setattr(discovery, "_read", lambda path, limit=65536: "200")
+    monkeypatch.setattr(discovery.proc_table, "is_tmux_server", lambda pid: True)
+    monkeypatch.setattr(discovery.proc_table, "read_oom_score_adj", lambda pid: "200")
     result = discovery._host_session_stability(_stability_home(tmp_path))
     assert result["state"] == "drift"
     assert result["unshielded"] == ["222"]
