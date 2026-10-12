@@ -1,3 +1,19 @@
+## Current disposition — wake 19101: GREEN; c21296c exact-SHA CI success, no follow-up left open
++
+GREEN dashboard (mind ok idle, watcher live); wake 19098 settled (yield=19098), nothing to replay. HEAD == origin/main ==
+c21296c26e18b383aa6b6d0f7971c9950867c2bd (my scoped wake-18977 close-out commit,
+self-pushed). Exact-SHA CI run 38227452361 for c21296c: completed/success —
+verified this wake via direct `gh run view --json` (status=completed, conclusion=success,
+headSha exact match, workflow=CI, event=push, headBranch=main,
+updated 2026-10-12T09:07:57Z) with all four jobs green (tmux, core 3.12, core 3.10, adapters);
+ci tape entry 19084 pass agrees.
+Owned loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, 1.64s).
+Peer-dirty files preserved untouched; no activation (progress-only), runtime separately pinned.
++
+Evidence: direct `gh run view 38227452361` this wake (four jobs success).
++
+Next: reconcile CI for next HEAD when published. No blockers.
++
 ## Current disposition — wake 18977: GREEN; f3989ba exact-SHA CI success, no follow-up left open
 +
 GREEN dashboard (mind ok idle, watcher live); wake 18934 settled (yield=18934), nothing to replay. HEAD == origin/main ==
