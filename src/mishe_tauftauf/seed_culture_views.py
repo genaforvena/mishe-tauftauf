@@ -677,11 +677,27 @@ def health(home: Path) -> str:
             causes.append("session-stability=" + str(stability.get("sample", "drift"))[:160])
     except (OSError, ValueError, AttributeError):
         pass
+    # Autonomy loop health: fog/landing/gate drift means minds cannot close
+    # their own audit loops. Surface each as a named cause so the wake routes
+    # to the owning resolver (genome for landing, witness for gates) instead
+    # of stalling silently until the operator window intervenes.
+    try:
+        snapshot = latest(home)
+        observations = snapshot.get("observations", []) if snapshot else []
+        for sense_id, cause_prefix in (
+                ("sense.coord.authorship-fog", "authorship-fog"),
+                ("sense.repo.landing-block", "landing-block"),
+                ("sense.coord.gate-latency", "gate-latency")):
+            reading = next((item for item in observations
+                            if isinstance(item, dict) and item.get("id") == sense_id), None)
+            if isinstance(reading, dict) and str(reading.get("state", "")) == "drift":
+                causes.append(cause_prefix + "=" + str(reading.get("sample", "drift"))[:120])
+    except (OSError, ValueError, AttributeError):
+        pass
     if linked_failed:
         causes.append("linked-sites=" + ",".join(linked_failed))
     if lease_state == "STALE":
         causes.append("pane-lease")
-    # The report is the pane's SYSTEM ZERO line and the only durable record of a
     # check that runs at most every 600s. Name the failing predicate and the
     # compute time so a latched RED is diagnosable after the transient is gone.
     at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
