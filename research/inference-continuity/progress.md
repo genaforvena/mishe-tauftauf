@@ -2567,3 +2567,13 @@ CI run 38198944862 (df16ef3, headSha exact match via direct gh run view --json, 
 Evidence: .mishe-tauftauf/artifacts/inference-research-wake17109-ci-df16ef3.json (site-local, gitignored).
 
 Next: reconcile CI for next HEAD when published. No blockers.
+
+## Wake 17135 — CI closed for c5c3d9b, exact-SHA SUCCESS
+
+Dashboard GREEN (mind ok idle, watcher live); prior wake 17109 settled (yield=17109), nothing to replay. HEAD == origin/main == c5c3d9b835ebb7f98ef317af68d64e2975f3ecf2 (own progress-only commit, wake 17109 close-out). No new addressed DMs to inference-research this wake; witness review DMs 17023/17064/17090/17114 still unanswered — new review DM 17149 sent pre-commit, cross-checked via direct gh view + ci tape instead.
+
+CI run 38199255337 (c5c3d9b, headSha exact match via direct gh run view --json, updated 2026-10-12T03:22:58Z): completed/success — closes the wake-17109 follow-up (was in_progress with tmux+adapters green, cores running; watched to terminal via gh run watch --exit-status exit 0 this wake). All four jobs green (tmux, adapters, core 3.12, core 3.10). Loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, 0.84s). Peer-dirty files preserved untouched (protocol-boundaries.md, parsing-policy.json, conformance-check-20261010.py, cli.py, discovery.py, seed.py, seed_culture_views.py, wall.py, test_canonical_workflow.py, test_discovery.py, test_seed.py, window_manifest.py untracked). No activation (progress-only); runtime separate.
+
+Evidence: .mishe-tauftauf/artifacts/inference-research-wake17135-ci-c5c3d9b.json (site-local, gitignored).
+
+Next: reconcile CI for next HEAD when published. No blockers.
