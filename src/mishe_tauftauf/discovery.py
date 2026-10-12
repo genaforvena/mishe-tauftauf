@@ -983,6 +983,200 @@ def _mind_wedge_suspects() -> dict:
             "sample": sample, "suspects": suspects,
             "panes": panes, "with_log": with_log, "foreign": foreign, "kind": "read"}
 
+WATCH_WAIT_SAMPLE_GAP_SECONDS = 3.0
+"""Seconds between the two pane captures a watch-wait verdict compares.
+
+Long enough that a live TUI frame advances its elapsed timer between reads
+(the probe measured timer ticks inside 15 s), short enough that the two
+``capture-pane`` round trips stay a bounded addition to the scan. Shorter
+than the CI poll loops the sense excuses (150 s sleeps), so a verdict never
+spans the wait it names.
+"""
+
+WATCH_WAIT_GH_TIMEOUT_SECONDS = 10
+"""Bound for one ``gh run view`` external-state read per pane."""
+
+
+def _capture_mind_frame(session: str, window: str) -> str | None:
+    """One mind-pane capture, or ``None`` when tmux cannot answer.
+
+    Reads the lower (``.1``) pane, where the mind's TUI runs; the upper pane
+    is the dashboard renderer, whose lease proves rendering, not mind state.
+    """
+    try:
+        result = subprocess.run(
+            ["tmux", "capture-pane", "-p", "-J", "-t", f"{session}:{window}.1"],
+            capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def _ci_run_state(run_id: str) -> dict | None:
+    """The external CI state for one run id, or ``None`` when unreadable.
+
+    The ``gh run view --json`` payload dialect is decoded in ``omp_pane``;
+    this function only bounds the subprocess read. A transport failure, a
+    missing ``gh`` binary, an unknown run id and a malformed payload all
+    read ``None``: the caller holds UNKNOWN rather than excusing a wait on
+    a state it could not read.
+    """
+    try:
+        result = subprocess.run(
+            ["gh", "run", "view", run_id, "--json", "status,conclusion,updatedAt"],
+            capture_output=True, text=True, timeout=WATCH_WAIT_GH_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return omp_pane.ci_run_state(result.stdout)
+
+
+def _watch_wait_verdict(first: str, second: str, now: str) -> dict:
+    """One pane's verdict from two captures and an optional CI read.
+
+    All inputs are decoded values: ``omp_pane`` names the wait pattern and
+    run id, ``hashlib`` names frame change. The verdicts:
+
+    * ``watch-wait`` — an allowlisted long-poll pattern is present and the
+      external state confirms the wait (a named CI run still in progress),
+      or the pattern needs no external state (``sleep``, ``tail -f``) and
+      normalized content is still while the raw frame advances.
+    * ``active`` — normalized content grew: the mind is producing, not
+      waiting, whatever the pattern says.
+    * ``suspect`` — frame alive, no pattern, no growth: cross with
+      ``sense.mind.wedge-suspect`` session-log evidence before calling it a
+      wedge.
+    * ``pane-dead`` — both captures empty: route to the supervisor/health,
+      not wedge logic.
+    * ``unknown`` — pattern present but external state unreadable, or the
+      pattern names CI with no run id: stays visible, never clean.
+    """
+    if omp_pane.frame_empty(first) and omp_pane.frame_empty(second):
+        return {"verdict": "pane-dead", "detail": "both captures empty"}
+    pattern = omp_pane.wait_pattern(second) or omp_pane.wait_pattern(first)
+    stable = (hashlib.sha256(omp_pane.normalize_frame(first).encode("utf-8")).hexdigest()
+              == hashlib.sha256(omp_pane.normalize_frame(second).encode("utf-8")).hexdigest())
+    frame_live = first != second
+    if stable and not frame_live and pattern is None:
+        return {"verdict": "suspect", "detail": "frame frozen, no wait pattern",
+                "pattern": None, "stable": True, "frame_live": False}
+    if not stable:
+        return {"verdict": "active", "detail": "normalized content grew",
+                "pattern": pattern, "stable": False, "frame_live": frame_live}
+    if pattern is None:
+        return {"verdict": "suspect",
+                "detail": "frame alive, no wait pattern, no growth",
+                "pattern": None, "stable": True, "frame_live": frame_live}
+    run_id = omp_pane.ci_run_id(second) or omp_pane.ci_run_id(first)
+    needs_external = pattern in ("gh run watch", "gh run view", "waiting on",
+                                  "Waiting for CI poll result")
+    if needs_external:
+        if run_id is None:
+            return {"verdict": "unknown",
+                    "detail": f"wait pattern {pattern!r} names no run id",
+                    "pattern": pattern, "stable": True, "frame_live": frame_live}
+        state = _ci_run_state(run_id)
+        if state is None:
+            return {"verdict": "unknown",
+                    "detail": f"wait pattern {pattern!r} run {run_id} state unreadable",
+                    "pattern": pattern, "stable": True, "frame_live": frame_live,
+                    "run_id": run_id}
+        if state["status"] == "in_progress":
+            return {"verdict": "watch-wait",
+                    "detail": (f"wait pattern {pattern!r} run {run_id} "
+                               f"status={state['status']} updated={state.get('updated_at')}"),
+                    "pattern": pattern, "stable": True, "frame_live": frame_live,
+                    "run_id": run_id, "ci_state": state, "sampled": now}
+        return {"verdict": "suspect",
+                "detail": (f"wait pattern {pattern!r} run {run_id} "
+                           f"no longer {state['status']}"),
+                "pattern": pattern, "stable": True, "frame_live": frame_live,
+                "run_id": run_id, "ci_state": state, "sampled": now}
+    return {"verdict": "watch-wait",
+            "detail": (f"wait pattern {pattern!r} content still, frame "
+                       f"{'advancing' if frame_live else 'still'}"),
+            "pattern": pattern, "stable": True, "frame_live": frame_live,
+            "sampled": now}
+
+
+def _mind_watch_wait(home: Path) -> dict:
+    """Name each live mind pane's wait state from two bounded captures.
+
+    Rule W (watch-wait): a pane whose normalized capture is still across the
+    sample gap while its raw frame advances, whose text carries an allowlisted
+    long-poll spelling, and whose external state confirms the wait (a named
+    CI run still ``in_progress``) reads ``watch-wait`` — tool-blocked, not
+    wedged. A still frame with no pattern reads ``suspect`` (cross with the
+    wedge sensor's session-log evidence); an empty frame reads ``pane-dead``
+    (supervisor route); a pattern with unreadable external state reads
+    ``unknown``. A pane set with no capture at all reads UNKNOWN rather than
+    a clean bill, so a ``capture-pane`` format change cannot silently pass
+    as healthy.
+
+    The verdict is bound to the sampled window (``sampled`` + gap): a
+    ``watch-wait`` expires when the external state changes or the next scan
+    runs. The consumer is witness pane rendering (WATCH-WAIT instead of a
+    stuck appearance); it complements, never replaces,
+    ``sense.mind.wedge-suspect``. Session-qualified attribution follows the
+    wedge sensor: two sites share window names on this host, so each verdict
+    carries its tmux session.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        result = subprocess.run(
+            ["tmux", "list-panes", "-a", "-F",
+             "#{session_name}|#{window_name}|#{pane_pid}"],
+            capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return {"id": "sense.mind.watch-wait", "state": "unknown",
+                "sample": "tmux pane enumeration unavailable", "panes": [],
+                "kind": "read"}
+    if result.returncode != 0:
+        return {"id": "sense.mind.watch-wait", "state": "unknown",
+                "sample": "tmux pane enumeration failed", "panes": [],
+                "kind": "read"}
+    records = proc_table.pane_records(result.stdout)
+    if not records:
+        return {"id": "sense.mind.watch-wait", "state": "unknown",
+                "sample": "no panes enumerated", "panes": [], "kind": "read"}
+    firsts: dict[tuple[str, str, int], str | None] = {}
+    for session, window, pid in records:
+        firsts[(session, window, pid)] = _capture_mind_frame(session, window)
+    time.sleep(WATCH_WAIT_SAMPLE_GAP_SECONDS)
+    panes: list[dict] = []
+    readable = 0
+    waiting = 0
+    for session, window, pid in records:
+        first = firsts[(session, window, pid)]
+        second = _capture_mind_frame(session, window)
+        if first is None or second is None:
+            panes.append({"window": window, "pid": pid, "session": session,
+                          "verdict": "unknown",
+                          "detail": "pane capture unreadable"})
+            continue
+        readable += 1
+        verdict = _watch_wait_verdict(first, second, now)
+        if verdict["verdict"] == "watch-wait":
+            waiting += 1
+        panes.append({"window": window, "pid": pid, "session": session,
+                      **verdict})
+    if waiting:
+        sample = ("watch-wait=" + " ".join(
+            f"{pane['window']}(pid={pane['pid']},session={pane['session']},"
+            f"pattern={pane.get('pattern')},run={pane.get('run_id')})"
+            for pane in panes if pane["verdict"] == "watch-wait"))
+    else:
+        sample = "watch-wait=0"
+    sample += f" panes={len(records)} readable={readable}"
+    state = "verified" if readable else "unknown"
+    return {"id": "sense.mind.watch-wait", "state": state,
+            "sample": sample, "panes": panes, "kind": "read",
+            "consumer": "witness pane rendering",
+            "validity": {"sampled": now, "gap_seconds": WATCH_WAIT_SAMPLE_GAP_SECONDS}}
+
 LEDGER_DV_PHASES = frozenset({
     "applied", "review-refused", "reverted", "revert-failed",
     "revert-observation-failed",
@@ -3608,6 +3802,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append({"id": "sense.journal.unit-failure-count", "kind": "read",
                      **_journal_unit_failure_window(home)})
     observed.append(_mind_wedge_suspects())
+    observed.append(_mind_watch_wait(home))
     observed.append(_ledger_delivery_invariant(home))
     observed.append(_ledger_dv_binding(home))
     observed.append(_ledger_evidence_binding(home))
