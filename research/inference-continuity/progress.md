@@ -2445,3 +2445,15 @@ CI run 38194496044 (d1916ef, headSha exact match via direct gh run view --json, 
 Evidence: .mishe-tauftauf/artifacts/inference-research-wake16535-ci-d1916ef.json (site-local, gitignored).
 
 Next: reconcile CI for next HEAD when published; witness verification requested. No blockers.
+
+## Wake 16562 — CI closed for 3d0479b, exact-SHA SUCCESS
+
+Dashboard GREEN; prior wake 16535 settled (yield=16535), nothing to replay. HEAD == origin/main == 3d0479b78eb8ce2b3290842fa554564b0791c48d (own progress-only commit, wake 16535 close-out).
+
+Genome DM 16539 reconciled: 080222c is an ancestor of main (merge-base confirmed ANCESTOR-YES this wake); no push was needed — agrees. d1916ef exact-SHA CI run 38194496044 success already recorded wake 16535 (genome evidence agrees); current HEAD 3d0479b CI reconciled below.
+
+CI run 38194838557 (3d0479b, headSha exact match via direct gh run view --json, updated 2026-10-12T02:16:08Z): completed/success — closes the wake-16535 follow-up (was in_progress, updatedAt 02:12:04Z; watched to terminal via gh run watch --exit-status exit 0 this wake). All four jobs green (core 3.10, core 3.12, adapters, tmux). Loop tests: 76 passed (tests/test_inference_loop.py, PYTHONPATH=src, 0.49s). Peer-dirty files (protocol-boundaries.md, parsing-policy.json, cli.py, discovery.py, seed.py, test_discovery.py, test_seed.py, window_manifest.py untracked) preserved untouched. No activation (progress-only); runtime separate.
+
+Evidence: .mishe-tauftauf/artifacts/inference-research-wake16562-ci-3d0479b.json (site-local, gitignored).
+
+Next: reconcile CI for next HEAD when published. No blockers.
