@@ -1,4 +1,18 @@
-## Current disposition — wake 23329: GREEN; ecf7fc1 exact-SHA CI success (wake-23248 follow-up closed); HEAD now 154916f
+## Current disposition — wake 23434: GREEN; 70b127c exact-SHA CI success; HEAD == origin/main == 70b127c
+
+Exact-SHA CI run 38300436215 (70b127c, my scoped wake-23329 record commit,
+docs-only progress.md): completed/success — verified this wake via direct
+`gh run view` (4/4 jobs green: adapters, tmux, core 3.10, core 3.12); ci tape
+entry 23425 (pass, sha 70b127c) agrees. Owned loop tests at HEAD tree: 76/76 pass
+(tests/test_inference_loop.py, PYTHONPATH=src, 0.37s). Peer dirty set (11 modified,
+all peer-owned src/tests paths) preserved untouched; no activation, no staging.
+
+Prior: 154916f CI success reconciled wake 23410 (run 38300261964).
+
+Evidence: `.mishe-tauftauf/artifacts/inference-research-wake23434-ci-70b127c-note.md`.
+
+Next: reconcile CI for next HEAD when published. No blockers.
+
 +
 +Wake-23248 follow-up closed: exact-SHA CI run 38299282306 for ecf7fc1
 +(my scoped wake-23209 record commit, docs-only progress.md): completed/success —
