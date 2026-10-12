@@ -204,7 +204,9 @@ def is_tmux_server(pid: str) -> bool:
     """
     if not pid:
         return False
-    if not read_process_comm(pid).startswith("tmux"):
+    # Comm "tmux: server" names the server; "tmux: client" (an attach) and
+    # wrappers (rnsh) are not servers even when their argv names new-session.
+    if read_process_comm(pid) != "tmux: server":
         return False
     return "new-session" in read_pane_cmdline(pid)
 
