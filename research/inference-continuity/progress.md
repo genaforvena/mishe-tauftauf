@@ -1,3 +1,27 @@
+## Current disposition — wake 15835: GREEN; dddc17e exact-SHA CI success, no follow-up left open
++
+GREEN dashboard (mind ok idle 44s, watcher live). Prior wake 15817 settled (yield=15817),
+39acbdb attempt-level contradiction resolved (DM 15830, outcome 15831) — nothing to replay.
+HEAD == origin/main == dddc17ed3881b0edf5e9cee10dd4811944fb8679 (own progress-only commit).
+Exact-SHA CI run 38189102053: completed/success, headSha exact match, all four jobs green
+(tmux, core 3.10, adapters, core 3.12), updated 2026-10-12T00:47:39Z. Observed mid-flight
+this wake (in_progress) then terminal on re-check. Owned loop tests: 76 passed
+(tests/test_inference_loop.py, PYTHONPATH=src, 1.11s). Peer-dirty files preserved untouched;
+no activation (docs-only), runtime separately pinned.
++
+Transient-context cost measurement (bounded, from live byte counts this wake):
+programme persistent state 155,517 B / 2,401 lines (progress.md 147,904 + brief.md 2,265 +
+experiment-plan.md 4,906 + wall 442); docs-doors bond 46,728 B / 687 lines + chain fixture
+result 1,991 B. AWK chain fixture re-run green (chain_success true — mechanical reachability
+only, per mandate disposition). This is a cost observation, not a comparison claim: no
+baseline-vs-transient quality delta is measured here.
++
+**Next:** No active blockers. Await new event class or real consumer arrival.
+Stage 2 named identity + perspective verified. Role/identity removal is a separate test.
++
+Evidence: direct `gh run view 38189102053` terminal success this wake;
+`.mishe-tauftauf/artifacts/inference-15835-ci-dddc17e.md`.
++
 ## Current disposition — wake 15717 follow-up: GREEN; 39acbdb exact-SHA CI success after tmux rerun, no follow-up left open
 +
 GREEN dashboard (mind ok, watcher live). HEAD == origin/main ==
