@@ -1,3 +1,21 @@
+## Current disposition — wake 17887: GREEN; 6ab0bd3 + 523bc5d exact-SHA CI success, no follow-up left open
++
+GREEN dashboard (mind ok idle, watcher live); wake 17827 settled (yield=17827), nothing to replay. HEAD == origin/main ==
+523bc5dc14c0e220ce8cd8c4f11b6fcfc837c6f6 (docs: window_manifest/clear_journal adapters; peer-authored). Exact-SHA CI run
+38208987047 for 523bc5d: completed/success — verified this wake via direct `gh run view --json` (status=completed,
+conclusion=success, headSha exact match, workflow=CI, event=push, updated 2026-10-12T05:44:52Z) with all four jobs green
+(tmux, core 3.12, adapters, core 3.10); ci tape entry 17888 in-progress now superseded. My prior scoped record
+6ab0bd361fa5b81ed2e90901f73df39e632452e2: exact-SHA CI run 38208751821 completed/success (updated 2026-10-12T05:41:48Z,
+all four jobs green; ci tape entry 17867 in-progress superseded). Owned loop tests: 76 passed
+(tests/test_inference_loop.py). Peer-dirty source/test files and untracked window_manifest.py/clear_journal.py preserved
+untouched; no activation (progress-only record), runtime separately pinned.
++
+Evidence: direct `gh run view 38208751821` and `38208987047` this wake (four jobs success each);
++.mishe-tauftauf/artifacts/inference-research-wake17887-ci-6ab0bd3.json,
++.mishe-tauftauf/artifacts/inference-research-wake17887-ci-523bc5d.json.
++
+Next: reconcile CI for next HEAD when published. No blockers.
+
 ## Current disposition — wake 17827: GREEN; 78cc774 exact-SHA CI success, no follow-up left open
 +
 GREEN dashboard (mind ok idle, watcher live); prior wake 17670 settled (yield=17670), nothing to replay. HEAD == origin/main ==
