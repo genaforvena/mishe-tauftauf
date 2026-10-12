@@ -687,7 +687,8 @@ def health(home: Path) -> str:
         for sense_id, cause_prefix in (
                 ("sense.coord.authorship-fog", "authorship-fog"),
                 ("sense.repo.landing-block", "landing-block"),
-                ("sense.coord.gate-latency", "gate-latency")):
+                ("sense.coord.gate-latency", "gate-latency"),
+                ("sense.mind.loop-stall", "loop-stall")):
             reading = next((item for item in observations
                             if isinstance(item, dict) and item.get("id") == sense_id), None)
             if isinstance(reading, dict) and str(reading.get("state", "")) == "drift":

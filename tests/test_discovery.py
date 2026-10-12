@@ -5869,3 +5869,58 @@ def test_landing_block_clean_gate_verified(monkeypatch, tmp_path):
     assert result["id"] == "sense.repo.landing-block"
     assert result["state"] == "verified"
     assert result["blocks"] == []
+
+
+def test_loop_stall_verified_when_nothing_treadmills(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    monkeypatch.setattr(discovery, "_mind_treadmill",
+                        lambda home: {"state": "verified", "roles": {"docs": {"verdict": "clean"}}})
+    home = tmp_path / "site"
+    home.mkdir()
+    result = discovery._mind_loop_stall(home)
+    assert result["id"] == "sense.mind.loop-stall"
+    assert result["state"] == "verified"
+    assert result["stalled"] == []
+
+
+def test_loop_stall_drift_when_treadmill_plus_mature_gate(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    monkeypatch.setattr(discovery, "_mind_treadmill",
+                        lambda home: {"state": "verified",
+                                      "roles": {"inference-research": {"verdict": "watch-treadmill"}}})
+    monkeypatch.setattr(discovery, "_coord_dm_disposition_age",
+                        lambda home, now=None: {"state": "verified", "stall": 2,
+                                               "oldest_open": "witness:7h"})
+    home = tmp_path / "site"
+    home.mkdir()
+    result = discovery._mind_loop_stall(home)
+    assert result["state"] == "drift"
+    assert result["stalled"] == ["inference-research@witness:7h"]
+
+
+def test_loop_stall_verified_when_gates_young(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    monkeypatch.setattr(discovery, "_mind_treadmill",
+                        lambda home: {"state": "verified",
+                                      "roles": {"inference-research": {"verdict": "watch-treadmill"}}})
+    monkeypatch.setattr(discovery, "_coord_dm_disposition_age",
+                        lambda home, now=None: {"state": "verified", "stall": 0,
+                                               "oldest_open": ""})
+    home = tmp_path / "site"
+    home.mkdir()
+    result = discovery._mind_loop_stall(home)
+    assert result["state"] == "verified"
+
+
+def test_loop_stall_unknown_when_treadmill_unreadable(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    monkeypatch.setattr(discovery, "_mind_treadmill",
+                        lambda home: {"state": "unknown"})
+    home = tmp_path / "site"
+    home.mkdir()
+    result = discovery._mind_loop_stall(home)
+    assert result["state"] == "unknown"
