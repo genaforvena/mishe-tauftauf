@@ -58,6 +58,10 @@ def test_identity_includes_server_pid_to_detect_reused_tmux_session_id(tmp_path,
     assert "#{pid}:#{session_id}:#{session_created}" in calls[1]
 
 
+class _Halt(Exception):
+    pass
+
+
 def test_routing_failure_keeps_bounded_retry_interval(tmp_path,monkeypatch):
     clock={"now":200,"loops":0}
     calls=[]
@@ -71,10 +75,10 @@ def test_routing_failure_keeps_bounded_retry_interval(tmp_path,monkeypatch):
         clock["now"]+=5
         clock["loops"]+=1
         if clock["loops"]>=3:
-            raise StopIteration
+            raise _Halt
     monkeypatch.setattr(watch,"route",route)
     monkeypatch.setattr(watch.time,"sleep",sleep)
-    with pytest.raises(StopIteration):
+    with pytest.raises(_Halt):
         watch.run(tmp_path,"fixture")
     assert len(calls)==1
 
@@ -93,9 +97,9 @@ def test_watchdog_heartbeat_precedes_slow_route(tmp_path,monkeypatch):
         events.append("route")
     monkeypatch.setattr(watch,"route",route)
     def _stop(_):
-        raise StopIteration()
+        raise _Halt
     monkeypatch.setattr(watch.time,"sleep",_stop)
-    with pytest.raises(StopIteration):
+    with pytest.raises(_Halt):
         watch.run(tmp_path,"fixture")
     assert events[0]=="READY=1"
     assert events[-1].startswith("WATCHDOG=1")
