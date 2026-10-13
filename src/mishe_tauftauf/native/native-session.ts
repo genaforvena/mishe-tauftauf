@@ -3,18 +3,22 @@ import type {Context, ProviderSessionState} from '@oh-my-pi/pi-ai/types';
 import {withNativeModel} from './native-bootstrap.ts';
 import {restoreCheckpoint} from './native-checkpoint.ts';
 import {WireRecorder} from './wire-usage.ts';
+import {DEFAULT_TURN_FETCH_ALLOWANCE, TurnFetchBudget} from './fetch-budget.ts';
 
-// One underlying fetch per turn, including lower-level HTTP retries and
-// encoding fallback. This deliberately withholds automatic retry authority
-// (docs/how-it-works.md); raising it is a contract change, not a tuning knob.
-const NATIVE_TURN_FETCH_BUDGET = 1;
+// One underlying fetch per turn by default, including lower-level HTTP retries
+// and encoding fallback. This deliberately withholds automatic retry authority
+// (docs/how-it-works.md). The only permitted raise is the operator-authorized
+// read-only CI-observation allowance of at most two fetches per turn, resolved
+// and range-checked in fetch-budget.ts; every other configuration is refused.
 
 // One owned subprocess lifetime. Bootstrap rejection is fatal to its caller;
 // never reacquire/retry in that process (pre-return auth acquisition gap).
 export async function withNativeSession<T>(selector: string, sessionId: string,
  consume: (session: {turn: (context: Context, signal?: AbortSignal, checkpoint?: unknown) => Promise<unknown>}) => Promise<T>,
- reasoning: string = 'medium'): Promise<T> {
+ reasoning: string = 'medium',
+ allowanceConfig: {allowance: number; workClass: string} = {allowance: DEFAULT_TURN_FETCH_ALLOWANCE, workClass: ''}): Promise<T> {
  if (typeof sessionId !== 'string' || !sessionId.trim() || sessionId !== sessionId.trim()) throw new Error('normalized stable sessionId required');
+ const allowance = new TurnFetchBudget(allowanceConfig.allowance, allowanceConfig.workClass).allowance;
  return withNativeModel(selector, async ({registry, model}) => {
   const state = new Map<string, ProviderSessionState>();
   let closed = false;
@@ -22,19 +26,27 @@ export async function withNativeSession<T>(selector: string, sessionId: string,
   let active: Promise<unknown> | null = null;
   const controller = new AbortController();
   async function generate(context: Context) {
-  // Bound all provider retry layers, including encoding fallback.
-  let fetches = 0;
+  // Bound all provider retry layers, including encoding fallback. The
+  // allowance is fixed for the session lifetime; the read-only class check
+  // and the bound's range check ran before any provider turn.
+  const budget = new TurnFetchBudget(allowance, allowanceConfig.workClass);
   let fetchBudgetError: Error | null = null;
   const fetchOnce: typeof fetch = async (input, init) => {
    if (controller.signal.aborted) throw new Error('native turn cancelled before fetch');
-   if (fetches >= NATIVE_TURN_FETCH_BUDGET) {
+   if (!budget.claim()) {
     poisoned = true;
-    fetchBudgetError = new Error('native provider fetch budget exhausted');
+    fetchBudgetError = budget.exhaustion();
     controller.abort(fetchBudgetError);
     throw fetchBudgetError;
    }
-   fetches++;
-   return fetch(input, init);
+   try {
+    const response = await fetch(input, init);
+    budget.observeResponse(response.status, response.statusText);
+    return response;
+   } catch (error) {
+    budget.observeNetworkError(error);
+    throw error;
+   }
   };
   const wire = new WireRecorder();
   const stream = streamSimple(model, context, {

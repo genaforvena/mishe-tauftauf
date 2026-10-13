@@ -1,3 +1,4 @@
+import json
 import sys
 import time
 
@@ -251,3 +252,60 @@ def test_refusal_stderr_survives_stdout_eof_and_deadline(tmp_path, mode):
         assert "[truncated]" in message and len(message) < 4200
     assert session.deadline == deadline
     assert_reaped(session)
+
+
+READ_ONLY_CLASS = NativeSession.READ_ONLY_CI_OBSERVATION_CLASS
+
+
+def recording_worker(tmp_path, sink):
+    script = tmp_path / "worker.py"
+    script.write_text(
+        "import json,sys\n"
+        "from pathlib import Path\n"
+        "request=json.loads(sys.stdin.readline())\n"
+        f"Path({str(sink)!r}).write_text(json.dumps(request))\n"
+        "print(json.dumps({'type':'ready'}), flush=True)\n"
+        "for line in sys.stdin:\n"
+        " request=json.loads(line)\n"
+        " if request['type']=='close':\n"
+        "  print(json.dumps({'type':'closed'}), flush=True); sys.exit(0)\n"
+        " print(json.dumps({'type':'turn','id':request['id'],'frame':"
+        + repr(FRAME) + "}), flush=True)\n"
+    )
+    return [sys.executable, str(script)]
+
+
+def test_default_open_request_carries_no_allowance(tmp_path):
+    sink = tmp_path / "open.json"
+    with NativeSession(recording_worker(tmp_path, sink), "fixture/model",
+                       "session", timeout=3) as session:
+        session.turn({"messages": []})
+    request = json.loads(sink.read_text())
+    assert request["type"] == "open" and request["reasoning"] == "medium"
+    assert "workClass" not in request and "fetchAllowance" not in request
+
+
+def test_read_only_allowance_open_request_carries_the_named_pair(tmp_path):
+    sink = tmp_path / "open.json"
+    with NativeSession(recording_worker(tmp_path, sink), "fixture/model",
+                       "session", timeout=3, work_class=READ_ONLY_CLASS,
+                       fetch_allowance=2) as session:
+        session.turn({"messages": [{"role": "user", "content": "observe"}]})
+    request = json.loads(sink.read_text())
+    assert request["workClass"] == READ_ONLY_CLASS
+    assert request["fetchAllowance"] == 2
+
+
+@pytest.mark.parametrize("kwargs,match", [
+    ({"fetch_allowance": 2}, "read-only class"),
+    ({"fetch_allowance": 1}, "read-only class"),
+    ({"work_class": "other-class", "fetch_allowance": 2}, "read-only class"),
+    ({"work_class": READ_ONLY_CLASS, "fetch_allowance": 3}, "integer 1..2"),
+    ({"work_class": READ_ONLY_CLASS, "fetch_allowance": 0}, "integer 1..2"),
+    ({"work_class": READ_ONLY_CLASS, "fetch_allowance": True}, "integer 1..2"),
+    ({"work_class": READ_ONLY_CLASS, "fetch_allowance": "2"}, "integer 1..2"),
+    ({"work_class": READ_ONLY_CLASS}, "integer 1..2"),
+])
+def test_refused_allowance_configurations_never_start_a_worker(tmp_path, kwargs, match):
+    with pytest.raises(ValueError, match=match):
+        NativeSession(["must-not-start"], "fixture/model", "session", timeout=3, **kwargs)
