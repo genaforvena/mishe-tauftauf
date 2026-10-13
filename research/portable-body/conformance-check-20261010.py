@@ -15,6 +15,7 @@ Validates:
 Exit 0 = all checks pass. Exit 1 = at least one failure.
 """
 
+import io
 import json
 import struct
 import sys
@@ -437,6 +438,98 @@ def validate_transfer(frames: list[tuple[int, bytes]], total_length: int,
         raise ConformanceError(f"{label}: {'; '.join(errors)}")
 
 
+
+class BinaryFrameReader:
+    """Receiver-side binary frame reader with explicit disconnection handling.
+
+    Reads frames from a bytes object. On EOF:
+    - Mid-header: returns status "incomplete_header"
+    - Mid-payload: returns status "incomplete_payload"
+    - Between frames: returns status "clean_eof" (transfer may be incomplete)
+    """
+
+    def __init__(self, data: bytes):
+        self.stream = io.BytesIO(data)
+        self.frames: list[tuple[int, bytes]] = []
+        self.bytes_consumed = 0
+
+    def read_frames(self) -> tuple[list[tuple[int, bytes]], str]:
+        """Read all frames until clean EOF or disconnection.
+
+        Returns (frames, status) where status is one of:
+        - "clean_eof": stream ended between frames (or after complete frame)
+        - "incomplete_header": EOF mid-frame-header
+        - "incomplete_payload": EOF mid-frame-payload
+        """
+        while True:
+            header = self.stream.read(FRAME_HEADER.size)
+            self.bytes_consumed += len(header)
+
+            if len(header) == 0:
+                return self.frames, "clean_eof"
+
+            if len(header) < FRAME_HEADER.size:
+                return self.frames, "incomplete_header"
+
+            sid, seq, payload_len = FRAME_HEADER.unpack(header)
+
+            payload = self.stream.read(payload_len)
+            self.bytes_consumed += len(payload)
+
+            if len(payload) < payload_len:
+                return self.frames, "incomplete_payload"
+
+            self.frames.append((seq, payload))
+
+
+def validate_transfer_completeness(frames: list[tuple[int, bytes]],
+                                   total_length: int,
+                                   chunk_max: int,
+                                   label: str) -> dict:
+    """Classify transfer completeness without raising.
+
+    Returns a result dict with status and details. Does NOT check chunk_max
+    or chunk caps — only contiguity and total bytes. Use validate_transfer
+    for full validation including chunk_max compliance.
+
+    Status values: complete, complete_empty, incomplete_no_frames,
+    incomplete_noncontiguous, incomplete_missing_data, incomplete_excess_data.
+    """
+    result = {"label": label, "status": None, "frames_received": len(frames),
+              "total_length_declared": total_length, "bytes_received": 0,
+              "errors": []}
+
+    if not frames:
+        if total_length == 0:
+            result["status"] = "complete_empty"
+            return result
+        result["status"] = "incomplete_no_frames"
+        result["errors"].append(f"no frames received but total_length={total_length}")
+        return result
+
+    sequences = [seq for seq, _ in frames]
+    expected = list(range(len(frames)))
+    if sequences != expected:
+        result["status"] = "incomplete_noncontiguous"
+        result["errors"].append(f"non-contiguous sequence: got {sequences}, expected {expected}")
+        return result
+
+    actual_total = sum(len(payload) for _, payload in frames)
+    result["bytes_received"] = actual_total
+
+    if actual_total < total_length:
+        result["status"] = "incomplete_missing_data"
+        result["errors"].append(
+            f"transfer incomplete: received {actual_total} of {total_length} bytes "
+            f"({total_length - actual_total} missing)")
+    elif actual_total > total_length:
+        result["status"] = "incomplete_excess_data"
+        result["errors"].append(
+            f"excess data: received {actual_total} bytes, declared {total_length}")
+    else:
+        result["status"] = "complete"
+
+    return result
 # --- Main conformance run ---
 
 def main() -> int:
@@ -1025,6 +1118,110 @@ def main() -> int:
         print(f"  FAIL framing-session-cap: {len(recs)} records, {len(errs)} errors")
         failed += 1
         errors.append("session cap not enforced behaviorally")
+
+    # 11. Binary frame EOF tests (receiver-side disconnection)
+    print("\n--- Binary Frame EOF (Receiver Disconnection) ---")
+
+    # Build a 3-frame transfer: 100 bytes total, chunk_max=40
+    eof_stream_id = "00112233445566778899aabbccddeeff"
+    eof_payload = bytes(range(100))
+    eof_chunk_max = 40
+    eof_frames = []
+    _off = 0
+    _seq = 0
+    while _off < len(eof_payload):
+        _chunk = eof_payload[_off:_off + eof_chunk_max]
+        eof_frames.append(
+            bytes.fromhex(eof_stream_id) +
+            struct.pack('>I', _seq) +
+            struct.pack('>H', len(_chunk)) +
+            _chunk
+        )
+        _off += len(_chunk)
+        _seq += 1
+    eof_full = b''.join(eof_frames)
+
+    # 11a. Clean EOF: complete transfer
+    reader = BinaryFrameReader(eof_full)
+    frames, status = reader.read_frames()
+    result = validate_transfer_completeness(frames, 100, eof_chunk_max, "eof-clean")
+    if status == "clean_eof" and len(frames) == 3 and result["status"] == "complete":
+        print("  PASS eof-clean: 3 frames, transfer complete")
+        passed += 1
+    else:
+        print(f"  FAIL eof-clean: status={status}, frames={len(frames)}, transfer={result['status']}")
+        failed += 1
+        errors.append("binary clean EOF failed")
+
+    # 11b. Mid-header EOF: cut 10 bytes into frame 1's header (at offset 72)
+    cut = 62 + 10
+    reader = BinaryFrameReader(eof_full[:cut])
+    frames, status = reader.read_frames()
+    result = validate_transfer_completeness(frames, 100, eof_chunk_max, "eof-mid-header")
+    if status == "incomplete_header" and len(frames) == 1 and result["status"] == "incomplete_missing_data":
+        print("  PASS eof-mid-header: 1 frame retained, header incomplete")
+        passed += 1
+    else:
+        print(f"  FAIL eof-mid-header: status={status}, frames={len(frames)}")
+        failed += 1
+        errors.append("binary mid-header EOF failed")
+
+    # 11c. Mid-payload EOF: cut 10 bytes into frame 1's payload (at offset 94)
+    cut = 62 + 22 + 10
+    reader = BinaryFrameReader(eof_full[:cut])
+    frames, status = reader.read_frames()
+    result = validate_transfer_completeness(frames, 100, eof_chunk_max, "eof-mid-payload")
+    if status == "incomplete_payload" and len(frames) == 1 and result["status"] == "incomplete_missing_data":
+        print("  PASS eof-mid-payload: 1 frame retained, payload incomplete")
+        passed += 1
+    else:
+        print(f"  FAIL eof-mid-payload: status={status}, frames={len(frames)}")
+        failed += 1
+        errors.append("binary mid-payload EOF failed")
+
+    # 11d. Partial recovery: cut mid-frame-2, verify completed frames retained
+    cut = 62 + 62 + 5  # 5 bytes into frame 2's header
+    reader = BinaryFrameReader(eof_full[:cut])
+    frames, status = reader.read_frames()
+    result = validate_transfer_completeness(frames, 100, eof_chunk_max, "eof-partial")
+    correct = (len(frames) == 2 and
+               frames[0] == (0, bytes(range(40))) and
+               frames[1] == (1, bytes(range(40, 80))))
+    if (status == "incomplete_header" and correct and
+            result["status"] == "incomplete_missing_data" and
+            result["bytes_received"] == 80):
+        print("  PASS eof-partial: 2 complete frames retained, no partial exposed")
+        passed += 1
+    else:
+        print(f"  FAIL eof-partial: status={status}, frames={len(frames)}, correct={correct}")
+        failed += 1
+        errors.append("binary partial recovery failed")
+
+    # 11e. Control + binary interleave: control records retained when binary fails
+    ctrl = b'{"v":1,"id":"r1","kind":"cap.list"}\n{"v":1,"id":"r1","kind":"result","status":"ok","caps":[]}\n'
+    bytes_begin = (b'{"v":1,"id":"r2","kind":"bytes.begin","op":"o1","stream":"' +
+                   eof_stream_id.encode() + b'","total_length":100,"chunk_max":40}\n')
+    full_interleave = ctrl + bytes_begin + eof_full
+    cut_interleave = len(ctrl) + len(bytes_begin) + 62 + 62 + 5  # into frame 2
+    data_interleave = full_interleave[:cut_interleave]
+
+    # Parse control records
+    ctrl_data = ctrl + bytes_begin
+    ctrl_recs, ctrl_errs = read_control_records(ctrl_data)
+
+    # Parse binary from remaining
+    bin_data = data_interleave[len(ctrl_data):]
+    reader = BinaryFrameReader(bin_data)
+    bin_frames, bin_status = reader.read_frames()
+
+    if (len(ctrl_recs) == 3 and len(ctrl_errs) == 0 and
+            len(bin_frames) == 2 and bin_status == "incomplete_header"):
+        print("  PASS eof-interleave: 3 control records retained, 2 binary frames before EOF")
+        passed += 1
+    else:
+        print(f"  FAIL eof-interleave: ctrl={len(ctrl_recs)}/{len(ctrl_errs)}, bin={len(bin_frames)}/{bin_status}")
+        failed += 1
+        errors.append("control+binary interleave failed")
 
 
     # Summary
