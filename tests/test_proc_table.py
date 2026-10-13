@@ -166,6 +166,42 @@ class ProcessTableTests(unittest.TestCase):
         self.assertEqual(proc_table.pane_root("/srv/pin"), "/srv/pin")
         self.assertEqual(proc_table.pane_root("/srv/srcpad"), "/srv/srcpad")
 
+    def test_read_cgroup_unit_returns_the_owning_systemd_unit(self):
+        # Read this very test process: its cgroup is always readable, and the
+        # decoder must hand back exactly the last path component the kernel
+        # wrote, whatever slice it names.
+        unit = proc_table.read_cgroup_unit(str(os.getpid()))
+        self.assertTrue(unit)
+        self.assertNotIn("/", unit)
+
+    def test_read_cgroup_unit_empty_for_unreadable_pid(self):
+        self.assertEqual(proc_table.read_cgroup_unit(""), "")
+        self.assertEqual(proc_table.read_cgroup_unit("not-a-pid"), "")
+        self.assertEqual(proc_table.read_cgroup_unit("999999999"), "")
+
+    def test_belongs_to_session_accepts_both_plant_keeper_shapes(self):
+        self.assertTrue(proc_table.belongs_to_session(
+            "mishe-self-development-current-session.scope",
+            "mishe-self-development-current"))
+        self.assertTrue(proc_table.belongs_to_session(
+            "mishe-self-development-current-session-9f3a.service",
+            "mishe-self-development-current"))
+
+    def test_belongs_to_session_rejects_a_foreign_test_keeper(self):
+        # A finished test's keeper shares the shared socket while nothing
+        # restarts it; a same-prefix session must not be mistaken for the
+        # plant's own keeper.
+        self.assertFalse(proc_table.belongs_to_session(
+            "mishe-self-development-current-extra-session-1.service",
+            "mishe-self-development-current"))
+        self.assertFalse(proc_table.belongs_to_session(
+            "mishe-tauftauf-test-2052154-2e8e4ec20b-session-69098cb50e994a759167cd47c622babc.service",
+            "mishe-self-development-current"))
+        self.assertFalse(proc_table.belongs_to_session(
+            "android-body-session.scope", "mishe-self-development-current"))
+        self.assertFalse(proc_table.belongs_to_session("", "mishe-self-development-current"))
+        self.assertFalse(proc_table.belongs_to_session("x-session.scope", ""))
+
 
 if __name__ == "__main__":
     unittest.main()
