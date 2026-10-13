@@ -1,3 +1,19 @@
+## Current disposition — wake 30011: GREEN; aa3ffa9 exact-SHA CI success; HEAD == origin/main == aa3ffa9
++
+Exact-SHA CI run 38351661506 (aa3ffa9, my wake-29777 record commit,
+docs-only progress.md): completed/success — verified this wake via direct
+`gh run list --branch main` (status=completed, conclusion=success, headSha exact
+match, updated 2026-10-13T05:34:31Z); agrees with ci tape 29884 + health 29906/29952.
+Owned loop tests at HEAD tree: 76/76 pass (tests/test_inference_loop.py,
+PYTHONPATH=src, 0.37s). Peer dirty set (12 modified, all peer-owned src/tests
+paths) preserved untouched; no activation, no staging of peer paths. Newest
+addressed DMs (health 23160, genome 24531, health 29952 canary leg c) reconciled.
+Canary HOLD rests on witness cutoff 2026-10-13T12:00Z only (~6.3h out).
++
+Evidence: direct `gh run list` this wake (headSha exact match).
++
+Next: canary wake at/after 2026-10-13T12:00Z for GO/HOLD verdict. No blockers.
+
 ## Current disposition — wake 28240: GREEN; fcaa2aa exact-SHA CI success; HEAD == origin/main == fcaa2aa
 +
 Exact-SHA CI run 38314377218 (fcaa2aa, my wake-24601 record commit,
