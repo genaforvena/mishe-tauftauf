@@ -201,6 +201,35 @@ def _wedge_reading(home: Path, session: str) -> tuple[dict[str, dict], str | Non
     return suspects, None
 
 
+def _watch_wait_reading(home: Path, session: str) -> tuple[dict[str, dict], str | None]:
+    """PID-bound watch-wait positives and aggregate unavailability.
+
+    Mirrors ``_wedge_reading``: each verdict carries its tmux session, so a
+    verdict binds only to the same session's live pane pid. A ``watch-wait``
+    verdict is tool-blocked (named long-poll + confirmed external state), not
+    a wedge; every other verdict (``active``, ``suspect``, ``pane-dead``,
+    ``unknown``) leaves the HELD line unchanged.
+    """
+    from .seed import _watch_wait_evidence
+    reported, unavailable = _watch_wait_evidence(home)
+    if unavailable is not None:
+        return {}, unavailable
+    waiting: dict[str, dict] = {}
+    for pane in reported:
+        if pane.get("verdict") != "watch-wait":
+            continue
+        window, pid = pane["window"], pane["pid"]
+        if pane.get("session") == session and pid == _mind_pane_pid(session, window):
+            waiting[window] = pane
+    return waiting, None
+
+
+def _watch_wait_note(pane: dict) -> str:
+    """One-line watch-wait evidence, in the shape the sense publishes."""
+    return (f"pattern={pane.get('pattern')} run={pane.get('run_id')} "
+            f"sampled={pane.get('sampled')}")
+
+
 def _wedge_note(suspect: dict) -> str:
     """One-line wedge evidence, in the shape the sense publishes."""
     if suspect.get("rule") == "provider-error":
@@ -256,6 +285,13 @@ def render(home: Path) -> str:
                  "; per-role coverage UNKNOWN; useful progress not established")
     lines.append(f"  Evidence: {home / 'discovery'} sense.mind.wedge-suspect; "
                  "inspect producer on unavailable evidence, not a busy-pane restart")
+    waiting, wait_reason = _watch_wait_reading(home, session)
+    lines.append("WATCH-WAIT: " +
+                 (f"UNKNOWN — {wait_reason}; owner=senses"
+                  if wait_reason else "AVAILABLE — fresh verified aggregate") +
+                 "; tool-blocked panes only, never a wedge verdict")
+    lines.append(f"  Evidence: {home / 'discovery'} sense.mind.watch-wait; "
+                 "inspect producer on unavailable evidence, not a busy-pane restart")
     wedged: list[str] = []
     payloads = {}
     try:
@@ -292,9 +328,14 @@ def render(home: Path) -> str:
                         continue
                     # A hold observes the idle gate only, not useful progress.
                     # Provider-error evidence can also name a streaming pane.
+                    # A watch-wait pane is tool-blocked (named long-poll with
+                    # confirmed external state), not wedged: render WATCH-WAIT
+                    # on the HELD line so the human stops eyeballing the pane.
+                    watch = waiting.get(role)
                     lines.append(f"CLEAR STALL: HELD {role} wake={wake} yield={receipt.sequence} "
                                  "mind not idle; supervisor holding rotation"
-                                 + (f" · wedge-suspect={_wedge_note(suspect)}" if suspect else ""))
+                                 + (f" · wedge-suspect={_wedge_note(suspect)}" if suspect else "")
+                                 + (f" · WATCH-WAIT {_watch_wait_note(watch)}" if watch else ""))
                     lines.append(f"  Evidence: {Feed(home).path} settled={receipt.timestamp}; "
                                  "recheck after the mind's turn ends")
                     continue
@@ -327,9 +368,13 @@ def render(home: Path) -> str:
                         wedged.append(role)
                         continue
                     # A hold observes the idle gate only, not useful progress.
+                    # A watch-wait pane is tool-blocked, not wedged: render
+                    # WATCH-WAIT on the HELD line like the clear-stall path.
+                    watch = waiting.get(role)
                     lines.append(f"STALE PEND: HELD {role} wake={wake} pending={receipt.sequence} "
                                  "mind not idle; supervisor holding delivery"
-                                 + (f" · wedge-suspect={_wedge_note(suspect)}" if suspect else ""))
+                                 + (f" · wedge-suspect={_wedge_note(suspect)}" if suspect else "")
+                                 + (f" · WATCH-WAIT {_watch_wait_note(watch)}" if watch else ""))
                     lines.append(f"  Evidence: {Feed(home).path} woken={receipt.timestamp}; "
                                  "recheck after the mind's turn ends")
                     continue

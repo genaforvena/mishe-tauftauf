@@ -19,6 +19,7 @@ from .discovery import (latest, producer_label, scan_attempt, _space_light,
 from .host_radio import decode_cam_events, decode_cam_manifest, decode_cam_state, decode_urb_failures
 from . import proc_table
 from . import scan_freshness
+from .space_text import nonblank
 from .seed import recorded_session
 
 
@@ -102,9 +103,20 @@ def _observation_reading(item: dict[str, object], freshness: str,
             # in the retention record, so it is applied again here rather than
             # re-derived and lost.
             current = _space_light_name_freeze(home, current, now)
+        bound = current.get("clock_bound")
+        if nonblank(bound) is None:
+            # Older scans predate the carried bound: fall back to the retained
+            # frame, whose light mapping is the reader's own validated copy.
+            frame = current.get("boundary", {})
+            nodes = frame.get("nodes") if isinstance(frame, dict) else None
+            light = (nodes[0].get("light") if isinstance(nodes, list) and nodes
+                     and isinstance(nodes[0], dict) else None)
+            candidate = light.get("status_reason") if isinstance(light, dict) else None
+            bound = nonblank(candidate)
         state = current["state"]
         detail = (f"{current['sample']} source_state={source_state}; "
-                  f"display_state={current['state']}; clock=unverified")
+                  f"display_state={current['state']}; "
+                  f"clock={'unverified; ' + bound if bound else 'unverified'}")
         if current.get("event_sample"):
             detail += "; retained history: " + current["event_sample"]
         return state, f"{state.upper()} {identity}: {detail}"
@@ -205,7 +217,10 @@ def senses(home: Path) -> str:
             unavailable += state == "unavailable"
             lines.append(line)
         provenance = space.get("provenance", {})
-        lines.append(f"UNKNOWN SPACE: phone/host clock agreement unverified; "
+        clock_bound = nonblank(space.get("clock_bound"))
+        clock_text = (clock_bound
+                      if clock_bound is not None else "phone/host clock agreement unverified")
+        lines.append(f"UNKNOWN SPACE: {clock_text}; "
                      f"boundary_state={space['state']} reason={space['reason']} "
                      f"provenance={provenance.get('source', 'unknown')} "
                      f"session={provenance.get('session', 'unknown')} "
