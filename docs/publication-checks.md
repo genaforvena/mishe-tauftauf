@@ -7,6 +7,13 @@ original draft, scoped task context and full relevant immutable-record reference
 feed entry, changes a task or settles a wake. Integration must retain existing
 under-lock ownership/state checks after this preflight.
 
+The command names for that review are **`publication check --source ROLE --file DRAFT`**,
+which runs it for one draft and prints the verdict with the private report path
+(stage `post`, `selection` or `handoff`; default `post`; exit 2 when not clear), and
+**`publication status`**, which reports whether a semantic checker is configured and
+names the newest private report; with none configured it exits 1, and only the
+deterministic admission guard is active.
+
 Without configuration, JSON objects or arrays anywhere in new text and hash-only notices are rejected, but
 semantic questions remain explicitly **untested**. This bootstrap mode establishes
 no semantic clearance. A configured checker has no fail-open override: suspicious,

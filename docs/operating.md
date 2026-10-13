@@ -67,6 +67,7 @@ tmux capture-pane -p -t "$SESSION:genome.0"
 "$SITE/bin/mishe-tauftauf" --home "$SITE" seed status --slug genome
 "$SITE/bin/mishe-tauftauf" --home "$SITE" wall show --owner genome
 "$SITE/bin/mishe-tauftauf" --home "$SITE" discover show
+"$SITE/bin/mishe-tauftauf" --home "$SITE" pain list
 "$SITE/bin/mishe-tauftauf" --home "$SITE" access list
 ```
 The standard genome and health panes show deterministic CI, runtime, service and
