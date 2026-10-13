@@ -48,3 +48,14 @@ def decode_stream_log(text: str) -> list[dict]:
         if isinstance(record, dict):
             records.append(record)
     return records
+
+def nonblank(text: object) -> str | None:
+    """The text itself when it reads as text with visible content, else None.
+
+    Blank-checking is interpretation of external text, so it lives at this
+    boundary; readers act on the plain answer and never call ``strip`` on a
+    decoded value themselves.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return None
+    return text

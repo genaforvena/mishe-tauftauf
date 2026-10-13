@@ -458,3 +458,95 @@ def test_missing_monitor_does_not_hide_independent_receipt_failure(monitor_home,
     assert 'STATE: RED' in output
     assert (monitor_home / 'observations' / 'witness').read_text().startswith(
         'FAIL witness overdue pending wake audit')
+
+
+def watch_wait_scan(tmp_path, panes, created=None):
+    """Publish a discovery scan carrying both wedge and watch-wait readings."""
+    from datetime import datetime, timezone
+    directory = tmp_path / 'discovery'
+    directory.mkdir(exist_ok=True)
+    created = created or datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    payload = json.dumps({
+        'created': created,
+        'observations': [
+            {'id': 'sense.mind.wedge-suspect', 'state': 'verified', 'suspects': []},
+            {'id': 'sense.mind.watch-wait', 'state': 'verified', 'panes': panes}]})
+    (directory / 'scan-20260930T000000Z-aaaa.json').write_text(payload, encoding='utf-8')
+
+
+def test_watch_wait_pane_renders_on_held_clear_stall(tmp_path, monkeypatch):
+    # The operator ask (DM 19872): a pane blocked in a named long-poll with
+    # confirmed external state reads tool-blocked, not stuck. The HELD line
+    # carries WATCH-WAIT with the pattern and run, and the verdict stays
+    # HELD (no wedge recovery, no RED).
+    entries = [entry(1, 'seed', 'seed wake audit observation=1'),
+               entry(2, 'seed', 'seed yield audit wake=1')]
+    busy_mind(tmp_path, monkeypatch, entries)
+    monkeypatch.setenv('MISHE_SEED_SESSION', 'test')
+    watch_wait_scan(tmp_path, [{'window': 'audit', 'pid': 1, 'session': 'test',
+                                'verdict': 'watch-wait', 'pattern': 'gh run watch',
+                                'run_id': '38244689224', 'sampled': 'now'}])
+    output = render(tmp_path)
+    assert 'WATCH-WAIT: AVAILABLE' in output
+    assert ('CLEAR STALL: HELD audit wake=1 yield=2 mind not idle; '
+            'supervisor holding rotation '
+            '· WATCH-WAIT pattern=gh run watch run=38244689224 sampled=now') in output
+    assert 'WEDGE-SUSPECT' not in output
+    assert 'STATE: RED' not in output
+
+
+def test_watch_wait_pane_renders_on_held_stale_pend(tmp_path, monkeypatch):
+    entries = [entry(1, 'seed', 'seed wake audit observation=1')]
+    busy_mind(tmp_path, monkeypatch, entries)
+    monkeypatch.setenv('MISHE_SEED_SESSION', 'test')
+    watch_wait_scan(tmp_path, [{'window': 'audit', 'pid': 1, 'session': 'test',
+                                'verdict': 'watch-wait', 'pattern': 'sleep',
+                                'run_id': None, 'sampled': 'now'}])
+    output = render(tmp_path)
+    assert ('STALE PEND: HELD audit wake=1 pending=1 mind not idle; '
+            'supervisor holding delivery '
+            '· WATCH-WAIT pattern=sleep run=None sampled=now') in output
+    assert 'WEDGE-SUSPECT' not in output
+
+
+def test_non_wait_verdict_leaves_held_line_unchanged(tmp_path, monkeypatch):
+    # active / suspect / pane-dead / unknown verdicts are not tool-blocked
+    # evidence: the HELD line renders without WATCH-WAIT.
+    entries = [entry(1, 'seed', 'seed wake audit observation=1'),
+               entry(2, 'seed', 'seed yield audit wake=1')]
+    busy_mind(tmp_path, monkeypatch, entries)
+    monkeypatch.setenv('MISHE_SEED_SESSION', 'test')
+    watch_wait_scan(tmp_path, [{'window': 'audit', 'pid': 1, 'session': 'test',
+                                'verdict': 'suspect', 'pattern': None,
+                                'run_id': None, 'sampled': 'now'}])
+    output = render(tmp_path)
+    assert 'CLEAR STALL: HELD audit wake=1 yield=2' in output
+    assert 'WATCH-WAIT pattern' not in output
+
+
+def test_watch_wait_for_another_sessions_pane_is_not_surfaced(tmp_path, monkeypatch):
+    # Two sites share window names on one host: a verdict binds only to the
+    # same session's live pane pid.
+    entries = [entry(1, 'seed', 'seed wake audit observation=1'),
+               entry(2, 'seed', 'seed yield audit wake=1')]
+    busy_mind(tmp_path, monkeypatch, entries)
+    monkeypatch.setenv('MISHE_SEED_SESSION', 'test')
+    watch_wait_scan(tmp_path, [{'window': 'audit', 'pid': 1, 'session': 'other',
+                                'verdict': 'watch-wait', 'pattern': 'gh run watch',
+                                'run_id': '38244689224', 'sampled': 'now'}])
+    output = render(tmp_path)
+    assert 'CLEAR STALL: HELD audit wake=1 yield=2 mind not idle' in output
+    assert 'WATCH-WAIT pattern' not in output
+
+
+def test_missing_watch_wait_reading_keeps_monitor_unknown(tmp_path, monkeypatch):
+    # The live pin predates the sense: a scan without the reading leaves the
+    # WATCH-WAIT monitor UNKNOWN, never a clean bill, while HELD still holds.
+    entries = [entry(1, 'seed', 'seed wake audit observation=1'),
+               entry(2, 'seed', 'seed yield audit wake=1')]
+    busy_mind(tmp_path, monkeypatch, entries)
+    wedge_scan(tmp_path, [])
+    output = render(tmp_path)
+    assert 'WATCH-WAIT: UNKNOWN — watch-wait reading missing or ambiguous' in output
+    assert 'CLEAR STALL: HELD audit wake=1 yield=2' in output
+    assert 'WATCH-WAIT pattern' not in output
