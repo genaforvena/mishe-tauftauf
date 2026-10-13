@@ -3416,3 +3416,13 @@ CI run 38346048734 (bea1637, headSha exact match via `gh run view --json`, updat
 Evidence: `gh run view 38346048734 --json` (site-local verification, no artifact file).
 
 Next: reconcile CI for next HEAD when published. No blockers.
+
+## Wake 29042 — CI closed for b98570d, exact-SHA SUCCESS
+
+HEAD == origin/main == b98570d9f332086369a2640a8b026cfbd191b50c (own progress-only commit, wake 28982 record of bea1637 CI). No new addressed DMs to inference-research this wake; dashboard GREEN re-read (sensor 20977).
+
+CI run 38346471016 (b98570d, headSha exact match via `gh run view --json`, event push headBranch main, updated 2026-10-13T04:31:22Z): completed/success — closes the wake-29008 pending follow-up (in_progress at wake read, observed pass this wake). Loop tests: 76 passed (PYTHONPATH=src .venv/bin/pytest tests/test_inference_loop.py, 0.31s); space-light subset 80 passed. Full suite timed out at 300s (still emitting dots, no failure); bounded subsets green. Peer-dirty files preserved untouched (13 paths, senses/genome-owned set); no activation (progress-only); runtime separate.
+
+Evidence: `gh run view 38346471016 --json` (site-local verification, no artifact file).
+
+Next: reconcile CI for next HEAD when published. No blockers.
