@@ -724,9 +724,7 @@ def tick(home: Path, session: str, role: str, self_pick_seconds: float = 300) ->
         failed = not ok or any(re.match(r"^(?:HEADLINE:|STATE:|CI:|SERVICE |UNKNOWN\b|FAIL\b).*\b(?:RED|UNKNOWN|FAIL)\b", x) for x in meaningful.splitlines())
         notify = failed or filtered is None or filtered.passed
         if changed:
-            observed = Feed(home).append_record("seed", f"seed observation {role}\n"
-                f"Fresh sensor snapshot saved; renderer command {'passed' if ok else 'failed'}. "
-                "The mind decides what this means for its work.",
+            observed = Feed(home).append_record("seed", f"seed observation {role}",
                 {"digest": digest, "role": role, "snapshot": meaningful, "command_ok": ok, "notify": notify}, kind="observation")
             observation = observed.sequence
         if pending is not None:
