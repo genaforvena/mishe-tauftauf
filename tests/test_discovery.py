@@ -6173,3 +6173,94 @@ def test_loop_stall_unknown_when_treadmill_unreadable(monkeypatch, tmp_path):
     home.mkdir()
     result = discovery._mind_loop_stall(home)
     assert result["state"] == "unknown"
+
+
+def _keeper_display(pid):
+    class Display:
+        returncode = 0
+        stdout = f"{pid}\n".encode()
+    return Display
+
+
+def test_server_keeper_verified_when_session_owns_server(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: _keeper_display(4242))
+    monkeypatch.setattr(discovery.proc_table, "read_cgroup_unit",
+                        lambda pid: "mishe-self-development-current-session-9f3a.service")
+    result = discovery._host_server_keeper(_stability_home(tmp_path))
+    assert result["id"] == "sense.host.server-keeper"
+    assert result["state"] == "verified"
+    assert result["keeper"] == "mishe-self-development-current-session-9f3a.service"
+
+
+def test_server_keeper_verified_string_scope_raise(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: _keeper_display(7))
+    monkeypatch.setattr(discovery.proc_table, "read_cgroup_unit",
+                        lambda pid: "mishe-self-development-current-session.scope")
+    result = discovery._host_server_keeper(_stability_home(tmp_path))
+    assert result["state"] == "verified"
+
+
+def test_server_keeper_drift_when_finished_test_holds_server(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: _keeper_display(2053654))
+    monkeypatch.setattr(discovery.proc_table, "read_cgroup_unit",
+                        lambda pid: "mishe-tauftauf-test-2052154-2e8e4ec20b-session-69098cb50e994a759167cd47c622babc.service")
+    result = discovery._host_server_keeper(_stability_home(tmp_path))
+    assert result["state"] == "drift"
+    assert result["server_pid"] == "2053654"
+    assert "foreign-keeper=mishe-tauftauf-test-2052154" in result["sample"]
+
+
+def test_server_keeper_drift_when_foreign_scope_holds_server(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: _keeper_display(8123))
+    monkeypatch.setattr(discovery.proc_table, "read_cgroup_unit",
+                        lambda pid: "android-body-session.scope")
+    result = discovery._host_server_keeper(_stability_home(tmp_path))
+    assert result["state"] == "drift"
+    assert result["keeper"] == "android-body-session.scope"
+
+
+def test_server_keeper_unknown_when_session_not_attributable(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    class Missing:
+        returncode = 1
+        stdout = b""
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: Missing())
+    result = discovery._host_server_keeper(_stability_home(tmp_path))
+    assert result["state"] == "unknown"
+
+
+def test_server_keeper_unknown_when_pid_unreadable(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    class Junk:
+        returncode = 0
+        stdout = b"not-a-pid\n"
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: Junk())
+    result = discovery._host_server_keeper(_stability_home(tmp_path))
+    assert result["state"] == "unknown"
+
+
+def test_server_keeper_unknown_when_cgroup_unreadable(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: _keeper_display(31))
+    monkeypatch.setattr(discovery.proc_table, "read_cgroup_unit", lambda pid: "")
+    result = discovery._host_server_keeper(_stability_home(tmp_path))
+    assert result["state"] == "unknown"
+
+
+def test_server_keeper_unknown_when_session_receipt_missing(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    monkeypatch.delenv("MISHE_SEED_SESSION", raising=False)
+    result = discovery._host_server_keeper(tmp_path / "empty")
+    assert result["state"] == "unknown"

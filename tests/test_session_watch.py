@@ -92,7 +92,9 @@ def test_watchdog_heartbeat_precedes_slow_route(tmp_path,monkeypatch):
         assert events[-1].startswith("WATCHDOG=1")
         events.append("route")
     monkeypatch.setattr(watch,"route",route)
-    monkeypatch.setattr(watch.time,"sleep",lambda _:(_ for _ in ()).throw(StopIteration()))
+    def _stop(_):
+        raise StopIteration()
+    monkeypatch.setattr(watch.time,"sleep",_stop)
     with pytest.raises(StopIteration):
         watch.run(tmp_path,"fixture")
     assert events[0]=="READY=1"
