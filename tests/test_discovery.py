@@ -1987,7 +1987,8 @@ def test_dm_disposition_age_replied_outcome_and_open(tmp_path):
     assert result["oldest_open"] == "alice:5h25m"
     assert result["sample"] == ("dms=4 reply_edge=1 seq_credit=0 credit_only=0 "
                                 "wall_only=1 dispositioned=2 open=2 stall=2 "
-                                "p50=18m p90=28m oldest_open=alice:5h25m")
+                                "p50=18m p90=28m broadcast_excluded=0 "
+                                "oldest_open=alice:5h25m")
 
 
 def test_dm_disposition_age_reply_to_third_party_does_not_disposition(tmp_path):
@@ -2044,7 +2045,8 @@ def test_dm_disposition_age_empty_window(tmp_path):
     assert result["dispositioned"] == 0
     assert result["open"] == 0
     assert result["sample"] == ("dms=0 reply_edge=0 seq_credit=0 credit_only=0 "
-                                "wall_only=0 dispositioned=0 open=0 stall=0")
+                                "wall_only=0 dispositioned=0 open=0 stall=0 "
+                                "broadcast_excluded=0")
 
 def test_dm_disposition_age_uses_earliest_outcome(tmp_path):
     home = tmp_path / "site"
@@ -2113,6 +2115,26 @@ def test_dm_disposition_age_stall_gate_excludes_young_open(tmp_path):
     # The 17:45 DM is 15m old: right-censored, open but not a stall.
     assert result["stall"] == 1
     assert result["oldest_open"] == "dave:1h00m"
+
+def test_dm_disposition_age_excludes_broadcast_pseudo_targets(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "records").mkdir(parents=True, exist_ok=True)
+    entries = [
+        (1, "2026-10-06T12:00:00Z", "body-research", "[dm] to=chat\n# routine note\n"),
+        (2, "2026-10-06T12:30:00Z", "body-research", "[dm] to=all\n# broadcast\n"),
+        (3, "2026-10-06T13:00:00Z", "alice", "[dm] to=bob\n# hi bob\n"),
+    ]
+    (home / "chat.log").write_bytes(
+        b"".join(_tape_entry(seq, ts, src, body) for seq, ts, src, body in entries))
+    result = discovery._coord_dm_disposition_age(home, now=_dm_now())
+    assert result["state"] == "verified"
+    # Only the alice->bob DM is counted; chat and all are excluded.
+    assert result["dms"] == 1
+    assert result["open"] == 1
+    assert result["stall"] == 1
+    assert result["broadcast_excluded"] == 2
+    assert result["oldest_open"] == "bob:5h00m"
 
 
 def _settle_tape(home: Path, settlements: list[tuple[str, str, str]]) -> None:
@@ -5295,6 +5317,58 @@ def test_drift_across_sites_keeps_an_unreadable_unit_unattributed(
     assert row["state"] == "unknown"
     assert row["identity"]["unattributed"] == [unit]
     assert row["identity"]["host_scope"] == []
+
+def test_drift_across_sites_maps_same_site_service_to_scanning_site(
+        tmp_path: Path) -> None:
+    # A same-site service (e.g. mishe-ifm-shim.service) starts with
+    # SITE_UNIT_PREFIX but doesn't match any session prefix. It should be
+    # mapped to the scanning site's session and compared against its pin,
+    # not classified as foreign.
+    own_sha: list[str] = []
+    own_pin = tmp_path / "releases" / "own"
+    _release_tree(own_pin, own_sha)
+    home = tmp_path / "plant"
+    _pin(home, own_pin, own_sha[0], "mishe-self")
+    _linked_registry(home, [{"home": str(tmp_path / "other"),
+                             "session": "mishe-other", "sha": own_sha[0]}])
+    unit = "mishe-ifm-shim.service"
+    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
+            patch.object(discovery, "_unit_import_roots",
+                         return_value={unit: str(own_pin)}), \
+            patch.object(discovery, "_foreign_checkout_consumers", return_value={}), \
+            patch.object(discovery, "_unit_declared_paths",
+                         return_value=[str(home / ".mishe-tauftauf" / "bin" / "ifm-shim")]), \
+            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
+        row = discovery._runtime_drift_across_sites(home)
+    assert row["state"] == "verified"
+    assert row["identity"]["foreign"] == {}
+    assert row["identity"]["stale"] == {}
+    assert row["identity"]["unattributed"] == []
+
+
+def test_drift_across_sites_mapped_unit_no_import_root_no_site_path_is_host_scope(
+        tmp_path: Path) -> None:
+    # A mapped unit with no import root that doesn't declare any site path
+    # is a host tool beside the sites, not an uninspectable gap.
+    own_sha: list[str] = []
+    own_pin = tmp_path / "releases" / "own"
+    _release_tree(own_pin, own_sha)
+    home = tmp_path / "plant"
+    _pin(home, own_pin, own_sha[0], "mishe-self")
+    _linked_registry(home, [{"home": str(tmp_path / "other"),
+                             "session": "mishe-other", "sha": own_sha[0]}])
+    unit = "mishe-self-host-tool.service"
+    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
+            patch.object(discovery, "_unit_import_roots", return_value={}), \
+            patch.object(discovery, "_foreign_checkout_consumers", return_value={}), \
+            patch.object(discovery, "_unit_declared_paths",
+                         return_value=["/usr/bin/python3", "/home/host/tool"]), \
+            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
+        row = discovery._runtime_drift_across_sites(home)
+    assert row["state"] == "verified"
+    assert f"host-scope={unit}" in row["sample"]
+    assert row["identity"]["host_scope"] == [unit]
+    assert row["identity"]["uninspectable"] == []
 
 
 def test_unit_declared_paths_reads_the_effective_unit_text() -> None:
