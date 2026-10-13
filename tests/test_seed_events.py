@@ -9,7 +9,7 @@ from mishe_tauftauf.seed_board import open_tasks
 
 def test_redact_display_age_keeps_meaning_and_unknown_ages():
     held = "UNKNOWN sense.space.light: Note3 light UNKNOWN: light-not-current-or-delayed last-phone=2026-10-11T00:47:31+00:00 age=19m17s; source_state=unknown"
-    assert redact_display_age(held) == held.replace("age=19m17s", "age=<age>")
+    assert redact_display_age(held) == held.replace("age=19m17s", "age=<age>").replace("last-phone=2026-10-11T00:47:31+00:00", "last-phone=<phone>")
     # A growing number is redacted the same way whether seconds or minutes.
     assert redact_display_age(held.replace("age=19m17s", "age=5s")) == redact_display_age(held)
     # A non-numeric age is distinct and preserved.
@@ -19,7 +19,8 @@ def test_redact_display_age_keeps_meaning_and_unknown_ages():
     # Every other token on the line is preserved, including the class wording.
     redacted = redact_display_age(held)
     assert "light-not-current-or-delayed" in redacted
-    assert "last-phone=2026-10-11T00:47:31+00:00" in redacted
+    assert "last-phone=<phone>" in redacted
+    assert "last-phone=2026-10-11T00:47:31+00:00" not in redacted
     assert "19m17s" not in redacted
 
 
@@ -105,8 +106,8 @@ def test_a_real_meaning_change_still_refires_the_observation_digest():
     # different state and must reach the digest.
     null_gap = held.replace("light-not-current-or-delayed", "light-null-gap")
     assert _observation_text("senses", held) != _observation_text("senses", null_gap)
-    # Recovery: a fresh last-phone stamp is meaning too.
-    resumed = held.replace("2026-10-11T00:47:31+00:00", "2026-10-11T01:20:05+00:00")
+    # Recovery: a fresh source_state is meaning too.
+    resumed = held.replace("source_state=unknown", "source_state=verified")
     assert _observation_text("senses", held) != _observation_text("senses", resumed)
     assert _observation_text("senses", held) != _observation_text(
         "senses", held.replace("STATE: UNKNOWN", "STATE: GREEN"))

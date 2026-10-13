@@ -81,6 +81,18 @@ Failed or incomplete native proposals remain history, not effect authority.
 Native call IDs and opaque assistant fields are retained unchanged; absent
 wire usage is UNKNOWN even when the provider synthesizes zero counters.
 
+Wire observation lives in `native/wire-usage.ts`, a provider-free module with
+its own `bun test` seam. It classifies both shapes a native turn can meet:
+Responses-API frames (`response.created` opening, `response.completed|done|
+incomplete|failed|error` terminal) and openai-completions chunks (top-level
+`id`, `finish_reason`, and the trailing usage-only chunk that follows
+`finish_reason` because `stream_options.include_usage` is on). A `[DONE]`
+sentinel closes a stream that never sent `finish_reason`. A payload is reset at
+each native payload opening. A failed payload, a malformed frame, or an
+unrecognised frame type reports neither usage nor a terminal, so an unread
+frame stays UNKNOWN instead of becoming a synthesized completion; usage is
+reported only when the terminal id correlates with the assistant response id.
+
 Provider authentication/configuration, durable operation identity and recovery,
 and resident activation are separate integrations. This boundary does not
 establish configured-model parity, safe replay, or live internal-loop delivery.
@@ -231,12 +243,22 @@ credential/account parity.
 
 The packaged native provider session permits at most one underlying `fetch`
 dispatch per turn, including lower-level HTTP retries and encoding fallback.
+The bound is the named constant `NATIVE_TURN_FETCH_BUDGET` in
+`native-session.ts`; raising it grants automatic retry authority inside a turn
+and is a contract change, not a tuning knob.
 An attempted second dispatch poisons the session and raises
 `native provider fetch budget exhausted`; provider cancellation normalization
 cannot replace that diagnostic. An ordinary error terminal remains an error,
 and a later caller-authorized turn has its own one-fetch allowance. This is not
 automatic retry authority, an output-token cap, a spend guarantee or proof that
-the server processed only one request. `drive_native` persists a `model_failure`
+the server processed only one request.
+The transport retries transient 408/429/5xx itself
+(`DEFAULT_MAX_ATTEMPTS`, six requests per dispatch), so on a route that answers
+one such transient with a second POST the diagnostic names the budget rather
+than the upstream status; the completions route to `opencode-go` was measured
+returning such a 429 (wake 33779). That is a known zero-tolerance interaction
+on this route, not a silent retry: the budget stays at one until the authority
+question is answered. `drive_native` persists a `model_failure`
 with the original `WorkerError` type and diagnostic before propagating the
 exception. Budget exhaustion, cancellation and time limits retain their distinct
 transport diagnostics; none supplies a model completion or authorizes replay.
