@@ -984,3 +984,81 @@ def test_read_pane_prompt_rejects_oversized_burst():
     with _Burst("x" * 64) as stream:
         with pytest.raises(ValueError):
             read_pane_prompt(stream, idle=0.05, limit=16)
+
+
+def test_wire_usage_none_means_unknown_not_zero(tmp_path):
+    events = []
+    result, _, _ = drive(Session(turn()), record=events.append,
+                         complete=lambda context: True)
+    assert result["status"] == "complete"
+    assert result["wire_usage"] == [None]
+    outputs = [row for row in events if row["kind"] == "model_output"]
+    assert len(outputs) == 1
+    # asdict serializes missing usage as explicit None: UNKNOWN, never 0.
+    assert outputs[0]["response"]["wire_usage"] is None
+
+
+def test_wire_usage_survives_journal_round_trip_and_continuation(tmp_path):
+    from mishe_tauftauf.inference_transport import NativeTurn
+    usage = {"input": 16, "output": 169, "total": 185}
+    response = turn([CALL])
+    native = NativeTurn(response.terminal, response.assistant, dict(usage), None,
+                        {"sessionId": "usage-session", "boundaryDigest": "usage-boundary"})
+    path = tmp_path / "usage.jsonl"
+    with NativeJournal(path) as journal:
+        def record(event):
+            journal(event)
+            if event["kind"] == "tool_result":
+                raise InterruptedError
+        with pytest.raises(InterruptedError):
+            drive(Session(native), record=record)
+    state = read_native_journal(path)
+    assert state["wire_usage"] == [usage]
+    continued_turn = turn()
+    continued_turn = type(continued_turn)(continued_turn.terminal,
+                                          continued_turn.assistant, dict(usage))
+    second = tmp_path / "usage-continued.jsonl"
+    with NativeJournal(second) as journal:
+        result, _ = continue_journal(path, Session(continued_turn), journal)
+    assert result["status"] == "complete"
+    assert result["wire_usage"] == [usage, usage]
+    # The continuation journal replays the checkpoint prefix, so a resume of
+    # this file (chained continuation) keeps per-turn alignment end to end.
+    assert read_native_journal(second)["wire_usage"] == [usage, usage]
+
+
+def test_wire_usage_chained_continuation_keeps_alignment(tmp_path):
+    from mishe_tauftauf.inference_transport import NativeTurn
+    usage = {"input": 16, "output": 169, "total": 185}
+    first = tmp_path / "chain-first.jsonl"
+    with NativeJournal(first) as journal:
+        def record(event):
+            journal(event)
+            if event["kind"] == "tool_result":
+                raise InterruptedError
+        response = turn([CALL])
+        native = NativeTurn(response.terminal, response.assistant, dict(usage),
+                            None, {"sessionId": "chain", "boundaryDigest": "chain"})
+        with pytest.raises(InterruptedError):
+            drive(Session(native), record=record)
+    second = tmp_path / "chain-second.jsonl"
+    with NativeJournal(second) as journal:
+        def record_second(event):
+            journal(event)
+            if event["kind"] == "tool_result":
+                raise InterruptedError
+        call_b = {**CALL, "id": "chain-b"}
+        continued = turn([call_b])
+        continued = type(continued)(continued.terminal, continued.assistant,
+                                    dict(usage))
+        with pytest.raises(InterruptedError):
+            continue_journal(first, Session(continued), record_second)
+    third = tmp_path / "chain-third.jsonl"
+    with NativeJournal(third) as journal:
+        result, _ = continue_journal(second, Session(turn()), journal,
+                                     complete=lambda context: True)
+    assert result["status"] == "complete"
+    assert result["turns"] == 3
+    # Third turn is a synthetic no-usage turn: None stays UNKNOWN, never 0.
+    assert result["wire_usage"] == [usage, usage, None]
+    assert read_native_journal(third)["wire_usage"] == [usage, usage, None]
