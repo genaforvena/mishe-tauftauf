@@ -3431,6 +3431,11 @@ DM_DISPOSITION_MATURITY_SECONDS = 30 * 60
 """A DM younger than this is right-censored: it has not had the full window to
 be dispositioned, so it is excluded from the stall estimate."""
 WALL_OUTCOME_RE = re.compile(r"^Wall outcome \S+ by ([A-Za-z0-9_.-]+)")
+PSEUDO_TARGETS = frozenset({"chat", "all"})
+"""Broadcast targets that can never reply or record a wall outcome. DMs to
+these targets are excluded from disposition stall/open counts: they are
+one-way notes, not resolver routings, and no reply edge or wall-outcome
+credit can ever disposition them."""
 SETTLE_RESULT_WINDOW = 100
 """Trailing settlements one result-mix sample covers."""
 SETTLE_INCIDENT_GAP_SECONDS = 60 * 60
@@ -3453,6 +3458,11 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
     stall. The window is the last 6 hours. State is ``verified`` when the
     tape and outcome store are readable; ``unknown`` when either is missing
     or unreadable, so a source change cannot pass as a clean bill.
+
+    Broadcast pseudo-targets (``chat``, ``all``) are excluded from all counts:
+    they can never reply or record a wall outcome, so their DMs would
+    permanently inflate stall/open without naming a real resolver wait.
+    The excluded count is reported as ``broadcast_excluded`` for visibility.
     """
     if now is None:
         now = datetime.now(timezone.utc)
@@ -3485,7 +3495,9 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
         return {"id": "sense.coord.dm-disposition-age", "state": "unknown",
                 "sample": "outcome store unavailable", "kind": "read"}
     window_start = now - timedelta(seconds=DM_DISPOSITION_WINDOW_SECONDS)
-    dms = [dm for dm in all_dms if dm[0] >= window_start]
+    dms = [dm for dm in all_dms if dm[0] >= window_start and dm[2] not in PSEUDO_TARGETS]
+    broadcast_excluded = sum(1 for dm in all_dms
+                             if dm[0] >= window_start and dm[2] in PSEUDO_TARGETS)
     pair_dms: dict[tuple[str, str], list[datetime]] = {}
     for ts, source, target, _seq in all_dms:
         pair_dms.setdefault((source, target), []).append(ts)
@@ -3493,11 +3505,12 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
         times.sort()
     if not dms:
         return {"id": "sense.coord.dm-disposition-age", "state": "verified",
-                "sample": ("dms=0 reply_edge=0 seq_credit=0 credit_only=0 "
-                           "wall_only=0 dispositioned=0 open=0 stall=0"),
+                "sample": (f"dms=0 reply_edge=0 seq_credit=0 credit_only=0 "
+                           f"wall_only=0 dispositioned=0 open=0 stall=0 "
+                           f"broadcast_excluded={broadcast_excluded}"),
                 "kind": "read", "dms": 0, "reply_edge": 0, "seq_credit": 0,
                 "credit_only": 0, "wall_only": 0, "dispositioned": 0, "open": 0,
-                "stall": 0}
+                "stall": 0, "broadcast_excluded": broadcast_excluded}
     outcomes: list[tuple[datetime, str]] = []
     for sha, ots in ref_time.items():
         path = records_dir / f"{sha}.json"
@@ -3588,7 +3601,8 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
     sample = (f"dms={len(dms)} reply_edge={reply_n} seq_credit={seq_n} "
               f"credit_only={credit_only_n} wall_only={wall_only_n} "
               f"dispositioned={dispositioned} open={open_count} stall={stall_n} "
-              f"p50={p50:.0f}m p90={p90:.0f}m")
+              f"p50={p50:.0f}m p90={p90:.0f}m "
+              f"broadcast_excluded={broadcast_excluded}")
     if oldest:
         sample += f" oldest_open={oldest}"
     return {"id": "sense.coord.dm-disposition-age", "state": "verified",
@@ -3597,7 +3611,7 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
             "credit_only": credit_only_n, "wall_only": wall_only_n,
             "dispositioned": dispositioned, "open": open_count, "stall": stall_n,
             "p50_minutes": round(p50), "p90_minutes": round(p90),
-            "oldest_open": oldest}
+            "oldest_open": oldest, "broadcast_excluded": broadcast_excluded}
 
 
 def _seed_settle_result_mix(home: Path) -> dict[str, object]:
@@ -3843,12 +3857,18 @@ def _space_age(seconds: float) -> str:
 
 
 def _space_light_age(light: dict, now: float) -> str | None:
-    """Name the last validated phone sample and its age so an UNKNOWN reading
-    still says how stale the feed is, not only that it is not current."""
-    phone = light.get("phone_sample_epoch_s")
-    if not _space_number(phone) or phone < 0 or phone > now:
+    """Name the last validated sample and its host-receipt age so an UNKNOWN
+    reading still says how stale the feed is, not only that it is not current.
+
+    The phone clock runs ~25-29s behind the host (measured DM 34981), so age
+    is computed against ``consumer_receipt_epoch_s`` — the host-side arrival
+    stamp — not ``phone_sample_epoch_s``. The phone stamp is behind by design
+    and would report false staleness on a healthy feed.
+    """
+    receipt = light.get("consumer_receipt_epoch_s")
+    if not _space_number(receipt) or receipt < 0 or receipt > now:
         return None
-    return f"last-phone={_space_stamp(phone)} age={_space_age(now - phone)}"
+    return f"last-receipt={_space_stamp(receipt)} age={_space_age(now - receipt)}"
 
 
 def _space_endpoint(item: dict, validity: float) -> tuple[float, float]:
@@ -3861,12 +3881,27 @@ def _space_endpoint(item: dict, validity: float) -> tuple[float, float]:
     return phone, receipt
 
 
+def _space_clock_bound(light: object) -> str | None:
+    """The publisher's own clock-skew bound, carried as opaque text.
+
+    The boundary recomputes it each render from retained acquisition spans
+    (received-collected = latency + host_wall - phone_wall; latency >= 0 so
+    the minimum span bounds the behind-skew). The reader never parses it:
+    a bound that will not read as text is absence, not a verified zero.
+    """
+    from .space_text import nonblank
+
+    if not isinstance(light, dict):
+        return None
+    return nonblank(light.get("status_reason"))
+
 def _space_light(data: object, now: float) -> dict:
     """Validate original evidence; publication and polling never renew a sample."""
     row = {"id": "sense.space.light", "kind": "read", "state": "unknown",
            "reason": "malformed-boundary", "sample": "Note3 light UNKNOWN: malformed-boundary",
            "current_lux": None, "event_id": None, "historical_transition": None,
-           "clock_uncertainty": "phone/host clock agreement unverified"}
+           "clock_uncertainty": "phone/host clock agreement unverified",
+           "clock_bound": None}
 
     def unknown(reason: str, detail: str | None = None) -> dict:
         row.update(state="unknown", reason=reason, current_lux=None, event_id=None,
@@ -3918,7 +3953,11 @@ def _space_light(data: object, now: float) -> dict:
         if not _space_number(collection_age) or not 0 <= collection_age <= validity * 1000:
             return unknown("invalid-or-stale-collection-age")
         generated, poll = _space_utc(data["generated_at_utc"]), _space_utc(node["last_poll_utc"])
-        times = (phone, receipt, generated, poll)
+        # Phone clock runs ~25-29s behind host by design (DM 34981), so
+        # phone_sample_epoch_s is excluded from staleness: it would report
+        # false staleness on a healthy feed. Receipt is the host-side arrival
+        # stamp and is the correct validity referent.
+        times = (receipt, generated, poll)
         if any(value > now for value in times):
             return unknown("clock-future")
         if any(now - value > validity for value in times):
@@ -3926,6 +3965,7 @@ def _space_light(data: object, now: float) -> dict:
         row.update(state="verified", reason="fresh-clock-conditional",
                    current_lux=light["lux"], sequence=light["sequence"],
                    expires_epoch_s=min(times) + validity,
+                   clock_bound=_space_clock_bound(light),
                    sample=(f"Note3 {light['lux']:g}lux #{light['sequence']} fresh-clock-conditional; "
                            f"phone={_space_stamp(phone)} receipt={_space_stamp(receipt)}; "
                            f"validity={validity:g}s provenance={node['source']} session={node['session']}"))
