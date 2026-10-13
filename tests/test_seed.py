@@ -20,26 +20,15 @@ def seeded_home(tmp_path: Path, name: str = "site") -> Path:
 
 
 def test_new_session_raises_the_server_in_its_own_unit(monkeypatch) -> None:
-    # A seed supervisor's cgroup would otherwise own the tmux server, so an
-    # activation restarting the seed set cgroup-kills the session and every turn.
-    # The raise must also RETURN and OUTLIVE itself: `--scope` blocks until its
-    # command exits and stops the unit then, and `tmux new-session -d` exits at
-    # once — the 2026-10-13 10:39Z teardown loop. A transient service led by a
-    # long-lived `sleep` returns at start and stays active.
-    from mishe_tauftauf import seed
-
+    from mishe_tauftauf import seed, session_runner
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
-    runs = []
+    monkeypatch.delenv("MISHE_SESSION_RUNNER", raising=False)
     monkeypatch.setattr(seed.shutil, "which", lambda name: "/usr/bin/systemd-run")
-    monkeypatch.setattr(seed.subprocess, "run", lambda argv, **kwargs: runs.append(argv))
+    calls = []
+    monkeypatch.setattr(session_runner, "raise_session", lambda *a, **kw: calls.append((a, kw)))
     seed._new_session("mishe-core", "genome", "/workspace")
-    assert runs and runs[0][:4] == ["/usr/bin/systemd-run", "--user", "--collect", "--unit"]
-    assert runs[0][4] == "mishe-core-session.service"
-    assert runs[0][5:7] == ["--description", "Mishe resident session mishe-core"]
-    assert runs[0][7:9] == ["sh", "-c"]
-    assert runs[0][9] == ("tmux new-session -d -s mishe-core -n genome -c /workspace sh; "
-                          "exec sleep infinity")
-    assert "--scope" not in runs[0]
+    assert calls == [(("mishe-core", "genome", "/workspace", Path("/run/user/1000/mishe-session-raises")),
+                      {"systemd_runner": "/usr/bin/systemd-run"})]
 
 
 def test_new_session_falls_back_to_plain_tmux_without_systemd(monkeypatch) -> None:
@@ -83,6 +72,7 @@ def test_new_session_attaches_when_a_peer_won_the_raise(monkeypatch) -> None:
     # Concurrent supervisors race one fixed scope unit name, so every loser fails
     # with "unit was already loaded". A peer's session exists: attach, don't exit.
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    monkeypatch.setenv("MISHE_SESSION_RUNNER", "/custom/session-runner")
     monkeypatch.setattr(seed.shutil, "which", lambda name: "/usr/bin/systemd-run")
 
     def losing_run(argv, **kwargs):
@@ -101,6 +91,7 @@ def test_new_session_reraises_when_no_peer_session_appears(monkeypatch) -> None:
 
     # A raise that is not a lost race must stay fatal instead of being swallowed.
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    monkeypatch.setenv("MISHE_SESSION_RUNNER", "/custom/session-runner")
     monkeypatch.setattr(seed.shutil, "which", lambda name: "/usr/bin/systemd-run")
 
     def failing_run(argv, **kwargs):

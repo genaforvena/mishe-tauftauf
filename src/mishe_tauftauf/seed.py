@@ -603,49 +603,37 @@ def _await_session(session: str, timeout: float = 15.0) -> bool:
 
 
 def _new_session(session: str, first_window: str, workspace: str) -> None:
-    """Create the tmux server outside any seed service cgroup.
-
-    A seed supervisor creates the server, so it inherits that unit's cgroup; a
-    later activation restarting the seed set cgroup-kills the server and every
-    mind turn with it. Raising the server in its own transient user scope puts
-    it beside the seed services instead of inside one, so a restart of any seed
-    unit leaves the session alive. systemd is optional: where it is missing the
-    plain tmux call still works, and the cgroup hazard does not arise there.
-    """
+    """Raise outside seed cgroups and wait for the actual session, not a unit."""
+    from .tmux import TmuxError
     argv = ["new-session", "-d", "-s", session, "-n", first_window, "-c", workspace, "sh"]
     runner = os.environ.get("MISHE_SESSION_RUNNER")
     if runner is None:
         runner = shutil.which("systemd-run") or ""
     if runner and os.environ.get("XDG_RUNTIME_DIR"):
-        # The raise must both RETURN and OUTLIVE itself. `--scope` blocks the
-        # caller until its command exits and stops the unit when that command
-        # exits: `tmux new-session -d` forks the server and its client exits at
-        # once, so a scope-led raise returned immediately and then had its
-        # cgroup stopped — killing the very server the scope was raised to
-        # protect, which the next supervisor re-raised. That self-sustaining
-        # teardown loop took both sessions of a shared tmux server down every
-        # ~40 s (2026-10-13 10:39-10:42Z, mishe-self-development-current and
-        # android-body in lockstep). A transient SERVICE returns as soon as the
-        # unit starts and stays active while its leader lives, so lead it with a
-        # long-lived `sleep` and the server's cgroup survives until an operator
-        # stops the unit.
-        leader = f"tmux {shlex.join(argv)}; exec sleep infinity"
-        raised = [runner, "--user", "--collect",
-                  "--unit", f"{session}-session.service",
-                  "--description", f"Mishe resident session {session}",
-                  "sh", "-c", leader]
-        try:
-            subprocess.run(raised, check=True)
-        except subprocess.CalledProcessError:
-            # Every supervisor for this session races the same fixed unit name,
-            # so a peer that wins makes the others fail here with "unit was
-            # already loaded". Attach to the peer's session instead of exiting,
-            # which would crash-loop the supervisor and turn a server restart
-            # into a plant-wide RED.
+        if Path(runner).name == "systemd-run":
+            from .session_runner import raise_session
+            try:
+                raise_session(session, first_window, workspace,
+                              Path(os.environ["XDG_RUNTIME_DIR"]) / "mishe-session-raises",
+                              systemd_runner=runner)
+            except RuntimeError as exc:
+                raise TmuxError(str(exc)) from exc
+        else:
+            # Keep the literal legacy argv for installed adapters. No shell
+            # command string needs to be interpreted by the receiving boundary.
+            raised = [runner, "--user", "--scope", "--collect", "--unit",
+                      f"{session}-session.scope", "--description",
+                      f"Mishe resident session {session}", "tmux", *argv]
+            try:
+                subprocess.run(raised, check=True)
+            except subprocess.CalledProcessError:
+                if not _await_session(session):
+                    raise
             if not _await_session(session):
-                raise
+                raise TmuxError(f"UNKNOWN session {session!r} unavailable after startup deadline")
         return
     _tmux(*argv)
+
 
 def start(home: Path, session: str, slug: str, interval: float) -> str:
     from .tmux import TmuxError
