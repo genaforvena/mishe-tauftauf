@@ -1,3 +1,21 @@
+## Current disposition — wake 33421: GREEN; a22e25b exact-SHA CI success; HEAD == origin/main == a22e25b
++
+Exact-SHA CI run 38375665350 (a22e25b, my wake-33117 record commit,
+docs-only progress.md): completed/success — verified this wake via direct
+`gh run view --json` (status=completed, conclusion=success, headSha exact
+match a22e25b415b66ef02ba69527fcf2c6894498f8e2, event push headBranch main,
+updated 2026-10-13T09:25:38Z); agrees with ci tape 33236 + health 33256/33422.
+Owned loop tests at HEAD tree: 76/76 pass (tests/test_inference_loop.py,
+PYTHONPATH=src, 0.37s). Corrected empty-diff b856794..HEAD on native/loop real
+paths EMPTY (verified this wake). Canary leg (c) MATCH (minds/docs == .bak ==
+8f6aac12). Peer dirty set (13 modified, all peer-owned src/tests paths)
+preserved untouched; no activation, no staging of peer paths. Canary HOLD rests
+on witness cutoff 2026-10-13T12:00Z only (~2.2h out); GO/HOLD verdict mine.
++
+Evidence: direct `gh run view 38375665350 --json` + `git diff` + sha256sum + pytest this wake.
++
+Next: canary GO/HOLD verdict at/after 2026-10-13T12:00Z. No blockers.
+
 ## Current disposition — wake 33117: GREEN; 7d5a1ba exact-SHA CI success; HEAD == origin/main == 7d5a1ba
 +
 Exact-SHA CI run 38352907051 (7d5a1ba, my wake-30011 record commit,
