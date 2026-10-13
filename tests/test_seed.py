@@ -534,6 +534,54 @@ def test_generic_top_pain_ci_line_survives_shell_quoting(tmp_path: Path) -> None
     assert "SyntaxError" not in command.stderr
     assert "invalid syntax" not in command.stderr
 
+def test_seed_start_rebuilds_declared_windows_after_session_loss(tmp_path: Path, monkeypatch) -> None:
+    import shutil
+    from mishe_tauftauf import seed
+    from mishe_tauftauf.tmux import _tmux
+
+    if not shutil.which("tmux"):
+        pytest.skip("tmux unavailable")
+    home = seeded_home(tmp_path)
+    seed.init(home, "genome", "sleep 60")
+    ledger = home / "top-pains" / "ledger"
+    ledger.write_text("#!/bin/sh\nprintf 'DESIRED STATE: ledger online\\n'\n", encoding="utf-8")
+    ledger.chmod(0o755)
+    (home / "health").mkdir(exist_ok=True)
+    (home / "health" / "windows.json").write_text(
+        '["genome", "ledger", "tail"]\n', encoding="utf-8")
+    (home / "chat.log").write_text(
+        "v1 00000000000000000001 2026-10-10T15:51:56.625536Z seed ::\n"
+        "    | before restart\n"
+        "    .\n", encoding="utf-8")
+
+    session = f"mishe-window-contract-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    socket_dir = tmp_path / "tmux"
+    socket_dir.mkdir()
+    monkeypatch.setenv("TMUX_TMPDIR", str(socket_dir))
+    monkeypatch.setenv("MISHE_SESSION_RUNNER", "")
+    try:
+        seed.start(home, session, "genome", 0.2)
+        _tmux("kill-session", "-t", session)
+
+        seed.start(home, session, "genome", 0.2)
+        windows = set(_tmux("list-windows", "-t", session, "-F", "#{window_name}")
+                      .stdout.decode().splitlines())
+        assert {"genome", "ledger", "tail"} <= windows
+
+        deadline = time.monotonic() + 4
+        ledger_output = tail_output = ""
+        while time.monotonic() < deadline:
+            ledger_output = _tmux("capture-pane", "-p", "-t", f"{session}:ledger.0").stdout.decode()
+            tail_output = _tmux("capture-pane", "-p", "-t", f"{session}:tail.0").stdout.decode()
+            if "ledger online" in ledger_output and "before restart" in tail_output:
+                break
+            time.sleep(0.05)
+        assert "ledger online" in ledger_output
+        assert "before restart" in tail_output
+    finally:
+        _tmux("kill-server", check=False)
+
+
 def test_seed_resident_channel_observes_repairs_and_restores(tmp_path: Path) -> None:
     home = seeded_home(tmp_path)
     session = f"mishe-tauftauf-test-{os.getpid()}-{uuid.uuid4().hex[:10]}"
