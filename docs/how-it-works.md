@@ -481,14 +481,24 @@ scan, and a boot or source change invalidates comparisons.
 The plant's Note3 light reading consumes an atomic `SITE/body/space.json`
 boundary written by the phone-side publisher; it never starts a second
 collector. It keeps lux, provenance (source and session) and the original sample
-and receipt times visible. Freshness is conditional on unverified phone/host
-clock agreement and is capped at 30 seconds or the producer's shorter validity;
-polling or rendering cannot extend it, and missing, broken, delayed or expired
+and receipt times visible. Freshness is capped at 30 seconds or the producer's
+shorter validity and is measured on the host side: the read compares the
+consumer receipt, publication and poll stamps, never the phone's event epoch,
+because the phone clock runs 25–29 seconds behind the host by design (DM 34981).
+Polling or rendering cannot extend it, and missing, broken, delayed or expired
 evidence is UNKNOWN. A last sample older than the cap reads UNKNOWN as
 `stale-original-evidence` even when every layer works: measured on this plant
 at 2026-10-11T03:06Z, a verified sample took 23 seconds from phone collection
 to consumer receipt and 26 seconds to the read, against the 30-second cap, so
-the margin is seconds rather than minutes. A published sample without a lux
+the margin is seconds rather than minutes. The same seconds-wide margin once
+produced that class from the clock itself rather than from a stalled producer:
+while the phone epoch sat inside the comparison, a healthy feed read
+`stale-original-evidence` on 29% of polls, worst case 33.45 seconds against
+the cap (the measurement recorded by `dc1b963`, which excluded it). The
+exclusion is source behaviour, and a pane loading an older pin still carries
+the previous rule, so one boundary file can read `verified` from the checkout
+and `unknown stale-original-evidence` from the pin, as measured on
+2026-10-13T13:49Z. A published sample without a lux
 value reads UNKNOWN as its own reason (`light-null-gap`), so a dropout stays
 distinguishable from ordinary aging and from a corrupt boundary. The null is a
 producer-side projection rule, not a phone value, verified read-only at the live
@@ -720,7 +730,12 @@ read is `=unread` with a named problem, which is UNKNOWN rather than a state.
 The camera reading is a fault reading, not a picture: `mesh-cam-watch` keeps a
 class line and the latest artifact, and the health view reads that artifact's
 age, `CAPTURE-FAIL` onsets and kernel URB resubmit failures in a 15-minute
-window. A node declares its camera with `health/camera.json`, so a plant
+window. The health view's text is written to the check's own stdout, which the
+health pane discards because the pane renders the generic wall view, so the
+`CAMERA:` detail line is not on a rendered surface; the reader-visible camera
+evidence is the named cause the same read publishes into the durable report and
+the pane's `SYSTEM ZERO` line. A node declares its camera with
+`health/camera.json`, so a plant
 without a webcam skips the check instead of inheriting its neighbour's faults,
 and an unreadable source on a declared node reads UNKNOWN rather than PASS. On
 this host the reading is a fault reading while the lens still sees a scene: at

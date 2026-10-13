@@ -126,6 +126,39 @@ tail -f "$SITE/chat.log"
 
 Ctrl-c stops `tail`, not the plant. The live panels may summarize only recent entries; the full feed holds the explanation, evidence path, and next owner or action.
 
+### Read the space readings
+
+Three surfaces are owned as read-only readings rather than collections. Take
+one published sample, or acquire a new bounded one:
+
+```bash
+"$SITE/bin/mishe-tauftauf" --home "$SITE" discover show
+"$SITE/bin/mishe-tauftauf" --home "$SITE" discover scan
+```
+
+`discover show` prints the latest published scan, which carries the Note3
+light reading as `sense.space.light` and this host's own Bluetooth and Wi-Fi
+adapter state as `sense.space.host-radio`; `discover scan` takes one new
+sample instead of reading a published one, so acquiring is an action rather
+than an inspection. The camera fault surface is read into the health check
+and reaches a reader as a named cause on the health pane's `SYSTEM ZERO` line,
+not as its own detail line.
+
+The light reading is capped at 30 seconds, or the producer's shorter validity,
+and a missing, unreadable, delayed or expired boundary stays UNKNOWN instead
+of serving a last-known-good lux. The phone's clock runs 25–29 seconds behind
+the host by design, so the checkout's rule compares the host-side receipt,
+publication and poll stamps and never the phone's event epoch (`dc1b963`). A
+pane loading an older pin still carries the previous rule: measured on
+2026-10-13T13:49Z, one boundary file read `verified fresh-clock-conditional`
+from the checkout source and `unknown stale-original-evidence` from pin
+`fcaa2aa`, so a fresh reading can read stale on a deployed pane.
+`sense.runtime.pin-lag` names that gap (`pin=<sha> head=<sha> lag=N age=…`).
+
+A lux value is a sensor reading, not room occupancy or human attendance, and
+the camera surface reports faults, not a scene. The measured history and its
+limits are in [how it works](how-it-works.md).
+
 ### Read the evidence, not just the color
 
 - **GREEN/PASS** means the displayed check passed for its stated scope. It does not certify a whole application, model, or host.
@@ -184,6 +217,15 @@ surface; a declaration that cannot be read, or a source that cannot be read on
 a declared node, reads UNKNOWN rather than PASS, because deleted monitoring
 must stay visible. The class word is informational — a covered lens is not a
 fault.
+That `CAMERA:` line reaches the health check's own stdout, and the health
+pane renders the generic wall view instead of that view, so the line's text
+is written to a discarded stream rather than to a pane: measured at
+2026-10-13T13:53Z on the live health frame, no `CAMERA:` row is rendered. The
+reader-visible camera surface is the named cause the check publishes into its
+durable report and the pane's `SYSTEM ZERO` line —
+`camera-artifact-stale`, `camera-capture-fail=<n>`, `camera-kernel-urb=<n>` —
+so a camera fault still reaches a reader as a RED cause with its own name,
+while the artifact age and counts stay one step deeper than the pane.
 Measured on this host at 06:40Z: `CAMERA: RED class=SEEING
 artifact-age=0s capture-fails=3/900s kernel-urbs=13/900s`, with the artifact
 refreshing on time and the lens seeing a scene. The recurrence signal is a RED

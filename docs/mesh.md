@@ -49,9 +49,12 @@ affected verdict reads UNKNOWN with the scan attempt retained
 Three owned surfaces are read, not collected: the Note3 light feed through an
 atomic boundary file with a bounded freshness window, this host's own
 Bluetooth and Wi-Fi adapter state, and this host's own camera fault state —
-faults, not a scene. Each keeps a missing, unreadable or broken
-read visibly UNKNOWN rather than calm; the reading rules and their limits are
-in [how it works](how-it-works.md).
+faults, not a scene. `discover show` prints the latest scan with the light and
+radio readings as `sense.space.light` and `sense.space.host-radio`; a camera
+fault reaches the health pane's `SYSTEM ZERO` line as a named cause. Each
+keeps a missing, unreadable or broken read visibly UNKNOWN rather than calm;
+the reading rules, the command that takes one, and their limits are in
+[operating the plant](operating.md) and [how it works](how-it-works.md).
 
 Repairs start with causal investigation and leave failures observable. Preserve
 what failed, explain why, and test that recurrence still reaches a mind able to
