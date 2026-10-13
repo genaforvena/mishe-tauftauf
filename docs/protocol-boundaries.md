@@ -12,10 +12,9 @@ single predetermined schema: ordinary Python values are sufficient.
 The literal approved adapter files are in `parsing-policy.json`. They cover chat
 lifecycle decoding, feed framing, immutable record envelopes, the wall-outcome
 publication text, external renderer/filter input, CLI arguments, the human
-operator view and the durable effect ledger. Two further adapters —
-the site window manifest and the wall-clear journals, described below — are
-peer worktree files not yet committed or listed in the committed policy;
-they become approved only when their source and policy entries land.
+operator view and the durable effect ledger. The site window manifest and the
+wall-clear journals described below are approved adapters too.
+
 The ledger reads its append-only UTF-8 JSONL journals as a boundary:
 invalid encoding or malformed records fail closed and remain intact as evidence.
 The checker is also a boundary: it reads Python source and policy files. New
