@@ -2048,6 +2048,19 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
     session_of = {unit: next((prefix for prefix in site_by_prefix
                               if unit.startswith(prefix + "-")), None)
                   for unit in active}
+    # Same-site services that don't match any session prefix (e.g.
+    # mishe-ifm-shim.service) are mapped to the scanning site's session when
+    # they declare a path inside the scanning site's home: they run from the
+    # same checkout and must be compared against the same pin.
+    if own_session and own_session in site_by_prefix:
+        own_home = Path(site_by_prefix[own_session])
+        for unit, session in session_of.items():
+            if session is None and unit.startswith(SITE_UNIT_PREFIX):
+                declared = _unit_declared_paths(unit)
+                if declared and any(
+                        own_home in Path(path).resolve().parents
+                        for path in declared):
+                    session_of[unit] = own_session
     # A unit no session names is foreign to every site. One that consumes this
     # plant's checkout is a live coupling rather than an anonymous coverage gap:
     # its own ExecStart declares the checkout even when no live process carries
@@ -2109,6 +2122,19 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
             continue
         host_scope.append(unit)
         unattributed.remove(unit)
+    # A mapped unit with no import root can still be judged by its declaration:
+    # when nothing its declaration names lies inside any site's checkout or
+    # home, the unit is a host tool beside the sites. A unit that declares a
+    # path inside a site stays uninspectable — the sensor cannot yet say the
+    # unit is irrelevant, so it does not claim it.
+    for unit in list(uninspectable):
+        declared = _unit_declared_paths(unit)
+        if not declared:
+            continue
+        if any(_declares_site_path(path, site_roots) for path in declared):
+            continue
+        host_scope.append(unit)
+        uninspectable.remove(unit)
     if host_scope:
         parts.append("host-scope=" + ",".join(sorted(host_scope)))
     if foreign:
