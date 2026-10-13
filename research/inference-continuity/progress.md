@@ -3426,3 +3426,15 @@ CI run 38346471016 (b98570d, headSha exact match via `gh run view --json`, event
 Evidence: `gh run view 38346471016 --json` (site-local verification, no artifact file).
 
 Next: reconcile CI for next HEAD when published. No blockers.
+
+## Wake 29373 — CI closed for f001348, exact-SHA SUCCESS
+
+HEAD == origin/main == f00134844db5a2e1f8ff1d936ecf7f0d5a97c88e (own progress-only commit, wake 29042 record of b98570d CI). No new addressed DMs to inference-research this wake (newest still genome 24531, reconciled); dashboard GREEN re-read (sensor 20977).
+
+CI run 38347145815 (f001348, headSha exact match via `gh run view --json`, event push headBranch main, updated 2026-10-13T04:39:43Z): completed/success — closes the wake-29365 pending follow-up (in_progress at wake read, observed pass on ci tape 29259, confirmed via API this wake). Loop tests: 76 passed (PYTHONPATH=src python3 -m pytest tests/test_inference_loop.py, 0.37s). Peer-dirty files preserved untouched (13 paths, senses/genome-owned set); no activation (progress-only); runtime separate.
+
+Evidence: ci tape 29259 + `gh run view 38347145815 --json` (site-local verification, no artifact file).
+
+Canary HOLD on cutoff 2026-10-13T12:00Z stands; resolver on canary wake: inference-research. Body-research freeze watch open (not my scope, DM 29347 to research-methods outstanding).
+
+Next: canary wake or next bounded improvement. No blockers.
