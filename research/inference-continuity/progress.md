@@ -1,4 +1,50 @@
-## Current disposition — wake 35220: changed; completions-route wire usage captured (measurement defect closed)
+## Current disposition — wake 35220 (final delivery): changed; 9326908 bounded two-fetch allowance landed; pass D re-run complete under the allowance
+
+GREEN dashboard; same unsettled wake 35220 whose earlier delivery died after
+committing (effects re-verified, artifact §below). Seed status at read:
+pending=35220 yield=33779 clear=33779. Commit `9326908` on shared `main`
+(local; genome pushes).
+
+**Operator DM 36772/36718 implemented (read-only CI-observation class only).**
+New provider-free seam `native/fetch-budget.ts`: default stays one fetch per
+turn for every class; the only permitted raise is allowance ≤2 paired with the
+exact class `experiment-2-read-only-ci-observation` and its frozen
+`["ci_status"]` tool set. Broader allowance, another class, or a half-specified
+pair is refused at both boundaries (worker open and `NativeSession`), never
+coerced. Every lower-level dispatch counts, including encoding fallback;
+cancellation and the overall deadline are honored; the exhaustion diagnostic
+keeps the upstream 408/429/5xx/network failure and the exhaustion as distinct
+named facts for the durable `model_failure` row. No tool/effect replay, no auth
+reacquisition. While an allowance is granted, every turn context is re-checked
+structurally against the frozen read-only tool set. Fixed in passing: the
+worker open request collected `reasoning` and dropped it; it is now forwarded.
+
+**Verified.** `bun test src/mishe_tauftauf/native/` 26 pass (13 wire-usage +
+13 fetch-budget: default/refusals/counting/transient-success/distinct
+exhaustion/network preservation/read-only tool check). `tsc --strict` over the
+native sources: same 5 pre-existing baseline errors, new module clean. Python
+inference lane 260 passed; parsing guard PASS. Live worker smoke: allowance-3,
+wrong-class and half-pair opens exit 1 with the named refusals; foreign
+capability in a granted turn context refused.
+
+**Live re-run, frozen inputs** (`e78ad41` + run `38377990382`, same budgets,
+only `fetch_allowance=2` added): complete, 2 turns / 1 call, 7.432 s, no
+`model_failure`; per-turn usage 412 and 631 tokens (cached 320); parity legs
+status/exact-SHA/durable-record/fallback all true. **Limit:** no transient was
+sampled, so the granted second fetch was held but never spent (n=1) — the
+transient-success path is deterministically tested, live observation of a
+survived 429/5xx stays UNKNOWN until a re-run samples the known intermittent
+429. Detector: budget-named `model_failure` row + route probe log.
+
+Docs: peer commit `f79866d` landed the matching contract text mid-implementation.
+Evidence: `.mishe-tauftauf/artifacts/inference-research-wake35220-fetch-allowance.md`.
+
+**Next.** Witness independent read of `9326908`; genome push + exact-SHA CI
+(`native-wire` now covers `fetch-budget.test.ts`); one bounded re-run on the
+same frozen inputs for the transient sample (disposition 2026-10-14T18:00Z).
+No activation: the allowance is opt-in at session open; default bytes unchanged.
+
+## Prior disposition — wake 35220: changed; completions-route wire usage captured (measurement defect closed)
 
 GREEN dashboard; no prior effect to replay. Seed status: pending=35220
 yield=33779 clear=33779 continue=none. Shared `main` HEAD `f3c1720` at 13:17Z.
@@ -41,8 +87,12 @@ genome, bounded action = one `setup-bun` job, deterministic and offline.
 (3) Parity: still NOT YET EVIDENCED for terminal-status agreement; the usage
 column is now measurable.
 
-**Next.** Witness independent reading, then the designed budget proposal or the
-operator's answer, then pass D re-run on `e78ad41` + run 38377990382.
+**Next (superseded by the final delivery above).** Witness independent
+reading, then the designed budget proposal or the operator's answer, then pass
+D re-run on `e78ad41` + run 38377990382. Items (1) and (3) were answered by
+the operator's DM 36772 and closed by `9326908` + the live re-run; item (2)
+closed by genome's `native-wire` CI job (`c55ab1c`), extended to the
+`fetch-budget` seam in `9326908`.
 
 ## Current disposition — wake 33779: changed; a42065d landed (wire usage through the native loop); Experiment 2 pass D; canary legs retired with tested substitute
 
