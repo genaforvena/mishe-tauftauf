@@ -97,13 +97,17 @@ def drive_native(session, context: dict, *, obligation: dict, max_turns: int,
     used_ids = set(recovery['used_ids']) if recovery else set()
     executed = recovery['calls'] if recovery else 0
     turns = recovery['turns'] if recovery else 0
+    # Per-turn provider wire usage, aligned with turn index. None means
+    # UNKNOWN (worker never saw a correlated terminal), never a synthesized
+    # zero. Carried across resume_from so cost evidence survives continuation.
+    wire_usages = list(recovery.get('wire_usage') or []) if recovery else []
 
     def emit(kind, **fields):
         record(snapshot({'kind': kind, 'obligation': obligation, **fields}))
 
     def stop(status):
         result = {'status': status, 'turns': turns, 'calls': executed,
-                  'context': snapshot(context)}
+                  'context': snapshot(context), 'wire_usage': snapshot(wire_usages)}
         if recovery and recovery['status'] != 'ready':
             result['pending_calls'] = snapshot(recovery['pending_calls'])
             result['used_ids'] = sorted(used_ids)
@@ -117,6 +121,7 @@ def drive_native(session, context: dict, *, obligation: dict, max_turns: int,
         'status': recovery['status'] if recovery else 'ready',
         'provider_checkpoint': recovery['provider_checkpoint'] if recovery else None,
         'model_failure': recovery['model_failure'] if recovery else None,
+        'wire_usage': snapshot(wire_usages),
     }
     emit('checkpoint', state=checkpoint)
     if recovery and recovery['status'] != 'ready':
@@ -137,6 +142,9 @@ def drive_native(session, context: dict, *, obligation: dict, max_turns: int,
             raise
         turns += 1
         emit('model_output', turn=index, response=asdict(turn))
+        # Cost evidence only: a failed journal write above already raised, so a
+        # usage entry here can never mask a lost model-output row.
+        wire_usages.append(snapshot(getattr(turn, 'wire_usage', None)))
         assistant = snapshot(turn.assistant)
         calls = [item for item in assistant['content'] if item.get('type') == 'toolCall']
         messages.append(assistant)
@@ -383,6 +391,7 @@ def _reconstruct_native(rows):
     budgets = None
     provider_checkpoint = None
     model_failure = None
+    wire_usage = []
     for row in rows:
         if stopped or row['obligation'] != obligation:
             raise NativeJournalError('record after stop or changed obligation')
@@ -416,6 +425,12 @@ def _reconstruct_native(rows):
                     or (status == 'ready' and pending)):
                 raise NativeJournalError('invalid continuation boundary')
             state = 'ready' if status == 'ready' else 'unresolved'
+            prefixed = seed.get('wire_usage', [])
+            if (not isinstance(prefixed, list)
+                    or any(not isinstance(u, dict) and u is not None for u in prefixed)
+                    or len(prefixed) != turns):
+                raise NativeJournalError('invalid checkpoint wire usage prefix')
+            wire_usage = snapshot(prefixed)
             model_failure = snapshot(seed.get('model_failure'))
             if model_failure is not None:
                 if (status != 'unknown' or not isinstance(model_failure, dict)
@@ -463,6 +478,7 @@ def _reconstruct_native(rows):
             assistant = snapshot(response['assistant'])
             context['messages'].append(assistant)
             turns += 1
+            wire_usage.append(snapshot(response.get('wire_usage')))
             selected = [item for item in assistant['content']
                         if item.get('type') == 'toolCall']
             ids = [item['id'] for item in selected]
@@ -518,4 +534,4 @@ def _reconstruct_native(rows):
             'used_ids': sorted(used_ids), 'turns': turns, 'calls': calls,
             'stopped': stopped, 'budgets': budgets,
             'provider_checkpoint': provider_checkpoint,
-            'model_failure': model_failure}
+            'model_failure': model_failure, 'wire_usage': snapshot(wire_usage)}
