@@ -24,10 +24,13 @@ from .observations import executable, redact_display_age, strip_owned_chrome, va
 from .tmux import OWNED_OPTION, _pane_stopped_or_dead, _python_command, _tmux, await_owned, capture_raw, lease_value, owns_session
 
 
-def _wedge_evidence(home: Path) -> tuple[list[dict], str | None]:
-    """Validate the whole aggregate before either consumer binds live PIDs.
+def _newest_scan_observations(home: Path) -> tuple[list | None, str | None]:
+    """Newest discovery scan's observations, or (None, reason) when unusable.
 
-    Availability does not establish per-role coverage or useful progress.
+    Single reader for the wedge and watch-wait evidence helpers so both
+    consumers share one freshness gate: unique newest scan by ``created``,
+    timezone-aware, no more than 30 minutes old. Shares the existing parse
+    nodes (no new parsing sites) with ``_wedge_evidence``.
     """
     try:
         scans = []
@@ -35,25 +38,36 @@ def _wedge_evidence(home: Path) -> tuple[list[dict], str | None]:
             scan = json.loads(path.read_text(encoding="utf-8"))
             created = datetime.fromisoformat(str(scan["created"]).replace("Z", "+00:00"))
             if created.tzinfo is None:
-                return [], "scan timestamp has no timezone"
+                return None, "scan timestamp has no timezone"
             scans.append((created, scan))
         if not scans:
-            return [], "no discovery scan"
+            return None, "no discovery scan"
         newest = max(created for created, _ in scans)
         latest = [scan for created, scan in scans if created == newest]
         if len(latest) != 1:
-            return [], "newest scan timestamp is ambiguous"
+            return None, "newest scan timestamp is ambiguous"
         scan = latest[0]
         age_seconds = (datetime.now(timezone.utc) - newest).total_seconds()
     except (OSError, ValueError, KeyError, TypeError):
-        return [], "discovery scan unreadable or malformed"
+        return None, "discovery scan unreadable or malformed"
     if age_seconds < 0:
-        return [], "newest scan is future-dated"
+        return None, "newest scan is future-dated"
     if age_seconds > 30 * 60:
-        return [], "newest scan is stale"
+        return None, "newest scan is stale"
     observations = scan.get("observations")
     if not isinstance(observations, list):
-        return [], "scan observations malformed"
+        return None, "scan observations malformed"
+    return observations, None
+
+
+def _wedge_evidence(home: Path) -> tuple[list[dict], str | None]:
+    """Validate the whole aggregate before either consumer binds live PIDs.
+
+    Availability does not establish per-role coverage or useful progress.
+    """
+    observations, unavailable = _newest_scan_observations(home)
+    if unavailable is not None:
+        return [], unavailable
     readings = [row for row in observations
                 if isinstance(row, dict) and row.get("id") == "sense.mind.wedge-suspect"]
     if len(readings) != 1:
@@ -68,6 +82,35 @@ def _wedge_evidence(home: Path) -> tuple[list[dict], str | None]:
         window, pid = suspect.get("window"), suspect.get("pid")
         if not isinstance(window, str) or not isinstance(pid, int) or isinstance(pid, bool):
             return [], "wedge suspect identity malformed"
+    return reported, None
+
+def _watch_wait_evidence(home: Path) -> tuple[list[dict], str | None]:
+    """Validate the watch-wait aggregate before the witness binds live PIDs.
+
+    Same newest-scan gate as ``_wedge_evidence``, then exactly one
+    ``sense.mind.watch-wait`` reading. A non-verified reading (unknown when
+    no pane is capturable, or the producer predates the sense) is unavailable
+    evidence, never a clean bill. Each pane verdict carries its tmux session,
+    window and pid; malformed identities stay visible as an unavailable reason
+    rather than silently dropping panes.
+    """
+    observations, unavailable = _newest_scan_observations(home)
+    if unavailable is not None:
+        return [], unavailable
+    readings = [row for row in observations
+                if isinstance(row, dict) and row.get("id") == "sense.mind.watch-wait"]
+    if len(readings) != 1:
+        return [], "watch-wait reading missing or ambiguous"
+    observation = readings[0]
+    if observation.get("state") != "verified":
+        return [], "watch-wait reading not verified"
+    reported = observation.get("panes")
+    if not isinstance(reported, list) or any(not isinstance(row, dict) for row in reported):
+        return [], "watch-wait panes malformed"
+    for pane in reported:
+        window, pid = pane.get("window"), pane.get("pid")
+        if not isinstance(window, str) or not isinstance(pid, int) or isinstance(pid, bool):
+            return [], "watch-wait pane identity malformed"
     return reported, None
 
 
