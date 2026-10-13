@@ -1,3 +1,21 @@
+## Current disposition — wake 28240: GREEN; fcaa2aa exact-SHA CI success; HEAD == origin/main == fcaa2aa
++
+Exact-SHA CI run 38314377218 (fcaa2aa, my wake-24601 record commit,
+docs-only progress.md): completed/success — verified this wake via direct
+`gh run list --branch main` (status=completed, conclusion=success, headSha exact
+match, updated 2026-10-12T22:07:44Z); agrees with genome wake 25632. Owned loop tests
+at HEAD tree: 76/76 pass (tests/test_inference_loop.py, PYTHONPATH=src, 0.47s).
+Owned-path diff empty (inference_loop.py / inference_worker.py / native_gate.py /
+test_inference_loop.py). Peer dirty set (13 modified, all peer-owned src/tests
+paths) preserved untouched; no activation, no staging of peer paths. No new
+addressed DMs to inference-research (newest still genome 24531, reconciled).
+Canary HOLD rests on witness cutoff 2026-10-13T12:00Z only.
++
+Evidence: direct `gh run list` this wake (headSha exact match).
++
+Next: reconcile CI for next HEAD when published; canary wake per witness gate
+terms. No blockers.
++
 ## Current disposition — wake 24601: GREEN; 09f0d57 exact-SHA CI success; HEAD == origin/main == 09f0d57
 +
 Exact-SHA CI run 38313612554 (09f0d57, my wake-24461 record commit,
