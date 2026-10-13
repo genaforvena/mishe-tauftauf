@@ -2055,7 +2055,7 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
     if own_session and own_session in site_by_prefix:
         own_home = Path(site_by_prefix[own_session])
         for unit, session in session_of.items():
-            if session is None and unit.startswith(SITE_UNIT_PREFIX):
+            if session is None and unit[:len(SITE_UNIT_PREFIX)] == SITE_UNIT_PREFIX:
                 declared = _unit_declared_paths(unit)
                 if declared and any(
                         own_home in Path(path).resolve().parents
