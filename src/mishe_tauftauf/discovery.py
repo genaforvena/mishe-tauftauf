@@ -1205,11 +1205,13 @@ _TREADMILL_RECORD_FILE = "research/inference-continuity/progress.md"
 """The owned record file a reconciliation record commit stands on.
 
 A record commit's subject names the role, wake and prior HEAD it reconciles
-(``<role> wake <N>: record <sha> CI success``): its only purpose is to close
-the previous wake's reconciliation obligation, which manufactures the next
-wake's identical obligation. The file + ``: record `` marker comparison
-below classifies that self-referential shape; no other subject shape counts
-as record-only.
+in one of two shapes: ``<role> wake <N>: record <sha> CI success`` (older)
+or ``<role> wake <N>: CI <run> concluded <success|failure>...`` (current:
+the same self-referential reconciliation — close the previous wake's CI
+watch, which manufactures the next wake's identical watch). Either shape's
+only purpose is to close the previous obligation with no implementation
+movement. The file + marker comparison below classifies both
+self-referential shapes; no other subject shape counts as record-only.
 """
 
 
@@ -1219,18 +1221,13 @@ def _treadmill_class(files: list[str], subject: str) -> str:
     The inputs are already decoded: ``files`` is git's name-only list from
     the ``proc_table`` boundary adapter, the subject is the ``%s`` line.
     A commit touching only the role's own record file whose subject carries
-    the ``: record `` marker reads ``record-only``; a commit touching any
+    a reconciliation marker reads ``record-only``; a commit touching any
     path outside ``research/`` reads ``source-change``; everything else
-    (docs, research drafts) reads ``other-change`` so the change accumulator
     still counts it as movement without overstating it as implementation.
-    The comparisons are slicing and equality only — no text decoding here.
+    The comparisons are substring containment and equality only — no text decoding here.
     """
-    marker = ": record "
-    hit = False
-    for index in range(len(subject) - len(marker) + 1):
-        if subject[index:index + len(marker)].lower() == marker:
-            hit = True
-            break
+    lowered = subject.lower()
+    hit = ": record " in lowered or (": ci " in lowered and " concluded " in lowered)
     if len(files) == 1 and files[0] == _TREADMILL_RECORD_FILE and hit:
         return "record-only"
     if any(name[:9] != "research/" for name in files):

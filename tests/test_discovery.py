@@ -5686,6 +5686,24 @@ def test_treadmill_non_record_single_record_file_is_other_change():
         "inference-research wake 1: notes") == "other-change"
 
 
+def test_treadmill_ci_concluded_single_record_file_is_record_only():
+    assert discovery._treadmill_class(
+        ["research/inference-continuity/progress.md"],
+        "inference-research wake 33421: CI 38375665350 concluded success") == "record-only"
+
+
+def test_treadmill_ci_concluded_failure_single_record_file_is_record_only():
+    assert discovery._treadmill_class(
+        ["research/inference-continuity/progress.md"],
+        "inference-research wake 23088: CI afdcce8 concluded failure (operator-window class)") == "record-only"
+
+
+def test_treadmill_ci_without_concluded_is_other_change():
+    assert discovery._treadmill_class(
+        ["research/inference-continuity/progress.md"],
+        "inference-research wake 1: CI watch pending") == "other-change"
+
+
 def test_treadmill_git_log_entries_groups_subjects_and_files():
     from mishe_tauftauf import proc_table
     raw = ("SUBJECT:inference-research wake 1: record abc CI success\n"
