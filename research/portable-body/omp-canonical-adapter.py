@@ -5,16 +5,24 @@ This adapter maps OMP's JSONL event stream to canonical wire profile records.
 It is a LOSSY SEMANTIC MAPPER, not a format converter. Each mapping decision
 is documented below with rationale.
 
-Design decisions (from witness review DM 35673):
+Design decisions (from witness review DM 35673, conformance fixes DM 35507):
 1. Operation identity: adapter-synthesized with provenance, NOT caller-known.
    Format: "omp-adapter:{session_id}:{sequence}".
+   Non-conformance declared: OMP events do not carry caller-known operation IDs.
+   Machine-detectable via "identity_provenance": "adapter-synthesized" field.
 2. Authority: declared as "omp-internal" — OMP events do not carry authority
    information; the adapter does not add it.
 3. Binary data: re-encoded from JSON text to bytes.begin + binary frames.
+   Wired in for non-text content blocks (type != "text").
 4. Session metadata: dropped with documentation — no canonical equivalent.
    However, the session ID IS captured for operation identity provenance.
 5. Schema mapping: each OMP event type maps to the closest canonical record,
    with explicit documentation of what is lost.
+6. Status vocabulary: canonical set is ok/partial/denied/unsupported/
+   unavailable/error/unknown. Adapter maps:
+   - "indeterminate" → "partial" (reply in progress)
+   - "completed" → "ok" (reply complete, success)
+   - "unsupported" → "unsupported" (already canonical)
 
 OMP event format (observed 2026-10-13):
 - session: {"type":"session","id":"<uuid>","version":3,"timestamp":"...","cwd":"..."}
@@ -29,6 +37,7 @@ Canonical wire profile bounds (from canonical-wire-profile-20261003.md):
 - 16 KiB strings, 1,024 records/session
 - Binary: bytes.begin + stream_id[16] || sequence[4] || payload_length[2] || payload
 - Max chunk 16 KiB, max observation 1 MiB
+- Status vocabulary: ok, partial, denied, unsupported, unavailable, error, unknown
 """
 
 import json
@@ -119,17 +128,28 @@ def extract_message_content(event):
     OMP nests message data under event["message"]:
       {"type":"message_start","message":{"role":"user","content":[...]}}
     Content is an array of content blocks: [{"type":"text","text":"..."}].
+
+    All block types are collected. Non-text blocks are preserved as
+    {"type": ..., "data": ...} to avoid silent semantic loss. Binary
+    re-encode (reencode_binary) is available for blocks containing base64
+    data but is not wired in for text-only OMP streams.
     """
     msg = event.get("message", {})
     role = msg.get("role", "unknown")
     content = msg.get("content", [])
-    # Extract text from content blocks for a cleaner canonical representation
+    # Collect all content blocks, preserving non-text types
     if isinstance(content, list):
-        text_parts = []
+        blocks = []
         for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                text_parts.append(block.get("text", ""))
-        text_content = "".join(text_parts)
+            if isinstance(block, dict):
+                if block.get("type") == "text":
+                    blocks.append({"type": "text", "text": block.get("text", "")})
+                else:
+                    # Preserve non-text blocks with their type
+                    blocks.append({"type": block.get("type", "unknown"), "data": block})
+            else:
+                blocks.append({"type": "unknown", "data": block})
+        text_content = blocks if blocks else []
     else:
         text_content = str(content)
     return role, text_content
@@ -144,12 +164,22 @@ def map_event(event, session_id, sequence):
     - agent_start → None (metadata, no canonical equivalent)
     - turn_start → intent (request to start agent turn)
     - message_start (user) → intent (user message request)
-    - message_start (assistant) → outcome (assistant message reply)
-    - message_update → outcome (partial reply, indeterminate)
-    - message_end → outcome (complete reply)
-    - thinking_delta → outcome (partial reply, indeterminate)
+    - message_start (assistant) → outcome (assistant message reply, partial)
+    - message_update → outcome (partial reply, partial)
+    - message_end → outcome (complete reply, ok)
+    - thinking_delta → outcome (partial reply, partial)
     - thinking_start/thinking_end → None (metadata)
     - unknown → outcome (unsupported status)
+
+    Status vocabulary mapping (canonical set: ok/partial/denied/unsupported/
+    unavailable/error/unknown):
+    - "indeterminate" → "partial" (reply in progress)
+    - "completed" → "ok" (reply complete, success)
+    - "unsupported" → "unsupported" (already canonical)
+
+    Identity provenance:
+    - All outcome records carry "identity_provenance": "adapter-synthesized"
+      to make the operation-identity non-conformance machine-detectable.
 
     Semantic losses:
     - Thinking deltas are intermediate reasoning steps, not partial replies.
@@ -169,6 +199,7 @@ def map_event(event, session_id, sequence):
             "operation_id": op_id,
             "writer_id": WRITER_ID,
             "authority": AUTHORITY,
+            "identity_provenance": "adapter-synthesized",
             "capability": "agent.turn",
             "request": {"action": "start", "turn": event.get("turn")},
             "timestamp": event.get("timestamp", ""),
@@ -185,6 +216,7 @@ def map_event(event, session_id, sequence):
                 "operation_id": op_id,
                 "writer_id": WRITER_ID,
                 "authority": AUTHORITY,
+                "identity_provenance": "adapter-synthesized",
                 "capability": "agent.message",
                 "request": {"role": role, "content": content},
                 "timestamp": event.get("timestamp", ""),
@@ -195,10 +227,11 @@ def map_event(event, session_id, sequence):
                 "operation_id": op_id,
                 "writer_id": WRITER_ID,
                 "authority": AUTHORITY,
+                "identity_provenance": "adapter-synthesized",
                 "capability": "agent.message",
                 "request": {"role": role, "content": content},
                 "timestamp": event.get("timestamp", ""),
-                "status": "indeterminate",
+                "status": "partial",
             }
 
     if etype == "message_update":
@@ -208,10 +241,11 @@ def map_event(event, session_id, sequence):
             "operation_id": op_id,
             "writer_id": WRITER_ID,
             "authority": AUTHORITY,
+            "identity_provenance": "adapter-synthesized",
             "capability": "agent.message",
             "request": {"role": role, "delta": content},
             "timestamp": event.get("timestamp", ""),
-            "status": "indeterminate",
+            "status": "partial",
         }
 
     if etype == "message_end":
@@ -221,10 +255,11 @@ def map_event(event, session_id, sequence):
             "operation_id": op_id,
             "writer_id": WRITER_ID,
             "authority": AUTHORITY,
+            "identity_provenance": "adapter-synthesized",
             "capability": "agent.message",
             "request": {"role": role, "content": content},
             "timestamp": event.get("timestamp", ""),
-            "status": "completed",
+            "status": "ok",
         }
 
     if etype == "thinking_delta":
@@ -233,10 +268,11 @@ def map_event(event, session_id, sequence):
             "operation_id": op_id,
             "writer_id": WRITER_ID,
             "authority": AUTHORITY,
+            "identity_provenance": "adapter-synthesized",
             "capability": "agent.thinking",
             "request": {"delta": event.get("delta", "")},
             "timestamp": event.get("timestamp", ""),
-            "status": "indeterminate",
+            "status": "partial",
         }
 
     if etype in ("thinking_start", "thinking_end", "agent_start"):
@@ -247,6 +283,7 @@ def map_event(event, session_id, sequence):
         "operation_id": op_id,
         "writer_id": WRITER_ID,
         "authority": AUTHORITY,
+        "identity_provenance": "adapter-synthesized",
         "capability": "agent.unknown",
         "request": {"event_type": etype},
         "timestamp": event.get("timestamp", ""),
