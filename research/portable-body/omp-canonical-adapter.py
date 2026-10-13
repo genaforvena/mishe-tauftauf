@@ -341,9 +341,26 @@ def reencode_binary(content_bytes, session_id):
     return [begin_record] + chunks
 
 
+def load_sequence(state_file):
+    """Load the last-used sequence number from a durable state file."""
+    if state_file.exists():
+        try:
+            return int(state_file.read_text().strip())
+        except (ValueError, OSError):
+            return 0
+    return 0
+
+
+def save_sequence(state_file, sequence):
+    """Persist the sequence number for cross-process continuity."""
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    state_file.write_text(str(sequence))
+
+
 def main():
     session_id = "unknown"
-    sequence = 0
+    state_file = Path(".mishe-tauftauf/scratch/omp-capture/.last-sequence")
+    sequence = load_sequence(state_file)
     record_count = 0
     dropped_events = []
     binary_chunks = []
@@ -383,6 +400,9 @@ def main():
 
         sys.stdout.buffer.write(encoded + b"\n")
         record_count += 1
+
+    # Persist sequence for next process
+    save_sequence(state_file, sequence)
 
     # Summary
     print(f"\n# Adapter summary:", file=sys.stderr)
