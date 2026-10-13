@@ -877,7 +877,10 @@ release this plant serves and reports which leaf invocations no reader page
 names, as coverage rows rather than a failure count. It resolves the release
 from the site's served-release record and refuses to audit any other tree,
 so the check cannot quietly measure a retired release. An uncovered row
-names a gap to consider, not a defect to suppress.
+must carry a recorded disposition — a retired command, an internal or
+install-time surface, or a live reading whose reader-facing vocabulary
+lives on another command — and a row with none prints as a naming gap, so
+the uncovered list changes only for a stated reason.
 
 ## Where this fits
 

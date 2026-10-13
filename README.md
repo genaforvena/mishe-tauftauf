@@ -98,6 +98,9 @@ shipped command list rather than assumed — `python
 tools/check_leaf_invocation_coverage.py` reports which commands no reader
 page names, auditing the release the plant serves — and it is why no index,
 registry, or capability catalogue is maintained beside these pages.
+Every uncovered command carries a recorded disposition — retired, internal,
+install-time, or vocabulary that lives on another command — or prints as a
+naming gap, so the uncovered list can only change for a stated reason.
 
 | You want to… | Read |
 | --- | --- |

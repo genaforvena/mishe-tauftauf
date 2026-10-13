@@ -12,14 +12,28 @@ the checkout tree the test happens to run beside.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 _CHECKOUT_ROOT = Path(__file__).resolve().parent.parent
 _CHECKER = _CHECKOUT_ROOT / "tools" / "check_leaf_invocation_coverage.py"
 _SHA = "0" * 39 + "1"
+
+
+def _load_checker():
+    """The checker module itself, so a reason is read from the table, not echoed."""
+    spec = importlib.util.spec_from_file_location("_leaf_coverage_checker", _CHECKER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_MODULE = _load_checker()
 
 _FAKE_CLI = '''\
 import argparse
@@ -137,6 +151,73 @@ def test_a_missing_record_reads_unknown_not_the_checkout(tmp_path: Path) -> None
     assert "UNKNOWN" in done.stderr
     assert not out.exists()
     assert "leaf invocations" not in done.stdout
+
+
+def test_an_uncovered_leaf_with_no_disposition_stays_a_gap(tmp_path: Path) -> None:
+    """'alpha two' is uncovered and carries no recorded reason yet."""
+    release = _release(tmp_path)
+    home = _home(tmp_path, release)
+    root = _corpus(tmp_path)
+    out = tmp_path / "coverage.json"
+
+    done = _run(home, root, out)
+
+    assert done.returncode == 0, done.stderr
+    assert "no disposition" in done.stdout
+    assert "alpha two" in done.stdout
+    record = json.loads(out.read_text(encoding="utf-8"))
+    assert record["undispositioned"] == ["alpha two"]
+    assert record["dispositioned"] == {}
+
+
+def test_a_dispositioned_leaf_reports_its_recorded_reason(tmp_path: Path) -> None:
+    """A retired leaf is printed with the reason no page names it."""
+    release = tmp_path / "releases" / _SHA
+    src = release / "src" / "mishe_tauftauf"
+    src.mkdir(parents=True)
+    (src / "__init__.py").write_text("", encoding="utf-8")
+    (src / "cli.py").write_text('''\
+import argparse
+
+
+def parser():
+    p = argparse.ArgumentParser(prog="mishe-tauftauf")
+    sub = p.add_subparsers()
+    delivery = sub.add_parser("delivery").add_subparsers()
+    delivery.add_parser("show")
+    alpha = sub.add_parser("alpha").add_subparsers()
+    alpha.add_parser("one")
+    return p
+''', encoding="utf-8")
+    home = _home(tmp_path, release)
+    root = _corpus(tmp_path)
+    out = tmp_path / "coverage.json"
+
+    done = _run(home, root, out)
+
+    assert done.returncode == 0, done.stderr
+    reason = _MODULE.DISPOSITIONS["delivery show"]
+    assert reason in done.stdout
+    # the reason is not reported as an undispositioned gap
+    assert "delivery show" not in done.stdout.split("no disposition")[1]
+    record = json.loads(out.read_text(encoding="utf-8"))
+    assert record["undispositioned"] == []
+    assert record["dispositioned"] == {"delivery show": reason}
+    assert record["strict_zero"] == ["delivery show"]
+
+
+def test_every_uncovered_leaf_of_the_served_plant_is_dispositioned() -> None:
+    """The real audit leaves no silent gap: every uncovered leaf has a reason."""
+    home = _CHECKOUT_ROOT / ".mishe-tauftauf"
+    if not (home / "health" / "runtime-release.json").is_file():
+        pytest.skip("no served-release record beside this checkout")
+    out = home / "artifacts" / "check-leaf-invocation-coverage.json"
+
+    done = _run(home, _CHECKOUT_ROOT, out)
+
+    assert done.returncode == 0, done.stderr
+    record = json.loads(out.read_text(encoding="utf-8"))
+    assert record["undispositioned"] == []
 
 
 def test_an_invalid_record_reads_unknown(tmp_path: Path) -> None:

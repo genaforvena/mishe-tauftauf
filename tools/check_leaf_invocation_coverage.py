@@ -21,6 +21,14 @@ Uncovered rows are reported as coverage, not as a failure count — an
 invocation absent from every reader page is a naming gap to consider — and
 the uncovered set is preserved raw, without narrowing the corpus.
 
+Each uncovered leaf also carries a recorded disposition in `DISPOSITIONS`
+below, because an uncovered row has exactly two honest endings: the page
+should name a real reader-facing command, or the leaf is retired, internal or
+install-time evidence that a reader page should not advertise. A leaf with no
+disposition prints as `undispositioned` and stays a first-class gap, so newly
+retired commands and new gaps both surface instead of shrinking the list
+quietly.
+
 Exit status: 0 for a completed audit, 2 when the audit is unavailable
 (UNKNOWN). A complete audit never fails on coverage.
 """
@@ -33,6 +41,42 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 HEX = frozenset("0123456789abcdef")
+
+# Why each uncovered leaf is uncovered, kept beside the check that enumerates
+# them so the uncovered set can only ever change for a stated reason. Three
+# shapes appear below: a retired command whose replacement the culture already
+# uses, an internal or install-time surface no reader page should advertise, and
+# a live reading whose reader-facing vocabulary lives on another command.
+DISPOSITIONS: dict[str, str] = {
+    # Retired branch-delivery workflow: `delivery` mutations raise at runtime;
+    # `delivery show` reads the frozen history under SITE/deliveries/.
+    "delivery check": "retired branch-delivery mutation; commit scoped work on main and verify runtime recovery",
+    "delivery finish": "retired branch-delivery mutation; commit scoped work on main and verify runtime recovery",
+    "delivery integrate": "retired branch-delivery mutation; commit scoped work on main and verify runtime recovery",
+    "delivery retire": "retired branch-delivery mutation; commit scoped work on main and verify runtime recovery",
+    "delivery submit": "retired branch-delivery mutation; commit scoped work on main and verify runtime recovery",
+    "delivery show": "frozen branch-delivery history view; the workflow that wrote new records is retired",
+    # Retired task ledger: walls and addressed messages replaced claim/step;
+    # only the historical views below still read anything.
+    "task add": "retired task-ledger mutation; walls and addressed messages replaced it",
+    "task event": "retired task-ledger mutation; walls and addressed messages replaced it",
+    "task finish": "retired task-ledger mutation; walls and addressed messages replaced it",
+    "task landing": "retired task-ledger mutation; walls and addressed messages replaced it",
+    "task offer": "retired task-ledger mutation; walls and addressed messages replaced it",
+    "task reopen": "retired task-ledger mutation; walls and addressed messages replaced it",
+    "task step": "retired task-ledger mutation; walls and addressed messages replaced it",
+    "task wait": "retired task-ledger mutation; walls and addressed messages replaced it",
+    "task show": "retired-ledger history view over the tape; the wall is the current surface",
+    "task coordination-report": "deterministic tape-wide coordination check; the witness pane publishes its readings",
+    "task landing-status": "retired landing report; CI and live-consumer checks carried its reading",
+    "task production-check": "retired landing report; CI and live-consumer checks carried its reading",
+    # Internal or install-time surfaces a reader page should not advertise.
+    "pain render": "headless frame compose for a renderer probe; readers use `pain read`",
+    "seed init": "lower-level site bootstrap; a reader plants with `python3 -m coordination.launcher`",
+    "seed start": "raises one resident pane for a manual setup; durable residents run `seed run` under generated services",
+    "tmux stop": "teardown of an owned session, the paired inverse of `tmux start`; not a repair step",
+    "dispatch-receipt": "bare top; an external dispatcher's delivery receipt with no live producer path in this plant",
+}
 
 
 class PinUnavailable(Exception):
@@ -153,6 +197,9 @@ def audit(root: Path, src: Path) -> dict:
         "invocations_covered": len(covered),
         "invocations_strict_zero": len(zero),
         "strict_zero": zero,
+        "dispositioned": {inv: DISPOSITIONS[inv] for inv in zero
+                          if inv in DISPOSITIONS},
+        "undispositioned": [inv for inv in zero if inv not in DISPOSITIONS],
         "bare_tops_strict_zero": tops_zero,
     }
 
@@ -211,8 +258,11 @@ def main(argv=None) -> int:
           f"named {result['invocations_covered']}; "
           f"uncovered {result['invocations_strict_zero']} "
           f"— coverage rows, not failures")
-    print("uncovered leaf invocations:")
-    for inv in result["strict_zero"]:
+    print("uncovered leaf invocations, with a recorded disposition:")
+    for inv, reason in result["dispositioned"].items():
+        print(f"  {inv}: {reason}")
+    print("uncovered leaf invocations with no disposition — a naming gap:")
+    for inv in result["undispositioned"]:
         print(f"  {inv}")
     print(f"bare tops never named in the corpus: "
           f"{' '.join(result['bare_tops_strict_zero']) or '(none)'}")
