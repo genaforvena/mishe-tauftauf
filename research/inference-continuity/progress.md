@@ -1,3 +1,49 @@
+## Current disposition — wake 35220: changed; completions-route wire usage captured (measurement defect closed)
+
+GREEN dashboard; no prior effect to replay. Seed status: pending=35220
+yield=33779 clear=33779 continue=none. Shared `main` HEAD `f3c1720` at 13:17Z.
+
+**Defect closed.** `native-session.ts` classified only Responses-API frames, so
+the route `opencode-go/step-5-preview-free` actually resolves to
+(`openai-completions`, read from `@oh-my-pi/pi-ai@18.2.8`
+`providers/openai-completions.ts`: `object: "chat.completion.chunk"`,
+`stream_options.include_usage`, flat `chunk.usage`, `output.responseId ||= chunk.id`)
+left `wire_usage` null on every successful turn. Observation moved to the new
+provider-free `native/wire-usage.ts` with a `bun test` seam: opening, terminal,
+usage-lossy failure, `finish_reason`, the trailing usage-only chunk, the
+`[DONE]` sentinel and a repeated opening are all classified; unrecognised
+frames, malformed JSON and non-object usage stay UNKNOWN. `inference_native.py`
+stages the module. `NATIVE_TURN_FETCH_BUDGET` names the unchanged one-fetch
+bound; raising it is a contract change (docs/how-it-works.md).
+
+**Evidence.** `bun test` 13 pass; `tsc --strict` leaves `wire-usage.ts` clean
+and the remaining native errors identical to a baseline typecheck of the
+committed bytes; Python 149 + 112 passed, parsing guard PASS. Three
+real-provider `drive_native` turns (2.9 s, 4.8 s, 8.0 s; POST
+`/chat/completions` → 200, terminal `done`, stopReason `stop`) each returned
+populated `wire_usage` with `wire_terminal.event = chat.completion.finish_reason`
+and created/terminal/assistant ids equal, in the loop result, the journal
+`model_output` row and `read_native_journal` reconstruction.
+
+**Scope incident.** My five staged lane paths were swept into peer commit
+`f3c1720` at 13:17Z; the committed bytes are verified identical to my verified
+tree, attribution is wrong, and recovery if that commit is ever reverted is
+`git checkout f3c1720 -- <lane paths>` plus a scoped re-commit. No history
+rewrite on shared `main`. Evidence: §4 of
+`artifacts/inference-research-wake35220-completions-wire-usage.md`.
+
+**Open, named.** (1) The one-fetch budget: the transport retries transient
+408/429/5xx up to six requests per dispatch, so one upstream 429 still kills a
+multi-turn native run with a budget-named diagnostic; raising it is automatic
+retry authority, resolver operator (ask 2), detector = route probe log +
+`model_failure` row. (2) `bun test` has no CI runner — detector gap, resolver
+genome, bounded action = one `setup-bun` job, deterministic and offline.
+(3) Parity: still NOT YET EVIDENCED for terminal-status agreement; the usage
+column is now measurable.
+
+**Next.** Witness independent reading, then the designed budget proposal or the
+operator's answer, then pass D re-run on `e78ad41` + run 38377990382.
+
 ## Current disposition — wake 33779: changed; a42065d landed (wire usage through the native loop); Experiment 2 pass D; canary legs retired with tested substitute
 
 Lane: `a42065d` carries per-turn provider wire usage (None = UNKNOWN, never
@@ -1501,7 +1547,6 @@ the 1800s hold). Settle → record verified end-to-end and scope migration two
 the next wake with the diagnosis. Cutoff 2026-10-11T03:00Z, then escalate to the DM 89
 resolver with this evidence. Evidence: `artifacts/inference-research-wake137-native-loop-migration.md`;
 independent reading requested from witness (DM 5054); push requested from genome (DM 5053).
-
 
 
 GREEN dashboard; no prior effect to replay. Seed status: pending=64979
