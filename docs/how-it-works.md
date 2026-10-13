@@ -242,23 +242,34 @@ effects and recovery. This transport does not activate a resident or establish
 credential/account parity.
 
 The packaged native provider session permits at most one underlying `fetch`
-dispatch per turn, including lower-level HTTP retries and encoding fallback.
-The bound is the named constant `NATIVE_TURN_FETCH_BUDGET` in
-`native-session.ts`; raising it grants automatic retry authority inside a turn
-and is a contract change, not a tuning knob.
-An attempted second dispatch poisons the session and raises
-`native provider fetch budget exhausted`; provider cancellation normalization
-cannot replace that diagnostic. An ordinary error terminal remains an error,
-and a later caller-authorized turn has its own one-fetch allowance. This is not
+dispatch per turn by default, including lower-level HTTP retries and encoding
+fallback. The bound is the named constant `DEFAULT_TURN_FETCH_ALLOWANCE` in
+`native/fetch-budget.ts`; resolving a different allowance grants automatic
+retry authority inside a turn and is a contract change, not a tuning knob.
+An attempted dispatch past the allowance poisons the session and raises
+`native provider fetch budget exhausted`, naming the upstream failure that
+preceded it when there was one; provider cancellation normalization cannot
+replace that diagnostic. An ordinary error terminal remains an error, and a
+later caller-authorized turn has its own default allowance. This is not broad
 automatic retry authority, an output-token cap, a spend guarantee or proof that
 the server processed only one request.
+One narrow exception exists, as an authorized experiment and not as a parity
+claim: the read-only CI-observation work class
+(`experiment-2-read-only-ci-observation`) may resolve an allowance of at most
+two (`MAX_TURN_FETCH_ALLOWANCE`) for its frozen `ci_status` tool set, a
+broader allowance, another work class or a half-specified pair is rejected
+rather than coerced to the default, and a granted allowance still cannot carry
+another capability inside the same turn context. No parity run under the
+allowance has completed, and the pinned release keeps the one-fetch session
+until the experiment, its independent review and its activation land; the
+harness route stays the fallback meanwhile.
 The transport retries transient 408/429/5xx itself
 (`DEFAULT_MAX_ATTEMPTS`, six requests per dispatch), so on a route that answers
 one such transient with a second POST the diagnostic names the budget rather
 than the upstream status; the completions route to `opencode-go` was measured
 returning such a 429 (wake 33779). That is a known zero-tolerance interaction
-on this route, not a silent retry: the budget stays at one until the authority
-question is answered. `drive_native` persists a `model_failure`
+on this route, not a silent retry — it is the measured failure the narrow
+allowance exists to test. `drive_native` persists a `model_failure`
 with the original `WorkerError` type and diagnostic before propagating the
 exception. Budget exhaustion, cancellation and time limits retain their distinct
 transport diagnostics; none supplies a model completion or authorizes replay.
