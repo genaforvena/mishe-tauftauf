@@ -2,6 +2,12 @@ import {streamSimple} from '@oh-my-pi/pi-ai/stream';
 import type {Context, ProviderSessionState} from '@oh-my-pi/pi-ai/types';
 import {withNativeModel} from './native-bootstrap.ts';
 import {restoreCheckpoint} from './native-checkpoint.ts';
+import {WireRecorder} from './wire-usage.ts';
+
+// One underlying fetch per turn, including lower-level HTTP retries and
+// encoding fallback. This deliberately withholds automatic retry authority
+// (docs/how-it-works.md); raising it is a contract change, not a tuning knob.
+const NATIVE_TURN_FETCH_BUDGET = 1;
 
 // One owned subprocess lifetime. Bootstrap rejection is fatal to its caller;
 // never reacquire/retry in that process (pre-return auth acquisition gap).
@@ -21,7 +27,7 @@ export async function withNativeSession<T>(selector: string, sessionId: string,
   let fetchBudgetError: Error | null = null;
   const fetchOnce: typeof fetch = async (input, init) => {
    if (controller.signal.aborted) throw new Error('native turn cancelled before fetch');
-   if (fetches >= 1) {
+   if (fetches >= NATIVE_TURN_FETCH_BUDGET) {
     poisoned = true;
     fetchBudgetError = new Error('native provider fetch budget exhausted');
     controller.abort(fetchBudgetError);
@@ -30,9 +36,7 @@ export async function withNativeSession<T>(selector: string, sessionId: string,
    fetches++;
    return fetch(input, init);
   };
-  let wireUsage: Record<string, unknown> | null = null;
-  let createdId: string | null = null;
-  let wireTerminal: {event: string; response_id: string | null} | null = null;
+  const wire = new WireRecorder();
   const stream = streamSimple(model, context, {
    apiKey: registry.resolver(model, sessionId),
    sessionId: sessionId,
@@ -43,28 +47,8 @@ export async function withNativeSession<T>(selector: string, sessionId: string,
    fetch: fetchOnce,
    codexSseMaxAttempts: 1,
    // Reset for each native payload opening, not each lower-level HTTP retry.
-   onPayload: () => { wireUsage = null; createdId = null; wireTerminal = null; },
-   onSseEvent: event => {
-    let frame: unknown;
-    try { frame = JSON.parse(event.data); } catch { return; }
-    if (!frame || typeof frame !== 'object' || !('type' in frame)) return;
-    const response = 'response' in frame && frame.response && typeof frame.response === 'object' ? frame.response : null;
-    const id = response && 'id' in response && typeof response.id === 'string' ? response.id : null;
-    if (frame.type === 'response.created') {
-     createdId = id;
-     wireUsage = null;
-     wireTerminal = null;
-     return;
-    }
-    if (!['response.completed', 'response.done', 'response.incomplete', 'response.failed', 'error'].includes(String(frame.type))) return;
-    wireTerminal = {event: String(frame.type), response_id: id};
-    wireUsage = null;
-    if (frame.type === 'response.failed' || frame.type === 'error' || !response || !('usage' in response)) return;
-    const usage = response.usage;
-    if (usage && typeof usage === 'object' && !Array.isArray(usage)) {
-     wireUsage = Object.fromEntries(Object.entries(usage));
-    }
-   },
+   onPayload: () => {wire.reset();},
+   onSseEvent: event => {wire.observe(event);},
   });
   let terminal: string | undefined;
   for await (const event of stream) terminal = event.type;
@@ -73,9 +57,9 @@ export async function withNativeSession<T>(selector: string, sessionId: string,
   if (fetchBudgetError) throw fetchBudgetError;
   if (terminal !== 'done' && terminal !== 'error') throw new Error('native stream ended without terminal event');
   // Native normalization is not evidence of raw usage or response correlation.
-  const observed = wireTerminal as {event: string; response_id: string | null} | null;
-  const responseId = observed?.response_id;
-  if (responseId && ((createdId && createdId !== responseId) || (assistant.responseId && assistant.responseId !== responseId))) {
+  const observed = wire.read();
+  const responseId = observed.terminal?.response_id ?? null;
+  if (responseId && ((observed.created_id && observed.created_id !== responseId) || (assistant.responseId && assistant.responseId !== responseId))) {
    throw new Error('wire terminal response ID mismatch');
   }
   const correlated = Boolean(responseId && assistant.responseId === responseId);
@@ -83,9 +67,9 @@ export async function withNativeSession<T>(selector: string, sessionId: string,
   // exportCheckpoint/restoreCheckpoint refuse loudly; continuation without a
   // checkpoint is a fresh full-history turn, not a resumed provider turn.
   const checkpoint = null;
-  return {terminal, assistant, checkpoint, wire_usage: correlated ? wireUsage : null,
-   wire_terminal: observed && {...observed, created_response_id: createdId,
-    assistant_response_id: assistant.responseId ?? null, correlated, stop_reason: assistant.stopReason}};
+  return {terminal, assistant, checkpoint, wire_usage: correlated ? observed.usage : null,
+   wire_terminal: observed.terminal ? {...observed.terminal, created_response_id: observed.created_id,
+    assistant_response_id: assistant.responseId ?? null, correlated, stop_reason: assistant.stopReason} : null};
   }
   const session = {async turn(context: Context, signal?: AbortSignal, checkpoint?: unknown): Promise<unknown> {
    if (closed || poisoned) throw new Error('native session unavailable');
