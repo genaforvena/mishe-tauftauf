@@ -56,15 +56,15 @@ def test_original_expiry_survives_publication_polling_and_rendering():
     data = boundary()
     data["generated_at_utc"] = stamp(NOW + 10)
     data["nodes"][0]["last_poll_utc"] = stamp(NOW + 10)
-    at_expiry = discovery._space_light(data, NOW + 10)
+    at_expiry = discovery._space_light(data, NOW + 28)
     assert at_expiry["current_lux"] == 14.431
-    assert at_expiry["expires_epoch_s"] == NOW + 10
-    expired = discovery._space_light(data, NOW + 10.001)
+    assert at_expiry["expires_epoch_s"] == NOW + 28
+    expired = discovery._space_light(data, NOW + 28.001)
     assert expired["state"] == "unknown"
     assert expired["current_lux"] is None
     assert expired["reason"] == "stale-original-evidence"
     with patch("mishe_tauftauf.seed_culture_views.datetime") as clock:
-        clock.now.return_value.timestamp.return_value = NOW + 10.001
+        clock.now.return_value.timestamp.return_value = NOW + 28.001
         state, line = _observation_reading(at_expiry, "recent")
     assert state == "unknown"
     assert "stale-original-evidence" in line
@@ -77,6 +77,47 @@ def test_validated_epochs_not_independent_strings_are_visible():
     assert "2000-01-01" not in row["sample"]
     assert "fresh-clock-conditional" in row["sample"]
     assert stamp(NOW - 20) in row["sample"]
+
+BOUND = ("phone/host clock skew <=23929ms behind host "
+         "(acquisition span 23929-26622ms, n=32 retained); skew/latency split unknown")
+
+
+def test_reader_carries_publisher_clock_bound_as_opaque_text():
+    data = boundary()
+    data["nodes"][0]["light"]["status_reason"] = BOUND
+    row = discovery._space_light(data, NOW)
+    assert row["state"] == "verified"
+    assert row["clock_bound"] == BOUND
+    assert row["clock_uncertainty"] == "phone/host clock agreement unverified"
+
+
+def test_reader_treats_unreadable_bound_as_absence_not_zero():
+    for bad in (None, "", "   ", 23929, ["skew"]):
+        data = boundary()
+        data["nodes"][0]["light"]["status_reason"] = bad
+        row = discovery._space_light(data, NOW)
+        assert row["state"] == "verified"
+        assert row["clock_bound"] is None
+
+
+def test_render_names_carried_bound_beside_unverified_clock():
+    data = boundary()
+    data["nodes"][0]["light"]["status_reason"] = BOUND
+    row = discovery._space_light(data, NOW)
+    with patch("mishe_tauftauf.seed_culture_views.datetime") as clock:
+        clock.now.return_value.timestamp.return_value = NOW
+        state, line = _observation_reading(row, "recent")
+    assert state == "verified"
+    assert "clock=unverified; " + BOUND in line
+
+
+def test_render_without_bound_keeps_plain_unverified_clock():
+    row = discovery._space_light(boundary(), NOW)
+    assert row["clock_bound"] is None
+    with patch("mishe_tauftauf.seed_culture_views.datetime") as clock:
+        clock.now.return_value.timestamp.return_value = NOW
+        _, line = _observation_reading(row, "recent")
+    assert line.rstrip().endswith("clock=unverified")
 
 
 @pytest.mark.parametrize("validity", [1, 0, -1, None, True, float("nan"), float("inf")])
@@ -91,6 +132,8 @@ def test_short_or_invalid_producer_validity_cannot_be_extended(validity):
 def test_core_caps_longer_validity():
     data = boundary()
     data["nodes"][0]["light"]["validity_seconds"] = 300
+    data["nodes"][0]["light"]["phone_sample_epoch_s"] = NOW - 45
+    data["nodes"][0]["light"]["consumer_receipt_epoch_s"] = NOW - 25
     assert discovery._space_light(data, NOW + 10.001)["state"] == "unknown"
 
 
@@ -177,8 +220,12 @@ def test_new_event_not_replayed_by_baseline_session_recovery_or_same_event(tmp_p
 
 
 def test_notification_rechecks_original_expiry(tmp_path: Path):
-    row = discovery._space_light(boundary(), NOW)
-    notify(tmp_path, row, row, NOW + 10.001)
+    data = boundary()
+    data["nodes"][0]["light"].update(consumer_receipt_epoch_s=NOW - 25,
+                                      phone_sample_epoch_s=NOW - 45)
+    row = discovery._space_light(data, NOW)
+    expired = discovery._space_light(data, NOW + 10.001)
+    notify(tmp_path, expired, row, NOW + 10.001)
     text = Feed(tmp_path).entries()[-1].body
     assert "stale-original-evidence" in text
     assert "14.431lux" not in text
@@ -191,13 +238,13 @@ def test_missing_and_corrupt_file_are_unknown(tmp_path: Path):
     assert discovery._space_light_read(tmp_path)["reason"] == "boundary-absent-or-corrupt"
 
 
-def test_stale_unknown_names_last_phone_sample_and_age():
+def test_stale_unknown_names_last_receipt_and_age():
     data = boundary()
     data["nodes"][0]["light"]["status"] = "stale"
     row = discovery._space_light(data, NOW + 7200)
     assert row["state"] == "unknown"
     assert row["reason"] == "light-not-current-or-delayed"
-    assert "last-phone=" in row["sample"] and stamp(NOW - 20) in row["sample"]
+    assert "last-receipt=" in row["sample"] and stamp(NOW - 2) in row["sample"]
     assert "age=2h0m" in row["sample"]
 
 
@@ -206,22 +253,22 @@ def test_delayed_unknown_names_age():
     data["nodes"][0]["light"]["delayed_at_receipt"] = True
     row = discovery._space_light(data, NOW + 5)
     assert row["reason"] == "light-not-current-or-delayed"
-    assert "age=25s" in row["sample"]
+    assert "age=7s" in row["sample"]
 
 
 def test_expired_fresh_claim_names_age():
     data = boundary()
     row = discovery._space_light(data, NOW + 31)
     assert row["reason"] == "stale-original-evidence"
-    assert "last-phone=" in row["sample"] and stamp(NOW - 20) in row["sample"]
+    assert "last-receipt=" in row["sample"] and stamp(NOW - 2) in row["sample"]
 
 
-def test_unknown_without_valid_phone_epoch_omits_age():
+def test_unknown_without_valid_receipt_epoch_omits_age():
     data = boundary()
-    data["nodes"][0]["light"].update(status="stale", phone_sample_epoch_s=None)
+    data["nodes"][0]["light"].update(status="stale", consumer_receipt_epoch_s=None)
     row = discovery._space_light(data, NOW + 5)
     assert row["reason"] == "light-not-current-or-delayed"
-    assert "last-phone=" not in row["sample"]
+    assert "last-receipt=" not in row["sample"]
 
 
 def test_published_sample_without_lux_names_a_null_gap_not_a_corrupt_file():
@@ -231,8 +278,26 @@ def test_published_sample_without_lux_names_a_null_gap_not_a_corrupt_file():
     assert row["state"] == "unknown"
     assert row["reason"] == "light-null-gap"
     assert row["current_lux"] is None
-    assert "last-phone=" in row["sample"] and stamp(NOW - 20) in row["sample"]
+    assert "last-receipt=" in row["sample"] and stamp(NOW - 2) in row["sample"]
     assert row["sample"].startswith("Note3 light UNKNOWN: light-null-gap")
+
+def test_phone_clock_behind_host_does_not_trigger_false_stale():
+    """Phone stamp runs ~25-29s behind host by design (DM 34981).
+
+    A sample whose phone epoch is 28s behind the host but whose receipt
+    arrived 2s ago is fresh: the host received it 2s ago. The old code
+    checked ``now - phone`` against validity and reported false staleness
+    on a healthy feed. The fix checks ``now - receipt`` instead.
+    """
+    data = boundary()
+    data["nodes"][0]["light"]["phone_sample_epoch_s"] = NOW - 28
+    data["nodes"][0]["light"]["consumer_receipt_epoch_s"] = NOW - 2
+    # 3 seconds after the boundary was generated: phone age = 31s (over 30s
+    # cap), receipt age = 5s (well under). Must read verified.
+    row = discovery._space_light(data, NOW + 3)
+    assert row["state"] == "verified"
+    assert row["reason"] == "fresh-clock-conditional"
+    assert row["current_lux"] == 14.431
 
 
 def test_null_lux_gap_outranks_the_delayed_status_flag():
@@ -272,7 +337,7 @@ def test_null_sample_persisting_across_reads_is_named_a_frozen_stream(tmp_path):
     assert row["reason"] == "light-stream-frozen"
     assert row["sample"].startswith("Note3 light UNKNOWN: light-stream-frozen")
     # The gap's age detail survives the rename; a freeze still says how stale.
-    assert "last-phone=" in row["sample"] and "age=" in row["sample"]
+    assert "last-receipt=" in row["sample"] and "age=" in row["sample"]
 
 
 def test_null_sample_first_seen_stays_a_single_read_gap(tmp_path):
@@ -385,7 +450,7 @@ def test_notification_recheck_names_a_sustained_freeze(tmp_path):
     assert "light-stream-frozen" in line
     assert "light-null-gap" not in line
     # A freeze still says how old the gap is.
-    assert "last-phone=" in line and "age=" in line
+    assert "last-receipt=" in line and "age=" in line
     assert record_path.read_text(encoding="utf-8") == stored
 
 
@@ -455,7 +520,7 @@ def test_first_freeze_naming_records_the_onset_and_routes_one_event(tmp_path):
     assert onset["onset_epoch_s"] == record["read_epoch_s"]
     assert onset["named_epoch_s"] > onset["onset_epoch_s"]
     assert onset["last_read_epoch_s"] == onset["named_epoch_s"]
-    assert "last-phone=" in onset["age_token"] and "age=" in onset["age_token"]
+    assert "last-receipt=" in onset["age_token"] and "age=" in onset["age_token"]
     events = freeze_dms(tmp_path)
     assert len(events) == 1
     assert "light-stream-frozen onset" in events[0].body
