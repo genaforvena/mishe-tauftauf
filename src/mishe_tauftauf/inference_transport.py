@@ -32,15 +32,36 @@ class NativeSession:
     prove that a later close will succeed.
     """
 
+    # The only class the operator has authorized a raised provider fetch
+    # allowance for: Experiment-2 read-only exact-SHA CI observation. The
+    # worker resolves and re-checks this pair; this boundary refuses to send
+    # any broader allowance or other class in the first place.
+    READ_ONLY_CI_OBSERVATION_CLASS = 'experiment-2-read-only-ci-observation'
+    MAX_FETCH_ALLOWANCE = 2
+
     def __init__(self, command, selector, session_id, *, cancelled=lambda: False,
                  timeout=60, max_output=4 * 1024 * 1024, env=None, cwd=None,
-                 checkpoint=None, close_grace=1.0, reasoning='medium'):
+                 checkpoint=None, close_grace=1.0, reasoning='medium',
+                 work_class=None, fetch_allowance=None):
         self.close_grace = close_grace
         if (not math.isfinite(timeout) or timeout <= 0 or
                 not math.isfinite(close_grace) or close_grace <= 0 or
                 type(max_output) is not int or max_output <= 0):
             raise ValueError('finite positive timeout, finite positive close grace '
                              'and positive integer output bound required')
+        open_request = {'type': 'open', 'selector': selector,
+                        'sessionId': session_id, 'reasoning': reasoning}
+        if work_class is not None or fetch_allowance is not None:
+            if work_class != self.READ_ONLY_CI_OBSERVATION_CLASS:
+                raise ValueError('a raised fetch allowance is limited to the '
+                                 f'{self.READ_ONLY_CI_OBSERVATION_CLASS} read-only '
+                                 f'class, got {work_class!r}')
+            if (type(fetch_allowance) is not int
+                    or not 1 <= fetch_allowance <= self.MAX_FETCH_ALLOWANCE):
+                raise ValueError('provider fetch allowance must be an integer '
+                                 f'1..{self.MAX_FETCH_ALLOWANCE}, got {fetch_allowance!r}')
+            open_request['workClass'] = work_class
+            open_request['fetchAllowance'] = fetch_allowance
         if cancelled():
             raise WorkerError('cancelled before session start')
         self.cancelled = cancelled
@@ -62,7 +83,7 @@ class NativeSession:
                 os.set_blocking(stream.fileno(), False)
                 self.selector.register(stream, selectors.EVENT_READ, name)
             os.set_blocking(self.process.stdin.fileno(), False)
-            if self._exchange({'type': 'open', 'selector': selector, 'sessionId': session_id, 'reasoning': reasoning}) != {'type': 'ready'}:
+            if self._exchange(open_request) != {'type': 'ready'}:
                 raise WorkerError('expected ready receipt')
         except BaseException:
             self._reap()

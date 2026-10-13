@@ -1,4 +1,5 @@
 import {withNativeSession} from './native-session.ts';
+import {assertReadOnlyObservationContext, resolveTurnFetchAllowance} from './fetch-budget.ts';
 
 // NDJSON: open, sequential numbered turns, close. Parent owns process-group,
 // wall-clock and total-output limits. Never replay or retry a failed session.
@@ -28,6 +29,9 @@ try {
  const open = first.value;
 if (first.done || !open || open.type !== 'open' || typeof open.selector !== 'string' || typeof open.sessionId !== 'string') throw new Error('open request required');
 const reasoning = typeof open.reasoning === 'string' ? open.reasoning : 'medium';
+// A granted allowance is a contract, not a hint: resolve it (and refuse every
+// broader or non-read-only configuration) before the first provider turn.
+const allowance = resolveTurnFetchAllowance({allowance: open.fetchAllowance, workClass: open.workClass});
 let closed = false;
 await withNativeSession(open.selector, open.sessionId, async session => {
   emit({type:'ready'});
@@ -36,12 +40,16 @@ await withNativeSession(open.selector, open.sessionId, async session => {
    if (!request || typeof request !== 'object') throw new Error('request object required');
    if (request.type === 'close') {closed = true; break;}
    if (request.type !== 'turn' || request.id !== next) throw new Error('sequential turn ID required');
+   // While an allowance above the default is granted, the read-only class is
+   // re-checked structurally on every turn context: no other capability may
+   // ride along under the read-only allowance.
+   if (allowance.allowance > 1) assertReadOnlyObservationContext(request.context);
    const frame = await session.turn(request.context, undefined, request.checkpoint);
    emit({type:'turn',id:next,frame});
    next++;
   }
   if (!closed) throw new Error('input ended before explicit close');
- });
+ }, reasoning, allowance);
  // Receipt proves both provider-state disposal and auth close returned.
  emit({type:'closed'});
  process.exit(0);
