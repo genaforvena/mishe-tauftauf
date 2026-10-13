@@ -14,6 +14,8 @@
     "src/mishe_tauftauf/proc_table.py",
     "src/mishe_tauftauf/records.py",
     "src/mishe_tauftauf/session_restarts.py",
+    "src/mishe_tauftauf/session_runner.py",
+    "src/mishe_tauftauf/session_watch.py",
     "src/mishe_tauftauf/unit_properties.py",
     "src/mishe_tauftauf/wall_text.py",
     "src/mishe_tauftauf/window_manifest.py",

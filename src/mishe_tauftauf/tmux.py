@@ -31,7 +31,12 @@ def _python_command(home: Path, *args: str) -> list[str]:
 def _tmux(*args: str, check: bool = True) -> subprocess.CompletedProcess[bytes]:
     if shutil.which("tmux") is None:
         raise TmuxError("tmux executable is unavailable")
-    result = subprocess.run(["tmux", *args], capture_output=True)
+    environment = os.environ.copy()
+    if environment.get("TMUX_TMPDIR"):
+        # An inherited pane socket otherwise overrides the explicit test/site
+        # directory, turning fixture kill-server into a live-server teardown.
+        environment.pop("TMUX", None)
+    result = subprocess.run(["tmux", *args], capture_output=True, env=environment)
     if check and result.returncode:
         raise TmuxError(result.stderr.decode("utf-8", "replace").strip() or f"tmux {' '.join(args)} failed")
     return result
