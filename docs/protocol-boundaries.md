@@ -153,8 +153,15 @@ evidence and coverage gaps.
 The checker conservatively treats some formatting operations as parsing. It
 cannot prove that arbitrary Python implements no parser: indexing, loops,
 dynamic aliases or another executable can implement one without calling a
-listed method. Review raw-text access and data flow alongside the check. This
-first check covers Python under `src`, `coordination` and `tools`; tests,
+listed method. Review raw-text access and data flow alongside the check. A
+measured instance of the limit (2026-10-13): rewriting a prefix test from
+`unit.startswith(PREFIX)` to `unit[:len(PREFIX)] == PREFIX` kept the same
+interpretation outside an adapter and changed the verdict from a reported
+violation to a pass, because the check recognizes a fixed set of call names.
+A frozen-budget pass is therefore not evidence that an interpretation moved
+into an adapter.
+
+This first check covers Python under `src`, `coordination` and `tools`; tests,
 gitignored deployment scripts and third-party code are outside its scan. A
 separate executable used to decode external text is still an adapter, and its
 location and contract must be recorded rather than hidden as an internal helper.
