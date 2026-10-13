@@ -83,6 +83,32 @@ def test_routing_failure_keeps_bounded_retry_interval(tmp_path,monkeypatch):
     assert len(calls)==1
 
 
+def test_persistent_red_routes_once_until_state_or_reason_changes(tmp_path,monkeypatch):
+    routes=[]
+    monkeypatch.setattr(watch,"notify",lambda _:None)
+    monkeypatch.setattr(watch,"route",lambda *a:routes.append(a[1]["reason"]))
+    clock={"now":200,"loops":0}
+    monkeypatch.setattr(watch.time,"monotonic",lambda:clock["now"])
+    states=[{"available":False,"identity":None,"panes_live":False,"dashboard_live":False},
+            {"available":False,"identity":None,"panes_live":False,"dashboard_live":False},
+            {"available":False,"identity":None,"panes_live":False,"dashboard_live":False},
+            {"available":True,"identity":"x","panes_live":False,"dashboard_live":True},
+            {"available":True,"identity":"x","panes_live":False,"dashboard_live":True}]
+    def observe(*a):
+        return dict(states[clock["loops"]])
+    def sleep(_):
+        clock["now"]+=5
+        clock["loops"]+=1
+        if clock["loops"]>=len(states):
+            raise _Halt
+    monkeypatch.setattr(watch,"observe",observe)
+    monkeypatch.setattr(watch.time,"sleep",sleep)
+    with pytest.raises(_Halt):
+        watch.run(tmp_path,"fixture")
+    assert routes==["owned session missing or ownership unavailable",
+                    "resident pane missing or dead"]
+
+
 def test_boolean_restart_history_is_malformed():
     previous={"observed_at":100,"identity":"owned-id","changes":[True]}
     assert watch.assess(current(),previous,105)["state"]=="UNKNOWN"
