@@ -126,7 +126,13 @@ or a shared results JSON, since any later edit invalidates the bound digest
 and drops the outcome from the trial's evidenced-outcome count, while a removal
 flags the outcome as absent without dropping it. Cite a per-outcome artifact
 under `artifacts/` — a file created for that one outcome, kept for the life of
-the trial and never reused. The load-bearing property is that the bound bytes
+the trial and never reused. That `artifacts/` is the owned site's own directory
+under the site home: a same-named directory in the shared checkout is outside it,
+so a file written there satisfies neither the containment test nor the
+inside-site rule, and `sense.repo.branch-inventory` reports the directory itself
+as a stray. Write evidence under the site home even when the checkout is the
+current working directory.
+The load-bearing property is that the bound bytes
 stay at the bound path unchanged, so a later edit invalidates the bound digest;
 a deletion is not digest-compared — it is flagged as absence, a distinct and
 more severe class; `artifacts/` is a proxy for a file made for this one
