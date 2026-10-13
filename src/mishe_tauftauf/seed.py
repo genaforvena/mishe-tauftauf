@@ -84,6 +84,7 @@ def _wedge_evidence(home: Path) -> tuple[list[dict], str | None]:
             return [], "wedge suspect identity malformed"
     return reported, None
 
+
 def _watch_wait_evidence(home: Path) -> tuple[list[dict], str | None]:
     """Validate the watch-wait aggregate before the witness binds live PIDs.
 
@@ -678,6 +679,41 @@ def _new_session(session: str, first_window: str, workspace: str) -> None:
     _tmux(*argv)
 
 
+def _ensure_contract_windows(home: Path, session: str, interval: float) -> None:
+    """Recreate health-declared utility windows after the tmux session is raised."""
+    from .proc_table import window_names
+    from .window_manifest import read
+
+    names = read(home)
+    if not names:
+        return
+
+    workspace = str(home.parent.resolve())
+    if "ledger" in names:
+        current = window_names(_tmux("list-windows", "-t", session, "-F", "#{window_name}").stdout)
+        if "ledger" not in current:
+            target = f"{session}:ledger"
+            _tmux("new-window", "-d", "-t", session, "-n", "ledger", "-c", workspace, "sh")
+            _tmux("set-option", "-w", "-t", target, "automatic-rename", "off")
+            _tmux("set-option", "-p", "-t", f"{target}.0", "remain-on-exit", "on")
+            _tmux("respawn-pane", "-k", "-t", f"{target}.0",
+                  "env", f"MISHE_SEED_SESSION={session}",
+                  *_python_command(home, "--home", str(home), "pain", "watch", "ledger",
+                                  "--interval", str(interval)))
+
+    if "tail" in names:
+        current = window_names(_tmux("list-windows", "-t", session, "-F", "#{window_name}").stdout)
+        if "tail" not in current:
+            target = f"{session}:tail"
+            _tmux("new-window", "-d", "-t", session, "-n", "tail", "-c", workspace, "sh")
+            _tmux("set-option", "-w", "-t", target, "automatic-rename", "off")
+            _tmux("set-option", "-p", "-t", f"{target}.0", "remain-on-exit", "on")
+            _tmux("respawn-pane", "-k", "-t", f"{target}.0", "tail", "-f", str(home / "chat.log"))
+            _tmux("split-window", "-v", "-t", target, "-c", workspace, "sh")
+            _tmux("set-option", "-p", "-t", f"{target}.1", "remain-on-exit", "on")
+            _tmux("select-layout", "-t", target, "even-vertical")
+
+
 def start(home: Path, session: str, slug: str, interval: float) -> str:
     from .tmux import TmuxError
 
@@ -755,6 +791,16 @@ def start(home: Path, session: str, slug: str, interval: float) -> str:
                 _send(f"{target}.1", _restore_text(home, slug, session))
             except (OSError, ValueError, TmuxError) as exc:
                 print(f"HOLD seed {slug} restore: {exc}", flush=True)
+    # The utility windows are a repair, not the supervisor's reason to exist:
+    # the mind's own window is already raised at this point. A site whose chat
+    # log is missing (wiped or half-initialized) or whose checks directory
+    # cannot be locked must HOLD like the restore path does, since raising out
+    # of start is the 2026-10-07T18:15:07Z restart-loop class.
+    try:
+        with _lock(home):
+            _ensure_contract_windows(home, session, interval)
+    except (OSError, ValueError, TmuxError) as exc:
+        print(f"HOLD seed {slug} contract windows: {exc}", flush=True)
     return f"seed {slug} ready in {session}"
 
 
