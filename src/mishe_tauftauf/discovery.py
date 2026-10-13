@@ -3934,11 +3934,12 @@ def _space_light_age(light: dict, now: float) -> str | None:
     reading still says how stale the feed is, not only that it is not current.
 
     DM 34981 measured a span (consumer_receipt - phone_sample = latency +
-    skew), not a skew directly. Skew is bounded above by the minimum
-    observed span (23.929s, n=32 retained spans). Age is computed against
-    ``consumer_receipt_epoch_s`` — the host-side arrival stamp — not
-    ``phone_sample_epoch_s``. The phone stamp is behind by design and would
-    report false staleness on a healthy feed.
+    skew), not a skew directly. Skew is bounded above by the minimum observed
+    span; the producer's retained-window bound was 23929-26622ms (n=32) at the
+    2026-10-13 investigation and is recomputed each render (bound observed live
+    at 25739ms, 12:11Z). Age is computed against ``consumer_receipt_epoch_s`` —
+    the host-side arrival stamp — not ``phone_sample_epoch_s``. The phone stamp
+    is behind by design and would report false staleness on a healthy feed.
     """
     receipt = light.get("consumer_receipt_epoch_s")
     if not _space_number(receipt) or receipt < 0 or receipt > now:
@@ -4028,7 +4029,9 @@ def _space_light(data: object, now: float) -> dict:
         if not _space_number(collection_age) or not 0 <= collection_age <= validity * 1000:
             return unknown("invalid-or-stale-collection-age")
         generated, poll = _space_utc(data["generated_at_utc"]), _space_utc(node["last_poll_utc"])
-        # Phone clock runs ~25-29s behind host by design (DM 34981), so
+        # Phone stamps sit behind the host by design: the measured quantity
+        # is a span (receipt - phone = latency + skew), so skew is bounded
+        # above by the smallest observed span, never read directly.
         # phone_sample_epoch_s is excluded from staleness: it would report
         # false staleness on a healthy feed. Receipt is the host-side arrival
         # stamp and is the correct validity referent.

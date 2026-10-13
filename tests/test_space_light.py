@@ -282,7 +282,8 @@ def test_published_sample_without_lux_names_a_null_gap_not_a_corrupt_file():
     assert row["sample"].startswith("Note3 light UNKNOWN: light-null-gap")
 
 def test_phone_clock_behind_host_does_not_trigger_false_stale():
-    """Phone stamp runs behind host; skew <= 23.929s (min span, DM 34981).
+    """Phone stamp runs behind host; skew <= 23.929s (producer retained-window min
+    span, n=32, 2026-10-13; DM 34981's own spans: min 25.27s, n=75).
 
     A sample whose phone epoch is 28s behind the host but whose receipt
     arrived 2s ago is fresh: the host received it 2s ago. The old code
