@@ -86,6 +86,8 @@ def run(home: Path, session: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     last_route = 0.0
     last_key = None
+    routed_key = None
+    route_failed = False
     notify("READY=1")
     while True:
         try:
@@ -114,12 +116,23 @@ def run(home: Path, session: str) -> None:
             with (home / "health/session-watch-events.jsonl").open("a") as log:
                 log.write(json.dumps(row) + "\n")
             print(row, flush=True)
-        if row["state"] != "GREEN" and (key != last_key or time.monotonic() - last_route >= 120):
+        # One alert per (state, reason) episode: a persistent RED is a single
+        # condition whose evidence stays durable in health/session-watch.json,
+        # session-watch-events.jsonl and the alert file, so re-sending identical
+        # text every 120s only multiplied open resolver DMs (the 13:41:11Z
+        # episode produced 12 indistinguishable DMs by 14:00Z). A failed route
+        # still retries at the bounded 120s interval so a broken transport
+        # fails visibly instead of silently dropping the condition.
+        if row["state"] != "GREEN" and (key != routed_key or
+                                        (route_failed and time.monotonic() - last_route >= 120)):
             last_route = time.monotonic()
             try:
                 route(home, row)
+                route_failed = False
             except (OSError, subprocess.SubprocessError) as exc:
+                route_failed = True
                 print("UNKNOWN session watcher routing failed: " + str(exc), flush=True)
+            routed_key = key
         last_key = key
         notify("WATCHDOG=1\nSTATUS=" + row["state"] + " " + row["reason"])
         time.sleep(5)
