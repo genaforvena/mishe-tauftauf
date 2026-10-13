@@ -182,6 +182,47 @@ def read_pane_cmdline(pid: str) -> str:
         return ""
     return raw.replace(b"\0", b" ").decode("utf-8", "replace").strip()
 
+def read_cgroup_unit(pid: str) -> str:
+    """The systemd unit a pid's cgroup names, or "" when unreadable.
+
+    ``/proc/<pid>/cgroup`` carries one ``0::/path`` line for the unified
+    hierarchy, whose last component is the systemd unit that owns the pid.
+    The unit name is how a consumer attributes a process to the keeper or
+    scope that raised it, so this decoder returns the last path component
+    rather than the whole slice path. An unreadable pid, a non-``0::`` line
+    or an empty path yields "" rather than a guess.
+    """
+    if not pid:
+        return ""
+    try:
+        text = Path("/proc", pid, "cgroup").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    for line in text.splitlines():
+        fields = line.split(":")
+        if len(fields) < 3 or fields[0] != "0" or not fields[2].startswith("/"):
+            continue
+        return fields[2].rsplit("/", 1)[-1]
+    return ""
+
+
+def belongs_to_session(unit: str, session: str) -> bool:
+    """Whether a cgroup unit is one of ``session``'s own keeper units.
+
+    A plant raises its session through one of two unit shapes, both prefixed
+    with the session name: ``<session>-session.scope`` for the legacy scoped
+    raise and ``<session>-session-<uuid>.service`` for the readiness-aware
+    transient keeper. A unit belonging to a foreign session — a test's
+    ``mishe-tauftauf-test-<id>-<uuid>-session-<uuid>.service`` keeper, for
+    instance — holds the shared server while nothing restsarts it. The test
+    lives here with the rest of the cgroup decoding so consumers compare
+    decoded values instead of parsing unit text themselves.
+    """
+    if not unit or not session:
+        return False
+    return unit[:len(session) + len("-session")] == session + "-session"
+
+
 def read_process_comm(pid: str) -> str:
     """The process's ``/proc/<pid>/comm`` name, or "" when unreadable.
 
