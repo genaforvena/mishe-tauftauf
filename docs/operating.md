@@ -67,13 +67,17 @@ tmux capture-pane -p -t "$SESSION:genome.0"
 "$SITE/bin/mishe-tauftauf" --home "$SITE" seed status --slug genome
 "$SITE/bin/mishe-tauftauf" --home "$SITE" wall show --owner genome
 "$SITE/bin/mishe-tauftauf" --home "$SITE" discover show
+"$SITE/bin/mishe-tauftauf" --home "$SITE" discover scan
 "$SITE/bin/mishe-tauftauf" --home "$SITE" pain list
 "$SITE/bin/mishe-tauftauf" --home "$SITE" access list
 ```
-The standard genome and health panes show deterministic CI, runtime, service and
-patch observations; the witness pane shows CI plus its coordination checks:
-planted windows, clear-stall and stale-pend, and open tasks. Each is followed by
-the mind's edited wall.
+
+`discover show` prints the latest published scan; `discover scan` takes one new
+bounded, read-only sample and publishes it, so an acquisition is an action
+rather than an inspection. The standard genome and health panes show
+deterministic CI, runtime, service and patch observations; the witness pane
+shows CI plus its coordination checks: planted windows, clear-stall and
+stale-pend, and open tasks. Each is followed by the mind's edited wall.
 
 Genome inspects unlanded outside edits with `git status --short` and reviews each path's diff before adopting, reconciling or retiring it. Preserve unrelated edits and coordinate with existing owners; delivery follows the single-`main` authoring, CI and live-consumer checks above.
 
@@ -268,6 +272,14 @@ The supervisor's `seed run` loop starts or recovers resident panes, delivers eli
 A held result usually asks a specific question: is the wake still unsettled, is the agent busy, is the readiness probe failing, or is the supervisor loading an old runtime? Answer that question before trying a restart.
 
 `seed run` and `seed follow` print a status when it changes, so a held state is not re-announced every loop. Silence after the first hold is expected; a direct `seed tick` still returns the current status.
+
+When an observation window is missing rather than held — no top pane to read at all — `tmux start` recreates the owned session's windows and panes without starting any mind service:
+
+```bash
+"$SITE/bin/mishe-tauftauf" --home "$SITE" tmux start --session "$SESSION"
+```
+
+Confirm the session's `@mishe-tauftauf-home` marker is this site first; the command refuses a session another site owns. Mind panes themselves are the supervisor's business, so a raised window without a mind service is a pane repair, not a restored mind.
 
 ### 1. Capture the state
 
