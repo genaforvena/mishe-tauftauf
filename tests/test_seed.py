@@ -19,9 +19,13 @@ def seeded_home(tmp_path: Path, name: str = "site") -> Path:
     return home
 
 
-def test_new_session_raises_the_server_in_its_own_scope(monkeypatch) -> None:
+def test_new_session_raises_the_server_in_its_own_unit(monkeypatch) -> None:
     # A seed supervisor's cgroup would otherwise own the tmux server, so an
     # activation restarting the seed set cgroup-kills the session and every turn.
+    # The raise must also RETURN and OUTLIVE itself: `--scope` blocks until its
+    # command exits and stops the unit then, and `tmux new-session -d` exits at
+    # once — the 2026-10-13 10:39Z teardown loop. A transient service led by a
+    # long-lived `sleep` returns at start and stays active.
     from mishe_tauftauf import seed
 
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
@@ -29,11 +33,13 @@ def test_new_session_raises_the_server_in_its_own_scope(monkeypatch) -> None:
     monkeypatch.setattr(seed.shutil, "which", lambda name: "/usr/bin/systemd-run")
     monkeypatch.setattr(seed.subprocess, "run", lambda argv, **kwargs: runs.append(argv))
     seed._new_session("mishe-core", "genome", "/workspace")
-    assert runs and runs[0][:6] == ["/usr/bin/systemd-run", "--user", "--scope", "--collect",
-                                    "--unit", "mishe-core-session.scope"]
-    assert runs[0][6:8] == ["--description", "Mishe resident session mishe-core"]
-    assert runs[0][8:] == ["tmux", "new-session", "-d", "-s", "mishe-core",
-                           "-n", "genome", "-c", "/workspace", "sh"]
+    assert runs and runs[0][:4] == ["/usr/bin/systemd-run", "--user", "--collect", "--unit"]
+    assert runs[0][4] == "mishe-core-session.service"
+    assert runs[0][5:7] == ["--description", "Mishe resident session mishe-core"]
+    assert runs[0][7:9] == ["sh", "-c"]
+    assert runs[0][9] == ("tmux new-session -d -s mishe-core -n genome -c /workspace sh; "
+                          "exec sleep infinity")
+    assert "--scope" not in runs[0]
 
 
 def test_new_session_falls_back_to_plain_tmux_without_systemd(monkeypatch) -> None:

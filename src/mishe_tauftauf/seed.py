@@ -617,15 +617,28 @@ def _new_session(session: str, first_window: str, workspace: str) -> None:
     if runner is None:
         runner = shutil.which("systemd-run") or ""
     if runner and os.environ.get("XDG_RUNTIME_DIR"):
-        scoped = [runner, "--user", "--scope", "--collect",
-                  "--unit", f"{session}-session.scope",
+        # The raise must both RETURN and OUTLIVE itself. `--scope` blocks the
+        # caller until its command exits and stops the unit when that command
+        # exits: `tmux new-session -d` forks the server and its client exits at
+        # once, so a scope-led raise returned immediately and then had its
+        # cgroup stopped — killing the very server the scope was raised to
+        # protect, which the next supervisor re-raised. That self-sustaining
+        # teardown loop took both sessions of a shared tmux server down every
+        # ~40 s (2026-10-13 10:39-10:42Z, mishe-self-development-current and
+        # android-body in lockstep). A transient SERVICE returns as soon as the
+        # unit starts and stays active while its leader lives, so lead it with a
+        # long-lived `sleep` and the server's cgroup survives until an operator
+        # stops the unit.
+        leader = f"tmux {shlex.join(argv)}; exec sleep infinity"
+        raised = [runner, "--user", "--collect",
+                  "--unit", f"{session}-session.service",
                   "--description", f"Mishe resident session {session}",
-                  "tmux", *argv]
+                  "sh", "-c", leader]
         try:
-            subprocess.run(scoped, check=True)
+            subprocess.run(raised, check=True)
         except subprocess.CalledProcessError:
-            # Every supervisor for this session races the same fixed scope unit
-            # name, so a peer that wins makes the others fail here with "unit was
+            # Every supervisor for this session races the same fixed unit name,
+            # so a peer that wins makes the others fail here with "unit was
             # already loaded". Attach to the peer's session instead of exiting,
             # which would crash-loop the supervisor and turn a server restart
             # into a plant-wide RED.
