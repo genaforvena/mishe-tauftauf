@@ -183,6 +183,8 @@ dispatch started. A retained stop is the previous caller's report, not independe
 acceptance. This API covers single-writer local file/process-crash evidence,
 not power-loss durability, automatic recovery or a deployed resident route.
 
+To take that reading in words a reader would use: read the role dashboard with `pain read ROLE --launcher dashboard`, then compare it with the native route's retained per-turn journal at `SITE/journals/ROLE-native.jsonl`, which records each turn's tool selections, result checks and wire usage. A bounded docs-class comparison (October 2026) reached no parity verdict yet — the retained native run predates per-turn usage evidence and never recorded a stop — so the harness route stays the fallback until a back-to-back same-input run evidences parity for this work class.
+
 `inference_inspect.prepare_exact_inspection` freezes one caller-supplied absolute
 file path, SHA256, byte count, source/task identity and loop budgets before a model
 turn. Preflight and dispatch use the same bounded read: every path component
