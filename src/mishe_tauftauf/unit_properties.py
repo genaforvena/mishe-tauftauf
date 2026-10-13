@@ -39,3 +39,15 @@ def declared_paths(text: str) -> list[str]:
             seen.add(path)
             paths.append(path)
     return paths
+
+SITE_UNIT_PREFIX = "mishe-"
+"""Shared prefix of every unit this plant installs, across every site session.
+
+A site's manifest names its own session's units, so the prefix is what makes a
+second site's services visible to a scan of this one.
+"""
+
+
+def is_site_unit(unit_name: str) -> bool:
+    """Whether a unit name belongs to this plant (starts with the site prefix)."""
+    return unit_name.startswith(SITE_UNIT_PREFIX)

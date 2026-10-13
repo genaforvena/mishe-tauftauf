@@ -27,6 +27,7 @@ from .outcome_events import classify_outcomes
 from .observations import reserved_home_name
 from .runtime_source import source_for
 from .scan_freshness import age_bounds, classify_age, endpoint
+from .unit_properties import SITE_UNIT_PREFIX, is_site_unit
 
 COMMANDS = ("rg", "git", "tmux", "python3", "systemctl", "journalctl", "ps", "df",
             "lsusb", "lspci", "bluetoothctl", "sensors", "upower", "evtest")
@@ -1650,14 +1651,6 @@ def _service_import_roots(home: Path) -> tuple[list[str], str | None]:
                     roots.append(root)
     return roots, None
 
-SITE_UNIT_PREFIX = "mishe-"
-"""Shared prefix of every unit this plant installs, across every site session.
-
-A site's manifest names its own session's units, so the prefix is what makes a
-second site's services visible to a scan of this one.
-"""
-
-
 def _active_site_units() -> tuple[list[str], str | None]:
     """Running ``mishe-*`` services in this user instance, with a failure reason.
     Every site's services share one systemd user bus, so a unit absent from a
@@ -2055,7 +2048,7 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
     if own_session and own_session in site_by_prefix:
         own_home = Path(site_by_prefix[own_session])
         for unit, session in session_of.items():
-            if session is None and unit[:len(SITE_UNIT_PREFIX)] == SITE_UNIT_PREFIX:
+            if session is None and is_site_unit(unit):
                 declared = _unit_declared_paths(unit)
                 if declared and any(
                         own_home in Path(path).resolve().parents
@@ -2882,6 +2875,60 @@ def _host_session_stability(home: Path) -> dict[str, object]:
     return {"id": "sense.host.session-stability", "state": "verified",
             "sample": f"live=[{','.join(live)}] servers={len(shields)} shielded",
             "live": live, "unshielded": unshielded, "kind": "read"}
+
+
+def _host_server_keeper(home: Path) -> dict[str, object]:
+    """Name the systemd unit that actually holds the tmux server.
+
+    The plant's session keeper is separate from the process serving its
+    socket: `systemd-run` raises a keeper beside the session, while the
+    server itself is forked by whichever `tmux new-session` first created
+    the shared socket. When a finished test's raise wins, the shared server
+    lives in a transient unit no live service owns, so the plant's
+    presentation liveness depends on a unit nothing will restart or protect.
+    Naming the unit makes that ownership visible; this reading never stops
+    anything, because stopping a keeper that holds a shared server would
+    cgroup-kill every session on the socket.
+
+    Drift is a holding unit that does not belong to the declared session.
+    Verified names the plant's own keeper. An absent session or an
+    unreadable /proc read stays unknown: attribution that cannot be made is
+    not a healthy signal, and a missing session is the session-stability
+    reading's to report rather than this one's to duplicate. All external
+    text enters through proc_table decoders.
+    """
+    session = os.environ.get("MISHE_SEED_SESSION") or None
+    if not session:
+        from .seed import recorded_session
+        session = recorded_session(home)
+    if not session:
+        return {"id": "sense.host.server-keeper", "state": "unknown",
+                "sample": "declared session unreadable", "kind": "read"}
+    try:
+        result = subprocess.run(["tmux", "display-message", "-p", "-t", "=" + session, "#{pid}"],
+                                capture_output=True, timeout=2)
+    except (OSError, subprocess.TimeoutExpired):
+        return {"id": "sense.host.server-keeper", "state": "unknown",
+                "sample": "server attribution unavailable", "kind": "read"}
+    if result.returncode != 0:
+        return {"id": "sense.host.server-keeper", "state": "unknown",
+                "sample": f"session {session} not attributable to a server", "kind": "read"}
+    pids = proc_table.pane_pids(result.stdout)
+    if len(pids) != 1:
+        return {"id": "sense.host.server-keeper", "state": "unknown",
+                "sample": "server pid unreadable", "kind": "read"}
+    server = str(pids[0])
+    unit = proc_table.read_cgroup_unit(server)
+    if not unit:
+        return {"id": "sense.host.server-keeper", "state": "unknown",
+                "sample": f"server pid {server} cgroup unreadable", "kind": "read"}
+    if not proc_table.belongs_to_session(unit, session):
+        return {"id": "sense.host.server-keeper", "state": "drift",
+                "sample": f"session={session} server-pid={server} foreign-keeper={unit}",
+                "session": session, "server_pid": server, "keeper": unit, "kind": "read"}
+    return {"id": "sense.host.server-keeper", "state": "verified",
+            "sample": f"session={session} server-pid={server} keeper={unit}",
+            "session": session, "server_pid": server, "keeper": unit, "kind": "read"}
 
 def _host_session_restarts(home: Path, past_minutes: int = 60) -> dict[str, object]:
     """Count plant session-scope births over the trailing window; flag churn.
@@ -4577,6 +4624,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append({"id": "sense.tmux.windows", "state": "verified" if names else "unknown",
                      "sample": names or "session unavailable", "kind": "read"})
     observed.append(_host_session_stability(home))
+    observed.append(_host_server_keeper(home))
     observed.append(_host_session_restarts(home))
     roots, _coverage_failure = _service_import_roots(home)
     observed.append(_sensor_coverage(home, roots))
