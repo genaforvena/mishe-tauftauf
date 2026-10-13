@@ -1,3 +1,66 @@
+## Current disposition — wake 33779: changed; a42065d landed (wire usage through the native loop); Experiment 2 pass D; canary legs retired with tested substitute
+
+Lane: `a42065d` carries per-turn provider wire usage (None = UNKNOWN, never
+a synthesized zero) through `drive_native`'s stop result, checkpoints,
+`_reconstruct_native`, and `resume_from` continuation; +78 tests
+(None-means-unknown, journal round trip + continuation, chained continuation
+alignment). Verified on current bytes: `tests/test_inference_loop.py` 79
+passed; with `tests/test_launcher_model.py` 89 passed;
+`tests/test_inference_transport.py tests/test_inference_worker.py` 45
+passed; package import ok; `tools/check_parsing.py` PASS (928 legacy sites
+unchanged). Local HEAD `3b86741` (docs) is 1 ahead of `origin/main`
+`0d3faee`; landing/promotion is genome's (held by the `0d3faee` CI RED).
+Earlier delivery of this wake died after committing; all effects above were
+re-verified this delivery.
+
+Experiment 2 pass D (class unchanged: read-only exact-SHA CI observation;
+frozen inputs `e78ad41` + run `38377990382`; candidate `drive_native` over
+the pinned native worker, real provider route `opencode-go/step-5-preview-free`,
+one capability `ci_status`, budgets 5/5/300): D1 selected `ci_status` with
+exactly the frozen run id and completed the `gh` read, then the turn died
+`WorkerError: native provider fetch budget exhausted` — the failure is
+durable in the caller journal, not silent. Root cause reproduced: upstream
+intermittently returns 429 `Upstream request failed: Endpoint is
+unavailable.` (3/7 samples ~12 min, reasoning level irrelevant); the
+provider transport's documented transient retry issues a second POST inside
+one turn and `native/native-session.ts` caps provider fetches at 1 per turn.
+Independent defect: `wire_usage` is null on every successful
+`openai-completions` turn (`onSseEvent` recognises only Responses-API
+terminals) — a42065d is what makes that UNKNOWN durable instead of a
+synthesized zero. Parity: NOT YET EVIDENCED; model-owned capability
+selection is now tested (correct single call, no invented id). Harness route
+remains the fallback.
+
+Footer (operator ask 3): launcher `--model opencode-go/step-5-preview-free
+--thinking high`; live pane footer MATCH. No health routing.
+
+Canary (cutoff was 12:00Z): leg re-measured live — `minds/docs`
+`4cf4f63c…` (step-5) vs `minds/docs.bak` `8f6aac12…` (muse-spark), model
+string only. Cause: the operator-authorized fleet switch; the byte-identity
+condition is deliberately superseded, so the legs are RETIRED. Substitute
+coverage `tests/test_launcher_model.py` re-run green with the loop tests
+before removal (detector substitution recorded in the artifact before the
+retirement).
+
+RED routed (not mine): `origin/main` head `0d3faee` exact-SHA CI `38386771440`
+`core (3.12)` failed — both failures `TmuxError` connecting to
+`/tmp/tmux-1001/default` (CI runner lacks that tmux server); new with
+`0d3faee`, prior run `38385876751` green; owner health, watch genome,
+diagnosis DM sent.
+
+Scope note: the first commit attempt carried a pre-staged peer hunk
+(`tests/test_seed.py`, health); amended away with an explicit-pathspec
+commit; peer bytes left unstaged and untouched.
+
+Evidence: `.mishe-tauftauf/artifacts/inference-research-wake33779-native-provider-parity.md`;
+journals and probes under `.mishe-tauftauf/scratch/wake33779/`.
+
+Next: `native/native-session.ts` — raise the per-turn provider fetch cap
+above 1 (still bounded) and parse usage from completions SSE chunks; first
+deliverable is a bun test seam (no TS harness exists in the repo). Then a
+pass-D re-run on the same frozen inputs; the harness route stays fallback
+until parity.
+
 ## Current disposition — wake 33421: GREEN; a22e25b exact-SHA CI success; HEAD == origin/main == a22e25b
 +
 Exact-SHA CI run 38375665350 (a22e25b, my wake-33117 record commit,
