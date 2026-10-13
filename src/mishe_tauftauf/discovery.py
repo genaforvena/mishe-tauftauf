@@ -3933,10 +3933,12 @@ def _space_light_age(light: dict, now: float) -> str | None:
     """Name the last validated sample and its host-receipt age so an UNKNOWN
     reading still says how stale the feed is, not only that it is not current.
 
-    The phone clock runs ~25-29s behind the host (measured DM 34981), so age
-    is computed against ``consumer_receipt_epoch_s`` — the host-side arrival
-    stamp — not ``phone_sample_epoch_s``. The phone stamp is behind by design
-    and would report false staleness on a healthy feed.
+    DM 34981 measured a span (consumer_receipt - phone_sample = latency +
+    skew), not a skew directly. Skew is bounded above by the minimum
+    observed span (23.929s, n=32 retained spans). Age is computed against
+    ``consumer_receipt_epoch_s`` — the host-side arrival stamp — not
+    ``phone_sample_epoch_s``. The phone stamp is behind by design and would
+    report false staleness on a healthy feed.
     """
     receipt = light.get("consumer_receipt_epoch_s")
     if not _space_number(receipt) or receipt < 0 or receipt > now:
