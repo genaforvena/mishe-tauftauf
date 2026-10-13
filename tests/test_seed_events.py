@@ -22,6 +22,13 @@ def test_redact_display_age_keeps_meaning_and_unknown_ages():
     assert "last-phone=<phone>" in redacted
     assert "last-phone=2026-10-11T00:47:31+00:00" not in redacted
     assert "19m17s" not in redacted
+    # Idle seconds in HEADLINE are volatile per-tick and must be redacted.
+    headline_1 = "HEADLINE: GREEN — mind ok idle 7s; watcher live"
+    headline_2 = "HEADLINE: GREEN — mind ok idle 42s; watcher live"
+    assert redact_display_age(headline_1) == "HEADLINE: GREEN — mind ok idle <idle>; watcher live"
+    assert redact_display_age(headline_1) == redact_display_age(headline_2)
+    # Idle redaction preserves the rest of the line.
+    assert "watcher live" in redact_display_age(headline_1)
 
 
 def test_indented_task_tags_remain_visible_and_addressed(tmp_path):

@@ -74,7 +74,7 @@ def executable(path: Path) -> bool:
     return path.is_file() and os.access(path, os.X_OK)
 
 
-AGE_TOKEN_RE = re.compile(r"\bage=[0-9hms]+|\blast-phone=[0-9T:\+-]+")
+AGE_TOKEN_RE = re.compile(r"\bage=[0-9hms]+|\blast-phone=[0-9T:\+-]+|\bidle [0-9]+s")
 
 
 def redact_display_age(line: str) -> str:
@@ -84,12 +84,13 @@ def redact_display_age(line: str) -> str:
     on a held phone light stream). That value grows on every refresh while the
     reading's meaning is unchanged, so an internal consumer that compares
     texts would treat the clock's advance as a new event. The same applies to
-    ``last-phone=``, a volatile per-scan timestamp. Returns the line with a
-    numeric age and the phone timestamp redacted; a non-numeric age
+    ``last-phone=``, a volatile per-scan timestamp, and ``idle Ns``, a volatile
+    per-tick idle counter. Returns the line with a numeric age, the phone
+    timestamp, and the idle counter redacted; a non-numeric age
     (``age=unknown``) is a distinct value and is preserved, as is the rest of
     the line.
     """
-    return AGE_TOKEN_RE.sub(lambda m: "age=<age>" if m.group().startswith("age=") else "last-phone=<phone>", line)
+    return AGE_TOKEN_RE.sub(lambda m: "age=<age>" if m.group().startswith("age=") else "last-phone=<phone>" if m.group().startswith("last-phone=") else "idle <idle>", line)
 
 
 def discover(home: Path) -> list[str]:
