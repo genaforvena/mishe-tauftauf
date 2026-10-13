@@ -5704,6 +5704,87 @@ def test_treadmill_ci_without_concluded_is_other_change():
         "inference-research wake 1: CI watch pending") == "other-change"
 
 
+def _treadmill_home_with_handoff(tmp_path, text="wake 1 notes"):
+    home = tmp_path / "site"
+    (home / "handoffs").mkdir(parents=True, exist_ok=True)
+    (home / "handoffs" / "senses.md").write_text(text, encoding="utf-8")
+    return home
+
+
+def test_treadmill_handoff_digest_is_stable_and_absent_is_none(tmp_path):
+    home = _treadmill_home_with_handoff(tmp_path)
+    assert discovery._treadmill_handoff_digest(home, "senses") == \
+        discovery._treadmill_handoff_digest(home, "senses")
+    assert discovery._treadmill_handoff_digest(home, "genome") is None
+
+
+def test_treadmill_handoff_stagnant_when_bytes_identical(monkeypatch, tmp_path):
+    import json
+
+    home = _treadmill_home_with_handoff(tmp_path, "same words")
+    digest = discovery._treadmill_handoff_digest(home, "senses")
+    (home / "discovery").mkdir(exist_ok=True)
+    previous = {"observations": [{"id": "sense.mind.treadmill", "kind": "read",
+                                  "state": "verified", "sample": "treadmill=clean",
+                                  "roles": {"senses": {"handoff": digest}}}]}
+    (home / "discovery" / "latest.json").write_text(json.dumps(previous), encoding="utf-8")
+
+    class Head:
+        returncode = 0
+        stdout = "abc123\n"
+
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: Head())
+    monkeypatch.setattr(discovery, "_treadmill_commits",
+                        lambda checkout, role, limit=60: [])
+    result = discovery._mind_treadmill(home)
+    assert result["roles"]["senses"]["handoff_moved"] == "stagnant"
+    assert "handoff_stagnant=senses" in result["sample"]
+
+
+def test_treadmill_handoff_changed_clears_nothing_but_names_movement(monkeypatch, tmp_path):
+    import json
+
+    home = _treadmill_home_with_handoff(tmp_path, "new words this wake")
+    (home / "discovery").mkdir(exist_ok=True)
+    previous = {"observations": [{"id": "sense.mind.treadmill", "kind": "read",
+                                  "state": "verified", "sample": "treadmill=clean",
+                                  "roles": {"senses": {"handoff": "deadbeef0000"}}}]}
+    (home / "discovery" / "latest.json").write_text(json.dumps(previous), encoding="utf-8")
+
+    def record_commit():
+        return {"subject": "inference-research wake 1: CI 1 concluded success",
+                "files": ["research/inference-continuity/progress.md"]}
+
+    class Head:
+        returncode = 0
+        stdout = "abc123\n"
+
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: Head())
+    monkeypatch.setattr(
+        discovery, "_treadmill_commits",
+        lambda checkout, role, limit=60:
+        ([record_commit() for _ in range(6)] if role == "inference-research" else []))
+    result = discovery._mind_treadmill(home)
+    assert result["roles"]["inference-research"]["verdict"] == "watch-treadmill"
+    assert result["roles"]["senses"]["handoff_moved"] == "changed"
+    assert "handoff_stagnant" not in result["sample"]
+
+
+def test_treadmill_handoff_unknown_without_previous_receipt(monkeypatch, tmp_path):
+    home = _treadmill_home_with_handoff(tmp_path)
+
+    class Head:
+        returncode = 0
+        stdout = "abc123\n"
+
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: Head())
+    monkeypatch.setattr(discovery, "_treadmill_commits",
+                        lambda checkout, role, limit=60: [])
+    result = discovery._mind_treadmill(home)
+    assert result["roles"]["senses"]["handoff_moved"] is None
+
+
+
 def test_treadmill_git_log_entries_groups_subjects_and_files():
     from mishe_tauftauf import proc_table
     raw = ("SUBJECT:inference-research wake 1: record abc CI success\n"

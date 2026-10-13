@@ -1280,6 +1280,44 @@ def _treadmill_commits(checkout: Path, role: str, limit: int = TREADMILL_WINDOW_
     entries = proc_table.git_log_entries(result.stdout)
     return [entry for entry in entries if role in entry["subject"]]
 
+def _treadmill_handoff_digest(home: Path, role: str) -> str | None:
+    """Short digest of a role's live handoff bytes, or None when absent.
+
+    Reads ``handoffs/<role>.md`` exactly as settled: the wall and the
+    handoff carry the same settled text, so one digest covers both. No
+    content parsing — human prose is opaque; byte equality is the only
+    claim. A missing file is absence, not stagnation.
+    """
+    import hashlib
+
+    try:
+        raw = (Path(home) / "handoffs" / f"{role}.md").read_bytes()
+    except OSError:
+        return None
+    return hashlib.sha256(raw).hexdigest()[:12]
+
+
+def _treadmill_previous_digests(home: Path) -> dict[str, str]:
+    """Handoff digests from the previous scan's treadmill reading, if any.
+
+    The previous receipt is the only retained cross-scan memory: the commit
+    stream shows what landed in git, the prior reading shows what the last
+    scan saw live. A malformed or missing receipt means no comparison, not
+    a clean bill — callers report ``unknown`` for that leg.
+    """
+    previous = latest(home)
+    if previous is None:
+        return {}
+    digests: dict[str, str] = {}
+    for item in previous.get("observations", []):
+        if isinstance(item, dict) and item.get("id") == "sense.mind.treadmill":
+            roles = item.get("roles")
+            if isinstance(roles, dict):
+                for role, pair in roles.items():
+                    if isinstance(pair, dict) and isinstance(pair.get("handoff"), str):
+                        digests[str(role)] = pair["handoff"]
+    return digests
+
 
 def _mind_treadmill(home: Path) -> dict:
     """Stagnation + change accumulators over each role's commit stream.
@@ -1292,6 +1330,14 @@ def _mind_treadmill(home: Path) -> dict:
     reads ``clean``. A role with fewer than one commit in the window, or a
     checkout git cannot read, stays UNKNOWN: absence of evidence is not a
     clean bill.
+
+    Handoff leg: each role's pair also carries the live handoff digest and
+    whether it moved since the previous scan (``changed``/``stagnant``/
+    ``unknown`` when the prior receipt or the file is absent). A stagnant
+    handoff beside a record-only run is corroboration — the wake settled
+    byte-identical words. A changed handoff does NOT clear the verdict:
+    handoff text renames the wake every turn, so gating on it would silence
+    the detector while the commit stream still shows no movement.
 
     The sample names every role's ``stagnation``/``change`` pair; the
     verdict that matters to witness/health rendering is the worst one.
@@ -1313,6 +1359,7 @@ def _mind_treadmill(home: Path) -> dict:
     sampled = head.stdout[:40]
     roles = ["inference-research", "body-research", "docs", "health", "senses",
              "discover", "genome", "witness", "research-methods", "operator-view"]
+    previous = _treadmill_previous_digests(home)
     pairs: dict[str, dict] = {}
     unreadable = 0
     worst = "clean"
@@ -1321,9 +1368,15 @@ def _mind_treadmill(home: Path) -> dict:
         if commits is None:
             unreadable += 1
             continue
+        digest = _treadmill_handoff_digest(home, role)
+        old = previous.get(role)
+        handoff_moved: str | None = None
+        if digest is not None and old is not None:
+            handoff_moved = "changed" if digest != old else "stagnant"
         if not commits:
             pairs[role] = {"stagnation": 0, "change": 0, "verdict": "unknown",
-                           "detail": "no commits in window"}
+                           "detail": "no commits in window",
+                           "handoff": digest, "handoff_moved": handoff_moved}
             continue
         fold = _treadmill_fold(commits)
         verdict = ("watch-treadmill" if fold["stagnation"] >= TREADMILL_MIN_WAKES
@@ -1331,10 +1384,15 @@ def _mind_treadmill(home: Path) -> dict:
         if verdict == "watch-treadmill":
             worst = "watch-treadmill"
         pairs[role] = {**fold, "verdict": verdict,
-                       "detail": f"leading record-only run over {len(commits)} commits"}
+                       "detail": f"leading record-only run over {len(commits)} commits",
+                       "handoff": digest, "handoff_moved": handoff_moved}
     sample = "treadmill=" + worst + " " + " ".join(
         f"{role}(stag={pairs[role]['stagnation']},change={pairs[role]['change']})"
         for role in sorted(pairs))
+    stagnant = sorted(role for role, pair in pairs.items()
+                      if pair.get("handoff_moved") == "stagnant")
+    if stagnant:
+        sample += " handoff_stagnant=" + ",".join(stagnant)
     if unreadable:
         sample += f" unreadable={unreadable}"
     state = "verified" if pairs else "unknown"
