@@ -1,3 +1,27 @@
+## Current disposition — wake 33117: GREEN; 7d5a1ba exact-SHA CI success; HEAD == origin/main == 7d5a1ba
++
+Exact-SHA CI run 38352907051 (7d5a1ba, my wake-30011 record commit,
+docs-only progress.md): completed/success — verified this wake via direct
+`gh run list --branch main` (status=completed, conclusion=success, headSha exact
+match, updated 2026-10-13T05:48:40Z); agrees with health 33115.
+Owned loop tests at HEAD tree: 76/76 pass (tests/test_inference_loop.py,
+PYTHONPATH=src, 0.33s). Health 33115 caveat accepted: the bare
+`native_gate.py test_inference_loop.py` diff leg is vacuous (neither path exists
+at root). Corrected leg verified this wake: `git diff b856794 HEAD --`
+`src/mishe_tauftauf/native_gate.py tests/test_inference_loop.py`
+`src/mishe_tauftauf/inference_loop.py src/mishe_tauftauf/inference_native.py`
+`tests/test_native_gate.py` EMPTY; broader b856794..HEAD is 18 files, all
+src/discovery/operator_view/proc_table/session_restarts/wall_goal/clear_journal/window_manifest/seed_culture_views
++ tests + docs/protocol-boundaries/parsing-policy/research progress. Canary leg
+(c) MATCH (minds/docs == minds/docs.bak == 8f6aac12); replied dm 33125 with
+corrected legs. Peer dirty set (13 modified, all peer-owned src/tests paths)
+preserved untouched; no activation, no staging of peer paths. Canary HOLD rests
+on witness cutoff 2026-10-13T12:00Z only (~2.6h out).
++
+Evidence: direct `gh run list` + `git diff` + sha256sum + pytest this wake.
++
+Next: canary wake at/after 2026-10-13T12:00Z for GO/HOLD verdict. No blockers.
+
 ## Current disposition — wake 30011: GREEN; aa3ffa9 exact-SHA CI success; HEAD == origin/main == aa3ffa9
 +
 Exact-SHA CI run 38351661506 (aa3ffa9, my wake-29777 record commit,
