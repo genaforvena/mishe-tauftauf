@@ -1094,3 +1094,92 @@ def test_fetch_ledger_absent_stays_unknown_per_turn(tmp_path):
     with NativeJournal(path) as journal:
         drive(Session(turn()), record=journal, complete=lambda context: True)
     assert read_native_journal(path)["fetch_ledger"] == [None]
+
+
+EXHAUSTION_LEDGER = {"allowance": 2,
+                     "workClass": "experiment-2-read-only-ci-observation",
+                     "dispatches": 2,
+                     "upstream_failure": {"kind": "status", "status": 429,
+                                          "statusText": "Too Many Requests"}}
+
+
+def exhausted(message="native provider fetch budget exhausted after 2 of 2 fetches "
+                      "permitted for experiment-2-read-only-ci-observation; "
+                      "upstream HTTP 429 Too Many Requests (transient)",
+              ledger=EXHAUSTION_LEDGER):
+    error = WorkerError(message)
+    error.fetch_ledger = ledger
+    return error
+
+
+def test_failed_turn_records_its_fetch_ledger_row_beside_the_diagnostic(tmp_path):
+    # An exhausted turn fails closed and still claimed real dispatches: the
+    # worker's budget row is recorded on the failure record, so the dispatch
+    # count stays auditable without trusting the diagnostic prose.
+    class FailedSession:
+        def turn(self, context):
+            raise exhausted()
+
+    path = tmp_path / "exhausted.jsonl"
+    with NativeJournal(path) as journal:
+        with pytest.raises(WorkerError):
+            drive(FailedSession(), record=journal)
+    row = [row for row in (json.loads(line) for line in
+                           path.read_text().splitlines())
+           if row["kind"] == "model_failure"][0]
+    assert row["fetch_ledger"] == EXHAUSTION_LEDGER
+    state = read_native_journal(path)
+    assert state["fetch_ledger"] == [EXHAUSTION_LEDGER]
+    assert state["model_failure"]["type"] == "WorkerError"
+    assert state["status"] == "unknown"
+
+
+def test_failed_turn_without_a_ledger_row_stays_unknown(tmp_path):
+    class FailedSession:
+        def turn(self, context):
+            raise WorkerError("native session exited 1")
+
+    path = tmp_path / "exited.jsonl"
+    with NativeJournal(path) as journal:
+        with pytest.raises(WorkerError):
+            drive(FailedSession(), record=journal)
+    state = read_native_journal(path)
+    assert state["fetch_ledger"] == [None]
+
+
+def test_failure_ledger_row_keeps_per_turn_alignment(tmp_path):
+    # The failed turn's row lands at its own turn index, so a journal with a
+    # completed turn followed by an exhausted one reads one row per attempt.
+    class TurnThenExhausted:
+        def __init__(self):
+            self.turns = iter([turn([CALL])])
+
+        def turn(self, context):
+            try:
+                return next(self.turns)
+            except StopIteration:
+                raise exhausted() from None
+
+    path = tmp_path / "alignment.jsonl"
+    with NativeJournal(path) as journal:
+        with pytest.raises(WorkerError):
+            drive(TurnThenExhausted(), record=journal)
+    # Turn 0 completed without a ledger (the plain WorkerTurn carries none);
+    # turn 1 failed closed holding the budget row for its two claims.
+    assert read_native_journal(path)["fetch_ledger"] == [None, EXHAUSTION_LEDGER]
+
+
+def test_malformed_failure_ledger_row_is_refused(tmp_path):
+    events = []
+
+    class FailedSession:
+        def turn(self, context):
+            raise exhausted()
+
+    with pytest.raises(WorkerError):
+        drive(FailedSession(), record=events.append)
+    events[-1]["fetch_ledger"] = 7
+    path = tmp_path / "invalid.jsonl"
+    path.write_text("".join(json.dumps(row) + "\n" for row in events))
+    with pytest.raises(NativeJournalError):
+        read_native_journal(path)

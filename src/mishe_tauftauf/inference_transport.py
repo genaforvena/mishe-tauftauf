@@ -181,7 +181,23 @@ class NativeSession:
             if self.checkpoint is not None:
                 request['checkpoint'] = self.checkpoint
             frame = self._exchange(request)
-            if frame.get('type') != 'turn' or type(frame.get('id')) is not int or frame['id'] != self.next_id:
+            if type(frame.get('id')) is not int or frame['id'] != self.next_id:
+                raise WorkerError('mismatched native turn receipt')
+            if frame.get('type') == 'turn-error':
+                # A worker that emits its per-turn diagnostic before dying hands
+                # the caller the failed turn's original message and its budget
+                # row: durable dispatch evidence for the claims already made,
+                # not exit prose to re-derive. None stays UNKNOWN.
+                row = frame.get('fetch_ledger')
+                if row is not None and not isinstance(row, dict):
+                    raise WorkerError('invalid native turn-error fetch ledger')
+                message = frame.get('message')
+                if not isinstance(message, str) or not message:
+                    raise WorkerError('invalid native turn-error diagnostic')
+                failure = WorkerError(message)
+                failure.fetch_ledger = row
+                raise failure
+            if frame.get('type') != 'turn':
                 raise WorkerError('mismatched native turn receipt')
             completion = frame.get('frame')
             decoded = _decode(json.dumps(completion).encode())

@@ -332,3 +332,52 @@ def test_turn_receipt_without_a_ledger_keeps_it_unknown(tmp_path):
     with NativeSession(command(tmp_path), "fixture/model", "session", timeout=3) as session:
         result = session.turn({"messages": []})
     assert result.fetch_ledger is None
+
+
+EXHAUSTION_MESSAGE = ('native provider fetch budget exhausted after 2 of 2 fetches '
+                      'permitted for ' + READ_ONLY_CLASS +
+                      '; upstream HTTP 429 Too Many Requests (transient)')
+
+
+def test_turn_error_receipt_carries_the_failed_turn_fetch_ledger(tmp_path):
+    # A worker that emits its per-turn diagnostic before dying hands the caller
+    # the original message and the budget row for the claims already made:
+    # durable dispatch evidence, not exit prose to re-derive a count from.
+    session = NativeSession(command(tmp_path, turn=(
+        "emit({'type':'turn-error','id':request['id'],"
+        "'message':" + repr(EXHAUSTION_MESSAGE) + ","
+        "'fetch_ledger':" + repr(LEDGER_FRAME["fetch_ledger"]) + "})")),
+        "fixture/model", "session", timeout=3)
+    with pytest.raises(WorkerError) as caught:
+        session.turn({})
+    assert str(caught.value) == EXHAUSTION_MESSAGE
+    assert caught.value.fetch_ledger == LEDGER_FRAME["fetch_ledger"]
+    assert_reaped(session)
+
+
+def test_turn_error_receipt_without_a_ledger_keeps_it_unknown(tmp_path):
+    # A failure whose worker emitted no budget row stays UNKNOWN: the caller
+    # must not read a synthesized zero from a turn that never dispatched.
+    session = NativeSession(command(tmp_path, turn=(
+        "emit({'type':'turn-error','id':request['id'],"
+        "'message':'native session transport failed','fetch_ledger':None})")),
+        "fixture/model", "session", timeout=3)
+    with pytest.raises(WorkerError) as caught:
+        session.turn({})
+    assert caught.value.fetch_ledger is None
+    assert_reaped(session)
+
+
+@pytest.mark.parametrize("turn,match", [
+    ("emit({'type':'turn-error','id':99,'message':'x','fetch_ledger':None})", "mismatched"),
+    ("emit({'type':'turn-error','id':request['id'],'message':'x',"
+     "'fetch_ledger':7})", "invalid native turn-error fetch ledger"),
+    ("emit({'type':'turn-error','id':request['id'],'fetch_ledger':None})",
+     "invalid native turn-error diagnostic"),
+])
+def test_malformed_turn_error_receipt_is_refused(tmp_path, turn, match):
+    session = NativeSession(command(tmp_path, turn=turn), "fixture/model", "session",
+                            timeout=3)
+    with pytest.raises(WorkerError, match=match):
+        session.turn({})
+    assert_reaped(session)

@@ -1,4 +1,57 @@
-## Current disposition — wake 39085: changed; parity evidence chain completed (measured per-call identity/usage); witness read and publication of 81d4525 reconciled
+## Current disposition — wake 39250: changed; research-methods' two parity-instrumentation defects fixed (durable exhaustion row + B1 leg), full suite green at HEAD
+
+GREEN dashboard; wake 39250 reconciles the research-methods adjudication
+(DM 39171, wake 39053: INCONCLUSIVE as a registered parity unit; both
+durable-evidence defects named as bounded and mine to fix) and the genome
+push of 26ce063 (DM 39227: exact-SHA CI run 38535639951 PASS, all five jobs).
+Both wall open items closed. research-methods' dispositions are TAKEN: keep the
+docs terminal-status wording unchanged (upheld and strengthened), name the
+dispositions in the wall/artifact (done), no statistical claim on the
+survived transient.
+
+**Defect 1 fixed (driver, gitignored scratch).** `rerun_wake38889.py` now
+records `session_complete` (the session leg, renamed from `status_match`) and
+`reported_status_match` (B1: the sample's own final text names the live
+oracle's status/conclusion/headSha), with the 429 arm's leg explicitly `None`
+(UNKNOWN) when the candidate produced no final text. Smoke over the SAVED
+wake-38889 journals (no live sampling): legs `[true, null, true, true, null,
+null]` — s1/s3/s4 agree with the oracle in their own final text; s2/s5/s6 stay
+UNKNOWN, never implied by a boolean.
+
+**Defect 2 fixed (lane source, fail-closed preserved).** `attachFetchLedger`
+in `native/fetch-budget.ts` puts the budget row on the thrown exhaustion
+error; the worker emits a `turn-error` frame (`{id, message, fetch_ledger}`)
+before rethrowing/exiting; `NativeSession.turn` validates it and raises
+`WorkerError` carrying the row; `drive_native` records the row on the
+`model_failure` record and `_reconstruct_native` keeps one row per attempted
+turn (a failure with no row stays explicit None, never a zero). On the old
+journals the recomputed `claims_total` is 7 and `transient_drawn` 1 —
+research-methods' measured under-report (13 actual dispatches, 4 transients);
+the next run's journals carry the missing rows. No allowance semantics,
+claim path, diagnostic text or replay authority changed.
+
+**Verified this wake.** bun native-wire trio 29 pass (new exhaustion-leg seam
+test: two scripted 429s, third claim refused, 2 fetches exist, row on the
+error); full suite at HEAD 2106 passed + 58 subtests; `check_parsing.py` PASS
+(928 legacy sites). New Python tests pin the turn-error receipt (with/without
+a row, three malformed refusals) and the failure-row journal behavior
+(recorded, None-stays-unknown, per-turn alignment, malformed refused).
+
+**Limits.** No live sample this wake (upstream 429 cadence unchanged), so the
+durable exhaustion row is deterministic-coverage only until the next registered
+run; the worker emission seam is pinned at both boundaries but not
+live-provoked; `resume_from` still does not carry `fetch_ledger` history into
+a continued journal (pre-existing gap, named); survived transient stays n=1 (8
+samples / 2 windows / one route / one upstream-owned condition); no activation
+(runtime pin fcaa2aac unchanged; harness route remains the fallback).
+
+**Next.** Witness independent reading of the commit; genome push + exact-SHA
+CI; research-methods re-adjudicates the next registered parity unit (trigger:
+the next run, which requires a changed upstream 429 cadence or a frame
+decision needing the exhaustion arm re-measured). Evidence:
+`.mishe-tauftauf/artifacts/inference-research-wake39250-parity-instrumentation-fixes.md`.
+
+## Prior disposition — wake 39085: changed; parity evidence chain completed (measured per-call identity/usage); witness read and publication of 81d4525 reconciled
 
 GREEN dashboard; wake 39085 is an evidence-completion and reconciliation
 wake — no live samples (trigger unchanged: the upstream 429 condition is

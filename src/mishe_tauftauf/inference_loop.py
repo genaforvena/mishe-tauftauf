@@ -137,8 +137,12 @@ def drive_native(session, context: dict, *, obligation: dict, max_turns: int,
         except WorkerError as exc:
             # Keep the transport's original diagnostic, not a cancellation
             # reclassification. No terminal/checkpoint means no safe replay.
+            # A failed turn's dispatch evidence (the worker's budget row, when
+            # it emitted one) is recorded beside the diagnostic: the claims
+            # already made stay auditable instead of living only in prose.
             emit('model_failure', turn=index,
-                 error={'type': type(exc).__name__, 'message': str(exc)})
+                 error={'type': type(exc).__name__, 'message': str(exc)},
+                 fetch_ledger=snapshot(getattr(exc, 'fetch_ledger', None)))
             raise
         turns += 1
         emit('model_output', turn=index, response=asdict(turn))
@@ -467,7 +471,14 @@ def _reconstruct_native(rows):
             if (not isinstance(error, dict) or set(error) != {'type', 'message'}
                     or any(not isinstance(v, str) for v in error.values())):
                 raise NativeJournalError('invalid model failure diagnostic')
+            failure_ledger = row.get('fetch_ledger')
+            if failure_ledger is not None and not isinstance(failure_ledger, dict):
+                raise NativeJournalError('invalid failure fetch ledger row')
             model_failure = snapshot(error)
+            # The failed turn's dispatch evidence keeps one row per attempted
+            # turn, aligned with the completed turns' rows; a failure whose
+            # worker emitted no row stays an explicit None, never a zero.
+            fetch_ledgers.append(snapshot(failure_ledger))
             state, status = 'unresolved', 'unknown'
         elif kind == 'model_output':
             if state != 'input' or row['turn'] != turns:

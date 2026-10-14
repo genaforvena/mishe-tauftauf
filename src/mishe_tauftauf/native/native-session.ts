@@ -3,7 +3,7 @@ import type {Context, ProviderSessionState} from '@oh-my-pi/pi-ai/types';
 import {withNativeModel} from './native-bootstrap.ts';
 import {restoreCheckpoint} from './native-checkpoint.ts';
 import {WireRecorder} from './wire-usage.ts';
-import {DEFAULT_TURN_FETCH_ALLOWANCE, TurnFetchBudget} from './fetch-budget.ts';
+import {DEFAULT_TURN_FETCH_ALLOWANCE, TurnFetchBudget, attachFetchLedger} from './fetch-budget.ts';
 
 // One underlying fetch per turn by default, including lower-level HTTP retries
 // and encoding fallback. This deliberately withholds automatic retry authority
@@ -35,7 +35,10 @@ export async function withNativeSession<T>(selector: string, sessionId: string,
    if (controller.signal.aborted) throw new Error('native turn cancelled before fetch');
    if (!budget.claim()) {
     poisoned = true;
-    fetchBudgetError = budget.exhaustion();
+    // The failed turn still claimed real dispatches: the budget's row rides
+    // the thrown exhaustion so the worker can emit durable per-turn evidence
+    // before the session ends. The turn still fails closed.
+    fetchBudgetError = attachFetchLedger(budget.exhaustion(), budget.ledger());
     controller.abort(fetchBudgetError);
     throw fetchBudgetError;
    }

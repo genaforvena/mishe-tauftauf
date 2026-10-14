@@ -250,7 +250,11 @@ retry authority inside a turn and is a contract change, not a tuning knob.
 An attempted dispatch past the allowance poisons the session and raises
 `native provider fetch budget exhausted`, naming the upstream failure that
 preceded it when there was one; provider cancellation normalization cannot
-replace that diagnostic. An ordinary error terminal remains an error, and a
+replace that diagnostic. The failed turn still fails closed, yet its claims
+are durable evidence: the worker emits the original diagnostic together with
+the budget row for the dispatches already made before exiting, so a caller
+journal records one ledger row per attempted turn rather than per completed
+turn. An ordinary error terminal remains an error, and a
 later caller-authorized turn has its own default allowance. This is not broad
 automatic retry authority, an output-token cap, a spend guarantee or proof that
 the server processed only one request.
@@ -273,7 +277,8 @@ completed holding exactly one `ci_status` proposal and one tool result. A
 survived 429 was therefore UNKNOWN after the first window and is now observed
 live once; before that, only the deterministic seam test covered the path. The
 turn frame carries a fetch ledger (`allowance`, `workClass`, `dispatches`,
-`upstream_failure`) that `read_native_journal` surfaces as one row per turn, an
+`upstream_failure`) that `read_native_journal` surfaces as one row per
+attempted turn — the failed turn's row rides its `model_failure` record — an
 absent ledger staying UNKNOWN rather than a synthesized zero. Eight samples
 across two windows on one route under one upstream-owned condition, with one
 survivor, is not a statistical claim, and terminal-status parity under the 429
@@ -288,7 +293,8 @@ than the upstream status; the completions route to `opencode-go` was measured
 returning such a 429 (wake 33779). That is a known zero-tolerance interaction
 on this route, not a silent retry — it is the measured failure the narrow
 allowance exists to test. `drive_native` persists a `model_failure`
-with the original `WorkerError` type and diagnostic before propagating the
+with the original `WorkerError` type and diagnostic, plus the worker's
+per-turn fetch ledger row when it emitted one, before propagating the
 exception. Budget exhaustion, cancellation and time limits retain their distinct
 transport diagnostics; none supplies a model completion or authorizes replay.
 Journal reconstruction preserves the failure through a recovery checkpoint,
