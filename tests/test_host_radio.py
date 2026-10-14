@@ -356,12 +356,74 @@ def test_cam_decoders_read_the_producer_dialect_and_skip_opaque_rows() -> None:
     assert len(rows) == 2
     assert rows[0][1] == "CAPTURE-FAIL"
     assert rows[1][1] == "SHUTTERED"
-    assert host_radio.decode_urb_failures(
+    journal = (
         "kernel: uvcvideo 1-6:1.1: Failed to resubmit video URB (-1).\n"
+        "kernel: uvcvideo 1-6:1.1: Failed to set UVC probe control : -110 (exp. 26)\n"
         "kernel: uvcvideo 1-6:1.1: something else\n"
-        "kernel: rtw_8822bu: unrelated\n") == 1
+        "kernel: rtw_8822bu: unrelated\n")
+    assert host_radio.decode_urb_failures(journal) == 1
+    assert host_radio.decode_probe_failures(journal) == 1
+    assert host_radio.decode_probe_failures(
+        "kernel: uvcvideo 1-6:1.1: Failed to set UVC probe control : -110 (exp. 26)\n" * 3
+    ) == 3
     assert host_radio.decode_urb_failures("") == 0
+    assert host_radio.decode_probe_failures("") == 0
     assert host_radio.decode_cam_manifest('{"version": 1}') is True
     assert host_radio.decode_cam_manifest('{"version": 2}') is None
     assert host_radio.decode_cam_manifest("not json") is None
     assert host_radio.decode_cam_manifest('{"version": 1, "extra": true}') is True
+
+def _ethernet_row(monkeypatch, *, interfaces, operstates=None, admins=None,
+                  speeds=None, carriers=None):
+    monkeypatch.setattr(discovery, "ethernet_interfaces", lambda: list(interfaces))
+    monkeypatch.setattr(discovery, "operstate",
+                        lambda name: (operstates or {}).get(name))
+    monkeypatch.setattr(discovery, "admin_up", lambda name: (admins or {}).get(name))
+    monkeypatch.setattr(discovery, "link_speed",
+                        lambda name: (speeds or {}).get(name))
+    monkeypatch.setattr(discovery, "carrier_state",
+                        lambda name: (carriers or {}).get(name))
+    return discovery._ethernet_read()
+
+
+
+
+def test_ethernet_verified_sample_names_every_state(monkeypatch) -> None:
+    row = _ethernet_row(
+        monkeypatch, interfaces=["enp42s0"],
+        operstates={"enp42s0": "up"}, admins={"enp42s0": True},
+        speeds={"enp42s0": 1000}, carriers={"enp42s0": 1})
+
+    assert row["id"] == "sense.net.ethernet"
+    assert row["state"] == "verified"
+    assert row["sample"] == "ethernet enp42s0=up/admin-up/1000Mb/s/carrier-1"
+    assert row["consumer"] == "operator/network-health"
+    assert row["interfaces"] == ["enp42s0"]
+
+
+def test_ethernet_missing_interface_is_unknown_not_absent_calm(monkeypatch) -> None:
+    row = _ethernet_row(monkeypatch, interfaces=[])
+
+    assert row["state"] == "unknown"
+    assert row["reason"] == "no-ethernet-interface"
+    assert "ethernet absent" in row["sample"]
+
+
+def test_ethernet_unread_operstate_is_unknown_and_names_the_interface(monkeypatch) -> None:
+    row = _ethernet_row(
+        monkeypatch, interfaces=["enp42s0"],
+        operstates={"enp42s0": None}, admins={"enp42s0": True})
+
+    assert row["state"] == "unknown"
+    assert row["reason"] == "operstate-unread:enp42s0"
+    assert "enp42s0=unread" in row["sample"]
+
+
+def test_ethernet_unreadable_flags_is_unknown_not_a_down_state(monkeypatch) -> None:
+    row = _ethernet_row(
+        monkeypatch, interfaces=["enp42s0"],
+        operstates={"enp42s0": "down"}, admins={"enp42s0": None})
+
+    assert row["state"] == "unknown"
+    assert row["reason"] == "flags-unreadable:enp42s0"
+    assert "enp42s0=unread" in row["sample"]

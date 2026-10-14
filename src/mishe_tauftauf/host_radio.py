@@ -74,6 +74,56 @@ def wireless_interfaces(root: Path = NET_ROOT) -> list[str]:
             continue
     return names
 
+def ethernet_interfaces(root: Path = NET_ROOT) -> list[str]:
+    """Names of wired physical netdevs: not wireless, not loopback, not virtual.
+
+    A physical Ethernet NIC has a ``device`` symlink in sysfs pointing at its
+    PCI/USB bus device; virtual interfaces (tailscale, docker, bridges) have
+    no such link. Wireless devices carry a ``wireless`` directory. Loopback
+    is named ``lo``. The remainder is wired physical Ethernet.
+    """
+    try:
+        entries = sorted(root.iterdir())
+    except OSError:
+        return []
+    names = []
+    for entry in entries:
+        if entry.name == "lo" or (entry / "wireless").is_dir():
+            continue
+        if (entry / "device").exists():
+            names.append(entry.name)
+    return names
+
+
+def link_speed(name: str, root: Path = NET_ROOT) -> int | None:
+    """The netdev's negotiated link rate in Mb/s, or ``None`` when unreadable.
+
+    ``speed`` is a signed integer in Mb/s; -1 means the link is down or the
+    value is unknown. A negative value other than -1 is treated as unreadable.
+    """
+    raw = _text(root / name / "speed")
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value >= 0 else None
+
+
+def carrier_state(name: str, root: Path = NET_ROOT) -> int | None:
+    """The netdev's carrier state (1 = link up, 0 = link down), or ``None``."""
+    raw = _text(root / name / "carrier")
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value
+
+
+
 
 def operstate(name: str, root: Path = NET_ROOT) -> str | None:
     """The netdev's ``operstate`` value, or ``None`` when it is unreadable."""
@@ -198,6 +248,7 @@ def controller_state(command: str = "bluetoothctl",
 _CAM_STATE_CLASS = re.compile(r"^\s*([A-Z][A-Z-]*)")
 _CAM_EVENT_ROW = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})Z\s+cam state (\S+)→(\S+)")
 _URB_FAILURE = re.compile(r"uvcvideo.*Failed to resubmit video URB")
+_PROBE_FAILURE = re.compile(r"uvcvideo.*Failed to set UVC probe control")
 
 
 def decode_cam_state(text: str) -> str | None:
@@ -239,6 +290,14 @@ def decode_urb_failures(text: str) -> int:
     are not failures of this class.
     """
     return sum(1 for line in text.split("\n") if _URB_FAILURE.search(line))
+
+
+def decode_probe_failures(text: str) -> int:
+    """Count of ``uvcvideo ... Failed to set UVC probe control`` lines.
+
+    The kernel's own wording is the dialect; unrelated messages are skipped.
+    """
+    return sum(1 for line in text.split("\n") if _PROBE_FAILURE.search(line))
 
 
 def decode_cam_manifest(text: str) -> bool | None:
