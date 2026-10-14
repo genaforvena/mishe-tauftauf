@@ -361,13 +361,18 @@ delivery author-wait layer writes — not `access.recover`.
 | point | durable feed state expected | receipt | stub `gh` calls after kill | successor decision expected |
 |---|---|---|---|---|
 | P1 | 0 waiting records; task absent or unchanged | absent | 0 | `no-obligation-visible` |
-| P2 | exactly 1 waiting record, identity/sequence unchanged | absent | no new call (no blind retry) | `keep-open-unknown; no retry` |
+| P2 | exactly 1 waiting record, identity/sequence unchanged | absent | exactly 1 bounded re-inspection call; no repeated retry loop | `keep-open-unknown; no retry` |
 | P3 | exactly 1 waiting record — **identical to P2** | absent | re-inspection call is the same-operation re-read | `reconcile-from-effect-side (bounded recovery)` |
 | C (controlled failure) | exactly 1 waiting record | absent | exactly 5 bounded attempts, no more | `keep-open-unknown; no retry`, `ci_watch.read()` returns `state=unknown` |
 
 Falsification: any P1 obligation invented, any P2/P3 duplicate or lost record, any
 unbounded retry, any `unknown` read reported as `pass`, or durable state that does
 **not** make P2/P3 indistinguishable from each other.
+
+Amended before the run (wake 42838, second commit, both preceding execution): the
+P2 cell now separates the declared single bounded re-inspection from a repeated
+retry loop; the fixture measures the waiter-phase and successor-phase stub-`gh`
+call counts separately.
 
 ### Acceptance
 
