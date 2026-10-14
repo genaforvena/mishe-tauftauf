@@ -5439,6 +5439,66 @@ def test_drift_across_sites_names_a_foreign_unit_importing_the_checkout(
     assert row["identity"]["foreign"] == {unit: str(checkout / "src")}
     assert row["identity"]["unattributed"] == []
 
+def test_drift_across_sites_names_a_standalone_script_a_host_tool(
+        tmp_path: Path) -> None:
+    # A unit that runs a stdlib-only script from a site-home path imports no
+    # site package, so it cannot drift against a pin through imports: the
+    # unit is a host tool, not an uninspectable site consumer.
+    own_sha: list[str] = []
+    own_pin = tmp_path / "releases" / "own"
+    _release_tree(own_pin, own_sha)
+    home = tmp_path / "plant"
+    _pin(home, own_pin, own_sha[0], "mishe-self")
+    _linked_registry(home, [{"home": str(tmp_path / "other"),
+                             "session": "mishe-other", "sha": own_sha[0]}])
+    script = home / "bin" / "standalone"
+    script.parent.mkdir(parents=True)
+    script.write_text("#!/usr/bin/env python3\nimport json\n", encoding="utf-8")
+    unit = "mishe-ifm-shim.service"
+    execstart = f"{{ path={script} ; argv[]={script} }}\n"
+    completed = subprocess.CompletedProcess(["systemctl"], 0, execstart, "")
+    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
+            patch.object(discovery, "_unit_import_roots", return_value={}), \
+            patch.object(discovery, "_unit_declared_paths",
+                         return_value=[str(script)]), \
+            patch.object(discovery.subprocess, "run", return_value=completed), \
+            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
+        row = discovery._runtime_drift_across_sites(home)
+    assert row["state"] == "verified"
+    assert row["identity"]["host_scope"] == [unit]
+    assert row["identity"]["uninspectable"] == []
+
+
+def test_drift_across_sites_keeps_a_site_importing_script_uninspectable(
+        tmp_path: Path) -> None:
+    # A unit whose executed script imports the site package may run code the
+    # pin contradicts; with no PYTHONPATH root the sensor cannot judge it,
+    # so the unit stays uninspectable rather than being cleared as a host
+    # tool.
+    own_sha: list[str] = []
+    own_pin = tmp_path / "releases" / "own"
+    _release_tree(own_pin, own_sha)
+    home = tmp_path / "plant"
+    _pin(home, own_pin, own_sha[0], "mishe-self")
+    _linked_registry(home, [{"home": str(tmp_path / "other"),
+                             "session": "mishe-other", "sha": own_sha[0]}])
+    script = home / "bin" / "consumer.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("from mishe_tauftauf import discovery\n", encoding="utf-8")
+    unit = "mishe-ifm-shim.service"
+    execstart = f"{{ path={script} ; argv[]={script} }}\n"
+    completed = subprocess.CompletedProcess(["systemctl"], 0, execstart, "")
+    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
+            patch.object(discovery, "_unit_import_roots", return_value={}), \
+            patch.object(discovery, "_unit_declared_paths",
+                         return_value=[str(script)]), \
+            patch.object(discovery.subprocess, "run", return_value=completed), \
+            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
+        row = discovery._runtime_drift_across_sites(home)
+    assert row["state"] == "unknown"
+    assert row["identity"]["uninspectable"] == [unit]
+    assert row["identity"]["host_scope"] == []
+
 
 def test_foreign_checkout_consumers_skips_unit_with_description_naming_root(
         tmp_path: Path) -> None:

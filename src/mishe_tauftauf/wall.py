@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 import math
 from pathlib import Path
 import re
@@ -42,6 +43,9 @@ def _audit_log(home: Path, role: str, source_path: str | None, wall_path: Path, 
             "wall": str(wall_path),
             "mtime": datetime.fromtimestamp(wall_path.stat().st_mtime, tz=timezone.utc).isoformat(),
             "digest": digest,
+            "pid": os.getpid(),
+            "ppid": os.getppid(),
+            "uid": os.geteuid(),
         }
         with open(logs_dir / "wall-write-audit.jsonl", "a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry) + "\n")
