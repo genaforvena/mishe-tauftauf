@@ -444,7 +444,44 @@ def restore(home: Path, role: str, session: str) -> str:
     )
 
 
-def settle(home: Path, role: str, wake: int, text: str, continuation: bool, result: str) -> str:
+def _reject_stale_staging_anchor(home: Path, role: str, text: str, source_path: Path | None,
+                                 source_is_anchor: bool) -> None:
+    """Refuse a settle whose staging anchor would silently regress the wall.
+
+    ``seed yield --file NOTES`` resolves a bare name to the role's own anchor
+    ``SITE_HOME/walls/<role>-NOTES`` (the resolver in ``cli`` names the anchor;
+    ``wall`` never re-derives it from the path text). A mind that keeps its plate
+    by editing ``SITE_HOME/walls/<role>.md`` directly — the shape the doctrine
+    names — and then settles with the bare anchor hands the settle the *previous*
+    wake's staged text, and ``settle`` writes that over the newer wall with no
+    error: the plate regresses and the wake's findings are lost (class:
+    android-body discover, wall reverted to a stale draft 2026-10-14; reproduced
+    in ``artifacts/discover-wake39796-anchor-clobber-repro.py``). The anchor is
+    only trusted when it is at least as new as the wall or already agrees with it;
+    otherwise the write fails closed with the remedy, and an explicit ``--file``
+    path (which the resolver never calls an anchor) stays the caller's deliberate
+    choice.
+    """
+    if not source_is_anchor or source_path is None:
+        return
+    source = Path(source_path)
+    wall_path = home / "walls" / f"{role}.md"
+    if not (source.is_file() and wall_path.is_file()):
+        return
+    if wall_path.read_text(encoding="utf-8") == text:
+        return
+    if source.stat().st_mtime > wall_path.stat().st_mtime:
+        return
+    raise ValueError(
+        f"staged notes {source} are older than the wall {wall_path} and differ from it; "
+        f"settling would regress the wall. Re-stage your current plate into {source.name} "
+        f"(or pass an explicit --file path), or run `wall write --owner {role} --file NOTES` "
+        "first if the anchor really is your current plate."
+    )
+
+
+def settle(home: Path, role: str, wake: int, text: str, continuation: bool, result: str,
+           source_path: Path | None = None, source_is_anchor: bool = False) -> str:
     from . import seed
     from .observations import validate_slug
     validate_slug(role)
@@ -465,6 +502,7 @@ def settle(home: Path, role: str, wake: int, text: str, continuation: bool, resu
                     raise ValueError("settled turn result or continuation differs")
                 return f"yield seed {role} wake {wake} already settled"
             raise ValueError(f"wake {wake} is not pending for {role}")
+        _reject_stale_staging_anchor(home, role, text, source_path, source_is_anchor)
         write(home, role, text)
         seed._write_handoff(home / "handoffs" / f"{role}.md", text)
         suffix = " continue=1" if continuation else ""

@@ -88,6 +88,21 @@ def cmd_append(args) -> int:
     return 0
 
 
+def _staging_anchor(home: Path, role: str, raw: Path) -> Path | None:
+    """The role's own staging anchor a bare ``--file`` name resolves to, or None.
+
+    Returns the anchor only for a bare name (no directory component, not
+    absolute) whose per-role file exists; every other argument is not an anchor
+    and keeps its own meaning. Callers that need to know whether the notes they
+    are about to consume came from the anchor (rather than a deliberate path)
+    ask here instead of re-deriving it from the path text.
+    """
+    if raw.is_absolute() or len(raw.parts) > 1:
+        return None
+    anchor = home / "walls" / f"{role}-{raw.name}"
+    return anchor if anchor.is_file() else None
+
+
 def _staging_notes(home: Path, role: str, raw: Path) -> Path:
     """Resolve a relative notes argument to the role's own staging anchor.
 
@@ -102,15 +117,13 @@ def _staging_notes(home: Path, role: str, raw: Path) -> Path:
     with a directory component (``artifacts/…``, ``walls/…``) keeps its
     working-directory meaning, and an absolute path is never re-anchored.
     """
-    if raw.is_absolute():
+    if raw.is_absolute() or len(raw.parts) > 1:
         return raw
-    if len(raw.parts) > 1:
-        return raw
-    anchor = home / "walls" / f"{role}-{raw.name}"
-    if anchor.is_file():
+    anchor = _staging_anchor(home, role, raw)
+    if anchor is not None:
         return anchor
     raise ValueError(
-        f"no staged notes for role '{role}': expected {anchor} "
+        f"no staged notes for role '{role}': expected {home / 'walls' / f'{role}-{raw.name}'} "
         f"(or pass an explicit relative or absolute path)"
     )
 
@@ -405,7 +418,10 @@ def cmd_seed(args) -> int:
         seed.run(args.home, args.session, args.slug, args.interval, args.self_pick_seconds, args.clear_grace_seconds)
         return 0
     elif action == "yield":
-        result = seed.yield_wake(args.home, args.slug, args.wake, _staging_notes(args.home, args.slug, args.file), args.continue_task, args.result)
+        result = seed.yield_wake(
+            args.home, args.slug, args.wake, _staging_notes(args.home, args.slug, args.file),
+            args.continue_task, args.result,
+            source_is_anchor=_staging_anchor(args.home, args.slug, args.file) is not None)
     elif action == "clear":
         result = seed.clear(args.home, args.session, args.slug)
     else:

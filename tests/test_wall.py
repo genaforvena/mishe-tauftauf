@@ -299,6 +299,88 @@ def test_wall_write_fails_closed_without_role_staging_anchor(tmp_path, monkeypat
     assert not (tmp_path / "walls" / "docs.md").exists()
 
 
+def test_seed_yield_refuses_a_stale_staging_anchor_that_would_regress_the_wall(tmp_path):
+    """A bare-anchor settle older than a directly edited wall fails closed.
+
+    The doctrine names the plate as ``walls/<role>.md``; a mind that edits it
+    directly and then settles with the previous wake's staged anchor would
+    otherwise overwrite the newer wall with no error and lose the wake's
+    findings (class: android-body discover, wall reverted to a stale draft
+    2026-10-14; reproduction ``artifacts/discover-wake39796-anchor-clobber-repro.py``).
+    """
+    setup_wall(tmp_path)
+    from mishe_tauftauf import cli
+    (tmp_path / "walls").mkdir()
+    wake = Feed(tmp_path).append("seed", "seed wake genome observation=1\nRead your wall.")
+    anchor = tmp_path / "walls" / "genome-NOTES"
+    anchor.write_text("PLATE A: previous wake.\n", encoding="utf-8")
+    wall_path = tmp_path / "walls" / "genome.md"
+    wall_path.write_text("PLATE B: edited directly this wake.\n", encoding="utf-8")
+    os.utime(anchor, (1_700_000_000, 1_700_000_000))
+    os.utime(wall_path, (1_700_000_100, 1_700_000_100))
+    code = cli.main(["--home", str(tmp_path), "seed", "yield", "--slug", "genome",
+                     "--wake", str(wake.sequence), "--file", "NOTES", "--result", "changed"])
+    assert code == 2
+    assert wall_path.read_text(encoding="utf-8") == "PLATE B: edited directly this wake.\n"
+    assert seed._state(tmp_path, "genome")[1] == wake.sequence
+
+
+def test_seed_yield_accepts_a_staging_anchor_newer_than_the_wall(tmp_path):
+    """Staged notes newer than the wall are the mind's current plate; settle writes them."""
+    setup_wall(tmp_path)
+    from mishe_tauftauf import cli
+    (tmp_path / "walls").mkdir()
+    wake = Feed(tmp_path).append("seed", "seed wake genome observation=1\nRead your wall.")
+    wall_path = tmp_path / "walls" / "genome.md"
+    wall_path.write_text("old plate\n", encoding="utf-8")
+    anchor = tmp_path / "walls" / "genome-NOTES"
+    anchor.write_text("new plate staged this wake\n", encoding="utf-8")
+    os.utime(wall_path, (1_700_000_000, 1_700_000_000))
+    os.utime(anchor, (1_700_000_100, 1_700_000_100))
+    code = cli.main(["--home", str(tmp_path), "seed", "yield", "--slug", "genome",
+                     "--wake", str(wake.sequence), "--file", "NOTES", "--result", "changed"])
+    assert code == 0
+    assert wall_path.read_text(encoding="utf-8") == "new plate staged this wake\n"
+
+
+def test_seed_yield_accepts_a_staging_anchor_matching_the_wall(tmp_path):
+    """The documented ``wall write`` then ``seed yield`` flow keeps the anchor equal to the wall."""
+    setup_wall(tmp_path)
+    from mishe_tauftauf import cli
+    (tmp_path / "walls").mkdir()
+    wake = Feed(tmp_path).append("seed", "seed wake genome observation=1\nRead your wall.")
+    wall_path = tmp_path / "walls" / "genome.md"
+    anchor = tmp_path / "walls" / "genome-NOTES"
+    wall_path.write_text("same plate\n", encoding="utf-8")
+    anchor.write_text("same plate\n", encoding="utf-8")
+    os.utime(anchor, (1_700_000_000, 1_700_000_000))
+    os.utime(wall_path, (1_700_000_100, 1_700_000_100))
+    code = cli.main(["--home", str(tmp_path), "seed", "yield", "--slug", "genome",
+                     "--wake", str(wake.sequence), "--file", "NOTES", "--result", "changed"])
+    assert code == 0
+    assert wall_path.read_text(encoding="utf-8") == "same plate\n"
+
+
+def test_seed_yield_accepts_an_explicit_notes_path_older_than_the_wall(tmp_path):
+    """An explicit ``--file`` path outside the anchor is the caller's deliberate choice."""
+    setup_wall(tmp_path)
+    from mishe_tauftauf import cli
+    (tmp_path / "walls").mkdir()
+    wake = Feed(tmp_path).append("seed", "seed wake genome observation=1\nRead your wall.")
+    wall_path = tmp_path / "walls" / "genome.md"
+    wall_path.write_text("current plate\n", encoding="utf-8")
+    staged = tmp_path / "artifacts"
+    staged.mkdir()
+    notes = staged / "notes.md"
+    notes.write_text("deliberate older notes\n", encoding="utf-8")
+    os.utime(notes, (1_700_000_000, 1_700_000_000))
+    os.utime(wall_path, (1_700_000_100, 1_700_000_100))
+    code = cli.main(["--home", str(tmp_path), "seed", "yield", "--slug", "genome",
+                     "--wake", str(wake.sequence), "--file", str(notes), "--result", "changed"])
+    assert code == 0
+    assert wall_path.read_text(encoding="utf-8") == "deliberate older notes\n"
+
+
 def test_wall_write_explicit_relative_path_resolves_from_cwd(tmp_path, monkeypatch):
     """A relative --file with a directory component keeps its cwd meaning."""
     setup_wall(tmp_path)
