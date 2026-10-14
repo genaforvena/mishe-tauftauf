@@ -13,6 +13,7 @@ import re
 import shutil
 import selectors
 import subprocess
+from subprocess import TimeoutExpired as _TimeoutExpired
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -22,9 +23,9 @@ from .activity import roles as seated_roles
 from .feed import Feed, parse_feed, publication_lock
 from .host_radio import (BLUETOOTH_ROOT, COMMAND_TIMEOUT_SECONDS, NET_ROOT,
                          RFKILL_ROOT, admin_up, bluetooth_controllers, carrier_state,
-                         controller_state, decode_tailnet_status, ethernet_interfaces,
-                         link_speed, operstate, rfkill_switches, rfkill_unreadable,
-                         rfkill_verdict, wireless_interfaces)
+                         controller_state, decode_git_log_lines, decode_sensor_id_lines,
+                         decode_tailnet_status, ethernet_interfaces, link_speed, operstate,
+                         rfkill_switches, rfkill_unreadable, rfkill_verdict, wireless_interfaces)
 from .outcome_events import classify_outcomes
 from .observations import reserved_home_name
 from .runtime_source import source_for
@@ -2728,6 +2729,11 @@ def _format_age(delta: timedelta) -> str:
     return f"{minutes}m"
 
 
+
+_SERVED_STALENESS_LIMIT = 64
+"""Sense ids retained per staleness reading; the rest are counted, not listed."""
+
+
 def _runtime_pin_lag(home: Path, now: datetime | None = None) -> dict[str, object]:
     """Count the commits between the runtime pin and the checkout HEAD.
 
@@ -2788,8 +2794,9 @@ def _runtime_pin_lag(home: Path, now: datetime | None = None) -> dict[str, objec
                     "sample": "git error: malformed HEAD sha", "kind": "read"}
         if head_sha == pin:
             return {"id": "sense.runtime.pin-lag", "state": "verified",
-                    "sample": f"pin={pin[:7]} head={head_sha[:7]} lag=0",
-                    "pin": pin, "head": head_sha, "lag": 0, "kind": "read"}
+                    "sample": f"pin={pin[:7]} head={head_sha[:7]} lag=0 stale_senses=0",
+                    "pin": pin, "head": head_sha, "lag": 0, "stale_senses": 0,
+                    "stale_sense_ids": [], "kind": "read"}
         ancestor = subprocess.run(["git", "merge-base", "--is-ancestor", pin, head_sha],
                                   capture_output=True, text=True, timeout=2,
                                   cwd=checkout_root)
@@ -2816,12 +2823,92 @@ def _runtime_pin_lag(home: Path, now: datetime | None = None) -> dict[str, objec
                 age_str = _format_age(now - oldest_dt)
             except ValueError:
                 age_str = "unknown"
+        stale_ids, stale_err = _served_staleness(checkout_root, pin, head_sha)
+        if stale_err is not None:
+            stale_sample = "stale_senses=unknown"
+            stale_ids_field = None
+        else:
+            stale_sample = f"stale_senses={len(stale_ids)}"
+            stale_ids_field = (stale_ids[:_SERVED_STALENESS_LIMIT]
+                               if len(stale_ids) > _SERVED_STALENESS_LIMIT
+                               else stale_ids)
         return {"id": "sense.runtime.pin-lag", "state": "verified",
-                "sample": f"pin={pin[:7]} head={head_sha[:7]} lag={lag} age={age_str}",
-                "pin": pin, "head": head_sha, "lag": lag, "age": age_str, "kind": "read"}
+                "sample": f"pin={pin[:7]} head={head_sha[:7]} lag={lag} age={age_str} {stale_sample}",
+                "pin": pin, "head": head_sha, "lag": lag, "age": age_str,
+                "stale_senses": len(stale_ids) if stale_err is None else None,
+                "stale_sense_ids": stale_ids_field, "kind": "read"}
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {"id": "sense.runtime.pin-lag", "state": "unknown",
                 "sample": f"git error: {exc}", "kind": "read"}
+
+
+def _served_staleness(checkout_root: Path, pin: str, head_sha: str) -> tuple[list[str], str | None]:
+    """Count senses whose producing code changed between pin and HEAD.
+
+    For each ``sense.*`` id literal in the checkout's emitter, find the
+    innermost producing function (or the exact emitting statement when the
+    id sits in the aggregator ``sample()``), then run ``git log -L`` for that
+    unit's line range. Non-empty output means the unit changed after the
+    served pin, so a served sample for that id may not reflect HEAD behaviour.
+
+    Returns ``(stale_ids, reason)``: the sorted stale sense ids, or an empty
+    list with a reason string when staleness cannot be computed (git failure,
+    unreadable emitter). The caller reports UNKNOWN when reason is non-None.
+    """
+    emitter = checkout_root / "src" / "mishe_tauftauf" / "discovery.py"
+    try:
+        source = emitter.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return [], "emitter unreadable"
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        return [], f"emitter unparseable: {exc}"
+    funcs = [n for n in ast.walk(tree)
+             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+
+    def innermost(line: int):
+        candidates = [f for f in funcs if f.lineno <= line <= f.end_lineno]
+        return min(candidates, key=lambda f: f.end_lineno - f.lineno) if candidates else None
+
+    def producing_unit(line: int) -> tuple[int, int] | None:
+        """The (start, end) line range of the producing unit for this id."""
+        func = innermost(line)
+        if func is None:
+            return None
+        if func.name == "sample":
+            for stmt in ast.walk(func):
+                if (isinstance(stmt, ast.stmt)
+                        and not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and stmt.lineno <= line <= stmt.end_lineno):
+                    return (stmt.lineno, stmt.end_lineno)
+            return (func.lineno, func.end_lineno)
+        return (func.lineno, func.end_lineno)
+
+    stale: set[str] = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+            continue
+        sid = node.value
+        if not (len(sid) > 6 and sid[:6] == "sense." and sid.count(".") >= 2):
+            continue
+        unit = producing_unit(node.lineno)
+        if unit is None:
+            continue
+        start, end = unit
+        try:
+            result = subprocess.run(
+                ["git", "log", "--oneline", "-L",
+                 f"{start},{end}:src/mishe_tauftauf/discovery.py",
+                 f"{pin}..{head_sha}"],
+                capture_output=True, text=True, timeout=5, cwd=checkout_root)
+            if result.returncode != 0:
+                continue
+            if result.stdout.strip():
+                stale.add(sid)
+        except (OSError, _TimeoutExpired):
+            continue
+    return sorted(stale), None
 
 
 def _host_session_stability(home: Path) -> dict[str, object]:

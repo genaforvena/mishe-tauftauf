@@ -1797,6 +1797,8 @@ def _write_pin(home: Path, sha: str, *, source: object = "auto") -> None:
 
 def _mock_pin_git(monkeypatch, head_sha: str, lag: int, oldest_time: str) -> None:
     class _FakeGit:
+        TimeoutExpired = subprocess.TimeoutExpired
+
         def run(self, cmd, **kwargs):
             if cmd[:2] == ["git", "rev-parse"]:
                 return subprocess.CompletedProcess(cmd, 0, head_sha, "")
@@ -1806,8 +1808,17 @@ def _mock_pin_git(monkeypatch, head_sha: str, lag: int, oldest_time: str) -> Non
                 return subprocess.CompletedProcess(cmd, 0, str(lag), "")
             if cmd[:3] == ["git", "log", "--format=%cI"]:
                 return subprocess.CompletedProcess(cmd, 0, oldest_time, "")
+            if cmd[:4] == ["git", "log", "--oneline", "-L"]:
+                return subprocess.CompletedProcess(cmd, 0, "", "")
             raise AssertionError(f"unexpected git command: {cmd}")
     monkeypatch.setattr(discovery, "subprocess", _FakeGit())
+
+def _mock_staleness(monkeypatch, ids: list[str] | None = None,
+                     err: str | None = None) -> None:
+    """Mock ``_served_staleness`` so pin-lag tests don't invoke git log -L."""
+    monkeypatch.setattr(
+        discovery, "_served_staleness",
+        lambda checkout, pin, head: (ids or [], err))
 
 
 def test_pin_lag_equal_to_head(tmp_path, monkeypatch):
@@ -1817,7 +1828,7 @@ def test_pin_lag_equal_to_head(tmp_path, monkeypatch):
     _mock_pin_git(monkeypatch, sha, 0, "")
     result = discovery._runtime_pin_lag(home)
     assert result["state"] == "verified"
-    assert result["sample"] == f"pin={sha[:7]} head={sha[:7]} lag=0"
+    assert result["sample"] == f"pin={sha[:7]} head={sha[:7]} lag=0 stale_senses=0"
     assert result["lag"] == 0
 
 
@@ -1828,10 +1839,11 @@ def test_pin_lag_behind_head(tmp_path, monkeypatch):
     _write_pin(home, pin)
     oldest = "2026-10-06T16:00:00+00:00\n2026-10-06T17:00:00+00:00"
     _mock_pin_git(monkeypatch, head, 3, oldest)
+    _mock_staleness(monkeypatch, [])
     now = datetime(2026, 10, 6, 18, 0, 0, tzinfo=timezone.utc)
     result = discovery._runtime_pin_lag(home, now=now)
     assert result["state"] == "verified"
-    assert result["sample"] == f"pin={pin[:7]} head={head[:7]} lag=3 age=1h00m"
+    assert result["sample"] == f"pin={pin[:7]} head={head[:7]} lag=3 age=1h00m stale_senses=0"
     assert result["lag"] == 3
     assert result["age"] == "1h00m"
 
@@ -1896,10 +1908,11 @@ def test_pin_lag_release_source_present_reads_the_lag(tmp_path, monkeypatch):
     present.mkdir()
     _write_pin(home, pin, source=str(present))
     _mock_pin_git(monkeypatch, head, 3, "2026-10-06T16:00:00+00:00")
+    _mock_staleness(monkeypatch, [])
     now = datetime(2026, 10, 6, 18, 0, 0, tzinfo=timezone.utc)
     result = discovery._runtime_pin_lag(home, now=now)
     assert result["state"] == "verified"
-    assert result["sample"] == f"pin={pin[:7]} head={head[:7]} lag=3 age=2h00m"
+    assert result["sample"] == f"pin={pin[:7]} head={head[:7]} lag=3 age=2h00m stale_senses=0"
     assert result["lag"] == 3
 
 
@@ -1924,6 +1937,128 @@ def test_pin_lag_record_not_an_object_is_unknown(tmp_path):
     result = discovery._runtime_pin_lag(home)
     assert result["state"] == "unknown"
     assert result["sample"] == "pin record not an object"
+
+def test_pin_lag_served_staleness_names_stale_senses(tmp_path, monkeypatch):
+    """When _served_staleness finds pre-fix emitters, the sample names the count."""
+    home = tmp_path / "site"
+    pin = "a" * 40
+    head = "b" * 40
+    _write_pin(home, pin)
+    oldest = "2026-10-06T16:00:00+00:00"
+    _mock_pin_git(monkeypatch, head, 3, oldest)
+    stale = ["sense.space.host-radio", "sense.coord.dm-disposition-age"]
+    _mock_staleness(monkeypatch, stale)
+    now = datetime(2026, 10, 6, 18, 0, 0, tzinfo=timezone.utc)
+    result = discovery._runtime_pin_lag(home, now=now)
+    assert result["state"] == "verified"
+    assert result["sample"] == f"pin={pin[:7]} head={head[:7]} lag=3 age=2h00m stale_senses=2"
+    assert result["stale_senses"] == 2
+    assert result["stale_sense_ids"] == stale
+
+
+def test_pin_lag_served_staleness_error_reads_unknown(tmp_path, monkeypatch):
+    """When the staleness check itself fails, the sample says so honestly."""
+    home = tmp_path / "site"
+    pin = "a" * 40
+    head = "b" * 40
+    _write_pin(home, pin)
+    oldest = "2026-10-06T16:00:00+00:00"
+    _mock_pin_git(monkeypatch, head, 3, oldest)
+    _mock_staleness(monkeypatch, err="emitter unreadable: missing")
+    now = datetime(2026, 10, 6, 18, 0, 0, tzinfo=timezone.utc)
+    result = discovery._runtime_pin_lag(home, now=now)
+    assert result["state"] == "verified"
+    assert result["sample"] == f"pin={pin[:7]} head={head[:7]} lag=3 age=2h00m stale_senses=unknown"
+    assert result["stale_senses"] is None
+    assert result["stale_sense_ids"] is None
+
+
+def test_served_staleness_happy_path(tmp_path, monkeypatch):
+    """_served_staleness parses the emitter and checks git log -L per unit."""
+    checkout = tmp_path / "checkout"
+    emitter = checkout / "src" / "mishe_tauftauf" / "discovery.py"
+    emitter.parent.mkdir(parents=True)
+    emitter.write_text(
+        'def _foo():\n'
+        '    return {"id": "sense.test.foo", "state": "verified"}\n'
+        'def sample():\n'
+        '    pass\n'
+    )
+    pin = "a" * 40
+    head = "b" * 40
+
+    class _FakeGit:
+        def run(self, cmd, **kwargs):
+            if cmd[:4] == ["git", "log", "--oneline", "-L"]:
+                return subprocess.CompletedProcess(cmd, 0, "abc1234 fix\n", "")
+            raise AssertionError(f"unexpected git command: {cmd}")
+    monkeypatch.setattr(discovery, "subprocess", _FakeGit())
+    stale, err = discovery._served_staleness(checkout, pin, head)
+    assert err is None
+    assert stale == ["sense.test.foo"]
+
+
+def test_served_staleness_emitter_unreadable(tmp_path):
+    """A missing emitter file reads as an error, not an empty result."""
+    checkout = tmp_path / "checkout"
+    stale, err = discovery._served_staleness(checkout, "a" * 40, "b" * 40)
+    assert stale == []
+    assert err is not None
+    assert "emitter unreadable" in err
+
+
+def test_served_staleness_emitter_unparseable(tmp_path, monkeypatch):
+    """A syntax-error emitter reads as an error, not a crash."""
+    checkout = tmp_path / "checkout"
+    emitter = checkout / "src" / "mishe_tauftauf" / "discovery.py"
+    emitter.parent.mkdir(parents=True)
+    emitter.write_text("def broken(:\n")
+    stale, err = discovery._served_staleness(checkout, "a" * 40, "b" * 40)
+    assert stale == []
+    assert err is not None
+    assert "emitter unparseable" in err
+
+
+def test_served_staleness_git_error_returns_none_commits(tmp_path, monkeypatch):
+    """A git log -L failure returns None commits, which reads as not stale."""
+    checkout = tmp_path / "checkout"
+    emitter = checkout / "src" / "mishe_tauftauf" / "discovery.py"
+    emitter.parent.mkdir(parents=True)
+    emitter.write_text(
+        'def _foo():\n'
+        '    return {"id": "sense.test.foo", "state": "verified"}\n'
+    )
+
+    class _FakeGit:
+        def run(self, cmd, **kwargs):
+            if cmd[:4] == ["git", "log", "--oneline", "-L"]:
+                return subprocess.CompletedProcess(cmd, 128, "", "fatal: bad revision")
+            raise AssertionError(f"unexpected git command: {cmd}")
+    monkeypatch.setattr(discovery, "subprocess", _FakeGit())
+    stale, err = discovery._served_staleness(checkout, "a" * 40, "b" * 40)
+    assert err is None
+    assert stale == []
+
+
+def test_served_staleness_no_stale_senses(tmp_path, monkeypatch):
+    """When no emitter changed after the pin, the result is an empty list."""
+    checkout = tmp_path / "checkout"
+    emitter = checkout / "src" / "mishe_tauftauf" / "discovery.py"
+    emitter.parent.mkdir(parents=True)
+    emitter.write_text(
+        'def _foo():\n'
+        '    return {"id": "sense.test.foo", "state": "verified"}\n'
+    )
+
+    class _FakeGit:
+        def run(self, cmd, **kwargs):
+            if cmd[:4] == ["git", "log", "--oneline", "-L"]:
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+            raise AssertionError(f"unexpected git command: {cmd}")
+    monkeypatch.setattr(discovery, "subprocess", _FakeGit())
+    stale, err = discovery._served_staleness(checkout, "a" * 40, "b" * 40)
+    assert err is None
+    assert stale == []
 
 
 def _tape_entry(sequence: int, timestamp: str, source: str, body: str) -> bytes:
