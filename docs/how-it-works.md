@@ -800,6 +800,26 @@ before the admin token both rendered `=down` so an enabled idle radio could not
 be told from an absent one. An interface whose `flags` or `operstate` will not
 read is `=unread` with a named problem, which is UNKNOWN rather than a state.
 
+Two further reads cover this host's own network path rather than its radios.
+Each wired interface reads as `sense.net.ethernet` and names
+`operstate/admin-up/speed/carrier`, because `operstate` follows carrier: a
+plugged cable reads `up`, an unplugged one `down`, and `admin_up` — not
+`operstate` — is what separates an administratively disabled port from a
+disconnected one. No interface at all reads `ethernet absent`, and an
+unreadable `flags` or `operstate` is `=unread` with a named problem, which is
+UNKNOWN rather than a state. The tailnet reads as `sense.net.tailnet-peer`,
+reporting the daemon's backend state and each peer's
+`online|offline / active|inactive / last-seen`; a missing binary, a non-zero
+exit, text that does not decode, a backend state other than `Running`, or a
+missing `Self` is a named problem and UNKNOWN. The rendezvous cursor is not
+readable from this host, so the sense reports reachability only: an offline
+peer beside a frozen light cursor and a frozen cursor with every peer online
+are not distinguished here. Both senses were committed on `main` as
+`f4013a3` and `9b44a95` while the served runtime pin is older, so a deployed
+`discover show` does not print them yet
+(`sense.runtime.pin-lag` names the gap: `lag=90 age=31h59m` at
+2026-10-14T11:38Z).
+
 The camera reading is a fault reading, not a picture: `mesh-cam-watch` keeps a
 class line and the latest artifact, and the health view reads that artifact's
 age, `CAPTURE-FAIL` onsets and kernel URB resubmit failures in a 15-minute

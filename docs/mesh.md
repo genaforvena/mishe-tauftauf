@@ -56,6 +56,14 @@ keeps a missing, unreadable or broken read visibly UNKNOWN rather than calm;
 the reading rules, the command that takes one, and their limits are in
 [operating the plant](operating.md) and [how it works](how-it-works.md).
 
+Two further readings cover this host's own network path instead of its space:
+its wired Ethernet link state as `sense.net.ethernet` and its tailnet peer
+status as `sense.net.tailnet-peer`, reported per interface and per peer with a
+named problem instead of a calm UNKNOWN. Neither is a space observation, and
+the tailnet sense reports reachability only — it cannot tell an unreachable
+device from a silent producer, so the joint light-plus-network reading still
+comes from the light and host-radio senses.
+
 Repairs start with causal investigation and leave failures observable. Preserve
 what failed, explain why, and test that recurrence still reaches a mind able to
 respond. Missing or broken monitoring stays unresolved. A retry can restore work

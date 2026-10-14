@@ -140,7 +140,11 @@ one published sample, or acquire a new bounded one:
 light reading as `sense.space.light` and this host's own Bluetooth and Wi-Fi
 adapter state as `sense.space.host-radio`; `discover scan` takes one new
 sample instead of reading a published one, so acquiring is an action rather
-than an inspection. The camera fault surface is read into the health check
+than an inspection. This host's wired Ethernet link state and tailnet peer
+status read as `sense.net.ethernet` and `sense.net.tailnet-peer` — per
+interface and per peer, with a missing binary, a non-zero exit, text that does
+not decode, or a backend state other than `Running` named as a problem rather
+than read as calm. The camera fault surface is read into the health check
 and reaches a reader as a named cause on the health pane's `SYSTEM ZERO` line,
 not as its own detail line.
 
