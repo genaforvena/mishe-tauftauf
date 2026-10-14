@@ -316,6 +316,34 @@ def test_host_radio_powered_without_advertising_counters_names_them_unread(monke
     assert "adv-instances=unread" in row["sample"]
 
 
+def test_host_radio_advertising_counter_names_active_over_capacity(monkeypatch) -> None:
+    """``SupportedInstances`` is BlueZ's *available* slot count, not capacity.
+
+    Printing it as the denominator made two registered clients on a five-slot
+    controller read ``2/3``, as if the controller had three slots (the 06:28Z
+    ``1/4`` was read the same way).
+    """
+    row = _radio_row(
+        monkeypatch, controllers=["hci0"], interfaces=["wlxabc"],
+        switches=[{"type": "bluetooth", "soft": "0", "hard": "0"},
+                  {"type": "wlan", "soft": "0", "hard": "0"}],
+        controller={"powered": True, "advertising": {"active": 2, "supported": 3},
+                    "error": None},
+        operstates={"wlxabc": "down"}, admins={"wlxabc": False})
+
+    assert row["state"] == "verified"
+    assert "adv-instances=2/5" in row["sample"]
+
+    # A half-decoded counter is UNKNOWN, never the literal string "None/5".
+    partial = _radio_row(
+        monkeypatch, controllers=["hci0"], interfaces=["wlxabc"],
+        switches=[{"type": "bluetooth", "soft": "0", "hard": "0"},
+                  {"type": "wlan", "soft": "0", "hard": "0"}],
+        controller={"powered": True, "advertising": {"active": None, "supported": 5},
+                    "error": None},
+        operstates={"wlxabc": "down"}, admins={"wlxabc": False})
+    assert "adv-instances=unread" in partial["sample"]
+
 def test_cam_decoders_read_the_producer_dialect_and_skip_opaque_rows() -> None:
     """A covered lens is a class, not a fault; truncated rows are never onsets."""
     assert host_radio.decode_cam_state("SHUTTERED|diff=1.19|mean=20|span=4|sd=1.41") == "SHUTTERED"

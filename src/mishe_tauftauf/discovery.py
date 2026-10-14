@@ -4352,10 +4352,18 @@ def _host_radio_read() -> dict:
     UNKNOWN — absence, an unread file and a hang are not calm. A radio that is
     ``down`` or rfkill-blocked is a verified state, and the sample names it.
 
-    ``adv-instances`` is BlueZ's advertising instance counter (active /
-    supported): a userspace count, not a capability. Advertisement registration
-    is unexercised by this read and fails at the kernel on this controller
-    (discover wake 64945), so the field must not be read as "advertising works".
+    ``adv-instances`` is BlueZ's advertising instance counter as ``active/total``:
+    ``ActiveInstances`` counts registered advertisement clients and
+    ``SupportedInstances`` is the number of *available* slots (the BlueZ 5.72
+    ``org.bluez.LEAdvertisingManager`` documents "available"; its
+    ``src/advertising.c`` computes ``max_ads - clients``), so the denominator is
+    the controller's slot capacity and does not drop as clients register.
+    Registration works unprivileged over the D-Bus manager route (senses wake
+    38406); the raw-HCI path stays EPERM. The count is BlueZ userspace
+    accounting, not proof of radiation and not a capability: a client that dies
+    while registering leaves it standing with no advertisement object on the bus
+    (2026-10-14: 1/4 at 06:28Z and 2/3 at 08:09Z, no live client), so the field
+    must never be read as "advertising works" or "the host is radiating".
 
     A wireless interface reads as ``operstate/admin-state``. ``operstate``
     follows carrier, so a radio that is administratively up but unassociated
@@ -4380,8 +4388,10 @@ def _host_radio_read() -> dict:
         else:
             ble = f"BLE {','.join(controllers)} powered={'yes' if controller['powered'] else 'no'}"
             advertising = controller["advertising"]
-            if advertising and advertising["supported"] is not None:
-                ble += f" adv-instances={advertising['active']}/{advertising['supported']}"
+            active = advertising["active"] if advertising else None
+            available = advertising["supported"] if advertising else None
+            if active is not None and available is not None:
+                ble += f" adv-instances={active}/{active + available}"
             elif controller["powered"]:
                 ble += " adv-instances=unread"
     else:
