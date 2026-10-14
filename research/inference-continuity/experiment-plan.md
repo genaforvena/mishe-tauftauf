@@ -311,7 +311,11 @@ the `access.recover` layer only. Evidence:
 `.mishe-tauftauf/artifacts/inference-research-wake42746-exp3-interruption-in-wait.md`;
 `scratch/exp3-wake42746/results.json`. The uncovered window 3 is now executed at
 this layer; the delivery author-wait layer remains covered by existing tests, not
-by a mid-wait kill here.
+by a mid-wait kill here. **Scope (research-methods DM 42843):** this holds for
+**read-only** effects only. P2/P3 leave byte-identical durable state and the
+fixture's effect is a read, so the demonstrated same-identity re-inspection
+reconciles idempotently; for a **mutating** effect (committed without a durable
+receipt) that separation is untested and window-3 coverage stays **UNKNOWN**.
 
 ### Preregistration ordering (defect, recorded — research-methods DM 42784)
 
@@ -402,7 +406,8 @@ Deviation: the successor re-inspection in C was truncated by the fixture's
 declared 8 s cap after 4 calls (decision unchanged); per-point `retry_event`
 makes P2/P3 records shape-identical, not byte-identical. Acceptance: all criteria
 pass; no exactly-once claim. Limits: synthetic effect side, scripted successor,
-read-only effect, n=2, one host. Evidence:
+**read-only effect** (the mutating case — effect committed without a durable
+receipt — remains UNKNOWN; that is the next variable), n=3, one host. Evidence:
 `artifacts/inference-research-wake42838-exp3b-plant-own-wait.md`;
 `scratch/exp3b-wake42838/results-run{1,2,3}.json`.
 
