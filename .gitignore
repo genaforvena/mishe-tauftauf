@@ -17,3 +17,5 @@ htmlcov/
 .mishe-*
 # Settlement notes: `seed yield --file NOTES` resolves cwd-relative (plant root).
 NOTES
+node_modules/
+artifacts/
