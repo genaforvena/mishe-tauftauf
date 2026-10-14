@@ -1959,22 +1959,22 @@ def _dm_now() -> datetime:
 def test_dm_disposition_age_replied_outcome_and_open(tmp_path):
     home = tmp_path / "site"
     home.mkdir(parents=True, exist_ok=True)
-    carol_digest = _write_outcome(home, "carol")
+    witness_digest = _write_outcome(home, "witness")
     entries = [
-        (1, "2026-10-06T12:30:00Z", "alice", "[dm] to=bob\n# hi bob\n"),
-        (2, "2026-10-06T12:35:00Z", "bob", "[dm] to=alice\n# hi alice\n"),
-        (3, "2026-10-06T13:00:00Z", "alice", "[dm] to=carol\n# hi carol\n"),
-        (4, "2026-10-06T13:30:00Z", "carol",
-         f"[record] records/{carol_digest}.json sha256={carol_digest}\n"),
-        (5, "2026-10-06T14:00:00Z", "alice", "[dm] to=dave\n# hi dave\n"),
+        (1, "2026-10-06T12:30:00Z", "health", "[dm] to=genome\n# hi genome\n"),
+        (2, "2026-10-06T12:35:00Z", "genome", "[dm] to=health\n# hi health\n"),
+        (3, "2026-10-06T13:00:00Z", "health", "[dm] to=witness\n# hi witness\n"),
+        (4, "2026-10-06T13:30:00Z", "witness",
+         f"[record] records/{witness_digest}.json sha256={witness_digest}\n"),
+        (5, "2026-10-06T14:00:00Z", "health", "[dm] to=docs\n# hi docs\n"),
     ]
     (home / "chat.log").write_bytes(
         b"".join(_tape_entry(seq, ts, src, body) for seq, ts, src, body in entries))
     result = discovery._coord_dm_disposition_age(home, now=_dm_now())
     assert result["state"] == "verified"
     assert result["dms"] == 4
-    # alice->bob is credited by the reply edge; alice->carol by the wall join.
-    # bob->alice is open: alice's later DMs go to carol and dave, not bob.
+    # health->genome is credited by the reply edge; health->witness by the wall join.
+    # genome->health is open: health's later DMs go to witness and docs, not genome.
     assert result["reply_edge"] == 1
     assert result["seq_credit"] == 0
     assert result["credit_only"] == 0
@@ -1984,11 +1984,11 @@ def test_dm_disposition_age_replied_outcome_and_open(tmp_path):
     assert result["stall"] == 2
     assert result["p50_minutes"] == 18
     assert result["p90_minutes"] == 28
-    assert result["oldest_open"] == "alice:5h25m"
+    assert result["oldest_open"] == "health:5h25m"
     assert result["sample"] == ("dms=4 reply_edge=1 seq_credit=0 credit_only=0 "
                                 "wall_only=1 dispositioned=2 open=2 stall=2 "
                                 "p50=18m p90=28m broadcast_excluded=0 "
-                                "oldest_open=alice:5h25m")
+                                "nonmind_excluded=0 oldest_open=health:5h25m")
 
 
 def test_dm_disposition_age_reply_to_third_party_does_not_disposition(tmp_path):
@@ -1996,8 +1996,8 @@ def test_dm_disposition_age_reply_to_third_party_does_not_disposition(tmp_path):
     home.mkdir(parents=True, exist_ok=True)
     (home / "records").mkdir(parents=True, exist_ok=True)
     entries = [
-        (1, "2026-10-06T12:30:00Z", "alice", "[dm] to=bob\n# hi bob\n"),
-        (2, "2026-10-06T12:35:00Z", "bob", "[dm] to=carol\n# hi carol\n"),
+        (1, "2026-10-06T12:30:00Z", "health", "[dm] to=genome\n# hi genome\n"),
+        (2, "2026-10-06T12:35:00Z", "genome", "[dm] to=witness\n# hi witness\n"),
     ]
     (home / "chat.log").write_bytes(
         b"".join(_tape_entry(seq, ts, src, body) for seq, ts, src, body in entries))
@@ -2008,7 +2008,7 @@ def test_dm_disposition_age_reply_to_third_party_does_not_disposition(tmp_path):
     assert result["dispositioned"] == 0
     assert result["open"] == 2
     assert result["stall"] == 2
-    assert result["oldest_open"] == "bob:5h30m"
+    assert result["oldest_open"] == "genome:5h30m"
 
 
 def test_dm_disposition_age_missing_tape(tmp_path):
@@ -2021,7 +2021,7 @@ def test_dm_disposition_age_missing_records(tmp_path):
     home = tmp_path / "site"
     home.mkdir(parents=True, exist_ok=True)
     entries = [
-        (1, "2026-10-06T12:30:00Z", "alice", "[dm] to=bob\n# hi bob\n"),
+        (1, "2026-10-06T12:30:00Z", "health", "[dm] to=genome\n# hi genome\n"),
     ]
     (home / "chat.log").write_bytes(
         b"".join(_tape_entry(seq, ts, src, body) for seq, ts, src, body in entries))
@@ -2035,7 +2035,7 @@ def test_dm_disposition_age_empty_window(tmp_path):
     home.mkdir(parents=True, exist_ok=True)
     (home / "records").mkdir(parents=True, exist_ok=True)
     entries = [
-        (1, "2026-10-06T10:00:00Z", "alice", "[dm] to=bob\n# hi bob\n"),
+        (1, "2026-10-06T10:00:00Z", "health", "[dm] to=genome\n# hi genome\n"),
     ]
     (home / "chat.log").write_bytes(
         b"".join(_tape_entry(seq, ts, src, body) for seq, ts, src, body in entries))
@@ -2046,7 +2046,7 @@ def test_dm_disposition_age_empty_window(tmp_path):
     assert result["open"] == 0
     assert result["sample"] == ("dms=0 reply_edge=0 seq_credit=0 credit_only=0 "
                                 "wall_only=0 dispositioned=0 open=0 stall=0 "
-                                "broadcast_excluded=0")
+                                "broadcast_excluded=0 nonmind_excluded=0")
 
 def test_dm_disposition_age_uses_earliest_outcome(tmp_path):
     home = tmp_path / "site"
@@ -2054,13 +2054,13 @@ def test_dm_disposition_age_uses_earliest_outcome(tmp_path):
     (home / "records").mkdir(parents=True, exist_ok=True)
     # Two outcomes for the same role at different times; the disposition age
     # must use the earliest, regardless of record filename (digest) order.
-    early = _write_outcome(home, "bob")
-    late = _write_outcome(home, "bob")
+    early = _write_outcome(home, "genome")
+    late = _write_outcome(home, "genome")
     entries = [
-        (1, "2026-10-06T12:00:00Z", "alice", "[dm] to=bob\n# hi bob\n"),
-        (2, "2026-10-06T12:30:00Z", "bob",
+        (1, "2026-10-06T12:00:00Z", "health", "[dm] to=genome\n# hi genome\n"),
+        (2, "2026-10-06T12:30:00Z", "genome",
          f"[record] records/{early}.json sha256={early}\n"),
-        (3, "2026-10-06T13:00:00Z", "bob",
+        (3, "2026-10-06T13:00:00Z", "genome",
          f"[record] records/{late}.json sha256={late}\n"),
     ]
     (home / "chat.log").write_bytes(
@@ -2079,9 +2079,9 @@ def test_dm_disposition_age_seq_citation_dispositions(tmp_path):
     home.mkdir(parents=True, exist_ok=True)
     (home / "records").mkdir(parents=True, exist_ok=True)
     entries = [
-        (1, "2026-10-06T12:30:00Z", "alice", "[dm] to=bob\n# hi bob\n"),
-        (2, "2026-10-06T13:00:00Z", "bob",
-         "Wall outcome accepted by bob\n# bob — wake 2\n\nRead DM 1. Acked.\n"),
+        (1, "2026-10-06T12:30:00Z", "health", "[dm] to=genome\n# hi genome\n"),
+        (2, "2026-10-06T13:00:00Z", "genome",
+         "Wall outcome accepted by genome\n# genome — wake 2\n\nRead DM 1. Acked.\n"),
     ]
     (home / "chat.log").write_bytes(
         b"".join(_tape_entry(seq, ts, src, body) for seq, ts, src, body in entries))
@@ -2103,8 +2103,8 @@ def test_dm_disposition_age_stall_gate_excludes_young_open(tmp_path):
     home.mkdir(parents=True, exist_ok=True)
     (home / "records").mkdir(parents=True, exist_ok=True)
     entries = [
-        (1, "2026-10-06T17:45:00Z", "alice", "[dm] to=bob\n# hi bob\n"),
-        (2, "2026-10-06T17:00:00Z", "carol", "[dm] to=dave\n# hi dave\n"),
+        (1, "2026-10-06T17:45:00Z", "health", "[dm] to=genome\n# hi genome\n"),
+        (2, "2026-10-06T17:00:00Z", "witness", "[dm] to=docs\n# hi docs\n"),
     ]
     (home / "chat.log").write_bytes(
         b"".join(_tape_entry(seq, ts, src, body) for seq, ts, src, body in entries))
@@ -2114,7 +2114,7 @@ def test_dm_disposition_age_stall_gate_excludes_young_open(tmp_path):
     assert result["open"] == 2
     # The 17:45 DM is 15m old: right-censored, open but not a stall.
     assert result["stall"] == 1
-    assert result["oldest_open"] == "dave:1h00m"
+    assert result["oldest_open"] == "docs:1h00m"
 
 def test_dm_disposition_age_excludes_broadcast_pseudo_targets(tmp_path):
     home = tmp_path / "site"
@@ -2123,18 +2123,82 @@ def test_dm_disposition_age_excludes_broadcast_pseudo_targets(tmp_path):
     entries = [
         (1, "2026-10-06T12:00:00Z", "body-research", "[dm] to=chat\n# routine note\n"),
         (2, "2026-10-06T12:30:00Z", "body-research", "[dm] to=all\n# broadcast\n"),
-        (3, "2026-10-06T13:00:00Z", "alice", "[dm] to=bob\n# hi bob\n"),
+        (3, "2026-10-06T13:00:00Z", "health", "[dm] to=genome\n# hi genome\n"),
     ]
     (home / "chat.log").write_bytes(
         b"".join(_tape_entry(seq, ts, src, body) for seq, ts, src, body in entries))
     result = discovery._coord_dm_disposition_age(home, now=_dm_now())
     assert result["state"] == "verified"
-    # Only the alice->bob DM is counted; chat and all are excluded.
+    # Only the health->genome DM is counted; chat and all are excluded.
     assert result["dms"] == 1
     assert result["open"] == 1
     assert result["stall"] == 1
     assert result["broadcast_excluded"] == 2
-    assert result["oldest_open"] == "bob:5h00m"
+    assert result["oldest_open"] == "genome:5h00m"
+
+
+def test_dm_disposition_age_excludes_targets_with_no_seated_mind(tmp_path):
+    """A watcher, feed or the human shell can never disposition a DM.
+
+    The plant held its own internal check RED at stall=8 while every
+    mind-to-mind request in the window was answered: four of the eight were
+    DMs addressed to ``operator``, three were health's own answers posted to
+    watcher targets (``operator-view``, ``session-watch``, ``silence-watch``),
+    and one went to ``ci``. Those routings have no reply edge and no wall
+    outcome, so counting them as resolver waits pinned the gate for the whole
+    six-hour window. They are counted in ``nonmind_excluded`` — visible, out
+    of the stall estimate.
+    """
+    home = tmp_path / "site"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "records").mkdir(parents=True, exist_ok=True)
+    entries = [
+        (1, "2026-10-06T12:00:00Z", "health", "[dm] to=operator-view\n# recurrence\n"),
+        (2, "2026-10-06T12:10:00Z", "health", "[dm] to=session-watch\n# cause\n"),
+        (3, "2026-10-06T12:20:00Z", "witness", "[dm] to=ci\n# run stale\n"),
+        (4, "2026-10-06T12:30:00Z", "docs", "[dm] to=operator\n# escalation\n"),
+        (5, "2026-10-06T13:00:00Z", "health", "[dm] to=genome\n# hi genome\n"),
+    ]
+    (home / "chat.log").write_bytes(
+        b"".join(_tape_entry(seq, ts, src, body) for seq, ts, src, body in entries))
+    result = discovery._coord_dm_disposition_age(home, now=_dm_now())
+    assert result["state"] == "verified"
+    assert result["dms"] == 1
+    assert result["open"] == 1
+    assert result["stall"] == 1
+    assert result["nonmind_excluded"] == 4
+    assert result["broadcast_excluded"] == 0
+    assert result["oldest_open"] == "genome:5h00m"
+    assert "nonmind_excluded=4" in result["sample"]
+
+
+def test_dm_disposition_age_counts_a_site_declared_seat(tmp_path):
+    """A role the site actually declares counts as seated; an unnamed one does not.
+
+    Seating is the site's own notion (charters/<slug>.md plus an executable
+    minds/<slug>), so a declared resident's DMs are resolver waits while a DM
+    to a role with no charter stays excluded.
+    """
+    home = tmp_path / "site"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "records").mkdir(parents=True, exist_ok=True)
+    (home / "charters").mkdir()
+    (home / "charters" / "researcher.md").write_text("# researcher\n", encoding="utf-8")
+    (home / "minds").mkdir()
+    (home / "minds" / "researcher").write_text("#!/bin/sh\n", encoding="utf-8")
+    entries = [
+        (1, "2026-10-06T12:30:00Z", "health", "[dm] to=researcher\n# ask\n"),
+        (2, "2026-10-06T12:35:00Z", "health", "[dm] to=stranger\n# ask\n"),
+    ]
+    (home / "chat.log").write_bytes(
+        b"".join(_tape_entry(seq, ts, src, body) for seq, ts, src, body in entries))
+    result = discovery._coord_dm_disposition_age(home, now=_dm_now())
+    assert result["state"] == "verified"
+    assert result["dms"] == 1
+    assert result["open"] == 1
+    assert result["stall"] == 1
+    assert result["nonmind_excluded"] == 1
+    assert result["oldest_open"] == "researcher:5h30m"
 
 
 def _settle_tape(home: Path, settlements: list[tuple[str, str, str]]) -> None:
