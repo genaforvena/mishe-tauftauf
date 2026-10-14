@@ -95,16 +95,29 @@ gap (which cause applied there stays UNKNOWN). Evidence:
 `artifacts/inference-research-wake40444-exp1-repeat-symmetric-isolation.md`;
 scratch `exp1-repeat-wake40444/`.
 
-Still not done: a third pair with the route adjustment (shell-capable
-read-only baseline route, or the REST read pre-declared as the mandated
-oracle mechanism for both arms); internal-loop arms (bun absent); the
-three interruption classes, still natural-cause observations only — no
-interruption claim is made. A lease or dashboard proves liveness only,
-not the comparison. Not adoption.
+Pair 3 executed at wake 42502 on the lane's own published commit
+`d623203` / run `38620278199` (terminal SUCCESS): the route adjustment
+choice was REST pre-declared for BOTH arms — the scout's missing shell
+could no longer cause a mid-run substitution because substitution was the
+pre-declared mechanism for everyone. Result: comparable quality, third
+event, mechanism-symmetric (both arms made the same two mandated REST
+reads, same verdict; the baseline additionally caught the newer main
+tip, job step-numbering gaps and the unsigned commit). Residual named:
+the transient arm's pre-freeze detection polling used the `gh` CLI
+(recorded deviation, outside the oracle scope). Evidence:
+`artifacts/inference-research-wake42502-exp1-pair3-rest-route.md`;
+scratch `exp1-pair3-wake42502/`.
 
-Next designed step: at the next terminal CI event run the third pair
-with the route adjustment; keep the harness route as fallback and record
-UNKNOWN where the measurement does not reach. No blind retry.
+Still not done: internal-loop arms (bun absent); the three interruption
+classes, still natural-cause observations only — no interruption claim
+is made. A lease or dashboard proves liveness only, not the comparison.
+Not adoption.
+
+Next designed step: a fourth pair only if a materially new variable
+appears (a different work class, a non-docs commit, or an internal-loop
+route becoming available); otherwise stop growing n and record. Keep
+the harness route as fallback and record UNKNOWN where the measurement
+does not reach. No blind retry.
 
 ## Experiment 2: gradual migration — one bounded work class on the internal loop
 
