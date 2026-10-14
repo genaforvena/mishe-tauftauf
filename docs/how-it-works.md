@@ -261,21 +261,26 @@ two (`MAX_TURN_FETCH_ALLOWANCE`) for its frozen `ci_status` tool set, a
 broader allowance, another work class or a half-specified pair is rejected
 rather than coerced to the default, and a granted allowance still cannot carry
 another capability inside the same turn context. A frozen-input live series has
-now been run for that read-only CI-observation class (October 2026, allowance
-two, one named `ci_status` capability): three samples, all three drawn the real
-intermittent upstream 429 and exhausted both permitted fetches, failing closed
-while the durable record keeps the exhaustion and the preserved upstream failure
-distinct; the first sample completed one turn holding one `ci_status` call in
-12.5 s before the second turn exhausted. The turn frame carries a fetch ledger
-(`allowance`, `workClass`, `dispatches`, `upstream_failure`) that
-`read_native_journal` surfaces as one row per turn, an absent ledger staying
-UNKNOWN rather than a synthesized zero. A survived 429 — the transient followed
-by a successful fetch — is UNKNOWN live: every sampled transient was followed by
-another 429, and only the deterministic seam test covers that path. Three
-samples on one route under one active condition is not a statistical claim.
-That class is not this plant's work class, the activation has not landed, and
-the pinned release keeps the one-fetch session: the harness route stays the
-fallback meanwhile.
+now been run twice for that read-only CI-observation class (October 2026,
+allowance two, one named `ci_status` capability). The first window (three
+samples) drew the real intermittent upstream 429 on every sample and exhausted
+both permitted fetches, failing closed while the durable record keeps the
+exhaustion and the preserved upstream failure distinct. The second window (six
+samples) drew the transient on four: three again exhausted and failed closed,
+and one survived it — the turn-1 ledger reports `dispatches: 2` with the
+preserved 429, the transport's transient retry succeeded, and the turn
+completed holding exactly one `ci_status` proposal and one tool result. A
+survived 429 was therefore UNKNOWN after the first window and is now observed
+live once; before that, only the deterministic seam test covered the path. The
+turn frame carries a fetch ledger (`allowance`, `workClass`, `dispatches`,
+`upstream_failure`) that `read_native_journal` surfaces as one row per turn, an
+absent ledger staying UNKNOWN rather than a synthesized zero. Eight samples
+across two windows on one route under one upstream-owned condition, with one
+survivor, is not a statistical claim, and terminal-status parity under the 429
+condition stays unasserted: the candidate fails closed on three of six where
+the harness oracle read the frozen run successfully. That class is not this
+plant's work class, the activation has not landed, and the pinned release
+keeps the one-fetch session: the harness route stays the fallback meanwhile.
 The transport retries transient 408/429/5xx itself
 (`DEFAULT_MAX_ATTEMPTS`, six requests per dispatch), so on a route that answers
 one such transient with a second POST the diagnostic names the budget rather
