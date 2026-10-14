@@ -518,4 +518,91 @@ probe that a keyed re-push is a no-op, n=3, one host. Evidence:
 `artifacts/inference-research-wake42947-exp3c-mutating-effect-window3.md`;
 `scratch/exp3c-wake42947/results-run{1,2,3}.json`.
 
+## Experiment 3d: interruption inside a bounded wait whose effect is a real Git ref update (keyed re-application on the real effect side)
+
+### Hypothesis
+
+Experiment 3c established the keyed property against a **synthetic** effect
+store. On the real delivery effect side the operation key is the commit SHA:
+`git push` is the mutation, `git ls-remote <remote> refs/heads/main` is the
+same-identity inspection, and re-applying the *same* push (same SHA) is a no-op.
+If that holds, (i) a successor can separate "committed, receipt lost" from
+"still pending" from real Git state alone, (ii) the bounded re-application of the
+same key duplicates nothing, and (iii) a retry that instead re-creates the commit
+(amend → new SHA) has no stable key and does duplicate — the real analogue of
+3c's append mode. Two limit-3 cells of 3c are under test: no separate probe that
+a keyed re-push is a no-op, and a synthetic rather than real effect side.
+
+### Materially new variable vs 3c
+
+The effect side is real Git, not a stub: a disposable local bare remote whose own
+`pre-receive`/`post-receive` hook is the blocked point *inside* the effect, and
+`git ls-remote` is the inspection. Mutations are counted as ref updates in the
+remote's own reflog, so "applied" is the remote's evidence, not the fixture's.
+
+### Method
+
+1. Fresh disposable site and a disposable bare remote per point under
+   `scratch/exp3d-wake<wake>/run-<label>/`; a source repo with one commit whose
+   SHA is the frozen operation identity, `origin` = the bare remote, remote
+   reflogs enabled.
+2. Waiter: the plant's own `task_state.add_task` → `task_state.wait_for` (the
+   durable obligation) → the plant's bounded external-call pattern
+   (`subprocess.run`, ≤5 attempts, 25 s timeout each) around a real
+   `git push origin main` → a 5 s post-mutation external wait → receipt.
+3. `SIGKILL` of the waiter's whole **process group** at (P1) before the wait
+   record is durable, (P2) after the remote's `pre-receive` hook signals it has
+   started (8 s block, so the push is provably in flight and the ref not yet
+   updated), (P3) after the `post-receive` hook signals it has started (ref
+   already updated, receipt not written). C: controlled transport failure —
+   `origin` points at a nonexistent repository, the bounded loop runs to
+   exhaustion, no kill.
+4. Successor reads only durable plant state (feed + receipt presence) plus the
+   frozen operation record (`op.json`, written before the run, holding the
+   desired SHA) and applies ONE declared bounded (8 s) same-identity inspection
+   (`git ls-remote`), then at most one bounded re-application (push the **same**
+   SHA). It never reads the timing markers.
+5. Orphan bound: after each kill the fixture waits past the hook's 8 s block and
+   re-reads the remote ref, so an orphaned push that would later commit the
+   effect is *detected* rather than assumed dead.
+6. After the P3 reconcile, two probes on the same frozen identity: **K** —
+   re-push the same SHA (expect no-op: exit 0, no ref update, reflog unchanged);
+   **R** — an unkeyed retry (`git commit --amend` → new SHA → push), which has no
+   stable operation identity.
+
+### Pre-registered expected durable state per kill point (written before the fixture is implemented)
+
+| point | durable feed state expected | remote ref after kill (and after the 8 s orphan window) | successor inspection | successor decision expected | ref updates after |
+|---|---|---|---|---|---|
+| P1-real | 0 waiting records | `refs/heads/main` absent | not run | `no-obligation-visible` | 0 |
+| P2-real | exactly 1 waiting record (sequence 2) | **unchanged** (absent): hook never returned, ref never updated | desired SHA absent → `pending` | one bounded re-application of the **same** SHA → record `ready` | **1** |
+| P3-real | exactly 1 waiting record (sequence 2) — **the same shape as P2** | `refs/heads/main` = desired SHA | desired SHA present → `committed` | `reconcile-from-effect-side` → record `ready`, **no re-push** | **1** |
+| C-real | exactly 1 waiting record (sequence 2) | no remote (transport failure) | inspection does not answer (nonzero exit) | `keep-open-unknown; no retry`; never `pass`; attempts bounded and counted | 0 |
+| K (keyed idempotence probe, after P3) | — | 1 ref update before the probe | — | re-push the same SHA → exit 0, `Everything up-to-date` | **1** (unchanged) |
+| R (unkeyed retry probe, after P3) | — | 1 ref update before the probe | — | amend → **new** SHA → push | **2** → `duplicated: true` |
+
+Falsification: any duplicate on the keyed path; a P2 ref that advances once the
+hook window passes (orphan survived the group kill); a P1 obligation invented; a
+transport failure or absent ref reported as committed/`pass`; a keyed re-push that
+updates the ref; an unbounded retry; a successor that reads timing markers or
+that separates P2 from P3 by anything other than the effect side.
+
+### Acceptance
+
+(a) Real-Git keyed inspection separates P2 from P3 using durable plant state plus
+the frozen identity only; (b) the keyed re-application (same SHA) is a no-op —
+exit 0, no ref update, reflog unchanged; (c) the P2 kill leaves the ref unchanged
+through the orphan window; (d) an unkeyed retry (amend) duplicates; (e) no
+obligation lost or duplicated; missing, failed or absent evidence stays UNKNOWN
+and is never `pass`. No exactly-once claim beyond the durable record.
+
+### Instrument
+
+`opencode-go/deepseek-v4.1-flash` (read at spawn from `SITE_HOME/minds/inference-research`;
+recorded here **before** the fixture is implemented and run).
+
+### Status
+
+**Preregistered 2026-10-14 (wake 43087); fixture and runs not yet executed.**
+
 ## Future experiments (not yet planned)
