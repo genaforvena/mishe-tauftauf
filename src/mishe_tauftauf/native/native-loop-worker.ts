@@ -1,4 +1,5 @@
 import {withNativeSession} from './native-session.ts';
+import type {FetchLedger} from './fetch-budget.ts';
 import {assertReadOnlyObservationContext, resolveTurnFetchAllowance} from './fetch-budget.ts';
 
 // NDJSON: open, sequential numbered turns, close. Parent owns process-group,
@@ -44,7 +45,21 @@ await withNativeSession(open.selector, open.sessionId, async session => {
    // re-checked structurally on every turn context: no other capability may
    // ride along under the read-only allowance.
    if (allowance.allowance > 1) assertReadOnlyObservationContext(request.context);
-   const frame = await session.turn(request.context, undefined, request.checkpoint);
+   let frame: unknown;
+   try {
+    frame = await session.turn(request.context, undefined, request.checkpoint);
+   } catch (error) {
+    // A turn that fails closed still claimed real lower-level dispatches: the
+    // budget's row rides the diagnostic (attachFetchLedger in fetch-budget.ts)
+    // and this frame matches the parent's `turn-error` receipt, so the caller
+    // journal records durable evidence instead of exit prose. The exception
+    // is rethrown unchanged: no turn failure becomes a completion.
+    const row = (error as {fetch_ledger?: unknown} | null)?.fetch_ledger;
+    emit({type:'turn-error', id:next,
+     message: error instanceof Error ? error.message : String(error),
+     fetch_ledger: row && typeof row === 'object' ? row as FetchLedger : null});
+    throw error;
+   }
    emit({type:'turn',id:next,frame});
    next++;
   }

@@ -159,3 +159,12 @@ export class TurnFetchBudget {
    dispatches: this.fetches, upstream_failure: this.lastFailure};
  }
 }
+
+/** Attach durable per-turn dispatch evidence to a thrown exhaustion error.
+ * The turn still fails closed; the row rides the diagnostic so the worker
+ * can emit it before the session ends, leaving the claims made before the
+ * refusal auditable without trusting the exit prose for the count. */
+export function attachFetchLedger<TError extends Error>(error: TError, ledger: FetchLedger): TError {
+ (error as TError & {fetch_ledger?: FetchLedger}).fetch_ledger = ledger;
+ return error;
+}

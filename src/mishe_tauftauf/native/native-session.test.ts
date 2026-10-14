@@ -4,6 +4,7 @@
 // its cancellation semantics stay checkable offline.
 import {test, expect, mock} from 'bun:test';
 import type {Context} from '@oh-my-pi/pi-ai/types';
+import type {FetchLedger} from './fetch-budget.ts';
 import {READ_ONLY_CI_OBSERVATION_CLASS} from './fetch-budget.ts';
 
 let fetchLog: string[] = [];
@@ -34,8 +35,9 @@ mock.module('./native-bootstrap.ts', () => ({
 
 // The provider transport's own transient retry re-issues the lower-level fetch
 // between attempts; that is exactly what the allowance counts. The mock also
-// waits on the gate before the retry so caller-side cancellation can land while
-// the transport is between dispatches.
+// waits on the gate before each retry so caller-side cancellation can land
+// while the transport is between dispatches, and retries while the transient
+// persists, so a third dispatch exercises the allowance's refusal.
 mock.module('@oh-my-pi/pi-ai/stream', () => ({
   streamSimple: (_model: unknown, _context: unknown,
    options: {fetch: typeof fetch; signal: AbortSignal}) => {
@@ -44,7 +46,7 @@ mock.module('@oh-my-pi/pi-ai/stream', () => ({
     async *[Symbol.asyncIterator]() {
      let response = await options.fetch('https://provider.test/turn', {});
      yield {type: 'start', status: response.status};
-     if (response.status === 429) {
+     while (response.status === 429) {
       await retryGate.wait();
       response = await options.fetch('https://provider.test/turn', {});
       yield {type: 'retry', status: response.status};
@@ -132,4 +134,33 @@ test('cancellation during the transport wait refuses the second dispatch', async
   } finally {
     restoreFetch();
   }
+});
+
+test('an exhausted allowance fails closed with the budget row on the thrown diagnostic', async () => {
+  // Two 429s, then the transport retries its own transient once more: the
+  // third lower-level dispatch is refused by the allowance, so the turn fails
+  // closed and the session is poisoned. The claims made before the refusal
+  // stay auditable on the error itself rather than only in exit prose.
+  scriptLowerLevelFetches([[429, 'Too Many Requests'], [429, 'Too Many Requests']]);
+  await loadSession();
+  let failure: (Error & {fetch_ledger?: FetchLedger}) | null = null;
+  try {
+    retryGate.open();
+    await withNativeSession('fixture/model', 'seam-session',
+     async session => {await session.turn(context);}, 'medium',
+     {allowance: 2, workClass: READ_ONLY_CI_OBSERVATION_CLASS});
+  } catch (error) {
+    failure = error as Error & {fetch_ledger?: FetchLedger};
+  } finally {
+    restoreFetch();
+  }
+  expect(failure).not.toBeNull();
+  expect(failure?.message).toContain('native provider fetch budget exhausted after 2 of 2 fetches');
+  expect(failure?.message).toContain('upstream HTTP 429 Too Many Requests (transient)');
+  expect(failure?.fetch_ledger).toEqual({allowance: 2,
+   workClass: READ_ONLY_CI_OBSERVATION_CLASS, dispatches: 2,
+   upstream_failure: {kind: 'status', status: 429, statusText: 'Too Many Requests'}});
+  // The third dispatch was refused, never sent, so only two lower-level
+  // fetches exist to account for.
+  expect(fetchLog.length).toBe(2);
 });
