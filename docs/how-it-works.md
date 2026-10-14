@@ -525,7 +525,8 @@ the phone's event time and its own age against the host clock under the same
 30-second cap. The publisher's own journal carried the phone's real values
 through the whole measured episode window (101 of 105 rows, 05:30–06:30Z), so
 the steady-regime null share is the tail of the standing receipt lag — itself
-23–26 s against the cap this morning — crossing the cap, not a silence of the
+23–26 s against the cap, measured 2026-10-11T03:06Z — crossing the cap, not a
+silence of the
 phone's sensor. Two source-side
 gap widths are measured: short dropouts of a few seconds to tens of seconds,
 where the boundary's event cursor keeps advancing, and a sustained phone-silent
