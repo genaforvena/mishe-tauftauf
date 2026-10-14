@@ -309,3 +309,26 @@ def test_read_only_allowance_open_request_carries_the_named_pair(tmp_path):
 def test_refused_allowance_configurations_never_start_a_worker(tmp_path, kwargs, match):
     with pytest.raises(ValueError, match=match):
         NativeSession(["must-not-start"], "fixture/model", "session", timeout=3, **kwargs)
+
+
+LEDGER_FRAME = dict(FRAME, fetch_ledger={"allowance": 2,
+    "workClass": READ_ONLY_CLASS, "dispatches": 2,
+    "upstream_failure": {"kind": "status", "status": 429, "statusText": "Too Many Requests"}})
+
+
+def test_turn_receipt_carries_the_per_turn_fetch_ledger(tmp_path):
+    # Durable dispatch evidence rides the turn frame through the worker seam:
+    # a survived 429 must remain distinguishable from an exhausted allowance
+    # without trusting the session process.
+    with NativeSession(command(tmp_path, turn=f"emit({{'type':'turn','id':request['id'],'frame':{LEDGER_FRAME!r}}})"),
+                       "fixture/model", "session", timeout=3) as session:
+        result = session.turn({"messages": []})
+    assert result.fetch_ledger == LEDGER_FRAME["fetch_ledger"]
+    assert result.fetch_ledger["dispatches"] == 2
+    assert result.fetch_ledger["upstream_failure"]["status"] == 429
+
+
+def test_turn_receipt_without_a_ledger_keeps_it_unknown(tmp_path):
+    with NativeSession(command(tmp_path), "fixture/model", "session", timeout=3) as session:
+        result = session.turn({"messages": []})
+    assert result.fetch_ledger is None
