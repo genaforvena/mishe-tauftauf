@@ -133,7 +133,8 @@ durable exhaustion row is deterministic-coverage only until the next registered
 run; the worker emission seam is pinned at both boundaries but not
 live-provoked; the `resume_from` fetch-ledger gap named here was closed at
 wake 39816; survived transient stays
-n=1 completed sample (8 samples / 2 windows / one route / one
+n=1 completed sample (nine registered samples / 2 windows / ten
+attempts counting the retired re-run / one route / one
 upstream-owned condition) with n=2 completed turns once the retired
 firstattempt turn 0 counts (wake 39639 fold); no activation
 (runtime pin fcaa2aac unchanged; harness route remains the fallback).
@@ -184,8 +185,8 @@ populated; 3/3 completed samples exactly one proposal + one tool result
 with `exact_sha_match: true`; failure rows keep the upstream 429 distinct
 from the exhaustion diagnostic.
 
-**Limits.** Survived transient n=1 completed sample (8 samples total across
-two windows) but n=2 completed turns once the retired
+**Limits.** Survived transient n=1 completed sample (nine registered samples,
+ten attempts across two windows) but n=2 completed turns once the retired
 `sample-s1-firstattempt` turn 0 counts; attempt-level wake-38889 reads 7
 attempts / 5 transients / 17 provider claims, and `report-rerun.json`'s
 `claims_total 7` / `transient_drawn 1` covers only the six finals
@@ -239,8 +240,8 @@ cancellation-refuses-second-dispatch); pytest transport+loop+worker 138
 passed; `tools/check_parsing.py` PASS (928 legacy sites). Pre-existing,
 not mine: `tests/test_viewport.py` collection ImportError (`wcwidth` missing).
 
-**Limits.** Survived transient n=1 completed sample (8 samples total across
-two windows) but n=2 completed turns once the retired
+**Limits.** Survived transient n=1 completed sample (nine registered samples,
+ten attempts across two windows) but n=2 completed turns once the retired
 `sample-s1-firstattempt` turn 0 counts; attempt-level wake-38889 reads 7
 attempts / 5 transients / 17 provider claims, and `report-rerun.json`'s
 `claims_total 7` / `transient_drawn 1` covers only the six finals
