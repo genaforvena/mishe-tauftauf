@@ -184,7 +184,7 @@ class ProcessTableTests(unittest.TestCase):
             "mishe-self-development-current-session.scope",
             "mishe-self-development-current"))
         self.assertTrue(proc_table.belongs_to_session(
-            "mishe-self-development-current-session-9f3a.service",
+            "mishe-self-development-current-session-9f3a2b1c4d5e6f708192a3b4c5d6e7f8.service",
             "mishe-self-development-current"))
 
     def test_belongs_to_session_rejects_a_foreign_test_keeper(self):
@@ -202,6 +202,31 @@ class ProcessTableTests(unittest.TestCase):
         self.assertFalse(proc_table.belongs_to_session("", "mishe-self-development-current"))
         self.assertFalse(proc_table.belongs_to_session("x-session.scope", ""))
 
+    def test_belongs_to_session_rejects_malformed_same_prefix_units(self):
+        # A same-prefix unit matching neither documented shape must be
+        # rejected; the old prefix check accepted these and could hide drift.
+        session = "mishe-self-development-current"
+        self.assertFalse(proc_table.belongs_to_session(
+            session + "-sessionx.scope", session))
+        self.assertFalse(proc_table.belongs_to_session(
+            session + "-session-foreign.scope", session))
+        self.assertFalse(proc_table.belongs_to_session(
+            session + "-session-foreign.service", session))
+        self.assertFalse(proc_table.belongs_to_session(
+            session + "-session-.service", session))
+
+    def test_belongs_to_session_rejects_non_32_hex_service_suffix(self):
+        # uuid4().hex is exactly 32 lowercase hex chars; shorter, longer,
+        # or non-hex suffixes are not producer-shaped units.
+        session = "mishe-self-development-current"
+        self.assertFalse(proc_table.belongs_to_session(
+            session + "-session-9f3a.service", session))          # short hex
+        self.assertFalse(proc_table.belongs_to_session(
+            session + "-session-9f3a2b1c4d5e6f708192a3b4c5d6e7f80aa.service", session))  # long hex
+        self.assertFalse(proc_table.belongs_to_session(
+            session + "-session-9f3a2b1c4d5e6f708192a3b4c5d6e7f8g.service", session))  # non-hex
+        self.assertFalse(proc_table.belongs_to_session(
+            session + "-session-9F3A2B1C4D5E6F708192A3B4C5D6E7F80.service", session))  # uppercase
 
 if __name__ == "__main__":
     unittest.main()

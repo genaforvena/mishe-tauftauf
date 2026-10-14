@@ -6187,11 +6187,11 @@ def test_server_keeper_verified_when_session_owns_server(monkeypatch, tmp_path):
 
     monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: _keeper_display(4242))
     monkeypatch.setattr(discovery.proc_table, "read_cgroup_unit",
-                        lambda pid: "mishe-self-development-current-session-9f3a.service")
+                        lambda pid: "mishe-self-development-current-session-9f3a2b1c4d5e6f708192a3b4c5d6e7f8.service")
     result = discovery._host_server_keeper(_stability_home(tmp_path))
     assert result["id"] == "sense.host.server-keeper"
     assert result["state"] == "verified"
-    assert result["keeper"] == "mishe-self-development-current-session-9f3a.service"
+    assert result["keeper"] == "mishe-self-development-current-session-9f3a2b1c4d5e6f708192a3b4c5d6e7f8.service"
 
 
 def test_server_keeper_verified_string_scope_raise(monkeypatch, tmp_path):
