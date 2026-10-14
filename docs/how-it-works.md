@@ -259,10 +259,13 @@ claim: the read-only CI-observation work class
 two (`MAX_TURN_FETCH_ALLOWANCE`) for its frozen `ci_status` tool set, a
 broader allowance, another work class or a half-specified pair is rejected
 rather than coerced to the default, and a granted allowance still cannot carry
-another capability inside the same turn context. No parity run under the
-allowance has completed, and the pinned release keeps the one-fetch session
-until the experiment, its independent review and its activation land; the
-harness route stays the fallback meanwhile.
+another capability inside the same turn context. One bounded re-run under the
+allowance has completed for that frozen read-only CI-observation class
+(2 turns, 1 call, 7.4 s, October 2026), and its implementation read was
+accepted independently; the transient 429 case remains a single sample, so it
+stays UNKNOWN rather than measured. That run is not this plant's work class,
+the activation has not landed, and the pinned release keeps the one-fetch
+session: the harness route stays the fallback meanwhile.
 The transport retries transient 408/429/5xx itself
 (`DEFAULT_MAX_ATTEMPTS`, six requests per dispatch), so on a route that answers
 one such transient with a second POST the diagnostic names the budget rather

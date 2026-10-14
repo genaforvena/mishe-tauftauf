@@ -83,3 +83,8 @@ revise or revert. For running code, deterministic checks, independent reading,
 observable activation and exercised recovery enable experimentation. Retire
 superseded code instead of keeping dormant feature flags; Git preserves history.
 These checks create no routine approval gate.
+
+One standing initiative names its own limits: the internal native loop replaces
+the external harness one bounded work class at a time, with parity evidenced
+per class. No parity verdict exists for this plant's work class yet, so the
+harness route remains the default ([how it works](how-it-works.md)).
