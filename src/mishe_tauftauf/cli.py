@@ -14,6 +14,8 @@ from .checks import run_check
 from . import access, discovery
 from .feed import Feed, FeedError, parse_feed, utc_now
 from .judges import QUESTIONS, classify, controls, document, run_external
+from . import window_manifest
+
 from .observations import FOOTER_WAKE_LABEL, compose_frame, discover, executable, validate_home, validate_slug
 from .predictions import PredictionError, append_prediction, pending_predictions, replay_predictions
 from .runtime import Coordinator, RuntimeConfig
@@ -547,15 +549,14 @@ def _configured_windows(home: Path, surfaces: list[str]) -> list[str]:
     raise (roles plus the permissions panel and the operator shell). Requiring a
     pane only for those surfaces keeps renderer-only observations honest instead
     of reporting a RED failure for a window no service is chartered to create.
-    An absent or unreadable manifest falls back to every discovered surface.
+    An absent manifest declares no windows; an unreadable or malformed one falls
+    back to every discovered surface, since damaged bytes must not read as a
+    narrower contract than the renderers actually raise.
     """
     try:
-        names = json.loads((home / "health/windows.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
+        configured = set(window_manifest.read(home))
+    except ValueError:
         return list(surfaces)
-    if not isinstance(names, list) or any(not isinstance(name, str) for name in names):
-        return list(surfaces)
-    configured = set(names)
     return [slug for slug in surfaces if slug in configured]
 
 

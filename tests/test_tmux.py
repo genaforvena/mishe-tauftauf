@@ -151,6 +151,8 @@ class TmuxTests(unittest.TestCase):
             renderer = home / "top-pains" / "sensor"
             renderer.write_text("#!/bin/sh\nprintf 'DESIRED STATE: green\\n'\n", encoding="utf-8")
             renderer.chmod(0o755)
+            (home / "health").mkdir(exist_ok=True)
+            (home / "health" / "windows.json").write_text('["sensor"]\n', encoding="utf-8")
             session = f"mishe-tauftauf-test-{os.getpid()}-default"
             with mock.patch.dict(os.environ):
                 os.environ.pop("MISHE_SEED_SESSION", None)
