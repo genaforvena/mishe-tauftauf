@@ -2190,12 +2190,6 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
             continue
         host_scope.append(unit)
         unattributed.remove(unit)
-def _declares_site_path(path: str, site_roots: list[Path]) -> bool:
-    """Whether one declared path lies inside a site's checkout or its home."""
-    candidate = Path(path)
-    return any(root == candidate or root in candidate.parents
-               for root in site_roots)
-
     # A mapped unit with no import root can still be judged by its declaration:
     # when nothing its declaration names lies inside any site's checkout or
     # home, the unit is a host tool beside the sites. A unit whose executed
