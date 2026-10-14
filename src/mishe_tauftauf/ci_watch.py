@@ -12,11 +12,13 @@ from pathlib import Path
 from .feed import Feed, utc_now
 
 
-_COMMAND_ATTEMPTS = 2
+_COMMAND_ATTEMPTS = 5
 # A transient GitHub transport error (connection reset, TLS, timeout) is not a CI
-# state; retry it once inside the same tick instead of publishing UNKNOWN.
+# state; retry it with bounded backoff inside the same tick instead of publishing
+# UNKNOWN. Five attempts with 2 s between them tolerate multi-second API
+# flakiness (observed: intermittent "Post .../graphql: EOF" from gh).
 
-_COMMAND_RETRY_SECONDS = 1.0
+_COMMAND_RETRY_SECONDS = 2.0
 
 
 def _command(*argv: str, cwd: Path | None = None) -> str:
