@@ -572,9 +572,10 @@ which the light channel's next sample resolves, and a sustained phone-silent
 freeze, where no new light sample arrives while the producer keeps writing and
 the transport stays reachable. One complete freeze instance was first measured
 on this plant: the last phone sample before it stopped was 2026-10-11T00:47:31Z
-and the stream
-resumed with a sample at 02:19:41Z, a 1h32m10s stoppage with a live transport
-throughout. The family has since grown: an overnight stoppage of 10h44m46s
+and the stream resumed with a sample at 02:19:46Z, a 1h32m15s stoppage with a
+live transport throughout (the producer reconnected at 02:19:41Z reporting
+`light unavailable`, so the reconnect is not the first sample). The family has
+since grown: an overnight stoppage of 10h44m46s
 (2026-10-13T15:04:02Z to 2026-10-14T01:48:48Z) with continuous uptime clocks,
 and the live one (last phone sample 2026-10-14T06:13:24Z) stopped acceleration,
 light, BLE and Wi-Fi within one batch while the phone was awake with its display
