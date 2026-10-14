@@ -418,4 +418,82 @@ receipt — remains UNKNOWN; that is the next variable), n=3, one host. Evidence
 `artifacts/inference-research-wake42838-exp3b-plant-own-wait.md`;
 `scratch/exp3b-wake42838/results-run{1,2,3}.json`.
 
+## Experiment 3c: interruption during a bounded external wait whose effect is a MUTATION
+
+### Hypothesis
+
+Experiments 3a/3b covered window 3 for **read-only** effects only. For a
+**mutating** effect (the effect may have been committed with no durable
+receipt), a successor can reconcile without duplicating the effect **iff** the
+effect side exposes an operation-identity-keyed inspection and an idempotent
+re-application of the *same* operation. If the effect side has no such key,
+P2/P3 are indistinguishable and the only honest successor decision is
+keep-open-UNKNOWN with no retry — a blind retry duplicates.
+
+### Materially new variable vs 3b
+
+The effect is a **mutation**, not a read: a durable per-operation record in a
+local effect store. Two effect-side keying modes are measured:
+
+- **keyed** — `publish(op-id)` creates `remote/<op-id>` only if absent
+  (idempotent by key); `inspect(op-id)` answers `committed`/`pending`. This
+  mirrors the plant's real delivery path, where the mutation is a push keyed by
+  the commit SHA and re-inspection is "does the remote ref contain that SHA".
+- **append** — `publish()` unconditionally appends one line to an append-only
+  log (no key); `inspect()` can only answer `indeterminate` with a line count.
+
+The durable obligation is again the plant's own `task_state.wait_for` record;
+the blocked wait again runs the real `subprocess.run` (the effect call itself is
+the blocked external call for P2).
+
+### Method
+
+1. Fresh initialized disposable site per point under `scratch/exp3c-wake<wake>/`,
+   plus a disposable local effect store (`remote/`) in the same scratch tree.
+   A stub `publish` executable on `PATH` implements both modes and counts its
+   own invocations per phase.
+2. Waiter: `task_state.add_task` → `task_state.wait_for(..., retry_event=…)`
+   (the durable obligation) → `publish` (the mutation, a blocked subprocess for
+   P2) → block in the external wait → receipt file.
+3. `SIGKILL` at (P1) before the wait record is durable, (P2) inside the blocked
+   `publish` call before the effect commits, (P3) after `publish` committed and
+   before the receipt. C is the controlled transport failure (no kill).
+4. Successor reads only plant state (feed registry + receipt presence) and
+   applies ONE declared bounded (8 s wall cap) same-identity re-inspection
+   (`inspect(op-id)`) before any bounded re-application of the same keyed
+   operation. R is a deliberate blind-retry probe against the append mode.
+
+### Pre-registered expected durable state per kill point (written before the fixture is implemented)
+
+| point | durable feed state expected | effect store after kill | successor decision expected |
+|---|---|---|---|
+| P1 | 0 waiting records | keyed 0 ops; append 0 lines | `no-obligation-visible` |
+| P2 | exactly 1 waiting record (sequence 2) | keyed 0 ops (effect never committed); append 0 lines | keyed: `inspect` → `pending` → one bounded re-publish of the **same** op-id → `committed`, 1 op; record → `ready`. append: `inspect` → `indeterminate` → `keep-open-unknown; no retry` (0 lines) |
+| P3 | exactly 1 waiting record (sequence 2) — **same shape as P2** | keyed 1 op (committed); append 1 line | keyed: `inspect` → `committed` → reconcile (`ready`), **no re-publish**, 1 op. append: `indeterminate` → `keep-open-unknown; no retry`, 1 line |
+| C (controlled failure) | exactly 1 waiting record | keyed 0 ops | publish/inspect transport failure → `keep-open-unknown`; never `pass`; attempts bounded and counted |
+| R (blind-retry probe; append only) | — | append 1 line before the probe | an unconditional retry appends a **2nd** line → the duplicate the keyed path avoids; recorded as the failure mode, not a fix |
+
+Falsification: any duplicate op on the keyed path (P3 re-publish, or P2/P3
+applied-count ≠ 1); any P1 obligation invented; any `indeterminate`/`pending`
+reported as committed or `pass`; any unbounded retry; or P2/P3 durable state
+that *is* distinguishable without the effect-side key.
+
+### Acceptance
+
+As 3a/3b, plus: a keyed mutating effect is reconciled with **exactly one**
+application and no duplicate; a non-keyed effect stays UNKNOWN and is never
+blind-retried; one controlled blind retry is shown to duplicate, demonstrating
+why the key is required. No exactly-once claim beyond the durable record.
+
+### Instrument
+
+`opencode-go/deepseek-v4.1-flash` (read at spawn from
+`SITE_HOME/minds/inference-research`; recorded here **before** the fixture is
+implemented and run).
+
+### Status
+
+**Preregistered 2026-10-14 (wake 42947) before the fixture was written or run.**
+Status pending execution.
+
 ## Future experiments (not yet planned)
