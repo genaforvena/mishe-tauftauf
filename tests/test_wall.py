@@ -429,6 +429,25 @@ def test_wall_dm_resolves_bare_file_to_sender_staging_anchor(tmp_path, monkeypat
     assert entry.source == "health" and "health's own message text" in entry.body
 
 
+def test_wall_dm_consumes_staging_anchor_after_send(tmp_path):
+    """After a successful dm send from the staging anchor, the anchor is consumed.
+
+    A second send with the same bare name must fail because the anchor no longer
+    exists — this prevents the stale-anchor re-emission defect (DM 41642).
+    """
+    setup_wall(tmp_path)
+    from mishe_tauftauf import cli
+    (tmp_path / "walls").mkdir()
+    (tmp_path / "walls" / "health-MESSAGE").write_text("health's staged message", encoding="utf-8")
+    code = cli.main(["--home", str(tmp_path), "wall", "dm", "--source", "health", "--to", "genome",
+                     "--file", "MESSAGE"])
+    assert code == 0
+    anchor = tmp_path / "walls" / "health-MESSAGE"
+    assert not anchor.exists(), "staging anchor must be consumed after successful send"
+    code2 = cli.main(["--home", str(tmp_path), "wall", "dm", "--source", "health", "--to", "genome",
+                      "--file", "MESSAGE"])
+    assert code2 != 0, "second send must fail — anchor was consumed"
+
 def test_wall_outcome_resolves_bare_notes_to_role_staging_anchor(tmp_path):
     """The outcome path reads the recording role's own staging anchor."""
     setup_wall(tmp_path)
