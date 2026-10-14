@@ -20,10 +20,11 @@ from uuid import uuid4
 from . import omp_pane, proc_table, space_text
 from .activity import roles as seated_roles
 from .feed import Feed, parse_feed, publication_lock
-from .host_radio import (BLUETOOTH_ROOT, COMMAND_TIMEOUT_SECONDS, NET_ROOT, RFKILL_ROOT,
-                         admin_up, bluetooth_controllers, carrier_state, controller_state,
-                         ethernet_interfaces, link_speed, operstate, rfkill_switches,
-                         rfkill_unreadable, rfkill_verdict, wireless_interfaces)
+from .host_radio import (BLUETOOTH_ROOT, COMMAND_TIMEOUT_SECONDS, NET_ROOT,
+                         RFKILL_ROOT, admin_up, bluetooth_controllers, carrier_state,
+                         controller_state, decode_tailnet_status, ethernet_interfaces,
+                         link_speed, operstate, rfkill_switches, rfkill_unreadable,
+                         rfkill_verdict, wireless_interfaces)
 from .outcome_events import classify_outcomes
 from .observations import reserved_home_name
 from .runtime_source import source_for
@@ -31,7 +32,7 @@ from .scan_freshness import age_bounds, classify_age, endpoint
 from .unit_properties import SITE_UNIT_PREFIX, is_site_unit
 
 COMMANDS = ("rg", "git", "tmux", "python3", "systemctl", "journalctl", "ps", "df",
-            "lsusb", "lspci", "bluetoothctl", "sensors", "upower", "evtest")
+            "lsusb", "lspci", "bluetoothctl", "sensors", "upower", "evtest", "tailscale")
 
 SENSOR_ID = re.compile(r"^sense\.[a-z0-9]+(?:\.[a-z0-9-]+)+$")
 
@@ -4440,6 +4441,103 @@ def _ethernet_read() -> dict:
                            "timeout_seconds": COMMAND_TIMEOUT_SECONDS},
             "interfaces": interfaces}
 
+def _tailnet_peer_read() -> dict:
+    """Sample this host's tailnet peer status.
+
+    Consumer: the operator and health, who must know whether tailnet-transported
+    devices are reachable. A missing BackendState, a non-Running state, or a
+    missing Self is a host-side UNKNOWN — the tailnet is not functional. A
+    missing binary, a non-zero exit, or text that does not decode is a named
+    problem, never a state.
+
+    Per-peer: online/active/LastSeen. The rendezvous cursor is NOT readable
+    from this host (the rendezvous server only serves /node/note3), so the
+    joint relation (peer offline + cursor frozen = device unreachable; peer
+    online + cursor frozen = producer silent; peer online + cursor moving =
+    normal) is not implementable here. This sense reports tailnet reachability
+    only; it does not distinguish device-unreachable from producer-silent.
+    """
+    problems: list[str] = []
+    if shutil.which("tailscale") is None:
+        problems.append("tailscale-absent")
+        data = None
+    else:
+        try:
+            result = subprocess.run(["tailscale", "status", "--json"],
+                                    capture_output=True, text=True,
+                                    timeout=COMMAND_TIMEOUT_SECONDS)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            problems.append(f"tailscale-unreadable:{type(exc).__name__}")
+            data = None
+        else:
+            if result.returncode != 0:
+                problems.append(f"tailscale-exit-{result.returncode}")
+                data = None
+            else:
+                data = decode_tailnet_status(result.stdout)
+                if data is None:
+                    problems.append("tailscale-unreadable:decode")
+
+    if data is None:
+        sample = "tailnet UNKNOWN " + ",".join(problems)
+        return {"id": "sense.net.tailnet-peer", "kind": "read",
+                "state": "unknown",
+                "reason": ",".join(problems),
+                "sample": sample,
+                "consumer": "operator/network-health",
+                "provenance": {"command": "tailscale status --json",
+                               "timeout_seconds": COMMAND_TIMEOUT_SECONDS},
+                "backend_state": None,
+                "self_present": False,
+                "peers": {}}
+
+    backend_state = data.get("BackendState")
+    self_present = data.get("Self") is not None
+
+    if backend_state != "Running":
+        problems.append(f"backend-state-{backend_state}")
+    if not self_present:
+        problems.append("self-missing")
+
+    peers_data = data.get("Peer", {}) or {}
+    peers = {}
+    for peer_id, peer in peers_data.items():
+        hostname = peer.get("HostName", "?")
+        online = peer.get("Online", False)
+        active = peer.get("Active", False)
+        last_seen = peer.get("LastSeen", "")
+        peers[hostname] = {"online": online, "active": active, "last_seen": last_seen}
+
+    if problems:
+        sample = f"tailnet UNKNOWN {','.join(problems)}"
+        state = "unknown"
+        reason = ",".join(problems)
+    else:
+        online_count = sum(1 for p in peers.values() if p["online"])
+        offline_count = len(peers) - online_count
+        peer_parts = []
+        for name in sorted(peers):
+            p = peers[name]
+            peer_parts.append(f"{name}={'online' if p['online'] else 'offline'}"
+                            f"/{'active' if p['active'] else 'inactive'}"
+                            f"/{p['last_seen']}")
+        sample = f"tailnet backend={backend_state} peers={len(peers)}" \
+                 f" online={online_count} offline={offline_count} " \
+                 + ",".join(peer_parts)
+        state = "verified"
+        reason = "tailnet-peer-state"
+
+    return {"id": "sense.net.tailnet-peer", "kind": "read",
+            "state": state,
+            "reason": reason,
+            "sample": sample,
+            "consumer": "operator/network-health",
+            "provenance": {"command": "tailscale status --json",
+                           "timeout_seconds": COMMAND_TIMEOUT_SECONDS},
+            "backend_state": backend_state,
+            "self_present": self_present,
+            "peers": peers}
+
 def _host_radio_read() -> dict:
     """Sample this host's BLE/Wi-Fi adapter state for the space programme.
 
@@ -4555,6 +4653,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_space_light_read(home))
     observed.append(_host_radio_read())
     observed.append(_ethernet_read())
+    observed.append(_tailnet_peer_read())
 
     loadavg = _read(Path("/proc/loadavg"), 256)
     observed.append({"id": "sense.proc.loadavg", "state": "verified" if loadavg else "unknown",
