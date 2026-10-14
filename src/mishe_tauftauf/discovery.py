@@ -18,6 +18,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from . import omp_pane, proc_table, space_text
+from .activity import roles as seated_roles
 from .feed import Feed, parse_feed, publication_lock
 from .host_radio import (BLUETOOTH_ROOT, COMMAND_TIMEOUT_SECONDS, NET_ROOT, RFKILL_ROOT,
                          admin_up, bluetooth_controllers, carrier_state, controller_state,
@@ -3536,6 +3537,15 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
     they can never reply or record a wall outcome, so their DMs would
     permanently inflate stall/open without naming a real resolver wait.
     The excluded count is reported as ``broadcast_excluded`` for visibility.
+    Targets with no mind at this site — a watcher, feed or the human shell
+    (``ci``, ``operator-view``, ``session-watch``, ``silence-watch``,
+    ``operator``) — are excluded the same way and reported as
+    ``nonmind_excluded``: they have no reply edge to give and no wall outcome
+    to record, so their DMs would otherwise hold the stall count above zero
+    for the rest of the window while every real mind-to-mind request was
+    answered. Seated means the role set the site supervises
+    (``activity.roles``), so a renamed role reads excluded until it is seated
+    here again.
     """
     if now is None:
         now = datetime.now(timezone.utc)
@@ -3567,10 +3577,14 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
     if not records_dir.is_dir():
         return {"id": "sense.coord.dm-disposition-age", "state": "unknown",
                 "sample": "outcome store unavailable", "kind": "read"}
+    seated = seated_roles(home)
     window_start = now - timedelta(seconds=DM_DISPOSITION_WINDOW_SECONDS)
-    dms = [dm for dm in all_dms if dm[0] >= window_start and dm[2] not in PSEUDO_TARGETS]
+    scoped = [dm for dm in all_dms
+              if dm[0] >= window_start and dm[2] not in PSEUDO_TARGETS]
     broadcast_excluded = sum(1 for dm in all_dms
                              if dm[0] >= window_start and dm[2] in PSEUDO_TARGETS)
+    nonmind_excluded = sum(1 for dm in scoped if dm[2] not in seated)
+    dms = [dm for dm in scoped if dm[2] in seated]
     pair_dms: dict[tuple[str, str], list[datetime]] = {}
     for ts, source, target, _seq in all_dms:
         pair_dms.setdefault((source, target), []).append(ts)
@@ -3580,10 +3594,12 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
         return {"id": "sense.coord.dm-disposition-age", "state": "verified",
                 "sample": (f"dms=0 reply_edge=0 seq_credit=0 credit_only=0 "
                            f"wall_only=0 dispositioned=0 open=0 stall=0 "
-                           f"broadcast_excluded={broadcast_excluded}"),
+                           f"broadcast_excluded={broadcast_excluded} "
+                           f"nonmind_excluded={nonmind_excluded}"),
                 "kind": "read", "dms": 0, "reply_edge": 0, "seq_credit": 0,
                 "credit_only": 0, "wall_only": 0, "dispositioned": 0, "open": 0,
-                "stall": 0, "broadcast_excluded": broadcast_excluded}
+                "stall": 0, "broadcast_excluded": broadcast_excluded,
+                "nonmind_excluded": nonmind_excluded}
     outcomes: list[tuple[datetime, str]] = []
     for sha, ots in ref_time.items():
         path = records_dir / f"{sha}.json"
@@ -3675,7 +3691,8 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
               f"credit_only={credit_only_n} wall_only={wall_only_n} "
               f"dispositioned={dispositioned} open={open_count} stall={stall_n} "
               f"p50={p50:.0f}m p90={p90:.0f}m "
-              f"broadcast_excluded={broadcast_excluded}")
+              f"broadcast_excluded={broadcast_excluded} "
+              f"nonmind_excluded={nonmind_excluded}")
     if oldest:
         sample += f" oldest_open={oldest}"
     return {"id": "sense.coord.dm-disposition-age", "state": "verified",
@@ -3684,7 +3701,8 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
             "credit_only": credit_only_n, "wall_only": wall_only_n,
             "dispositioned": dispositioned, "open": open_count, "stall": stall_n,
             "p50_minutes": round(p50), "p90_minutes": round(p90),
-            "oldest_open": oldest, "broadcast_excluded": broadcast_excluded}
+            "oldest_open": oldest, "broadcast_excluded": broadcast_excluded,
+            "nonmind_excluded": nonmind_excluded}
 
 
 def _seed_settle_result_mix(home: Path) -> dict[str, object]:
