@@ -1298,3 +1298,36 @@ def test_invalid_periodic_review_config_is_visible_unknown(tmp_path, value):
     config["self_pick_seconds"] = value
     (tmp_path / "coordination-mode.json").write_text(json.dumps(config))
     assert "UNKNOWN" in seed.tick(tmp_path, "session", "genome")
+
+def test_seed_yield_race_restage_mid_settle_preserves_newer_anchor(tmp_path, monkeypatch, capsys):
+    """If the staging anchor is restaged mid-settle, the newer bytes are preserved.
+
+    Mirrors the dm consumption race guard (test_wall_dm_race_restage_mid_send...):
+    the anchor stat must be captured before the wall write so a restage during
+    settle is detected; otherwise the guard reads the anchor twice after the fact
+    and unconditionally destroys whatever is on disk.
+    """
+    setup_wall(tmp_path)
+    from mishe_tauftauf import cli, wall
+    (tmp_path / "walls").mkdir()
+    wake = Feed(tmp_path).append("seed", "seed wake genome observation=1\nRead your wall.")
+    wall_path = tmp_path / "walls" / "genome.md"
+    wall_path.write_text("old plate\n", encoding="utf-8")
+    anchor = tmp_path / "walls" / "genome-NOTES"
+    anchor.write_text("original staged plate\n", encoding="utf-8")
+    os.utime(wall_path, (1_700_000_000, 1_700_000_000))
+    os.utime(anchor, (1_700_000_100, 1_700_000_100))
+
+    original_write = wall.write
+    def restaging_write(*args, **kwargs):
+        anchor.write_text("restaged during settle", encoding="utf-8")
+        return original_write(*args, **kwargs)
+    monkeypatch.setattr(wall, "write", restaging_write)
+
+    code = cli.main(["--home", str(tmp_path), "seed", "yield", "--slug", "genome",
+                     "--wake", str(wake.sequence), "--file", "NOTES", "--result", "changed"])
+    assert code == 0, "settle succeeds even when anchor is restaged mid-flight"
+    assert anchor.exists(), "restaged anchor must survive — newer bytes preserved"
+    assert anchor.read_text(encoding="utf-8") == "restaged during settle"
+    captured = capsys.readouterr()
+    assert "not consumed" in captured.out

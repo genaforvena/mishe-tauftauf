@@ -506,6 +506,18 @@ def settle(home: Path, role: str, wake: int, text: str, continuation: bool, resu
                     raise ValueError("settled turn result or continuation differs")
                 return f"yield seed {role} wake {wake} already settled"
             raise ValueError(f"wake {wake} is not pending for {role}")
+        # Capture the anchor stat before any write so a restage mid-settle is
+        # detected (mirrors the dm consumption path). The capture must precede
+        # ``_reject_stale_staging_anchor`` and the wall write; otherwise the
+        # comparison is two reads taken after the fact and the guard never fires.
+        _source_anchor_stat = None
+        _consume_anchor = False
+        if source_is_anchor and source_path is not None:
+            _consume_anchor = True
+            try:
+                _source_anchor_stat = Path(source_path).stat()
+            except FileNotFoundError:
+                _source_anchor_stat = None
         _reject_stale_staging_anchor(home, role, text, source_path, source_is_anchor)
         write(home, role, text)
         seed._write_handoff(home / "handoffs" / f"{role}.md", text)
@@ -513,6 +525,21 @@ def settle(home: Path, role: str, wake: int, text: str, continuation: bool, resu
         Feed(home).append("seed", f"seed yield {role} wake={wake}{suffix}\n"
                           f"Turn settled ({result}); wall and handoff at walls/{role}.md and handoffs/{role}.md. "
                           "This is a transport receipt, not proof of patch acceptance.")
+        if _consume_anchor and source_path is not None:
+            anchor = Path(source_path)
+            if _source_anchor_stat is not None:
+                try:
+                    current_stat = anchor.stat()
+                except FileNotFoundError:
+                    current_stat = None  # already consumed externally
+                if current_stat is None or current_stat.st_ino == _source_anchor_stat.st_ino and current_stat.st_mtime == _source_anchor_stat.st_mtime:
+                    if current_stat is not None:
+                        try:
+                            anchor.unlink()
+                        except FileNotFoundError:
+                            pass
+                else:
+                    print(f"warning: staging anchor {anchor} changed during settle; not consumed")
     return f"yield seed {role} wake {wake}"
 
 
