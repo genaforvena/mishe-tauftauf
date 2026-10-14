@@ -146,11 +146,14 @@ not as its own detail line.
 
 The light reading is capped at 30 seconds, or the producer's shorter validity,
 and a missing, unreadable, delayed or expired boundary stays UNKNOWN instead
-of serving a last-known-good lux. The phone's clock runs 25–29 seconds behind
-the host by design, so the checkout's rule compares the host-side receipt,
-publication and poll stamps and never the phone's event epoch (`dc1b963`). A
-pane loading an older pin still carries the previous rule: measured on
-2026-10-13T13:49Z, one boundary file read `verified fresh-clock-conditional`
+of serving a last-known-good lux. The phone's clock runs behind the host by
+design; the measured quantity is a span (host arrival minus phone stamp =
+latency + skew), so the phone-side skew is bounded above by the smallest
+observed span rather than read directly. The checkout's rule therefore
+compares the host-side receipt, publication and poll stamps and never the
+phone's event epoch (`dc1b963`). A pane loading an older pin still carries
+the previous rule: measured on 2026-10-13T13:49Z, one boundary file read
+`verified fresh-clock-conditional`
 from the checkout source and `unknown stale-original-evidence` from pin
 `fcaa2aa`, so a fresh reading can read stale on a deployed pane.
 `sense.runtime.pin-lag` names that gap (`pin=<sha> head=<sha> lag=N age=…`).

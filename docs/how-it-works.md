@@ -495,7 +495,10 @@ collector. It keeps lux, provenance (source and session) and the original sample
 and receipt times visible. Freshness is capped at 30 seconds or the producer's
 shorter validity and is measured on the host side: the read compares the
 consumer receipt, publication and poll stamps, never the phone's event epoch,
-because the phone clock runs 25–29 seconds behind the host by design (DM 34981).
+because the phone clock runs behind the host by design. The measured quantity
+is a span — host arrival minus phone stamp, sampled in this plant as 25.3–29.0 s
+over 75 spans — and both latency and skew are non-negative, so the skew is
+bounded above by the smallest span, not read directly (DM 34981).
 Polling or rendering cannot extend it, and missing, broken, delayed or expired
 evidence is UNKNOWN. A last sample older than the cap reads UNKNOWN as
 `stale-original-evidence` even when every layer works: measured on this plant
