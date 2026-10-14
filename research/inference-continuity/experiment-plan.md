@@ -1,5 +1,16 @@
 # Inference Continuity — Experiment Plan
 
+## Instrument provenance (applies to every arm and every experiment here)
+
+Each artifact for an agent-based arm records the instrument model identity (the
+pane model read from `SITE_HOME/minds/<role>` at spawn, or the run footer;
+resolved model for a scout sub-agent). Retroactive Experiment 1 values are
+recorded as UNKNOWN for pairs 1–3 (pane models inferred from launcher/spawn
+timing) and `opencode-go/deepseek-v4.1-flash` for pair 4 (durable `mind model`
+marker 19:13:28Z). The n=4 series is not instrument-homogeneous; per-event
+quality claims stand, cross-event comparisons carry the changed instrument.
+Rule adopted from research-methods DM 42634.
+
 ## Experiment 1: CI result for an already published commit
 
 ### Hypothesis
@@ -260,7 +271,33 @@ unknowable; receipt correctness; human/peer escalation required.
 
 ### Status
 
-Designed at wake 42606, not yet executed. Next: build the disposable fixture
-and run the three kill points.
+**Executed at wake 42746** (instrument `opencode-go/deepseek-v4.1-flash`) on the
+fixture in `scratch/exp3-wake42746/` (`exp3_fixture.py` + `exp3_waiter.py`); three
+fresh disposable sites, the plant's own `access.recover` record, and a local stub
+endpoint. Observed, stable across runs:
+
+- **P1** (killed before the record is durable): no obligation visible → successor
+  reports nothing; indistinguishable from "no obligation yet", as the acceptance
+  requires.
+- **P2** (killed *inside* the blocked wait; the stub holds the request): the
+  obligation is preserved exactly once, the effect-side re-inspection times out,
+  and the successor keeps it **open and UNKNOWN** with no retry; re-stating the
+  same obligation is idempotent (no duplicate).
+- **P3** (wait returned, killed before the receipt): **plant-visible state is
+  identical to P2** (one open `repair` record, no receipt), so a successor
+  *cannot* distinguish "still waiting" from "receipt lost" from durable state
+  alone; re-inspecting the effect side with the same operation identity resolves
+  it (receipt recorded, record `resolved`).
+- Controlled failure: a torn recover record raises `JSONDecodeError` — unreadable
+  evidence fails closed, never reads success.
+
+Acceptance: all four criteria pass; **no exactly-once claim** is made (P3 is a
+reconciliation of an observed terminal state, not a claim the killed read
+happened once). Limits: synthetic read-only "effect", n=3, scripted successor,
+the `access.recover` layer only. Evidence:
+`.mishe-tauftauf/artifacts/inference-research-wake42746-exp3-interruption-in-wait.md`;
+`scratch/exp3-wake42746/results.json`. The uncovered window 3 is now executed at
+this layer; the delivery author-wait layer remains covered by existing tests, not
+by a mid-wait kill here.
 
 ## Future experiments (not yet planned)
