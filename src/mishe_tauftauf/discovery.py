@@ -20,9 +20,9 @@ from uuid import uuid4
 from . import omp_pane, proc_table, space_text
 from .feed import Feed, parse_feed, publication_lock
 from .host_radio import (BLUETOOTH_ROOT, COMMAND_TIMEOUT_SECONDS, NET_ROOT, RFKILL_ROOT,
-                         admin_up, bluetooth_controllers, controller_state, operstate,
-                         rfkill_switches, rfkill_unreadable, rfkill_verdict,
-                         wireless_interfaces)
+                         admin_up, bluetooth_controllers, carrier_state, controller_state,
+                         ethernet_interfaces, link_speed, operstate, rfkill_switches,
+                         rfkill_unreadable, rfkill_verdict, wireless_interfaces)
 from .outcome_events import classify_outcomes
 from .observations import reserved_home_name
 from .runtime_source import source_for
@@ -4343,6 +4343,57 @@ def _switch_label(kind: str, verdict: str | None, unreadable: list[str]) -> str:
     return "unread" if kind in unreadable else "absent"
 
 
+def _ethernet_read() -> dict:
+    """Sample this host's wired Ethernet interface state.
+
+    Consumer: the operator and health, who must know whether the host's
+    physical network link is available before diagnosing connectivity. A
+    missing interface, an unreadable sysfs value stays UNKNOWN — absence and
+    an unread file are not calm. An interface that is administratively down
+    or has no carrier is a verified state, and the sample names it.
+
+    ``operstate`` follows carrier: a cable that is plugged in reads ``up``,
+    one that is unplugged reads ``down``. ``admin_up`` distinguishes an
+    administratively disabled port from a physically disconnected one.
+    ``speed`` is the negotiated link rate in Mb/s (e.g. 1000); ``carrier``
+    is 1 when the link is up and 0 when it is down. An unreadable speed or
+    carrier is a named problem, never a state.
+    """
+    interfaces = ethernet_interfaces()
+    problems: list[str] = []
+    if interfaces:
+        states = []
+        for name in interfaces:
+            value = operstate(name)
+            if value is None:
+                problems.append(f"operstate-unread:{name}")
+                states.append(f"{name}=unread")
+                continue
+            admin = admin_up(name)
+            if admin is None:
+                problems.append(f"flags-unreadable:{name}")
+                states.append(f"{name}=unread")
+                continue
+            speed = link_speed(name)
+            carrier = carrier_state(name)
+            speed_text = f"{speed}Mb/s" if speed is not None else "unread"
+            carrier_text = str(carrier) if carrier is not None else "unread"
+            states.append(f"{name}={value}/admin-{'up' if admin else 'down'}/{speed_text}/carrier-{carrier_text}")
+        sample = "ethernet " + ",".join(states)
+    else:
+        problems.append("no-ethernet-interface")
+        sample = "ethernet absent"
+    if problems:
+        sample = f"ethernet UNKNOWN {','.join(problems)}; " + sample
+    return {"id": "sense.net.ethernet", "kind": "read",
+            "state": "unknown" if problems else "verified",
+            "reason": ",".join(problems) if problems else "ethernet-state",
+            "sample": sample,
+            "consumer": "operator/network-health",
+            "provenance": {"sysfs": [str(NET_ROOT)],
+                           "timeout_seconds": COMMAND_TIMEOUT_SECONDS},
+            "interfaces": interfaces}
+
 def _host_radio_read() -> dict:
     """Sample this host's BLE/Wi-Fi adapter state for the space programme.
 
@@ -4457,6 +4508,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_ledger_evidence_binding(home))
     observed.append(_space_light_read(home))
     observed.append(_host_radio_read())
+    observed.append(_ethernet_read())
 
     loadavg = _read(Path("/proc/loadavg"), 256)
     observed.append({"id": "sense.proc.loadavg", "state": "verified" if loadavg else "unknown",
