@@ -1192,3 +1192,54 @@ def test_health_passes_a_camera_node_below_the_fault_thresholds(tmp_path: Path, 
     assert ("CAMERA: PASS class=SEEING artifact-age=119s capture-fails=2/900s "
             "kernel-urbs=9/900s") in rendered
     assert "STATE: GREEN" in rendered
+
+
+def test_health_names_an_unowned_server_keeper_as_a_cause(tmp_path: Path, monkeypatch) -> None:
+    """A server held by a foreign keeper must route to a resolver.
+
+    A live, shielded session with a finished test's keeper currently reads
+    verified on session-stability, so the drift has to be named here or it
+    never reaches a mind before something stops the keeper.
+    """
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health" / "windows.json").write_text(json.dumps(["health"]), encoding="utf-8")
+    (home / "health" / "services.json").write_text(json.dumps([]), encoding="utf-8")
+    (home / "discovery").mkdir(parents=True)
+    monkeypatch.setenv("MISHE_SEED_SESSION", "test-session")
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.ci_line", lambda _home: "CI: PASS")
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.subprocess.run",
+                        lambda argv, **_kw: subprocess.CompletedProcess(
+                            argv, 0, "health 0 0 9001\n", "") if argv[0] == "tmux"
+                        else subprocess.CompletedProcess(argv, 0, "PASS doctor\n", ""))
+    keeper = {"id": "sense.host.server-keeper", "state": "drift",
+              "sample": "session=test-session server-pid=11 foreign-keeper=x-session-1.service"}
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.latest",
+                        lambda _home: {"observations": [keeper]})
+    health(home)
+    report = (home / "observations" / "health").read_text(encoding="utf-8")
+    assert report.startswith("FAIL health internal check")
+    assert "server-keeper=" in report
+    assert "test-session server-pid=11" in report
+    assert "STATE: RED" in health(home)
+
+
+def test_health_keeps_a_plant_owned_server_keeper_clean(tmp_path: Path, monkeypatch) -> None:
+    """The plant's own keeper must not add a RED cause of its own."""
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health" / "windows.json").write_text(json.dumps(["health"]), encoding="utf-8")
+    (home / "health" / "services.json").write_text(json.dumps([]), encoding="utf-8")
+    (home / "discovery").mkdir(parents=True)
+    monkeypatch.setenv("MISHE_SEED_SESSION", "test-session")
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.ci_line", lambda _home: "CI: PASS")
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.subprocess.run",
+                        lambda argv, **_kw: subprocess.CompletedProcess(
+                            argv, 0, "health 0 0 9001\n", "") if argv[0] == "tmux"
+                        else subprocess.CompletedProcess(argv, 0, "PASS doctor\n", ""))
+    keeper = {"id": "sense.host.server-keeper", "state": "verified",
+              "sample": "session=test-session server-pid=11 keeper=test-session-session-1.service"}
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.latest",
+                        lambda _home: {"observations": [keeper]})
+    health(home)
+    assert "server-keeper" not in (home / "observations" / "health").read_text(encoding="utf-8")
