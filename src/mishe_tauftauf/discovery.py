@@ -1970,17 +1970,67 @@ def _is_tmux_session_holder(unit: str) -> bool:
         return False
     return "tmux new-session" in result.stdout
 
-
 def _declares_site_path(path: str, site_roots: list[Path]) -> bool:
     """Whether one declared path lies inside a site's checkout or its home."""
     candidate = Path(path)
     return any(root == candidate or root in candidate.parents
                for root in site_roots)
 
+def _script_imports_site_package(unit: str) -> bool | None:
+    """Whether the script a unit's ExecStart executes imports the site package.
 
+    ``None`` when no executed script can be read or parsed, so the sensor
+    cannot say whether the unit couples to the site: the unit then stays
+    uninspectable. A script that imports no site package is a host tool
+    beside the sites even when its file lives inside a site home, because
+    the drift this sense catches runs through imports, not file location.
+    """
+    environment = os.environ.copy()
+    environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    try:
+        result = subprocess.run(["systemctl", "--user", "show", unit,
+                                 "-p", "ExecStart"],
+                                capture_output=True, text=True, timeout=5,
+                                env=environment)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode:
+        return None
+    from .unit_properties import declared_paths
+    checked = False
+    for path in declared_paths(result.stdout):
+        candidate = Path(path)
+        if not candidate.is_file():
+            continue
+        try:
+            raw = candidate.read_bytes()
+        except OSError:
+            continue
+        if candidate.suffix != ".py" and not (
+                raw[:2] == b"#!" and b"python" in raw[:128]):
+            continue
+        checked = True
+        try:
+            tree = ast.parse(raw)
+        except SyntaxError:
+            return None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:
+                    # A relative import resolves inside a package; the only
+                    # packages in play are the site's.
+                    return True
+                names = [node.module or ""]
+            else:
+                continue
+            for name in names:
+                if name == "mishe_tauftauf" or name[:14] == "mishe_tauftauf.":
+                    return True
+    return False if checked else None
 def _foreign_checkout_consumers(units: list[str], root: Path) -> dict[str, str]:
     """Unattributed units whose ExecStart names this plant's checkout, by unit.
-
     A unit whose description names the checkout root is a plant-level service
     of this site, not a foreign consumer: the description is systemd's own
     attribution, so it outranks the script-text heuristic.
@@ -2010,8 +2060,9 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
     consumes this plant's checkout — observed in its import root or declared in
     the script its ``ExecStart`` runs — the sample names the coupling as
     ``foreign=<unit>@<checkout>`` and stays ``unknown`` rather than hiding it in
-    an anonymous coverage gap. A unit that names no site in anything it imports
-    or declares is a host tool beside the sites, so the sample names it
+    anonymous coverage gap. A unit that names no site in anything it imports or
+    declares — or whose executed script imports no site package at all — is a
+    host tool beside the sites, so the sample names it
     ``host-scope=<unit>`` and the reading is ``verified``: the question the
     sense answers is settled for it, and an unattributed UNKNOWN is left for
     the units whose declaration could not be read or whose declared paths do
@@ -2139,13 +2190,25 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
             continue
         host_scope.append(unit)
         unattributed.remove(unit)
+def _declares_site_path(path: str, site_roots: list[Path]) -> bool:
+    """Whether one declared path lies inside a site's checkout or its home."""
+    candidate = Path(path)
+    return any(root == candidate or root in candidate.parents
+               for root in site_roots)
+
     # A mapped unit with no import root can still be judged by its declaration:
     # when nothing its declaration names lies inside any site's checkout or
-    # home, the unit is a host tool beside the sites. A unit that declares a
-    # path inside a site stays uninspectable — the sensor cannot yet say the
-    # unit is irrelevant, so it does not claim it.
+    # home, the unit is a host tool beside the sites. A unit whose executed
+    # script imports no site package is a host tool by the same rule: the
+    # drift this sense catches runs through imports, not file location. A unit
+    # that declares a path inside a site stays uninspectable — the sensor
+    # cannot yet say the unit is irrelevant, so it does not claim it.
     for unit in list(uninspectable):
         if _is_tmux_session_holder(unit):
+            host_scope.append(unit)
+            uninspectable.remove(unit)
+            continue
+        if _script_imports_site_package(unit) is False:
             host_scope.append(unit)
             uninspectable.remove(unit)
             continue
