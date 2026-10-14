@@ -14,11 +14,12 @@ from pathlib import Path
 
 from .access import list_requests, recoveries, retired_requests
 from .ci_watch import line as ci_line
+from . import clear_journal
+from . import scan_freshness
 from .discovery import (latest, producer_label, scan_attempt, _space_light,
                         _space_light_name_freeze, _space_light_read)
 from .host_radio import decode_cam_events, decode_cam_manifest, decode_cam_state, decode_urb_failures
 from . import proc_table
-from . import scan_freshness
 from .space_text import nonblank
 from .seed import recorded_session
 
@@ -303,6 +304,15 @@ CAMERA_CAPTURE_FAULTS = 3
 CAMERA_KERNEL_FAULTS = 10
 CAMERA_MANIFEST = "camera.json"
 _CAMERA_EVENTS_TAIL_B = 1 << 18
+CLEAR_JOURNAL_STALL_S = 60.0
+"""Age after which a clear journal stuck between rotating and rotated is a stall.
+
+Half the witness CLEAR STALL budget (120 s): a rotation normally commits inside
+one supervisor tick, so a journal still mid-rotation after a minute means the
+receipt guard keeps rejecting the live pane — the tmux-resurrection pid class —
+and the supervisor is holding in a silent loop. Surfacing the stuck phase here
+names the cause while the generic overdue-clear RED is still pending.
+"""
 
 
 def _camera_faults(home: Path, env: dict[str, str]) -> tuple[str, str, list[str]]:
@@ -390,6 +400,57 @@ def _camera_faults(home: Path, env: dict[str, str]) -> tuple[str, str, list[str]
     if state == "UNKNOWN":
         line += f" — {unknown}"
     return line, unknown, causes
+
+
+def _clear_journal_stalls(home: Path) -> tuple[str, list[str]]:
+    """Flag clear journals abandoned mid-rotation past the stall budget.
+
+    `wall.clear` records each rotation under `checks/wall-clear-*.json` and
+    walks phase rotating -> rotated -> committed within one supervisor tick.
+    A journal that stops in rotating or rotated means its receipt guard keeps
+    rejecting the live pane — the tmux-resurrection pid class from witness DM
+    16442 — and the supervisor holds the clear in a silent loop until the
+    witness 120 s budget turns the generic overdue-clear RED. Naming the stuck
+    phase here gives the resolver the role, the wake and the cause one budget
+    earlier. A journal that cannot be read is monitoring damage and stays
+    UNKNOWN rather than silently passing; a healthy journal is simply absent
+    from the concern set, so an empty directory reads PASS.
+    """
+    causes: list[str] = []
+    stuck: list[str] = []
+    unknown = ""
+    now = datetime.now(timezone.utc).timestamp()
+    try:
+        rows = clear_journal.paths(home)
+    except OSError:
+        return "CLEAR JOURNAL: UNKNOWN — checks directory unreadable", []
+    for path in rows:
+        journal = clear_journal.read(path)
+        if journal is None:
+            unknown = unknown or "journal unreadable"
+            continue
+        if journal.get("phase") not in {"rotating", "rotated"}:
+            continue
+        try:
+            age = max(0.0, now - path.stat().st_mtime)
+        except OSError:
+            unknown = unknown or "journal mtime unreadable"
+            continue
+        if age >= CLEAR_JOURNAL_STALL_S:
+            stuck.append(f"{journal.get('role')}/{journal.get('settled')}"
+                         f":{journal.get('phase')}:{age:.0f}s")
+    if stuck:
+        line = (f"CLEAR JOURNAL: RED stuck={','.join(stuck)} "
+                f"budget={CLEAR_JOURNAL_STALL_S:.0f}s")
+        if unknown:
+            # A stuck journal names the cause; an unreadable neighbour is
+            # monitoring damage that must stay visible next to it, not be
+            # subsumed by the red.
+            line += f" — {unknown}"
+        return line, [f"clear-journal-stuck={len(stuck)}"]
+    if unknown:
+        return f"CLEAR JOURNAL: UNKNOWN — {unknown}", []
+    return "CLEAR JOURNAL: PASS", []
 
 
 def _pane_roots(home: Path, pane_rows: list[tuple[str, str, str, str]]) -> tuple[str, str, list[str]]:
@@ -582,6 +643,8 @@ def health(home: Path) -> str:
     camera_line, camera_unknown, camera_fault_causes = _camera_faults(home, env)
     if camera_line:
         lines.append(camera_line)
+    clear_journal_line, clear_journal_causes = _clear_journal_stalls(home)
+    lines.append(clear_journal_line)
     pane_roots_line, pane_roots_unknown, pane_roots_causes = _pane_roots(home, pane_rows)
     if pane_roots_line:
         lines.append(pane_roots_line)
@@ -660,6 +723,7 @@ def health(home: Path) -> str:
     lines.extend(lease_lines)
     causes: list[str] = []
     causes.extend(camera_fault_causes)
+    causes.extend(clear_journal_causes)
     causes.extend(pane_roots_causes)
     if doctor.returncode:
         causes.append("doctor")
@@ -702,6 +766,19 @@ def health(home: Path) -> str:
                          if isinstance(item, dict) and item.get("id") == "sense.host.session-restarts"), None)
         if isinstance(restarts, dict) and str(restarts.get("state", "")) == "drift":
             causes.append("session-restarts=" + str(restarts.get("sample", "drift"))[:160])
+    except (OSError, ValueError, AttributeError):
+        pass
+    # A server held by a unit that does not belong to the declared session —
+    # a finished test's keeper, most often — is also a host failure Health
+    # owns. The session-stability sense reads verified there (the session is
+    # live and shielded), so without this cause an unowned keeper holding
+    # the shared server would never route to a resolver before it is stopped.
+    try:
+        snapshot = latest(home)
+        keeper = next((item for item in (snapshot.get("observations", []) if snapshot else [])
+                       if isinstance(item, dict) and item.get("id") == "sense.host.server-keeper"), None)
+        if isinstance(keeper, dict) and str(keeper.get("state", "")) == "drift":
+            causes.append("server-keeper=" + str(keeper.get("sample", "drift"))[:160])
     except (OSError, ValueError, AttributeError):
         pass
     # Autonomy loop health: fog/landing/gate drift means minds cannot close
