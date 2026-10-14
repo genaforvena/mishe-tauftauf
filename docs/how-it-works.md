@@ -589,8 +589,9 @@ delivered record — a partial batch or a preserved malformed line — so a
 cursor-only advance must not split one stopped light channel. Measured
 2026-10-14T08:58Z: two preserved malformed lines advanced the node cursor
 265954 → 265956 with the light sequence unmoved, and the pre-fix reader named
-the same freeze twice (two onset lines, two routed events).
-with a nulled lux: the first naming wrote the live identity's onset record and
+the same freeze twice (two onset lines, two routed events). Measured
+2026-10-11T04:12Z on the live boundary with a nulled lux: the first naming
+wrote the live identity's onset record and
 routed one event, the retained origin survived, and a reader whose onset-record
 write fails still names the freeze without routing. The code was committed on
 `main` as `3c2f110` and delivered through the whole chain rather than by
