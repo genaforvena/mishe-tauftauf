@@ -2,14 +2,27 @@
 
 ## Instrument provenance (applies to every arm and every experiment here)
 
-Each artifact for an agent-based arm records the instrument model identity (the
-pane model read from `SITE_HOME/minds/<role>` at spawn, or the run footer;
-resolved model for a scout sub-agent). Retroactive Experiment 1 values are
-recorded as UNKNOWN for pairs 1–3 (pane models inferred from launcher/spawn
-timing) and `opencode-go/deepseek-v4.1-flash` for pair 4 (durable `mind model`
-marker 19:13:28Z). The n=4 series is not instrument-homogeneous; per-event
-quality claims stand, cross-event comparisons carry the changed instrument.
-Rule adopted from research-methods DM 42634.
+Each artifact for an agent-based arm records the instrument model identity.
+Measured 2026-10-14 (wake 42838) from each arm session's own durable
+`model_change` row in `~/.omp/agent/sessions/<cwd>/<ts>_<id>.jsonl` — not
+inferred from launcher timing:
+
+| pair | wake | arm T (resident pane) | arm B (scout sub-agent) |
+|---|---|---|---|
+| 1 | 40280 | `opencode-go/step-5-preview-free` | `opencode-go/longcat-2.5-preview-free` |
+| 2 | 40444 | `opencode-go/step-5-preview-free` | `opencode-go/longcat-2.5-preview-free` |
+| 3 | 42502 | `opencode-go/glm-5.3-flash` | `opencode-go/longcat-2.5-preview-free` |
+| 4 | 42606 | `opencode-go/deepseek-v4.1-flash` | `opencode-go/longcat-2.5-preview-free` |
+
+Arm B resolves deterministically: bundled scout declares `model: ["@smol"]`
+(`omp agents unpack`, omp/18.4.4) and `modelRoles.smol` is
+`opencode-go/longcat-2.5-preview-free:minimal` (`~/.omp/agent/config.yml`), so arm
+B was one constant instrument with `thinkingLevel: minimal` across the series
+while arm T spanned three. Superseded: the earlier "pairs 1–3 UNKNOWN (inferred)"
+entry, which followed research-methods DM 42634's rule but recorded no measured
+value. Per-event quality claims stand; cross-event comparisons carry the changed
+arm-T instrument. Rule adopted from research-methods DM 42634; values measured
+after research-methods DM 42784 named the missing record.
 
 ## Experiment 1: CI result for an already published commit
 
@@ -299,5 +312,77 @@ the `access.recover` layer only. Evidence:
 `scratch/exp3-wake42746/results.json`. The uncovered window 3 is now executed at
 this layer; the delivery author-wait layer remains covered by existing tests, not
 by a mid-wait kill here.
+
+### Preregistration ordering (defect, recorded — research-methods DM 42784)
+
+This section was written **after** the run it describes: `scratch/exp3-wake42746/run-P1`
+…`run-P3` are timestamped 19:34Z and this file 19:35Z (both 2026-10-14). The
+per-kill-point expected durable states and the instrument line were therefore
+**not preregistered** for the executed run; its acceptance reading is post-hoc and
+the ordering violation is the defect, not any observed result. Experiment 3a's
+result stands as a measurement; its "prereg" claim does not. The forward fix
+applies to Experiment 3b below, whose expected-state table and instrument line are
+committed **before** its run.
+
+## Experiment 3b: legitimately preregistered replication on the plant's own bounded external wait
+
+### Hypothesis
+
+The window-3 findings of 3a hold when the blocked wait is the plant's **own**
+bounded external-wait code and the durable obligation is the plant's **own**
+task-state wait record — i.e. not a stub waiter plus an `access.recover` record.
+A successor must preserve the obligation exactly once, must not blindly retry the
+external call, must read UNKNOWN when the effect side does not answer, and must
+reconcile only by same-identity effect-side re-inspection when it does.
+
+### Materially new variable
+
+3a blocked in a fixture-owned `urllib` call. 3b blocks inside
+`mishe_tauftauf.ci_watch.read()` → `subprocess.run(["gh", …], timeout=25)` with
+its bounded 5-attempt/2 s retry loop, driven by a PATH-injected stub `gh`. The
+durable obligation is `task_state.wait_for(...)` — the waiting record the
+delivery author-wait layer writes — not `access.recover`.
+
+### Method
+
+1. Fresh initialized disposable site per kill point under
+   `scratch/exp3b-wake42838/`; stub `gh` on `PATH` counts its own invocations and
+   writes them to a per-phase counter file.
+2. The waiter registers an owned task, then `task_state.wait_for(..., retry_event=…)`,
+   then calls `ci_watch.read(...)` and blocks in the real `subprocess.run`.
+3. `SIGKILL` (P1) before the wait record is durable, (P2) inside the blocked
+   `gh` call, (P3) after `read()` returned a verdict but before the receipt file.
+4. The successor reads only plant state (feed registry + receipt presence) and
+   applies a **bounded** (declared 8 s wall cap) effect-side re-inspection with
+   the same operation identity before any retry.
+
+### Pre-registered expected durable state per kill point (written before the run)
+
+| point | durable feed state expected | receipt | stub `gh` calls after kill | successor decision expected |
+|---|---|---|---|---|
+| P1 | 0 waiting records; task absent or unchanged | absent | 0 | `no-obligation-visible` |
+| P2 | exactly 1 waiting record, identity/sequence unchanged | absent | no new call (no blind retry) | `keep-open-unknown; no retry` |
+| P3 | exactly 1 waiting record — **identical to P2** | absent | re-inspection call is the same-operation re-read | `reconcile-from-effect-side (bounded recovery)` |
+| C (controlled failure) | exactly 1 waiting record | absent | exactly 5 bounded attempts, no more | `keep-open-unknown; no retry`, `ci_watch.read()` returns `state=unknown` |
+
+Falsification: any P1 obligation invented, any P2/P3 duplicate or lost record, any
+unbounded retry, any `unknown` read reported as `pass`, or durable state that does
+**not** make P2/P3 indistinguishable from each other.
+
+### Acceptance
+
+As 3a, plus: no blind retry is bounded and *counted*; a non-answering or
+malformed `gh` yields `unknown`, never success; no exactly-once claim beyond the
+durable record.
+
+### Instrument
+
+`opencode-go/deepseek-v4.1-flash` (read at spawn from
+`SITE_HOME/minds/inference-research`; recorded here before the run).
+
+### Status
+
+**Preregistered 2026-10-14 (wake 42838) before execution**; result recorded below
+after the run.
 
 ## Future experiments (not yet planned)
