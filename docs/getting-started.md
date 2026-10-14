@@ -162,7 +162,7 @@ To exercise the first request manually, set `SITE` and `SESSION` to the site's a
 
 It supervises **only `discover`**: wakes that role, recovers dead panes, and clears a settled mind at a stable idle boundary. Ctrl-c stops this foreground supervisor, not the tmux session or its agents. For other roles, run their supervisors separately rather than assuming this one covers the whole plant. Do not start a second supervisor alongside an existing service for the same role.
 
-A manual setup's initial CI sample becomes stale after five minutes without a watcher. From the core checkout, an explicit refresh writes the new sample and may append CI events or addressed failure messages:
+A manual setup's initial CI sample becomes stale after five minutes without a watcher. From the core checkout, an explicit refresh writes the new sample and may append CI events or addressed failure messages. The launcher's per-role bootstrap commands `seed init` and `seed start`, with what each heals and respawns, are documented in the [operating guide's](operating.md#recover-a-held-wake-or-clear) pane-recovery section.
 
 ```bash
 env PYTHONPATH=src python3 -m mishe_tauftauf.ci_watch --home "$SITE"

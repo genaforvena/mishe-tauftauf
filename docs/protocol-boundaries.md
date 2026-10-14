@@ -36,6 +36,11 @@ consumer keeps the reading UNKNOWN rather than reading absence or a hang as calm
 An unreadable sysfs value is named `unread` rather than dropped, and an unreadable
 rfkill switch is omitted from the decoded list: `rfkill_unreadable()` names the
 skipped switches, so a caller can tell an omission from a radio that is absent.
+It also decodes one repository-facing dialect, `decode_git_log_lines`: the
+commit lines of `git log --oneline -L` ancestry output, so
+the served-staleness reading can ask whether a sense's producing unit changed
+since its pin, skipping git's diff bodies and blank lines. The consumer is the
+discover scan (discovery.py `_served_staleness`), which marks senses stale.
 
 `observations.py` also decodes one volatile token in the rendered discover and
 senses panes: the displayed age of an unverified reading (`age=19m17s`) grows

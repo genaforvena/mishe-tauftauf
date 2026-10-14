@@ -330,6 +330,15 @@ When an observation window is missing rather than held — no top pane to read a
 
 Confirm the session's `@mishe-tauftauf-home` marker is this site first; the command refuses a session another site owns. Mind panes themselves are the supervisor's business, so a raised window without a mind service is a pane repair, not a restored mind.
 
+`seed init` and `seed start` are the launcher's per-role steps, available directly:
+
+```bash
+"$SITE/bin/mishe-tauftauf" --home "$SITE" seed init --slug "$ROLE" --engine-command 'codex'
+"$SITE/bin/mishe-tauftauf" --home "$SITE" seed start --slug "$ROLE" --session "$SESSION"
+```
+
+`init` re-heals the site without erasing it: the CLI wrapper and doctrine/charter copies are refreshed only when stale, a missing mind launcher is written once from the engine command (an existing one is never healed), and the role's top-pain and service-unit files are written when absent. It requires a checkout worktree. `start` raises or reuses the owned session, re-heals `.seed-raised` from the live session identity, creates the role's two-pane window when missing, respawns dead or wedged panes, and restores pending work only when the mind is verifiably idle. Together they are what "the launcher reuses it" does per role; a single role can be re-raised without replanting the whole site.
+
 ### 1. Capture the state
 
 Use the affected role, not necessarily `genome`:
