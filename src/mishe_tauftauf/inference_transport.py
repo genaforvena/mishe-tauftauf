@@ -19,6 +19,11 @@ from mishe_tauftauf.inference_worker import WorkerError, WorkerTurn, _decode
 class NativeTurn(WorkerTurn):
     wire_terminal: Any = None
     checkpoint: Any = None
+    # Durable per-turn dispatch evidence: the resolved allowance, work class,
+    # how many lower-level fetches were claimed, and the last transient
+    # upstream failure (null when none). Upstream 408/429/5xx and budget
+    # exhaustion stay distinct named facts for the caller journal.
+    fetch_ledger: Any = None
 
 
 class NativeSession:
@@ -192,9 +197,10 @@ class NativeSession:
                 # the caller owns the reconciliation of an orphaned provider.
                 return NativeTurn('transport-receipt-after-exit', decoded.assistant,
                                   decoded.wire_usage, completion.get('wire_terminal'),
-                                  checkpoint)
+                                  checkpoint, completion.get('fetch_ledger'))
             return NativeTurn(decoded.terminal, decoded.assistant, decoded.wire_usage,
-                              completion.get('wire_terminal'), checkpoint)
+                              completion.get('wire_terminal'), checkpoint,
+                              completion.get('fetch_ledger'))
         except BaseException:
             self._reap()
             raise

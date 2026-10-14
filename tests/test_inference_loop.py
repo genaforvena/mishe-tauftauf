@@ -1062,3 +1062,35 @@ def test_wire_usage_chained_continuation_keeps_alignment(tmp_path):
     # Third turn is a synthetic no-usage turn: None stays UNKNOWN, never 0.
     assert result["wire_usage"] == [usage, usage, None]
     assert read_native_journal(third)["wire_usage"] == [usage, usage, None]
+
+
+def test_fetch_ledger_survives_journal_round_trip(tmp_path):
+    from mishe_tauftauf.inference_transport import NativeTurn
+    ledger = {"allowance": 2, "workClass": "experiment-2-read-only-ci-observation",
+              "dispatches": 2, "upstream_failure": {"kind": "status", "status": 429,
+                                                    "statusText": "Too Many Requests"}}
+    response = turn([CALL])
+    native = NativeTurn(response.terminal, response.assistant, None, None, None, ledger)
+    path = tmp_path / "ledger.jsonl"
+    with NativeJournal(path) as journal:
+        def record(event):
+            journal(event)
+            if event["kind"] == "tool_result":
+                raise InterruptedError
+        with pytest.raises(InterruptedError):
+            drive(Session(native), record=record)
+    state = read_native_journal(path)
+    # One durable row per turn: the granted allowance, the claimed dispatches
+    # and the preserved upstream failure, readable without the session process.
+    assert state["fetch_ledger"] == [ledger]
+    row = [row for row in (json.loads(line) for line in
+                           path.read_text().splitlines())
+           if row["kind"] == "model_output"][0]
+    assert row["response"]["fetch_ledger"] == ledger
+
+
+def test_fetch_ledger_absent_stays_unknown_per_turn(tmp_path):
+    path = tmp_path / "no-ledger.jsonl"
+    with NativeJournal(path) as journal:
+        drive(Session(turn()), record=journal, complete=lambda context: True)
+    assert read_native_journal(path)["fetch_ledger"] == [None]

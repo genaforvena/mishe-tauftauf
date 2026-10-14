@@ -46,4 +46,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
-      - run: bun test src/mishe_tauftauf/native/wire-usage.test.ts src/mishe_tauftauf/native/fetch-budget.test.ts
+      - run: bun test src/mishe_tauftauf/native/wire-usage.test.ts src/mishe_tauftauf/native/fetch-budget.test.ts src/mishe_tauftauf/native/native-session.test.ts

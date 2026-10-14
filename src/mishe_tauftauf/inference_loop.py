@@ -392,6 +392,7 @@ def _reconstruct_native(rows):
     provider_checkpoint = None
     model_failure = None
     wire_usage = []
+    fetch_ledgers = []
     for row in rows:
         if stopped or row['obligation'] != obligation:
             raise NativeJournalError('record after stop or changed obligation')
@@ -479,6 +480,7 @@ def _reconstruct_native(rows):
             context['messages'].append(assistant)
             turns += 1
             wire_usage.append(snapshot(response.get('wire_usage')))
+            fetch_ledgers.append(snapshot(response.get('fetch_ledger')))
             selected = [item for item in assistant['content']
                         if item.get('type') == 'toolCall']
             ids = [item['id'] for item in selected]
@@ -534,4 +536,5 @@ def _reconstruct_native(rows):
             'used_ids': sorted(used_ids), 'turns': turns, 'calls': calls,
             'stopped': stopped, 'budgets': budgets,
             'provider_checkpoint': provider_checkpoint,
-            'model_failure': model_failure, 'wire_usage': snapshot(wire_usage)}
+            'model_failure': model_failure, 'wire_usage': snapshot(wire_usage),
+            'fetch_ledger': snapshot(fetch_ledgers)}

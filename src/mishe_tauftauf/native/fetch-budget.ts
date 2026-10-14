@@ -90,6 +90,17 @@ export interface UpstreamFailure {
  message?: string;
 }
 
+/** Durable per-turn dispatch evidence: what was permitted, how many
+ * lower-level dispatches were actually claimed, and the last transient
+ * upstream failure observed (null when none). One row per turn in the caller
+ * journal keeps upstream 408/429/5xx and budget exhaustion distinct facts. */
+export interface FetchLedger {
+ allowance: number;
+ workClass: string;
+ dispatches: number;
+ upstream_failure: UpstreamFailure | null;
+}
+
 /** Per-turn dispatch counter. Every lower-level fetch counts, including
  * encoding fallback; the tool/effect layer is never retried by this bound. */
 export class TurnFetchBudget {
@@ -138,5 +149,13 @@ export class TurnFetchBudget {
      : `upstream network error: ${failure.message}`;
   return new Error(`native provider fetch budget exhausted after ${this.fetches} of `
    + `${this.allowance} fetches permitted for ${this.workClass || 'the default class'}; ${detail}`);
+ }
+
+ /** Per-turn evidence for the caller journal. `dispatches` counts every
+  * claimed lower-level fetch; `upstream_failure` is the preserved transient
+  * fact (null when none), never merged into the exhaustion diagnostic. */
+ ledger(): FetchLedger {
+  return {allowance: this.allowance, workClass: this.workClass,
+   dispatches: this.fetches, upstream_failure: this.lastFailure};
  }
 }

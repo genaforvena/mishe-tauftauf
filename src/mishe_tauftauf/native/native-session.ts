@@ -81,7 +81,11 @@ export async function withNativeSession<T>(selector: string, sessionId: string,
   const checkpoint = null;
   return {terminal, assistant, checkpoint, wire_usage: correlated ? observed.usage : null,
    wire_terminal: observed.terminal ? {...observed.terminal, created_response_id: observed.created_id,
-    assistant_response_id: assistant.responseId ?? null, correlated, stop_reason: assistant.stopReason} : null};
+    assistant_response_id: assistant.responseId ?? null, correlated, stop_reason: assistant.stopReason} : null,
+   // Durable per-turn dispatch evidence: permits, claims and the last
+   // transient upstream failure, so a caller journal can distinguish a
+   // survived 429 from an exhausted allowance without trusting this process.
+   fetch_ledger: budget.ledger()};
   }
   const session = {async turn(context: Context, signal?: AbortSignal, checkpoint?: unknown): Promise<unknown> {
    if (closed || poisoned) throw new Error('native session unavailable');
