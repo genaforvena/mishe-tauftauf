@@ -350,11 +350,37 @@ def test_null_sample_first_seen_stays_a_single_read_gap(tmp_path):
     assert kept["reason"] == "light-null-gap" and kept["cursor"] == 12
 
 
-def test_advancing_cursor_between_reads_stays_a_dropout(tmp_path):
-    null_gap_fixture(tmp_path, null_record(cursor=11))
+def test_cursor_only_advance_keeps_one_null_streak(tmp_path):
+    """The node cursor advances on any delivered record — a partial batch or a
+    preserved malformed line — so it cannot tell a live light channel from a
+    stopped one. A cursor-only advance with the light sequence unmoving must not
+    re-arm the streak's origin."""
+    record = null_record(cursor=11)
+    null_gap_fixture(tmp_path, record)
     row = discovery._space_light_read(tmp_path)
-    # The boundary kept receiving frames between the reads: a momentary gap.
-    assert row["reason"] == "light-null-gap"
+    assert row["reason"] == "light-stream-frozen"
+    kept = json.loads((tmp_path / "discovery" / "space-light-stream.json").read_text())
+    assert kept["read_epoch_s"] == record["read_epoch_s"]
+
+
+def test_cursor_only_advance_between_reads_routes_one_onset(tmp_path):
+    """Live defect (wake 39349): two preserved malformed lines advanced the node
+    cursor 265954 -> 265956 with the light sequence unmoved, and one continuous
+    freeze was named twice — two history lines, two routes. The streak identity
+    is the light channel's, so the cursor-only advance must not re-arm the
+    onset."""
+    null_gap_fixture(tmp_path, None)
+    assert discovery._space_light_read(tmp_path)["reason"] == "light-null-gap"
+    record = json.loads((tmp_path / "discovery" / "space-light-stream.json").read_text())
+    data = json.loads((tmp_path / "body" / "space.json").read_text())
+    data["nodes"][0]["cursor"] = record["cursor"] + 2
+    (tmp_path / "body" / "space.json").write_text(json.dumps(data), encoding="utf-8")
+    aged = dict(record, read_epoch_s=time.time() - discovery.SPACE_FROZEN_MIN_SECONDS - 1)
+    (tmp_path / "discovery" / "space-light-stream.json").write_text(
+        json.dumps(aged), encoding="utf-8")
+    assert discovery._space_light_read(tmp_path)["reason"] == "light-stream-frozen"
+    assert len(freeze_history(tmp_path)) == 1
+    assert len(freeze_dms(tmp_path)) == 1
 
 
 def test_new_absent_sample_between_reads_stays_a_dropout(tmp_path):
@@ -800,13 +826,13 @@ def test_pane_names_a_sustained_freeze_it_re_derives_at_render_time(
 
 @pytest.mark.parametrize("pane", [discover, senses])
 def test_pane_keeps_a_seconds_wide_gap_a_gap(tmp_path: Path, current_endpoint, pane) -> None:
-    """A retention record that is still recent, or whose cursor advanced,
-    keeps the single-read name on the pane."""
+    """A retention record that is still recent, or whose light sequence advanced
+    (a new absent sample), keeps the single-read name on the pane."""
     home = tmp_path / "site"
     null_gap_fixture(home, None)
     _write_scan(home, [])
     for record in (null_record(read_epoch_s=time.time() - 5),
-                   null_record(cursor=11)):
+                   null_record(sequence=11)):
         (home / "discovery" / "space-light-stream.json").write_text(
             json.dumps(record), encoding="utf-8")
         rendered = pane(home)
