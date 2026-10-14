@@ -183,7 +183,12 @@ observed turn/result counts and recorded lifetime budgets without touching effec
 state. Torn history, changed context and uncorrelated results fail closed without
 altering evidence. `drive_native(..., resume_from=path)` reads that history and
 requires the same obligation, context and original budgets; it carries consumed
-turns/results and used IDs into a new journal. Exhausted turn budgets cannot call
+turns/results and used IDs into a new journal. Per-turn evidence follows the
+continuation as well: the resumed run's checkpoint replays one wire-usage entry
+per completed turn and one fetch-ledger row per attempted turn, so a failed
+turn's budget row survives into the resumed journal instead of living only in
+the earlier file; a ledger prefix that cannot align with the counters is
+refused. Exhausted turn budgets cannot call
 the provider, and remaining call budgets and reused IDs are checked before
 dispatch. Pending or ambiguous history returns an UNKNOWN handoff without calling
 the provider or executor. Stopped histories and older histories without recorded
@@ -288,7 +293,9 @@ and 7 — a measured under-report, not a claim difference. The
 turn frame carries a fetch ledger (`allowance`, `workClass`, `dispatches`,
 `upstream_failure`) that `read_native_journal` surfaces as one row per
 attempted turn — the failed turn's row rides its `model_failure` record — an
-absent ledger staying UNKNOWN rather than a synthesized zero. Nine registered
+absent ledger staying UNKNOWN rather than a synthesized zero. `resume_from`
+carries the prior turns' rows into the new journal's checkpoint, so a chain of
+journals keeps one row per attempted turn end to end. Nine registered
 samples across two windows (three plus six, per the two rerun reports) on one
 route under one upstream-owned condition, with one surviving sample, is not a
 statistical claim, and terminal-status parity under

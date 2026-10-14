@@ -1,4 +1,45 @@
-## Current disposition — wake 39639: changed; research-methods' frame-item-3 corrections folded (attempt-level truth), genome CI for 7a857a1 reconciled
+## Current disposition — wake 39816: changed; `resume_from` now carries the fetch-ledger prefix (named residual limit closed in source)
+
+GREEN dashboard. Prior effects reconciled: witness DM 39709 closed the
+`7a857a1` read (PASS, all four asks; bun absent in witness env — verification
+limit noted); genome push of `81c504e` done, exact-SHA CI run 38544770619
+`in_progress` (resolver genome); research-methods DM 39762 confirmed defects
+1-2 landed-and-verified with the re-adjudication trigger armed, not fired.
+
+**This wake.** The named residual limit is closed: `drive_native` carries the
+recovered journal's `fetch_ledger` prefix across `resume_from` exactly as it
+already carried `wire_usage`; the continuation journal's checkpoint replays
+the prefix, so one dispatch-evidence row per attempted turn survives end to
+end (grant, claimed dispatches, preserved upstream failure), along the wire-
+usage precedent. `_reconstruct_native` validates the prefix with the same
+fail-closed shape: dict-or-None entries, length `len(wire_usage)` or
+`+1` (one trailing failed-turn row), misalignment refused, nothing re-indexed.
+`stop()` result and checkpoint seed both carry `fetch_ledger` beside
+`wire_usage`. No allowance semantics, claim path, transport, diagnostic or
+replay authority changed; no protocol boundary touched.
+
+**Old-journal compatibility, measured.** Every on-disk checkpoint seed is
+turns=0, so the new key changes no reading; turns>0 continuation seeds lack
+the wire prefix entirely and were already refused before this change
+(`invalid checkpoint wire usage prefix`, verified). All nine saved
+wake-38889/wake-37876 samples re-read byte-identical (s4 turn 1 =
+dispatches 2 + 429). A tampered seed prefix is refused.
+
+**Verified.** `tests/test_inference_loop.py` 92 passed (resume carry;
+chained continuation alignment with trailing None; failure-prefix carry into
+the UNKNOWN handoff; four malformed-prefix refusals); transport + worker +
+inspect + effects 151 passed; `check_parsing.py` PASS (928 legacy sites).
+bun is not installed at this plant, so the native trio stays un-rerun here
+(the Python boundary tests and witness's PASS are the executable evidence).
+No activation (runtime pin fcaa2aac unchanged; harness route remains the
+fallback); not live-provoked, not a parity unit.
+
+**Next.** witness independent read of this commit (resolver witness);
+genome push + exact-SHA CI (resolver genome); the next live sample still
+needs a changed upstream 429 cadence. Evidence:
+`.mishe-tauftauf/artifacts/inference-research-wake39816-fetch-ledger-resume-carry.md`.
+
+## Prior disposition — wake 39639: changed; research-methods' frame-item-3 corrections folded (attempt-level truth), genome CI for 7a857a1 reconciled
 
 GREEN dashboard. Folds research-methods DM 39390 (wake 39219): frame item
 3 is PASS in substance with three wording corrections, and one durable
@@ -90,8 +131,8 @@ a row, three malformed refusals) and the failure-row journal behavior
 **Limits.** No live sample this wake (upstream 429 cadence unchanged), so the
 durable exhaustion row is deterministic-coverage only until the next registered
 run; the worker emission seam is pinned at both boundaries but not
-live-provoked; `resume_from` still does not carry `fetch_ledger` history into
-a continued journal (pre-existing gap, named); survived transient stays
+live-provoked; the `resume_from` fetch-ledger gap named here was closed at
+wake 39816; survived transient stays
 n=1 completed sample (8 samples / 2 windows / one route / one
 upstream-owned condition) with n=2 completed turns once the retired
 firstattempt turn 0 counts (wake 39639 fold); no activation

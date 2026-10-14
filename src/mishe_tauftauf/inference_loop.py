@@ -101,13 +101,19 @@ def drive_native(session, context: dict, *, obligation: dict, max_turns: int,
     # UNKNOWN (worker never saw a correlated terminal), never a synthesized
     # zero. Carried across resume_from so cost evidence survives continuation.
     wire_usages = list(recovery.get('wire_usage') or []) if recovery else []
+    # Per-turn provider dispatch evidence (the worker's budget row), one entry
+    # per attempted turn and aligned with the completed turns' rows. None means
+    # UNKNOWN (the worker emitted no correlated row), never a synthesized zero.
+    # Carried across resume_from so grant/claim evidence survives continuation.
+    fetch_ledgers = list(recovery.get('fetch_ledger') or []) if recovery else []
 
     def emit(kind, **fields):
         record(snapshot({'kind': kind, 'obligation': obligation, **fields}))
 
     def stop(status):
         result = {'status': status, 'turns': turns, 'calls': executed,
-                  'context': snapshot(context), 'wire_usage': snapshot(wire_usages)}
+                  'context': snapshot(context), 'wire_usage': snapshot(wire_usages),
+                  'fetch_ledger': snapshot(fetch_ledgers)}
         if recovery and recovery['status'] != 'ready':
             result['pending_calls'] = snapshot(recovery['pending_calls'])
             result['used_ids'] = sorted(used_ids)
@@ -122,6 +128,7 @@ def drive_native(session, context: dict, *, obligation: dict, max_turns: int,
         'provider_checkpoint': recovery['provider_checkpoint'] if recovery else None,
         'model_failure': recovery['model_failure'] if recovery else None,
         'wire_usage': snapshot(wire_usages),
+        'fetch_ledger': snapshot(fetch_ledgers),
     }
     emit('checkpoint', state=checkpoint)
     if recovery and recovery['status'] != 'ready':
@@ -149,6 +156,9 @@ def drive_native(session, context: dict, *, obligation: dict, max_turns: int,
         # Cost evidence only: a failed journal write above already raised, so a
         # usage entry here can never mask a lost model-output row.
         wire_usages.append(snapshot(getattr(turn, 'wire_usage', None)))
+        # One dispatch-evidence row per completed turn, beside the usage entry;
+        # a failed turn's row is recorded on its own model_failure record.
+        fetch_ledgers.append(snapshot(getattr(turn, 'fetch_ledger', None)))
         assistant = snapshot(turn.assistant)
         calls = [item for item in assistant['content'] if item.get('type') == 'toolCall']
         messages.append(assistant)
@@ -436,6 +446,17 @@ def _reconstruct_native(rows):
                     or len(prefixed) != turns):
                 raise NativeJournalError('invalid checkpoint wire usage prefix')
             wire_usage = snapshot(prefixed)
+            ledger_prefixed = seed.get('fetch_ledger', [])
+            # One row per attempted turn: the completed turns' rows plus at
+            # most one trailing failed-turn row. A prefix that cannot align
+            # with the counters is refused, never silently re-indexed.
+            if (not isinstance(ledger_prefixed, list)
+                    or any(not isinstance(row, dict) and row is not None
+                           for row in ledger_prefixed)
+                    or not (len(prefixed) <= len(ledger_prefixed)
+                            <= len(prefixed) + 1)):
+                raise NativeJournalError('invalid checkpoint fetch ledger prefix')
+            fetch_ledgers = snapshot(ledger_prefixed)
             model_failure = snapshot(seed.get('model_failure'))
             if model_failure is not None:
                 if (status != 'unknown' or not isinstance(model_failure, dict)
