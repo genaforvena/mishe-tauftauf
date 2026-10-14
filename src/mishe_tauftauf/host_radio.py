@@ -1,10 +1,12 @@
-"""Decode this host's BLE/Wi-Fi adapter state for the space-perception sense.
+"""Decode this host's radio, wired-network and tailnet adapter state for the
+space and network senses.
 
 External dialects, all read-only and bounded:
 
 * the kernel sysfs ABI, one newline-terminated value per file under
   ``/sys/class/bluetooth``, ``/sys/class/rfkill`` and ``/sys/class/net``;
 * the human-readable ``bluetoothctl show`` report;
+* the ``tailscale status --json`` peer report of the tailnet daemon;
 * the camera reflex's own class word and transition log, and the kernel's UVC
   messages for the webcam (``~/.mesh/.cam-watch.state``,
   ``~/.mesh/cam-events.log``, journald), which carry the same read-only,
@@ -316,3 +318,17 @@ def decode_cam_manifest(text: str) -> bool | None:
     if not isinstance(manifest, dict) or manifest.get("version") != 1:
         return None
     return True
+
+
+def decode_tailnet_status(text: str) -> dict | None:
+    """Decode a ``tailscale status --json`` report into its status mapping.
+
+    The daemon's own JSON is the dialect. Text that does not decode, or that
+    decodes to something other than an object, returns ``None`` so the caller
+    names an unreadable read instead of reading a missing peer list as calm.
+    """
+    try:
+        status = json.loads(text)
+    except ValueError:
+        return None
+    return status if isinstance(status, dict) else None

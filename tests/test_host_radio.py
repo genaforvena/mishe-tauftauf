@@ -427,3 +427,89 @@ def test_ethernet_unreadable_flags_is_unknown_not_a_down_state(monkeypatch) -> N
     assert row["state"] == "unknown"
     assert row["reason"] == "flags-unreadable:enp42s0"
     assert "enp42s0=unread" in row["sample"]
+
+
+def _tailnet_row(monkeypatch, *, returncode=0, stdout="", stderr="", present=True):
+    monkeypatch.setattr(discovery.shutil, "which",
+                        lambda command: "/usr/bin/tailscale" if present else None)
+    def run(command, **kwargs):
+        return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
+    monkeypatch.setattr(discovery.subprocess, "run", run)
+    return discovery._tailnet_peer_read()
+
+
+def test_tailnet_verified_sample_names_peers_and_backend(monkeypatch) -> None:
+    status = json.dumps({
+        "BackendState": "Running",
+        "Self": {"HostName": "mesh-home", "Online": True},
+        "Peer": {
+            "p1": {"HostName": "Redmi 10", "Online": False, "Active": False,
+                   "LastSeen": "2026-10-12T21:27:49.1Z"},
+            "p2": {"HostName": "phaedra", "Online": True, "Active": True,
+                   "LastSeen": "0001-01-01T00:00:00Z"},
+        },
+    })
+    row = _tailnet_row(monkeypatch, stdout=status)
+
+    assert row["id"] == "sense.net.tailnet-peer"
+    assert row["state"] == "verified"
+    assert "backend=Running" in row["sample"]
+    assert "peers=2" in row["sample"]
+    assert "online=1" in row["sample"]
+    assert "Redmi 10=offline/inactive/2026-10-12T21:27:49.1Z" in row["sample"]
+    assert "phaedra=online/active/0001-01-01T00:00:00Z" in row["sample"]
+    assert row["backend_state"] == "Running"
+    assert row["self_present"] is True
+    assert row["peers"]["Redmi 10"]["online"] is False
+    assert row["consumer"] == "operator/network-health"
+
+
+def test_tailnet_non_running_backend_is_unknown(monkeypatch) -> None:
+    status = json.dumps({
+        "BackendState": "Stopped",
+        "Self": {"HostName": "mesh-home"},
+        "Peer": {},
+    })
+    row = _tailnet_row(monkeypatch, stdout=status)
+
+    assert row["state"] == "unknown"
+    assert "backend-state-Stopped" in row["reason"]
+
+
+def test_tailnet_missing_self_is_unknown(monkeypatch) -> None:
+    status = json.dumps({
+        "BackendState": "Running",
+        "Peer": {},
+    })
+    row = _tailnet_row(monkeypatch, stdout=status)
+
+    assert row["state"] == "unknown"
+    assert "self-missing" in row["reason"]
+
+
+def test_tailnet_command_failure_is_unknown(monkeypatch) -> None:
+    row = _tailnet_row(monkeypatch, returncode=1)
+
+    assert row["state"] == "unknown"
+    assert "tailscale-exit-1" in row["reason"]
+
+
+def test_tailnet_malformed_json_is_unknown(monkeypatch) -> None:
+    row = _tailnet_row(monkeypatch, stdout="not json")
+
+    assert row["state"] == "unknown"
+    assert "tailscale-unreadable" in row["reason"]
+
+
+def test_tailnet_absent_binary_is_unknown_not_a_state(monkeypatch) -> None:
+    row = _tailnet_row(monkeypatch, present=False)
+
+    assert row["state"] == "unknown"
+    assert row["reason"] == "tailscale-absent"
+
+
+def test_decode_tailnet_status_returns_only_object_mappings() -> None:
+    assert host_radio.decode_tailnet_status('{"BackendState": "Running"}') == {
+        "BackendState": "Running"}
+    assert host_radio.decode_tailnet_status("not json") is None
+    assert host_radio.decode_tailnet_status("[1, 2]") is None
