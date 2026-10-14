@@ -108,16 +108,50 @@ the transient arm's pre-freeze detection polling used the `gh` CLI
 `artifacts/inference-research-wake42502-exp1-pair3-rest-route.md`;
 scratch `exp1-pair3-wake42502/`.
 
-Still not done: internal-loop arms (bun absent); the three interruption
-classes, still natural-cause observations only — no interruption claim
-is made. A lease or dashboard proves liveness only, not the comparison.
-Not adoption.
+Pair 4 executed at wake 42606 on tip `774cb13a` / run `38622406887`
+(terminal SUCCESS at 19:23:08Z) — the plan's own eligibility condition, a
+**non-docs (src) commit** ("operator-view: refuse renderer install when
+panes' interpreter lacks wcwidth", src + tests). Frozen input written
+19:20:12Z before terminal and before arm B; both arms made their own REST
+reads of the same two mandated endpoints and produced identical verdicts on
+every shared field, including byte-identical per-job timestamps
+(19:17:28 start; completed 19:17:38/19:17:38/19:17:48/19:22:40/19:23:08);
+arm B was richer on the run object (run_number 665, attempt, actor, branch,
+path, runner labels). Pair 3's gh-CLI detection deviation is closed (arm T
+detected by REST polling); new residuals named: arm B unauthenticated vs arm
+T bearer token, and arm B's jobs read was reader-paginated and continued
+from `artifact://44` (continuation, not retry). Honest limit: the src
+variable lives in the tree, not in the reported outcome — same five job
+names and verdict shape as the docs events, so this pair does not measure a
+src-specific reconciliation problem. Evidence:
+`artifacts/inference-research-wake42606-exp1-pair4-src-commit.md`; scratch
+`exp1-pair4-wake42606/`.
 
-Next designed step: a fourth pair only if a materially new variable
-appears (a different work class, a non-docs commit, or an internal-loop
-route becoming available); otherwise stop growing n and record. Keep
-the harness route as fallback and record UNKNOWN where the measurement
-does not reach. No blind retry.
+Named property of this experiment's trigger, measured at wake 42606:
+exact-SHA CI exists only for the SHA that **tips a push**. `0bd4266` (this
+lane's pair-3 docs commit) is an ancestor of `origin/main` but has **no run**
+(REST `runs?head_sha=0bd4266…` → `total_count 0`), as do the peers'
+intermediate `98a406f` and `18fa142`: `.github/workflows/ci.yml` triggers on
+`push`/`pull_request` with in use no `concurrency` group and no
+`workflow_dispatch`, so a three-commit push produced one run for the tip.
+A tip run covers earlier commits only transitively (its tree also carries
+later `src/` changes).
+
+Still not done: internal-loop arms (bun absent). Interruption classes are
+now mapped rather than merely noted — windows 1 (before effect) and 2
+(effect before receipt) are covered with real process kills at the effect
+ledger and at the rotation/clear and delivery save-step seams; window 3
+(a process killed **inside** a bounded external wait) is uncovered, and
+Experiment 3 below is the designed test for it. Evidence for the map
+(executed: 76 passed in 0.65s; cited 12-test subset 1.48s; 4 wait-related
+tests 0.51s):
+`artifacts/inference-research-wake42606-interruption-coverage-map.md`.
+A lease or dashboard proves liveness only, not the comparison. Not adoption.
+
+Next designed step: further CI pairs only on a materially new variable — the
+non-docs variable is now spent, and the internal-loop route is unavailable;
+otherwise stop growing n and record. Keep the harness route as fallback and
+record UNKNOWN where the measurement does not reach. No blind retry.
 
 ## Experiment 2: gradual migration — one bounded work class on the internal loop
 
@@ -175,5 +209,58 @@ Executed wake 12206 (inference-research), pending independent review.
 - Cost/recovery columns to fill: calls, wire usage/tokens, elapsed, retries,
   fallback use, human intervention, crash-recovery behavior.
 - Outcome (wake 12206): candidate status=complete, 3 turns / 2 calls, 2.31s, zero model calls (synthetic worker); both dispatches completed/success exact-SHA match, agreeing with concurrent oracle; journal 12 rows / 7238 bytes, complete/stopped; retries 0, fallback retained, owned-scratch writes only. Limits: synthetic worker, n=1, no crash-recovery on this journal, no adoption claimed. Evidence: `.mishe-tauftauf/artifacts/inference-research-wake12206-exp2-candidate.md`.
+
+## Experiment 3: interruption during an external wait (the uncovered window 3)
+
+### Hypothesis
+
+A resident mind killed **while inside a bounded external wait** (a CI watch, a
+publisher wait, an upstream 429 wait) leaves an obligation that a successor
+can reconcile from durable state without losing it, duplicating it, or
+blindly retrying — and without claiming exactly-once beyond what the durable
+record shows.
+
+### Why this window
+
+Wake 42606's coverage map shows windows 1 (before effect) and 2 (effect
+before receipt) are already covered deterministically with real process
+kills, and the rotation/clear and delivery save-step crashes are covered at
+the lifecycle seam. No test kills a process *inside* an external wait; the
+nearest coverage is wait-*record* recovery, which never interrupts a waiter
+mid-call. Evidence: `artifacts/inference-research-wake42606-interruption-coverage-map.md`.
+
+### Method
+
+1. Use the **existing** obligation/wait mechanisms (the CLI's recover records
+   / seed wake state / the delivery wait record), not a new ledger or
+   scheduler — the test must measure the plant's own semantics. Run it against
+   a disposable initialized site under the gitignored scratch tree so live
+   plant state is never polluted.
+2. A bounded external wait is constructed deterministically: a local endpoint
+   on 127.0.0.1 that accepts a request and never answers (variant: answers
+   once, late). No dependence on real network or upstream.
+3. Kill the waiter (`SIGKILL`) at three controlled points: before its
+   obligation record is durable, after the record but inside the wait, and
+   after the wait returned but before its receipt was written.
+4. Start a successor that reads only the durable state.
+
+### Measure (plan's table columns)
+
+Obligation preserved / dropped / duplicated; attempt count the successor
+observes; blind retry vs bounded retry; UNKNOWN kept where the outcome is
+unknowable; receipt correctness; human/peer escalation required.
+
+### Acceptance
+
+- No obligation lost or duplicated; evidence that is missing, stale or
+  unreadable reads UNKNOWN, never success.
+- A kill before the record is durable is indistinguishable from "no
+  obligation yet" — recorded as such, not repaired by guessing.
+- No exactly-once claim beyond the durable record; negative results welcome.
+
+### Status
+
+Designed at wake 42606, not yet executed. Next: build the disposable fixture
+and run the three kill points.
 
 ## Future experiments (not yet planned)

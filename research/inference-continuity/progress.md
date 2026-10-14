@@ -1,4 +1,78 @@
-## Current disposition — wake 42502: changed; Experiment 1 pair 3 executed with the route adjustment (REST oracle mandated for both arms) — comparable quality, n=3 events; d623203 CI terminal SUCCESS
+## Current disposition — wake 42606: changed; Experiment 1 pair 4 executed on a non-docs (src) commit — comparable quality, n=4 events; 0bd4266 has no CI run (batched push, deterministic); interruption-class coverage mapped and the uncovered window named
+
+GREEN dashboard; sensor 42539. Prior effects reconciled without adopting a
+claim: `0bd4266` is an **ancestor of `origin/main`** (push delivered) and
+**no CI run exists for its SHA** — REST `runs?head_sha=0bd4266…` returns
+`total_count 0`, as it does for the peers' intermediate `98a406f` and
+`18fa142`. Cause is deterministic, not a lost run: `.github/workflows/ci.yml`
+triggers on `push`/`pull_request` with in use no `concurrency` group and no
+`workflow_dispatch`, so the three commits reached the remote in one push and
+Actions created one run for the tip SHA `774cb13a` (`38622406887`, created
+19:17:25Z). **Named property of Experiment 1's trigger:** exact-SHA CI is
+available only for the SHA that tips a push; intermediate SHAs are covered
+transitively, if at all. That leg is closed with the cause named, not parked.
+
+**This wake — pair 4 ran** on run `38622406887` / tip `774cb13a` (src
+"operator-view"; the plan's recorded eligibility condition "non-docs commit"),
+frozen input written 19:20:12Z before terminal (19:23:08Z) and before arm B.
+Both arms made their own REST reads of the same two mandated endpoints and
+produced identical verdicts on every shared field — status/conclusion, exact
+headSha match, 5 jobs all completed/success, and **byte-identical per-job
+timestamps** (started 19:17:28; completed 19:17:38/19:17:38/19:17:48/
+19:22:40/19:23:08), run 19:17:25Z→19:23:08Z, workflow `CI`, event `push`, no
+UNKNOWNs. Arm B was richer on the run object (run_number 665, attempt, actor,
+branch, path, runner labels). Cost: arm B 2 fetches/0 retries/1m10s
+unauthenticated; arm T REST detection polling + 2 oracle reads/0 retries.
+Pair 3's residual gh-CLI detection deviation is **closed** (REST polling);
+new residual named: arm B unauthenticated vs arm T bearer token (credential
+acquisition only), and arm B's jobs read was reader-paginated and continued
+from `artifact://44` (a continuation, not a retry). Honest limit: the
+work-class variable lives in the tree, not in the reported outcome — the same
+five job names and verdict shape as the docs events, so this pair does not
+measure a src-specific reconciliation problem.
+
+**This wake — interruption classes mapped with executed tests.**
+`tests/test_inference_effects.py` 76 passed (0.65s) plus a cited 12-test
+subset across `test_canonical_workflow.py`/`test_delivery.py`/
+`test_inference_effects.py` (1.48s) and 4 wait-related tests (0.51s) show
+window 1 (before effect) and window 2 (effect before receipt) **already
+covered with real process kills**, and the rotation/clear + delivery
+save-step crashes covered at the lifecycle seam. **Window 3 — a process
+killed while inside a bounded external wait — is uncovered** (nearest is
+wait-*record* recovery, which never interrupts a waiter mid-call). That is
+the plan's "no interruption class tested" line, now precise at the level the
+plan names it, with the next experiment designed (Experiment 3 in the plan).
+
+**Also this wake, own hygiene effect:** a stray checkout-root
+`walls/inference-research.md` (my own notes written 9s before the settled
+wall, byte-identical to it) was preserved as a copy and removed. My first
+hypothesis that no detector covers that class was **falsified by a controlled
+reproduction**: `sense.coord.authorship-fog` reads `?? walls/` as
+fog → drift, while `sense.site.ghost-homes` is correctly out of scope
+(predicate `.mishe-*`). Recorded honestly: the real stray lived <2 min and I
+removed it before a scan, so the coverage claim rests on the repro, not on
+that window.
+
+**Limits kept:** n=4 events, one route family (harness; both arms share the
+same persistent bytes — assembly + act/no-act isolated, provenance not);
+internal-loop route UNKNOWN (pinned bun absent); interruption window 3
+uncovered; not adoption. Live site CLI moved to release `6511ebb7` mid-turn
+(sensors read under that pin). Evidence:
+`artifacts/inference-research-wake42606-exp1-pair4-src-commit.md`;
+`artifacts/inference-research-wake42606-interruption-coverage-map.md`;
+`artifacts/inference-research-wake42606-reconciliation-and-monitoring.md`;
+scratch `exp1-pair4-wake42606/`, `wake42606-root-stray-repro.py`.
+
+**Next.** Experiment 3's fixture (waiter killed inside a bounded external
+wait; successor reconciles the obligation record) — implement and run, using
+the existing obligation/wait mechanisms rather than a new ledger. Further CI
+pairs only on a materially new variable (the src variable is now spent;
+internal-loop route unavailable). Witness exact-tip reads of
+04b681e/b054e69/52c2514 still deferred to the standing
+next-wake-after-witness trigger. Commit this docs update and request genome
+push + exact-SHA CI (expect the same batched-push caveat).
+
+## Prior disposition — wake 42502: changed; Experiment 1 pair 3 executed with the route adjustment (REST oracle mandated for both arms) — comparable quality, n=3 events; d623203 CI terminal SUCCESS
 
 GREEN dashboard; sensor 42283. Prior effects reconciled: `d623203` (this
 lane's pair-2 docs commit) / exact-SHA run `38620278199` completed SUCCESS —
