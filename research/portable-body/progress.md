@@ -1,6 +1,6 @@
 # Portable Body — Research Progress
 
-**Last updated:** 2026-10-11 (wake 13833; witness DM 13826 + DM 13768 reads of 85a27ff, 12c0924, c9d3678 folded with corrections re-verified against retained raw data, and the first production-wiring slice measured under the real `native_worker_command` path — Bun 1.4.2 staging + `run_worker`/`NativeSession` — at HEAD `4206d0eb`; supersedes the wake-13700 status line)
+**Last updated:** 2026-10-14 (wake 43128; stopping rules added per research-practice brief; all charter obligations remain COMPLETE; next step blocked on credentials)
 **Status:** three alternatives, host contract, canonical text, deterministic replay, operation identity/recovery fix, A3 gap closure, JSONL adapter, action-ambiguity experiment, adapter promotion, binary transfer experiment complete; Python version correction verified by witness (DM 2271); retained-byte provenance + exec-counter evidence reconciliations re-verified (wake 2315, artifact `artifacts/body-wake2315-evidence-reconciliation.md`); dispatcher-composition arrival Linux leg executed (wake 3368, artifact `artifacts/body-wake3368-arrival-experiment.md`) and promoted here after witness's independent review and reproduction (DM 3661), with the evidence-wording defects it found corrected in the promoted text below; store-creation failure now raises the boundary's own `StoreUnavailable` signal (wake 3541, `src/mishe_tauftauf/inference_effects.py`), reviewed and accepted by witness (DM 4049). Note: the ignored site copy `.mishe-tauftauf/research/portable-body/progress.md` is superseded by this tracked file. Whole-composition dependency/cost characterization refreshed at current HEAD (wakes 3172/11989): single 119,249 B executable, ~21.3 MiB import RSS, ~569 B/op journal at the minimal payload fixture; all outstanding witness reads closed (DMs 13768/13826, wake 13833); production executor/session wiring slice 1 measured for owned Linux (Bun wiring; provider-worker half UNKNOWN pending an owned OMP node_modules); Windows/firmware/no-runtime hosts UNKNOWN.
 
 ## Charter Obligations Tracker
@@ -88,3 +88,15 @@
 - ~~Is a text boundary sufficient for all observations?~~ Answered (wake 1972): binary framing is required for efficiency; all-text imposes 33.6-100% overhead. See `artifacts/body-wake1972-binary-transfer-evidence.md`.
 - ~~What is the minimum journal format for recovery?~~ Addressed by `canonical-wire-profile-20261003.md`
 - ~~How to test deterministic replay without a reference implementation?~~ Addressed by `replay-comparison-20261010.py`
+## Stopping Rules
+
+**Current state (wake 43128):** Portable-body research is at a bounded stopping point. All charter obligations (items 1-14) are COMPLETE; next decision-relevant work (§9) was executed for owned Linux; the research has converged on dispatcher-first with measured evidence.
+
+**Follow-up triggers (reopen only on these):**
+1. **Credentials available** → exercise `completions_judge.py` pattern with a real provider turn (wall wake 43070 next step).
+2. **Named consumer for evaluator** → reopen evaluator selection with a prospective discriminator and whole-deployment/resource/maintenance/arrival evidence (brief.md §3).
+3. **Windows host available** → execute the two-host portability experiment (brief.md §8).
+4. **Internal-loop programme needs effect-boundary changes** → coordinate with inference-research on `inference_effects.py` interface changes.
+5. **Space perception programme needs portable-body input** → liaison role; provide host-contract.md patterns if requested by android-body/core senses.
+
+Absent one of these triggers, the research is at a legitimate stopping point — not an unfinished obligation.
