@@ -448,6 +448,34 @@ def test_wall_dm_consumes_staging_anchor_after_send(tmp_path):
                       "--file", "MESSAGE"])
     assert code2 != 0, "second send must fail — anchor was consumed"
 
+
+def test_wall_dm_race_restage_mid_send_preserves_newer_anchor(tmp_path, monkeypatch, capsys):
+    """If the staging anchor is restaged mid-send, the newer bytes are preserved.
+
+    Genome DM 41746 identified the residual race: between read and unlink, a
+    restage of the same anchor path would unlink the newer bytes, not the ones
+    actually sent. The guard verifies inode+mtime before consuming.
+    """
+    setup_wall(tmp_path)
+    from mishe_tauftauf import cli, wall
+    (tmp_path / "walls").mkdir()
+    anchor = tmp_path / "walls" / "health-MESSAGE"
+    anchor.write_text("original staged message", encoding="utf-8")
+
+    original_message = wall.message
+    def restaging_send(*args, **kwargs):
+        """Simulate a concurrent restage during the send."""
+        anchor.write_text("restaged during send", encoding="utf-8")
+        return original_message(*args, **kwargs)
+    monkeypatch.setattr(wall, "message", restaging_send)
+
+    code = cli.main(["--home", str(tmp_path), "wall", "dm", "--source", "health", "--to", "genome",
+                     "--file", "MESSAGE"])
+    assert code == 0, "send succeeds even when anchor is restaged mid-flight"
+    assert anchor.exists(), "restaged anchor must survive — newer bytes preserved"
+    assert anchor.read_text(encoding="utf-8") == "restaged during send"
+    captured = capsys.readouterr()
+    assert "not consumed" in captured.out
 def test_wall_outcome_resolves_bare_notes_to_role_staging_anchor(tmp_path):
     """The outcome path reads the recording role's own staging anchor."""
     setup_wall(tmp_path)
