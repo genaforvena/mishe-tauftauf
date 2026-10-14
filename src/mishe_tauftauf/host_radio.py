@@ -333,9 +333,6 @@ def decode_tailnet_status(text: str) -> dict | None:
         return None
     return status if isinstance(status, dict) else None
 
-SENSOR_ID_RE = re.compile(r"^sense\.[a-z0-9]+(?:\.[a-z0-9-]+)+$")
-"""A full ``sense.*`` id literal."""
-
 
 def decode_git_log_lines(text: str) -> list[str]:
     """Commit lines from ``git log --oneline`` output.
