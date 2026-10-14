@@ -3287,7 +3287,7 @@ absence, and a retained root count stays a lower bound."""
 
 def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]:
     """Enumerate ``.mishe-*`` site directories under the checkout that are not
-    this site's home, with their files and newest-file age.
+    this site's home, with their files and the age of their newest content.
 
     Only this site's home is a sanctioned ``.mishe-*`` directory in a plant's
     checkout, and ``validate_home`` rejects any other one that lacks the
@@ -3299,7 +3299,9 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
     the canonical wall silently stays stale. The reading turns that silent
     class of loss into a visible one: it counts the ghost trees and their
     files, names the nested ghosts inside a ghost tree, and ages the newest
-    file so a lane can prioritize counsel. Presence of a ghost directory is
+    content so a lane can prioritize counsel. An empty root has no file to
+    age, so its own last-change time dates the stray instead: a fresh typo
+    reads as recent rather than undated. Presence of a ghost directory is
     itself the violation; the file count quantifies it. Identity lists are
     capped and counts are exact only while every cap holds: a truncated tree
     count, nested count or name budget leaves its lower-bound marker on the
@@ -3444,6 +3446,15 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
                     "sample": f"ghost home unreadable: {entry.name}: {failures[0]}"}
         files_per_ghost[entry.name] = files
         total += files
+        if newest_at is None:
+            # An empty root holds no file to age, but its own last-change time
+            # dates the stray — its creation, or the removal of its last child
+            # — so a lane can tell a fresh write from an ancient one instead of
+            # reading every empty ghost as undated.
+            try:
+                newest_at = tree.stat().st_mtime
+            except OSError:
+                newest_at = None
         if newest_at is not None:
             newest[entry.name] = (newest_at,
                                   datetime.fromtimestamp(newest_at, timezone.utc)

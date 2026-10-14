@@ -4246,6 +4246,29 @@ def test_ghost_site_homes_reports_empty_ghost_directories_without_files(tmp_path
     assert "holding=none empty=.mishe-tauftauftau" in reading["sample"]
 
 
+def test_ghost_site_homes_dates_an_empty_ghost_root_by_its_own_mtime(tmp_path):
+    """An empty ghost has no file to age, so the root's own time dates the stray.
+
+    A reserved-root directory holding nothing is still a live typo: with no
+    file to age, the reading had no temporal validity for the empty class, so a
+    fresh stray could not be told from an ancient leftover.
+    """
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir(parents=True)
+    ghost = tmp_path / ".mishe-tauftaft"
+    ghost.mkdir()
+    os.utime(ghost, (1_000.0, 1_000.0))
+    reading = discovery._ghost_site_homes(home, now=1_000.0 + 3_600)
+    assert reading["state"] == "drift"
+    assert reading["empty"] == [".mishe-tauftaft"]
+    assert reading["total"] == 0
+    assert reading["newest"][".mishe-tauftaft"]["age_s"] == 3_600
+    assert "empty=.mishe-tauftaft" in reading["sample"]
+    assert "newest=.mishe-tauftaft age=1h0m" in reading["sample"]
+
+
 def test_ghost_site_homes_caps_the_enumeration_to_a_lower_bound(tmp_path, monkeypatch):
     from mishe_tauftauf import discovery
 
