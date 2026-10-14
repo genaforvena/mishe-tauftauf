@@ -4089,10 +4089,14 @@ def _space_light_frozen(row: dict, previous: dict | None, now: float) -> bool:
     """Whether a null sample has persisted as a sustained source freeze.
 
     A seconds-wide dropout resolves between two reads, so the next read of the
-    same stream publishes a fresh sample; only a stopped producer keeps the same
-    absent sequence and unmoving cursor across reads. The comparison is against
-    the retained origin of the reader's own current null streak, never against
-    publication or polling activity, which cannot renew a sample.
+    same stream publishes a fresh sample; only a light channel that has stopped
+    keeps the same absent sequence across reads. The streak identity is the
+    light channel's own ``(session, sequence)``: the node cursor advances on any
+    delivered record, including malformed or non-light lines, so it cannot tell
+    a live light channel from a stopped one and is not part of the identity. The
+    comparison is against the retained origin of the reader's own current null
+    streak, never against publication or polling activity, which cannot renew a
+    sample.
     """
     if row.get("reason") != "light-null-gap" or not isinstance(previous, dict):
         return False
@@ -4106,7 +4110,6 @@ def _space_light_frozen(row: dict, previous: dict | None, now: float) -> bool:
     except (TypeError, ValueError):
         return False
     return (previous.get("session") == session
-            and previous.get("cursor") == node.get("cursor")
             and previous.get("sequence") == (node.get("light") or {}).get("sequence")
             and interval >= SPACE_FROZEN_MIN_SECONDS)
 
@@ -4142,23 +4145,24 @@ def _space_light_name_freeze(home: Path, row: dict, now: float) -> dict:
 def _space_light_identity(row: dict) -> tuple | None:
     """The streak identity a naming belongs to, or None if the row carries none.
 
-    The identity is the triple the retention rule already compares, so a null
-    streak whose cursor or sequence advanced is a new streak rather than a
-    longer freeze, and a second freeze instance re-arms the onset record.
+    The identity is the light channel's own ``(session, sequence)`` — the pair
+    the retention rule compares — so a null streak whose sequence advanced is a
+    new streak rather than a longer freeze, and a second freeze instance re-arms
+    the onset record. The node cursor is excluded: it advances on any delivered
+    record, so a cursor-only advance during one stopped light channel must not
+    split the streak.
     """
     provenance = row.get("provenance") or {}
     nodes = (row.get("boundary") or {}).get("nodes") or [{}]
     node = nodes[0] if nodes else {}
     session = provenance.get("session")
-    cursor = node.get("cursor")
     sequence = (node.get("light") or {}).get("sequence")
     # The retention rule compares the identity with plain equality, so a JSON
     # number sequence must remain recordable; only values that cannot name a
     # freeze at all are rejected.
-    if (not isinstance(session, str)
-            or not _space_number(cursor) or not _space_number(sequence)):
+    if not isinstance(session, str) or not _space_number(sequence):
         return None
-    return session, cursor, sequence
+    return session, sequence
 
 
 def _space_light_freeze_record(home: Path) -> dict | None:
@@ -4228,7 +4232,8 @@ def _space_light_record_freeze(home: Path, row: dict, previous: dict | None,
     identity = _space_light_identity(row)
     if identity is None:
         return
-    session, cursor, sequence = identity
+    session, sequence = identity
+    cursor = row["boundary"]["nodes"][0].get("cursor")
     onset = previous.get("read_epoch_s") if isinstance(previous, dict) else None
     detail = _space_light_age(row["boundary"]["nodes"][0]["light"], now)
     root = home / "discovery"
@@ -4237,7 +4242,6 @@ def _space_light_record_freeze(home: Path, row: dict, previous: dict | None,
         continuing = (isinstance(record, dict)
                       and record.get("class") == "light-stream-frozen"
                       and record.get("session") == session
-                      and record.get("cursor") == cursor
                       and record.get("sequence") == sequence)
         if continuing:
             record.update(last_read_epoch_s=now, age_token=detail)
@@ -4287,9 +4291,10 @@ def _space_light_read(home: Path) -> dict:
     latest one: the pane renders every few seconds, so refreshing the origin
     on each render would keep the measured interval below the freeze
     threshold and the class could never fire on a live stream. A fresh sample
-    leaves the record alone; a later null read with a new cursor or sequence
-    starts a new record, since an advancing stream cannot revisit an old
-    identity.
+    leaves the record alone; a later null read with a new sequence starts a new
+    record, since an advancing light channel cannot revisit an old identity. The
+    node cursor is not part of that identity: it advances on any delivered
+    record, so a cursor-only advance must not re-arm the streak's origin.
     """
     path = home / "body" / "space.json"
     text = _read(path, 65536)
@@ -4310,7 +4315,6 @@ def _space_light_read(home: Path) -> dict:
         previous = _space_light_stream_record(home)
         continuing = (isinstance(previous, dict)
                       and previous.get("session") == session
-                      and previous.get("cursor") == node.get("cursor")
                       and previous.get("sequence") == sequence)
         if not continuing:
             record = {"session": session, "cursor": node.get("cursor"),
