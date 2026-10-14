@@ -28,11 +28,12 @@ role's staged notes (class: genome's content on docs' wall, 2026-10-11). A
 relative `--file` with a directory component (`artifacts/…`, `walls/…`) keeps
 its working-directory meaning; an absolute path is never re-anchored. `seed
 yield --slug ROLE --file NOTES` resolves the same way, but fails closed when that
-anchor is older than the wall and differs from it: the notes a mind stages for a
+anchor is not newer than the wall and differs from it: the notes a mind stages for a
 settle must be its current plate, and a stale anchor would otherwise overwrite a
 wall the mind edited directly on disk with the previous wake's text (class:
 android-body discover, wall reverted to a stale draft 2026-10-14). Re-stage the
-anchor or pass an explicit `--file` path. A wall write also updates
+anchor, pass an explicit `--file` path, or `wall write` it first if the anchor
+really is your current plate. A wall write also updates
 `SITE_HOME/handoffs/<role>.md` — the projection the launcher reads as CURRENT
 HANDOFF and one of the two files `seed yield` compares when re-settling a wake it
 already settled — so a wall edit can never leave a stale handoff behind (class:
