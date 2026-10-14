@@ -4345,7 +4345,7 @@ def test_ghost_site_homes_drift_names_a_reserved_home_that_is_not_this_site(tmp_
     assert reading["total"] == 1
     assert reading["nested"] == []
     assert reading["newest"][".mishe-tauftauft"]["age_s"] == 7_200
-    assert "ghost-homes=1 files=1 holding=.mishe-tauftauft nested=0" in reading["sample"]
+    assert "ghost-homes=1 files=1 holding=.mishe-tauftauft stale=.mishe-tauftauft nested=0" in reading["sample"]
     assert "newest=.mishe-tauftauft age=2h0m" in reading["sample"]
     assert reading["files_at_least"] is False
 
@@ -4550,7 +4550,7 @@ def test_ghost_site_homes_names_a_reserved_root_symlink_without_traversing_it(tm
     assert "external-dir" not in reading["sample"]
     # One unmeasured root makes the file count a lower bound, not an exact 0.
     assert reading["files_at_least"] is True
-    assert ("ghost-homes=1 files>=0 holding=none nested=0 symlink=.mishe-tauftauft"
+    assert ("ghost-homes=1 files>=0 holding=none stale=.mishe-tauftauft nested=0 symlink=.mishe-tauftauft"
             in reading["sample"])
 
 
