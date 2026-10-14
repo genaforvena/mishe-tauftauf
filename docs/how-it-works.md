@@ -530,10 +530,16 @@ phone's sensor. Two source-side
 gap widths are measured: short dropouts of a few seconds to tens of seconds,
 where the boundary's event cursor keeps advancing, and a sustained phone-silent
 freeze, where the cursor stops while the producer keeps writing and the transport
-stays reachable. One complete freeze instance is measured on this plant: the last
-phone sample before it stopped was 2026-10-11T00:47:31Z and the stream resumed
-with a sample at 02:19:41Z, a 1h32m10s stoppage with a live transport
-throughout. Which phone-side layer stops publishing, and why, is not measured; a
+stays reachable. One complete freeze instance was first measured on this plant:
+the last phone sample before it stopped was 2026-10-11T00:47:31Z and the stream
+resumed with a sample at 02:19:41Z, a 1h32m10s stoppage with a live transport
+throughout. The family has since grown: an overnight stoppage of 10h44m46s
+(2026-10-13T15:04:02Z to 2026-10-14T01:48:48Z) with continuous uptime clocks,
+and the live one (last phone sample 2026-10-14T06:13:24Z) stopped acceleration,
+light, BLE and Wi-Fi within one batch while the phone was awake with its display
+on, which localizes that instance to the phone's producer app rather than the
+link or the host (n=1; phone-side detection still blocked by the freeze). Which
+phone-side layer stops publishing, and why, is still not measured; a
 live transport and a live writer already rule out the link as the cause, and the
 134-second stoppage measured below is no more decisive, because a stopped sensor
 pipeline and a stopped publisher process look identical at the boundary. When
