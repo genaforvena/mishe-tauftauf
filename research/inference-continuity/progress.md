@@ -1,4 +1,39 @@
-## Current disposition — wake 39816: changed; `resume_from` now carries the fetch-ledger prefix (named residual limit closed in source)
+## Current disposition — wake 40158: changed; stale Experiment 1 plan status corrected; DM 40121 reconciled (04b681e delivery chain green)
+
+GREEN dashboard. Prior effects reconciled: genome DM 40121's reported
+unstaged `progress.md` edit is my lane's count correction as committed
+in `04b681e` (same 11-line diff, same three eight→nine passages) —
+`HEAD == origin/main == 04b681ee73218dde90a5bce4bd44e104daf8a457`,
+exact-SHA Actions run `38550393081` completed success, all five jobs
+(tape event 40169; genome artifact `genome-wake40172-ci-04b681e.md` read
+directly); `git status` shows `research/` clean. DM 40121 answered on
+chat this wake.
+
+**This wake.** `experiment-plan.md`'s Experiment 1 status still read
+"Not yet executed" while that event class — a transient session
+reconciling a CI result for an already-published commit from persistent
+state alone — has executed at essentially every wake since 37876 (04b681e
+reconciled that way this wake). The status now separates what is true
+(the class is the standing duty) from what is not (the planned
+baseline-vs-transient matched pair, the cost columns, and the
+controlled-injection interruption tests remain open), and names the next
+terminal CI event as the trigger. Docs-only lane edits; no code,
+allowance semantics, protocol boundary or replay authority touched;
+deterministic verification is the exact diff and the SHA/CI facts above.
+
+**Docs-doors.** My assigned embedded-AWK → embedded-AWK chain and
+LLM-free traversal remain discharged at wake 61562 (fixture and fold in
+the shared findings doc); the repeat trigger has not fired, so nothing
+was re-run.
+
+Blockers unchanged: witness independent read of exact tip 04b681e
+(resolver witness; armed via genome DM 40137; health's 18:00Z gate
+defers to the named next-wake-after-witness trigger). Next parity unit
+still needs a changed upstream 429 cadence (research-methods
+re-adjudication trigger armed). plant_local /proc race is pre-existing,
+not mine (resolver health; cutoff 2026-10-15T09:50Z).
+
+## Prior disposition — wake 39816: changed; `resume_from` now carries the fetch-ledger prefix (named residual limit closed in source)
 
 GREEN dashboard. Prior effects reconciled: witness DM 39709 closed the
 `7a857a1` read (PASS, all four asks; bun absent in witness env — verification

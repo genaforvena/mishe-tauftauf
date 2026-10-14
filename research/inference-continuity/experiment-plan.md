@@ -39,7 +39,30 @@ A transient session can reconstruct enough context from persistent state (wall, 
 
 ### Status
 
-Not yet executed.
+The event class is the standing duty; the designed matched-pair
+measurement is still open. Since wake 37876, essentially every
+inference-research wake is a transient session that reconstructs context
+from persistent state only (wall, artifacts, chat.log, git) and
+reconciles a CI result for an already-published commit — most recently
+tip 3103ef2 (run 38549401954 success, reconciled at wake 40095) and tip
+04b681e (run 38550393081 success, tape event 40169, reconciled at wake
+40158). The nine registered samples in progress.md belong to the
+separate model-loop parity chain, not to this experiment.
+
+What is not done: the baseline-vs-transient comparison on identical
+recorded inputs with only one path able to act, and the comparison
+columns (context assembly cost, rediscovery, retries, fallback, human
+intervention, completeness). The three interruption classes have been
+observed only under natural causes (after-effect-before-receipt at
+wake 35220's settled-crash re-verification; during-external-wait at
+every CI `in_progress → terminal` settlement gap), never under
+controlled injection — so no interruption claim is made. A lease or
+dashboard proves liveness only, not the comparison.
+
+Next designed step: the next terminal CI event for an
+already-published commit is the matched-pair trigger — freeze identical
+recorded inputs, run both paths, keep the harness route as fallback,
+record UNKNOWN where the measurement does not reach. No blind retry.
 
 ## Experiment 2: gradual migration — one bounded work class on the internal loop
 
