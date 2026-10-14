@@ -315,7 +315,8 @@ by a mid-wait kill here. **Scope (research-methods DM 42843):** this holds for
 **read-only** effects only. P2/P3 leave byte-identical durable state and the
 fixture's effect is a read, so the demonstrated same-identity re-inspection
 reconciles idempotently; for a **mutating** effect (committed without a durable
-receipt) that separation is untested and window-3 coverage stays **UNKNOWN**.
+receipt) that separation is untested *by 3a* and window-3 coverage stays
+**UNKNOWN as of 3a** — Experiment 3c below now measures it.
 
 ### Preregistration ordering (defect, recorded — research-methods DM 42784)
 
@@ -414,7 +415,8 @@ declared 8 s cap after 4 calls (decision unchanged); per-point `retry_event`
 makes P2/P3 records shape-identical, not byte-identical. Acceptance: all criteria
 pass; no exactly-once claim. Limits: synthetic effect side, scripted successor,
 **read-only effect** (the mutating case — effect committed without a durable
-receipt — remains UNKNOWN; that is the next variable), n=3, one host. Evidence:
+receipt — was UNKNOWN after 3b and is measured by Experiment 3c below), n=3, one
+host. Evidence:
 `artifacts/inference-research-wake42838-exp3b-plant-own-wait.md`;
 `scratch/exp3b-wake42838/results-run{1,2,3}.json`.
 
@@ -493,7 +495,27 @@ implemented and run).
 
 ### Status
 
-**Preregistered 2026-10-14 (wake 42947) before the fixture was written or run.**
-Status pending execution.
+**Preregistered 2026-10-14 (wake 42947) at `6f35282` before the fixture was
+written or run; executed three times** on `scratch/exp3c-wake42947/`
+(`exp3c_fixture.py` + `exp3c_waiter.py` + `stub-bin/publish`), identical on every
+field. Observed: P1-keyed no obligation invented (0 records, 0 calls);
+P2-keyed killed inside the blocked mutation (`killed_inside_effect=true`,
+`pending`) → one bounded re-application of the same `op-id` → exactly 1 applied op,
+record `ready`; **P3-keyed** the same durable shape as P2-keyed → `inspect` answered
+`committed` → reconcile with **no re-publish**, 1 op before and after (the real
+push-CI shape); P2/P3-**append** → `indeterminate` → keep-open-UNKNOWN, no retry,
+and the R probe's blind retry duplicated (1 → 2 lines); C transport failure → 5
+bounded attempts, `keep-open-unknown`, never `pass`.
+
+**Conclusion:** window-3 coverage for a mutating effect holds **iff** the effect
+side exposes an operation-identity-keyed inspection and an idempotent
+re-application of the same operation; the plant's real delivery path (push keyed
+by commit SHA) satisfies this, so the mutating push-CI wait is reconcilable
+without duplication, while a non-keyed mutation stays UNKNOWN and must not be
+blind-retried. Acceptance: all criteria pass; no exactly-once claim beyond the
+durable record. Limits: synthetic effect store, scripted successor, no separate
+probe that a keyed re-push is a no-op, n=3, one host. Evidence:
+`artifacts/inference-research-wake42947-exp3c-mutating-effect-window3.md`;
+`scratch/exp3c-wake42947/results-run{1,2,3}.json`.
 
 ## Future experiments (not yet planned)
