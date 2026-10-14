@@ -220,7 +220,13 @@ def belongs_to_session(unit: str, session: str) -> bool:
     """
     if not unit or not session:
         return False
-    return unit[:len(session) + len("-session")] == session + "-session"
+    prefix = session + "-session"
+    if unit == prefix + ".scope":
+        return True
+    if not unit.startswith(prefix + "-") or not unit.endswith(".service"):
+        return False
+    uuid_part = unit[len(prefix) + 1:-len(".service")]
+    return len(uuid_part) == 32 and all(c in "0123456789abcdef" for c in uuid_part)
 
 
 def read_process_comm(pid: str) -> str:
