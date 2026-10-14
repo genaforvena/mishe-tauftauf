@@ -544,10 +544,11 @@ the steady-regime null share is the tail of the standing receipt lag — itself
 silence of the
 phone's sensor. Two source-side
 gap widths are measured: short dropouts of a few seconds to tens of seconds,
-where the boundary's event cursor keeps advancing, and a sustained phone-silent
-freeze, where the cursor stops while the producer keeps writing and the transport
-stays reachable. One complete freeze instance was first measured on this plant:
-the last phone sample before it stopped was 2026-10-11T00:47:31Z and the stream
+which the light channel's next sample resolves, and a sustained phone-silent
+freeze, where no new light sample arrives while the producer keeps writing and
+the transport stays reachable. One complete freeze instance was first measured
+on this plant: the last phone sample before it stopped was 2026-10-11T00:47:31Z
+and the stream
 resumed with a sample at 02:19:41Z, a 1h32m10s stoppage with a live transport
 throughout. The family has since grown: an overnight stoppage of 10h44m46s
 (2026-10-13T15:04:02Z to 2026-10-14T01:48:48Z) with continuous uptime clocks,
@@ -559,8 +560,8 @@ phone-side layer stops publishing, and why, is still not measured; a
 live transport and a live writer already rule out the link as the cause, and the
 134-second stoppage measured below is no more decisive, because a stopped sensor
 pipeline and a stopped publisher process look identical at the boundary. When
-the same absent sample and unmoving cursor persist across two of the reader's
-own null observations at least a minute apart, the reading names
+the same absent light sample and unmoving light sequence persist across two of
+the reader's own null observations at least a minute apart, the reading names
 `light-stream-frozen`; the first null observation of a stream reads
 `light-null-gap`, and publication or polling never converts one into the other.
 The notification-time re-read applies the same class to the boundary it
@@ -575,8 +576,14 @@ first naming of a sustained freeze writes `discovery/space-light-freeze.json`
 token — and appends one addressed event to `research-methods` naming the class
 and the age token, so a recurrence cannot end before the event is routed at
 the naming cadence rather than the unbounded stored-scan cadence. Later
-namings of the same streak only advance the last-read epoch; a new cursor or
-sequence re-arms the record. Measured 2026-10-11T04:12Z on the live boundary
+namings of the same streak only advance the last-read epoch; a new light
+sequence re-arms the record. The identity is the light channel's own `(session,
+light sequence)`; the node cursor is excluded, because it advances on any
+delivered record — a partial batch or a preserved malformed line — so a
+cursor-only advance must not split one stopped light channel. Measured
+2026-10-14T08:58Z: two preserved malformed lines advanced the node cursor
+265954 → 265956 with the light sequence unmoved, and the pre-fix reader named
+the same freeze twice (two onset lines, two routed events).
 with a nulled lux: the first naming wrote the live identity's onset record and
 routed one event, the retained origin survived, and a reader whose onset-record
 write fails still names the freeze without routing. The code was committed on
@@ -601,10 +608,10 @@ attributes to the consumer poll rather than to the phone, and the fetch recovere
 at 07:35:12Z — so a phone-side silence and a host-side fetch outage are now
 distinguishable. The onset record is keyed by the streak identity and is not
 cleared when the stream resumes: at 07:46Z it still held the 07:24Z identity
-twenty minutes after recovery, and only a new session, cursor or sequence writes
+twenty minutes after recovery, and only a new session or light sequence writes
 a fresh record at the same path (the served pin's
 `_space_light_record_freeze`), so the record's **onset epoch and streak
-identity** — a new session, cursor or sequence, the fields that re-arm it —
+identity** — a new session or light sequence, the fields that re-arm it —
 are the host-side recurrence signal for this class, not the file's mtime.
 Measured inside the 08:11Z streak: two reads six seconds apart (08:36:20.567Z
 and 08:36:26.202Z) saw the mtime advance and `last_read_epoch_s` move
