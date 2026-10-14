@@ -474,9 +474,45 @@ def settle(home: Path, role: str, wake: int, text: str, continuation: bool, resu
     return f"yield seed {role} wake {wake}"
 
 
+def _rotated_by_resurrection(session: str, role: str, journal: dict) -> str | None:
+    """Live pane pid when an external respawn re-raised the journal's launcher.
+
+    A tmux server resurrection replaces every pane's OS pid. The clear journal
+    names the pid of the rotation it witnessed, and that pid can never be
+    observed again after the respawn, so an equality-only receipt guard holds
+    the clear forever with no self-recovery path (witness DM 16442: a genome
+    clear held ~35 minutes until its journal was reconciled by hand). When the
+    live pane in the same session starts exactly the journal's recorded
+    launch_command and the mind is idle, the rotation the journal recorded is
+    still represented by that pane — the same launcher raised the same mind —
+    and the live pid is that rotation's new identity. A different launcher, a
+    missing or dead pane, or a busy mind is not that representation and returns
+    None, so the caller keeps raising instead of committing an ambiguous pane.
+    """
+    from . import seed
+    from .proc_table import launch_argv, pane_field
+    launch = journal.get("launch_command")
+    if journal.get("session") != session or not isinstance(launch, list) or not launch:
+        return None
+    target = f"{session}:{role}.1"
+    try:
+        command = launch_argv(seed._tmux("display-message", "-p", "-t", target,
+                                        "#{pane_start_command}").stdout)
+        if command != list(launch):
+            return None
+    except ValueError:
+        return None
+    if not seed._mind_idle(session, role):
+        return None
+    pid = pane_field(seed._tmux("display-message", "-p", "-t", target,
+                                "#{pane_pid}").stdout)
+    return pid or None
+
+
 def clear(home: Path, session: str, role: str) -> str:
     from . import seed
     from .post_check import _save
+    from .proc_table import launch_argv, pane_field
     from .tmux import owns_session
     from .observations import validate_slug
     validate_slug(role)
@@ -491,25 +527,52 @@ def clear(home: Path, session: str, role: str) -> str:
         journal = json.loads(path.read_text()) if path.exists() else None
         target = f"{session}:{role}.1"
         def live_pid():
-            pid = seed._tmux("display-message", "-p", "-t", target, "#{pane_pid}").stdout.decode().strip()
-            dead = seed._tmux("display-message", "-p", "-t", target, "#{pane_dead}").stdout.decode().strip()
+            pid = pane_field(seed._tmux("display-message", "-p", "-t", target, "#{pane_pid}").stdout)
+            dead = pane_field(seed._tmux("display-message", "-p", "-t", target, "#{pane_dead}").stdout)
             if not pid or dead != "0":
                 raise ValueError("rotated mind missing or dead; reconcile clear")
             return pid
         if settled == cleared:
             if journal and journal.get("phase") in {"rotated", "committed"}:
-                if journal.get("session") != session or live_pid() != journal.get("after_pid"):
+                if journal.get("session") != session:
                     raise ValueError("committed clear process differs; reconcile")
+                if live_pid() != journal.get("after_pid"):
+                    # The pane was re-pid'd by an external respawn after this
+                    # journal was written: accept it when the same launcher is
+                    # live and idle; anything else keeps the hold.
+                    rotated = _rotated_by_resurrection(session, role, journal)
+                    if rotated is None:
+                        raise ValueError("committed clear process differs; reconcile")
+                    journal.update(after_pid=rotated, reconciled_resurrection=True)
                 journal["phase"] = "committed"
                 _save(path, journal)
             return f"held seed {role} no settled turn to clear"
+        if journal and journal.get("phase") == "committed":
+            # A committed journal is written only after the feed records that
+            # turn's own clear, so a committed journal naming a turn the current
+            # feed has not cleared cannot describe this rotation: the feed was
+            # renumbered and this settled number collided with a journal from
+            # an earlier numbering. The equality-only guards then hold the mind
+            # forever with no self-recovery path (research-methods settled=38264
+            # wedged 06:06-08:07Z 2026-10-14; settled=20853 four days earlier).
+            # The journal is inert evidence of a completed rotation in a
+            # superseded numbering, not of this turn: preserve it under a
+            # collision-free name and rotate fresh.
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+            stale = path.with_name(f"{path.stem}.stale-{stamp}.json")
+            suffix = 1
+            while stale.exists():
+                suffix += 1
+                stale = path.with_name(f"{path.stem}.stale-{stamp}-{suffix}.json")
+            path.replace(stale)
+            journal = None
         if journal and journal.get("phase") == "rotating" and journal.get("session") == session:
             # The respawn may have completed before the next journal write.
             # Reconcile its exact intended launcher, never repeat an uncertain send.
             current_pid = live_pid()
-            command = seed._tmux("display-message", "-p", "-t", target, "#{pane_start_command}").stdout.decode().strip()
             try:
-                matches = shlex.split(command) == journal.get("launch_command")
+                matches = launch_argv(seed._tmux("display-message", "-p", "-t", target,
+                                                 "#{pane_start_command}").stdout) == journal.get("launch_command")
             except ValueError:
                 matches = False
             if current_pid == journal.get("before_pid") or not matches:
@@ -520,7 +583,14 @@ def clear(home: Path, session: str, role: str) -> str:
             if journal.get("session") != session or journal.get("phase") != "rotated":
                 raise ValueError("clear rotation is uncertain; inspect journal and live process before retry")
             if live_pid() != journal.get("after_pid"):
-                raise ValueError("rotated mind process changed; reconcile clear")
+                # The pane was re-pid'd by an external respawn (the tmux
+                # resurrection class): accept the live pane when the same
+                # launcher is live and idle; anything else keeps the hold.
+                rotated = _rotated_by_resurrection(session, role, journal)
+                if rotated is None:
+                    raise ValueError("rotated mind process changed; reconcile clear")
+                journal.update(after_pid=rotated, reconciled_resurrection=True)
+                _save(path, journal)
         else:
             if not seed._mind_idle(session, role):
                 return f"held seed {role} mind busy"
