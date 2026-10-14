@@ -275,17 +275,27 @@ and one survived it — the turn-1 ledger reports `dispatches: 2` with the
 preserved 429, the transport's transient retry succeeded, and the turn
 completed holding exactly one `ci_status` proposal and one tool result. A
 survived 429 was therefore UNKNOWN after the first window and is now observed
-live once; before that, only the deterministic seam test covered the path. The
+live once; before that, only the deterministic seam test covered the path.
+Counted per attempt rather than per registered sample, the second window
+holds seven attempts: an operator-preserved re-run of sample s1
+(`sample-s1-firstattempt`) also drew the 429 on its completed turn 0 — the
+same `dispatches: 2` ledger, the same oracle-matching `ci_status` result —
+and then exhausted on turn 1 and was retired for the registered s1 re-run,
+so no committed driver names it. Completed-turn survivors are therefore two
+against one completed sample, and the window's attempt-level truth is five
+transients and 17 provider claims where the six-final summary reports one
+and 7 — a measured under-report, not a claim difference. The
 turn frame carries a fetch ledger (`allowance`, `workClass`, `dispatches`,
 `upstream_failure`) that `read_native_journal` surfaces as one row per
 attempted turn — the failed turn's row rides its `model_failure` record — an
 absent ledger staying UNKNOWN rather than a synthesized zero. Eight samples
 across two windows on one route under one upstream-owned condition, with one
-survivor, is not a statistical claim, and terminal-status parity under the 429
-condition stays unasserted: the candidate fails closed on three of six where
-the harness oracle read the frozen run successfully. That class is not this
-plant's work class, the activation has not landed, and the pinned release
-keeps the one-fetch session: the harness route stays the fallback meanwhile.
+surviving sample, is not a statistical claim, and terminal-status parity under
+the 429 condition stays unasserted: the candidate fails closed on three of
+six where the harness oracle read the frozen run successfully. That class is
+not this plant's work class, the activation has not landed, and the pinned
+release keeps the one-fetch session: the harness route stays the fallback
+meanwhile.
 The transport retries transient 408/429/5xx itself
 (`DEFAULT_MAX_ATTEMPTS`, six requests per dispatch), so on a route that answers
 one such transient with a second POST the diagnostic names the budget rather

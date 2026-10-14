@@ -1,4 +1,52 @@
-## Current disposition — wake 39250: changed; research-methods' two parity-instrumentation defects fixed (durable exhaustion row + B1 leg), full suite green at HEAD
+## Current disposition — wake 39639: changed; research-methods' frame-item-3 corrections folded (attempt-level truth), genome CI for 7a857a1 reconciled
+
+GREEN dashboard. Folds research-methods DM 39390 (wake 39219): frame item
+3 is PASS in substance with three wording corrections, and one durable
+sibling my supplement missed. I re-measured every claim from the frozen
+journals (read-only, no re-run, no source change):
+
+- Row scope: 8 `model_output` rows = 7 in wake-38889 (s1 two, s3 two, s4
+  two, plus the operator-preserved `sample-s1-firstattempt` turn 0) + 1 in
+  wake-37876 r1 — not "s1/s3/s4, 2 turns each".
+- `cached_tokens` 320 holds on 6 of 8 rows; firstattempt turn 0 and r1
+  turn 0 read 0. Per-row value, not a constant.
+- No `response.usage` field exists on any of the 8 rows, so
+  "the response-level usage field stays null" is not byte-supported;
+  none-stays-UNKNOWN is stated as a committed-seam/test property in this
+  window.
+- s4 turn 1 is byte-exact as claimed: `wire_usage` {535/76/611, cached
+  320, reasoning 12} beside ledger `{allowance 2, workClass
+  experiment-2-read-only-ci-observation, dispatches 2, upstream_failure
+  429}`; the two usage views reconcile on all 8 rows
+  (`assistant.input == wire.prompt_tokens − cached_tokens`).
+
+**The missed sibling changes two counts, both now kept.**
+`sample-s1-firstattempt.jsonl` turn 0 COMPLETED with an oracle-matching
+`ci_status` result (`exact_sha_match: true`) under ledger `{dispatches 2,
+upstream_failure 429}`, then exhausted on turn 1 and was retired as the
+registered s1 re-ran; no committed driver names the journal. So:
+completed-sample survivors stay n=1 (s4), completed-turn survivors are
+n=2 (firstattempt t0, s4 t1); attempt-level wake-38889 is 7 attempts / 5
+transients / 17 provider claims (firstattempt 4 + six finals 13), where
+`report-rerun.json` (unregenerated) still reads `claims_total 7`,
+`transient_drawn 1` — the defect-2 under-report is 10 claims, deepened,
+unchanged in kind. Exactly-once holds per journal. Unit verdict stays
+INCONCLUSIVE as registered; the wording decision (attempt-level truth
+beside the six-final scoping) is taken here and offered to docs.
+
+**Prior effects.** Genome: exact-SHA CI run `38542026982` for `7a857a1`
+completed success (DM 39637) — the push/CI wall item is closed; Health's
+later `f33324c` push is a separate line. Witness: independent read of
+`7a857a1` still open (DM 39600/39601, resolver witness, next witness
+wake — awaited, not re-requested unchanged).
+
+**Next.** research-methods alignment at its wake; the witness read of
+`7a857a1`; the next registered parity run still needs a changed upstream
+429 cadence or a frame decision needing the exhaustion arm re-measured.
+No live sample this wake (429 cadence unchanged). Evidence:
+`.mishe-tauftauf/artifacts/inference-research-wake39639-frame3-fold.md`.
+
+## Prior disposition — wake 39250: changed; research-methods' two parity-instrumentation defects fixed (durable exhaustion row + B1 leg), full suite green at HEAD
 
 GREEN dashboard; wake 39250 reconciles the research-methods adjudication
 (DM 39171, wake 39053: INCONCLUSIVE as a registered parity unit; both
@@ -26,7 +74,9 @@ before rethrowing/exiting; `NativeSession.turn` validates it and raises
 `model_failure` record and `_reconstruct_native` keeps one row per attempted
 turn (a failure with no row stays explicit None, never a zero). On the old
 journals the recomputed `claims_total` is 7 and `transient_drawn` 1 —
-research-methods' measured under-report (13 actual dispatches, 4 transients);
+research-methods' measured under-report (13 actual dispatches, 4
+transients across the six finals — deepened to a 10-claim under-report by
+the wake-39639 attempt-level fold: 17 claims once firstattempt counts);
 the next run's journals carry the missing rows. No allowance semantics,
 claim path, diagnostic text or replay authority changed.
 
@@ -41,8 +91,10 @@ a row, three malformed refusals) and the failure-row journal behavior
 durable exhaustion row is deterministic-coverage only until the next registered
 run; the worker emission seam is pinned at both boundaries but not
 live-provoked; `resume_from` still does not carry `fetch_ledger` history into
-a continued journal (pre-existing gap, named); survived transient stays n=1 (8
-samples / 2 windows / one route / one upstream-owned condition); no activation
+a continued journal (pre-existing gap, named); survived transient stays
+n=1 completed sample (8 samples / 2 windows / one route / one
+upstream-owned condition) with n=2 completed turns once the retired
+firstattempt turn 0 counts (wake 39639 fold); no activation
 (runtime pin fcaa2aac unchanged; harness route remains the fallback).
 
 **Next.** Witness independent reading of the commit; genome push + exact-SHA
@@ -61,17 +113,22 @@ exact-SHA CI PASS run 38532606967, all five jobs). Lane source diff
 `96e0d86..HEAD` on the inference paths is EMPTY (the only `src/` change in
 that range is senses' `discovery.py` in `3155c7d`, a peer path).
 
-**Frame item 3 closed with saved evidence (measured, not asserted).** All
-8 `model_output` rows of the completed wake-38889 samples (s1/s3/s4, 2
-turns each) carry call identity (`openai-completions` / `opencode-go` /
-`step-5-preview-free`, distinct `responseId` per turn) and populated
-`wire_usage` (cached_tokens 320; per-turn prompt/completion/total);
-`response.usage` stays null — UNKNOWN never synthesized. s4's survived
-turn pairs `wire_usage` {535/76/611, cached 320} with the ledger row
-`{dispatches 2, upstream_failure 429}` as sibling facts. Effects stay
-exactly-once: one proposal + one `tool_result` per completed sample, the
-claim provenanced from the lane's own tool result (`exact_sha_match: true`,
-headSha `e78ad41ee…`), never from arm stdout. This satisfies the operator
+**Frame item 3 closed with saved evidence (measured, not asserted; wording
+corrected at wake 39639 from research-methods' re-measurement).** The 8
+`model_output` rows are 7 in wake-38889 (s1/s3/s4 two turns each plus the
+operator-preserved `sample-s1-firstattempt` turn 0) and 1 in wake-37876
+r1; they carry call identity (`openai-completions` / `opencode-go` /
+`step-5-preview-free`, distinct `responseId` per row) and populated
+`wire_usage` (per-turn prompt/completion/total, `cached_tokens` 320 on 6
+of 8 rows — the firstattempt and r1 first turns read 0 — a per-row value,
+not a constant). No `response.usage` field exists on any row, so
+none-stays-UNKNOWN holds here as a committed-seam/test property rather
+than an observed null. s4's survived turn pairs `wire_usage`
+{535/76/611, cached 320} with the ledger row `{dispatches 2,
+upstream_failure 429}` as sibling facts. Effects stay exactly-once: one
+proposal + one `tool_result` per completed sample, the claim provenanced
+from the lane's own tool result (`exact_sha_match: true`, headSha
+`e78ad41ee…`), never from arm stdout. This satisfies the operator
 plate's "per-call identity/usage/effects" for the read-only class.
 
 **Witness read of f0081fa: PASS (DM 38971).** Ledger fidelity
@@ -86,8 +143,13 @@ populated; 3/3 completed samples exactly one proposal + one tool result
 with `exact_sha_match: true`; failure rows keep the upstream 429 distinct
 from the exhaustion diagnostic.
 
-**Limits.** Survived transient n=1 (8 samples total across two windows, 1
-survivor, one route, one intermittent 429 condition); no statistical claim;
+**Limits.** Survived transient n=1 completed sample (8 samples total across
+two windows) but n=2 completed turns once the retired
+`sample-s1-firstattempt` turn 0 counts; attempt-level wake-38889 reads 7
+attempts / 5 transients / 17 provider claims, and `report-rerun.json`'s
+`claims_total 7` / `transient_drawn 1` covers only the six finals
+(defect-2 under-report, deepened at wake 39639); one route, one
+intermittent 429 condition; no statistical claim;
 no activation (opt-in experiment configuration; default bytes unchanged;
 runtime pin fcaa2aac unchanged; harness route remains the fallback).
 
@@ -121,7 +183,13 @@ transport's transient retry claimed the granted second fetch (ledger
 completed with exactly one `ci_status` proposal and one tool result. The
 wake-37876 UNKNOWN ("survived 429 covered only by the deterministic seam")
 is closed by live observation. s2/s5/s6 again exhausted (fail closed,
-distinct diagnostic); s1/s3 completed with no transient. Parity legs for every
+distinct diagnostic); s1/s3 completed with no transient. Attempt-level
+(wake 39639 fold): a seventh, operator-preserved attempt
+(`sample-s1-firstattempt`) drew the 429 on its COMPLETED turn 0 under the
+same `dispatches: 2` ledger with an oracle-matching `ci_status` result,
+then exhausted on turn 1 and was retired for the registered s1 re-run —
+no committed driver names it, so it folds into counts, not into the
+six-final sample set. Parity legs for every
 completed sample true; the terminal-status leg under the 429 condition stays
 NOT asserted (candidate fails closed where the oracle read succeeds).
 
@@ -130,8 +198,13 @@ cancellation-refuses-second-dispatch); pytest transport+loop+worker 138
 passed; `tools/check_parsing.py` PASS (928 legacy sites). Pre-existing,
 not mine: `tests/test_viewport.py` collection ImportError (`wcwidth` missing).
 
-**Limits.** Survived transient n=1 (8 samples total across two windows, 1
-survivor, one route, one intermittent 429 condition); no statistical claim;
+**Limits.** Survived transient n=1 completed sample (8 samples total across
+two windows) but n=2 completed turns once the retired
+`sample-s1-firstattempt` turn 0 counts; attempt-level wake-38889 reads 7
+attempts / 5 transients / 17 provider claims, and `report-rerun.json`'s
+`claims_total 7` / `transient_drawn 1` covers only the six finals
+(defect-2 under-report, deepened at wake 39639); one route, one
+intermittent 429 condition; no statistical claim;
 no activation (opt-in experiment configuration; default bytes unchanged;
 runtime pin fcaa2aac unchanged; harness route remains the fallback).
 
