@@ -332,3 +332,18 @@ def decode_tailnet_status(text: str) -> dict | None:
     except ValueError:
         return None
     return status if isinstance(status, dict) else None
+
+SENSOR_ID_RE = re.compile(r"^sense\.[a-z0-9]+(?:\.[a-z0-9-]+)+$")
+"""A full ``sense.*`` id literal."""
+
+
+def decode_git_log_lines(text: str) -> list[str]:
+    """Commit lines from ``git log --oneline`` output.
+
+    Returns only lines that look like ``<sha> <subject>``; blank lines and
+    git's decorative output are skipped.
+    """
+    return [line for line in text.splitlines()
+            if re.match(r"^[0-9a-f]{7,40} ", line)]
+
+

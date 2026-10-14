@@ -23,7 +23,7 @@ from .activity import roles as seated_roles
 from .feed import Feed, parse_feed, publication_lock
 from .host_radio import (BLUETOOTH_ROOT, COMMAND_TIMEOUT_SECONDS, NET_ROOT,
                          RFKILL_ROOT, admin_up, bluetooth_controllers, carrier_state,
-                         controller_state, decode_git_log_lines, decode_sensor_id_lines,
+                         controller_state, decode_git_log_lines,
                          decode_tailnet_status, ethernet_interfaces, link_speed, operstate,
                          rfkill_switches, rfkill_unreadable, rfkill_verdict, wireless_interfaces)
 from .outcome_events import classify_outcomes
@@ -2897,14 +2897,14 @@ def _served_staleness(checkout_root: Path, pin: str, head_sha: str) -> tuple[lis
             continue
         start, end = unit
         try:
-            result = subprocess.run(
+            log_result = subprocess.run(
                 ["git", "log", "--oneline", "-L",
                  f"{start},{end}:src/mishe_tauftauf/discovery.py",
                  f"{pin}..{head_sha}"],
                 capture_output=True, text=True, timeout=5, cwd=checkout_root)
-            if result.returncode != 0:
+            if log_result.returncode != 0:
                 continue
-            if result.stdout.strip():
+            if decode_git_log_lines(log_result.stdout):
                 stale.add(sid)
         except (OSError, _TimeoutExpired):
             continue
