@@ -408,6 +408,76 @@ def test_unreadable_retention_is_not_a_freeze(tmp_path):
     assert row["reason"] == "light-null-gap"
 
 
+def declare_node_state(home: Path, **verdict) -> None:
+    """Attach the producer's node-state verdict to the published boundary."""
+    path = home / "body" / "space.json"
+    data = json.loads(path.read_text())
+    node_state = {"status": "ok", "mode": "ON_COLLECT_ONLY", "desired_on": True,
+                  "collect_only": True, "observed_at_epoch_s": time.time() - 20,
+                  "age_s": 20.0, "reason": None, "reasons": []}
+    node_state.update(verdict)
+    data["nodes"][0]["node_state"] = node_state
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+@pytest.mark.parametrize("mode,expected", [
+    ("ON_COLLECT_ONLY", "collect-only"),
+    ("ON_NOT_RUNNING", "producer-not-running"),
+    ("OFF", "producer-off"),
+    ("ON_SENDING", None),
+    ("UNKNOWN", None),
+])
+def test_decode_node_state_names_only_declared_not_sending_modes(mode, expected):
+    assert space_text.decode_node_state({"status": "ok", "mode": mode}) == expected
+
+
+@pytest.mark.parametrize("value", [
+    None,
+    [],
+    "ON_COLLECT_ONLY",
+    {"mode": "ON_COLLECT_ONLY"},
+    {"status": "stale", "mode": "ON_COLLECT_ONLY"},
+    {"status": "absent", "mode": "ON_COLLECT_ONLY"},
+    {"status": "ok", "mode": None},
+    {"status": "ok", "mode": ["ON_COLLECT_ONLY"]},
+])
+def test_decode_node_state_declares_nothing_without_a_fresh_verdict(value):
+    """Absent, stale and malformed verdicts declare nothing: a reader that
+    cannot read a declaration must keep its own name for the absent channel."""
+    assert space_text.decode_node_state(value) is None
+
+
+def test_producer_declared_collect_only_names_the_configured_silence(tmp_path):
+    """A producer that declares it is deliberately not delivering is a
+    configured silence, not a frozen light channel. The retained streak is old
+    enough to name a freeze, so only the declaration can produce this reason."""
+    null_gap_fixture(tmp_path, null_record())
+    declare_node_state(tmp_path)
+    row = discovery._space_light_read(tmp_path)
+    assert row["reason"] == "collect-only"
+    assert row["sample"].startswith("Note3 light UNKNOWN: collect-only")
+    # The declaration explains the silence, so nothing is named a freeze and no
+    # onset is recorded or routed.
+    assert not (tmp_path / "discovery" / "space-light-freeze.json").exists()
+    assert freeze_history(tmp_path) == [] and freeze_dms(tmp_path) == []
+
+
+def test_unreadable_node_state_declaration_keeps_the_freeze_name(tmp_path):
+    null_gap_fixture(tmp_path, null_record())
+    declare_node_state(tmp_path, status="stale")
+    row = discovery._space_light_read(tmp_path)
+    assert row["reason"] == "light-stream-frozen"
+
+
+def test_sending_producer_with_absent_light_stays_a_frozen_light_stream(tmp_path):
+    """A producer that declares ON_SENDING while the light sequence is unmoved
+    is the case the duration class is for: the light channel itself stopped."""
+    null_gap_fixture(tmp_path, null_record())
+    declare_node_state(tmp_path, mode="ON_SENDING", collect_only=False)
+    row = discovery._space_light_read(tmp_path)
+    assert row["reason"] == "light-stream-frozen"
+
+
 def test_null_streak_origin_survives_the_render_cadence(tmp_path):
     """A pane renders every few seconds, so the origin must not be refreshed
     per render or the measured interval never reaches the freeze threshold."""
@@ -519,6 +589,19 @@ def test_freeze_to_gap_reports_a_duration_class_change(tmp_path):
     notify(tmp_path, row, frozen, now=time.time())
     assert ("sense.space.light gap duration class light-stream-frozen -> "
             "light-null-gap") in Feed(tmp_path).entries()[-1].body
+
+
+def test_declared_silence_is_not_reported_as_a_physical_transition(tmp_path):
+    """A producer that starts declaring collect-only explains the same absent
+    coverage; it is a baseline shift, never a light transition and never a
+    duration class."""
+    row = null_gap_now(tmp_path)
+    declared = {**row, "reason": "collect-only",
+                "sample": "Note3 light UNKNOWN: collect-only last-phone=x age=1h31m"}
+    notify(tmp_path, row, declared, now=time.time())
+    body = Feed(tmp_path).entries()[-1].body
+    assert "sense.space.light availability/provenance baseline" in body
+    assert "gap duration class" not in body
 
 
 def freeze_record(home: Path) -> dict:

@@ -4123,10 +4123,14 @@ SPACE_SOURCE = "http://127.0.0.1:8765/node/note3"
 SPACE_PRODUCER = {"name": "android-body-perception", "entry_point": "watch.py",
                   "mode": "space", "contract": 1}
 SPACE_VALIDITY_SECONDS = 30.0
-# A null gap that persists across reads for at least this long, with the cursor
-# and sequence unmoving, is a sustained source freeze rather than a dropout.
-# The threshold sits in the gap between the measured widths: seconds-wide
-# dropouts resolve between reads, a stopped producer does not.
+# A null gap that persists across reads for at least this long, with the light
+# channel's own sequence unmoving, is a sustained source freeze rather than a
+# dropout. The identity is the light channel's (session, sequence): the node
+# cursor is not part of it, because two preserved malformed lines advanced the
+# cursor 265954 -> 265956 with the light sequence unmoved and split one
+# continuous freeze into two namings. The threshold sits in the gap between the
+# measured widths: seconds-wide dropouts resolve between reads, a stopped
+# producer does not.
 SPACE_FROZEN_MIN_SECONDS = 60.0
 
 
@@ -4247,8 +4251,13 @@ def _space_light(data: object, now: float) -> dict:
         if light["lux"] is None:
             # A published sample without a lux value is a source coverage gap,
             # not a corrupt file: keep it distinguishable so a dropout reads as
-            # itself instead of "malformed-boundary".
-            return unknown("light-null-gap", _space_light_age(light, now))
+            # itself instead of "malformed-boundary". When the producer's own
+            # node-state verdict declares it is deliberately not delivering, the
+            # absent channel is that declared silence, so the reading names the
+            # declaration rather than blaming the light channel for a
+            # producer-wide stop it cannot see from here.
+            declared = space_text.decode_node_state(node.get("node_state"))
+            return unknown(declared or "light-null-gap", _space_light_age(light, now))
         if (light["status"] != "fresh-clock-conditional"
                 or light["delayed_at_receipt"] is not False):
             return unknown("light-not-current-or-delayed", _space_light_age(light, now))

@@ -59,3 +59,34 @@ def nonblank(text: object) -> str | None:
     if not isinstance(text, str) or not text.strip():
         return None
     return text
+
+# The producer's own bounded node-state verdict carries one mode enum. These
+# three values mean the node is deliberately not delivering over HTTP: naming
+# them is what tells a designed silence from a delivery failure. ON_SENDING and
+# UNKNOWN are absent here on purpose — the first declares delivery is on, and
+# the second declares nothing a reader may attribute a silence to.
+NOT_SENDING_MODES = {
+    "ON_COLLECT_ONLY": "collect-only",
+    "ON_NOT_RUNNING": "producer-not-running",
+    "OFF": "producer-off",
+}
+
+
+def decode_node_state(node_state: object) -> str | None:
+    """The producer's declared reason for delivering nothing, or None.
+
+    ``node_state`` is the additive per-node field the producer projects from its
+    own host-side verdict, and its ``status`` is the producer's own judgement of
+    freshness and shape: anything but ``ok`` is absent, stale or invalid, so it
+    declares nothing here. ``None`` therefore means "the producer declares it is
+    sending, or declares nothing at all" — a reader that cannot read a
+    declaration keeps its own name for the absent channel instead of claiming a
+    configured silence it cannot see. Only the documented mode enum is
+    interpreted; every other field of the verdict is opaque content.
+    """
+    if not isinstance(node_state, dict) or node_state.get("status") != "ok":
+        return None
+    mode = node_state.get("mode")
+    if not isinstance(mode, str):
+        return None
+    return NOT_SENDING_MODES.get(mode)
