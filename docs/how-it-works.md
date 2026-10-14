@@ -195,7 +195,8 @@ dispatch started. A retained stop is the previous caller's report, not independe
 acceptance. This API covers single-writer local file/process-crash evidence,
 not power-loss durability, automatic recovery or a deployed resident route.
 
-To take that reading in words a reader would use: read the role dashboard with `pain read ROLE --launcher dashboard`, then compare it with the native route's retained per-turn journal at `SITE/journals/ROLE-native.jsonl`, which records each turn's tool selections, result checks and wire usage. A bounded docs-class comparison (October 2026) reached no parity verdict yet — the retained native run predates per-turn usage evidence and never recorded a stop — so the harness route stays the fallback until a back-to-back same-input run evidences parity for this work class.
+To take that reading in words a reader would use: read the role dashboard with `pain read ROLE --launcher dashboard`, then compare it with the native route's retained per-turn journal at `SITE/journals/ROLE-native.jsonl`, which records each turn's tool selections, result checks, wire usage and fetch
+dispatch count with any preserved upstream failure. A bounded docs-class comparison (October 2026) reached no parity verdict yet — the retained native run predates per-turn usage evidence and never recorded a stop — so the harness route stays the fallback until a back-to-back same-input run evidences parity for this work class.
 
 `inference_inspect.prepare_exact_inspection` freezes one caller-supplied absolute
 file path, SHA256, byte count, source/task identity and loop budgets before a model
@@ -259,13 +260,22 @@ claim: the read-only CI-observation work class
 two (`MAX_TURN_FETCH_ALLOWANCE`) for its frozen `ci_status` tool set, a
 broader allowance, another work class or a half-specified pair is rejected
 rather than coerced to the default, and a granted allowance still cannot carry
-another capability inside the same turn context. One bounded re-run under the
-allowance has completed for that frozen read-only CI-observation class
-(2 turns, 1 call, 7.4 s, October 2026), and its implementation read was
-accepted independently; the transient 429 case remains a single sample, so it
-stays UNKNOWN rather than measured. That run is not this plant's work class,
-the activation has not landed, and the pinned release keeps the one-fetch
-session: the harness route stays the fallback meanwhile.
+another capability inside the same turn context. A frozen-input live series has
+now been run for that read-only CI-observation class (October 2026, allowance
+two, one named `ci_status` capability): three samples, all three drawn the real
+intermittent upstream 429 and exhausted both permitted fetches, failing closed
+while the durable record keeps the exhaustion and the preserved upstream failure
+distinct; the first sample completed one turn holding one `ci_status` call in
+12.5 s before the second turn exhausted. The turn frame carries a fetch ledger
+(`allowance`, `workClass`, `dispatches`, `upstream_failure`) that
+`read_native_journal` surfaces as one row per turn, an absent ledger staying
+UNKNOWN rather than a synthesized zero. A survived 429 — the transient followed
+by a successful fetch — is UNKNOWN live: every sampled transient was followed by
+another 429, and only the deterministic seam test covers that path. Three
+samples on one route under one active condition is not a statistical claim.
+That class is not this plant's work class, the activation has not landed, and
+the pinned release keeps the one-fetch session: the harness route stays the
+fallback meanwhile.
 The transport retries transient 408/429/5xx itself
 (`DEFAULT_MAX_ATTEMPTS`, six requests per dispatch), so on a route that answers
 one such transient with a second POST the diagnostic names the budget rather
