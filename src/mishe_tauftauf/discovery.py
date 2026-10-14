@@ -3062,40 +3062,62 @@ def _coord_authorship_fog(home: Path, now: datetime | None = None) -> dict[str, 
             "sample": f"dirty={len(dirty)} fog={len(fog)} " + ",".join(fog[:8]),
             "kind": "read", "dirty": len(dirty), "fog": fog, "claimed": claimed}
 
+LANDING_GATE_SUITE = "tests/test_proc_table.py"
+"""The kernel focused suite the landing gate runs, relative to the checkout.
+
+Its presence is what makes the gate applicable. A linked site whose repo does
+not carry the kernel suite cannot be gated by it: running the kernel's command
+there fails on the missing interpreter (``env`` exits 127), which would name a
+failing test that does not exist in that repo.
+"""
+
+
 def _repo_landing_block(home: Path) -> dict[str, object]:
     """Name what stops the dirty tree from landing, so a mind can unblock it.
 
-    Three block classes: fog paths (no wall/chat claim — see authorship-fog),
-    peer-overlap files (dirty paths also touched by another site's claim),
-    and test-gate state (whether focused suites pass on the working tree).
-    The test gate runs only the two fastest suites (proc_table + plant
-    focused names) with a hard timeout; a timeout reads unknown, never pass.
+    Two block classes: fog paths (no wall/chat claim — see authorship-fog) and
+    test-gate state (whether the kernel focused suite passes on the working
+    tree). The gate runs ``tests/test_proc_table.py`` from the checkout holding
+    the site's repo with a hard timeout; a timeout or an unlaunchable runner
+    reads ``gate=unknown``, never pass. The gate applies only where that suite
+    exists: a linked site's repo does not carry it, so the kernel suite is not
+    a landing block there and the sample names ``gate=absent``.
     State is drift when any block exists, verified when the tree is clean or
-    every dirty path is claimed by exactly one author and the gate passes.
+    every dirty path is claimed and the gate passes or does not apply.
     """
     fog_reading = _coord_authorship_fog(home)
     fog = fog_reading.get("fog", []) if isinstance(fog_reading.get("fog"), list) else []
     checkout = Path(home).resolve().parent
-    try:
-        gate = subprocess.run(
-            ["env", "PYTHONPATH=src", ".venv/bin/pytest", "-q",
-             "tests/test_proc_table.py", "-x", "--no-header"],
-            capture_output=True, timeout=120, cwd=checkout)
-        gate_ok = gate.returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
-        gate_ok = None
+    applicable = (checkout / LANDING_GATE_SUITE).is_file()
+    gate_ok: bool | None = None
+    if applicable:
+        try:
+            gate = subprocess.run(
+                ["env", "PYTHONPATH=src", ".venv/bin/pytest", "-q",
+                 LANDING_GATE_SUITE, "-x", "--no-header"],
+                capture_output=True, timeout=120, cwd=checkout)
+            gate_ok = gate.returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            gate_ok = None
     blocks: list[str] = []
     if fog:
         blocks.append(f"fog={len(fog)}")
     if gate_ok is False:
         blocks.append("gate=fail")
-    elif gate_ok is None:
+    elif applicable and gate_ok is None:
         blocks.append("gate=unknown")
+    if not applicable:
+        gate_label = "absent"
+    elif gate_ok is None:
+        gate_label = "unknown"
+    else:
+        gate_label = "pass" if gate_ok else "fail"
     state = "drift" if blocks else "verified"
-    sample = f"blocks=[{','.join(blocks) if blocks else 'none'}] fogpaths={len(fog)}"
+    sample = (f"blocks=[{','.join(blocks) if blocks else 'none'}] "
+              f"fogpaths={len(fog)} gate={gate_label}")
     return {"id": "sense.repo.landing-block", "state": state,
             "sample": sample, "kind": "read", "blocks": blocks, "fog": fog,
-            "gate": gate_ok}
+            "gate": gate_ok, "gate_applicable": applicable}
 
 def _coord_gate_latency(home: Path, now: datetime | None = None) -> dict[str, object]:
     """Age the oldest unanswered resolver routing, so stalls wake their owner.
