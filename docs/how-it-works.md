@@ -602,7 +602,8 @@ and the age token, so a recurrence cannot end before the event is routed at
 the naming cadence rather than the unbounded stored-scan cadence. Later
 namings of the same streak only advance the last-read epoch; a new light
 sequence re-arms the record. The identity is the light channel's own `(session,
-light sequence)`; the node cursor is excluded, because it advances on any
+light sequence)`, with the node cursor kept in the onset record as evidence
+rather than as identity (`09ef4a3`), because it advances on any
 delivered record — a partial batch or a preserved malformed line — so a
 cursor-only advance must not split one stopped light channel. Measured
 2026-10-14T08:58Z: two preserved malformed lines advanced the node cursor
