@@ -1950,6 +1950,27 @@ def _unit_declared_paths(unit: str) -> list[str] | None:
     return declared_paths(result.stdout)
 
 
+def _is_tmux_session_holder(unit: str) -> bool:
+    """Whether a unit's ExecStart is a tmux session holder.
+
+    Tmux session holders run ``tmux new-session ... sh && exec sleep infinity``,
+    not Python services. They have no import root and cannot drift against a
+    pin; classifying them as host-scope reduces uninspectable noise.
+    """
+    environment = os.environ.copy()
+    environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    try:
+        result = subprocess.run(["systemctl", "--user", "show", unit,
+                                 "-p", "ExecStart"],
+                                capture_output=True, text=True, timeout=5,
+                                env=environment)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if result.returncode:
+        return False
+    return "tmux new-session" in result.stdout
+
+
 def _declares_site_path(path: str, site_roots: list[Path]) -> bool:
     """Whether one declared path lies inside a site's checkout or its home."""
     candidate = Path(path)
@@ -2124,6 +2145,10 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
     # path inside a site stays uninspectable — the sensor cannot yet say the
     # unit is irrelevant, so it does not claim it.
     for unit in list(uninspectable):
+        if _is_tmux_session_holder(unit):
+            host_scope.append(unit)
+            uninspectable.remove(unit)
+            continue
         declared = _unit_declared_paths(unit)
         if not declared:
             continue
@@ -2131,6 +2156,7 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
             continue
         host_scope.append(unit)
         uninspectable.remove(unit)
+
     if host_scope:
         parts.append("host-scope=" + ",".join(sorted(host_scope)))
     if foreign:
@@ -3408,6 +3434,42 @@ reading. A truncated enumeration that examined no ghost tree cannot claim
 absence, and a retained root count stays a lower bound."""
 
 
+def _home_referenced_by_runtime(path: Path) -> bool:
+    """Whether any running process or systemd unit references this directory.
+
+    A ghost home that no live process or unit references is a stale runtime
+    home — its content was written by a prior activation that has since
+    ended. Distinguishing 'stale' from 'active ghost' lets an operator
+    tell a live hazard from an abandoned artifact.
+    """
+    path_str = str(path)
+    # Check /proc/*/cmdline for any process referencing this path
+    try:
+        for pid_dir in os.scandir("/proc"):
+            if not pid_dir.name.isdigit():
+                continue
+            try:
+                cmdline = Path(f"/proc/{pid_dir.name}/cmdline").read_bytes()
+            except (OSError, ValueError):
+                continue
+            if path_str.encode() in cmdline:
+                return True
+    except OSError:
+        pass
+    # Check systemd user units for any referencing this path
+    try:
+        environment = os.environ.copy()
+        environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+        result = subprocess.run(
+            ["systemctl", "--user", "list-units", "--type=service", "--no-legend", "--all"],
+            capture_output=True, text=True, timeout=5, env=environment)
+        if result.returncode == 0 and path_str in result.stdout:
+            return True
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return False
+
+
 def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]:
     """Enumerate ``.mishe-*`` site directories under the checkout that are not
     this site's home, with their files and the age of their newest content.
@@ -3585,6 +3647,13 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
         (holding if files else empty).append(entry.name)
         if capped or work_truncated:
             break  # identity lists hold at most the examined trees
+    # Classify ghosts as stale (no runtime reference) or active
+    stale: list[str] = []
+    for name in ghosts:
+        tree = Path(checkout / name)
+        if not _home_referenced_by_runtime(tree):
+            stale.append(name)
+
     if checkout_truncated and not ghosts:
         return {"id": "sense.site.ghost-homes", "state": "unknown", "kind": "read",
                 "sample": (f"checkout enumeration truncated at {GHOST_SCAN_LIMIT} names: "
@@ -3604,6 +3673,9 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
     parts.append("holding=" + named(holding))
     if empty:
         parts.append("empty=" + named(empty))
+    if stale:
+        parts.append("stale=" + named(stale))
+
     parts.append(f"nested={len(nested)}{'+' if nested_truncated else ''}")
     if symlinked:
         parts.append("symlink=" + named(symlinked)
@@ -3620,6 +3692,8 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
             "ghosts": sorted(ghosts), "files": files_per_ghost, "total": total,
             "holding": sorted(holding), "empty": sorted(empty),
             "nested": sorted(nested),
+            "stale": sorted(stale),
+
             "files_at_least": capped or work_truncated or bool(symlinked),
             "roots_at_least": roots_at_least,
             "nested_truncated": nested_truncated,
