@@ -88,6 +88,24 @@ def _journal_bounds_valid(item: dict[str, object]) -> bool:
         return False
 
 
+def _clip_sample(sample: str, limit: int = 120) -> str:
+    """Shorten a sample for the fixed-width pane without lying about the cut.
+
+    The producers lead a sample with the field the reader needs and expect the
+    pane to shorten the tail (``discovery.py`` caps its drift lists for this
+    reason). A bare ``sample[:limit]`` cut, though, lands inside a field and
+    silently rewrites it — ``all_bad=81`` renders as ``all_bad=8``, which a
+    reader cannot tell from a real reading. Cut on the last field boundary
+    inside the budget and append an ellipsis, so a shortened sample reads as
+    shortened and no field is misstated.
+    """
+    if len(sample) <= limit:
+        return sample
+    head = sample[:limit]
+    cut = max(head.rfind(" "), head.rfind(","))
+    return (head[:cut] if cut > 0 else head) + "…"
+
+
 def _observation_reading(item: dict[str, object], freshness: str,
                          home: Path | None = None) -> tuple[str, str]:
     source_state = str(item.get("state", "unknown"))
@@ -136,7 +154,7 @@ def _observation_reading(item: dict[str, object], freshness: str,
                   f"source_bounds={'valid' if valid else 'unknown'} "
                   f"source_metadata={json.dumps({key: value for key, value in item.items() if key != 'id'}, sort_keys=True)}")
     else:
-        detail = f"{sample[:120]} source_state={source_state}"
+        detail = f"{_clip_sample(sample)} source_state={source_state}"
     if ((identity.startswith("sense.tmux.") and identity != "sense.tmux.windows")
             or item.get("cached") or item.get("imported")):
         if state != "unavailable":
@@ -753,7 +771,7 @@ def health(home: Path) -> str:
         stability = next((item for item in (snapshot.get("observations", []) if snapshot else [])
                           if isinstance(item, dict) and item.get("id") == "sense.host.session-stability"), None)
         if isinstance(stability, dict) and str(stability.get("state", "")) == "drift":
-            causes.append("session-stability=" + str(stability.get("sample", "drift"))[:160])
+            causes.append("session-stability=" + _clip_sample(str(stability.get("sample", "drift")), 160))
     except (OSError, ValueError, AttributeError):
         pass
     # A churning session (repeated births = repeated deaths + re-raises) is a
@@ -765,7 +783,7 @@ def health(home: Path) -> str:
         restarts = next((item for item in (snapshot.get("observations", []) if snapshot else [])
                          if isinstance(item, dict) and item.get("id") == "sense.host.session-restarts"), None)
         if isinstance(restarts, dict) and str(restarts.get("state", "")) == "drift":
-            causes.append("session-restarts=" + str(restarts.get("sample", "drift"))[:160])
+            causes.append("session-restarts=" + _clip_sample(str(restarts.get("sample", "drift")), 160))
     except (OSError, ValueError, AttributeError):
         pass
     # A server held by a unit that does not belong to the declared session —
@@ -778,7 +796,7 @@ def health(home: Path) -> str:
         keeper = next((item for item in (snapshot.get("observations", []) if snapshot else [])
                        if isinstance(item, dict) and item.get("id") == "sense.host.server-keeper"), None)
         if isinstance(keeper, dict) and str(keeper.get("state", "")) == "drift":
-            causes.append("server-keeper=" + str(keeper.get("sample", "drift"))[:160])
+            causes.append("server-keeper=" + _clip_sample(str(keeper.get("sample", "drift")), 160))
     except (OSError, ValueError, AttributeError):
         pass
     # Autonomy loop health: fog/landing/gate drift means minds cannot close
@@ -796,7 +814,7 @@ def health(home: Path) -> str:
             reading = next((item for item in observations
                             if isinstance(item, dict) and item.get("id") == sense_id), None)
             if isinstance(reading, dict) and str(reading.get("state", "")) == "drift":
-                causes.append(cause_prefix + "=" + str(reading.get("sample", "drift"))[:120])
+                causes.append(cause_prefix + "=" + _clip_sample(str(reading.get("sample", "drift"))))
     except (OSError, ValueError, AttributeError):
         pass
     if linked_failed:

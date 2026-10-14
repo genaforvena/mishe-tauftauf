@@ -318,6 +318,54 @@ def test_senses_shows_the_host_radio_verdict_from_the_scan(tmp_path: Path, curre
     assert "VERIFIED sense.space.host-radio: BLE hci0 powered=yes adv-instances=0/5" in rendered
 
 
+@pytest.mark.parametrize("pane", [discover, senses])
+def test_pane_clips_a_long_sample_at_a_field_boundary_with_a_marker(
+        tmp_path: Path, current_endpoint, pane) -> None:
+    """A clipped sample must not misstate a field: `all_bad=81` is never `all_bad=8`."""
+    home = tmp_path / "site"
+    _write_scan(home, [
+        {"id": "sense.ledger.evidence-binding", "state": "drift", "kind": "read",
+         "sample": "bound=1213 latest_roles=10 latest_bad=0 latest_bad_roles=none "
+                   "latest_bad_last=none all_bad=81 count_excluded=45 violating=x"},
+    ])
+    rendered = pane(home)
+    assert "all_bad=81 count_excluded=45… source_state=drift" in rendered
+    assert "all_bad=8 " not in rendered
+
+
+@pytest.mark.parametrize("pane", [discover, senses])
+def test_pane_keeps_a_comma_list_prefix_when_clipping(
+        tmp_path: Path, current_endpoint, pane) -> None:
+    """A comma-joined list keeps its leading entries rather than collapsing to none."""
+    home = tmp_path / "site"
+    _write_scan(home, [
+        {"id": "sense.runtime.renderer-coverage", "state": "drift", "kind": "read",
+         "sample": "renderers=11 drift=" + ",".join(f"mod{i}" for i in range(40))},
+    ])
+    rendered = pane(home)
+    assert "renderers=11 drift=mod0,mod1" in rendered
+    assert "… source_state=drift" in rendered
+
+
+@pytest.mark.parametrize("pane", [discover, senses])
+def test_pane_leaves_a_sample_at_the_budget_unmarked(
+        tmp_path: Path, current_endpoint, pane) -> None:
+    home = tmp_path / "site"
+    sample = "x" * 120
+    _write_scan(home, [
+        {"id": "sense.value", "state": "verified", "kind": "read", "sample": sample},
+    ])
+    rendered = pane(home)
+    assert f"sense.value: {sample} source_state=verified" in rendered
+
+
+def test_clip_sample_marks_a_cut_and_never_splits_a_field() -> None:
+    from mishe_tauftauf.seed_culture_views import _clip_sample
+    assert _clip_sample("a=1 " + "b" * 200) == "a=1…"
+    assert _clip_sample("c" * 200) == "c" * 120 + "…"
+    assert _clip_sample("short") == "short"
+
+
 def _endpoint(first: int, last: int, utc_ns: int = 1_700_000_000_000_000_000) -> dict:
     return {"clock": "CLOCK_BOOTTIME", "bounds_ns": [first, last],
             "boot_id": "12345678-1234-5678-1234-567812345678",
