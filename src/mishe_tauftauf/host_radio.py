@@ -11,6 +11,9 @@ External dialects, all read-only and bounded:
   messages for the webcam (``~/.mesh/.cam-watch.state``,
   ``~/.mesh/cam-events.log``, journald), which carry the same read-only,
   external-text character.
+* the git dialect — ``git log --oneline`` / ``-L`` ancestry output, decoded by
+  ``decode_git_log_lines`` for the served-sense staleness sense
+  (``_served_staleness`` → ``sense.runtime.pin-lag``);
 
 The decoder returns ordinary Python values and never mutates a radio. A missing
 adapter, an unreadable file or a command that does not return inside the bound is

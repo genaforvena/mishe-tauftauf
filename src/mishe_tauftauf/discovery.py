@@ -3435,15 +3435,22 @@ absence, and a retained root count stays a lower bound."""
 
 
 def _home_referenced_by_runtime(path: Path) -> bool:
-    """Whether any running process or systemd unit references this directory.
+    """Whether any running process references this directory.
 
-    A ghost home that no live process or unit references is a stale runtime
+    A ghost home that no live process references is a stale runtime
     home — its content was written by a prior activation that has since
     ended. Distinguishing 'stale' from 'active ghost' lets an operator
     tell a live hazard from an abandoned artifact.
+
+    Only ``/proc/*/cmdline`` is checked. ``systemctl --user list-units`` was
+    previously consulted, but its output exposes unit name/state/description,
+    not ExecStart or unit-file contents, so a path reference in a unit file was
+    invisible and a description that happened to matched the path produced a
+    false positive. A systemd unit whose ExecStart names this path but whose
+    description does not is therefore UNKNOWN here, not absent — the caller
+    must not read a ``False`` verdict as "no systemd unit references this".
     """
     path_str = str(path)
-    # Check /proc/*/cmdline for any process referencing this path
     try:
         for pid_dir in os.scandir("/proc"):
             if not pid_dir.name.isdigit():
@@ -3455,17 +3462,6 @@ def _home_referenced_by_runtime(path: Path) -> bool:
             if path_str.encode() in cmdline:
                 return True
     except OSError:
-        pass
-    # Check systemd user units for any referencing this path
-    try:
-        environment = os.environ.copy()
-        environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
-        result = subprocess.run(
-            ["systemctl", "--user", "list-units", "--type=service", "--no-legend", "--all"],
-            capture_output=True, text=True, timeout=5, env=environment)
-        if result.returncode == 0 and path_str in result.stdout:
-            return True
-    except (OSError, subprocess.SubprocessError):
         pass
     return False
 
