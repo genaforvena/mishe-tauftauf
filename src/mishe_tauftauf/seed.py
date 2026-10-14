@@ -856,14 +856,16 @@ def _write_handoff(path: Path, text: str) -> None:
 
 
 def yield_wake(home: Path, slug: str, wake: int, handoff_file: Path, continue_task: bool = False,
-               result: str = "unspecified") -> str:
-    handoff_text = Path(handoff_file).resolve().read_text(encoding="utf-8")
+               result: str = "unspecified", source_is_anchor: bool = False) -> str:
+    handoff_source = Path(handoff_file).resolve()
+    handoff_text = handoff_source.read_text(encoding="utf-8")
     if not handoff_text.strip():
         raise ValueError("handoff is empty")
     if result not in {"changed", "verified", "blocked", "unspecified"}:
         raise ValueError("result must be changed, verified, or blocked")
     from . import wall
-    return wall.settle(home, slug, wake, handoff_text, continue_task, result)
+    return wall.settle(home, slug, wake, handoff_text, continue_task, result,
+                       source_path=handoff_source, source_is_anchor=source_is_anchor)
 
 
 def clear(home: Path, session: str, slug: str) -> str:
