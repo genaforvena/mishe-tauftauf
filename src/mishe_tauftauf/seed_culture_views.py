@@ -430,42 +430,74 @@ def _clear_journal_stalls(home: Path) -> tuple[str, list[str]]:
     16442 — and the supervisor holds the clear in a silent loop until the
     witness 120 s budget turns the generic overdue-clear RED. Naming the stuck
     phase here gives the resolver the role, the wake and the cause one budget
-    earlier. A journal that cannot be read is monitoring damage and stays
-    UNKNOWN rather than silently passing; a healthy journal is simply absent
-    from the concern set, so an empty directory reads PASS.
+    earlier.
+
+    A committed journal naming the role's *current* settled turn is the second
+    silent hold, and the one this line could not see: `clear` writes that phase
+    only after the feed records the turn's own clear, so one naming a turn the
+    feed has not cleared cannot describe this rotation — the feed was
+    renumbered and the settled number collided with a journal from an earlier
+    numbering. The guards of a runtime without the retire path then reject
+    every retry, forever (witness settled=39741 held 09:47-15:23Z 2026-10-14
+    against an Oct-6 committed journal). Only the current settled turn is
+    judged, so the committed journals of earlier turns stay inert history
+    instead of turning this line red.
+
+    A journal that cannot be read is monitoring damage and stays UNKNOWN rather
+    than silently passing; a healthy journal is simply absent from the concern
+    set, so an empty directory reads PASS.
     """
-    causes: list[str] = []
+    from . import seed
     stuck: list[str] = []
+    collisions: list[str] = []
     unknown = ""
     now = datetime.now(timezone.utc).timestamp()
     try:
         rows = clear_journal.paths(home)
     except OSError:
         return "CLEAR JOURNAL: UNKNOWN — checks directory unreadable", []
+    turn_by_role: dict[str, tuple[object, object]] = {}
     for path in rows:
         journal = clear_journal.read(path)
         if journal is None:
             unknown = unknown or "journal unreadable"
             continue
-        if journal.get("phase") not in {"rotating", "rotated"}:
+        phase = journal.get("phase")
+        if phase not in {"rotating", "rotated", "committed"}:
             continue
         try:
             age = max(0.0, now - path.stat().st_mtime)
         except OSError:
             unknown = unknown or "journal mtime unreadable"
             continue
-        if age >= CLEAR_JOURNAL_STALL_S:
-            stuck.append(f"{journal.get('role')}/{journal.get('settled')}"
-                         f":{journal.get('phase')}:{age:.0f}s")
-    if stuck:
-        line = (f"CLEAR JOURNAL: RED stuck={','.join(stuck)} "
+        if age < CLEAR_JOURNAL_STALL_S:
+            continue
+        role = journal.get("role")
+        settled = journal.get("settled")
+        if phase in {"rotating", "rotated"}:
+            stuck.append(f"{role}/{settled}:{phase}:{age:.0f}s")
+            continue
+        if (not isinstance(role, str) or not isinstance(settled, int)
+                or isinstance(settled, bool)):
+            continue
+        if role not in turn_by_role:
+            _, _, last_yield, last_clear, *_ = seed._state(home, role)
+            turn_by_role[role] = (last_yield, last_clear)
+        last_yield, last_clear = turn_by_role[role]
+        if settled == last_yield and last_clear != settled:
+            collisions.append(f"{role}/{settled}:committed-collision:{age:.0f}s")
+    if stuck or collisions:
+        line = (f"CLEAR JOURNAL: RED stuck={','.join(stuck + collisions)} "
                 f"budget={CLEAR_JOURNAL_STALL_S:.0f}s")
         if unknown:
             # A stuck journal names the cause; an unreadable neighbour is
             # monitoring damage that must stay visible next to it, not be
             # subsumed by the red.
             line += f" — {unknown}"
-        return line, [f"clear-journal-stuck={len(stuck)}"]
+        causes = [f"clear-journal-stuck={len(stuck)}"] if stuck else []
+        if collisions:
+            causes.append(f"clear-journal-collision={len(collisions)}")
+        return line, causes
     if unknown:
         return f"CLEAR JOURNAL: UNKNOWN — {unknown}", []
     return "CLEAR JOURNAL: PASS", []

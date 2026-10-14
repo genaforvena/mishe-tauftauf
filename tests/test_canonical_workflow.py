@@ -418,6 +418,45 @@ def test_clear_journal_stall_detector_names_stuck_rotation(tmp_path):
     assert causes == []
 
 
+def test_clear_journal_detector_names_a_collided_committed_journal(tmp_path):
+    """The class that held the witness 09:47-15:23Z 2026-10-14 stays named.
+
+    A committed journal is written only after the feed records that turn's own
+    clear, so one naming the role's current settled turn is a journal from an
+    earlier feed numbering whose settled number collided. A runtime without the
+    retire path rejects every retry, so the pane names the collision instead of
+    leaving the hold to the generic overdue-clear RED.
+    """
+    import os
+    import time
+    from mishe_tauftauf import seed_culture_views as views
+    checks = tmp_path / "checks"
+    checks.mkdir()
+    settled = _settled_genome(tmp_path).sequence
+    journal = checks / f"wall-clear-genome-{settled}.json"
+    journal.write_text(json.dumps({"phase": "committed", "role": "genome",
+                                   "settled": settled}))
+    # A rotation may still be committing, so the budget holds a fresh journal.
+    assert views._clear_journal_stalls(tmp_path) == ("CLEAR JOURNAL: PASS", [])
+    old = time.time() - 120
+    os.utime(journal, (old, old))
+    line, causes = views._clear_journal_stalls(tmp_path)
+    assert line.startswith(f"CLEAR JOURNAL: RED stuck=genome/{settled}:committed-collision")
+    assert causes == ["clear-journal-collision=1"]
+    # The site keeps thousands of committed journals for earlier turns; only the
+    # current settled turn can be the collision.
+    earlier = checks / "wall-clear-genome-4.json"
+    earlier.write_text(json.dumps({"phase": "committed", "role": "genome", "settled": 4}))
+    os.utime(earlier, (old, old))
+    line, causes = views._clear_journal_stalls(tmp_path)
+    assert "genome/4" not in line
+    assert causes == ["clear-journal-collision=1"]
+    # The turn's own clear in the feed retires the concern: the journal then
+    # describes a completed rotation.
+    Feed(tmp_path).append("seed", f"seed clear genome after={settled}\nIdle mind rotated.")
+    assert views._clear_journal_stalls(tmp_path) == ("CLEAR JOURNAL: PASS", [])
+
+
 def test_fresh_seed_records_a_stable_activity_origin(tmp_path):
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     home = tmp_path / "site"
