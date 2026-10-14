@@ -378,6 +378,13 @@ P2 cell now separates the declared single bounded re-inspection from a repeated
 retry loop; the fixture measures the waiter-phase and successor-phase stub-`gh`
 call counts separately.
 
+**Prereg strength (limit, recorded):** the ordering claim above is only that no
+expected-state cell postdates the run. The fixture (`exp3b_fixture.py`,
+`exp3b_waiter.py`, `stub-gh/gh`) was written first and the prereg table committed
+~5 s before the run, so the expected cells encode the designer's expectations
+rather than a blind prediction. A stronger prereg would name the cells before the
+fixture is implemented.
+
 ### Acceptance
 
 As 3a, plus: no blind retry is bounded and *counted*; a non-answering or
