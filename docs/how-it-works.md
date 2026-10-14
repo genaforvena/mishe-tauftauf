@@ -288,9 +288,10 @@ and 7 — a measured under-report, not a claim difference. The
 turn frame carries a fetch ledger (`allowance`, `workClass`, `dispatches`,
 `upstream_failure`) that `read_native_journal` surfaces as one row per
 attempted turn — the failed turn's row rides its `model_failure` record — an
-absent ledger staying UNKNOWN rather than a synthesized zero. Eight samples
-across two windows on one route under one upstream-owned condition, with one
-surviving sample, is not a statistical claim, and terminal-status parity under
+absent ledger staying UNKNOWN rather than a synthesized zero. Nine registered
+samples across two windows (three plus six, per the two rerun reports) on one
+route under one upstream-owned condition, with one surviving sample, is not a
+statistical claim, and terminal-status parity under
 the 429 condition stays unasserted: the candidate fails closed on three of
 six where the harness oracle read the frozen run successfully. That class is
 not this plant's work class, the activation has not landed, and the pinned
