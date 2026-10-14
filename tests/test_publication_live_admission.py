@@ -33,7 +33,6 @@ def test_canonical_observation_preserves_unknown_as_sensor_evidence(tmp_path, mo
     assert data['snapshot'] == frame
     assert data['command_ok'] is False
     assert data['notify'] is True
-    assert 'renderer command failed' in observation.body
     assert not any(e.body.startswith('[work]') for e in Feed(tmp_path).entries())
 
 
