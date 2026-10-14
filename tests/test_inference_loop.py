@@ -1183,3 +1183,145 @@ def test_malformed_failure_ledger_row_is_refused(tmp_path):
     path.write_text("".join(json.dumps(row) + "\n" for row in events))
     with pytest.raises(NativeJournalError):
         read_native_journal(path)
+
+
+SECOND_LEDGER = {"allowance": 2,
+                 "workClass": "experiment-2-read-only-ci-observation",
+                 "dispatches": 1, "upstream_failure": None}
+
+
+def test_fetch_ledger_survives_resume_from_continuation(tmp_path):
+    # A resumed run must keep the prior turns' dispatch evidence: the
+    # continuation journal's checkpoint replays the prefix so the rows stay
+    # aligned, one per attempted turn, without trusting the earlier process.
+    from mishe_tauftauf.inference_transport import NativeTurn
+    ledger = {"allowance": 2, "workClass": "experiment-2-read-only-ci-observation",
+              "dispatches": 2, "upstream_failure": {"kind": "status", "status": 429,
+                                                    "statusText": "Too Many Requests"}}
+    response = turn([CALL])
+    native = NativeTurn(response.terminal, response.assistant, None, None, None, ledger)
+    path = tmp_path / "ledger.jsonl"
+    with NativeJournal(path) as journal:
+        def record(event):
+            journal(event)
+            if event["kind"] == "tool_result":
+                raise InterruptedError
+        with pytest.raises(InterruptedError):
+            drive(Session(native), record=record)
+    continued = turn()
+    second_native = NativeTurn(continued.terminal, continued.assistant,
+                               None, None, None, dict(SECOND_LEDGER))
+    second = tmp_path / "ledger-continued.jsonl"
+    with NativeJournal(second) as journal:
+        result, _ = continue_journal(path, Session(second_native), journal)
+    assert result["status"] == "complete"
+    assert result["fetch_ledger"] == [ledger, SECOND_LEDGER]
+    # The continuation journal replays the checkpoint prefix, so a resume of
+    # this file (chained continuation) keeps per-turn alignment end to end.
+    assert read_native_journal(second)["fetch_ledger"] == [ledger, SECOND_LEDGER]
+    seed = [row for row in map(json.loads, second.read_text().splitlines())
+            if row["kind"] == "checkpoint"][0]["state"]
+    assert seed["fetch_ledger"] == [ledger]
+
+
+def test_fetch_ledger_chained_continuation_keeps_alignment(tmp_path):
+    from mishe_tauftauf.inference_transport import NativeTurn
+    ledger = {"allowance": 2, "workClass": "experiment-2-read-only-ci-observation",
+              "dispatches": 2, "upstream_failure": {"kind": "status", "status": 429,
+                                                    "statusText": "Too Many Requests"}}
+    first = tmp_path / "chain-first.jsonl"
+    with NativeJournal(first) as journal:
+        def record(event):
+            journal(event)
+            if event["kind"] == "tool_result":
+                raise InterruptedError
+        response = turn([CALL])
+        native = NativeTurn(response.terminal, response.assistant, None, None,
+                            None, ledger)
+        with pytest.raises(InterruptedError):
+            drive(Session(native), record=record)
+    second = tmp_path / "chain-second.jsonl"
+    with NativeJournal(second) as journal:
+        def record_second(event):
+            journal(event)
+            if event["kind"] == "tool_result":
+                raise InterruptedError
+        call_b = {**CALL, "id": "chain-b"}
+        continued = turn([call_b])
+        continued = NativeTurn(continued.terminal, continued.assistant, None,
+                               None, None, dict(SECOND_LEDGER))
+        with pytest.raises(InterruptedError):
+            continue_journal(first, Session(continued), record_second)
+    third = tmp_path / "chain-third.jsonl"
+    with NativeJournal(third) as journal:
+        result, _ = continue_journal(second, Session(turn()), journal,
+                                     complete=lambda context: True)
+    assert result["status"] == "complete"
+    assert result["turns"] == 3
+    # Third turn is a synthetic turn with no ledger row: None stays UNKNOWN.
+    assert result["fetch_ledger"] == [ledger, SECOND_LEDGER, None]
+    assert read_native_journal(third)["fetch_ledger"] == [ledger, SECOND_LEDGER, None]
+
+
+def test_failed_turn_row_survives_resume_into_the_unknown_handoff(tmp_path):
+    # An unresolved history never constructs a provider, and its checkpoint
+    # still carries the failed turn's budget row (one more attempted turn
+    # than completed turns) into the handoff journal.
+    class TurnThenExhausted:
+        def __init__(self):
+            self.turns = iter([turn([CALL])])
+
+        def turn(self, context):
+            try:
+                return next(self.turns)
+            except StopIteration:
+                raise exhausted() from None
+
+    path = tmp_path / "exhausted-history.jsonl"
+    with NativeJournal(path) as journal:
+        with pytest.raises(WorkerError):
+            drive(TurnThenExhausted(), record=journal)
+    second = tmp_path / "handoff.jsonl"
+    with NativeJournal(second) as journal:
+        result, effects = continue_journal(path, Session(turn()), journal)
+    assert result["status"] == "unknown"
+    assert effects == []
+    # Turn 0 completed without a ledger row; the exhausted turn 1 row rides
+    # the failure record and the carried prefix into the handoff journal.
+    assert result["fetch_ledger"] == [None, EXHAUSTION_LEDGER]
+    assert read_native_journal(second)["fetch_ledger"] == [None, EXHAUSTION_LEDGER]
+    # Wire usage counts completed turns, so the failed attempt adds none,
+    # while the ledger prefix counts it: the two views keep their own scope.
+    assert read_native_journal(second)["wire_usage"] == [None]
+
+
+@pytest.mark.parametrize("prefix", [
+    7,                                   # not a list at all
+    [7, None],                           # entry neither dict nor None
+    [],                                  # fewer rows than turns
+    [None, EXHAUSTION_LEDGER, None],     # more rows than attempted turns
+])
+def test_malformed_checkpoint_fetch_ledger_prefix_is_refused(tmp_path, prefix):
+    class TurnThenExhausted:
+        def __init__(self):
+            self.turns = iter([turn([CALL])])
+
+        def turn(self, context):
+            try:
+                return next(self.turns)
+            except StopIteration:
+                raise exhausted() from None
+
+    path = tmp_path / "exhausted-history.jsonl"
+    with NativeJournal(path) as journal:
+        with pytest.raises(WorkerError):
+            drive(TurnThenExhausted(), record=journal)
+    second = tmp_path / "handoff.jsonl"
+    with NativeJournal(second) as journal:
+        continue_journal(path, Session(turn()), journal)
+    rows = [json.loads(line) for line in second.read_text().splitlines()]
+    rows[0]["state"]["fetch_ledger"] = prefix
+    tampered = tmp_path / "tampered.jsonl"
+    tampered.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    with pytest.raises(NativeJournalError):
+        read_native_journal(tampered)
