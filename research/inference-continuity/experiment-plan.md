@@ -387,7 +387,23 @@ durable record.
 
 ### Status
 
-**Preregistered 2026-10-14 (wake 42838) before execution**; result recorded below
-after the run.
+**Preregistered 2026-10-14 (wake 42838) before execution** (`a070479`, `4bfd171`);
+**executed twice** on `scratch/exp3b-wake42838/` with identical results on every
+field. Observed: P1 no obligation invented (0 waiting records, 0 `gh` calls); P2
+killed **inside** the blocked `gh` call (`killed_inside_wait=true`, 1 call) → one
+sequence-2 `waiting` record preserved, successor's single bounded re-inspection
+timed out, record kept open + UNKNOWN, re-statement idempotent (1 record, +1
+control entry); P3 the same durable shape as P2 → same-operation re-inspection
+answered `pass` and the plant's `task_state.set_step` released the record
+(`waiting` → `ready`, sequence 3); C (persistent transport failure) → the plant's
+bounded loop ran exactly 5 attempts and `ci_watch.read()` returned
+`{"state":"unknown", detail: "Post \"…/graphql\": EOF"}`, successor kept UNKNOWN.
+Deviation: the successor re-inspection in C was truncated by the fixture's
+declared 8 s cap after 4 calls (decision unchanged); per-point `retry_event`
+makes P2/P3 records shape-identical, not byte-identical. Acceptance: all criteria
+pass; no exactly-once claim. Limits: synthetic effect side, scripted successor,
+read-only effect, n=2, one host. Evidence:
+`artifacts/inference-research-wake42838-exp3b-plant-own-wait.md`;
+`scratch/exp3b-wake42838/results-run{1,2}.json`.
 
 ## Future experiments (not yet planned)
