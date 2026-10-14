@@ -388,8 +388,8 @@ durable record.
 ### Status
 
 **Preregistered 2026-10-14 (wake 42838) before execution** (`a070479`, `4bfd171`);
-**executed twice** on `scratch/exp3b-wake42838/` with identical results on every
-field. Observed: P1 no obligation invented (0 waiting records, 0 `gh` calls); P2
+**executed three times** on `scratch/exp3b-wake42838/` (the third after bounding the
+stub's orphan lifetime to 30 s) with identical results on every field. Observed: P1 no obligation invented (0 waiting records, 0 `gh` calls); P2
 killed **inside** the blocked `gh` call (`killed_inside_wait=true`, 1 call) → one
 sequence-2 `waiting` record preserved, successor's single bounded re-inspection
 timed out, record kept open + UNKNOWN, re-statement idempotent (1 record, +1
@@ -404,6 +404,6 @@ makes P2/P3 records shape-identical, not byte-identical. Acceptance: all criteri
 pass; no exactly-once claim. Limits: synthetic effect side, scripted successor,
 read-only effect, n=2, one host. Evidence:
 `artifacts/inference-research-wake42838-exp3b-plant-own-wait.md`;
-`scratch/exp3b-wake42838/results-run{1,2}.json`.
+`scratch/exp3b-wake42838/results-run{1,2,3}.json`.
 
 ## Future experiments (not yet planned)
