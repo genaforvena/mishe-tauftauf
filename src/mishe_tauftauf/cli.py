@@ -141,11 +141,22 @@ def cmd_wall(args) -> int:
             args.file = _staging_notes(args.home, args.source, args.file)
         else:
             anchor = None
+        anchor_stat = anchor.stat() if anchor is not None else None
         text = args.file.read_text(encoding="utf-8") if args.file else args.text
         print(wall.message(args.home, args.source, args.to, text).sequence)
-        # Consume the staging anchor after successful send so a second send requires re-staging
+        # Consume the staging anchor after successful send so a second send requires
+        # re-staging. Verify inode+mtime before unlink: if the anchor was restaged
+        # mid-flight, keep the newer bytes and warn instead of destroying them.
         if anchor is not None:
-            anchor.unlink()
+            try:
+                current = anchor.stat()
+            except FileNotFoundError:
+                pass  # already consumed externally
+            else:
+                if current.st_ino == anchor_stat.st_ino and current.st_mtime == anchor_stat.st_mtime:
+                    anchor.unlink()
+                else:
+                    print(f"warning: staging anchor {anchor} changed during send; not consumed")
     elif args.wall_command == "retry":
         wall.retry(args.home, args.owner)
     elif args.wall_command == "outcome":
