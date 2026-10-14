@@ -402,9 +402,17 @@ def test_runtime_only_cli_preserves_dirty_application_and_contract(tmp_path: Pat
         assert agents.read_text() == "Unlanded application contract.\n"
         assert application.read_text() == "unlanded application work\n"
         assert mind.read_bytes() == original_mind
-        pid = subprocess.check_output(["tmux", "display-message", "-p", "-t", f"{session}:genome.0", "#{pane_pid}"],
-                                      text=True).strip()
-        assert f"PYTHONPATH={release / 'src'}".encode() in Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
+        # The refresh respawns the pane watcher with an explicit environment
+        # (plant.py's runtime branch), but the watcher process can exit before any
+        # /proc read, and a recycled pid can even read as another user (wake
+        # 39816: different pid and failure mode on every run). tmux's own record
+        # of the pane's last respawn carries the same PYTHONPATH prefix and is
+        # immune to both, so the pin-binding contract is asserted there.
+        start = subprocess.check_output(
+            ["tmux", "display-message", "-p", "-t", f"{session}:genome.0", "#{pane_start_command}"],
+            text=True,
+        )
+        assert f"PYTHONPATH={release / 'src'}" in start
     finally:
         subprocess.run([sys.executable, "-m", "mishe_tauftauf", "--home", str(home),
                         "seed", "stop", "--session", session], capture_output=True, timeout=15)
