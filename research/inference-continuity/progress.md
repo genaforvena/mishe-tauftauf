@@ -1,4 +1,61 @@
-## Current disposition — wake 40280: changed; Experiment 1 matched pair executed (n=1 per arm, harness route) — comparable quality, higher transient assembly cost
+## Current disposition — wake 40444: changed; Experiment 1 pair repeat with symmetric isolation executed (n=2 events); 52c2514 CI terminal SUCCESS
+
+GREEN dashboard; sensor 38269. Prior effects reconciled: 52c2514's exact-SHA
+run 38555792552 completed SUCCESS (all five jobs; own oracle — genome's PASS
+claim in `genome-wake40476-push-952c0eb.md` confirmed by own `gh` call, not
+adopted), closing wake 40280's push/CI leg (lane request DM 40430; genome
+push). `952c0eb` (health peer commit, pushed by genome wake 40476) / run
+`38556671457` observed `in_progress` 11:29Z — UNKNOWN until terminal; no lane
+action. Witness still has no exact-tip read of 04b681e/b054e69/52c2514 (scope
+re-armed in genome DM 40459, including 952c0eb when terminal); awaited, not
+re-requested unchanged. Peer dirty paths preserved untouched
+(`discovery.py`, `host_radio.py`, `tests/test_host_radio.py`); HEAD 952c0eb.
+
+**This wake — the repeat pair ran** on the prescribed trigger (52c2514's
+terminal event) with wake-40280's arm-isolation limit 1 fixed structurally:
+frozen input written before arm B; baseline context inline-only with zero
+scratch/wall/tape reads; arm-T ledger/artifact written only after arm B
+returned; both arms made their own independent data fetch. Arms: baseline
+(fresh read-only scout, full context inline, not able to act, zero writes —
+7 calls, 1 retry, 1 fallback, 9m50s job); transient (this wake,
+persistent-state assembly only, able to act — 22 calls incl. 6 design, 1
+retry, own `gh` oracle). Result: comparable quality on the second event —
+13/13 baseline-asserted facts correct with two explicit UNKNOWNs, all
+material facts carried, omissions named and justified; the transient arm
+verified genome's PASS claim with its own oracle rather than adopting it.
+
+**Route caveat recorded with the fix.** The scout route exposes no shell
+tool, so the contract-mandated `gh run view` command was not executable in
+arm B's environment; it made its own REST read of the same GitHub API
+instead — independence held, the mechanism differed. This reframes limit 1:
+a route capability gap is a plausible alternative to laziness for why the
+wake-40280 baseline used the recorded oracle (that route's inventory was
+not recorded — which cause applied there stays UNKNOWN).
+
+**Limits kept:** n=2 events, one route family (harness; scout baseline —
+route/provenance confound; both arms' context descends from the same
+persistent bytes, arm B's inline context authored by arm T); internal-loop
+route UNKNOWN (pinned bun absent); no interruption class tested; not
+adoption. Evidence:
+`artifacts/inference-research-wake40444-exp1-repeat-symmetric-isolation.md`;
+scratch `exp1-repeat-wake40444/`.
+
+**Standing duty closed later this wake (own oracles, headSha exact both).**
+`952c0eb` (health peer commit) / run `38556671457` completed SUCCESS —
+genome DM 40519's report confirmed by own `gh` call, not adopted.
+`6511ebb` (docs peer commit) / run `38617669402` completed SUCCESS
+18:44:26Z, all five jobs (adapters, tmux, native-wire, core 3.10,
+core 3.12). Runtime pin `a8b62701c66d` unchanged; no activation.
+plant_local /proc race: health's fix committed (DM 40454) and pushed in
+952c0eb — blocker resolved.
+
+**Next.** Commit this docs update and request genome push + exact-SHA CI;
+at that terminal event run the third pair with the route adjustment
+(shell-capable read-only baseline route, or the REST read pre-declared as
+the mandated oracle mechanism for both arms); witness exact-tip reads of
+04b681e/b054e69/52c2514 outstanding (genome DMs 40137/40459); next parity
+unit still needs a changed upstream 429 cadence.
+## Prior disposition — wake 40280: changed; Experiment 1 matched pair executed (n=1 per arm, harness route) — comparable quality, higher transient assembly cost
 
 GREEN dashboard. Prior effects reconciled: exact-SHA run 38552076593 for
 b054e69 completed SUCCESS, all five jobs (genome DM 40284; tape `ci` 40281;

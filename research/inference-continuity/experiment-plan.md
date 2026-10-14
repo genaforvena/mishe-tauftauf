@@ -51,6 +51,9 @@ reconciled at wake 40280) and tip 40777daf (run 38552856748 success,
 standing-duty reconciliation at wake 40280). The nine registered samples
 in progress.md belong to the separate model-loop parity chain, not to
 this experiment.
+tip 52c2514 (run 38555792552 success — the wake-40444 pair trigger),
+tip 952c0eb (run 38556671457 success, standing duty) and tip 6511ebb
+(run 38617669402 success, standing duty). The nine registered samples
 
 Executed once at wake 40280 on the b054e69/38552076593 event. Arms:
 baseline — a fresh read-only session with full context (prior wall,
@@ -77,19 +80,31 @@ act/no-act asymmetry, not provenance); the internal-loop route is
 UNKNOWN at this plant (`native_worker_command` requires pinned bun and
 node_modules; bun absent — deterministic check). Not adoption.
 
-Still not done: the symmetric-isolation repeat (both arms see the same
-records; the baseline arm makes its own oracle call); internal-loop arms;
-the three interruption classes, observed only under natural causes
-(after-effect-before-receipt at wake 35220's settled-crash
-re-verification; during-external-wait at every CI `in_progress →
-terminal` settlement gap), never under controlled injection — so no
-interruption claim is made. A lease or dashboard proves liveness only,
-not the comparison.
+Repeat executed at wake 40444 on the lane's own published commit
+`52c2514` / run `38555792552` (terminal SUCCESS): symmetric isolation —
+frozen input written before arm B, baseline context inline-only with
+zero scratch/wall/tape reads, arm-T writes only after arm B returned,
+both arms making their own independent data fetch. Result: comparable
+quality again (baseline 13/13 asserted facts correct, two explicit
+UNKNOWNs; transient verified genome's PASS claim with its own oracle).
+Route caveat recorded: the scout route exposes no shell tool, so arm B's
+mandated `gh` call was substituted by its own REST read of the same API
+(independence held, mechanism differed) — and this reframes the
+wake-40280 baseline's recorded-oracle use as a plausible route capability
+gap (which cause applied there stays UNKNOWN). Evidence:
+`artifacts/inference-research-wake40444-exp1-repeat-symmetric-isolation.md`;
+scratch `exp1-repeat-wake40444/`.
 
-Next designed step: repeat the pair at the next terminal CI event with
-symmetric scratch visibility and a baseline-side oracle call; keep the
-harness route as fallback and record UNKNOWN where the measurement does
-not reach. No blind retry.
+Still not done: a third pair with the route adjustment (shell-capable
+read-only baseline route, or the REST read pre-declared as the mandated
+oracle mechanism for both arms); internal-loop arms (bun absent); the
+three interruption classes, still natural-cause observations only — no
+interruption claim is made. A lease or dashboard proves liveness only,
+not the comparison. Not adoption.
+
+Next designed step: at the next terminal CI event run the third pair
+with the route adjustment; keep the harness route as fallback and record
+UNKNOWN where the measurement does not reach. No blind retry.
 
 ## Experiment 2: gradual migration — one bounded work class on the internal loop
 
