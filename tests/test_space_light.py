@@ -481,17 +481,22 @@ def test_notification_recheck_names_a_sustained_freeze(tmp_path):
     assert record_path.read_text(encoding="utf-8") == stored
 
 
-def test_notification_recheck_keeps_a_seconds_wide_gap_a_gap(tmp_path):
-    """A recent retained observation, or an advancing cursor, keeps the
-    single-read name through the notification re-read as well."""
+def test_notification_recheck_names_a_cursor_only_advance_a_freeze(tmp_path):
+    """A cursor-only advance with the light sequence unmoved names a freeze
+    through the notification re-read as well, and does not re-arm the
+    streak's origin."""
     row = null_gap_now(tmp_path)
     record_path = tmp_path / "discovery" / "space-light-stream.json"
-    for overrides in ({"read_epoch_s": time.time() - 5}, {"cursor": 11}):
-        retain_null_streak(record_path, **overrides)
-        notify(tmp_path, row)
-        line = unknown_reading_line(Feed(tmp_path).entries()[-1].body)
-        assert "light-null-gap" in line
-        assert "light-stream-frozen" not in line
+    stored = retain_null_streak(
+        record_path, read_epoch_s=time.time() - discovery.SPACE_FROZEN_MIN_SECONDS - 1)
+    data = json.loads((tmp_path / "body" / "space.json").read_text())
+    data["nodes"][0]["cursor"] = data["nodes"][0]["cursor"] + 2
+    (tmp_path / "body" / "space.json").write_text(json.dumps(data), encoding="utf-8")
+    notify(tmp_path, row, row, now=time.time())
+    line = unknown_reading_line(Feed(tmp_path).entries()[-1].body)
+    assert "light-stream-frozen" in line
+    assert "light-null-gap" not in line
+    assert record_path.read_text(encoding="utf-8") == stored
 
 
 def test_gap_to_freeze_reports_a_duration_class_change(tmp_path):
