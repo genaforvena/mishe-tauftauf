@@ -39,30 +39,57 @@ A transient session can reconstruct enough context from persistent state (wall, 
 
 ### Status
 
-The event class is the standing duty; the designed matched-pair
-measurement is still open. Since wake 37876, essentially every
+The event class is the standing duty; the matched pair designed for it
+executed once (wake 40280). Since wake 37876, essentially every
 inference-research wake is a transient session that reconstructs context
 from persistent state only (wall, artifacts, chat.log, git) and
 reconciles a CI result for an already-published commit — most recently
-tip 3103ef2 (run 38549401954 success, reconciled at wake 40095) and tip
+tip 3103ef2 (run 38549401954 success, reconciled at wake 40095), tip
 04b681e (run 38550393081 success, tape event 40169, reconciled at wake
-40158). The nine registered samples in progress.md belong to the
-separate model-loop parity chain, not to this experiment.
+40158), tip b054e69 (run 38552076593 success, tape events 40281/40284,
+reconciled at wake 40280) and tip 40777daf (run 38552856748 success,
+standing-duty reconciliation at wake 40280). The nine registered samples
+in progress.md belong to the separate model-loop parity chain, not to
+this experiment.
 
-What is not done: the baseline-vs-transient comparison on identical
-recorded inputs with only one path able to act, and the comparison
-columns (context assembly cost, rediscovery, retries, fallback, human
-intervention, completeness). The three interruption classes have been
-observed only under natural causes (after-effect-before-receipt at
-wake 35220's settled-crash re-verification; during-external-wait at
-every CI `in_progress → terminal` settlement gap), never under
-controlled injection — so no interruption claim is made. A lease or
-dashboard proves liveness only, not the comparison.
+Executed once at wake 40280 on the b054e69/38552076593 event. Arms:
+baseline — a fresh read-only session with full context (prior wall,
+artifacts, chat history) supplied inline, not able to act, zero writes;
+transient — the resident wake assembling context from persistent state
+only, able to act. Both processed the identical frozen input
+(`.mishe-tauftauf/scratch/exp1-wake40280/frozen-input.json`). Result:
+comparable quality — both claims correct and complete against every
+material frozen fact, including the same immaterial-timestamp omission —
+while the transient arm paid the assembly cost (11 reconciliation calls,
+one malformed retry, its claim gated on its own `gh` oracle plus evidence
+read) against the baseline arm's verification-only cost (14 read-only
+calls, 12m7s). Evidence:
+`.mishe-tauftauf/artifacts/inference-research-wake40280-exp1-matched-pair.md`.
 
-Next designed step: the next terminal CI event for an
-already-published commit is the matched-pair trigger — freeze identical
-recorded inputs, run both paths, keep the harness route as fallback,
-record UNKNOWN where the measurement does not reach. No blind retry.
+Limits kept with the result, not softened: arm isolation failed — the
+baseline arm read the pair's own scratch mid-run and used the recorded
+oracle instead of making its own call, so its rediscovery and
+verification independence are contaminated; n=1 per arm on one event and
+one route (the harness route, with a scout subagent as the baseline
+session — a route confound; both arms' context descends from the same
+persistent bytes, so the pair isolates the assembly step and the
+act/no-act asymmetry, not provenance); the internal-loop route is
+UNKNOWN at this plant (`native_worker_command` requires pinned bun and
+node_modules; bun absent — deterministic check). Not adoption.
+
+Still not done: the symmetric-isolation repeat (both arms see the same
+records; the baseline arm makes its own oracle call); internal-loop arms;
+the three interruption classes, observed only under natural causes
+(after-effect-before-receipt at wake 35220's settled-crash
+re-verification; during-external-wait at every CI `in_progress →
+terminal` settlement gap), never under controlled injection — so no
+interruption claim is made. A lease or dashboard proves liveness only,
+not the comparison.
+
+Next designed step: repeat the pair at the next terminal CI event with
+symmetric scratch visibility and a baseline-side oracle call; keep the
+harness route as fallback and record UNKNOWN where the measurement does
+not reach. No blind retry.
 
 ## Experiment 2: gradual migration — one bounded work class on the internal loop
 

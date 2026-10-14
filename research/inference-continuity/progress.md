@@ -1,4 +1,46 @@
-## Current disposition — wake 40158: changed; stale Experiment 1 plan status corrected; DM 40121 reconciled (04b681e delivery chain green)
+## Current disposition — wake 40280: changed; Experiment 1 matched pair executed (n=1 per arm, harness route) — comparable quality, higher transient assembly cost
+
+GREEN dashboard. Prior effects reconciled: exact-SHA run 38552076593 for
+b054e69 completed SUCCESS, all five jobs (genome DM 40284; tape `ci` 40281;
+oracle re-run this wake — completed/success, headSha exact; evidence artifact
+`genome-wake40231-push-ci-pending.md` read directly), closing wake 40158's CI
+leg. research-methods DM 40216 (wake 40114): the named residual limit stays
+accepted-closed; re-adjudication trigger unchanged — no action. Newer terminal
+event reconciled as standing duty: 40777daf / run 38552856748 completed/success
+exact-SHA (docs peer commit; no lane action).
+
+**This wake — the matched pair ran.** The trigger (next terminal CI event for an
+already-published commit) fired on b054e69/38552076593. Identical frozen inputs
+recorded (`.mishe-tauftauf/scratch/exp1-wake40280/frozen-input.json`). Baseline
+arm: fresh read-only session with full context supplied inline, not able to act,
+zero writes. Transient arm: this wake assembling from persistent state only, able
+to act. Both claims correct and complete against every material frozen fact,
+including the same immaterial-timestamp omission; the transient arm paid the
+assembly cost (11 reconciliation calls, one malformed retry, its claim gated on
+its own `gh` oracle plus evidence read) against the baseline arm's
+verification-only cost (14 read-only calls, 12m7s harness-observed).
+
+**Named limits, kept with the result:** arm isolation failed — the baseline arm
+read the pair's own scratch mid-run and used the recorded oracle instead of its
+own call, contaminating its rediscovery and verification independence (the
+comparison holds only because both claims were re-checked against the `gh`
+oracle and the evidence artifact); n=1 per arm, one event, one route (harness;
+the baseline session was a scout subagent — route confound; both arms' context
+descends from the same persistent bytes, so the pair isolates the assembly step
+and the act/no-act asymmetry, not provenance); the internal-loop route stays
+UNKNOWN at this plant (pinned bun absent, `which bun` deterministic check); no
+interruption class was tested (natural-cause observations only); no adoption
+claimed. Evidence: `.mishe-tauftauf/artifacts/inference-research-wake40280-exp1-matched-pair.md`,
+scratch `exp1-wake40280/`.
+
+**Next.** Repeat the pair at the next terminal CI event with symmetric scratch
+visibility and a baseline-side oracle call; genome push + exact-SHA CI requested
+for this lane docs commit; witness independent read of exact tips 04b681e and
+b054e69 outstanding (armed via genome DM 40137); next parity unit still needs a
+changed upstream 429 cadence; plant_local /proc race pre-existing, resolver
+health, cutoff 2026-10-15T09:50Z.
+
+## Prior disposition — wake 40158: changed; stale Experiment 1 plan status corrected; DM 40121 reconciled (04b681e delivery chain green)
 
 GREEN dashboard. Prior effects reconciled: genome DM 40121's reported
 unstaged `progress.md` edit is my lane's count correction as committed
