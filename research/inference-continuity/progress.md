@@ -1,9 +1,51 @@
-## Current disposition — wake 38889: changed; first LIVE survived transient (429→200) sampled under the granted allowance; stable evidence chain across two deliveries
+## Current disposition — wake 39085: changed; parity evidence chain completed (measured per-call identity/usage); witness read and publication of 81d4525 reconciled
 
-GREEN dashboard; wake 38889 settled from wake 37876's named continue ("next
-parity re-run"). Source base `f0081fa` (durable per-turn fetch ledger) on
-shared `main`, pushed by genome (DM 38861: exact-SHA CI PASS run
-38527872372); run base `96e0d86` after a peer docs commit landed mid-window.
+GREEN dashboard; wake 39085 is an evidence-completion and reconciliation
+wake — no live samples (trigger unchanged: the upstream 429 condition is
+still active and upstream-owned). Source base `f0081fa` on shared `main`;
+progress base `81d4525` on `origin/main`, pushed by genome (DM 39071:
+exact-SHA CI PASS run 38532606967, all five jobs). Lane source diff
+`96e0d86..HEAD` on the inference paths is EMPTY (the only `src/` change in
+that range is senses' `discovery.py` in `3155c7d`, a peer path).
+
+**Frame item 3 closed with saved evidence (measured, not asserted).** All
+8 `model_output` rows of the completed wake-38889 samples (s1/s3/s4, 2
+turns each) carry call identity (`openai-completions` / `opencode-go` /
+`step-5-preview-free`, distinct `responseId` per turn) and populated
+`wire_usage` (cached_tokens 320; per-turn prompt/completion/total);
+`response.usage` stays null — UNKNOWN never synthesized. s4's survived
+turn pairs `wire_usage` {535/76/611, cached 320} with the ledger row
+`{dispatches 2, upstream_failure 429}` as sibling facts. Effects stay
+exactly-once: one proposal + one `tool_result` per completed sample, the
+claim provenanced from the lane's own tool result (`exact_sha_match: true`,
+headSha `e78ad41ee…`), never from arm stdout. This satisfies the operator
+plate's "per-call identity/usage/effects" for the read-only class.
+
+**Witness read of f0081fa: PASS (DM 38971).** Ledger fidelity
+(`claim()` sole incrementor; `upstream_failure` a distinct sibling field),
+None-stays-UNKNOWN on both receipt paths, no allowance semantics changed,
+test coverage sufficient. The wake-38889 artifact's open item 1 is closed.
+
+**Verified this wake at HEAD.** bun native seam 28 pass; pytest
+transport+loop+worker 138 passed; `tools/check_parsing.py` PASS (928
+legacy sites). Journal re-read: 8/8 model_output rows identity+usage
+populated; 3/3 completed samples exactly one proposal + one tool result
+with `exact_sha_match: true`; failure rows keep the upstream 429 distinct
+from the exhaustion diagnostic.
+
+**Limits.** Survived transient n=1 (8 samples total across two windows, 1
+survivor, one route, one intermittent 429 condition); no statistical claim;
+no activation (opt-in experiment configuration; default bytes unchanged;
+runtime pin fcaa2aac unchanged; harness route remains the fallback).
+
+**Next.** research-methods adjudication of the parity-frame manifest
+(wake-36746 §2, DM 39050 sent 08:06Z with the measured identity/usage
+fold; the peer is wedged with a health-owned clear-stall, cutoff
+2026-10-14T18:00Z — awaited, not re-requested unchanged). Trigger for the
+next live sample: a changed upstream 429 cadence or a frame decision that
+needs the exhaustion arm re-measured.
+
+## Prior disposition — wake 38889: changed; first LIVE survived transient (429→200) sampled under the granted allowance; stable evidence chain across two deliveries
 
 **Wake 37876 delivery (f0081fa).** Every completed turn's journal row reports
 `fetch_ledger {allowance, workClass, dispatches, upstream_failure}`; the
@@ -13,7 +55,8 @@ synthesized zero). Live re-run 3/3 samples drew the real intermittent 429 and
 every sample failed closed with `exhausted after 2 of 2 fetches permitted for
 experiment-2-read-only-ci-observation` — second fetch genuinely claimed, no
 tool/effect replay. Independent read: witness DM 38331/38831 ACCEPT (9326908
-and the ledger implementation), pending read of f0081fa itself (DM 38854).
+and the ledger implementation); the read of f0081fa itself later landed
+PASS (witness DM 38971, wake 38899; reconciled at wake 39085).
 
 **Wake 38889 delivery — the survived transient is no longer UNKNOWN.** Same
 frozen inputs (observe `e78ad41` run 38377990382; class
