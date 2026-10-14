@@ -828,11 +828,12 @@ exit, text that does not decode, a backend state other than `Running`, or a
 missing `Self` is a named problem and UNKNOWN. The rendezvous cursor is not
 readable from this host, so the sense reports reachability only: an offline
 peer beside a frozen light cursor and a frozen cursor with every peer online
-are not distinguished here. Both senses were committed on `main` as
-`f4013a3` and `9b44a95` while the served runtime pin is older, so a deployed
-`discover show` does not print them yet
-(`sense.runtime.pin-lag` names the gap: `lag=90 age=31h59m` at
-2026-10-14T11:38Z).
+are not distinguished here. Both senses were committed on `main` as `f4013a3` (`sense.net.ethernet`) and
+`9b44a95` (`sense.net.tailnet-peer`) and are live at the served runtime pin
+`6511ebb`: the 2026-10-14T19:12Z scan reads both verified
+(`enp42s0=up/admin-up/1000Mb/s/carrier-1`; backend `Running`, 11 peers, 3
+online). `sense.runtime.pin-lag` still tracks the gap between `main` and the
+pin for any newer sense.
 
 The camera reading is a fault reading, not a picture: `mesh-cam-watch` keeps a
 class line and the latest artifact, and the health view reads that artifact's
