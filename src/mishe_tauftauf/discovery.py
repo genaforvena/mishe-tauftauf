@@ -3434,21 +3434,19 @@ reading. A truncated enumeration that examined no ghost tree cannot claim
 absence, and a retained root count stays a lower bound."""
 
 
-def _home_referenced_by_runtime(path: Path) -> bool:
-    """Whether any running process references this directory.
+def _home_referenced_by_process(path: Path) -> bool:
+    """Whether a running process names this directory.
 
-    A ghost home that no live process references is a stale runtime
-    home — its content was written by a prior activation that has since
-    ended. Distinguishing 'stale' from 'active ghost' lets an operator
-    tell a live hazard from an abandoned artifact.
-
-    Only ``/proc/*/cmdline`` is checked. ``systemctl --user list-units`` was
-    previously consulted, but its output exposes unit name/state/description,
-    not ExecStart or unit-file contents, so a path reference in a unit file was
-    invisible and a description that happened to matched the path produced a
-    false positive. A systemd unit whose ExecStart names this path but whose
-    description does not is therefore UNKNOWN here, not absent — the caller
-    must not read a ``False`` verdict as "no systemd unit references this".
+    Only ``/proc/*/cmdline`` is read, so a ``False`` verdict means exactly "no
+    running process names this path" and nothing more. A systemd unit whose
+    ``ExecStart`` (or ``WorkingDirectory``/``Environment``) names the path but
+    that is not running, a system unit, a timer and every other non-process
+    reference are invisible here. ``systemctl --user list-units`` was previously
+    consulted too, but its output exposes unit name/state/description, not
+    ExecStart or unit-file contents, so a path in a unit file stayed invisible
+    while a description that happened to match the path produced a false
+    positive. The caller must never read a ``False`` verdict as "no runtime
+    references this" or "the ghost is abandoned".
     """
     path_str = str(path)
     try:
@@ -3499,6 +3497,13 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
     reserved root that is itself a symlink is recorded by name and never
     traversed either: its content lives outside the checkout, so reading its
     names, counts and ages would report external state under a checkout name.
+
+    A ghost no running process names is reported ``no-process``: the process
+    scan (:func:`_home_referenced_by_process`) is the only reference signal read
+    here, so the sample names what it checked and never calls the ghost
+    ``stale`` or abandoned. An installed systemd unit that names the path, a
+    system unit, a timer or any other non-process configuration is UNKNOWN here,
+    not absent, so this label is not a disposition to delete the tree.
     """
     if now is None:
         now = time.time()
@@ -3643,12 +3648,15 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
         (holding if files else empty).append(entry.name)
         if capped or work_truncated:
             break  # identity lists hold at most the examined trees
-    # Classify ghosts as stale (no runtime reference) or active
-    stale: list[str] = []
+    # Name the ghosts no running process holds. The process scan is the only
+    # runtime signal read here, so a miss is ``no-process`` — never ``stale`` or
+    # ``abandoned``. A configured-but-not-running unit and every other
+    # non-process reference stay UNKNOWN, not absent.
+    no_process: list[str] = []
     for name in ghosts:
         tree = Path(checkout / name)
-        if not _home_referenced_by_runtime(tree):
-            stale.append(name)
+        if not _home_referenced_by_process(tree):
+            no_process.append(name)
 
     if checkout_truncated and not ghosts:
         return {"id": "sense.site.ghost-homes", "state": "unknown", "kind": "read",
@@ -3669,8 +3677,8 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
     parts.append("holding=" + named(holding))
     if empty:
         parts.append("empty=" + named(empty))
-    if stale:
-        parts.append("stale=" + named(stale))
+    if no_process:
+        parts.append("no-process=" + named(no_process))
 
     parts.append(f"nested={len(nested)}{'+' if nested_truncated else ''}")
     if symlinked:
@@ -3688,7 +3696,7 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
             "ghosts": sorted(ghosts), "files": files_per_ghost, "total": total,
             "holding": sorted(holding), "empty": sorted(empty),
             "nested": sorted(nested),
-            "stale": sorted(stale),
+            "no_process": sorted(no_process),
 
             "files_at_least": capped or work_truncated or bool(symlinked),
             "roots_at_least": roots_at_least,

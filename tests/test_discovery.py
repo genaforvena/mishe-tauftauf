@@ -4345,9 +4345,30 @@ def test_ghost_site_homes_drift_names_a_reserved_home_that_is_not_this_site(tmp_
     assert reading["total"] == 1
     assert reading["nested"] == []
     assert reading["newest"][".mishe-tauftauft"]["age_s"] == 7_200
-    assert "ghost-homes=1 files=1 holding=.mishe-tauftauft stale=.mishe-tauftauft nested=0" in reading["sample"]
+    assert "ghost-homes=1 files=1 holding=.mishe-tauftauft no-process=.mishe-tauftauft nested=0" in reading["sample"]
     assert "newest=.mishe-tauftauft age=2h0m" in reading["sample"]
     assert reading["files_at_least"] is False
+
+
+def test_ghost_site_homes_no_process_excludes_a_ghost_a_running_process_names(monkeypatch, tmp_path):
+    """A ghost a running process names drops out of the ``no-process`` list.
+
+    The reference scan is process-only, so its miss is labelled ``no-process``,
+    never ``stale``: a configured-but-not-running unit stays UNKNOWN. A hit must
+    not be reported under that miss label.
+    """
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / ".mishe-tauftauf"
+    home.mkdir(parents=True)
+    _ghost_tree(tmp_path, ".mishe-tauftauft", {"walls/senses.md": "ghost wall\n"}, 1_000.0)
+
+    monkeypatch.setattr(discovery, "_home_referenced_by_process",
+                        lambda path: Path(path).name == ".mishe-tauftauft")
+    reading = discovery._ghost_site_homes(home)
+    assert reading["ghosts"] == [".mishe-tauftauft"]
+    assert reading["no_process"] == []
+    assert "no-process=" not in reading["sample"]
 
 
 def test_ghost_site_homes_counts_nested_ghost_directories(tmp_path):
@@ -4550,7 +4571,7 @@ def test_ghost_site_homes_names_a_reserved_root_symlink_without_traversing_it(tm
     assert "external-dir" not in reading["sample"]
     # One unmeasured root makes the file count a lower bound, not an exact 0.
     assert reading["files_at_least"] is True
-    assert ("ghost-homes=1 files>=0 holding=none stale=.mishe-tauftauft nested=0 symlink=.mishe-tauftauft"
+    assert ("ghost-homes=1 files>=0 holding=none no-process=.mishe-tauftauft nested=0 symlink=.mishe-tauftauft"
             in reading["sample"])
 
 
