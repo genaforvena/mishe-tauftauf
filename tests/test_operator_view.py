@@ -130,6 +130,27 @@ def test_ensure_uses_selected_runtime_and_refuses_missing_renderer(tmp_path, mon
     assert not (tmp_path / "operator").exists()
 
 
+def test_ensure_refuses_renderer_when_spawn_interpreter_lacks_wcwidth(tmp_path, monkeypatch):
+    # Wake 40528: the unit interpreter lacked wcwidth, every respawn died at
+    # the viewport import, and the supervisor flap-looped pane-stopped-or-dead.
+    # ensure must refuse at the pane boundary instead of installing the pane.
+    from mishe_tauftauf import operator_view
+    spawned = []
+    def fake_tmux(*args, **kwargs):
+        spawned.append(args)
+        return CompletedProcess(args, 0, b"%shell\n")
+    monkeypatch.setattr(operator_view, "await_owned", lambda *a: True)
+    monkeypatch.setattr(operator_view, "_tmux", fake_tmux)
+    monkeypatch.setattr(operator_view, "package_for", lambda *a: tmp_path / "pinned/src")
+    monkeypatch.setattr(operator_view, "_renderer_dependency_error",
+                        lambda: ModuleNotFoundError("No module named 'wcwidth'"))
+    with pytest.raises(ValueError, match=r"cannot load the renderer dependency wcwidth"):
+        operator_view.ensure(tmp_path, "owned", "operator")
+    assert not any("split-window" in str(a) or "respawn-pane" in str(a) for a in spawned)
+    assert not (tmp_path / "top-pains" / "operator").exists()
+
+
+
 def test_operator_renderer_participates_in_existing_lease_detector(tmp_path, monkeypatch):
     from datetime import datetime, timedelta, timezone
     import json
