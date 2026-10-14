@@ -6260,6 +6260,20 @@ def test_gate_latency_no_tape_is_unknown(tmp_path):
     assert result["state"] == "unknown"
 
 
+def _landing_home(tmp_path, suite: bool):
+    """A site home whose checkout is ``tmp_path``, suite file optional.
+
+    ``_repo_landing_block`` derives the checkout as the site home's parent, so
+    the focused suite it gates on lives at ``tmp_path/tests/test_proc_table.py``.
+    """
+    if suite:
+        (tmp_path / "tests").mkdir(exist_ok=True)
+        (tmp_path / "tests" / "test_proc_table.py").write_text("", encoding="utf-8")
+    home = tmp_path / "site"
+    home.mkdir()
+    return home
+
+
 def test_landing_block_clean_gate_verified(monkeypatch, tmp_path):
     from mishe_tauftauf import discovery
 
@@ -6268,12 +6282,68 @@ def test_landing_block_clean_gate_verified(monkeypatch, tmp_path):
     class Gate:
         returncode = 0
     monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: Gate())
-    home = tmp_path / "site"
-    home.mkdir()
+    home = _landing_home(tmp_path, suite=True)
     result = discovery._repo_landing_block(home)
     assert result["id"] == "sense.repo.landing-block"
     assert result["state"] == "verified"
     assert result["blocks"] == []
+    assert result["gate"] is True
+
+
+def test_landing_block_absent_suite_is_not_gated(monkeypatch, tmp_path):
+    """A checkout without the kernel focused suite must not read as a failure.
+
+    A linked site's repo carries no ``tests/test_proc_table.py``, so the
+    kernel's gate command fails there on the missing interpreter (``env``
+    exits 127). That absence is not a landing block: the sense must stay
+    verified and name the gate absent rather than report a failing test that
+    does not exist in that repo.
+    """
+    from mishe_tauftauf import discovery
+
+    monkeypatch.setattr(discovery, "_coord_authorship_fog",
+                        lambda home: {"fog": [], "state": "verified"})
+
+    class Env:
+        returncode = 127
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: Env())
+    home = _landing_home(tmp_path, suite=False)
+    result = discovery._repo_landing_block(home)
+    assert result["state"] == "verified"
+    assert result["blocks"] == []
+    assert result["gate_applicable"] is False
+    assert "gate=absent" in result["sample"]
+
+
+def test_landing_block_failing_suite_is_a_block(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    monkeypatch.setattr(discovery, "_coord_authorship_fog",
+                        lambda home: {"fog": [], "state": "verified"})
+
+    class Gate:
+        returncode = 1
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: Gate())
+    home = _landing_home(tmp_path, suite=True)
+    result = discovery._repo_landing_block(home)
+    assert result["state"] == "drift"
+    assert result["blocks"] == ["gate=fail"]
+    assert result["gate"] is False
+
+
+def test_landing_block_unlaunchable_runner_is_unknown(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    monkeypatch.setattr(discovery, "_coord_authorship_fog",
+                        lambda home: {"fog": [], "state": "verified"})
+
+    def run(*a, **kw):
+        raise OSError("no runner")
+    monkeypatch.setattr(discovery.subprocess, "run", run)
+    home = _landing_home(tmp_path, suite=True)
+    result = discovery._repo_landing_block(home)
+    assert result["state"] == "drift"
+    assert result["blocks"] == ["gate=unknown"]
 
 
 def test_loop_stall_verified_when_nothing_treadmills(monkeypatch, tmp_path):
