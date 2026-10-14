@@ -2,7 +2,7 @@
 import json
 import subprocess
 import pytest
-from mishe_tauftauf import seed, wall, observations, ci_watch, post_check
+from mishe_tauftauf import seed, wall, observations, ci_watch, post_check, clear_journal
 from mishe_tauftauf.feed import Feed
 
 
@@ -273,6 +273,149 @@ def test_clear_retry_records_rotated_process_without_rotating_twice(tmp_path, mo
     assert seed.clear(tmp_path, "session", "genome").startswith("clear seed")
     assert len(rotations) == 1
     assert seed._state(tmp_path, "genome")[3] == wake.sequence
+
+
+def _rotated_journal(home, settled, **overrides):
+    """A wall-clear journal stranded in the rotated phase, as a crash leaves it."""
+    journal = {"phase": "rotated", "session": "session", "role": "genome",
+               "settled": settled, "after_pid": "102",
+               "launch_command": ["env", "PYTHONPATH=/reviewed/src", "/site/minds/genome"]}
+    journal.update(overrides)
+    checks = home / "checks"
+    checks.mkdir(parents=True, exist_ok=True)
+    path = checks / f"wall-clear-genome-{settled}.json"
+    path.write_text(json.dumps(journal))
+    return path
+
+
+def _pane_command(pid, dead="0", start="env PYTHONPATH=/reviewed/src /site/minds/genome"):
+    """A fake display-message reader: pane pid, dead flag, start command."""
+    from subprocess import CompletedProcess
+    def command(*args, **kwargs):
+        value = (pid if args[-1] == "#{pane_pid}" else
+                 dead if args[-1] == "#{pane_dead}" else
+                 start if args[-1] == "#{pane_start_command}" else "0")
+        return CompletedProcess(args, 0, value.encode(), b"")
+    return command
+
+
+def _respawning_pane_command(before, after, dead="0",
+                             start="env PYTHONPATH=/reviewed/src /site/minds/genome"):
+    """A fake tmux client whose respawn-pane actually re-pids the pane."""
+    from subprocess import CompletedProcess
+    pid = [before]
+    def command(*args, **kwargs):
+        if args[0] == "respawn-pane":
+            pid[0] = after
+        value = (pid[0] if args[-1] == "#{pane_pid}" else
+                 dead if args[-1] == "#{pane_dead}" else
+                 start if args[-1] == "#{pane_start_command}" else "0")
+        return CompletedProcess(args, 0, value.encode(), b"")
+    return command
+
+
+def _settled_genome(tmp_path):
+    """A settled genome wake the supervisor now owes a clear for."""
+    wake = Feed(tmp_path).append("seed", "seed wake genome observation=1\nInvestigate.")
+    note = tmp_path / "note.md"
+    note.write_text("Investigated source; next trigger is changed evidence.")
+    seed.yield_wake(tmp_path, "genome", wake.sequence, note, result="verified")
+    return wake
+
+
+def test_clear_recovers_when_a_resurrection_replaced_the_recorded_pid(tmp_path, monkeypatch):
+    from mishe_tauftauf import tmux
+    wake = _settled_genome(tmp_path)
+    path = _rotated_journal(tmp_path, wake.sequence)
+    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
+    monkeypatch.setattr(seed, "_mind_idle", lambda *a: True)
+    monkeypatch.setattr(seed, "_tmux", _pane_command("3135499"))
+    assert seed.clear(tmp_path, "session", "genome").startswith("clear seed")
+    journal = json.loads(path.read_text())
+    assert journal["phase"] == "committed"
+    assert journal["after_pid"] == "3135499"
+    assert journal["reconciled_resurrection"] is True
+    assert seed._state(tmp_path, "genome")[3] == wake.sequence
+
+
+def test_clear_still_holds_when_the_resurrected_launcher_differs(tmp_path, monkeypatch):
+    from mishe_tauftauf import tmux
+    wake = _settled_genome(tmp_path)
+    _rotated_journal(tmp_path, wake.sequence)
+    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
+    monkeypatch.setattr(seed, "_mind_idle", lambda *a: True)
+    monkeypatch.setattr(seed, "_tmux", _pane_command("3135499", start="sleep 999"))
+    with pytest.raises(ValueError, match="rotated mind process changed"):
+        seed.clear(tmp_path, "session", "genome")
+
+
+def test_clear_still_holds_when_the_resurrected_pane_is_dead(tmp_path, monkeypatch):
+    from mishe_tauftauf import tmux
+    wake = _settled_genome(tmp_path)
+    _rotated_journal(tmp_path, wake.sequence)
+    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
+    monkeypatch.setattr(seed, "_mind_idle", lambda *a: True)
+    monkeypatch.setattr(seed, "_tmux", _pane_command("", dead="1"))
+    with pytest.raises(ValueError, match="missing or dead"):
+        seed.clear(tmp_path, "session", "genome")
+
+
+def test_clear_still_holds_when_the_resurrected_mind_is_busy(tmp_path, monkeypatch):
+    from mishe_tauftauf import tmux
+    wake = _settled_genome(tmp_path)
+    _rotated_journal(tmp_path, wake.sequence)
+    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
+    monkeypatch.setattr(seed, "_mind_idle", lambda *a: False)
+    monkeypatch.setattr(seed, "_tmux", _pane_command("3135499"))
+    with pytest.raises(ValueError, match="rotated mind process changed"):
+        seed.clear(tmp_path, "session", "genome")
+
+
+def test_clear_commits_a_resurrected_journal_when_turn_already_cleared(tmp_path, monkeypatch):
+    from mishe_tauftauf import tmux
+    wake = _settled_genome(tmp_path)
+    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
+    monkeypatch.setattr(seed, "_mind_idle", lambda *a: True)
+    monkeypatch.setattr(seed, "_tmux", _respawning_pane_command("102", "103"))
+    assert seed.clear(tmp_path, "session", "genome").startswith("clear seed")
+    # A crash after the receipt plus a resurrection: the journal stays in the
+    # rotated phase while the live pane now runs a different pid.
+    path = _rotated_journal(tmp_path, wake.sequence, phase="rotated", after_pid="103")
+    monkeypatch.setattr(seed, "_tmux", _pane_command("3135499"))
+    assert seed.clear(tmp_path, "session", "genome").startswith("held seed")
+    journal = json.loads(path.read_text())
+    assert journal["phase"] == "committed"
+    assert journal["after_pid"] == "3135499"
+    assert journal["reconciled_resurrection"] is True
+
+
+def test_clear_journal_stall_detector_names_stuck_rotation(tmp_path):
+    import os
+    import time
+    from mishe_tauftauf import seed_culture_views as views
+    checks = tmp_path / "checks"
+    checks.mkdir()
+    (checks / "wall-clear-genome-5.json").write_text(
+        json.dumps({"phase": "committed", "role": "genome", "settled": 5}))
+    assert views._clear_journal_stalls(tmp_path) == ("CLEAR JOURNAL: PASS", [])
+    fresh = checks / "wall-clear-genome-6.json"
+    fresh.write_text(json.dumps({"phase": "rotated", "role": "genome", "settled": 6}))
+    assert views._clear_journal_stalls(tmp_path) == ("CLEAR JOURNAL: PASS", [])
+    old = time.time() - 120
+    os.utime(fresh, (old, old))
+    line, causes = views._clear_journal_stalls(tmp_path)
+    assert line.startswith("CLEAR JOURNAL: RED stuck=genome/6:rotated")
+    assert causes == ["clear-journal-stuck=1"]
+    # Unreadable monitoring damage stays visible next to the stuck phase.
+    (checks / "wall-clear-genome-7.json").write_text("{not json")
+    line, causes = views._clear_journal_stalls(tmp_path)
+    assert line.startswith("CLEAR JOURNAL: RED stuck=genome/6:rotated")
+    assert "journal unreadable" in line
+    assert causes == ["clear-journal-stuck=1"]
+    os.remove(fresh)
+    line, causes = views._clear_journal_stalls(tmp_path)
+    assert line == "CLEAR JOURNAL: UNKNOWN — journal unreadable"
+    assert causes == []
 
 
 def test_fresh_seed_records_a_stable_activity_origin(tmp_path):
@@ -732,3 +875,56 @@ def test_an_interrupted_rotated_clear_records_the_model_on_retry(tmp_path, monke
     bodies = [e.body.splitlines()[0] for e in Feed(tmp_path).entries()
               if e.source == "mishe-tauftauf" and e.body.startswith("mind model ")]
     assert bodies == [marker], "the repaired record is emitted exactly once"
+
+
+def _committed_journal(home, settled, **overrides):
+    """A wall-clear journal a renumbered feed's number collides with.
+
+    Its phase is committed and both recorded pids are long dead: the exact
+    research-methods 38264 shape of 2026-10-14, where the feed had been
+    renumbered and settled 38264 again named a different turn.
+    """
+    journal = {"phase": "committed", "session": "session", "role": "genome",
+               "settled": settled, "before_pid": "150829", "after_pid": "204172",
+               "launch_command": ["env", "PYTHONPATH=/old/src", "/site/minds/genome"]}
+    journal.update(overrides)
+    checks = home / "checks"
+    checks.mkdir(parents=True, exist_ok=True)
+    path = checks / f"wall-clear-genome-{settled}.json"
+    path.write_text(json.dumps(journal))
+    return path
+
+
+def test_clear_retires_a_renumbered_feeds_collided_committed_journal(tmp_path, monkeypatch):
+    from mishe_tauftauf import tmux
+    wake = _settled_genome(tmp_path)
+    path = _committed_journal(tmp_path, wake.sequence)
+    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
+    monkeypatch.setattr(seed, "_mind_idle", lambda *a: True)
+    monkeypatch.setattr(seed, "_tmux", _respawning_pane_command("900001", "900002"))
+    assert seed.clear(tmp_path, "session", "genome").startswith("clear seed")
+    assert seed._state(tmp_path, "genome")[3] == wake.sequence
+    stale = list((tmp_path / "checks").glob("wall-clear-genome-*.stale-*.json"))
+    assert len(stale) == 1
+    preserved = json.loads(stale[0].read_text())
+    assert preserved["phase"] == "committed" and preserved["after_pid"] == "204172"
+    assert stale[0].name in [item.name for item in clear_journal.paths(tmp_path)], \
+        "retiring preserves the journal for the monitoring consumer"
+    fresh = json.loads((tmp_path / "checks" / path.name).read_text())
+    assert fresh["phase"] == "committed" and fresh["after_pid"] == "900002"
+
+
+def test_clear_keeps_a_committed_journal_for_its_own_cleared_turn(tmp_path, monkeypatch):
+    from mishe_tauftauf import tmux
+    wake = _settled_genome(tmp_path)
+    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
+    monkeypatch.setattr(seed, "_mind_idle", lambda *a: True)
+    monkeypatch.setattr(seed, "_tmux", _respawning_pane_command("102", "103"))
+    assert seed.clear(tmp_path, "session", "genome").startswith("clear seed")
+    before = Feed(tmp_path).read_bytes()
+    path = tmp_path / "checks" / f"wall-clear-genome-{wake.sequence}.json"
+    assert seed.clear(tmp_path, "session", "genome").startswith("held seed")
+    assert Feed(tmp_path).read_bytes() == before
+    assert path.exists(), "a journal for its own cleared turn stays put"
+    assert json.loads(path.read_text())["phase"] == "committed"
+    assert not list((tmp_path / "checks").glob("wall-clear-genome-*.stale-*.json"))
