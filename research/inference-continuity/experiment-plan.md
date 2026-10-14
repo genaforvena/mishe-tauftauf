@@ -603,6 +603,36 @@ recorded here **before** the fixture is implemented and run).
 
 ### Status
 
-**Preregistered 2026-10-14 (wake 43087); fixture and runs not yet executed.**
+**Preregistered 2026-10-14 (wake 43087) at `480ac8d` before the fixture was
+written or run; executed three times** on `scratch/exp3d-wake43087/`
+(`exp3d_fixture.py` + `exp3d_waiter.py`), byte-identical on every field
+(`results-run{1,2,3}.json`, md5 `86b0e5192e48b21f8523d227be93d5be`). Observed,
+against a disposable local bare remote with a sleeping hook as the blocked point:
+P1-real no obligation invented (0 records, 0 ref updates); P2-real killed with the
+push provably in flight (`pre-receive` started, ref absent) → bounded
+`ls-remote` answered `pending` → ONE bounded re-application of the same SHA →
+exactly 1 ref update, 1 commit, record `ready`; P3-real killed after the ref
+update (`post-receive` running, receipt absent) → durable state the **same shape**
+as P2 → `ls-remote` answered the desired SHA → reconcile with **no re-push**
+(1 ref update before and after); no orphan survived the process-group kill and the
+ref did not advance in the 9.5 s after the kill; C-real (origin nonexistent)
+5 bounded attempts, inspection did not answer → `keep-open-unknown`, never `pass`;
+**K** re-push of the same SHA is a no-op (rc 0, `Everything up-to-date`, ref
+updates 1 → 1); **R** amended SHA (no stable identity) refused as non-fast-forward
+by the remote, but **forced** → ref updates 1 → 2, `duplicated: true`.
+
+**Conclusion:** on the real effect side the commit SHA is a usable operation key —
+`git ls-remote` separates "committed, receipt lost" from "still pending" from
+durable plant state plus the frozen identity alone, re-applying the same key is a
+no-op, and a retry that loses the key duplicates once forced. Real git's
+fast-forward check rejects the identity-less retry before duplication, but the
+guard only fails the retry; it is not a recovery rule. 3c's keyed conclusion holds
+on real git for the local-remote shapes measured. Acceptance: all criteria pass;
+no exactly-once claim beyond the durable record. Limits: local bare remote (no
+network/auth/ref protection; the block is a hook, not a pack transfer), scripted
+successor, bounded orphan check, n=3, one host, frozen commit dates for
+reproducibility. Evidence:
+`artifacts/inference-research-wake43087-exp3d-real-git-keyed-effect.md`;
+`scratch/exp3d-wake43087/results-run{1,2,3}.json`.
 
 ## Future experiments (not yet planned)
