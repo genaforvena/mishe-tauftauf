@@ -137,9 +137,15 @@ def cmd_wall(args) -> int:
         wall.write(args.home, args.owner, source.read_text(encoding="utf-8"), source_path=str(source))
     elif args.wall_command == "dm":
         if args.file:
+            anchor = _staging_anchor(args.home, args.source, args.file)
             args.file = _staging_notes(args.home, args.source, args.file)
+        else:
+            anchor = None
         text = args.file.read_text(encoding="utf-8") if args.file else args.text
         print(wall.message(args.home, args.source, args.to, text).sequence)
+        # Consume the staging anchor after successful send so a second send requires re-staging
+        if anchor is not None:
+            anchor.unlink()
     elif args.wall_command == "retry":
         wall.retry(args.home, args.owner)
     elif args.wall_command == "outcome":
