@@ -56,6 +56,19 @@ def ensure(home: Path, session: str, window: str, *, package_root: Path | None =
         return _ensure(home, session, window, package_root=package_root, refresh=refresh)
 
 
+def _renderer_dependency_error() -> Exception | None:
+    """Check the import contract the renderer pane will run under.
+
+    Renderer panes spawn with this unit's interpreter (`sys.executable`), so
+    the check must mirror viewport.py's real import, not a metadata lookup.
+    """
+    try:
+        from wcwidth import iter_graphemes, wcswidth  # noqa: F401
+    except Exception as exc:  # ModuleNotFoundError is the wake-40528 observed cause
+        return exc
+    return None
+
+
 def _ensure(home: Path, session: str, window: str, *, package_root: Path | None,
             refresh: bool) -> str:
     """Install a top dashboard, preserving the existing operator shell by pane ID."""
@@ -63,6 +76,17 @@ def _ensure(home: Path, session: str, window: str, *, package_root: Path | None,
     validate_slug(window)
     if not await_owned(home, session):
         raise ValueError(f"session {session!r} is not owned by {home}")
+    dependency_error = _renderer_dependency_error()
+    if dependency_error is not None:
+        # Renderer panes spawn with this unit's interpreter, so a missing
+        # dependency dies in every respawn and the supervisor flap-loops
+        # (wake 40528: ModuleNotFoundError: wcwidth at ~1/10 s). Refuse before
+        # any tmux mutation with the failing import named instead.
+        raise ValueError(
+            f"selected runtime interpreter {sys.executable} cannot load the renderer "
+            f"dependency wcwidth ({dependency_error}); panes would die at import — "
+            "activate the dashboard with an interpreter that has it installed"
+        ) from dependency_error
     shell_path = home / "bin" / "operator-shell"
     shell_path.parent.mkdir(parents=True, exist_ok=True)
     generated_shell = ("#!/bin/sh\n"
