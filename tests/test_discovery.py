@@ -5997,17 +5997,56 @@ def _stability_home(tmp_path, session="mishe-self-development-current"):
     return home
 
 
+def _stability_run(session_names=b"", server_pids=b"", pgrep_out=b"",
+                   name_rc=0, pid_rc=0, pgrep_rc=0):
+    """Route the sense's subprocess calls by their tmux/pgrep argv.
+
+    The sense reads the session names and the socket's own server pids from two
+    ``list-sessions`` calls, then the host-wide server list from pgrep; a test
+    names each by the argv it carries so the owner read can be told apart.
+    """
+    class Result:
+        def __init__(self, returncode, stdout):
+            self.returncode = returncode
+            self.stdout = stdout
+
+    def run(argv, **kwargs):
+        text = " ".join(str(part) for part in argv)
+        if "list-sessions" in text:
+            if "#{pid}" in text:
+                return Result(pid_rc, server_pids)
+            return Result(name_rc, session_names)
+        return Result(pgrep_rc, pgrep_out)
+
+    return run
+
+
+def test_session_stability_no_live_sessions_keeps_only_the_missing_session(
+        monkeypatch, tmp_path):
+    """No live session means no server of this plant's to shield.
+
+    With the socket's session list empty, a foreign unshielded server must not
+    be named; the recorded session is what drifts, not the foreign server.
+    """
+    from mishe_tauftauf import discovery
+
+    monkeypatch.setattr(discovery.subprocess, "run",
+                        _stability_run(b"", b"", b"999\n", name_rc=1))
+    monkeypatch.setattr(discovery.proc_table, "is_tmux_server", lambda pid: True)
+    monkeypatch.setattr(discovery.proc_table, "read_oom_score_adj", lambda pid: "0")
+    result = discovery._host_session_stability(_stability_home(tmp_path))
+    assert result["state"] == "drift"
+    assert result["live"] == []
+    assert result["unshielded"] == []
+    assert "session-missing=mishe-self-development-current" in result["sample"]
+
+
 def test_session_stability_verified_when_live_and_shielded(monkeypatch, tmp_path):
     from mishe_tauftauf import discovery
 
-    class ListSessions:
-        returncode = 0
-        stdout = b"mishe-self-development-current\nandroid-body\n"
-    class Pgrep:
-        returncode = 0
-        stdout = b"111\n"
     monkeypatch.setattr(discovery.subprocess, "run",
-                        lambda *a, **kw: ListSessions() if "list-sessions" in str(a) else Pgrep())
+                        _stability_run(b"mishe-self-development-current\nandroid-body\n",
+                                       b"111\n", b"111\n"))
     monkeypatch.setattr(discovery.proc_table, "is_tmux_server", lambda pid: True)
     monkeypatch.setattr(discovery.proc_table, "read_oom_score_adj", lambda pid: "-900")
     result = discovery._host_session_stability(_stability_home(tmp_path))
@@ -6016,17 +6055,52 @@ def test_session_stability_verified_when_live_and_shielded(monkeypatch, tmp_path
     assert result["unshielded"] == []
 
 
+def test_session_stability_ignores_a_foreign_unshielded_server(monkeypatch, tmp_path):
+    """A test's disposable server on its own socket is not this plant's to shield.
+
+    The plant's server (111) is shielded; a foreign server (999) is not. Only
+    the plant's own socket's servers may read as a shield lapse, so the foreign
+    one must not turn the reading drift.
+    """
+    from mishe_tauftauf import discovery
+
+    monkeypatch.setattr(discovery.subprocess, "run",
+                        _stability_run(b"mishe-self-development-current\n",
+                                       b"111\n", b"111\n999\n"))
+    monkeypatch.setattr(discovery.proc_table, "is_tmux_server", lambda pid: True)
+    monkeypatch.setattr(discovery.proc_table, "read_oom_score_adj",
+                        lambda pid: "-900" if pid == "111" else "0")
+    result = discovery._host_session_stability(_stability_home(tmp_path))
+    assert result["state"] == "verified"
+    assert result["unshielded"] == []
+
+
+def test_session_stability_keeps_foreign_servers_when_the_pid_list_is_unreadable(
+        monkeypatch, tmp_path):
+    """An unreadable owner list must stay visible, not read as stability.
+
+    The socket's own server pids cannot be read, so the sense cannot tell a
+    plant server from a foreign one; it falls back to every server so a broken
+    read still surfaces the unshielded one.
+    """
+    from mishe_tauftauf import discovery
+
+    monkeypatch.setattr(discovery.subprocess, "run",
+                        _stability_run(b"mishe-self-development-current\n", b"",
+                                       b"999\n", pid_rc=1))
+    monkeypatch.setattr(discovery.proc_table, "is_tmux_server", lambda pid: True)
+    monkeypatch.setattr(discovery.proc_table, "read_oom_score_adj", lambda pid: "0")
+    result = discovery._host_session_stability(_stability_home(tmp_path))
+    assert result["state"] == "drift"
+    assert result["unshielded"] == ["999"]
+
+
 def test_session_stability_drift_when_session_missing(monkeypatch, tmp_path):
     from mishe_tauftauf import discovery
 
-    class ListSessions:
-        returncode = 0
-        stdout = b"android-body\n"
-    class Pgrep:
-        returncode = 1
-        stdout = b""
     monkeypatch.setattr(discovery.subprocess, "run",
-                        lambda *a, **kw: ListSessions() if "list-sessions" in str(a) else Pgrep())
+                        _stability_run(b"android-body\n", b"111\n", b"",
+                                       pgrep_rc=1))
     result = discovery._host_session_stability(_stability_home(tmp_path))
     assert result["state"] == "drift"
     assert result["session"] == "mishe-self-development-current"
@@ -6036,14 +6110,9 @@ def test_session_stability_drift_when_session_missing(monkeypatch, tmp_path):
 def test_session_stability_drift_when_server_unshielded(monkeypatch, tmp_path):
     from mishe_tauftauf import discovery
 
-    class ListSessions:
-        returncode = 0
-        stdout = b"mishe-self-development-current\n"
-    class Pgrep:
-        returncode = 0
-        stdout = b"222\n"
     monkeypatch.setattr(discovery.subprocess, "run",
-                        lambda *a, **kw: ListSessions() if "list-sessions" in str(a) else Pgrep())
+                        _stability_run(b"mishe-self-development-current\n",
+                                       b"222\n", b"222\n"))
     monkeypatch.setattr(discovery.proc_table, "is_tmux_server", lambda pid: True)
     monkeypatch.setattr(discovery.proc_table, "read_oom_score_adj", lambda pid: "200")
     result = discovery._host_session_stability(_stability_home(tmp_path))

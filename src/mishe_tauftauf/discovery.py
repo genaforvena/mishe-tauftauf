@@ -2829,11 +2829,15 @@ def _host_session_stability(home: Path) -> dict[str, object]:
     A dead tmux server reads as every pane UNKNOWN and every supervisor
     crash-looping; without this reading the operator window is the only
     detector and the fix is manual. A session absent from the live list is
-    drift, not unknown: the receipt names the expected session. Live servers
-    report their oom_score_adj; anything above -900 means the host-guard
-    shield lapsed and the server is OOM-killable again. Unreadable tmux or
-    /proc reads stay unknown rather than reading as stability. All external
-    text enters through proc_table decoders, never inline parsing.
+    drift, not unknown: the receipt names the expected session. The live
+    sessions' own servers report their oom_score_adj; anything above -900
+    means the host-guard shield lapsed and the plant's server is OOM-killable
+    again. A server this socket does not host — a test's disposable server on
+    its own TMUX_TMPDIR socket, say — is not a live server here and must not
+    read as a plant shield lapse; when the socket's own server pids cannot be
+    read, every server is checked so a broken read stays visible. Unreadable
+    tmux or /proc reads stay unknown rather than reading as stability. All
+    external text enters through proc_table decoders, never inline parsing.
     """
     session = os.environ.get("MISHE_SEED_SESSION") or None
     if not session:
@@ -2842,13 +2846,21 @@ def _host_session_stability(home: Path) -> dict[str, object]:
     try:
         listed = subprocess.run(["tmux", "list-sessions", "-F", "#{session_name}"],
                                 capture_output=True, timeout=2)
+        owners = subprocess.run(["tmux", "list-sessions", "-F", "#{pid}"],
+                                capture_output=True, timeout=2)
     except (OSError, subprocess.TimeoutExpired):
         return {"id": "sense.host.session-stability", "state": "unknown",
                 "sample": "tmux enumeration unavailable", "kind": "read"}
+    # This socket's own servers, named by tmux itself. No live session means no
+    # server of this plant's to shield; an unreadable pid list leaves the
+    # attribution open (None) so the check falls back to every server.
     if listed.returncode != 0:
         live: list[str] = []
+        plant_servers: set[str] | None = set()
     else:
         live = sorted(proc_table.window_names(listed.stdout))
+        plant_servers = ({str(pid) for pid in proc_table.pane_pids(owners.stdout)}
+                         if owners.returncode == 0 else None)
     shields: dict[str, str] = {}
     # The server's comm is "tmux: server", so pgrep -x misses it; match the
     # full command line and keep only the new-session server processes.
@@ -2864,7 +2876,8 @@ def _host_session_stability(home: Path) -> dict[str, object]:
             if adj is None:
                 continue
             shields[str(pid_text)] = adj
-    unshielded = sorted(pid for pid, adj in shields.items() if adj != "-900")
+    unshielded = sorted(pid for pid, adj in shields.items()
+                        if adj != "-900" and (plant_servers is None or pid in plant_servers))
     if session is not None and session not in live:
         return {"id": "sense.host.session-stability", "state": "drift",
                 "sample": f"live=[{','.join(live)}] session-missing={session} unshielded=[{','.join(unshielded)}]",
