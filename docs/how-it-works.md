@@ -594,6 +594,20 @@ rechecks and, like the scan read, never renews the streak's origin, so the
 notification cadence cannot hold the measured interval under that minute. A
 stream that moves between the two names is reported as a gap duration class
 change, not as a light transition and not as an availability baseline.
+An absent light sample is only a *frozen light stream* while the producer
+declares it is sending. The node's additive `node_state` field carries the
+producer's own bounded verdict — the mode it read from the device's app
+preference — and the reader decodes only that enum: a verdict whose status is
+not `ok` is absent, stale or invalid and declares nothing, `ON_SENDING` and
+`UNKNOWN` declare nothing, and `ON_COLLECT_ONLY`, `ON_NOT_RUNNING` and `OFF`
+each name the reading `collect-only`, `producer-not-running` or `producer-off`.
+A declared silence is not a freeze: it names no duration class, records no
+onset and routes no event, and it is named from the first null read rather than
+after a minute. A boundary without the field — an older producer, or one whose
+verdict is stale — keeps the reader's own name, so a reader can never claim a
+configured silence it could not read. The mode enum is the producer's
+declaration about delivery, not about the sensor: a `collect-only` node's light
+capability stays unmeasured rather than reported as stopped.
 The class needs the reader's own retained null origin to survive between reads.
 A freeze onset is recorded beside that origin and routed once per streak: the
 first naming of a sustained freeze writes `discovery/space-light-freeze.json`
