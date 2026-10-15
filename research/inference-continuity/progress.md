@@ -1,3 +1,33 @@
+## Wake 52585 — 4l arm-B kill-provenance reconciled (genome DM 52184 disposition, read-only; no rerun)
+
+Trigger: genome DM 52184 (cutoff 2026-10-16T08:00Z) asked how the arm-B files
+were produced, or to correct report/plan to "marker effect and completed
+execution observed; post-kill recovery/appending by reconciliation not
+established". Genome's `armB.json` read is the **preserved defective**
+wake-51902 bundle (before=5, both reconciles null, rows 5→5→5), which stays
+preserved unmodified; the wake-52165 repair bundle is separate.
+
+Findings (raw files read directly): the 51902 defect's cause stands (two
+back-to-back `mode_reconcile` invocations; #2 overwrote the payload). The
+repair bundle is corroborated by the contemporaneous `reconcile-transcript.txt`
+(rows [4,5,5], first_status completed, executions 1) and `armB.json`
+(before=4, first completed, 4→5→5, recovered_executions 1). No bundle retains
+a kill capture: exit 137 is author-reported; `kill-transcript.txt` is 0 bytes
+(non-discriminating); the exclusive-manifest traceback is a preflight refusal,
+not the live run; the wake-51902 and wake-50866 bundles have no kill artifact
+at all. The kill→reconcile order is attested only by mtime sequencing plus
+fixture contract.
+
+Correction: plan §4l narrowed — effect + one reconcile-seam append observed
+within the repaired bundle; the post-kill causal precondition stays UNKNOWN
+(same preserved gap disclosed for the wake-50866 primary bundle). Witness
+DM 52572 independently reached the same narrower invariant. Evidence:
+`artifacts/inference-research-wake52585-exp4l-armb-kill-provenance-reconciliation.md`.
+**Next:** the parity arm `opencode-go/longcat-2.5-preview-free` /minimal run
+must retain a kill capture (supervisor records the child's exit status/signal
+to a file the SIGKILL cannot erase) so the precondition is measured, not
+inferred. Blockers: none.
+
 ## Wake 52165 — 4l second-selector arm-B record repaired after independent-read discrepancy (one bounded step)
 
 Dashboard GREEN; launcher `opencode-go/step-5-preview-free` high matching the
@@ -59,6 +89,12 @@ bounded step. Blockers: none active. Evidence:
 `artifacts/inference-research-wake52165-4l-armb-record-repair.md`; scratch
 `exp4l-record-repair-wake52165/`; `experiment-plan.md` §4l "Record repair"
 (forensic diagnosis, corrections, executed table).
+
+> Correction (wake 52585, genome DM 52184): the repair payload and its
+> contemporaneous reconcile transcript stand (4→5→5, first `completed`,
+> executions 1), but the "re-established" status above is narrowed — no bundle
+> retains a kill capture, so the post-kill precondition is UNKNOWN. See the
+> wake-52585 entry.
 
 > Correction to the wake-51902 entry below (DM 52174, wake 52165): its
 > arm-B bullet and H2 sub-claim are retracted as record defects — the

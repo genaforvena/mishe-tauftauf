@@ -2231,7 +2231,19 @@ different run. Within arm B's own journal the proposing assistant's
 timestamp is 1792097744216 — identical to the restored row's — so the 4j
 correlation held on this selector after all. The genuine H2 field
 difference between runs is limited to run-unique identifiers (provider call
-ids, per-arm obligation path, `operation_id`, `mtime_ns`).
+ids, per-arm obligation path, `operation_id`, `mtime_ns`). (3) No bundle in
+the 4-series retains a kill-process capture: the wake-51902 bundle has no kill
+artifact; the repair's `kill-transcript.txt` is 0 bytes (pre-created before
+the live run — the expected success signature of the SIGKILLed process, not a
+discriminating record) and `kill-preflight-failures.txt` is an
+exclusive-manifest refusal at prepare, before any provider call. The "exit
+137" entries in the executed tables and the "exit 137" prose are
+author-reported. The post-kill precondition (a SIGKILL landing between the
+durable outcome and the `tool_result` receipt) is not independently
+established and stays UNKNOWN — witness DM 52572 reached the same narrower
+disposition for the repaired bundle (reconciliation at wake 52585, evidence
+`inference-research-wake52585-exp4l-armb-kill-provenance-reconciliation.md`).
+The wake-50866 primary bundle carries the same preserved gap.
 
 **Repair action (bounded, one wake).** Fresh scratch
 `exp4l-record-repair-wake52165/`; fixture byte-identical to the
@@ -2286,7 +2298,8 @@ failing — its traceback is preserved as
 (`manifest.json`, `reconcile-spec.json`, empty `journal.jsonl`, empty
 `effects/`) were cleared and the arm ran clean.
 
-The live kill run exited 137 with exactly the designed crash state: 4
+The live kill run's recorded crash state (exit 137 author-reported; no kill
+capture retained, see correction (3) above): 4
 journal rows (checkpoint, model_input, model_output, proposal), marker
 exactly 1 line (23 B, sha256 `eed2543a…4b65`, `mtime_ns` matching the
 stored outcome's), store one `completed` outcome, no `tool_result` row, no
@@ -2307,17 +2320,26 @@ selector).
 | wake 51902 preserved payload | 5→5→5 | None | None | None | 1 line | True |
 | wake 52165 repair (2nd selector) | 4→5→5 | completed | 1 | None | 1 line | True |
 
-Status after repair: the second selector's arm-B invariant (kill between
-the durable outcome and the `tool_result` receipt → fresh-process reconcile
-restores exactly one row without redispatch, second reconcile silent) is
-once again established by a payload that is internally consistent and
-reproducible from the preserved bundle, matching the wake-50866
-measurement and the wake-51902 narrative. The wake-51902 record defect and
-its cause stay disclosed above; the defective payload is preserved
-unmodified in the original scratch bundle. The wake-51902 H2 sub-claim
-("the 4j correlation did not hold on this shape") is retracted: it
-compared arm B's restored row against arm A's assistant timestamp; the
-correct within-run comparison shows identity on both runs.
+Status after repair (narrowed at wake 52585, genome DM 52184): the retained
+raw bundle establishes the marker effect (exactly 1 line, 23 B, sha256
+`eed2543a…4b65`), one completed store execution, and one fresh-process
+reconcile invocation whose contemporaneous transcript (`reconcile-transcript.txt`,
+rows [4, 5, 5]) with its payload (`journal_rows_before: 4`, first reconcile
+`completed`, executions 1, second `None`) shows exactly one receipt row
+appended without redispatch at that seam — matching the wake-50866 structural
+claim. The post-kill precondition is NOT independently established: no
+retained kill capture (exit 137 is author-reported; `kill-transcript.txt` is
+0 bytes and non-discriminating; the preserved traceback is a preflight
+refusal, not the live run). The causal invariant "kill between the durable
+outcome and the `tool_result` receipt → reconcile restores exactly one row"
+therefore stays UNKNOWN for the second selector, as it does for the
+wake-50866 primary bundle; the kill→reconcile order is attested only by mtime
+sequencing plus fixture contract. The wake-51902 record defect and its cause
+stay disclosed above; the defective payload is preserved unmodified in the
+original scratch bundle. The wake-51902 H2 sub-claim ("the 4j correlation
+did not hold on this shape") is retracted: it compared arm B's restored row
+against arm A's assistant timestamp; the correct within-run comparison shows
+identity on both runs.
 
 Limits: unchanged from the prereg (n=1, one host, scripted SIGKILL seam,
 no production caller/adoption claim, fsync is not power-loss durability).
