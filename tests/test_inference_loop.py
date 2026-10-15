@@ -661,6 +661,58 @@ def test_crash_between_dispatch_and_tool_result_reconciles_from_effect_store(tmp
     assert final["used_ids"] == [CALL["id"]]
 
 
+def test_recovered_effect_reaches_fresh_model_turn_and_completes_obligation(tmp_path):
+    from contextlib import nullcontext
+    from mishe_tauftauf.inference_loop import reconcile_caller_journal
+    from mishe_tauftauf.inference_effects import EffectBoundary
+    from mishe_tauftauf.inference_transport import NativeTurn
+
+    store_dir = tmp_path / "effects"
+    boundary = EffectBoundary(
+        store_dir, writer_id="loop-1", obligation={"source": "owned-event"},
+        execute=lambda call: {"marker": "done"}, authority="test:authority",
+    )
+    response = turn([CALL])
+    native = NativeTurn(
+        response.terminal, response.assistant, None, None,
+        {"sessionId": "recorded-session", "boundaryDigest": "recorded-boundary"},
+    )
+    path = tmp_path / "interrupted.jsonl"
+    with NativeJournal(path) as journal:
+        def record(event):
+            if event["kind"] == "tool_result":
+                raise InterruptedError("crash before tool_result persisted")
+            journal(event)
+
+        with pytest.raises(InterruptedError):
+            drive_native(
+                Session(native), CONTEXT, obligation={"source": "owned-event"},
+                max_turns=3, max_calls=2, dispatch=boundary, record=record,
+                phase=lambda call: None, cancelled=lambda: False,
+                authorized=lambda call: True, complete=lambda context: False,
+            )
+
+    reconciled = reconcile_caller_journal(
+        path, store_dir, writer_id="loop-1", authority="test:authority",
+        authorized=lambda call: True,
+    )
+    assert reconciled == {"status": "completed", "reconciled": [CALL["id"]]}
+
+    session = Session(turn())
+    continued = tmp_path / "continued.jsonl"
+    with NativeJournal(continued) as journal:
+        result = recover_native(
+            path, open_session=lambda **kwargs: nullcontext(session),
+            **recovery_options(journal),
+        )
+
+    tool_result = session.inputs[0]["messages"][-1]
+    assert tool_result["toolCallId"] == CALL["id"]
+    assert json.loads(tool_result["content"][0]["text"])["result"] == {"marker": "done"}
+    assert result["status"] == "complete"
+    assert read_native_journal(continued)["status"] == "complete"
+
+
 def test_reconcile_never_dispatches_for_unknown_outcome(tmp_path):
     """Unknown outcome in effect store: bridge leaves call pending, no dispatch."""
     from mishe_tauftauf.inference_effects import EffectBoundary
