@@ -1491,6 +1491,8 @@ Regression test pins: (1) the loop reconciler's appended row equals the uninterr
 
 **Witness independent read delivered (wake 48884, DM 48961):** no mismatch — defect, reachability bound, amendment honesty, regression alignment and source/report/test agreement confirmed; author-reported n=3-style measurements read, not replayed; no live activation or parity claim. Its residual chronology limit is closed by deterministic timestamps: prereg `9d137e2` 17:01:45Z, before-fix fixture `exp4h_fixture.py` born 17:08:10Z, amendment `9d61cd2` 17:10:54Z, source fix `e904cc5` 17:26:53Z (prereg → fixture → amendment → fix). **Live reachability measured (wake 49120, zero provider calls, `~/.omp/agent/sessions` scan, 2026-10-13..15):** 66253/66253 assistant rows carry an integer epoch-ms `timestamp` on every route (opencode-go 54430, openai-codex 11679, ifm 138, nvidia 6), so the pre-fix hardcoded 0 diverged from the uninterrupted writer on the live-normal case for any caller of this reconciler. The live consumers' caller journals (`journals/docs-native.jsonl` 10 rows, `journals/health-native.jsonl` 9 rows) were written entirely by the uninterrupted writer (event key order `kind,obligation,turn,call,message`; all timestamps nonzero real ms), so neither reconciler has fired in production and the defect never fired live — it was reachable-in-principle for a future caller, and the fix now restores exactly the row that writer produces. Live `toolCall` items carry `type: 'toolCall'` with a string `id`, matching `_proposing_assistant`'s predicate on the real shape. Evidence: `artifacts/inference-research-wake49120-4h-live-reachability.md`; original experiment evidence: `artifacts/inference-research-wake48495-exp4h-restored-row-fidelity.md`.
 
+**Witness independent read of the 49120 measurement delivered (wake 49527, DM 49538):** no source/report/plan contradiction in that bounded read; the plan's §4g qualification and the reconciler's positional inspection path agree; the session-row counts, key-order provenance, toolCall sample and timestamps are internally consistent with the artifact and remain author-reported scans, not independently replayed. No live activation, parity or OMP-convention claim follows. The 4h source fix is not challenged by this review.
+
 ## Experiment 4i: bounded live canary of the exact-inspection caller path (wake 49430, operator DM 49390)
 
 ### Dispatch (pre-registration, before execution)
@@ -1562,5 +1564,75 @@ exactly-once claim. Docs acceptance wording requested (DM 49582) before any
 adoption claim; witness independent read requested (DM 49583). Evidence:
 `artifacts/inference-research-wake49430-internal-loop-canary.md` with run dirs
 `runA/` and `runB/`.
+
+**Witness independent read delivered (wake 49593, DM 49603):** artifact checks,
+not a rerun — Arm A/B numbers, journal row counts, `executions=1` and the
+external arm's UNKNOWN token cost all check in the records. Recorded limit from
+that read: `freeze.md` carries mtime only to whole seconds
+(`1792063851`), so exact-nanosecond equality of the frozen file is independently
+falsifiable only through the arms' `source_after.mtime_ns` recordings
+(`1792063851899848221`), not from `freeze.md` as presented. Procedure amendment
+for any future freeze: record `mtime_ns` in the freeze record itself. Claims
+stay author-reported run facts (n=1; no parity/adoption claim); the read does not
+challenge the 4i results.
+
+## Experiment 4j: the inspection reconciler's positional timestamp read under a multi-call inspection context (wake 49668)
+
+### Causal diagnosis (source comparison, before any fixture)
+
+- `inference_loop.reconcile_caller_journal` (fixed at `e904cc5`, Exp 4h) restores
+  a row's `timestamp` by explicit correlation:
+  `_proposing_assistant(state['context']['messages'], call['id'])`
+  (`inference_loop.py:354`).
+- `inference_inspect.reconcile_caller_journal` keeps the positional convention
+  `assistant = recovery['context']['messages'][-1]` (`inference_inspect.py:193`)
+  and restores only the proposed call (`recovery['proposed_call']`,
+  `inference_inspect.py:172`).
+- Since 4h, every `tool_result` row `drive_native` writes carries its proposing
+  assistant's timestamp (`inference_loop.py:205`), so in any journal written only
+  by current writers the last message's timestamp equals the pending call's
+  proposing assistant's timestamp. The positional read is therefore correct by
+  coincidence, not by construction: it breaks exactly when the last message is a
+  result row stamped by a writer that does not propagate the proposing
+  assistant's timestamp — the pre-4h loop reconciler, whose before-fix
+  measurement restored `0` against the uninterrupted writer's `7` (preserved at
+  `scratch/exp4h-rowfidelity-wake48495/before-fix.json`).
+- The exact-inspection caller accepts `max_calls > 1` (`inference_inspect.py:116`)
+  and the 4i canary ran the caller path live, so multi-call inspection journals
+  are reachable, not synthetic.
+
+### Hypothesis
+
+- **H1:** Under a `max_calls = 2` inspection context, the inspect reconciler's
+  positional read restores the pending call's row with the proposing assistant's
+  timestamp in every current-writer shape (single-call, multi-call crash before
+  either result, two-turn) — it still coincides with the uninterrupted
+  `drive_native` row.
+- **H2:** The coincidence is not structural. In a journal whose last message is a
+  sibling `toolResult` row stamped `0` (the pre-4h loop reconciler's writer
+  convention, measured in 4h), the positional read restores `0` while the
+  proposing assistant carries `7` and the uninterrupted writer appends `7`.
+
+Falsification: a current-writer shape where the restored row's timestamp differs
+from the uninterrupted writer's row for the same call; a legacy-sibling shape
+where the positional and correlated reads agree.
+
+### Acceptance
+
+- Measured current-writer shapes: restored `timestamp` equals the proposing
+  assistant's and the uninterrupted row's (modulo the run-specific
+  `operation_id`/`reconciliation_ref` inside the outcome payload); an assistant
+  without a timestamp restores 0 unchanged.
+- Measured legacy-sibling shape: `messages[-1]`'s timestamp is 0 (positional read
+  would restore 0); the path under test restores 7 — the proposing assistant's
+  timestamp, equal to the uninterrupted writer's row.
+- The fix derives the timestamp through the same explicit correlation the 4h fix
+  installed in the loop writer, with regression tests pinning both shapes.
+  Targeted suites plus `tools/check_parsing.py` PASS.
+
+### Instrument
+
+`opencode-go/step-5-preview-free`; the fixture and regression tests use zero
+provider calls.
 
 ## Future experiments (not yet planned)
