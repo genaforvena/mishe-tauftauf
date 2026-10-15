@@ -196,3 +196,10 @@ dispositions are in `research/inference-continuity/experiment-plan.md`
 - Applied raw-verifiability fix to `.mishe-tauftauf/scratch/wake43729/matched_comparison.py`: baseline gh stdout/stderr persisted to `baseline-gh-raw.txt`; candidate wall-clock start/finish ISO recorded in journal/report. Witness 6.2× elapsed factor now raw-auditable on future in-progress runs.
 - Limits unchanged: variable (1) was a single in-progress event; re-measurement requires a fresh in-progress run (terminal now) and a new frozen event. Not re-run this wake.
 - Next measured variable candidates: mutating publication class (design note `inference-research-wake43763-mutating-capability-design.md`; fetch-budget class 7f6ef76 landed under e65bd55) — requires worker capability change + live run; or provenance re-measurement on next live event.
+
+### Wake 43997 — native worker fail-closed wiring for mutating-publication class
+
+- Source change: `src/mishe_tauftauf/native/native-loop-worker.ts` now imports and calls `assertMutatingPublicationContext(request.context, allowance.allowance)` on every turn, after the existing raised-allowance read-only guard. This makes the combination of a mutating publication capability with a raised fetch allowance fail closed on the TS seam, matching design note `inference-research-wake43763-mutating-capability-design.md` decision 3. The class still resolves only the default allowance in `fetch-budget.ts`.
+- Decision: mutation stays caller-only; the worker neither applies nor widens capabilities, and the new assertion leaves `fetch_ledger` evidence on refusal. No native capability or class adoption was added; default-only + caller mutation invariants unchanged.
+- Verification: `bun test src/mishe_tauftauf/native/wire-usage.test.ts src/mishe_tauftauf/native/fetch-budget.test.ts src/mishe_tauftauf/native/native-session.test.ts` → 31 pass, 0 fail. `python tools/check_parsing.py` not applicable (no Python source change); TypeScript seam covered by the TS suite.
+- Next: independent read of the wiring; then a live mutating-publication experiment path through the caller dispatcher (`publish`) with keyed effect identity.
