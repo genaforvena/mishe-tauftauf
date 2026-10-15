@@ -260,3 +260,15 @@ def test_redmi_does_not_surface_malformed_light_transition(tmp_path: Path) -> No
 
     assert row["light_transition"] is None
     assert "measured-light-transition=" not in row["details"]
+
+def test_redmi_surfaces_acceleration_source_reason_when_not_fresh(tmp_path: Path) -> None:
+    now = 1_800_000_000.0
+    core, path, state = _linked_state(tmp_path, now)
+    state["latest"]["acceleration"]["received"] = now - 31
+    state["latest"]["acceleration"]["fields"]["reason"] = "stale"
+    path.write_text(json.dumps(state), encoding="utf-8")
+
+    row = body_perception.read_redmi10(core, now)
+
+    assert row["state"] == "unknown"
+    assert "|a|=stale" in row["sample"]
