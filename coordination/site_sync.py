@@ -12,6 +12,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from mishe_tauftauf.chat_protocol import decode_kernel_sync_target
 from mishe_tauftauf.ci_watch import latest, read
 from mishe_tauftauf.feed import Feed
 from mishe_tauftauf.observations import FOOTER_LEASE_RE
@@ -243,12 +244,10 @@ def _close_stale_sync_tasks(core_home: Path, target: Path, task: str, sha: str) 
     independently in the core and target feeds, so close every older matching
     identity in each feed.
     """
-    prefix = "kernel-sync-"
-    suffix = f"-{target.parent.name}"
     for feed_home in (core_home, target):
         open_ids = {state.identity for state in
                     task_states(Feed(feed_home).entries()).values()
-                    if identity_matches_site(state.identity, prefix, suffix)}
+                    if decode_kernel_sync_target(state.identity) == target.parent.name}
         open_ids.discard(task)
         for identity in sorted(open_ids):
             Feed(feed_home).append("sync", f"[done] {identity}\n"
@@ -256,13 +255,6 @@ def _close_stale_sync_tasks(core_home: Path, target: Path, task: str, sha: str) 
                                    f"{sha[:12]} by this sync cycle.")
         marker = json.dumps({"target": target.parent.name, "core_sha": sha}, sort_keys=True)
         Feed(feed_home).append("sync", f"[site-sync] {marker}")
-
-
-def identity_matches_site(identity: str, prefix: str, suffix: str) -> bool:
-    """True when a task identity is `kernel-sync-<sha>-<site>` for this site."""
-    return (len(identity) > len(prefix) + len(suffix)
-            and identity[:len(prefix)] == prefix
-            and identity[-len(suffix):] == suffix)
 
 
 def sync_registered_sites(core_home: Path, ci: dict[str, str], *, runtime_only: bool = False) -> list[str]:
