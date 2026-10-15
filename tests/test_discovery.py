@@ -6725,6 +6725,28 @@ def test_notify_scan_ignores_read_at_only_drift_changes(tmp_path):
     after = len(Feed(home).entries())
     assert after == before
 
+def test_notify_scan_marks_absent_artifact_instead_of_claiming_it(tmp_path):
+    """A notice must not assert a `Full sample:` path that does not exist.
+
+    A diagnostic caller can pass a synthetic snapshot with a nonexistent
+    artifact; the notice is still appended to the tape. Naming the path as a
+    full sample asserts evidence that never existed (wake 44217: five phantom
+    `discover` notices on the canonical tape, later retired by a correction).
+    The absent marker keeps the pointer without the claim.
+    """
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    (home / "discovery").mkdir(parents=True, exist_ok=True)
+    missing = home / "discovery" / "probe-sample.json"
+    snapshot = {"created": "2026-10-10T12:00:00Z", "node": "probe",
+                "observations": [{"id": "sense.a", "kind": "read", "state": "drift",
+                                  "sample": "measured violation"}]}
+    discovery._notify_scan(home, snapshot, None, missing)
+    body = Feed(home).entries()[-1].body
+    assert "Full sample: absent" in body
+    assert f"Full sample: {missing.resolve()}." not in body
+
 
 def test_notify_scan_notifies_on_evidence_binding_cause_change(tmp_path):
     home = tmp_path / "site"
