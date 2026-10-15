@@ -218,15 +218,42 @@ def read_redmi10(home: Path, now: float | None = None) -> dict[str, object]:
                 if ble_status == "stale" and ble_reason
                 else f"BLE scan {ble_reason}" if ble_reason
                 else f"BLE scan {ble_status}")
+    transition = state.get("last_light_transition")
+    if not isinstance(transition, dict):
+        transition = None
+    else:
+        needed = {"kind", "bucket_from", "bucket_to", "claim", "freshness_at_detection",
+                  "validity_seconds", "from", "to"}
+        if not needed.issubset(transition):
+            transition = None
+        else:
+            try:
+                if (transition.get("kind") != "measured_light_bucket_transition"
+                        or transition.get("claim") != "historical-measured-light-change-only"
+                        or not isinstance(transition.get("bucket_from"), int)
+                        or not isinstance(transition.get("bucket_to"), int)
+                        or not isinstance(transition.get("validity_seconds"), int)
+                        or not isinstance(transition.get("from"), dict)
+                        or not isinstance(transition.get("to"), dict)):
+                    transition = None
+            except (TypeError, ValueError):
+                transition = None
+    transition_text = ""
+    if transition is not None:
+        transition_text = (" measured-light-transition="
+                           f"{transition['bucket_from']}->{transition['bucket_to']}"
+                           f" validity={transition['validity_seconds']}s"
+                           f" freshness={transition['freshness_at_detection']};")
     details = (f"source={REDMI_SOURCE} session={session} cursor={cursor}; "
                f"acceleration phone_sample={_utc(phone_time)} consumer_receipt={_utc(receipt_time)}; "
-               f"host-receipt freshness conditional; {wifi_text}; {ble_text}; "
+               f"host-receipt freshness conditional; {wifi_text}; {ble_text};{transition_text} "
                "phone/host clock split unknown; acceleration includes gravity and is not person-movement evidence.")
     return {"id": SENSE_ID, "kind": "read", "state": status,
             "reason": "fresh-clock-conditional" if status == "verified" else "channel-not-current",
             "sample": sample, "source": REDMI_SOURCE, "cursor": cursor,
             "session": session,
             "channel_provenance": channel_provenance,
+            "light_transition": transition,
             "acceleration_phone_sample_epoch_s": phone_time,
             "acceleration_consumer_receipt_epoch_s": receipt_time,
             "channels": statuses, "details": details}
