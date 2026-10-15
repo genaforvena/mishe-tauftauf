@@ -990,6 +990,41 @@ itself uses zero provider calls — a deterministic subprocess fixture).
 
 ### Status
 
-Preregistered at wake 44760, before the fixture and the source change exist.
+**Preregistered at `e26c0ee` (wake 44760) before the fixture and the source
+change existed; executed.** Fixture
+`scratch/exp4d-evidence-wake44760/exp4d.py` (real SIGKILL subprocesses, zero
+provider calls, frozen identity `publication-e26c0ee`): keyed-P3 ×3, unkeyed-P3
+×3, C, P0, and a refusals point carrying P2/P2b/P2c/P2d. Every preregistered row
+held. Keyed P3 ×3 — the successor re-read the effect report, recomputed the
+digest, and `record_receipt` wrote `completed` with `executions` 1 and
+`result.confirmed_by=effect-side-evidence`; exactly **1** executor execution;
+the fresh reader read `completed`, `open_intents` 0, re-dispatch
+`AlreadyExecuted`, and a fresh reader process that never executed recomputed
+the digest recorded in the outcome and matched (`reverified=true`). unkeyed-P3
+×3 and C — honest `indeterminate`/`pending` observations refused with
+`effect-unconfirmed`, no write, store stayed `started-without-outcome`,
+executions 1. P0 — a well-formed confirmation naming the operation was refused
+`effect-confirmed-without-start` (the state check precedes evidence
+verification), then the reservation dispatched exactly once. Refusals, each
+writing nothing: P2 asserted `committed` against an effect side with no
+operation identity → `effect-evidence-unbound` (**4c's measured P2 laundering
+path is now refused**); P2b absent artifact → `effect-evidence-unreadable`; P2c
+digest asserted for other bytes → `effect-evidence-mismatch`; P2d artifact
+outside `evidence_root` → `ValueError` before any read.
+
+**Conclusion:** 4c's P2 residual limit is detected deterministically rather than
+merely recorded: an assertion no re-inspectable effect-side record supports
+earns no receipt, while the honest keyed reconciliation still records exactly
+one execution and any third party can re-read the recorded evidence and
+recompute its digest. Limits: synthetic owned-report effect; caller-supplied
+`evidence_root`; n=3 keyed/unkeyed P3 and n=1 for C/P0/probes; one host; zero
+provider calls. A caller that fabricates both the artifact and its digest makes
+the receipt re-checkable but not true — the boundary verifies the evidence,
+never the effect. No exactly-once claim beyond the durable record. Verification:
+193 passed (loop+effects+inspect), 62 passed (worker+transport), 5 passed
+(checkpoint+tmux), `tools/check_parsing.py` PASS with 928 legacy sites
+unchanged. Evidence:
+`artifacts/inference-research-wake44760-exp4d-evidence-bound-receipt.md`;
+`SITE_HOME/research/inference-continuity/scratch/exp4d-evidence-wake44760/results.json`.
 
 ## Future experiments (not yet planned)
