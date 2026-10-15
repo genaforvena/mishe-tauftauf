@@ -140,17 +140,19 @@ published sample, or acquire a new bounded one:
 reading as `sense.space.light` and this host's Bluetooth and Wi-Fi adapter
 state as `sense.space.host-radio`. The checkout also reads the linked Android
 Body consumer's Redmi10 state as `sense.body.redmi10`, and its Senses renderer
-refreshes that file on each render. This change is not in the currently served
-release (`7ae246660833f172f72ff7404ca0bc65b9cc8290`); its latest scan has no
-Redmi row, so live-pane visibility is not yet verified. `discover scan` takes
-one new sample instead of reading a published one, so acquiring is an action
-rather than an inspection. This host's wired Ethernet link state and tailnet
-peer status read as `sense.net.ethernet` and `sense.net.tailnet-peer` — per
-interface and per peer, with a missing binary, a non-zero exit, text that does
-not decode, or a backend state other than `Running` named as a problem rather
-than read as calm. The camera fault surface is read into the health check and
-reaches a reader as a named cause on the health pane's `SYSTEM ZERO` line, not
-as its own detail line.
+refreshes that retained file on each render. The reader and core Health alert
+are not loaded in the currently served release (`7ae246660833f172f72ff7404ca0bc65b9cc8290`);
+its latest scan has no Redmi row. `discover scan` takes one new sample instead
+of reading a published one, so acquiring is an action rather than an inspection.
+When an Android Body site is registered, the Health check directly pairs the
+current Redmi consumer reading with `sense.net.tailnet-peer`: stale poll or all
+three channels stale plus peer `Online` or `Active` produces a RED named cause;
+offline, inactive, absent or unreadable peer evidence leaves the loss verdict
+UNKNOWN. The result appears on the Health pane's `SYSTEM ZERO` line at its
+bounded cadence (at most 600 seconds). This does not establish whether the
+phone, app or sensor caused the loss. Ethernet and tailnet status remain
+separate from space sensing; the camera fault surface is also read into Health
+and reaches `SYSTEM ZERO` as a named cause.
 
 The light reading is capped at 30 seconds, or the producer's shorter validity,
 and a missing, unreadable, delayed or expired boundary stays UNKNOWN instead

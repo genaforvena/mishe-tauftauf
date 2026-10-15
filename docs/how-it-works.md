@@ -865,6 +865,15 @@ are not distinguished here. Both senses were committed on `main` as `f4013a3` (`
 online). `sense.runtime.pin-lag` still tracks the gap between `main` and the
 pin for any newer sense.
 
+For a registered Android Body site, the Health check pairs a fresh core reader
+result with the live tailnet peer's structured `Online` and `Active` booleans.
+A stale consumer poll or all three channels stale is RED when either boolean is
+true; a down, unreadable or absent peer leaves the loss verdict UNKNOWN. Missing
+or partial consumer evidence also stays UNKNOWN. This distinguishes a stale
+producer on a live path without claiming whether the phone, app or sensor caused
+it. The check runs on the bounded Health cadence (at most 600 seconds); a
+runtime pin without the reader cannot produce this alert.
+
 The camera reading is a fault reading, not a picture: `mesh-cam-watch` keeps a
 class line and the latest artifact, and the health view reads that artifact's
 age, `CAPTURE-FAIL` onsets and kernel URB resubmit failures in a 15-minute
