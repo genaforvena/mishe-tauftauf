@@ -472,7 +472,7 @@ A persistent external plant registers its site and session in the core site's ig
 3. The target is a separate direct Git worktree with a matching site marker and an existing tmux session owned by that site.
 4. For a normal refresh, the target worktree also has no unlanded changes.
 
-An already applied SHA without a recorded error is skipped. A hold is explained in the core `chat.log`; later eligible passes retry it. After refreshing, the coordinator checks the target's feed, expected top panes, live mind panes, advancing leases, and named services before recording the applied SHA.
+An already applied SHA without a recorded error is skipped. A hold is explained in the core `chat.log`; later eligible passes retry it. After refreshing, the coordinator checks the target's feed, expected top panes, live mind panes, advancing leases, and named services before recording the applied SHA. A successful later refresh also closes that site's superseded `kernel-sync` hold in both the core and target feeds.
 
 A changed generated target contract becomes a target genome task to review, commit, push, and verify in that repository. Thus the refresh itself may create the tracked change that genome must subsequently land. Application files are never copied from the core.
 

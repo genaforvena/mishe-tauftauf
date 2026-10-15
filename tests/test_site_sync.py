@@ -166,13 +166,59 @@ def test_replant_closes_superseded_sync_task_for_same_site(tmp_path, monkeypatch
     monkeypatch.setattr(site_sync.subprocess, "run", lambda argv, **_kwargs: (
         subprocess.CompletedProcess(argv, 0, "plant ready", "")))
     monkeypatch.setattr(site_sync, "_verify", lambda *_args: None)
+    old_identity = f"kernel-sync-{old_sha[:12]}-{target.parent.name}"
+    old_state = type("State", (), {"identity": old_identity})()
+    monkeypatch.setattr(FakeFeed, "entries", lambda self: self.home)
     monkeypatch.setattr(site_sync, "task_states",
-                         lambda _entries: {old_sha[:12]: type("State", (), {"identity": f"kernel-sync-{old_sha[:12]}-{target.parent.name}"})()})
+                         lambda feed_home: {old_identity: old_state}
+                         if feed_home == core_home else {})
     assert site_sync.sync_registered_sites(core_home, {"state": "pass", "sha": new_sha}) == [
         f"synced {target.parent.name and target.parent} {new_sha[:12]}"]
     done = [body.splitlines()[0] for _, body in FakeFeed.events
             if body.startswith(f"[done] kernel-sync-{old_sha[:12]}-")]
     assert done == [f"[done] kernel-sync-{old_sha[:12]}-{target.parent.name}"]
+
+
+def test_replant_closes_target_side_sync_task_after_blocker_clears(tmp_path, monkeypatch) -> None:
+    core_home, target = setup_sites(tmp_path, monkeypatch)
+    old_sha = "b" * 40
+    new_sha = "d" * 40
+    dirty = True
+
+    def git(workspace, *args):
+        if args == ("rev-parse", "HEAD"):
+            return new_sha
+        if args == ("rev-parse", "--show-toplevel"):
+            return str(workspace)
+        if args == ("status", "--porcelain"):
+            return " M AGENTS.md" if dirty and workspace == target.parent else ""
+        raise AssertionError(args)
+
+    monkeypatch.setattr(site_sync, "_git", git)
+    site_sync._save(core_home, [{"home": str(target), "session": "example", "sha": "old"}])
+    monkeypatch.setattr(site_sync.subprocess, "run", lambda *_args, **_kwargs: (
+        subprocess.CompletedProcess([], 0, "plant ready", "")))
+    monkeypatch.setattr(site_sync, "_verify", lambda *_args: None)
+
+    # A dirty target opens the hold in both independent site feeds.
+    held = site_sync.sync_registered_sites(core_home, {"state": "pass", "sha": old_sha})
+    assert len(held) == 1 and held[0].startswith("held ")
+    old_identity = f"kernel-sync-{old_sha[:12]}-{target.parent.name}"
+    assert any(home == target and body.startswith(f"[task] {old_identity}")
+               for home, body in FakeFeed.events)
+
+    # After the blocker clears, the replant must close the target-feed task too.
+    dirty = False
+    old_state = type("State", (), {"identity": old_identity})()
+    monkeypatch.setattr(FakeFeed, "entries", lambda self: self.home)
+    monkeypatch.setattr(site_sync, "task_states",
+                         lambda feed_home: {old_identity: old_state}
+                         if feed_home == target else {})
+    result = site_sync.sync_registered_sites(core_home, {"state": "pass", "sha": new_sha})
+    assert result == [f"synced {target.parent} {new_sha[:12]}"]
+    done = [body for home, body in FakeFeed.events
+            if home == target and body.startswith(f"[done] {old_identity}")]
+    assert len(done) == 1
 
 
 def test_failed_live_verification_keeps_old_sha_for_retry(tmp_path: Path, monkeypatch) -> None:
