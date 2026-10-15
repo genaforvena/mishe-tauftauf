@@ -1691,4 +1691,78 @@ Evidence: `artifacts/inference-research-wake49668-exp4j-inspect-positional-times
 fixture and per-stage results at
 `scratch/exp4j-inspect-positional-wake49668/{exp4j_fixture.py,results-before-fix.json,results-after-fix.json}`.
 
+## Experiment 4k: the inspection reconciler's one-row-per-invocation shape under a multi-call turn (wake 50236)
+
+### Causal diagnosis (source comparison, before any fixture)
+
+- `inference_inspect.reconcile_caller_journal` restores exactly the call with an
+  open proposal row (`recovery['proposed_call']`, `inference_inspect.py:177`)
+  and returns before the boundary otherwise. `inference_loop.reconcile_caller_
+  journal` instead walks every entry of `recovery['pending_calls']`
+  (`inference_loop.py:330`). The two reconcilers therefore differ structurally
+  on a multi-call turn: proposed-only versus all-pending.
+- `drive_native`'s per-call write-ahead (`emit('proposal')` before `dispatch`,
+  `emit('tool_result')` before the next call's proposal, `inference_loop.py:
+  183-206`) and `NativeJournal`'s per-row fsync (`inference_loop.py:407-414`)
+  imply at most one call per interruption has a durable outcome with a lost
+  result row: the call in flight when the process died.
+- A journal where `pending_calls` holds a non-proposed call with a durable
+  outcome requires a writer that dispatches a sibling before recording the
+  earlier call's result row — no writer in this checkout does that.
+
+### Hypothesis
+
+- **H1 (single lost receipt):** across every interruption point of a two-call
+  turn reached through the real `prepare_exact_inspection` / `drive_native`
+  path (`max_calls=2`), at most one call's receipt is lost; the first
+  `reconcile_caller_journal` invocation restores it when its effect is durable
+  and completed, and appends nothing when nothing was lost.
+- **H2 (no fabrication, convergence):** a second invocation on the reconciled
+  journal returns `None` and appends no row; after reconciliation every
+  still-pending call has no durable completed outcome in the store, so no
+  receipt exists that the reconciler left unrestored on any reachable shape.
+- **H3 (claim correction):** Experiment 4j's recorded limitation — "a
+  multi-call turn needs repeated reconciles" — does not hold under the
+  write-ahead writer: repeated invocations converge after the first on every
+  reachable shape. The one-row-per-invocation shape is a scope bound, not an
+  obligation-loss defect.
+- **H4 (labeled unreachable stress):** when the store holds a completed
+  outcome for a non-proposed pending call (seeded directly, bypassing
+  `drive_native`'s write-ahead — no current writer produces this shape), the
+  inspect reconciler appends nothing and the journal stays valid; a receipt
+  exists but the restore path requires an open proposal row. This bounds the
+  recorded limitation to the safe direction (no fabrication) under reordered
+  writers.
+
+Falsification: a reachable multi-call shape where a completed receipt stays
+unrestored after one invocation; a second invocation that appends a row; a
+still-pending call with a durable completed outcome after reconciliation; a
+stress arm where the reconciler fabricates a row or corrupts the journal.
+
+### Acceptance
+
+- Per interruption point (kill before call a's result row, between call a's
+  result row and call b's proposal, before call b's result row, after call b's
+  result row), plus a two-call selection spread over two turns: measured
+  restored-row set, second-invocation return value and appended-row count,
+  post-reconciliation reader state (`proposed_call`, `pending_calls`, status),
+  and per-pending-call store status (never completed).
+- Restored rows equal the uninterrupted writer's rows byte-for-byte modulo
+  the run-specific outcome identifiers; resumed continuation through
+  `drive_native(resume_from=...)` on a NEW journal behaves as the reader state
+  says: `stop('unknown')` carrying the stranded pending sibling, or a normal
+  ready-boundary continuation.
+- Stress arm labeled unreachable: inspect reconciler appends nothing, journal
+  remains readable, `read_native_journal` succeeds, store reports `completed`
+  for the non-proposed call.
+- Regression tests pin: one restore per interruption; second invocation
+  appends nothing; no fabrication for an outcome-less pending sibling;
+  both-call multi-call restore equals the uninterrupted writer.
+  Targeted suites plus `tools/check_parsing.py` PASS.
+
+### Instrument
+
+`opencode-go/step-5-preview-free`; fixture and regression tests use zero
+provider calls.
+
 ## Future experiments (not yet planned)
