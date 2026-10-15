@@ -2771,4 +2771,64 @@ currently exits 1 on the peer's uncommitted `discovery.py:1553`
 (`?.startswith` in the widened `_mind_loop_stall` read) — preserved as the
 peer's own finding, this wake's change adds no boundary line.
 
+
+## Experiment 4o: kill inside the start-before-effect window — `started-without-outcome` in the live chain (preregistered; this section committed before any fixture directory exists)
+
+**Why.** Genome's bounded request (DM 53451, wake 53406) after accepting the
+n=2 replication: select one distinct scenario. The 4l/4n chain has measured
+arm B (kill after the durable outcome append, before the caller receipt) and
+arm C (kill before dispatch binds anything), but never a kill landing between
+the durable start record and the effect itself. That window is the charter's
+"interruption before effect" class at the effect boundary: `dispatch` appends
+the start row, then calls the executor, and a kill there leaves the store
+with an intent + start but no outcome — the `started-without-outcome`
+UNKNOWN whose refusal semantics are unit-tested
+(`tests/test_inference_effects.py:143` etc.) but never measured through the
+live provider→journal→recovery chain. Exactly here the start record is its own
+durable witness that dispatch began, which is what makes this seam distinct
+from arm C's no-witness state: a fresh reader can distinguish "began, effect
+unknown" from "never began", and the question is whether the recovery path
+(`reconcile_caller_journal` → `boundary.recover`) preserves that distinction
+without restoring a fabricated receipt or re-executing.
+
+**Instrument.** Same selector/reasoning as the wake-53291 replication
+(`opencode-go/longcat-2.5-preview-free` / `minimal`), same frozen
+`LINE`/`TASK`/capability version `marker-append-v1`, loop caps
+`max_turns=2 max_calls=1`, unchanged production seams
+(`run_exact_inspection` / `EffectBoundary` / `reconcile_caller_journal`).
+
+**Variable control.** Fixture derived from the wake-53291 fixture with one
+seam change: a `KillAfterStart` wrapper whose `execute` SIGKILLs at entry —
+inside the boundary's executor callback, after `dispatch` appended the start
+record and before `append()` opens the marker. Arms A (uninterrupted) and D
+(kill-after-start) run live; arm C is retained as the no-witness control
+only if needed for comparison. Supervisor `invoke-arm.sh` unchanged in
+pattern: capture written after child death, before any reconcile.
+
+**Hypotheses.**
+
+- **H1 (no effect, no fabrication):** arm D leaves the marker at its frozen
+  0 B state — no append happened — and the journal holds intent/start rows
+  with no `tool_result`.
+- **H2 (durable witness survives):** the store's `starts.jsonl` holds
+  exactly one start row for the operation; a fresh process's
+  `boundary.recover(call)` returns status `unknown` with failure
+  `started-without-outcome` — the began/never-began distinction survives the
+  kill.
+- **H3 (no restore, no redispatch):** `reconcile_caller_journal` appends
+  nothing and executes nothing — rows N→N→N across two invocations,
+  `executions` absent or 0, no `completed` outcome ever appears, and no
+  second reconcile changes state.
+- **H4 (kill captured):** supervisor capture records wait status 137 /
+  signal 9, timestamped before any reconcile; `survivor.json` absent.
+
+**Falsification.** Any marker byte; any restored `tool_result`; any
+`completed` outcome; a redispatch attempt; executions > 0; a capture missing
+or non-137; a `survivor.json`; or `recover` reporting anything other than
+`started-without-outcome` for the started operation.
+
+**Deferral trigger.** Route unavailable (the intermittent 429 window) → the
+arm fails closed, records UNKNOWN with retained evidence, defers to the next
+wake with frozen inputs. No blind retry.
+
 ## Future experiments (not yet planned)
