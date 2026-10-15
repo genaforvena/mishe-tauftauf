@@ -356,3 +356,13 @@ def test_ref_recreated_during_archive_recovery_is_never_deleted(candidate, monke
     assert row["state"] == "pending", row
     assert git(target, "rev-parse", ref) == head
     assert work.exists()
+
+def test_delivery_help_lists_only_the_read_only_cli_command(capsys):
+    from mishe_tauftauf.cli import parser
+
+    with pytest.raises(SystemExit) as raised:
+        parser().parse_args(["delivery", "--help"])
+    assert raised.value.code == 0
+    output = capsys.readouterr().out
+    assert "{show}" in output
+    assert all(command not in output for command in ("submit", "check", "retire", "integrate", "finish"))
