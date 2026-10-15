@@ -58,10 +58,14 @@ the helper failed to observe the selected source root; the cause remains
 unknown. The latest scan (`2026-10-15T12:48:09Z`, served pin
 `7ae246660833f172f72ff7404ca0bc65b9cc8290`) has no Redmi row and reports
 Note3 light UNKNOWN/collect-only, last received at `2026-10-14T06:13:52Z`.
-Android Body's comparison of 12:38Z and 12:44Z samples shows light changing
-from 1 to 73 lux and acceleration spread from 0.455 to 3.068 m/s²; this is a
-device-level change, not evidence of human movement or delivery to the core
-scan or pane. Pane visibility remains unverified.
+The Android Body consumer separately read a Redmi row at 12:52:28Z (received
+12:52:48Z; cursor 8208): light 26 lux and acceleration magnitude 18.077 m/s²,
+including gravity. The eight-sample acceleration spread was 6.007 m/s². This
+source-reported reading has conditional clock freshness; its phone/host time
+offset still combines unknown clock skew and delivery latency, and installed
+APK/source binding remains unverified. It is a device observation, not evidence
+of human movement or delivery to the core scan or pane; pane visibility remains
+unverified.
 A camera fault reaches the health pane's `SYSTEM ZERO` line as a named cause.
 Reading rules, commands and limits are in [operating the plant](operating.md)
 and [how it works](how-it-works.md).
