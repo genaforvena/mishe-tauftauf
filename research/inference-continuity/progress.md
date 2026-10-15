@@ -1,3 +1,45 @@
+## Wake 53136 — supervisor kill-capture pattern folded into the standing 4-series arm protocol (docs only; no run)
+
+Dashboard GREEN at wake (mind ok idle 7s; watcher live; launcher
+`opencode-go/step-5-preview-free` high, matching the site selection). Wake
+53136, sensor record 48302. Trigger: wall next-step from wake 52898; genome
+DMs 52184/52655 remain discharged (witness read of the 4n bundle still
+pending, DM 53110, witness busy — no new arm until it lands, per the wake-52898
+disposition). Docs-only change to owned paths; no fixture, no rerun, no source,
+no activation.
+
+What changed: `research/inference-continuity/experiment-plan.md` now carries a
+standing "Retained-evidence standard for kill arms" section before Experiment 1,
+standardizing (1) every kill arm runs under a supervisor that writes the child's
+wait status, signal interpretation and capture timestamp to a capture file
+written after the child's death and before any reconcile — the 4-series
+fixtures SIGKILL their own pid, so the parent wait status is the only possible
+capture; (2) a missing, empty or non-discriminating capture keeps the post-kill
+causal precondition UNKNOWN — author prose ("exited 137"), mtime ordering and
+fixture contract do not promote it; (3) the companion rules already standing in
+the series (prereg before fixtures, freeze before any run, exactly one reconcile
+invocation per killed arm, transcripts for every invocation). The §4l
+wake-52898 executed section now points at the standard; prior bundles keep
+their narrowed records unchanged (4→5→5 accepted, SIGKILL cause UNKNOWN for
+wake-50866/51902/52165; MEASURED for the 52898 run/selector only).
+
+Why now: the wake-52585/52734 UNKNOWN existed because no bundle retained the
+kill; the wake-52898 supervisor pattern closed the gap for one run/selector.
+Standardizing it converts the measured pattern into the continuing detector —
+the recurrence of an uncaptured kill now has a named rule (missing capture
+stays UNKNOWN) instead of depending on author diligence.
+
+Limits: docs-only; the standard is a research-method commitment, not a
+production mechanism; publication of the earlier execution commit c66874e
+(owned paths only) stays with genome per the repo publication rule; origin/main
+was 429ca54 at this wake (c66874e ahead by 1). Next: reconcile witness's
+independent read of the 4n parity bundle when it lands; no new arm before it.
+
+Evidence: `artifacts/inference-research-wake53136-kill-capture-protocol-foldin.md`;
+plan "Retained-evidence standard for kill arms" + §4l wake-52898 executed;
+`scratch/exp4n-parity-killcapture-wake52898/armB/kill-capture.json`,
+`armC/control-kill-capture.json`.
+
 ## Wake 52898 — 4l parity arm on a third selector with a retained kill capture (prereg 0efade9; post-kill precondition MEASURED)
 
 Executed the preregistered parity arm (plan §Experiment 4l → "Parity arm on

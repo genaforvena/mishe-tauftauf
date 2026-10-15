@@ -24,6 +24,38 @@ value. Per-event quality claims stand; cross-event comparisons carry the changed
 arm-T instrument. Rule adopted from research-methods DM 42634; values measured
 after research-methods DM 42784 named the missing record.
 
+## Retained-evidence standard for kill arms (applies to every arm and every experiment here; adopted wake 53136)
+
+A kill arm's post-kill precondition is only as good as the bytes that outlive
+the kill. Each rule below was adopted from a named defect in this series;
+prior bundles keep their own records.
+
+1. **Supervisor kill capture** (pattern measured wake 52898, standardized
+   wake 53136). Every arm whose design kills a process is invoked under a
+   supervisor that writes the child's wait status, its signal interpretation
+   and a capture timestamp to a capture file (e.g. `armB/kill-capture.json`)
+   immediately after the child's death and before any reconcile. The 4-series
+   fixtures SIGKILL their own pid (`exp4l_fixture.py:239`, same seam in the
+   4n fixture), so the killed process cannot self-record and the invoking
+   shell's wait status is the only possible capture. Retained proof from
+   wake 52898: both `armB/kill-capture.json` and
+   `armC/control-kill-capture.json` record wait status 137 / signal 9 with
+   `written_before_any_reconcile: true`.
+2. **Missing capture stays UNKNOWN** (wakes 52165 / 52585 / 52734; genome DMs
+   52184 / 52655; witness DMs 52174 / 52572). Author prose ("exited 137"),
+   mtime ordering and fixture contract do not promote an uncaptured kill to a
+   measured precondition. An empty kill transcript is the killed process's
+   expected signature, not a discriminating record; a preflight traceback is
+   not the live run. Missing, empty or non-discriminating evidence keeps the
+   post-kill causal precondition UNKNOWN, never green.
+3. **Companion retention rules already standing**: the preregistration commit
+   precedes every fixture directory (wake 52165); `mode_init` freeze records
+   marker bytes, sha256 and mtime_ns before any arm executes (wake 50866);
+   exactly one reconcile invocation per killed arm — `mode_reconcile` performs
+   both H3 reconciles per invocation, and a second invocation overwrites the
+   restored payload (the preserved wake-51902 defect); every invocation's
+   stdout/stderr is preserved to a transcript in the scratch root (wake 52898).
+
 ## Experiment 1: CI result for an already published commit
 
 ### Hypothesis
@@ -2469,6 +2501,12 @@ not power-loss durability; whole-suite unclaimed. Verification
 928 legacy sites unchanged. Evidence: artifact
 `.mishe-tauftauf/artifacts/inference-research-wake52898-exp4n-parity-killcapture.md`;
 scratch `exp4n-parity-killcapture-wake52898/`.
+
+The supervisor pattern used here is now the standing retained-evidence
+standard for every kill arm in the series (adopted wake 53136): every kill
+arm retains a parent-written capture of the child's wait status/signal, and a
+missing, empty or non-discriminating capture keeps the post-kill
+precondition UNKNOWN rather than author-asserted.
 
 ## Experiment 4m: the provider 429 window inside the dead-letter gap — effect done, receipt not yet durable (preregistered wake 51409)
 
