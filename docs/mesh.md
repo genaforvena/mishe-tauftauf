@@ -53,38 +53,32 @@ faults, not a scene. `discover show` prints published light and radio readings
 as `sense.space.light` and `sense.space.host-radio`; a checkout scan can also
 read `sense.body.redmi10`.
 
-The Redmi reader is in source commit `40aa387`, but remains source-only. The
-latest core scan (`2026-10-15T14:17:50Z`, scan
-`50dd045ceff1486089fd1fc6d232d895`, served pin
-`7ae246660833f172f72ff7404ca0bc65b9cc8290`) has no
-`sense.body.redmi10` row; that release lacks the reader. Its activation was
-reverted after the helper failed to observe the selected source root; the cause
-remains unknown. This is a core visibility gap, not evidence that phone-side
-delivery failed. The scan reports Note3 light UNKNOWN/collect-only, last
-received at `2026-10-14T06:13:52Z`.
-At 14:20:38Z, a read-only Android Body consumer view showed Redmi acceleration
-at 14:20:11Z: `(-0.43305, -12.328051, -3.1669502) m/s²`, magnitude 12.736.
-Another isolated sample at 14:17:56Z had magnitude 8.434; no intervening
-sequence or trajectory is established. Handling/movement and sensor error
-remain competing explanations, not a human-activity label. Light was 0.0 lux
-and battery 0.88/not charging at 14:20:12Z. Freshness remains clock-conditional:
-observed phone/host skew was 20.385–27.989s, but the offset/transport split is
-unknown. Note3 delivered rows remained stale; its collection spool was
-`phase=window` but 79.1s old at that read, not a fresh paired interval.
-Redmi Wi-Fi was disconnected; BLE has no newer observation after a
-`SecurityException`. These consumer readings do not establish human movement
-or delivery to the core scan or pane; pane visibility remains unverified.
-A camera fault reaches the health pane's `SYSTEM ZERO` line as a named cause.
-Reading rules, commands and limits are in [operating the plant](operating.md)
-and [how it works](how-it-works.md).
+The Redmi reader (source commit `40aa387`) is loaded at the served pin
+`e8405b875122`, and the checkout scan reads `sense.body.redmi10` from the
+linked consumer. The reading reaches the checkout, but the acceleration channel
+is not always readable (`unknown/value` when not); a readable value is device
+evidence including gravity, never person-movement. A stale consumer poll, or all
+three channels stale, is RED only while the tailnet peer is online or active; a
+down, unreadable or absent peer keeps the loss verdict UNKNOWN. The linked
+Android Body detector checks JSON `Online OR Active` rather than a literal
+`offline` text for the same reason. Health reports this monitor verified within
+its exercised scope. Do not infer phone failure from a missing or unreadable row.
+
+Note3 light remains UNKNOWN/collect-only: the consumer is polled but publishes
+no light value, and no fresh paired Note3 interval is established. A local
+collection spool is not delivered sensor evidence. A camera fault reaches the
+health pane's `SYSTEM ZERO` line as a named cause.
 
 Two further readings cover this host's own network path instead of its space:
 its wired Ethernet link state as `sense.net.ethernet` and its tailnet peer
-status as `sense.net.tailnet-peer`, reported per interface and per peer with a
-named problem instead of a calm UNKNOWN. Neither is a space observation, and
-the tailnet sense reports reachability only — it cannot tell an unreachable
-device from a silent producer, so the joint light-plus-network reading still
-comes from the light and host-radio senses.
+status as `sense.net.tailnet-peer`. Neither is a space observation, and tailnet
+reachability alone cannot distinguish an unreachable device from a silent
+producer.
+
+Individual sensor readings and personal analysis belong in private site
+records; this page reports only source, deployment and freshness status.
+Reading rules and limits are in [operating the plant](operating.md) and
+[how it works](how-it-works.md).
 
 Repairs start with causal investigation and leave failures observable. Preserve
 what failed, explain why, and test that recurrence still reaches a mind able to
