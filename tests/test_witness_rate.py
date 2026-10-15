@@ -11,6 +11,18 @@ def test_witness_reports_discovery_chat_flood(tmp_path, monkeypatch):
     assert "CHAT RATE: RED — discover: 8 entries" in view
     assert "Trace the wake or sampling feedback loop" in view
 
+
+def test_witness_marks_chat_rate_unknown_when_canonical_feed_is_unreadable(tmp_path, monkeypatch):
+    monkeypatch.delenv("MISHE_SEED_SESSION", raising=False)
+    (tmp_path / "chat.log").mkdir()
+
+    view = render(tmp_path)
+
+    assert "CHAT RATE: UNKNOWN — canonical chat input unavailable" in view, view
+    assert "STATE: UNKNOWN" in view, view
+    assert (tmp_path / "observations" / "witness").read_text(encoding="utf-8").strip() == (
+        "UNKNOWN witness coordination evidence invalid")
+
 def test_witness_reports_witness_chat_flood_but_exempts_seed_bookkeeping(tmp_path, monkeypatch):
     monkeypatch.delenv("MISHE_SEED_SESSION", raising=False)
     from datetime import datetime, timedelta, timezone

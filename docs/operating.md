@@ -77,7 +77,9 @@ bounded, read-only sample and publishes it, so an acquisition is an action
 rather than an inspection. The standard genome and health panes show
 deterministic CI, runtime, service and patch observations; the witness pane
 shows CI plus its coordination checks: planted windows, clear-stall and
-stale-pend, and open tasks. Each is followed by the mind's edited wall.
+stale-pend, open tasks, and chat rate. Chat rate is UNKNOWN when the canonical
+chat feed cannot be read; a quiet rolling window is not proof that a producer
+fault is resolved. Each is followed by the mind's edited wall.
 
 Genome inspects unlanded outside edits with `git status --short` and reviews each path's diff before adopting, reconciling or retiring it. Preserve unrelated edits and coordinate with existing owners; delivery follows the single-`main` authoring, CI and live-consumer checks above.
 

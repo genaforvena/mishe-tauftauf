@@ -459,7 +459,9 @@ def render(home: Path) -> str:
                              if entry.source == "seed" and entry.body.startswith("seed observation "))
     floods = [f"{source}: {count} entries" for source, count in by_source.items() if count >= 8]
     floods.extend(f"{source}: {count} observations" for source, count in by_observation.items() if count >= 12)
-    if floods:
+    if feed_error:
+        lines.append("CHAT RATE: UNKNOWN — canonical chat input unavailable")
+    elif floods:
         lines.append("CHAT RATE: RED — " + "; ".join(sorted(floods)) +
                      ". Trace the wake or sampling feedback loop and fix its cause.")
         verdict = "FAIL witness chat event flood"
