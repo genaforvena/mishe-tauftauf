@@ -272,3 +272,42 @@ def test_redmi_surfaces_acceleration_source_reason_when_not_fresh(tmp_path: Path
 
     assert row["state"] == "unknown"
     assert "|a|=stale" in row["sample"]
+
+
+def test_redmi_light_sense_stays_verified_when_acceleration_is_stale(tmp_path: Path) -> None:
+    now = 1_800_000_000.0
+    core, state_path, state = _linked_state(tmp_path, now)
+    state["latest"]["acceleration"]["received"] = now - 31
+    state["latest"]["acceleration"]["fields"]["reason"] = "stale"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    row = body_perception.read_redmi10_light(core, now)
+
+    assert row["id"] == body_perception.LIGHT_SENSE_ID
+    assert row["state"] == "verified"
+    assert row["channels"] == {"light": "fresh-clock-conditional"}
+    assert "|a|=stale" in row["sample"]
+    assert "L=101lux" in row["sample"]
+
+
+def test_redmi_light_sense_becomes_unknown_when_light_is_not_current(tmp_path: Path) -> None:
+    now = 1_800_000_000.0
+    core, state_path, state = _linked_state(tmp_path, now)
+    state["latest"]["light"]["received"] = now - 31
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    row = body_perception.read_redmi10_light(core, now)
+
+    assert row["id"] == body_perception.LIGHT_SENSE_ID
+    assert row["state"] == "unknown"
+
+
+def test_redmi_light_sense_preserves_measured_light_transition(tmp_path: Path) -> None:
+    now = 1_800_000_000.0
+    core, state_path, state = _linked_state(tmp_path, now)
+    state["last_light_transition"] = STABLE_TRANSITION
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    row = body_perception.read_redmi10_light(core, now)
+
+    assert row["light_transition"] == STABLE_TRANSITION
