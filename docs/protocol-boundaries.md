@@ -17,9 +17,12 @@ wall-clear journals described below are approved adapters too.
 
 The ledger reads its append-only UTF-8 JSONL journals as a boundary:
 invalid encoding or malformed records fail closed and remain intact as evidence.
-The checker is also a boundary: it reads Python source and policy files. New
-adapters require an explicit, reviewed addition of their exact path; a
-directory-wide exemption would make the constraint ineffective.
+The checker reads Python source and policy files. The reader-book command-name
+check reads the served release's CLI parser and command-shaped spans in
+`README.md` and `docs/*.md`; it reports unknown subcommands rather than
+silently treating them as commands. New adapters require an explicit, reviewed
+addition of their exact path; a directory-wide exemption would make the
+constraint ineffective.
 
 `proc_table.py` decodes external process and tmux tables. It parses the `ps`
 parent/child columns, `tmux list-panes` pid list, and single tmux pane fields;
