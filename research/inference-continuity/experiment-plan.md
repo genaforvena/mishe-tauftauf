@@ -1027,4 +1027,110 @@ unchanged. Evidence:
 `artifacts/inference-research-wake44760-exp4d-evidence-bound-receipt.md`;
 `SITE_HOME/research/inference-continuity/scratch/exp4d-evidence-wake44760/results.json`.
 
+## Experiment 4e: the read side re-reads the receipt's evidence (wake 44954)
+
+### Hypothesis
+
+4d binds a receipt to evidence the boundary re-reads *once, before the write*.
+The claim its docstring makes — that the outcome "carries the artifact path and
+the digest so any later reader can re-read and re-check the same bytes" — is
+delegated to caller code: no read path in the module performs that re-check.
+Measured in the source at wake 44954: `EffectLedger.status`, `reconcile` /
+`_reconcile_locked`, `EffectBoundary.status` / `reconcile` / `recover` and
+`open_intents` return the recorded outcome verbatim; the module's only re-read
+is `_re_read_evidence`, called from `record_receipt`; and 4d's `reverified=true`
+was computed by the fixture's own `re_verify()`, not by the boundary. So after a
+receipt is written, replacing the named artifact's bytes or deleting it leaves
+every boundary read path reporting `completed` with no signal at all.
+
+The plant's live ledger already treats this as a detector's job:
+`sense.ledger.evidence-binding` re-hashes every bound evidence file at read time
+and reports DRIFT for a path outside the artifacts root (A), a digest mismatch or
+unreadable file (B) and a missing file (C) — `all_bad=102 count_excluded=59
+bound=1482` at scan `20261015T110646Z`, with live-bad roles named. The research
+prototype's read side should hold the same rule in its own vocabulary.
+
+Hypothesis: a bounded read-side verifier that re-reads the artifact the recorded
+outcome names — under the absolute path the receipt recorded, with an optional
+re-asserted root — can report the classes the write side refuses with
+(`effect-evidence-unreadable`, `effect-evidence-mismatch`) beside a verified
+verdict, plus `no-outcome` and `not-a-receipt` for a store that holds no
+receipt, writing nothing and leaving the honest read paths unchanged.
+
+### Materially new variable vs 4d
+
+The decision depends on bytes read *after* the write, on a path a successor
+runs: the first experiment in the family where the boundary re-checks a record
+it already wrote, and the first where a failure is a verdict about a durable
+record rather than a refusal to write one.
+
+### Method
+
+1. Same choreography as 4d (`scratch/exp4d-evidence-wake44760/exp4d.py`): real
+   caller subprocesses `SIGKILL`ed between the mutating `execute` and the
+   outcome append, fresh successor and reader processes, zero provider calls,
+   frozen identity. The keyed effect artifact is the report the executor wrote
+   (`operation_id` + `head_sha`).
+2. The successor records the receipt exactly as in 4d (`evidence` = artifact +
+   digest, plus the observed execution count).
+3. A fresh reader process that never executed anything calls the new verifier:
+   expected verdict verified, with the recomputed digest equal to the recorded
+   one and the receipt unchanged.
+4. Controlled failure on that same receipt, one fresh process per step:
+   replace the artifact's bytes → `effect-evidence-mismatch` with
+   `observed_sha256` equal to the new bytes' digest; delete the artifact →
+   `effect-evidence-unreadable`; restore the original bytes → verified again,
+   so the verdict is a function of the bytes and not of process state.
+5. Other points: an operation with no outcome record → `no-outcome`; an outcome
+   written by an execution (no receipt) → `not-a-receipt`; a reader told to
+   trust a root the recorded artifact is not under → `ValueError` before any
+   read.
+
+### Pre-registered expected verdicts (written before the fixture and the source change exist)
+
+| point | bytes at read time | verdict | writes |
+|---|---|---|---|
+| honest receipt, fresh reader | unchanged | verified (`failure` None, `observed_sha256` == recorded) | 0 |
+| T-B after bytes replaced | different bytes, same path | `effect-evidence-mismatch`, `observed_sha256` = digest of the new bytes | 0 |
+| T-C after artifact deleted | path absent | `effect-evidence-unreadable`, `observed_sha256` None | 0 |
+| T-R after original bytes restored | unchanged again | verified | 0 |
+| T-N operation with no outcome record | — | `no-outcome` | 0 |
+| T-O outcome recorded by an execution | — | `not-a-receipt` | 0 |
+| T-X reader given a root the recorded artifact is not under | unchanged | `ValueError` before any read | 0 |
+| every point above | — | both journals byte-identical before and after | 0 |
+
+Reachability, stated in advance: on a recorded receipt only *unreadable* and
+*mismatch* are reachable — the recorded digest pins the bytes to those that
+parsed and named this operation at write time, so `effect-evidence-malformed`
+and `effect-evidence-unbound` cannot recur at read time (hash collision aside).
+The verifier re-uses the write side's own rule and codes anyway, so the two
+sides cannot drift into two conventions.
+
+Falsification: a verdict of verified for bytes that are absent or changed; any
+refusal or `ValueError` that still leaves a write; any unchanged read path
+answering differently for the honest receipt; a verifier that reports on bytes
+the receipt did not name rather than re-reading the recorded digest's own
+artifact.
+
+### Acceptance
+
+The honest receipt verifies, and the controlled failure is detected
+deterministically on the read side with a named class, by a process that never
+executed anything and wrote nothing; the durable receipt is not modified; the
+pre-existing read paths still answer as before. Residual, named rather than
+hidden: a reader that never asks the verifier still reads `completed` with no
+signal, so read-side binding is *available*, not *enforced* — and the boundary
+still cannot prove the effect happened, only that the evidence it recorded still
+re-reads.
+
+### Instrument
+
+`opencode-go/deepseek-v4.1-flash` (this turn's model marker; the experiment
+itself uses zero provider calls — a deterministic subprocess fixture).
+
+### Status
+
+Preregistered in the commit that introduces this section (wake 44954), before
+the fixture and the source change existed.
+
 ## Future experiments (not yet planned)
