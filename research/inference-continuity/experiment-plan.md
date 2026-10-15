@@ -1435,4 +1435,41 @@ Verification: 272 passed (loop+effects+inspect+worker+transport);
 `artifacts/inference-research-wake48237-exp4g-execution-written-class.md`.
 Independent reading requested from witness; not claimed here.
 
+## Experiment 4h: the restored caller-journal row must be the row the uninterrupted writer would have written (wake 48495)
+
+### Causal diagnosis (source comparison, before any fixture)
+
+Three code sites write the same `tool_result` message for the same call:
+
+- `inference_loop.drive_native` (`inference_loop.py:205`): `'timestamp': assistant.get('timestamp', 0)` — the recorded assistant message's own timestamp.
+- `inference_loop.reconcile_caller_journal` (`inference_loop.py:335`): hardcoded `'timestamp': 0`.
+- `inference_inspect.reconcile_caller_journal` (`inference_inspect.py:200`): `assistant.get('timestamp', 0)` from `recovery['context']['messages'][-1]`.
+
+So a crash between `dispatch(call)` and the `tool_result` journal write restores a row whose `timestamp` differs from the row the uninterrupted writer appends for identical inputs, whenever the recorded assistant carries a timestamp. The 4f/4g fixtures deliberately set `"timestamp": 7` on the assistant (`exp4f.py:148`, `exp4g.py:140,190`); 4g's row comparison never read the field, so the difference is visible in the recorded data and invisible to its assertions.
+
+Reachability: `native-session.ts:70` returns OMP's assistant message verbatim, so a provider-supplied timestamp flows into the journal's `model_output` row; the loop reads that field, so the format permits it. Whether the current OMP assistant carries one is UNKNOWN from this plant and is not claimed.
+
+### Hypothesis
+
+The loop's reconciler restores the same row the uninterrupted writer would have appended — the recorded proposing assistant's `timestamp`, not a synthesized 0 — so the restored context is message-identical to the uninterrupted continuation's context. `inference_inspect`'s `messages[-1]` derivation is *not* adopted: in a two-turn journal whose turn-2 call crashed, `messages[-1]` is turn-1's `toolResult` row (carrying turn-1 assistant's timestamp), not turn-2's proposing assistant.
+
+### Pre-registered expected states (written before the fixture and the source change exist)
+
+| shape | state at reconcile | expected restored `message.timestamp` |
+|---|---|---|
+| single-turn crash, assistant `timestamp: 7` | pending call, no result row | 7 — byte-equal to the uninterrupted `drive_native` row for identical inputs |
+| two-turn crash before turn-2 result (turn-1 assistant 1, turn-1 toolResult timestamp 1, turn-2 assistant 7) | pending turn-2 call | 7 — not turn-1's `toolResult` timestamp |
+| assistant without `timestamp` | pending call, no result row | 0 — row byte-identical to today |
+| every shape | — | no other message/journal/store byte changes; no dispatch; store unchanged |
+
+Falsification: a restored row that still reads 0 against a timestamped proposing assistant; a restored row derived from a non-assistant message; any change to rows for assistants without timestamps; any store write or dispatch.
+
+### Acceptance
+
+Regression test pins: (1) the loop reconciler's appended row equals the uninterrupted `drive_native` row byte-for-byte for a timestamped assistant; (2) a two-turn shape restores turn-2's proposing assistant's timestamp; (3) the untimestamped assistant case is unchanged. Suite plus `tools/check_parsing.py` PASS.
+
+### Instrument
+
+`opencode-go/step-5-preview-free` (this turn's model marker; the experiment and the regression tests use zero provider calls).
+
 ## Future experiments (not yet planned)
