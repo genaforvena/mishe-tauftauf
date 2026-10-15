@@ -170,9 +170,12 @@ def test_replant_closes_superseded_sync_task_for_same_site(tmp_path, monkeypatch
     monkeypatch.setattr(site_sync, "_verify", lambda *_args: None)
     old_identity = f"kernel-sync-{old_sha[:12]}-{target.parent.name}"
     old_state = type("State", (), {"identity": old_identity})()
+    # A different hyphenated site can share this target's terminal suffix.
+    other_identity = f"kernel-sync-{old_sha[:12]}-x-{target.parent.name}"
+    other_state = type("State", (), {"identity": other_identity})()
     monkeypatch.setattr(FakeFeed, "entries", lambda self: self.home)
     monkeypatch.setattr(site_sync, "task_states",
-                         lambda feed_home: {old_identity: old_state}
+                         lambda feed_home: {old_identity: old_state, other_identity: other_state}
                          if feed_home == core_home else {})
     assert site_sync.sync_registered_sites(core_home, {"state": "pass", "sha": new_sha}) == [
         f"synced {target.parent.name and target.parent} {new_sha[:12]}"]
