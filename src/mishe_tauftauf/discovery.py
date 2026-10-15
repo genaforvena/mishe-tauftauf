@@ -5304,6 +5304,17 @@ def _notify_scan(home: Path, snapshot: dict[str, object],
             sample_text = str(item["sample"])
             if identifier == "sense.space.light":
                 detail = json.dumps((item.get("reason"), item.get("provenance")), sort_keys=True)
+            elif identifier == "sense.coord.gate-latency":
+                # The humanized age in `oldest=<role>:<age>` advances every
+                # scan; identity uses the structured stall count and the
+                # oldest role name, so an unchanged condition stops
+                # re-notifying while a real change still surfaces. The
+                # stored sample keeps the humanized age for readers. Slicing
+                # only, so discovery stays outside the parsing boundary.
+                _oldest = str(item.get("oldest_open", ""))
+                _sep = _oldest.find(":")
+                _role = _oldest if _sep < 0 else _oldest[:_sep]
+                detail = json.dumps((item.get("stall"), _role), sort_keys=True)
             elif item["kind"] == "declaration" or state != "verified":
                 detail = sample_text
                 if identifier == "sense.ledger.evidence-binding":
