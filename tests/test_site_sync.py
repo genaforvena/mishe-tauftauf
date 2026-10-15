@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 
 from coordination import site_sync
+from mishe_tauftauf.coordination_checks import anomalies
+from mishe_tauftauf.feed import FeedEntry
 
 
 class FakeFeed:
@@ -219,6 +221,10 @@ def test_replant_closes_target_side_sync_task_after_blocker_clears(tmp_path, mon
     done = [body for home, body in FakeFeed.events
             if home == target and body.startswith(f"[done] {old_identity}")]
     assert len(done) == 1
+    target_entries = [FeedEntry(sequence, "now", "sync", body)
+                      for sequence, (_, body) in enumerate(
+                          [event for event in FakeFeed.events if event[0] == target], start=1)]
+    assert not any(item["kind"] == "stale-kernel-sync" for item in anomalies(target_entries))
 
 
 def test_failed_live_verification_keeps_old_sha_for_retry(tmp_path: Path, monkeypatch) -> None:

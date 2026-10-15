@@ -235,7 +235,7 @@ def _release_source(core_home: Path, sha: str) -> Path:
     return checked_source(release, sha)[0]
 
 
-def _close_stale_sync_tasks(core_home: Path, target: Path, task: str) -> None:
+def _close_stale_sync_tasks(core_home: Path, target: Path, task: str, sha: str) -> None:
     """Close every older task for this site after a successful replant.
 
     If the green core SHA advances while a hold is open, the eventual replant
@@ -245,19 +245,17 @@ def _close_stale_sync_tasks(core_home: Path, target: Path, task: str) -> None:
     """
     prefix = "kernel-sync-"
     suffix = f"-{target.parent.name}"
-    sha_label = task[len(prefix):len(task) - len(suffix)]
     for feed_home in (core_home, target):
-        try:
-            open_ids = {state.identity for state in
-                        task_states(Feed(feed_home).entries()).values()
-                        if identity_matches_site(state.identity, prefix, suffix)}
-        except (OSError, ValueError):
-            continue
+        open_ids = {state.identity for state in
+                    task_states(Feed(feed_home).entries()).values()
+                    if identity_matches_site(state.identity, prefix, suffix)}
         open_ids.discard(task)
         for identity in sorted(open_ids):
             Feed(feed_home).append("sync", f"[done] {identity}\n"
                                    f"Superseded: {target.parent} was replanted from core "
-                                   f"{sha_label} by this sync cycle.")
+                                   f"{sha[:12]} by this sync cycle.")
+        marker = json.dumps({"target": target.parent.name, "core_sha": sha}, sort_keys=True)
+        Feed(feed_home).append("sync", f"[site-sync] {marker}")
 
 
 def identity_matches_site(identity: str, prefix: str, suffix: str) -> bool:
@@ -308,7 +306,7 @@ def sync_registered_sites(core_home: Path, ci: dict[str, str], *, runtime_only: 
                 if _git(release, "rev-parse", "HEAD") != sha or _git(release, "status", "--porcelain"):
                     raise RuntimeError("release changed during linked-site refresh")
                 _update_site(core_home, target, sha=sha, error=None)
-                _close_stale_sync_tasks(core_home, target, task)
+                _close_stale_sync_tasks(core_home, target, task, sha)
                 detail = f"Replanted {target.parent} from core {sha}; expected top panes and resident services are live."
                 core_tag = f"[done] {task}" if row.get("error") else f"[sync] core sha={sha}"
                 Feed(core_home).append("sync", f"{core_tag}\n{detail}")

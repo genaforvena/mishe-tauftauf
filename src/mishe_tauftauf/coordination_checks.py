@@ -12,7 +12,7 @@ from pathlib import Path
 import re
 
 from .feed import Feed
-from .chat_protocol import decode_lifecycle
+from .chat_protocol import decode_kernel_sync_target, decode_lifecycle, decode_site_sync
 from .records import payload
 from .task_state import TaskState, eligible, registry
 
@@ -82,9 +82,26 @@ def anomalies(entries, payloads: dict | None = None):
     view = project(entries, payloads)
     findings = [_finding(None, 'invalid-context', 'UNKNOWN', error['message'], [error['sequence']]) for error in view['errors']]
     tasks = view['tasks']
+    site_syncs = []
+    for entry in entries:
+        try:
+            completion = decode_site_sync(entry)
+        except ValueError as exc:
+            findings.append(_finding(None, 'invalid-context', 'UNKNOWN', str(exc), [entry.sequence]))
+            continue
+        if completion:
+            site_syncs.append((entry.sequence, completion))
     for identity, state in tasks.items():
         if state['status'] in {'done', 'dropped'}:
             continue
+        sync_target = decode_kernel_sync_target(identity)
+        if sync_target is not None:
+            completed = [sequence for sequence, marker in site_syncs
+                         if sequence > state['sequence'] and marker.target == sync_target]
+            if completed:
+                findings.append(_finding(identity, 'stale-kernel-sync', 'RED',
+                                         'A successful refresh for this site was recorded while its kernel-sync task remained open.',
+                                         [state['sequence'], *completed]))
         producer = state.get('retry_task')
         if producer:
             dependency = tasks.get(producer)

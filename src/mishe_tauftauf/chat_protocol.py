@@ -1,10 +1,10 @@
-"""Boundary adapter for the chat tape's historical lifecycle dialect.
+"""Boundary adapters for lifecycle and linked-site completion records.
 
-Only this module interprets wake/yield/clear sentences. Consumers receive
-decoded values; explanatory prose never supplies lifecycle control fields.
+Machine control records are decoded here; explanatory prose remains opaque.
 """
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from functools import lru_cache
@@ -16,6 +16,9 @@ _YIELD_RE = re.compile(r"seed yield ([a-z0-9-]+) wake=([1-9][0-9]*)( continue=1)
 _CLEAR_RE = re.compile(r"seed clear ([a-z0-9-]+) after=([1-9][0-9]*)\Z")
 _RESERVED = re.compile(r"\s*seed (?:wake|yield|clear)(?:\s|\Z)")
 _SETTLED = re.compile(r"Turn settled \(([a-z]+)\);")
+_SITE_SYNC_HEADER = "[site-sync] "
+_CORE_SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
+_KERNEL_SYNC_TASK_RE = re.compile(r"kernel-sync-[0-9a-f]{12}-(.+)\Z")
 
 
 class ProtocolError(FeedError):
@@ -33,6 +36,12 @@ class LifecycleEvent:
     continue_work: bool = False
     result: str | None = None
     prose: str = ""
+
+
+@dataclass(frozen=True)
+class SiteSyncCompletion:
+    target: str
+    core_sha: str
 
 
 @lru_cache(maxsize=8192)
@@ -64,3 +73,30 @@ def decode_lifecycle(entry: FeedEntry) -> LifecycleEvent | None:
         return _decode(entry.body)
     except ProtocolError as exc:
         raise ProtocolError(f"entry {entry.sequence}: {exc}") from exc
+
+
+def decode_site_sync(entry: FeedEntry) -> SiteSyncCompletion | None:
+    """Decode the coordinator's target-scoped successful-refresh marker."""
+    if entry.source != "sync":
+        return None
+    header = entry.body.splitlines()[0] if entry.body else ""
+    if not header.startswith("[site-sync]"):
+        return None
+    if not header.startswith(_SITE_SYNC_HEADER):
+        raise ProtocolError(f"entry {entry.sequence}: malformed site-sync marker")
+    try:
+        data = json.loads(header[len(_SITE_SYNC_HEADER):])
+    except (TypeError, ValueError) as exc:
+        raise ProtocolError(f"entry {entry.sequence}: malformed site-sync payload") from exc
+    if (not isinstance(data, dict) or set(data) != {"target", "core_sha"}
+            or not isinstance(data["target"], str) or not data["target"]
+            or len(data["target"]) > 255 or any(char in data["target"] for char in "\r\n\0")
+            or not isinstance(data["core_sha"], str) or not _CORE_SHA_RE.fullmatch(data["core_sha"])):
+        raise ProtocolError(f"entry {entry.sequence}: invalid site-sync payload")
+    return SiteSyncCompletion(data["target"], data["core_sha"])
+
+
+def decode_kernel_sync_target(identity: str) -> str | None:
+    """Decode the target suffix in the coordinator's kernel-sync task identity."""
+    match = _KERNEL_SYNC_TASK_RE.fullmatch(identity)
+    return match[1] if match else None
