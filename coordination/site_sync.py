@@ -236,28 +236,28 @@ def _release_source(core_home: Path, sha: str) -> Path:
 
 
 def _close_stale_sync_tasks(core_home: Path, target: Path, task: str) -> None:
-    """Close older kernel-sync tasks for this site superseded by a replant.
+    """Close every older task for this site after a successful replant.
 
-    A hold opens kernel-sync-<old sha>-<site>. If the green core sha advances
-    before the blocker clears, the eventual replant closes the new-sha task
-    only and the old-sha task would stay open forever. The successful replant
-    satisfies that obligation, so close every other open kernel-sync task for
-    this site.
+    If the green core SHA advances while a hold is open, the eventual replant
+    satisfies the old obligation as well as the current one. Tasks are tracked
+    independently in the core and target feeds, so close every older matching
+    identity in each feed.
     """
     prefix = "kernel-sync-"
     suffix = f"-{target.parent.name}"
-    try:
-        open_ids = {state.identity for state in
-                    task_states(Feed(core_home).entries()).values()
-                    if identity_matches_site(state.identity, prefix, suffix)}
-    except (OSError, ValueError):
-        return
-    open_ids.discard(task)
     sha_label = task[len(prefix):len(task) - len(suffix)]
-    for identity in sorted(open_ids):
-        Feed(core_home).append("sync", f"[done] {identity}\n"
-                               f"Superseded: {target.parent} was replanted from core "
-                               f"{sha_label} by this sync cycle.")
+    for feed_home in (core_home, target):
+        try:
+            open_ids = {state.identity for state in
+                        task_states(Feed(feed_home).entries()).values()
+                        if identity_matches_site(state.identity, prefix, suffix)}
+        except (OSError, ValueError):
+            continue
+        open_ids.discard(task)
+        for identity in sorted(open_ids):
+            Feed(feed_home).append("sync", f"[done] {identity}\n"
+                                   f"Superseded: {target.parent} was replanted from core "
+                                   f"{sha_label} by this sync cycle.")
 
 
 def identity_matches_site(identity: str, prefix: str, suffix: str) -> bool:
@@ -265,6 +265,7 @@ def identity_matches_site(identity: str, prefix: str, suffix: str) -> bool:
     return (len(identity) > len(prefix) + len(suffix)
             and identity[:len(prefix)] == prefix
             and identity[-len(suffix):] == suffix)
+
 
 def sync_registered_sites(core_home: Path, ci: dict[str, str], *, runtime_only: bool = False) -> list[str]:
     """Apply the exact green local commit to clean, owned sites; retry later on a hold."""
