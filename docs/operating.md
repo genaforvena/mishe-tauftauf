@@ -128,8 +128,8 @@ Ctrl-c stops `tail`, not the plant. The live panels may summarize only recent en
 
 ### Read the space readings
 
-Three surfaces are owned as read-only readings rather than collections. Take
-one published sample, or acquire a new bounded one:
+Four sources are read-only readings rather than collections. Take one
+published sample, or acquire a new bounded one:
 
 ```bash
 "$SITE/bin/mishe-tauftauf" --home "$SITE" discover show
@@ -138,15 +138,17 @@ one published sample, or acquire a new bounded one:
 
 `discover show` prints the latest published scan, which carries the Note3
 light reading as `sense.space.light` and this host's own Bluetooth and Wi-Fi
-adapter state as `sense.space.host-radio`; `discover scan` takes one new
-sample instead of reading a published one, so acquiring is an action rather
-than an inspection. This host's wired Ethernet link state and tailnet peer
-status read as `sense.net.ethernet` and `sense.net.tailnet-peer` — per
-interface and per peer, with a missing binary, a non-zero exit, text that does
-not decode, or a backend state other than `Running` named as a problem rather
-than read as calm. The camera fault surface is read into the health check
-and reaches a reader as a named cause on the health pane's `SYSTEM ZERO` line,
-not as its own detail line.
+adapter state as `sense.space.host-radio`. It also records the linked Android
+Body consumer's Redmi10 reading as `sense.body.redmi10`; the Senses pane reads
+that retained consumer state on each render, so it does not wait for another
+core scan. `discover scan` takes one new sample instead of reading a published
+one, so acquiring is an action rather than an inspection. This host's wired
+Ethernet link state and tailnet peer status read as `sense.net.ethernet` and
+`sense.net.tailnet-peer` — per interface and per peer, with a missing binary,
+a non-zero exit, text that does not decode, or a backend state other than
+`Running` named as a problem rather than read as calm. The camera fault surface
+is read into the health check and reaches a reader as a named cause on the
+health pane's `SYSTEM ZERO` line, not as its own detail line.
 
 The light reading is capped at 30 seconds, or the producer's shorter validity,
 and a missing, unreadable, delayed or expired boundary stays UNKNOWN instead
@@ -161,6 +163,16 @@ the previous rule: measured on 2026-10-13T13:49Z, one boundary file read
 from the checkout source and `unknown stale-original-evidence` from pin
 `fcaa2aa`, so a fresh reading can read stale on a deployed pane.
 `sense.runtime.pin-lag` names that gap (`pin=<sha> head=<sha> lag=N age=…`).
+
+The Redmi10 line reads the linked Android Body site's retained consumer JSON,
+not a second phone collector. It shows battery, light and acceleration only
+when the consumer receipt is within 30 seconds; the displayed phone-sample and
+host-receipt times remain separate, and their clock split is UNKNOWN without a
+measured clock-domain result. Missing, malformed, backlogged or stale consumer
+state reads UNKNOWN. Wi-Fi RSSI is a connected-link observation, not proximity;
+the BLE scan error is shown as source evidence, not silently repaired. The
+acceleration magnitude includes gravity and does not establish human motion,
+continuous carrying or presence.
 
 A published historical transition is retained only when the reader can
 revalidate it; otherwise the pane names the failed predicate after

@@ -46,18 +46,22 @@ rejects the record whole rather than trusting a readable subset, and the
 affected verdict reads UNKNOWN with the scan attempt retained
 ([operating the plant](operating.md), [how it works](how-it-works.md)).
 
-Three owned surfaces are read, not collected: the Note3 light feed through an
-atomic boundary file with a bounded freshness window, this host's own
-Bluetooth and Wi-Fi adapter state, and this host's own camera fault state —
-faults, not a scene. `discover show` prints the latest scan with the light and
-radio readings as `sense.space.light` and `sense.space.host-radio`; a camera
-fault reaches the health pane's `SYSTEM ZERO` line as a named cause. Each
-keeps a missing, unreadable or broken read visibly UNKNOWN rather than calm;
-the reading rules, the command that takes one, and their limits are in
-[operating the plant](operating.md) and [how it works](how-it-works.md).
-The latest scan (2026-10-15T10:56:47Z) reported Note3 light as `UNKNOWN`
-(`light-stream-frozen`; last receipt 2026-10-14T06:13:52Z); no current light
-sample was available.
+Four owned surfaces are read, not collected: the Note3 light feed, the linked
+Android Body consumer's retained Redmi10 readings, this host's own Bluetooth
+and Wi-Fi adapter state, and this host's camera fault state — faults, not a
+scene. `discover show` prints the published light and radio readings as
+`sense.space.light` and `sense.space.host-radio`; its scan also carries
+`sense.body.redmi10`. The Senses pane refreshes that Redmi10 consumer read
+directly, so it remains visible between scans. Missing, unreadable or stale
+Redmi10 evidence stays UNKNOWN; acceleration includes gravity and is not
+evidence of human movement, while phone/host clock agreement remains explicit.
+A camera fault reaches the health pane's `SYSTEM ZERO` line as a named cause.
+The reading rules, commands and limits are in [operating the plant](operating.md)
+and [how it works](how-it-works.md).
+
+The latest published scan (2026-10-15T10:56:47Z) reported Note3 light as
+`UNKNOWN` (`light-stream-frozen`; last receipt 2026-10-14T06:13:52Z); no current
+Note3 light sample was available.
 
 Two further readings cover this host's own network path instead of its space:
 its wired Ethernet link state as `sense.net.ethernet` and its tailnet peer

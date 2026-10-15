@@ -619,6 +619,25 @@ verdict is stale — keeps the reader's own name, so a reader can never claim a
 configured silence it could not read. The mode enum is the producer's
 declaration about delivery, not about the sensor: a `collect-only` node's light
 capability stays unmeasured rather than reported as stopped.
+
+Redmi10 is read through the linked Android Body site's retained
+`body/perception/redmi10.json`; core senses do not duplicate the phone collector
+or post rows to the shared chat. A decoder checks the linked-site and consumer
+schema, node, source, session, cursor and per-channel receipt metadata before it
+publishes `sense.body.redmi10`. Battery, light and acceleration are current
+only when their host consumer receipts (and any sensor-age field) are within
+30 seconds and the consumer is not in error or draining a backlog. The Senses
+pane re-reads this local file on each render; the ordinary discovery scan also
+stores a bounded reading for later resident analysis. Missing, malformed,
+future or stale receipts remain UNKNOWN rather than reusing a last-known value.
+The line preserves phone-sample time separately from consumer receipt time;
+without a clock-domain measurement their split is unknown. Wi-Fi RSSI is only a
+connected-link reading, not proximity. The last BLE scan error remains visible
+as stale evidence, not a current permission diagnosis. Acceleration magnitude
+includes gravity; it is device evidence, not a human movement, presence or
+continuous-carrying claim. The human's carrying context remains contextual, not
+sensor-certified.
+
 The class needs the reader's own retained null origin to survive between reads.
 A freeze onset is recorded beside that origin and routed once per streak: the
 first naming of a sustained freeze writes `discovery/space-light-freeze.json`

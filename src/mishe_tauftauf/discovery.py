@@ -19,6 +19,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from . import omp_pane, proc_table, space_text
+from .body_perception import read_redmi10
 from .activity import roles as seated_roles
 from .feed import Feed, parse_feed, publication_lock
 from .host_radio import (BLUETOOTH_ROOT, COMMAND_TIMEOUT_SECONDS, NET_ROOT,
@@ -4958,6 +4959,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_ledger_dv_binding(home))
     observed.append(_ledger_evidence_binding(home))
     observed.append(_space_light_read(home))
+    observed.append(read_redmi10(home))
     observed.append(_host_radio_read())
     observed.append(_ethernet_read())
     observed.append(_tailnet_peer_read())

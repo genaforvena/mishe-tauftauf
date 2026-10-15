@@ -18,6 +18,7 @@ from . import clear_journal
 from . import scan_freshness
 from .discovery import (latest, producer_label, scan_attempt, _space_light,
                         _space_light_name_freeze, _space_light_read)
+from .body_perception import SENSE_ID, read_redmi10
 from .host_radio import decode_cam_events, decode_cam_manifest, decode_cam_state, decode_urb_failures
 from . import proc_table
 from .space_text import nonblank
@@ -223,24 +224,33 @@ def senses(home: Path) -> str:
              "NEXT: pursue a new useful read when an UNKNOWN has a documented retry condition; verify its live sample"]
     snapshot = latest(home)
     attempt_line, attempt_failure = _attempt_reading(home, snapshot)
+    redmi = read_redmi10(home)
     lines.append(attempt_line)
     if snapshot is None:
         verdict = "UNKNOWN senses no discovery sample"
         lines.append("STATE: UNKNOWN — no sample exists")
+        _, redmi_line = _observation_reading(redmi, "recent", home)
+        lines.append(redmi_line)
+        if isinstance(redmi.get("details"), str):
+            lines.append("REDMI10 SOURCE/LIMITS: " + redmi["details"])
     else:
         freshness, consistency = _scan_reading(snapshot)
         senses_rows = [item for item in snapshot.get("observations", [])
                        if str(item.get("id", "")).startswith("sense.")
-                       and item.get("id") != "sense.space.light"]
+                       and item.get("id") not in {"sense.space.light", SENSE_ID}]
         space = _space_light_read(home)
+        senses_rows.append(redmi)
         senses_rows.append(space)
         unknown = 0
         unavailable = 0
         for item in senses_rows:
-            state, line = _observation_reading(item, freshness, home)
+            item_freshness = "recent" if item.get("id") == SENSE_ID else freshness
+            state, line = _observation_reading(item, item_freshness, home)
             unknown += state not in {"verified", "unavailable"}
             unavailable += state == "unavailable"
             lines.append(line)
+            if isinstance(item.get("details"), str):
+                lines.append("REDMI10 SOURCE/LIMITS: " + item["details"])
         provenance = space.get("provenance", {})
         clock_bound = nonblank(space.get("clock_bound"))
         clock_text = (clock_bound
