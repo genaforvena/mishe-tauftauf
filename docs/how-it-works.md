@@ -203,6 +203,19 @@ not power-loss durability, automatic recovery or a deployed resident route.
 To take that reading in words a reader would use: read the role dashboard with `pain read ROLE --launcher dashboard`, then compare it with the native route's retained per-turn journal at `SITE/journals/ROLE-native.jsonl`, which records each turn's tool selections, result checks, wire usage and fetch
 dispatch count with any preserved upstream failure. A bounded docs-class comparison (October 2026) reached no parity verdict yet — the retained native run predates per-turn usage evidence and never recorded a stop — so the harness route stays the fallback until a back-to-back same-input run evidences parity for this work class.
 
+The named acceptance for that back-to-back run, so no adoption claim can
+precede it: both arms read the same frozen path and digest; both select
+`inspect` on that exact path with no extra arguments; both results match the
+frozen file's content; tokens, elapsed and calls are recorded as measured
+columns, not equalled; a process kill mid-run leaves the source
+byte-unchanged after reconcile and records the kill as UNKNOWN, never
+success; the journal carries per-turn selections, result checks, wire usage,
+fetch dispatch counts and preserved upstream failures; a second reader
+checks the comparison artifact. Resident activation, durable replay,
+configured-model parity and live useful-task proof are outside this class
+and stay open. The harness route stays the fallback until every listed
+item is evidenced; `applied` alone is not delivery.
+
 `inference_inspect.prepare_exact_inspection` freezes one caller-supplied absolute
 file path, SHA256, byte count, source/task identity and loop budgets before a model
 turn. Preflight and dispatch use the same bounded read: every path component
