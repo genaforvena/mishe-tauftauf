@@ -1,3 +1,38 @@
+## Wake 49430 — operator's bounded internal-loop canary executed live (no adoption claim)
+
+Executed operator DM 49390. Frozen one source file before any run
+(`src/mishe_tauftauf/inference_inspect.py`, sha256
+`89f7f33b5de21595cbe4edeb174a1fcc56f283202b6c1a7802153d8f0a117738`, 11192 B,
+mtime_ns `1792063851899848221`; freeze record precedes both runs) and drove
+`prepare_exact_inspection` / `run_exact_inspection` with a local worker
+(`NativeSession`, `opencode-go/step-5-preview-free`, reasoning `medium`) on the
+existing journal + `EffectBoundary` + reconcile path.
+
+- **Arm A (uninterrupted):** `status=complete`, 2 turns / 1 `inspect` call,
+  **26.151 s**, **4911 provider tokens** (6718 prompt incl. 320 cached), 8-row
+  journal, exactly one intent/start/outcome in the store. The capability
+  re-verified the frozen digest internally.
+- **External-mind arm (same file, same wake):** one tool read, 0.10 s, no
+  model proposal, token cost UNKNOWN from outside the resident OMP session
+  (recorded as UNKNOWN, not zero); it has no independent digest check of the
+  bytes it returns.
+- **Arm B (process-kill/reconcile, mutation-free dispatch):** real SIGKILL
+  (exit 137) after the durable outcome append, before the `tool_result` row
+  (journal 4 rows at kill). Fresh-process reconcile appended exactly that row
+  and returned the completed outcome; the store still holds one execution (no
+  redispatch); the frozen file remained sha256- and mtime-identical to the
+  freeze. The restored row carries the reconciler's event key order
+  (`kind,turn,call,message,obligation`) vs the uninterrupted writer's
+  (`kind,obligation,turn,call,message`) — a writer fingerprint, consistent with
+  the 4h live-journal observation.
+- **Checks:** 214 targeted tests passed at HEAD; `check_parsing.py` PASS 928;
+  no source change this wake.
+- **Block/claims:** no resident mind replacement, no settlement or mutation by
+  the canary, external mind remains fallback/default; docs acceptance wording
+  requested (DM 49582) before any adoption claim; witness independent read
+  requested (DM 49583). Evidence:
+  `artifacts/inference-research-wake49430-internal-loop-canary.md`.
+
 ## Wake 49120 — witness reads delivered; 4h live-reachability measured; chronology closed
 
 Dashboard GREEN; launcher marker `opencode-go/step-5-preview-free` (high). Both

@@ -1491,4 +1491,76 @@ Regression test pins: (1) the loop reconciler's appended row equals the uninterr
 
 **Witness independent read delivered (wake 48884, DM 48961):** no mismatch — defect, reachability bound, amendment honesty, regression alignment and source/report/test agreement confirmed; author-reported n=3-style measurements read, not replayed; no live activation or parity claim. Its residual chronology limit is closed by deterministic timestamps: prereg `9d137e2` 17:01:45Z, before-fix fixture `exp4h_fixture.py` born 17:08:10Z, amendment `9d61cd2` 17:10:54Z, source fix `e904cc5` 17:26:53Z (prereg → fixture → amendment → fix). **Live reachability measured (wake 49120, zero provider calls, `~/.omp/agent/sessions` scan, 2026-10-13..15):** 66253/66253 assistant rows carry an integer epoch-ms `timestamp` on every route (opencode-go 54430, openai-codex 11679, ifm 138, nvidia 6), so the pre-fix hardcoded 0 diverged from the uninterrupted writer on the live-normal case for any caller of this reconciler. The live consumers' caller journals (`journals/docs-native.jsonl` 10 rows, `journals/health-native.jsonl` 9 rows) were written entirely by the uninterrupted writer (event key order `kind,obligation,turn,call,message`; all timestamps nonzero real ms), so neither reconciler has fired in production and the defect never fired live — it was reachable-in-principle for a future caller, and the fix now restores exactly the row that writer produces. Live `toolCall` items carry `type: 'toolCall'` with a string `id`, matching `_proposing_assistant`'s predicate on the real shape. Evidence: `artifacts/inference-research-wake49120-4h-live-reachability.md`; original experiment evidence: `artifacts/inference-research-wake48495-exp4h-restored-row-fidelity.md`.
 
+## Experiment 4i: bounded live canary of the exact-inspection caller path (wake 49430, operator DM 49390)
+
+### Dispatch (pre-registration, before execution)
+
+Operator dispatch required: freeze one source path + SHA before the run; drive
+`prepare_exact_inspection` / `run_exact_inspection` with a local worker
+(`NativeSession`) on the existing journal + `EffectBoundary` + reconcile path;
+compare to the external-mind run on the same source (tokens, elapsed, calls,
+proposal/result, failure mode); exercise process-kill/reconcile after
+mutation-free dispatch and report whether the source remains unchanged.
+Blocks maintained: no mutation, no settlement, no seed yield, no resident mind
+replacement; external mind remains fallback/default; docs name acceptance
+before any adoption claim. Freeze record written before both runs
+(`artifacts/inference-research-wake49430-canary/freeze.md`).
+
+### Predictions
+
+1. Arm A (uninterrupted) reaches `status=complete` in 2 turns / 1 `inspect` call
+   with exactly one store execution.
+2. Arm B (SIGKILL after the outcome append) kills the child before the
+   `tool_result` row; a fresh-process reconcile appends exactly that row,
+   returns the completed outcome, leaves one execution, and the frozen file is
+   byte- and mtime-identical to the freeze.
+3. The external-mind read is cheaper in wall time and carries no provider
+   wire-usage row (its token cost is UNKNOWN from outside the resident
+   session, not zero).
+
+### Executed (live, one host, one route, one file, n=1 per arm)
+
+Frozen: `src/mishe_tauftauf/inference_inspect.py`, sha256
+`89f7f33b5de21595cbe4edeb174a1fcc56f283202b6c1a7802153d8f0a117738`, 11192 B,
+mtime_ns `1792063851899848221`; route `opencode-go/step-5-preview-free`
+(bun 1.4.3, pinned `@oh-my-pi` tree `oh-my-pi-atria-5e0fc86`), reasoning
+`medium` (accepted on this route), `max_turns=2 max_calls=1`.
+
+| metric | external mind (this wake) | internal loop arm A | arm B (kill+reconcile) |
+|---|---|---|---|
+| elapsed | 0.10 s | 26.151 s | child 20.5 s to kill |
+| calls | 1 tool read | 2 turns / 1 `inspect` call | 1 turn / 1 call, killed post-outcome |
+| provider tokens | UNKNOWN (bounded by output) | 4911 total (6718 prompt incl. 320 cached) | not observable post-kill |
+| proposal/result | none | proposal + tool_result rows | proposal only; row restored by reconcile |
+| failure mode | none | none | SIGKILL (exit 137), controlled |
+| store executions | n/a | 1 (intent/start/outcome) | 1 — no redispatch |
+
+Arm A journal 8 rows; `tool_result` written by `drive_native` with event key
+order `kind,obligation,turn,call,message` and the proposing assistant's
+timestamp `1792087553661`. Arm B: child journal 4 rows at kill; fresh-process
+`reconcile_caller_journal` appended one row (5 rows) and returned the
+`completed` outcome; the restored row's event key order is the reconciler's
+`kind,turn,call,message,obligation` (a writer fingerprint matching the 4h live
+observation); restored message equals the uninterrupted row modulo the
+run-specific `operation_id`/`reconciliation_ref`, and its timestamp is that
+run's proposing assistant's (`1792087596555`; `messages[-1]` coincides in the
+single-call shape, 4h table row 1). Source after both arms: sha256, bytes and
+mtime_ns identical to the freeze.
+
+### Verification
+
+`PYTHONPATH=src .venv/bin/pytest tests/test_inference_inspect.py
+tests/test_inference_loop.py tests/test_inference_effects.py -q` → 214 passed;
+`tools/check_parsing.py` → PASS 928. No source change this wake.
+
+### Status
+
+**Executed.** All three predictions held. Recorded limits: one host, one route,
+one file, n=1 per arm; provider-reported usage; the external arm's token cost
+is UNKNOWN from outside the resident OMP session; not an activation, parity or
+exactly-once claim. Docs acceptance wording requested (DM 49582) before any
+adoption claim; witness independent read requested (DM 49583). Evidence:
+`artifacts/inference-research-wake49430-internal-loop-canary.md` with run dirs
+`runA/` and `runB/`.
+
 ## Future experiments (not yet planned)
