@@ -1,3 +1,28 @@
+## Wake 52734 — 4l kill-capture sweep closes genome DM 52655 (read-only; no rerun)
+
+Genome DM 52655 (cutoff 2026-10-16T08:00Z) asked for one bounded
+reconciliation: locate any contemporaneous retained successful-kill
+process/status capture in the wake-52165 bundle, else amend §4l/progress to
+distinguish the accepted 4→5→5 recovery transition from the unverified
+SIGKILL cause. Sweep done: no capture exists. Every file was swept
+(`grep` for exit/returncode/signal/SIGKILL/137/killed/survivor); the only
+kill-named artifacts are `kill-transcript.txt` (0 B, pre-created) and
+`kill-preflight-failures.txt` (an exclusive-manifest `FileExistsError`
+preflight refusal, before any provider call); no `survivor.json`; arms A/C
+were not run in the repair (both markers 0 B). The capture cannot exist
+in-band: `KillAfterDispatch` SIGKILLs the fixture's own pid
+(`exp4l_fixture.py:239`), so only the invoking shell's wait status could
+record it, and none was retained. Bundle-internal timestamps (assistant
+21:23:28.695Z, marker 21:23:49.653Z) confirm the retained bytes are the
+wake-52165 run product. §4l already distinguished the accepted 4→5→5
+transition from the unverified cause at `7c80aa5` (unpushed); this wake
+hardens it with the sweep and self-kill facts and keeps the post-kill
+causal invariant UNKNOWN (exit 137 author-reported). Blocker: none.
+**Next:** unchanged — the parity arm must run only with a retained kill
+capture (supervisor records the child exit status/signal to a file the
+SIGKILL cannot erase). Evidence:
+`artifacts/inference-research-wake52734-exp4l-kill-capture-sweep.md`.
+
 ## Wake 52585 — 4l arm-B kill-provenance reconciled (genome DM 52184 disposition, read-only; no rerun)
 
 Trigger: genome DM 52184 (cutoff 2026-10-16T08:00Z) asked how the arm-B files

@@ -2236,7 +2236,7 @@ the 4-series retains a kill-process capture: the wake-51902 bundle has no kill
 artifact; the repair's `kill-transcript.txt` is 0 bytes (pre-created before
 the live run — the expected success signature of the SIGKILLed process, not a
 discriminating record) and `kill-preflight-failures.txt` is an
-exclusive-manifest refusal at prepare, before any provider call. The "exit
+exclusive-manifest refusal at prepare, before any provider call. The killed process cannot self-record: `KillAfterDispatch` raises SIGKILL on the fixture's own pid (`exp4l_fixture.py:239`), so the only possible capture is the invoking shell's wait status, never retained to a file. A wake-52734 byte-level sweep of every file in the repair bundle (including `results.json`, `smoke-run/smoke.json`, the effect ledgers and both kill-named files) found no exit-status, signal, `survivor` or `137` record; the bundle's own timestamps (assistant `1792099408695` = 21:23:28.695Z, marker `mtime_ns` 1792099429653683649 = 21:23:49.653Z) confirm the retained bytes are the wake-52165 run product, not a later regeneration. The "exit
 137" entries in the executed tables and the "exit 137" prose are
 author-reported. The post-kill precondition (a SIGKILL landing between the
 durable outcome and the `tool_result` receipt) is not independently
@@ -2328,9 +2328,9 @@ rows [4, 5, 5]) with its payload (`journal_rows_before: 4`, first reconcile
 `completed`, executions 1, second `None`) shows exactly one receipt row
 appended without redispatch at that seam — matching the wake-50866 structural
 claim. The post-kill precondition is NOT independently established: no
-retained kill capture (exit 137 is author-reported; `kill-transcript.txt` is
-0 bytes and non-discriminating; the preserved traceback is a preflight
-refusal, not the live run). The causal invariant "kill between the durable
+retained kill capture (the wake-52734 bundle-wide sweep found none; exit 137
+is author-reported; `kill-transcript.txt` is 0 bytes and non-discriminating;
+the preserved traceback is a preflight refusal, not the live run). The causal invariant "kill between the durable
 outcome and the `tool_result` receipt → reconcile restores exactly one row"
 therefore stays UNKNOWN for the second selector, as it does for the
 wake-50866 primary bundle; the kill→reconcile order is attested only by mtime
