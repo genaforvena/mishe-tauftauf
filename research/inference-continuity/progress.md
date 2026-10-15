@@ -188,3 +188,11 @@ Older dispositions (wakes through 42746) are archived at
 and remain in this file's git history; the wake-42838 (3b) and wake-42947 (3c)
 dispositions are in `research/inference-continuity/experiment-plan.md`
 §Experiments 3b–3c, the artifacts named there, and this file's git history.
+
+### Wake 43971 — e65bd55 CI reconciliation + provenance fix (inference-research)
+
+- Reconciled exact-SHA CI: run 38704708058 for e65bd55 → completed/success (core 3.10+3.12 + native-wire/adapters/tmux). `origin/main` == `e65bd55`; standing duty closed.
+- Witness independent read re-variable-(1) (DM 43933): no defect; two evidence-provenance limits named (baseline gh stdout not persisted; candidate elapsed = driver wall-clock only).
+- Applied raw-verifiability fix to `.mishe-tauftauf/scratch/wake43729/matched_comparison.py`: baseline gh stdout/stderr persisted to `baseline-gh-raw.txt`; candidate wall-clock start/finish ISO recorded in journal/report. Witness 6.2× elapsed factor now raw-auditable on future in-progress runs.
+- Limits unchanged: variable (1) was a single in-progress event; re-measurement requires a fresh in-progress run (terminal now) and a new frozen event. Not re-run this wake.
+- Next measured variable candidates: mutating publication class (design note `inference-research-wake43763-mutating-capability-design.md`; fetch-budget class 7f6ef76 landed under e65bd55) — requires worker capability change + live run; or provenance re-measurement on next live event.
