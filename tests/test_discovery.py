@@ -6763,3 +6763,75 @@ def test_notify_scan_notifies_on_evidence_binding_cause_change(tmp_path):
     discovery._notify_scan(home, snapshot_two, snapshot_one, path)
     after = len(Feed(home).entries())
     assert after > before
+
+def test_notify_scan_ignores_gate_latency_age_only_changes(tmp_path):
+    """A humanized-age advance alone is not a material gate-latency change.
+
+    The live sample embeds `oldest=<role>:<age>` where the age advances every
+    scan; identity uses the structured stall count and oldest role name
+    (DM 44455: gate-latency was named in 3/3 consecutive notices with only
+    the age differing).
+    """
+    home = tmp_path / "site"
+    (home / "discovery").mkdir(parents=True, exist_ok=True)
+    path = home / "discovery" / "sample.json"
+    rid = "sense.coord.gate-latency"
+    reading_one = {"id": rid, "kind": "read", "state": "drift",
+                   "sample": "stall=8 oldest=discover:1h02m",
+                   "stall": 8, "oldest_open": "discover:1h02m"}
+    reading_two = {"id": rid, "kind": "read", "state": "drift",
+                   "sample": "stall=8 oldest=discover:1h03m",
+                   "stall": 8, "oldest_open": "discover:1h03m"}
+    snapshot_one = {"created": "2026-10-10T12:00:00Z", "node": "test",
+                    "observations": [reading_one]}
+    snapshot_two = {"created": "2026-10-10T12:01:00Z", "node": "test",
+                    "observations": [reading_two]}
+    discovery._notify_scan(home, snapshot_one, None, path)
+    before = len(Feed(home).entries())
+    discovery._notify_scan(home, snapshot_two, snapshot_one, path)
+    after = len(Feed(home).entries())
+    assert after == before
+
+
+def test_notify_scan_notifies_on_gate_latency_stall_change(tmp_path):
+    home = tmp_path / "site"
+    (home / "discovery").mkdir(parents=True, exist_ok=True)
+    path = home / "discovery" / "sample.json"
+    rid = "sense.coord.gate-latency"
+    reading_one = {"id": rid, "kind": "read", "state": "drift",
+                   "sample": "stall=8 oldest=discover:1h02m",
+                   "stall": 8, "oldest_open": "discover:1h02m"}
+    reading_two = {"id": rid, "kind": "read", "state": "drift",
+                   "sample": "stall=9 oldest=discover:1h02m",
+                   "stall": 9, "oldest_open": "discover:1h02m"}
+    snapshot_one = {"created": "2026-10-10T12:00:00Z", "node": "test",
+                    "observations": [reading_one]}
+    snapshot_two = {"created": "2026-10-10T12:01:00Z", "node": "test",
+                    "observations": [reading_two]}
+    discovery._notify_scan(home, snapshot_one, None, path)
+    before = len(Feed(home).entries())
+    discovery._notify_scan(home, snapshot_two, snapshot_one, path)
+    after = len(Feed(home).entries())
+    assert after > before
+
+
+def test_notify_scan_notifies_on_gate_latency_oldest_role_change(tmp_path):
+    home = tmp_path / "site"
+    (home / "discovery").mkdir(parents=True, exist_ok=True)
+    path = home / "discovery" / "sample.json"
+    rid = "sense.coord.gate-latency"
+    reading_one = {"id": rid, "kind": "read", "state": "drift",
+                   "sample": "stall=8 oldest=discover:1h02m",
+                   "stall": 8, "oldest_open": "discover:1h02m"}
+    reading_two = {"id": rid, "kind": "read", "state": "drift",
+                   "sample": "stall=8 oldest=health:05m",
+                   "stall": 8, "oldest_open": "health:05m"}
+    snapshot_one = {"created": "2026-10-10T12:00:00Z", "node": "test",
+                    "observations": [reading_one]}
+    snapshot_two = {"created": "2026-10-10T12:01:00Z", "node": "test",
+                    "observations": [reading_two]}
+    discovery._notify_scan(home, snapshot_one, None, path)
+    before = len(Feed(home).entries())
+    discovery._notify_scan(home, snapshot_two, snapshot_one, path)
+    after = len(Feed(home).entries())
+    assert after > before
