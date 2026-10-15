@@ -200,9 +200,15 @@ def read_redmi10(home: Path, now: float | None = None) -> dict[str, object]:
     light_text = (f"{lux:g}lux"
                   if statuses["light"] == "fresh-clock-conditional" and lux is not None
                   else statuses["light"])
+    acceleration_fields = fields_by_kind["acceleration"]
+    acceleration_source_reason = (acceleration_fields.get("reason")
+                                 if isinstance(acceleration_fields, dict) else None)
     acceleration_text = (f"{magnitude:.2f}m/s² incl-g"
                          if statuses["acceleration"] == "fresh-clock-conditional" and magnitude is not None
-                         else statuses["acceleration"])
+                         else (str(acceleration_source_reason)
+                               if isinstance(acceleration_source_reason, str)
+                               and acceleration_source_reason
+                               else statuses["acceleration"]))
     # Cursor progress remains in structured provenance/details, not the
     # observation summary: cursor-only advances must not re-wake the mind.
     sample = (f"Redmi10 sid={session} b={battery_text} L={light_text} "
