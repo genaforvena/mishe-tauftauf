@@ -1451,14 +1451,15 @@ Reachability: `native-session.ts:70` returns OMP's assistant message verbatim, s
 
 ### Hypothesis
 
-The loop's reconciler restores the same row the uninterrupted writer would have appended — the recorded proposing assistant's `timestamp`, not a synthesized 0 — so the restored context is message-identical to the uninterrupted continuation's context. `inference_inspect`'s `messages[-1]` derivation is *not* adopted: in a two-turn journal whose turn-2 call crashed, `messages[-1]` is turn-1's `toolResult` row (carrying turn-1 assistant's timestamp), not turn-2's proposing assistant.
+The loop's reconciler restores the same row the uninterrupted writer would have appended — the recorded proposing assistant's `timestamp`, not a synthesized 0 — so the restored context is message-identical to the uninterrupted continuation's context. The implementation correlates each pending call to the assistant message that proposed it, rather than reading `messages[-1]` (the convention `inference_inspect` uses): measured before the fix, `messages[-1]` happens to yield the same timestamp in both reachable crash shapes (two-turn: `messages[-1]` is turn-2's proposing assistant; multi-call: it is the sibling call's `toolResult` row, which carries the same proposing assistant's timestamp), so the helper is chosen for explicit correlation by construction, not for a measured numerical divergence. The earlier draft wording here claimed a reachable divergence that the before-fix fixture falsified; this paragraph is the correction, recorded before the source change.
 
 ### Pre-registered expected states (written before the fixture and the source change exist)
 
 | shape | state at reconcile | expected restored `message.timestamp` |
 |---|---|---|
 | single-turn crash, assistant `timestamp: 7` | pending call, no result row | 7 — byte-equal to the uninterrupted `drive_native` row for identical inputs |
-| two-turn crash before turn-2 result (turn-1 assistant 1, turn-1 toolResult timestamp 1, turn-2 assistant 7) | pending turn-2 call | 7 — not turn-1's `toolResult` timestamp |
+| two-turn crash before turn-2 result (turn-1 assistant 1, turn-2 assistant 7) | pending turn-2 call | 7 — `messages[-1]` coincides here (it is turn-2's assistant); the proposing-assistant correlation is correct by construction, not by coincidence |
+| multi-call single turn (both calls from assistant ts 7, A's result persisted) | pending B | 7 — `messages[-1]` is A's `toolResult` row, which carries the same proposing assistant's timestamp; coincidence again, correlation again explicit |
 | assistant without `timestamp` | pending call, no result row | 0 — row byte-identical to today |
 | every shape | — | no other message/journal/store byte changes; no dispatch; store unchanged |
 
