@@ -1329,4 +1329,90 @@ the pushed head are outstanding, not claimed. Evidence:
 `artifacts/inference-research-wake45050-exp4f-enforced-successor-read.md`;
 `SITE_HOME/research/inference-continuity/scratch/exp4f-successor-wake45050/results.json`.
 
+## Experiment 4g: the execution-written completion class under a real crash (wake 48237)
+
+### Hypothesis
+
+4f named the class its rule cannot cover: an outcome an execution wrote reads
+`completed` with no evidence binding at all, and 4f's control for that class was
+an in-process simulation — the `tool_result` write interrupted by an exception
+while the same process had dispatched through a real boundary. No experiment in
+the family has measured this class under the real crash choreography the other
+points use: a caller process that really dies after the boundary durably wrote
+the outcome and before the loop persists the `tool_result` row, reconciled
+afterwards by a fresh process through the live successor path.
+
+Prediction: the class behaves faithfully on that path. The outcome survives the
+kill (appended before the crash point); the successor's `recover` reply carries
+no `evidence_verdict` key (`verify_receipt_evidence` answers `not-a-receipt`,
+suppressed at the reply seam); `recovery_evidence_drift` therefore returns None
+and the reconciler appends the success row; the store journals are byte-unchanged
+and exactly one execution happened; the appended row is distinguishable from a
+receipt-backed row only by its `result` content (executor payload vs
+`confirmed_by: effect-side-evidence` plus the evidence observation), not by any
+first-class field on the record.
+
+### Materially new variable vs 4f
+
+The crash is real and lands *after* the outcome write instead of inside the
+executor, so the store already holds a completed outcome when the successor
+reads it; 4f's exec-written control never died. The measurement adds the
+receipt-backed arm on the same choreography so the two success rows can be
+compared directly.
+
+### Method
+
+1. `SITE_HOME/research/inference-continuity/scratch/exp4g-execwritten-wake48237/exp4g.py`,
+   fresh initialized run dir per point; zero provider calls; real SIGKILL
+   subprocesses; frozen operation identity `publication-<prereg-sha>`.
+2. `exec-written` arm — caller reserves and dispatches through a real
+   `EffectBoundary`; the mutating executor writes the effect artifact and counter
+   and returns normally; the boundary appends start + outcome under the store
+   lock; the caller is SIGKILLed inside the loop's `record` callback for the
+   `tool_result` event: after the outcome append, before the journal write.
+3. `receipt-backed` arm (comparison) — caller is SIGKILLed inside the executor
+   after the effect write (4f's honest choreography); a fresh successor inspects
+   the effect side and calls `record_receipt`.
+4. A fresh process probes `recover`, `recovery_evidence_drift` and the direct
+   `verify_receipt_evidence` export for the operation, then reconciles a copy of
+   the crash-state journal through `inference_loop.reconcile_caller_journal`,
+   with journal and store hashed around the call.
+5. Control `no-outcome` — caller killed inside the executor, no successor
+   receipt: the call must stay pending.
+6. n=3 per point; per-run dirs, digests and the appended row's parsed content
+   recorded.
+
+### Pre-registered expected states (written before the fixture is implemented)
+
+| point | store after kill | `recover` reply | `recovery_evidence_drift` | reconciler action | caller journal row | executions |
+|---|---|---|---|---|---|---|
+| exec-written | intent+start+outcome | `completed`, no `evidence_verdict` | None | append success row | `result` = executor payload, no `confirmed_by` | 1 |
+| receipt-backed | intent+start+outcome | `completed`, verdict verified | None | append success row | `result.confirmed_by = effect-side-evidence` + evidence | 1 |
+| no-outcome | intent+start | `started-without-outcome` (unknown) | None | none, stays pending | none | 1 |
+
+Also predicted: store journals byte-identical across every reconcile; the direct
+`verify_receipt_evidence` export answers `not-a-receipt` (`verified` false) for
+the exec-written outcome, so the reply-seam suppression is the only consumer-safe
+handling; and no live consumer calls that export on an execution-written outcome
+today (live scan: 0 receipts, all rows execution-written).
+
+### Acceptance
+
+- No source change is implied: every prediction is about existing behaviour. If a
+  prediction fails, the failure is the result, not a fixture bug to route around.
+- Exactly one execution per arm; no successor dispatch; no obligation lost or
+  duplicated; the UNKNOWN control stays pending.
+- The two completed classes' rows are compared by digest and the distinguishing
+  field named, answering whether a successor's durable success claim reveals
+  which class it came from.
+
+### Instrument
+
+`openai-codex/gpt-6-luna` (this turn's model marker; the experiment itself uses
+zero provider calls — a deterministic subprocess fixture).
+
+### Status
+
+Recorded after execution.
+
 ## Future experiments (not yet planned)
