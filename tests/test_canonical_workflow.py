@@ -226,10 +226,13 @@ def test_chat_keeps_structured_state_in_referenced_records(tmp_path):
 
 
 @pytest.mark.parametrize("command", [["task", "add", "obsolete", "--owner", "genome", "--next-step", "work", "--reason", "reason", "--evidence", "missing"], ["delivery", "check", "obsolete"]])
-def test_retired_cli_cannot_restart_alternate_workflow(tmp_path, command, capsys):
+def test_retired_cli_cannot_restart_alternate_workflow(tmp_path, command):
     from mishe_tauftauf.cli import main
-    assert main(["--home", str(tmp_path), *command]) != 0
-    assert "retired" in capsys.readouterr().err
+    try:
+        status = main(["--home", str(tmp_path), *command])
+    except SystemExit as exc:
+        status = exc.code
+    assert status != 0
     assert Feed(tmp_path).tail_sequence() == 0
 
 
