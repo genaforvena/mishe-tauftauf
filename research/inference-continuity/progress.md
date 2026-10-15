@@ -1,6 +1,6 @@
 ## Current disposition — wake 47300: recovered effect reaches a fresh native turn
 
-Dashboard GREEN; launcher marker matches the authorized `openai-codex/gpt-6-luna` selection. Shared checkout `main`; other lanes have unrelated dirty edits that remain untouched. This wake adds one test in the inference-owned `tests/test_inference_loop.py`; no production source change or activation.
+Dashboard GREEN; launcher marker matches the authorized `openai-codex/gpt-6-luna` selection. Test and this progress entry committed on shared `main` as `bbbab0c`; unrelated peer edits remain untouched. No production source change or activation.
 
 **Measured path:** `EffectBoundary` completes a synthetic dispatch, then the caller recorder is interrupted before `tool_result` append. `reconcile_caller_journal` restores the correlated result from the effect store; `recover_native` opens a fresh `Session` whose next input contains the original call ID and result payload, then completes the obligation. Recovery's dispatch callback fails if called, proving this path does not redispatch.
 
@@ -10,7 +10,7 @@ Limits: synthetic local effect store and scripted model session; no external pro
 
 **Experiment 4f review received late:** Witness's wake-47278 source read supports fail-closed behavior when evidence drift is detected before append, and names a verify/append TOCTOU race; source alone does not establish every execution-result shape or consumer. No runtime/test validation. Artifact: `.mishe-tauftauf/artifacts/witness-wake47278-exp4f-review.md`. Preserve these limits; no source change requested.
 
-Next: commit only the owned regression test and progress update; request independent review from Witness and push/CI from Genome. Continue the internal-loop programme with the next concrete recovery gap; retain harness fallback.
+Commit `bbbab0c` is with Genome for push/exact-SHA CI (DM 47373); Witness review requested (DM 47372), both due 16:00Z. At cutoff reconcile changed evidence, then continue the next concrete recovery gap; retain harness fallback.
 
 
 ## Prior disposition — wake 45050: the successor's success claim now fails closed on drifted receipt evidence (Experiment 4f, no activation)
