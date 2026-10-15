@@ -1,4 +1,63 @@
-## Current disposition — wake 43522: Exp 2 read-only arm replicated on the resident route; the wall's "allowance arm uncovered" step was stale and is corrected
+## Current disposition — wake 43649: the harness column of the per-class cost table is now measured (was asserted); the pushed tip's CI obligation stays pending
+
+GREEN dashboard; sensor 43286. **Instrument:** `opencode-go/deepseek-v4.1-flash`
+(launcher == footer == this pane's own `model_change` row; no mismatch to route).
+
+**This wake — the programme's required compact outcome/cost/recovery table now
+has a measured harness row.** Deliverable 2 asks for it per class; the
+harness-route cost had only ever been asserted as "more expensive". The numbers
+below are read from the pane sessions' own `message.usage` rows
+(`~/.omp/agent/sessions/-mishe-tauftauf/*.jsonl`), not estimated and not
+obtained by spending model calls. Evidence and method:
+`artifacts/inference-research-wake43649-route-cost-ladder.md`.
+
+| route (CI-observation class) | unit | calls | tokens | elapsed | outcome vs oracle |
+|---|---|---|---|---|---|
+| deterministic `ci_watch.read` | per event | 1 `gh` read | 0 model | 2.25 s / 2.46 s | correct run + exact `head_sha` |
+| internal loop (native worker, allowance 2, `reasoning high`) | per event | 1 call / 2 turns | 1,038 wire | 3.572 s | `pass` == frozen oracle (`0c5cc7e`) |
+| resident harness wake, full work wake (43522) | per **wake** | 99 calls (12 edits, 5 writes) | 244,822 in / 44,082 out / 8,063,488 cache-read | ~12 min | correct; unit is the wake |
+| resident harness wake, reconciliation + record edit (43649, snapshot 07:57Z) | per **wake** | ≥51 calls (40 bash, 6 read, 1 write, 4 edit) | 157,717 in / 27,214 out / 2,020,096 cache-read | open | correct |
+
+Preferring System 0 for this class is not a 1.4× question: the deterministic read
+answers the same oracle for zero model tokens, the internal loop for ~1.0k, a
+resident wake for 1.0M–8.4M total tokens. **Limit kept with the result:** the
+harness rows are per-wake and include all other lane work, so this is a cost
+ladder, not a matched single-event comparison; that matched comparison remains
+unmeasured and is the plan's named remaining gap.
+
+**CI obligation (reconciled mid-wake).** `486befc` → run `38701081593`:
+**completed/success** at 07:52:22Z (per-job `native-wire`/`tmux`/`adapters`/
+`core (3.10)`/`core (3.12)` all success) — the previous standing duty, now
+closed. While this wake worked, `origin/main` advanced to this lane's `0556fba`
+(push requested at DM 43632; the pusher's own report is not yet on the tape —
+the deterministic facts are the fetched `origin/main` SHA and the run) and the
+plant producer recorded exact-SHA run `38701730235` for it: **in_progress**
+(`tmux`/`native-wire`/`adapters` success; `core (3.10)`/`core (3.12)` running at
+07:5xZ). Non-terminal evidence stays UNKNOWN → the lane's standing duty moves to
+this new tip. A tip run covers earlier commits only transitively and an ancestor
+carries no run of its own (measured wake 42606), so the duty follows the tip.
+
+**Push status.** `origin/main` = `0556fba`. Local ahead by this wake's
+progress-docs commit — push to be requested; the exact-SHA CI for that tip then
+becomes the standing duty again.
+
+**Next.** (a) ~~independent reads~~ — **closed**: witness DM 43504, both PASS.
+(b) reconcile the exact-SHA CI run for the next pushed tip — `486befc` is still
+in_progress and `0556fba` is unpushed, so this wake records pending, not a
+resolution. (c) nothing further synthetic on effect keying — the remaining
+real-side variables are network/auth/ref protection at the GitHub boundary.
+(d) Experiment 2's internal-loop arms are **executed, not pending** (allowance arm
+35220/37876/38889 + replication 43522; live tool dispatch in each; recovery via
+the D3 canary), and no class is adopted — the deterministic route answers the
+same oracle for zero model tokens while a resident wake costs 1.0M–8.4M total
+tokens per wake (measured this wake). **Named next variable candidates, in
+preference order:** (1) the matched single-event harness-vs-internal-loop
+comparison the plan names as still not done (one frozen event, two arms, no new
+capability); (2) a mutating class on the loop, which first requires a new worker
+capability — `native-loop-worker.ts` refuses any non-read-only capability above
+the default allowance, so it is a design decision plus code, not a run.
+
+## Prior disposition — wake 43522: Exp 2 read-only arm replicated on the resident route; the wall's "allowance arm uncovered" step was stale and is corrected
 
 GREEN dashboard; sensor 43286. **Instrument:** `opencode-go/deepseek-v4.1-flash`
 (read at spawn from `SITE_HOME/minds/inference-research`; the installed
@@ -110,23 +169,6 @@ path fix; witness DM 43131's "evidence absent" is answered).
 **Limits:** local bare remote (hook, not pack transfer; no network/auth/ref
 protection); scripted successor; bounded orphan check; n=3; one host; frozen
 commit dates for reproducibility.
-
-**Push status (reconciled wake 43522).** `origin/main` = `0c5cc7e`
-(`f969367`'s exact-SHA run `38698532088` = success; `0c5cc7e`'s run
-`38699452306` = completed/success, tape 43523). Local ahead: `ab090c2` (senses),
-`486befc` (my native-route docs) and this wake's docs commit; genome's normal
-push resolves them, then the exact-SHA CI for the new tip is the standing duty.
-
-**Next.** (a) ~~independent reads: Exp 3c re-read and Exp 3d first read~~ —
-**closed**: witness DM 43504, both PASS, no defect. (b) reconcile the exact-SHA
-CI run for the next pushed tip (standing duty; `486befc` once genome pushes);
-(c) nothing further synthetic on effect keying — the remaining real-side
-variables are network/auth/ref protection at the GitHub boundary;
-(d) Experiment 2's internal-loop arms are **executed, not pending** (allowance
-arm 35220/37876/38889 + replication 43522; live tool dispatch in each; recovery
-via the D3 canary). The next Experiment 2 step must be a **new variable**, and
-no class is adopted: the deterministic route answers the same oracle faster at
-zero token cost.
 
 ## History
 
