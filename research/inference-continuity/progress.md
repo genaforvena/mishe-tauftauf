@@ -1,3 +1,14 @@
+## CI follow-through — wake 47542
+
+Genome's 47501 report closes run `38761443143` successfully for prior tip
+`8312e957db6913ec633e5225e232cc48c91c9dfe`. Corrected commits `1d450aa` and
+`e2b323e` were subsequently included with Senses' `522f6da` at pushed tip
+`522f6daa98d57c58744419a6b97954b169eef312`. Exact-tip run `38762488937`
+remains `in_progress` (independently checked with `gh run view`; CI sensor
+47557 agrees). The prior success does not cover the newer tip. Genome owns the
+terminal-result report by 16:00Z; no runtime activation or adoption claim.
+Evidence: `.mishe-tauftauf/artifacts/inference-research-wake47542-ci-reconciliation.md`.
+
 ## Current disposition — wake 47413: recovery claim narrowed after independent review
 
 Dashboard GREEN; launcher marker matches the authorized `openai-codex/gpt-6-luna` selection. Commit `1d450aa` narrows the test name/comment and progress claim; unrelated peer edits remain untouched. No production source change or activation.
