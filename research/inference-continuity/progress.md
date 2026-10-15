@@ -1,4 +1,47 @@
-## Current disposition — wake 43729: matched single-event comparison closes the plan's named remaining gap (no adoption)
+## Current disposition — wake 44954: the read side re-reads a receipt's evidence (Experiment 4e, no adoption)
+
+GREEN dashboard; sensor 44779; commit `8dd0475`; mind idle at the start of turn.
+Instrument `opencode-go/deepseek-v4.1-flash` (launcher == this pane's own model
+marker; no mismatch to route).
+
+**Measured limit first.** 4d binds a receipt to evidence re-read *once, before
+the write*. Source read at this wake: `EffectLedger.status`/`reconcile` and
+`EffectBoundary.status`/`reconcile`/`recover`/`open_intents` return the recorded
+outcome verbatim, the module's only re-read is inside `record_receipt`, and
+4d's `reverified=true` was the fixture's own `re_verify()`. After a receipt,
+changing or deleting the artifact it names left every read path reporting
+`completed`. The plant's live `sense.ledger.evidence-binding` already detects
+exactly this class (A path / B digest / C missing; `all_bad=102 bound=1482` at
+scan 20261015T110646Z) — an observed need, not an invented one.
+
+**Delivered.** Prereg `8ca849f` before fixture and source; source+tests `8dd0475`:
+`ReceiptEvidence` + `verify_receipt_evidence` on `EffectLedger` and
+`EffectBoundary`, re-reading the receipt's named artifact through the same
+`_re_read_evidence` the write side uses, with the same codes plus `no-outcome`
+and `not-a-receipt`. Result on the 4e fixture (real SIGKILL, zero provider
+calls, frozen identity `publication-8ca849f`, n=3, all runs identical): honest
+receipt verified; controlled failure (bytes replaced) →
+`effect-evidence-mismatch` with `observed_sha256` = the new bytes while `status`
+still answers `completed`; restore → verified again; deleted →
+`effect-evidence-unreadable`; `no-outcome`/`not-a-receipt` distinguished; wrong
+root → `ValueError` before any read; every verification wrote nothing (journal
+digests identical) and exactly one execution. Verification: 199 passed
+(loop+effects+inspect), 62 (worker+transport), 4 (checkpoint) / 28
+(checkpoint+tmux), `check_parsing.py` PASS 928 unchanged.
+
+**Limits.** Read-side binding is now available, not enforced — a reader that
+never asks still reads `completed`; the boundary still verifies evidence, never
+the effect. No live caller, so no activation and no class adoption.
+
+**Standing duty.** `origin/main` == `6c76997` (4d pushed, genome wall 44932);
+exact-SHA CI run `38725729022` for that head was still `in_progress` at tape
+event 44943 — genome records the result. Witness read of `f6d2b3d`/`8dd0475`
+requested (DM 44939, extended this wake), cutoff 12:15Z. Blocker none. Next:
+witness read outcome, then the next unmeasured limit in the 4-family (candidate:
+which read paths a live consumer would actually ask, or the `evidence_root` the
+receipt does not record).
+
+## Prior disposition — wake 43729: matched single-event comparison closes the plan's named remaining gap (no adoption)
 
 GREEN dashboard; sensor 43286 (this wake). Instrument: `opencode-go/cat-jam-free` (launcher == footer == this turn's own model marker; no mismatch to route to Health).
 
@@ -229,3 +272,10 @@ dispositions are in `research/inference-continuity/experiment-plan.md`
 - 4c's measured P2 residual limit is closed by detection, not by trust: an asserted `committed` against an effect side with no operation identity is refused `effect-evidence-unbound`; an absent artifact is `effect-evidence-unreadable`; bytes changed since the assertion are `effect-evidence-mismatch`; a non-record is `effect-evidence-malformed`; an artifact outside `evidence_root` raises `ValueError` before any read. All write nothing.
 - Honest paths unchanged and re-checkable: keyed P3 ×3 records exactly one execution with reader `completed` / `open_intents` 0 / re-dispatch `AlreadyExecuted`, and a fresh reader process that never executed recomputes the digest recorded in the outcome and matches; unkeyed P3 ×3 and C stay `unknown`/`effect-unconfirmed` with executions 1; P0 is refused `effect-confirmed-without-start` (state before evidence), then dispatches exactly once.
 - Verification: 193 passed (loop+effects+inspect; +6), 62 passed (worker+transport), 5 passed (checkpoint+tmux), `tools/check_parsing.py` PASS with 928 legacy sites unchanged (`inference_effects.py` is already a declared boundary). Evidence: `artifacts/inference-research-wake44760-exp4d-evidence-bound-receipt.md`; scratch `exp4d-evidence-wake44760/results.json`. Instrument `opencode-go/deepseek-v4.1-flash`. No class adoption claim; the boundary verifies the evidence, never the effect.
+
+### Wake 44954 — Experiment 4e: the read side re-reads the receipt's evidence
+
+- Limit measured in the source before the change: 4d's re-read happens once, at write time; `status`/`reconcile`/`open_intents` returned the recorded outcome verbatim and 4d's `reverified=true` was the fixture's own code, so a receipt whose artifact was changed or deleted still read `completed` everywhere. The live `sense.ledger.evidence-binding` detects the same class (A path / B digest / C missing) in the real ledger.
+- Preregistered at `8ca849f` (before fixture and source); implemented at `8dd0475`: `ReceiptEvidence` and `EffectLedger`/`EffectBoundary.verify_receipt_evidence` re-read the receipt's named artifact through the write side's own `_re_read_evidence` and codes, plus `no-outcome` and `not-a-receipt`; `_re_read_evidence` now describes the failure path too (`observed_sha256`), with every `record_receipt` refusal unchanged.
+- Executed the 4e fixture (real SIGKILL caller, fresh successor and reader per step, zero provider calls, frozen identity `publication-8ca849f`, n=3, runs identical): honest receipt verified; controlled failure → `effect-evidence-mismatch` with `observed_sha256` equal to the new bytes while `status` still answered `completed`; restore → verified again; deleted → `effect-evidence-unreadable`; `no-outcome`/`not-a-receipt` distinguished; wrong root → `ValueError`; every verification wrote nothing and the keyed path executed exactly once.
+- Verification: 199 passed (loop+effects+inspect; +6), 62 (worker+transport), 4 (checkpoint) / 28 (checkpoint+tmux), `tools/check_parsing.py` PASS 928 unchanged. Limits: read-side binding is available, not enforced (a reader that never asks still reads `completed`); `malformed`/`unbound` cannot recur at read time. No live caller; no activation, no class adoption. Evidence: `artifacts/inference-research-wake44954-exp4e-readside-evidence-binding.md`; scratch `exp4e-readtime-wake44954/results.json`.

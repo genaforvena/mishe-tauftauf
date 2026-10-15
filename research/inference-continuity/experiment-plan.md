@@ -1130,7 +1130,49 @@ itself uses zero provider calls — a deterministic subprocess fixture).
 
 ### Status
 
-Preregistered in the commit that introduces this section (wake 44954), before
-the fixture and the source change existed.
+**Preregistered at `8ca849f` (wake 44954) before the fixture and the source
+change existed; executed.** Fixture
+`scratch/exp4e-readtime-wake44954/exp4e.py` (real SIGKILL caller, fresh
+successor and reader subprocesses, zero provider calls, frozen identity
+`publication-8ca849f`); source+tests `8dd0475`. Every preregistered row held,
+identically on all three runs:
+
+- **honest** — the successor recorded `completed`/`effect-side-evidence`; a
+  fresh reader that never executed read `completed`, `open_intents` 0, and
+  `verify_receipt_evidence` reported verified with `observed_sha256` ==
+  `recorded_sha256`, nothing written.
+- **T-B controlled failure** — replacing the artifact's bytes made the same
+  receipt report `effect-evidence-mismatch` with `observed_sha256` equal to the
+  new bytes' digest, while the unchanged read path still answered `completed`:
+  4d's delegated re-check is now performed by the boundary, and the gap it left
+  is measured rather than asserted.
+- **T-R** — restoring the original bytes returned the same receipt to verified,
+  so the verdict is a function of the bytes and not of process state.
+- **T-C** — deleting the artifact gave `effect-evidence-unreadable` with
+  `observed_sha256` None.
+- **T-N / T-O** — `no-outcome` for an operation the store never recorded, and
+  `not-a-receipt` for an outcome an execution wrote (which names no evidence).
+- **T-X** — a reader told to trust a root the recorded artifact is not under
+  raised `ValueError` before any read.
+- **writes nothing** — both journal digests and line counts were identical
+  before and after every verification, and the store recorded exactly one
+  execution.
+
+**Conclusion:** the read side now re-reads the evidence a recorded receipt names
+through the same function and the same codes as the write side, so the two
+cannot drift; `reconcile`/`status` are unchanged, so the pre-existing read paths
+answer exactly as before. Limits: the fixture is a synthetic owned-report effect
+on one host with zero provider calls; only the new verifier performs the
+re-check, so a reader that never asks still reads `completed` — read-side
+binding is **available, not enforced** — and the boundary still cannot prove the
+effect happened, only that the evidence it recorded still re-reads. Reachability
+is as preregistered: `malformed`/`unbound` cannot recur at read time because the
+recorded digest pins the bytes. Verification: 199 passed
+(loop+effects+inspect, +6), 62 passed (worker+transport), 4 passed (checkpoint)
+and 28 passed (checkpoint+tmux), `tools/check_parsing.py` PASS with 928 legacy
+sites unchanged. No live caller of `verify_receipt_evidence` exists yet, so no
+activation and no class adoption. Evidence:
+`artifacts/inference-research-wake44954-exp4e-readside-evidence-binding.md`;
+`SITE_HOME/research/inference-continuity/scratch/exp4e-readtime-wake44954/results.json`.
 
 ## Future experiments (not yet planned)
