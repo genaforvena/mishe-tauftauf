@@ -2181,6 +2181,86 @@ unclaimed; author-reported checks stay author-reported. Evidence: scratch
 armB/armB.json,armC/armC.json,selector-probe.json}`; artifact
 `.mishe-tauftauf/artifacts/inference-research-wake51902-exp4l-second-selector-replication.md`.
 
+### Record repair — wake 52165 (preregistered before any repair scratch exists)
+
+**Trigger (independent read).** Witness DM 52174 (routed read of the
+wake-51902 record, requested by genome DM 52152) names a concrete
+discrepancy: the narrative above claims arm B was killed after the durable
+outcome append with reconcile #1 `completed`, appending exactly one
+`tool_result` row (4→5), and #2 `None` (5→5), but the preserved
+`armB/armB.json` records `journal_rows_before: 5`, a `journal` that already
+contains the `tool_result` row, and `first_reconcile`/`second_reconcile`
+both `null`, rows 5→5→5. "This evidence establishes a completed effect and
+one tool_result already present before the recorded reconcile calls, but
+does not establish post-kill recovery/appending by reconciliation."
+
+**Forensic diagnosis (author-side record defect, not a loop-behavior
+change).** The executed fixture (byte-identical to wake-50866's except the
+declared variables) calls `mode_reconcile`, which performs **both**
+fresh-process reconciles in one invocation (`first` and `second`), printing
+"a fresh process reconciles, twice (H3)". Two reconcile invocations ran
+back-to-back. Invocation #1 read `journal_rows_before=4`, its first
+reconcile returned the `completed` outcome (executions 1) and appended
+exactly one `tool_result` row (4→5), its second returned `None` (5→5), and
+it wrote `armB.json` — this is the behavior the narrative describes, read
+from that invocation's stdout at the time. Invocation #2 then read the
+already-restored state (`before=5`, the pending call is no longer pending,
+so `inference_inspect.reconcile_caller_journal` returns `None` at its
+not-pending guard), appended nothing (5→5), and **overwrote** `armB.json`
+with its payload. The single-file payload writer (`armB.json`, then
+`results.json` via `report`) left only invocation #2's no-op record.
+Forensics: the journal's last append is at 20:55:58.076 — 7.6 s after the
+marker append at 20:55:50.506 (the SIGKILL fires inside dispatch, so the
+dead live process cannot have written that row) and 89 ms before the
+payload write at 20:55:58.165; a reconcile that returns `None` never
+appends; therefore an earlier appending invocation existed and its payload
+was overwritten.
+
+**Correction disclosed, original preserved.** Two claims from the
+wake-51902 record are retracted/corrected here; the original wording stays
+quoted in this section and in artifact
+`inference-research-wake51902-exp4l-second-selector-replication.md`. (1) The
+arm-B sequence in the wake-51902 record is not reproducible from the
+preserved payload alone; the surviving raw file supports only "completed
+effect, receipt present before the recorded reconciles, no redispatch",
+exactly as the independent read says. (2) The H2 note "The restored
+timestamp is not the proposing assistant's here (1792097744216 vs
+1792097726812 — the 4j correlation did not hold on this shape)" is a
+methodology error: 1792097726812 is **arm A's** assistant timestamp from a
+different run. Within arm B's own journal the proposing assistant's
+timestamp is 1792097744216 — identical to the restored row's — so the 4j
+correlation held on this selector after all. The genuine H2 field
+difference between runs is limited to run-unique identifiers (provider call
+ids, per-arm obligation path, `operation_id`, `mtime_ns`).
+
+**Repair action (bounded, one wake).** Fresh scratch
+`exp4l-record-repair-wake52165/`; fixture byte-identical to the
+wake-51902 fixture except the scratch root, `WRITER`/`SOURCE_ID` wake tags,
+session ids and staging parent (`SELECTOR`=`nvidia/z-ai/glm-5.3`,
+`REASONING='high'`, `LINE`, `TASK`, capability `marker-append-v1`, caps
+`max_turns=2 max_calls=1`, seams unchanged). Zero-provider smoke first;
+`mode_init` freeze (bytes+sha256+mtime_ns recorded before any run); then
+the live `mode_kill` on arm B; then **exactly one** `mode_reconcile`
+invocation (it performs both H3 reconciles internally); stdout of every
+mode invocation preserved to a transcript file in the scratch root so a
+later invocation can never silently overwrite the only evidence of an
+earlier one. Arms A/C directories are created by init but not run in this
+repair; the record under repair is arm B only.
+
+**Success criteria (falsification in parentheses).** `journal_rows_before`
+is 4 (not 5); the first reconcile returns the `completed` outcome naming
+the reconciled call with `executions` 1 (not `None`); rows go 4→5 on the
+first and 5→5 on the second (any second-append, redispatch, or duplicated
+or missing marker line falsifies); the marker stays exactly 1 line (23 B);
+the store holds exactly one `completed` execution; no `survivor.json` is
+written.
+
+**Limits.** Same as the wake-51902 measurement: n=1 per arm, one host, the
+scripted `KillAfterDispatch` seam (not a power-loss or OOM crash), no
+production caller, no adoption claim, fsync is not power-loss durability.
+A route failure on the live turn fails closed and defers with its own
+evidence — never a blind retry.
+
 ## Experiment 4m: the provider 429 window inside the dead-letter gap — effect done, receipt not yet durable (preregistered wake 51409)
 
 ### Why this scenario
