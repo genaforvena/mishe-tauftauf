@@ -698,4 +698,80 @@ reproducibility. Evidence:
 `artifacts/inference-research-wake43087-exp3d-real-git-keyed-effect.md`;
 `SITE_HOME/research/inference-continuity/scratch/exp3d-wake43087/results-run{1,2,3}.json`.
 
+## Experiment 4b: interruption inside the mutating publication at the loop's own effect boundary (wake 44327)
+
+### Hypothesis
+
+Experiments 3c/3d measured keyed reconciliation at the plant's
+`task_state.wait_for` delivery layer with a scripted successor. The wake-44083
+live arm executed the named mutating class (`experiment-3-mutating-publication`,
+exp3) end to end but left its interruption window unexercised — its stated
+limit. This experiment measures the same window one layer down, at the loop's
+own `EffectBoundary`: a caller killed between the mutating `execute` and the
+outcome append leaves a start record with no outcome. A fresh successor
+(i) reads `started-without-outcome` as UNKNOWN, (ii) cannot re-dispatch through
+the boundary (fail closed), and (iii) can reconcile without duplicating **iff**
+the effect side answers a same-operation-identity inspection (`committed`) and
+the successor can record a receipt for the confirmed effect. A non-keyed effect
+side answers only `indeterminate`, and the honest decision is keep-open-UNKNOWN
+with no retry. Prediction recorded before the run: the boundary exposes **no**
+outcome-recording entry point other than execution, so a confirmed-effect
+receipt must be written through the ledger's own append path; that caller-side
+reconciliation cost is measured here, not assumed.
+
+### Materially new variable vs 3d
+
+The durable obligation is not a `waiting` record but an `EffectBoundary`
+operation (intent + start, no outcome). The effect is the exp3 mutating
+publication (an owned report keyed by `operation_id` + head SHA). The successor
+is a fresh process that goes through `reconcile` / `__call__(claim_for=…)` and
+only falls back to effect-side inspection.
+
+### Method
+
+1. Fresh store and fresh effect files per point under
+   `SITE_HOME/research/inference-continuity/scratch/exp4-interrupt-wake44327/run-<point>-<n>/`.
+   The caller is a subprocess that reserves operation
+   `publication-<head-sha-12>`, then dispatches with `claim_for`; its `execute`
+   increments a durable execution counter and (keyed mode) writes the effect
+   artifact keyed by the operation identity, then `SIGKILL`s itself before the
+   outcome append. Kill after start but before the artifact write is point C.
+   P0 reserves and exits without dispatching.
+2. The successor is a fresh interpreter process: new `EffectBoundary`
+   (`writer_id=loop-2`) on the same store, `status`/`reconcile`, one
+   `__call__(claim_for=…)` attempt with the identical provider call, then
+   effect-side inspection under the frozen identity: confirmed → append the
+   receipt through `ledger._append` under `_locked`; `indeterminate`/absent →
+   keep open. R is a deliberate blind-retry probe that bypasses the boundary.
+3. A third fresh reader re-reads the store after each decision; the harness
+   records executor execution counts from the durable counter file.
+
+### Pre-registered expected durable state per kill point (written before the fixture is implemented)
+
+| point | durable store after kill | effect side after kill | successor `reconcile` | successor dispatch attempt | executor executions | final store |
+|---|---|---|---|---|---|---|
+| keyed P3 (kill after artifact write, before outcome) | intent + start, no outcome | artifact present, `operation_id`+`head_sha` match | `unknown` / `started-without-outcome` | refused, no execution | 1 | receipt appended; fresh reader: `completed`, `open_intents` empty, re-dispatch raises `AlreadyExecuted` |
+| unkeyed P3 | intent + start, no outcome | 1 appended line, no identity | `unknown` / `started-without-outcome` | refused | 1 | no receipt; intent stays open, status stays `unknown` |
+| R (blind retry, unkeyed, after P3) | intent + start, no outcome | 1 line | — | bypass boundary, re-execute | 2 | second line appended — the duplicate the keyed path avoids |
+| C (kill after start, before artifact write) | intent + start, no outcome | absent | `unknown` / `started-without-outcome` | refused | 1 | no receipt; keep-open-UNKNOWN despite effect-side absence |
+| P0 (reserved, never dispatched) | intent only, no start | absent | `unknown` / `unreconciled-intent` | permitted (reserve→dispatch upgrade) | 1 | `completed` |
+
+Falsification: any second executor execution on the keyed/unkeyed/C paths; any
+`indeterminate` or absent effect side read as `committed`; a successor dispatch
+that executes a started intent; a receipt appended without a same-identity
+effect-side match; P0 dispatch refused.
+
+### Acceptance
+
+As 3a–3d, plus: the mutating-publication interruption window at the boundary
+layer is measured (UNKNOWN after wake 44083); a confirmed effect is reconciled
+by a receipt append with exactly one execution in total; the boundary stays
+fail closed for every unconfirmed state; no exactly-once claim beyond the
+durable record.
+
+### Instrument
+
+`opencode-go/step-5-preview-free` (this turn's model marker; the experiment
+itself uses zero provider calls — a deterministic subprocess fixture).
+
 ## Future experiments (not yet planned)
