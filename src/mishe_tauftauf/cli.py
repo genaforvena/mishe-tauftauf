@@ -499,11 +499,8 @@ def cmd_task(args) -> int:
 
 
 def cmd_delivery(args) -> int:
-    import json
     from . import delivery
 
-    if args.delivery_command != "show":
-        raise ValueError("branch delivery mutation is retired; commit scoped work on main and verify runtime recovery")
     print(delivery.line(args.home))
     return 0
 
@@ -778,21 +775,7 @@ def parser() -> argparse.ArgumentParser:
     message = p.add_mutually_exclusive_group(required=True)
     message.add_argument("--file", type=Path); message.add_argument("--text"); p.set_defaults(func=cmd_wall)
     delivery = sub.add_parser("delivery").add_subparsers(dest="delivery_command", required=True)
-    p = delivery.add_parser("submit"); p.add_argument("id"); p.add_argument("--owner", required=True)
-    p.add_argument("--repo", type=Path, required=True); p.add_argument("--base", required=True)
-    p.add_argument("--review", type=Path, required=True)
-    p.add_argument("--branch", default="main",
-                   help="legacy label only; main-only is the default and no branch is published")
-    p.add_argument("--main-only", action="store_true", default=True,
-                   help="main is the single branch; land from the exact local worktree and verify CI on main")
-    p.set_defaults(func=cmd_delivery)
-    p = delivery.add_parser("check"); p.add_argument("id"); p.set_defaults(func=cmd_delivery)
     p = delivery.add_parser("show"); p.set_defaults(func=cmd_delivery)
-    p = delivery.add_parser("retire"); p.add_argument("id"); p.set_defaults(func=cmd_delivery)
-    p = delivery.add_parser("integrate"); p.add_argument("id")
-    p.add_argument("--source", choices=("genome", "operator"), required=True); p.set_defaults(func=cmd_delivery)
-    p = delivery.add_parser("finish"); p.add_argument("id"); p.add_argument("--owner", required=True)
-    p.add_argument("--evidence", type=Path, required=True); p.set_defaults(func=cmd_delivery)
     task = sub.add_parser("task").add_subparsers(dest="task_command", required=True)
     p = task.add_parser("landing"); p.add_argument("id"); p.add_argument("--source", choices=("genome", "operator"), required=True)
     p.add_argument("--producer", required=True); p.add_argument("--reason", required=True)

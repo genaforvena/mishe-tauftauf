@@ -770,7 +770,8 @@ If main advanced while an author worked, inspect the current diff and preserve
 peers' edits; rerun checks when changes affect reviewed bytes. Record exact
 committed and deployed revisions, live consumers and failures under the ignored
 site. Historical task and delivery reports remain available read-only for
-recovery; they do not provide another publication workflow.
+recovery; they do not provide another publication workflow. The `delivery` CLI
+exposes only its read-only status view.
 
 Running-code delivery uses reviewed snapshots, observable activation and the
 tested recovery exercise in [wall coordination](wall-coordination.md).
