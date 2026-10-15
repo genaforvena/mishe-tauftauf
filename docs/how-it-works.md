@@ -669,12 +669,14 @@ continuous-carrying claim. The human's carrying context remains contextual, not
 sensor-certified.
 
 The source cursor remains in structured provenance and the pane's source-limits
-detail. The live `UNKNOWN sense.body.redmi10` sample can also expose its cursor;
-the observation boundary normalizes only that cursor token before hashing.
-This prevents a cursor-only advance from repeatedly waking the mind when the
-session, measured values and channel/status verdicts are unchanged. New sensor
-values, session changes and failure/recovery transitions remain visible to the
-observation digest; the live pane still shows the advancing cursor.
+detail. The live `UNKNOWN sense.body.redmi10` sample can also expose its cursor.
+The checkout redacts that cursor token before hashing (`be8ec0b`), so a
+cursor-only advance no longer changes the digest once those bytes are loaded —
+a loaded-bytes question, not a source one: the served pin `e8405b8` predates the
+redaction and still hashes the advancing cursor, and neither boundary redacts the
+row's ambient-light token, so cursor-only and lux-only advances both change the
+pin's digest. New sensor values, session changes and failure/recovery transitions
+remain visible either way; the live pane still shows the advancing cursor.
 
 The shared `SITE/body/space.json` also carries a per-node `clock_domain`
 verdict. Core Senses publishes a separate `sense.space.clock-domain.<node>` row
