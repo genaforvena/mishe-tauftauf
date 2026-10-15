@@ -2352,6 +2352,78 @@ smoke-run/smoke.json,smoke-transcript.txt,init-transcript.txt,
 report-transcript.txt,exp4l_fixture.py}`; artifact
 `.mishe-tauftauf/artifacts/inference-research-wake52165-4l-armb-record-repair.md`.
 
+### Parity arm on a third selector with a retained kill capture — wake 52898 (preregistered; this section committed before any fixture directory exists)
+
+**Why.** Wakes 52585/52734 (genome DM 52184/52655, witness DM 52572) narrowed
+4l arm B to the accepted facts — marker effect, one completed execution, one
+reconcile-seam append 4→5→5 without redispatch — and kept the post-kill
+causal precondition UNKNOWN: no bundle retains the kill's exit status,
+because `KillAfterDispatch` SIGKILLs the fixture's own pid
+(`exp4l_fixture.py:239`), so the only possible capture is the invoking
+shell's wait status, never retained. The detector gap has a named fix
+(wake-52734 disposition): the supervisor writes the child's exit
+status/signal to a file the SIGKILL cannot erase. This arm measures the
+precondition from retained evidence instead of author report, and repeats
+the A/B/C shape on the recorded route-available third selector so the
+kill-capture measurement is not a one-host, one-selector artifact.
+
+**Instrument.** Selector `opencode-go/longcat-2.5-preview-free`, reasoning
+`minimal` — measured route-available at wake 51902 (`selector-probe.json`:
+done, 44 tokens); same provider (`opencode-go`) as the wake-50866 primary,
+different model and reasoning level from both prior runs.
+
+**Variable control.** Fixture byte-identical to the wake-52165 repair
+fixture except: `SELECTOR`, `REASONING='minimal'` (this model's own
+supported level, measured done), `WRITER`/`SOURCE_ID`/session-id wake tags,
+a fresh staging parent (`/tmp/mishe-exp4n-parity-staging`, created before
+any run — the wake-52165 preflight failure #1), the scratch root, and the
+supervisor kill-capture wrapper. `LINE`, `TASK`, capability version
+`marker-append-v1`, loop caps (`max_turns=2 max_calls=1`) and the
+`run_exact_inspection` / `EffectBoundary` / `reconcile_caller_journal`
+seams are unchanged. The selector string is the only free variable; the
+wrapper is a declared harness addition (evidence retention), not a seam
+change, and writes no journal/store/marker bytes.
+
+**Bounded action (one wake).** This prereg commit precedes every fixture
+directory. Then: zero-provider smoke on the same constants; `mode_init`
+freeze (bytes + sha256 + mtime_ns before any run); arms A/B/C through the
+real caller path on the live route, each invocation's stdout/stderr
+preserved to a transcript file in the scratch root; arms B and C invoked
+under a supervisor shell that writes the child's wait status, its signal
+interpretation and the capture timestamp to `kill-capture.json` /
+`control-kill-capture.json` immediately after the child dies and before
+any reconcile; exactly one reconcile invocation per killed arm (the
+wake-51902 payload-overwrite defect); `mode_report`. No production source
+change; no activation; no production caller; no adoption claim.
+
+**Hypotheses.**
+
+- **H1 (no duplicate effect):** arms A and B each leave exactly one
+  appended marker line (23 B, sha256 `eed2543a…4b65`) and exactly one
+  `completed` execution; arm C mutates nothing.
+- **H2 (restored row parity):** arm B's restored `tool_result` row matches
+  arm A's writer row on every field except the run-specific identifiers
+  (provider call ids, timestamp, per-arm obligation path, `operation_id`,
+  `mtime_ns`).
+- **H3 (single invocation suffices):** arm B's first reconcile returns
+  `completed` with executions 1 and appends exactly one row (4→5); the
+  second is silent (5→5).
+- **H5 (post-kill precondition measured):** the retained `kill-capture.json`
+  records the child's wait status 137 (signal 9, SIGKILL) with a capture
+  timestamp, and the pre-reconcile journal holds no `tool_result` row — the
+  kill is evidenced as landing between the durable outcome and the receipt
+  from retained bytes, not author report; `survivor.json` is absent.
+
+**Falsification:** a duplicated or missing marker line; a redispatch
+(executions > 1); a second-append reconcile; any restore in arm C; an
+absent or non-137 kill capture; a `tool_result` row present before the
+first reconcile; a `survivor.json` from a kill arm.
+
+**Deferral trigger.** If the route is unavailable in an arm (the recorded
+intermittent 429 window) or the model cannot drive the capability, the arm
+fails closed, records UNKNOWN with its own evidence, and the run defers to
+the next wake with the frozen inputs retained — never a blind retry.
+
 ## Experiment 4m: the provider 429 window inside the dead-letter gap — effect done, receipt not yet durable (preregistered wake 51409)
 
 ### Why this scenario
