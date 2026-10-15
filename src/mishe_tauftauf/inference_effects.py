@@ -222,6 +222,33 @@ class DispatchClaim:
                    started_at=float(record.get("started_at") or 0.0))
 
 
+@dataclass(frozen=True)
+class ReceiptEvidence:
+    """What a re-read of a recorded receipt's named evidence shows now.
+
+    A read-side verdict, never durable state: nothing is written, and the
+    receipt it reports on is unchanged. `failure` is None only when the bytes
+    the receipt named still read back, still digest-match the recorded digest
+    and still name this operation; `no-outcome` means the store holds no
+    receipt to re-read, and `not-a-receipt` distinguishes an outcome recorded
+    by an execution, which names no evidence, from a receipt. `observed_sha256`
+    is what those bytes are now, None when they could not be read, so a
+    mismatch names both digests instead of asserting one. A receipt whose
+    evidence no longer verifies means the boundary no longer holds evidence
+    the effect happened; it is not evidence that it did not.
+    """
+    operation_id: str
+    failure: str | None = None
+    artifact: str | None = None
+    recorded_sha256: str | None = None
+    observed_sha256: str | None = None
+
+    @property
+    def verified(self) -> bool:
+        """True only for a receipt whose recorded evidence still re-reads."""
+        return self.failure is None
+
+
 _RECORD_TYPES = {"intent": EffectIntent, "start": DispatchClaim,
                  "outcome": EffectOutcome}
 _JOURNAL_TYPES = {"intents.jsonl": "intent", "starts.jsonl": "start",
@@ -366,24 +393,41 @@ def _re_read_evidence(artifact: Path, digest: str, operation_id: str,
                       ) -> tuple[str | None, dict[str, Any] | None]:
     """Re-read the named artifact and bind it to this operation.
 
-    Returns `(failure, observation)`; exactly one is not None. The recorder
-    reads the effect side itself here, so the recorded receipt is checkable
-    against bytes that existed at write time rather than against an assertion.
+    `failure` is None exactly when the bytes read back, still digest-match the
+    recorded digest, parse, and name this operation; `observation` always
+    describes what was read (`artifact`, the recorded digest as `sha256`, and
+    `observed_sha256`, None when the bytes could not be read at all). The
+    recorder reads the effect side itself here, so the recorded receipt is
+    checkable against bytes that existed at write time rather than against an
+    assertion — and the read-side verifier re-reads through this same function,
+    so the two sides cannot drift into two conventions.
     """
     try:
         raw = artifact.read_bytes()
     except OSError:
-        return "effect-evidence-unreadable", None
-    if hashlib.sha256(raw).hexdigest() != digest:
-        return "effect-evidence-mismatch", None
+        return "effect-evidence-unreadable", _evidence_observation(
+            artifact, digest, None)
+    observed = hashlib.sha256(raw).hexdigest()
+    if observed != digest:
+        return "effect-evidence-mismatch", _evidence_observation(
+            artifact, digest, observed)
     try:
         record = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
-        return "effect-evidence-malformed", None
+        return "effect-evidence-malformed", _evidence_observation(
+            artifact, digest, observed)
     if not isinstance(record, Mapping) or record.get("operation_id") != operation_id:
-        return "effect-evidence-unbound", None
+        return "effect-evidence-unbound", _evidence_observation(
+            artifact, digest, observed)
     return None, {"artifact": str(artifact), "sha256": digest,
                   "operation_id": operation_id}
+
+
+def _evidence_observation(artifact: Path, digest: str,
+                          observed: str | None) -> dict[str, Any]:
+    """What a re-read of the named artifact showed, digest-matching or not."""
+    return {"artifact": str(artifact), "sha256": digest,
+            "observed_sha256": observed}
 
 
 class EffectLedger:
@@ -877,7 +921,8 @@ class EffectLedger:
         ledger re-reads exactly those bytes, recomputes the digest, parses the
         record, and requires its `operation_id` to be this operation. Only then
         is the outcome written, and its `result` carries the artifact path and
-        the digest so any later reader can re-read and re-check the same bytes.
+        the digest so any later reader can re-read and re-check the same bytes
+        (`verify_receipt_evidence` performs that re-read on the read side).
         An unconfirmed observation — `indeterminate`, `pending`, absent — and a
         committed confirmation whose record is missing (`effect-evidence-
         unreadable`), altered (`effect-evidence-mismatch`), unparseable
@@ -947,6 +992,69 @@ class EffectLedger:
                 executions=executions, native_call=intent.native_call)
             self._append(self.outcomes_path, outcome.to_record())
             return outcome
+
+    def verify_receipt_evidence(self, operation_id: str, *,
+                                evidence_root: Path | str | None = None,
+                                ) -> ReceiptEvidence:
+        """Re-read the evidence a recorded receipt names, now.
+
+        `record_receipt` reads the effect side once, before it writes. This is
+        the read-side half of the same rule, for a successor that has read a
+        receipt and wants to know whether it is still backed by the bytes it
+        names. The artifact the outcome recorded is re-read under the absolute
+        path the receipt stored; `evidence_root`, when given, is re-asserted
+        against that path, so a reader refuses evidence outside the root it was
+        told to trust — a caller error raised before any read, exactly as at
+        write time. Nothing is written and the receipt is not modified: the
+        verdict is a function of the bytes, so restoring the bytes restores the
+        verdict. A mismatch or unreadable verdict means this boundary no longer
+        holds evidence the effect happened, never that it did not.
+
+        Read-side reachability, stated rather than implied: the recorded digest
+        pins the bytes to those that parsed and named this operation at write
+        time, so `effect-evidence-malformed` and `effect-evidence-unbound`
+        cannot recur here (hash collision aside). This re-reads through the same
+        function and returns the same codes as the write side anyway, so the
+        two sides cannot drift into two conventions.
+        """
+        if not _OPERATION_ID_RE.match(operation_id):
+            raise ValueError(
+                f"operation_id {operation_id!r} must match [A-Za-z0-9_.:-]+")
+        with self._locked():
+            outcome = self._read_outcomes().get(operation_id)
+        if outcome is None:
+            return ReceiptEvidence(operation_id=operation_id,
+                                   failure="no-outcome")
+        evidence: Mapping[str, Any] | None = None
+        if isinstance(outcome.result, Mapping):
+            named = outcome.result.get("evidence")
+            if isinstance(named, Mapping):
+                evidence = named
+        artifact = evidence.get("artifact") if evidence is not None else None
+        digest = evidence.get("sha256") if evidence is not None else None
+        if not isinstance(artifact, str) or not artifact \
+                or not isinstance(digest, str) \
+                or not _EVIDENCE_DIGEST_RE.match(digest):
+            return ReceiptEvidence(
+                operation_id=operation_id, failure="not-a-receipt",
+                artifact=artifact if isinstance(artifact, str) else None,
+                recorded_sha256=digest if isinstance(digest, str) else None)
+        path = Path(artifact).resolve()
+        if evidence_root is not None:
+            root = Path(evidence_root).resolve()
+            try:
+                path.relative_to(root)
+            except ValueError:
+                raise ValueError(
+                    f"recorded evidence {artifact!r} is outside the evidence "
+                    f"root {str(root)!r}") from None
+        failure, observation = _re_read_evidence(path, digest, operation_id)
+        return ReceiptEvidence(
+            operation_id=operation_id, failure=failure,
+            artifact=observation["artifact"],
+            recorded_sha256=observation["sha256"],
+            observed_sha256=digest if failure is None
+            else observation["observed_sha256"])
 
     def open_intents(self) -> Sequence[EffectIntent]:
         """Every intent a fresh process still has to reconcile.
@@ -1131,6 +1239,14 @@ def effect_outcome_for(outcome: EffectOutcome) -> dict[str, Any]:
             "operation_id": outcome.operation_id, "failure": outcome.failure,
             "reconciliation_ref": outcome.reconciliation_ref,
             "executions": outcome.executions}
+
+
+def receipt_evidence_for(verdict: ReceiptEvidence) -> dict[str, Any]:
+    """The read-side verdict as a reply dict, for a loop or a check to consume."""
+    return {"operation_id": verdict.operation_id, "verified": verdict.verified,
+            "failure": verdict.failure, "artifact": verdict.artifact,
+            "recorded_sha256": verdict.recorded_sha256,
+            "observed_sha256": verdict.observed_sha256}
 
 
 def snapshot_json(value: Any) -> Any:
@@ -1350,11 +1466,30 @@ class EffectBoundary:
 
         The receipt records the effect as evidenced, not as performed: the
         outcome's `result` carries the artifact path, its digest and the
-        confirmation verbatim, so a later reader can re-read the same bytes.
+        confirmation verbatim, so `verify_receipt_evidence` (or any reader) can
+        re-read the same bytes.
         """
         return effect_outcome_for(
             self.ledger.record_receipt(operation_id, confirmation,
                                        evidence_root=evidence_root))
+
+    def verify_receipt_evidence(self, operation_id: str, *,
+                                evidence_root: Path | str | None = None,
+                                ) -> dict[str, Any]:
+        """Re-read the evidence a recorded receipt names, without executing.
+
+        The read-side half of `record_receipt`'s rule: a fresh reader re-reads
+        the artifact the recorded outcome names and reports whether those bytes
+        still exist, still digest-match the recorded digest and still name this
+        operation. Nothing is written and the receipt is not modified. A receipt
+        whose evidence no longer verifies means this boundary no longer holds
+        evidence the effect happened, not that it did not — and a reader that
+        never asks this question still reads `completed`, so the binding is
+        available to the reader, not enforced on it.
+        """
+        return receipt_evidence_for(
+            self.ledger.verify_receipt_evidence(operation_id,
+                                                evidence_root=evidence_root))
 
     def status(self, operation_id: str) -> dict[str, Any] | None:
         """The durable state a fresh process reads, or None if never allocated."""
