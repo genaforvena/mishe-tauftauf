@@ -60,9 +60,9 @@ diagnosable after the fact. That log's scope is the write path the site CLI acce
 covered here. File-level coverage for out-of-band writes comes from
 research-methods' site-local read-only detector, which reads the wall files
 themselves.
-A session clear never rewrites walls or handoffs: `wall clear` rotates the mind's
-pane and records a control line, `wall restore` reassembles the instruction
-document it displays, and neither writes `SITE_HOME/walls/<role>.md` nor its
+A session clear never rewrites walls or handoffs: `seed clear` rotates the mind's
+pane and records a control line, and the next wake reassembles the instruction
+document that pane displays, and neither writes `SITE_HOME/walls/<role>.md` nor its
 handoff projection, so a pane reassembled after a clear shows the last wall text
 the site actually wrote. A wall that looks stale or reverted after a gap usually
 means its mind was not running turns: measured on this plant on 2026-10-13, when
