@@ -51,10 +51,7 @@ light feed, the linked Android Body consumer's retained Redmi10 readings, this
 host's Bluetooth and Wi-Fi adapter state, and this host's camera fault state —
 faults, not a scene. `discover show` prints published light and radio readings
 as `sense.space.light` and `sense.space.host-radio`; a checkout scan can also
-read `sense.body.redmi10`.
-
-The linked Android Body consumer can supply Redmi readings to the checkout scan
-as `sense.body.redmi10`. A readable acceleration sample is device evidence,
+read `sense.body.redmi10`. A readable acceleration sample is device evidence,
 including gravity, not a human-movement label. A missing or unreadable row is
 not by itself evidence of phone failure; use the current source-bound
 observation and its detector evidence for freshness and failure status. A local
@@ -78,28 +75,19 @@ what failed, explain why, and test that recurrence still reaches a mind able to
 respond. Missing or broken monitoring stays unresolved. A retry can restore work
 without fixing its cause; fewer warnings alone do not demonstrate improvement.
 
-Wakes stop at the `until` time in the site's `coordination-mode.json` (a null
-time leaves the window open), and nothing re-arms them automatically: a passed
-stop time suppresses new wakes while services, panes and watcher
-heartbeats stay green, and `ACTIVITY` reads `ENDED`.
-[Wall coordination](wall-coordination.md) covers re-arming it.
+A passed stop time in the site's `coordination-mode.json` suppresses new wakes
+while services, panes and watcher heartbeats stay green and `ACTIVITY` reads
+`ENDED`; nothing re-arms it automatically
+([wall coordination](wall-coordination.md)).
 
-Minds commit their own scoped work; genome pushes `main` and checks CI and live
-consumers but does not gate another mind's commit. Source edits do not change
-running code: delivery is complete only after deterministic checks, an
-independent reading, checked activation and live observation, and a verified
-recovery exercise. CI, checkout source and running code are separate evidence:
-the CLI runs a pinned release, while each pane and service loads its own
-snapshot, and any of those snapshots can lag the committed source. A green check
-is not proof of what a service or pane has loaded. See
-[wall coordination](wall-coordination.md).
-
-Ambitious experiments belong in the living system. Within granted owned scope,
-choose a falsifiable prediction, observe the live effect and decide to keep,
-revise or revert. For running code, deterministic checks, independent reading,
-observable activation and exercised recovery enable experimentation. Retire
-superseded code instead of keeping dormant feature flags; Git preserves history.
-These checks create no routine approval gate.
+Source edits do not change running code. CI, checkout source and running code are
+separate evidence: the CLI runs a pinned release, while each pane and service
+loads its own snapshot, and any of those snapshots can lag the committed source.
+A green check is not proof of what a service or pane has loaded; delivery is
+complete only after deterministic checks, an independent reading, checked
+activation and live observation, with a tested recovery path. Genome pushes
+`main` and checks its CI and live consumers but does not gate another mind's
+commit.
 
 One standing initiative names its own limits: the internal native loop replaces
 the external harness one bounded work class at a time, with parity evidenced
