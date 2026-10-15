@@ -31,6 +31,7 @@ from mishe_tauftauf.inference_effects import (
     StoreUnavailable,
     canonical_request,
     effect_outcome_for,
+    recovery_evidence_drift,
     request_digest,
     snapshot_json,
 )
@@ -1313,6 +1314,77 @@ def test_boundary_recover_reports_a_call_that_never_arrived(tmp_path):
     assert dispatch.recover(NATIVE_CALL) is None
     assert dispatch.status("effect-never-issued") is None
     assert dispatch.reconcile("effect-never-issued")["status"] == "unknown"
+
+
+# -- enforced successor read path (Experiment 4f) ---------------------------
+
+
+def test_recover_of_a_receipt_carries_the_verdict_beside_the_recorded_status(
+        tmp_path):
+    """The acting read path re-checks, and the record's own status is unchanged."""
+    world = tmp_path / "world"
+    world.mkdir()
+    artifact, digest, _receipt = recorded_receipt(tmp_path, world)
+    before = journal_bytes(tmp_path)
+
+    reader = boundary(tmp_path, lambda call: pytest.fail("executed again"),
+                      writer_id="reader-3")
+    reply = reader.recover(NATIVE_CALL)
+    assert reply["status"] == "completed"
+    assert reply["evidence_verdict"]["verified"] is True
+    assert reply["evidence_verdict"]["observed_sha256"] == digest
+    assert reply["evidence_verdict"]["recorded_sha256"] == digest
+    assert journal_bytes(tmp_path) == before
+    # The durable record is untouched, so a reader that never recovers still
+    # reads completed: enforcement lives on the acting path, not in the store.
+    assert reader.reconcile(OP_ID)["status"] == "completed"
+
+
+def test_recover_names_drift_without_rewriting_the_recorded_status(tmp_path):
+    world = tmp_path / "world"
+    world.mkdir()
+    artifact, digest, _receipt = recorded_receipt(tmp_path, world)
+    original = artifact.read_bytes()
+    artifact.write_bytes(b"replaced bytes\n")
+    changed = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    before = journal_bytes(tmp_path)
+
+    reader = boundary(tmp_path, lambda call: pytest.fail("executed again"),
+                      writer_id="reader-3")
+    reply = reader.recover(NATIVE_CALL)
+    assert reply["status"] == "completed"
+    assert reply["evidence_verdict"]["failure"] == "effect-evidence-mismatch"
+    assert reply["evidence_verdict"]["recorded_sha256"] == digest
+    assert reply["evidence_verdict"]["observed_sha256"] == changed
+    assert reader.reconcile(OP_ID)["status"] == "completed"
+    assert journal_bytes(tmp_path) == before
+
+    artifact.write_bytes(original)
+    restored = reader.recover(NATIVE_CALL)
+    assert restored["evidence_verdict"]["verified"] is True
+
+
+def test_recover_of_an_execution_written_outcome_names_no_verdict(tmp_path):
+    """Nothing to re-read: the key's absence is not a verification."""
+    dispatch = boundary(tmp_path, lambda call: {"ok": True})
+    assert dispatch(NATIVE_CALL)["status"] == "completed"
+
+    recovered = dispatch.recover(NATIVE_CALL)
+    assert recovered["status"] == "completed"
+    assert "evidence_verdict" not in recovered
+    assert recovery_evidence_drift(recovered) is None
+    assert recovery_evidence_drift({"status": "completed"}) is None
+    assert recovery_evidence_drift(None) is None
+
+
+def test_recovery_evidence_drift_reads_every_unverified_verdict_as_drift():
+    drift = recovery_evidence_drift({"evidence_verdict": {
+        "verified": False, "failure": "effect-evidence-unreadable",
+        "observed_sha256": None}})
+    assert drift["failure"] == "effect-evidence-unreadable"
+    assert recovery_evidence_drift({"evidence_verdict": {"verified": True}}) is None
+    assert recovery_evidence_drift({"evidence_verdict": {"verified": False}}) \
+        == {"verified": False}
 
 
 

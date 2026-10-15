@@ -268,7 +268,12 @@ def reconcile_caller_journal(
     If the outcome is `completed` and authority is still granted, appends a
     durable `tool_result` row to the journal. If the outcome is `unknown` or
     `None`, leaves the call pending. If authority is revoked, returns
-    `authority_denied` without appending.
+    `authority_denied` without appending. A completion recorded by
+    `record_receipt` is appended only while the evidence it named still
+    re-reads: a receipt whose artifact was altered or deleted returns `unknown`
+    with `evidence_drift` naming the verdict, leaves that call pending and
+    dispatches nothing, because a lost artifact is not a lost effect and is
+    never a reason to run the capability again.
 
     Never dispatches, never constructs a provider session, never duplicates
     execution.
@@ -276,7 +281,7 @@ def reconcile_caller_journal(
     Returns a dict with `status` and `reconciled` (list of call ids that were
     reconciled).
     """
-    from .inference_effects import EffectBoundary
+    from .inference_effects import EffectBoundary, recovery_evidence_drift
 
     state = read_native_journal(journal_path)
     pending = state["pending_calls"]
@@ -297,6 +302,7 @@ def reconcile_caller_journal(
     )
 
     reconciled = []
+    drift: list[dict[str, Any]] = []
     for call in pending:
         outcome = boundary.recover(call)
         if outcome is None:
@@ -307,12 +313,24 @@ def reconcile_caller_journal(
             continue
         if not authorized(call):
             return {"status": "authority_denied", "reconciled": reconciled}
-        # Append durable tool_result row
+        evidence = recovery_evidence_drift(outcome)
+        if evidence is not None:
+            # The store still says completed, but the bytes the receipt named
+            # no longer re-read, so this successor refuses to make the success
+            # claim durable. Nothing is dispatched and the call stays pending
+            # with the verdict preserved for whoever restores the evidence.
+            drift.append({"call": call["id"], **evidence})
+            continue
+        # Append durable tool_result row. The read-side verdict is a fact about
+        # this read, not part of the durable record, so it is excluded here.
         message = {
             "role": "toolResult",
             "toolCallId": call["id"],
             "toolName": call["name"],
-            "content": [{"type": "text", "text": json.dumps(outcome, ensure_ascii=False, allow_nan=False)}],
+            "content": [{"type": "text", "text": json.dumps(
+                {key: value for key, value in outcome.items()
+                 if key != "evidence_verdict"},
+                ensure_ascii=False, allow_nan=False)}],
             "isError": False,
             "timestamp": 0,
         }
@@ -330,6 +348,9 @@ def reconcile_caller_journal(
             os.fsync(f.fileno())
         reconciled.append(call["id"])
 
+    if drift:
+        return {"status": "unknown", "reconciled": reconciled,
+                "evidence_drift": drift}
     if reconciled:
         return {"status": "completed", "reconciled": reconciled}
     return {"status": "unknown", "reconciled": []}

@@ -1249,6 +1249,28 @@ def receipt_evidence_for(verdict: ReceiptEvidence) -> dict[str, Any]:
             "observed_sha256": verdict.observed_sha256}
 
 
+def recovery_evidence_drift(reply: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """The read-side verdict when a recovered completion is no longer backed.
+
+    `EffectBoundary.recover` attaches `evidence_verdict` when the outcome it
+    read was written by `record_receipt`; the key is absent for an outcome an
+    execution wrote, which names no evidence the boundary could re-read, and
+    absent for a reply that is not a completion. A caller about to convert a
+    recovered completion into its own durable success claim must ask this
+    first: anything other than a verified verdict — mismatch, unreadable, or a
+    verdict this read could not obtain — means the boundary no longer holds
+    evidence the effect happened, so the claim must not be written. The
+    durable record is unchanged and is not proof the effect did not happen;
+    this answers only whether the evidence it named still re-reads.
+    """
+    if not isinstance(reply, Mapping):
+        return None
+    verdict = reply.get("evidence_verdict")
+    if not isinstance(verdict, Mapping) or verdict.get("verified") is True:
+        return None
+    return dict(verdict)
+
+
 def snapshot_json(value: Any) -> Any:
     """Canonical, crash-safe copy of a capability result for journal and reply.
 
@@ -1529,6 +1551,15 @@ class EffectBoundary:
         durable state and must not be retried: a `started-without-outcome`
         failure is an unknown effect, not permission to run the capability again.
 
+        A completed outcome written by `record_receipt` also carries
+        `evidence_verdict`: the read-side re-check of the bytes that receipt
+        named, performed here so a caller about to make the completion durable
+        in its own journal cannot skip it. The recorded `status` is never
+        rewritten to express that verdict — the store still holds the receipt —
+        and nothing is written by the check. An outcome an execution wrote
+        carries no verdict key at all: it names no evidence to re-read, so a
+        caller must not read the absence as verification.
+
         The id is resolved rather than derived: a caller-named operation reaches
         the loop only through `claim_for`, so the durable record that belongs to
         this provider call can carry an id the call itself does not. Deriving
@@ -1536,5 +1567,11 @@ class EffectBoundary:
         answer `None`, and let a successor execute the capability a second time
         under a derived id while the first start record still names another.
         """
-        return self.status(self._resolve_operation_id(call))
+        reply = self.status(self._resolve_operation_id(call))
+        if reply is None or reply.get("status") != "completed":
+            return reply
+        verdict = self.verify_receipt_evidence(reply["operation_id"])
+        if verdict.get("failure") == "not-a-receipt":
+            return reply
+        return {**reply, "evidence_verdict": verdict}
 
