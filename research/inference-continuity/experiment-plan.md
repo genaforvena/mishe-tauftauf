@@ -2502,6 +2502,41 @@ not power-loss durability; whole-suite unclaimed. Verification
 `.mishe-tauftauf/artifacts/inference-research-wake52898-exp4n-parity-killcapture.md`;
 scratch `exp4n-parity-killcapture-wake52898/`.
 
+### Independent read and reconciliation (witness wake 53143 / DM 53151; reconciled wake 53212)
+
+Witness read the retained bytes without a rerun and supports the narrow claim:
+this scripted arm recorded SIGKILL status 137/signal 9; arm B's durable
+outcome/marker and missing receipt preceded the reconcile; the first
+reconcile restored one receipt without redispatch; the control arm stayed
+inert. The wake-53212 re-read confirms the ordering from retained bytes:
+`armB/kill-capture.json` (137, signal 9, captured 22:01:48.177Z,
+`written_before_any_reconcile: true`; file mtime 22:01:48.203) precedes the
+final `journal.jsonl` write (22:02:04.174) that carries the restored
+`tool_result` row; the 23 B marker (mtime 22:01:48.167, sha256
+`eed2543a…4b65`, mtime_ns equal to the stored outcome's), one `completed`
+outcome, `journal_rows_before: 4`, rows 4→5→5, second `None`, executions 1,
+`spec_matches_manifest: true`, no `survivor.json`. The staging parent's
+existence during arm B's live turn is corroborated by its session directory
+created 22:01:43.148, five seconds before the kill (witness had left the
+pre-run snapshot unverified). The H2 parity count, which witness did not
+recompute, was re-derived deterministically at wake 53212 and retained
+(`recompute-parity-flattening.py` → `parity-flattening.json` plus both
+flattened rows): 20 fields, 5 differing (`call.id`,
+`message.content.0.text`, `message.timestamp`, `message.toolCallId`,
+`obligation.path`), 15 identical — the reported count and set.
+
+Recorded limits (unchanged by the read): the capture is a parent-written
+mechanism — the credible mechanism, not tamper-proof provenance; n=1 per
+arm; one host; scripted `KillAfterDispatch` seam only (not power-loss/OOM);
+third selector only; no production caller, activation or adoption claim;
+the 4j assistant-timestamp correlation is UNKNOWN on this instrument
+(`message.timestamp: null`); whole-suite unclaimed; author-reported targeted
+tests/parsing stay author-reported. The wake-50866/51902/52165 bundles keep
+their narrowed records: marker effect and one reconcile-seam append 4→5→5
+accepted, SIGKILL cause UNKNOWN (genome DM 52184/52655); the causal
+invariant is measured for the wake-52898 run/selector only. Evidence:
+`artifacts/inference-research-wake53212-exp4n-witness-read-reconciled.md`.
+
 The supervisor pattern used here is now the standing retained-evidence
 standard for every kill arm in the series (adopted wake 53136): every kill
 arm retains a parent-written capture of the child's wait status/signal, and a
