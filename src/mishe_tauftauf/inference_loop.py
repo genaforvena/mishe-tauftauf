@@ -246,6 +246,25 @@ class NativeJournalError(ValueError):
 
 
 
+def _proposing_assistant(messages, call_id):
+    """The recorded assistant message that proposed `call_id`, or None.
+
+    A restored `tool_result` row must carry the timestamp of the assistant
+    that proposed the call — the same value `drive_native` writes — so the
+    recovered context stays message-identical to the uninterrupted
+    continuation's. `messages[-1]` is not a safe source: after a crash mid
+    selection it is the sibling call's `toolResult` row, and its timestamp is
+    only coincidentally the same value.
+    """
+    for message in reversed(messages):
+        if message.get('role') != 'assistant':
+            continue
+        if any(item.get('type') == 'toolCall' and item.get('id') == call_id
+               for item in message.get('content', [])):
+            return message
+    return None
+
+
 def reconcile_caller_journal(
     journal_path: Path,
     effect_store_dir: Path,
@@ -277,6 +296,11 @@ def reconcile_caller_journal(
 
     Never dispatches, never constructs a provider session, never duplicates
     execution.
+
+    The appended row is the row the uninterrupted writer would have written
+    for the same call — including the proposing assistant's recorded
+    timestamp — so a continued session's next model input is message-identical
+    to the uninterrupted continuation's.
 
     Returns a dict with `status` and `reconciled` (list of call ids that were
     reconciled).
@@ -323,6 +347,11 @@ def reconcile_caller_journal(
             continue
         # Append durable tool_result row. The read-side verdict is a fact about
         # this read, not part of the durable record, so it is excluded here.
+        # The row is the row the uninterrupted writer would have appended for
+        # this call: the proposing assistant's recorded timestamp, not a
+        # synthesized one, so a continued session's next model input is
+        # message-identical to the uninterrupted continuation's.
+        assistant = _proposing_assistant(state['context']['messages'], call['id'])
         message = {
             "role": "toolResult",
             "toolCallId": call["id"],
@@ -332,7 +361,7 @@ def reconcile_caller_journal(
                  if key != "evidence_verdict"},
                 ensure_ascii=False, allow_nan=False)}],
             "isError": False,
-            "timestamp": 0,
+            "timestamp": assistant.get("timestamp", 0) if assistant else 0,
         }
         # Append to journal
         with open(journal_path, "a", encoding="utf-8") as f:

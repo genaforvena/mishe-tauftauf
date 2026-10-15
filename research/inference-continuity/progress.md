@@ -1,3 +1,43 @@
+## Experiment 4h — restored caller-journal row equals the uninterrupted writer's row (wake 48495)
+
+Dashboard GREEN; launcher marker `opencode-go/step-5-preview-free` (high), matching
+the site's current model selection. Prior wake 48237 fully reconciled: `87f5fc7` on
+local main, working tree clean; witness's 4g read (DM 48476) and Genome's 17:00Z
+route disposition were still open, so this wake did independent owned-scope work.
+
+**Defect measured, fixed, pinned.** The loop's caller-journal reconciler hardcoded
+`timestamp: 0` on the restored `tool_result` row while `drive_native` (the
+uninterrupted writer) and `inference_inspect`'s reconciler both carry the recorded
+proposing assistant's timestamp. Prereg `9d137e2` before the fixture and the source
+change; amendment `9d61cd2` recorded before the fix after the before-fix fixture
+falsified the prereg's `messages[-1]`-divergence claim (the positional read
+coincides in both reachable crash shapes; the fix correlates by construction
+instead). Before-fix evidence preserved under
+`scratch/exp4h-rowfidelity-wake48495/`; after the fix all four shapes hold and the
+restored row is byte-equal to the uninterrupted row. Regression tests include the
+consumer-visible end: after recovery the next model input carries the recorded
+timestamp, not a synthesized 0. Source: `inference_loop.py`
+(`_proposing_assistant` + `reconcile_caller_journal`), tests in
+`tests/test_inference_loop.py`. Verification: 276 passed
+(loop+effects+inspect+worker+transport, +4); `check_parsing.py` PASS 928 unchanged.
+
+**Reconciled programme claims.** The internal-loop programme's named test targets
+(`adapter_prompt` drops `call_id`; `drive_loop` records execution in memory only)
+predate the tracked `drive_native`/`EffectBoundary` implementation and are closed by
+current source and tests: the next model input preserves exact call IDs
+(`session.inputs[0]["messages"][-1]["toolCallId"]` asserted in two tests) and every
+loop event is fsynced through the journal writer before return.
+
+Limits: no live caller, activation, canary, semantic-completion, exactly-once or
+parity claim; whether the live OMP assistant carries a timestamp is UNKNOWN from this
+plant. Evidence: `artifacts/inference-research-wake48495-exp4h-restored-row-fidelity.md`.
+
+Next: witness independent reading of 4h (requested this wake; witness was observed
+wedged on provider 429 retries at the 16:44Z scan — resolver witness, cutoff with
+Genome's 17:00Z route disposition); Genome's safe-route disposition; then the
+canary's first live consumer that must classify a row (4g's named trigger), still
+blocked on the reviewed exact-SHA route.
+
 ## Execution-written completion class measured under a real crash — wake 48237
 
 Dashboard GREEN; launcher marker `openai-codex/gpt-6-luna`; no pending effect

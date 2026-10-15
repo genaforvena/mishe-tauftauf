@@ -2,6 +2,7 @@ import io
 import hashlib
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -9,6 +10,7 @@ from mishe_tauftauf.inference_loop import (
     NativeJournal, NativeJournalError, drive_native, read_native_journal, read_pane_prompt,
     recover_native,
 )
+from mishe_tauftauf.inference_transport import NativeTurn
 from mishe_tauftauf.inference_worker import WorkerError, WorkerTurn
 
 
@@ -659,6 +661,150 @@ def test_crash_between_dispatch_and_tool_result_reconciles_from_effect_store(tmp
     assert final["pending_calls"] == []
     assert final["calls"] == 1
     assert final["used_ids"] == [CALL["id"]]
+
+
+def timed_turn(calls, timestamp):
+    return NativeTurn("done", {"role": "assistant", "content": list(calls),
+                               "stopReason": "toolUse", "timestamp": timestamp},
+                      None, None,
+                      {"sessionId": "recorded-session",
+                       "boundaryDigest": "recorded-boundary"})
+
+
+def _tool_result_row(path, call_id=None):
+    row = None
+    for line in Path(path).read_text().splitlines():
+        event = json.loads(line)
+        if event.get("kind") == "tool_result" and (
+                call_id is None or event["message"]["toolCallId"] == call_id):
+            row = event["message"]
+    return row
+
+
+@pytest.mark.parametrize("timestamp", [7, None])
+def test_restored_row_is_the_row_the_uninterrupted_writer_appends(tmp_path, timestamp):
+    """4h: the reconciled row equals the uninterrupted drive_native row.
+
+    A timestamped proposing assistant must not lose its timestamp to a
+    synthesized 0 on the recovery path, and an untimestamped assistant must
+    stay byte-identical to today's row.
+    """
+    from mishe_tauftauf.inference_effects import EffectBoundary
+    from mishe_tauftauf.inference_loop import reconcile_caller_journal
+
+    def assistant():
+        message = {"role": "assistant", "content": [CALL],
+                   "stopReason": "toolUse"}
+        if timestamp is not None:
+            message["timestamp"] = timestamp
+        return WorkerTurn("done", message, "toolUse")
+
+    def run(name, crash):
+        store = tmp_path / f"{name}-effects"
+        boundary = EffectBoundary(
+            store, writer_id="loop-1", obligation={"source": "owned-event"},
+            execute=lambda call: {"marker": "done"}, authority="test:authority")
+        path = tmp_path / f"{name}.jsonl"
+        with NativeJournal(path) as journal:
+            def record(event):
+                if crash and event["kind"] == "tool_result":
+                    raise InterruptedError("crash before tool_result persisted")
+                journal(event)
+
+            if crash:
+                with pytest.raises(InterruptedError):
+                    drive(Session(assistant()), record=record, dispatch=boundary)
+            else:
+                drive(Session(assistant(), turn()), record=record, dispatch=boundary)
+        return path, store
+
+    whole_path, _ = run("whole", crash=False)
+    expected = _tool_result_row(whole_path)
+    crashed_path, crashed_store = run("crashed", crash=True)
+    result = reconcile_caller_journal(
+        crashed_path, crashed_store, writer_id="loop-1", authority="test:authority",
+        authorized=lambda call: True)
+
+    assert result["status"] == "completed"
+    restored = _tool_result_row(crashed_path)
+    assert restored == expected
+    assert restored["timestamp"] == (timestamp if timestamp is not None else 0)
+
+
+def test_continued_model_input_carries_the_proposing_assistant_timestamp(tmp_path):
+    """4h: the consumer-visible part — the next model input after recovery
+    holds the restored row with the proposing assistant's recorded timestamp.
+    """
+    from contextlib import nullcontext
+    from mishe_tauftauf.inference_effects import EffectBoundary
+    from mishe_tauftauf.inference_loop import (reconcile_caller_journal,
+                                               recover_native)
+    second = {**CALL, "id": "second|native"}
+    store = tmp_path / "effects"
+    boundary = EffectBoundary(
+        store, writer_id="loop-1", obligation={"source": "owned-event"},
+        execute=lambda call: {"marker": "done"}, authority="test:authority")
+    path = tmp_path / "crashed.jsonl"
+    with NativeJournal(path) as journal:
+        def record(event):
+            if (event["kind"] == "tool_result"
+                    and event["message"]["toolCallId"] == second["id"]):
+                raise InterruptedError("crash before the second result")
+            journal(event)
+
+        with pytest.raises(InterruptedError):
+            drive(Session(timed_turn([CALL], 1), timed_turn([second], 7)),
+                  record=record, dispatch=boundary)
+
+    reconciled = reconcile_caller_journal(
+        path, store, writer_id="loop-1", authority="test:authority",
+        authorized=lambda call: True)
+    assert reconciled == {"status": "completed", "reconciled": [second["id"]]}
+
+    session = Session(turn())
+    continued = tmp_path / "continued.jsonl"
+    with NativeJournal(continued) as journal:
+        result = recover_native(
+            path, open_session=lambda **kwargs: nullcontext(session),
+            **recovery_options(journal))
+
+    restored = session.inputs[0]["messages"][-1]
+    assert restored["toolCallId"] == second["id"]
+    assert restored["timestamp"] == 7
+    assert result["status"] == "complete"
+
+
+def test_multi_call_crash_restores_pending_call_timestamp(tmp_path):
+    """4h: mid-selection crash — the last recorded message is the sibling
+    call's toolResult row; the pending call still restores its proposing
+    assistant's timestamp (by explicit correlation, not by position).
+    """
+    from mishe_tauftauf.inference_effects import EffectBoundary
+    from mishe_tauftauf.inference_loop import reconcile_caller_journal
+    second = {**CALL, "id": "second|native"}
+    store = tmp_path / "effects"
+    boundary = EffectBoundary(
+        store, writer_id="loop-1", obligation={"source": "owned-event"},
+        execute=lambda call: {"marker": "done"}, authority="test:authority")
+    path = tmp_path / "crashed.jsonl"
+    with NativeJournal(path) as journal:
+        def record(event):
+            if (event["kind"] == "tool_result"
+                    and event["message"]["toolCallId"] == second["id"]):
+                raise InterruptedError("crash before the second result")
+            journal(event)
+
+        with pytest.raises(InterruptedError):
+            drive(Session(timed_turn([CALL, second], 7)), record=record,
+                  dispatch=boundary)
+
+    result = reconcile_caller_journal(
+        path, store, writer_id="loop-1", authority="test:authority",
+        authorized=lambda call: True)
+
+    assert result["status"] == "completed"
+    assert read_native_journal(path)["pending_calls"] == []
+    assert _tool_result_row(path, second["id"])["timestamp"] == 7
 
 
 def test_recovered_effect_reaches_fresh_model_turn_without_redispatch(tmp_path):
