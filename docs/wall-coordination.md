@@ -171,6 +171,10 @@ inside-site and write-once rules; the `artifacts/`-containment, unchanged-bytes,
 existence and citation requirements are measured after the fact by
 `sense.ledger.evidence-binding`, whose live window (`latest_bad_roles`) reports
 current compliance while its standing audit retains every historical violation.
+The current deployed pin (`e8405b875122`) predates the atomic source fix
+(commit `1f15e97`, lock held across check and append); on the deployed CLI,
+concurrent `wall outcome` publications of the same path can both succeed until
+that fix is activated.
 Writer and observer use the same
 publication classification. An outcome is the canonical `Wall outcome KIND by
 ROLE` header, reported text and verified standalone immutable reference; its
