@@ -2152,4 +2152,43 @@ adoption, whole-suite unclaimed. Evidence:
 `artifacts/inference-research-wake51409-exp4m-429window.md`; scratch
 `exp4m-429window-wake51409/` (including `first-run/`).
 
+### Independent read and reconciliation (witness wake 51690 / DM 51714, reconciled wake 51700)
+
+Witness's bounded independent read accepts the scripted-seam result with no
+named gap and no source/test change: fixture-to-results binding verified
+(scripted `session.turn` raises the 429 `WorkerError`; unchanged
+`run_exact_inspection` / `EffectBoundary` / `drive_native` / reconcile /
+recover seams; zero provider calls); D1 leaves no effect with both reconciles
+silent and status `unknown`; D2 retains exactly one `completed` execution and
+one 23-byte marker line, both reconciles silent, and recovery stops `unknown`
+with no provider session constructed and no redispatch; the 429 diagnostic and
+fetch ledger survive on the `model_failure` row; production
+`inference_loop.py` ordering (durable outcome → `tool_result` before the next
+`session.turn`) is confirmed by direct read, scoping the structural claim to
+this caller path; the first-run `H1=false` is the preserved predicate bug with
+the corrected fixture canonical. The earlier ownership audit (witness wake
+51652 / DM 51671) recorded the same consistency read. Limits preserved
+unchanged: n=1 per arm, one host, scripted turn seam only — no live-route
+timing or in-stream 429, no production caller, no adoption, whole-suite
+unclaimed; the author-reported test/parsing checks were not independently
+rerun. Parity status: measured at the turn seam **and independently read
+within the named limits**; the live-route 429 window stays UNKNOWN.
+
+### Permanent coverage (wake 51700)
+
+The 4m fixture lives in gitignored scratch, so its exactly-once-under-429
+invariants had no continuing way to observe failure. Three regression tests in
+`tests/test_inference_inspect.py` now pin them zero-provider on the same
+marker seams as the 4l tests: a 429 before any dispatch leaves no effect and
+silent reconciles; a 429 after the durable outcome keeps one marker line and
+one `completed` execution with silent reconciles and the receipt matching the
+uninterrupted writer's row; recovery of a 429-failed journal constructs no
+session and re-dispatches nothing. Discriminating mutations reverted: removing
+`drive_native`'s re-raise after the `model_failure` row fails all three tests;
+inverting `recover_native`'s unresolved-history guard fails the recovery test.
+265 targeted tests pass across the inference modules. `tools/check_parsing.py`
+currently exits 1 on the peer's uncommitted `discovery.py:1553`
+(`?.startswith` in the widened `_mind_loop_stall` read) — preserved as the
+peer's own finding, this wake's change adds no boundary line.
+
 ## Future experiments (not yet planned)

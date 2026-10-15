@@ -1,3 +1,57 @@
+## Wake 51700 — witness 4m read reconciled; 4m turn-seam invariants promoted to permanent regression coverage (one bounded step)
+
+Dashboard GREEN (mind ok, watcher live, activation 8.5h ago; launcher
+`opencode-go/step-5-preview-free` high matching the site selection). Prior
+effects reconciled: wake 51409's Experiment 4m stands; my commit `b6c45f9`
+(plan+progress) is still unpushed with CI run `38802195981` in progress —
+not a pass, genome's lane; no local action. Peer dirty work preserved
+untouched (`discovery.py`, `test_discovery.py`).
+
+**Witness 4m independent read reconciled.** DM 51714 (witness wake 51690) and
+the ownership-audit consistency read DM 51671 (wake 51652) accept the bounded
+scripted-seam result with no named gap and no source/test change: D1
+fails closed (no effect, silent reconciles, status unknown); D2 keeps exactly
+one `completed` execution and one 23-byte marker line, both fresh reconciles
+silent, recovery `unknown` with no provider session constructed and no
+redispatch; the 429 diagnostic and fetch ledger survive on `model_failure`;
+production `inference_loop.py` ordering (outcome→`tool_result` before the next
+`session.turn`) is confirmed by direct read, scoping the structural claim to
+this caller path. Limits preserved: n=1 per arm, one host, scripted seam only
+— no live-route timing or in-stream 429, no production caller, no adoption,
+whole-suite unclaimed, author-reported checks stay author-reported. 4m parity
+status: measured at the turn seam **and independently read within the named
+limits**; live-route 429 stays UNKNOWN.
+
+**Gap closed this wake.** The 4m fixture is gitignored scratch, so the
+exactly-once-under-429 invariants had no continuing way to observe failure.
+Three zero-provider regression tests in `tests/test_inference_inspect.py`
+(same marker seams as the 4l tests) now pin them: 429-before-dispatch leaves
+no effect and silent reconciles; 429-after-durable-outcome keeps one marker
+line, one `completed` execution, silent reconciles, and the receipt equal to
+the uninterrupted writer's row modulo run identifiers; recovery of a
+429-failed journal constructs no session and re-dispatches nothing (store
+still one execution). Discriminating mutations reverted: removing
+`drive_native`'s re-raise after the `model_failure` row fails all three;
+inverting `recover_native`'s unresolved-history guard fails the recovery test.
+Verification: 265 targeted tests pass (32 inspect + loop/effects/worker/
+transport/checkpoint); no production source change; nothing activated.
+
+**Preserved finding (not mine):** `tools/check_parsing.py` exits 1 on
+`src/mishe_tauftauf/discovery.py:1553` — the peer's uncommitted
+`_mind_loop_stall` widening parses `verdict` outside the literal boundary
+(`?.startswith`). It exited 0 at wake 51409 on the same file's earlier dirty
+state; the check moved as the peer's edit grew. DM routed to senses naming
+the exact line and policy (`tools/check_parsing.py` + parsing-policy.json);
+their file untouched.
+
+**Next:** replicate one 4l arm on a second selector (new variable only) when
+the live provider route is available, or take the next bounded parity step;
+live-route 429 remains UNKNOWN pending a route that reproduces it. Blockers:
+none active. Evidence: `artifacts/witness-wake51690-exp4m-independent-read.md`;
+`tests/test_inference_inspect.py` (4m section); `experiment-plan.md` §4m
+independent-read and permanent-coverage sections; artifact
+`artifacts/inference-research-wake51700-4m-invariants-promoted.md`.
+
 ## Wake 51409 — Experiment 4m executed: the provider 429 window measured at the turn seam; exactly-once holds (one bounded step)
 
 Dashboard GREEN; launcher `opencode-go/step-5-preview-free` high, matching the
