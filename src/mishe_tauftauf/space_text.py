@@ -10,6 +10,8 @@ reader acts on a plain answer.
 from __future__ import annotations
 
 import json
+import math
+import re
 
 
 def decode_stream_record(text: str) -> dict | None:
@@ -90,3 +92,71 @@ def decode_node_state(node_state: object) -> str | None:
     if not isinstance(mode, str):
         return None
     return NOT_SENDING_MODES.get(mode)
+
+def decode_space_boundary(text: str | None) -> dict | None:
+    """Decode the shared space publication, or return None when it is unreadable."""
+    try:
+        value = json.loads(text) if text is not None else None
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(value, dict):
+        return None
+    nodes = value.get("nodes")
+    if isinstance(nodes, list) and any(
+            not isinstance(node, dict)
+            or not isinstance(node.get("node"), str)
+            or re.fullmatch(r"[a-z0-9][a-z0-9-]*", node["node"]) is None
+            for node in nodes):
+        return None
+    return value
+
+
+CLOCK_DOMAIN_STATUSES = ("ok", "absent", "invalid", "stale")
+
+
+def decode_clock_domain(clock_domain: object) -> dict | None:
+    """The additive per-node clock-offset reading, or None for a malformed field.
+
+    ``clock_domain`` is the versioned ``clock_domain`` node field the producer
+    projects from its own ``read_clock_domain`` verdict. Shape validation lives
+    here so a reader acts on a plain answer; consistency (nominal within the
+    bounds) and freshness (age within ``validity_seconds``) are the reader's
+    judgement, never repaired here. An inconsistent reading is preserved, not
+    coerced: the reader sees the nominal as published and names the conflict.
+    """
+    if (not isinstance(clock_domain, dict) or type(clock_domain.get("version")) is not int
+            or clock_domain["version"] != 1):
+        return None
+    status = clock_domain.get("status")
+    if status not in CLOCK_DOMAIN_STATUSES:
+        return None
+
+    def finite(key: str) -> float | None:
+        value = clock_domain.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        try:
+            number = float(value)
+        except OverflowError:
+            return None
+        return number if math.isfinite(number) else None
+
+    offsets = {key: finite(key) for key in
+               ("offset_nominal_s", "offset_min_s", "offset_max_s",
+                "observed_at_epoch_s", "validity_seconds")}
+    samples = clock_domain.get("samples")
+    source = clock_domain.get("source")
+    reason = clock_domain.get("reason")
+    jump = clock_domain.get("jump")
+    if (type(samples) is not int or samples < 0
+            or (source is not None and not isinstance(source, str))
+            or (reason is not None and not isinstance(reason, str))
+            or (jump is not None and not isinstance(jump, dict))):
+        return None
+    return {"version": 1, "status": status,
+            "offset_nominal_s": offsets["offset_nominal_s"],
+            "offset_min_s": offsets["offset_min_s"],
+            "offset_max_s": offsets["offset_max_s"],
+            "observed_at_epoch_s": offsets["observed_at_epoch_s"],
+            "validity_seconds": offsets["validity_seconds"],
+            "samples": samples, "source": source, "reason": reason, "jump": jump}

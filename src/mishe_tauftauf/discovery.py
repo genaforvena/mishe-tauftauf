@@ -4634,6 +4634,96 @@ def _space_light_record_freeze(home: Path, row: dict, previous: dict | None,
             pass
 
 
+SPACE_CLOCK_NODES = ("note3", "redmi10")
+
+
+def _space_clock_domains(data: object, now: float) -> list[dict]:
+    """Read each node's clock-domain verdict without renewing its age."""
+    nodes: dict[str, object] = {}
+    names = list(SPACE_CLOCK_NODES)
+    envelope_ok = (isinstance(data, dict)
+                   and type(data.get("schema_version")) is int
+                   and data.get("schema_version") == 1
+                   and data.get("producer") == SPACE_PRODUCER
+                   and isinstance(data.get("nodes"), list))
+    if envelope_ok:
+        for node in data["nodes"]:
+            if not isinstance(node, dict) or not isinstance(node.get("node"), str):
+                envelope_ok = False
+                continue
+            name = node["node"]
+            if name not in names:
+                names.append(name)
+            nodes[name] = node if name not in nodes else None
+
+    rows = []
+    for name in names:
+        identity = f"sense.space.clock-domain.{name}"
+        node = nodes.get(name)
+        reading = (space_text.decode_clock_domain(node.get("clock_domain"))
+                   if isinstance(node, dict) else None)
+        state, reason = "unknown", "boundary-absent-or-invalid"
+        detail = ""
+        if not envelope_ok:
+            reason = "boundary-absent-or-invalid"
+        elif node is None:
+            reason = "missing-or-duplicate-node"
+        elif reading is None:
+            reason = "malformed-clock-domain"
+        elif reading["status"] != "ok":
+            reason = reading["reason"] or f"clock-domain-{reading['status']}"
+        else:
+            nominal = reading["offset_nominal_s"]
+            lower = reading["offset_min_s"]
+            upper = reading["offset_max_s"]
+            observed = reading["observed_at_epoch_s"]
+            validity = reading["validity_seconds"]
+            samples = reading["samples"]
+            if (any(value is None for value in (nominal, lower, upper, observed, validity))
+                    or validity <= 0 or samples <= 0):
+                reason = "incomplete-clock-domain"
+            elif lower > upper or not lower <= nominal <= upper:
+                reason = "inconsistent-clock-domain-interval"
+            elif observed > now:
+                reason = "clock-domain-future"
+            elif now - observed > validity:
+                reason = "clock-domain-expired"
+            else:
+                state, reason = "verified", "clock-domain-current"
+                detail = (f" offset={nominal:+.3f}s bounds=[{lower:+.3f},{upper:+.3f}]s"
+                          f" age={_space_age(now - observed)} n={samples}"
+                          f" validity={validity:g}s")
+        if not detail:
+            if reading is not None:
+                observed = reading["observed_at_epoch_s"]
+                validity = reading["validity_seconds"]
+                if observed is not None:
+                    detail += f" observed={_space_stamp(observed)}"
+                    if observed <= now:
+                        detail += f" age={_space_age(now - observed)}"
+                if validity is not None:
+                    detail += f" validity={validity:g}s"
+                if reading["status"] == "ok":
+                    detail += (f" nominal={reading['offset_nominal_s']}"
+                               f" bounds=[{reading['offset_min_s']},{reading['offset_max_s']}]"
+                               f" n={reading['samples']}")
+                if reading["reason"]:
+                    detail += f" producer_reason={reading['reason']}"
+        rows.append({"id": identity, "kind": "read", "state": state,
+                     "reason": reason,
+                     "sample": f"{name} clock-domain {state.upper()}: {reason}"
+                                f"{detail}; provenance={SPACE_PRODUCER['name']}"})
+    return rows
+
+
+def _space_clock_domains_read(home: Path) -> list[dict]:
+    """Read the shared body boundary; absent or corrupt input stays UNKNOWN."""
+    path = home / "body" / "space.json"
+    text = _read(path, 65536)
+    data = space_text.decode_space_boundary(text)
+    return _space_clock_domains(data, time.time())
+
+
 def _space_light_read(home: Path) -> dict:
     """Read the light boundary, naming a null read's duration class.
 

@@ -17,7 +17,8 @@ from .ci_watch import line as ci_line
 from . import clear_journal
 from . import scan_freshness
 from .discovery import (latest, producer_label, scan_attempt, _tailnet_peer_read,
-                        _space_light, _space_light_name_freeze, _space_light_read)
+                        _space_clock_domains_read, _space_light, _space_light_name_freeze,
+                        _space_light_read)
 from .body_perception import SENSE_ID, read_redmi10
 from .host_radio import decode_cam_events, decode_cam_manifest, decode_cam_state, decode_urb_failures
 from . import proc_table
@@ -266,6 +267,9 @@ def senses(home: Path) -> str:
     if snapshot is None:
         verdict = "UNKNOWN senses no discovery sample"
         lines.append("STATE: UNKNOWN — no sample exists")
+        for clock_row in _space_clock_domains_read(home):
+            state, line = _observation_reading(clock_row, "recent", home)
+            lines.append(line)
         _, redmi_line = _observation_reading(redmi, "recent", home)
         lines.append(redmi_line)
         if isinstance(redmi.get("details"), str):
@@ -278,6 +282,7 @@ def senses(home: Path) -> str:
         space = _space_light_read(home)
         senses_rows.append(redmi)
         senses_rows.append(space)
+        senses_rows.extend(_space_clock_domains_read(home))
         unknown = 0
         unavailable = 0
         for item in senses_rows:

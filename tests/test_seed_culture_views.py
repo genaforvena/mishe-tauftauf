@@ -294,6 +294,24 @@ def test_missing_space_boundary_keeps_other_reads_but_cannot_claim_overall_succe
     assert (home / "observations" / "senses").read_text(encoding="utf-8").startswith("UNKNOWN ")
 
 
+
+
+def test_senses_pane_renders_each_clock_domain_as_a_separate_read(tmp_path: Path,
+                                                                  current_endpoint,
+                                                                  monkeypatch) -> None:
+    home = tmp_path / "site"
+    _write_scan(home, [{"id": "sense.proc.loadavg", "state": "verified",
+                        "sample": "1.23", "kind": "read"}])
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views._space_clock_domains_read",
+                        lambda _home: [
+                            {"id": "sense.space.clock-domain.note3", "state": "verified",
+                             "sample": "note3 clock-domain current bounds=[24.2,25.2]"},
+                            {"id": "sense.space.clock-domain.redmi10", "state": "unknown",
+                             "sample": "redmi10 clock-domain absent"}])
+    rendered = senses(home)
+    assert "VERIFIED sense.space.clock-domain.note3" in rendered
+    assert "UNKNOWN sense.space.clock-domain.redmi10" in rendered
+    assert "UNKNOWN sense.space.light" in rendered
 def test_senses_still_counts_an_unreadable_counter_as_unknown(tmp_path: Path, current_endpoint) -> None:
     home = tmp_path / "site"
     _write_scan(home, [
