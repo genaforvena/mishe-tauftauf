@@ -20,7 +20,8 @@ from pathlib import Path
 from .feed import Feed
 from .records import payload as record_payload
 from . import discovery
-from .observations import executable, redact_display_age, strip_owned_chrome, validate_home, validate_slug
+from .observations import (executable, redact_display_age, redact_redmi_cursor,
+                           strip_owned_chrome, validate_home, validate_slug)
 from .tmux import OWNED_OPTION, _pane_stopped_or_dead, _python_command, _tmux, await_owned, capture_raw, lease_value, owns_session
 
 
@@ -324,11 +325,10 @@ def _observation_text(slug: str, frame: str) -> str:
     prefixes = ("STATE:", "UNKNOWN ", "UNAVAILABLE command.", "AVAILABLE command.",
                 "PERMISSION REQUESTS:", "REQUEST ") if slug == "discover" else (
                     "STATE:", "UNKNOWN ", "DRIFT ")
-    # A rendered display age (``age=19m17s``) grows on every refresh while the
-    # reading's meaning is unchanged; the boundary adapter redacts it so the
-    # digest tracks meaning. The gap class, ``last-phone`` stamp and STATE
-    # line still separate digests.
-    lines = (redact_display_age(line)
+    # A rendered display age grows while meaning is unchanged; redact it here.
+    # State classes and STATE remain in the digest; a Redmi cursor does not.
+    # A rendered Redmi cursor is source progress, not a changed observation.
+    lines = (redact_redmi_cursor(redact_display_age(line), slug=slug)
              for line in frame.splitlines() if line.startswith(prefixes))
     return "\n".join(lines)
 
