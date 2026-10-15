@@ -217,3 +217,46 @@ def test_redmi_missing_link_registry_stays_unknown(tmp_path: Path) -> None:
 
     assert row["state"] == "unknown"
     assert "linked-site-registry-missing" in row["reason"]
+
+
+STABLE_TRANSITION = {
+    "kind": "measured_light_bucket_transition",
+    "bucket_from": 4,
+    "bucket_to": 3,
+    "claim": "historical-measured-light-change-only",
+    "freshness_at_detection": "fresh-clock-conditional",
+    "validity_seconds": 30,
+    "from": {"sequence": 25455, "lux": 17.0},
+    "to": {"sequence": 25459, "lux": 10.0},
+}
+
+
+def test_redmi_surfaces_measured_light_transition_as_adjacent_context(tmp_path: Path) -> None:
+    now = 1_800_000_000.0
+    core, _path, state = _linked_state(tmp_path, now)
+    state["last_light_transition"] = STABLE_TRANSITION
+    (tmp_path / "android-body" / "body" / "perception" / "redmi10.json").write_text(
+        json.dumps(state), encoding="utf-8")
+
+    row = body_perception.read_redmi10(core, now)
+
+    assert row["light_transition"] == STABLE_TRANSITION
+    assert "measured-light-transition=4->3 validity=30s freshness=fresh-clock-conditional;" in row["details"]
+    assert "not person-movement evidence" in row["details"]
+    assert row["state"] == "verified"
+
+
+def test_redmi_does_not_surface_malformed_light_transition(tmp_path: Path) -> None:
+    now = 1_800_000_000.0
+    core, _path, state = _linked_state(tmp_path, now)
+    state["last_light_transition"] = {
+        "kind": "measured_light_bucket_transition",
+        "claim": "historical-measured-light-change-only",
+    }
+    (tmp_path / "android-body" / "body" / "perception" / "redmi10.json").write_text(
+        json.dumps(state), encoding="utf-8")
+
+    row = body_perception.read_redmi10(core, now)
+
+    assert row["light_transition"] is None
+    assert "measured-light-transition=" not in row["details"]
