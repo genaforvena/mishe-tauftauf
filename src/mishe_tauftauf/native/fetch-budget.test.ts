@@ -3,8 +3,8 @@
 // the transient-success path and the distinct exhaustion diagnostic.
 import {test, expect} from 'bun:test';
 import {DEFAULT_TURN_FETCH_ALLOWANCE, MAX_TURN_FETCH_ALLOWANCE,
- READ_ONLY_CI_OBSERVATION_CLASS, TurnFetchBudget, assertReadOnlyObservationContext,
- assertTurnFetchAllowance, isTransientUpstreamStatus, resolveTurnFetchAllowance} from './fetch-budget.ts';
+ READ_ONLY_CI_OBSERVATION_CLASS, MUTATING_PUBLICATION_CLASS, TurnFetchBudget, assertReadOnlyObservationContext,
+ assertMutatingPublicationContext, assertTurnFetchAllowance, isTransientUpstreamStatus, resolveTurnFetchAllowance} from './fetch-budget.ts';
 
 const CLASS = READ_ONLY_CI_OBSERVATION_CLASS;
 
@@ -119,4 +119,18 @@ test('a read-only turn context may name only frozen read-only capabilities', () 
   expect(() => assertReadOnlyObservationContext({messages: [], tools: [{name: 'CI_STATUS'}]}))
    .toThrow('capabilities outside ["ci_status"]');
   expect(() => assertReadOnlyObservationContext({messages: []})).toThrow('tools array');
+});
+
+test('the mutating publication class accepts only the default allowance', () => {
+  expect(resolveTurnFetchAllowance({allowance: 1, workClass: MUTATING_PUBLICATION_CLASS}))
+   .toEqual({allowance: 1, workClass: MUTATING_PUBLICATION_CLASS});
+  expect(() => resolveTurnFetchAllowance({allowance: 2, workClass: MUTATING_PUBLICATION_CLASS}))
+   .toThrow('default 1-fetch allowance only');
+});
+
+test('a mutating publication context refuses a raised allowance', () => {
+  const ctx = {tools: [{name: 'publish'}]};
+  expect(() => assertMutatingPublicationContext(ctx, 2)).toThrow('mutating publication context');
+  expect(() => assertMutatingPublicationContext(ctx, 1)).not.toThrow();
+  expect(() => assertMutatingPublicationContext({tools: [{name: 'ci_status'}]}, 2)).not.toThrow();
 });
