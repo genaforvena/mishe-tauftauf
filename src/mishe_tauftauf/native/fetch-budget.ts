@@ -15,6 +15,12 @@ export const READ_ONLY_CI_OBSERVATION_CLASS = 'experiment-2-read-only-ci-observa
 // The frozen Experiment-2 read-only capability set. A granted allowance never
 // lets another capability ride along inside the same turn context.
 export const READ_ONLY_CI_OBSERVATION_TOOLS = ['ci_status'];
+// The first official mutating class. It runs under the default one-fetch
+// allowance only; the mutation itself is executed by the caller, not the loop.
+export const MUTATING_PUBLICATION_CLASS = 'experiment-3-mutating-publication';
+// Capability names that make a turn context mutating. Any context containing one
+// of these must keep the default allowance; raised allowance is refused.
+export const MUTATING_PUBLICATION_TOOLS = ['publish'];
 
 export class FetchAllowanceError extends Error {}
 
@@ -52,9 +58,19 @@ export function resolveTurnFetchAllowance(fields: {
   throw new FetchAllowanceError('fetch allowance configuration requires both '
    + 'workClass and allowance');
  }
+ if (workClass === MUTATING_PUBLICATION_CLASS) {
+  if (allowance !== DEFAULT_TURN_FETCH_ALLOWANCE) {
+   throw new FetchAllowanceError('the mutating publication class runs under the '
+    + `default ${DEFAULT_TURN_FETCH_ALLOWANCE}-fetch allowance only, got `
+    + `${JSON.stringify(allowance)}`);
+  }
+  return {allowance: DEFAULT_TURN_FETCH_ALLOWANCE, workClass};
+ }
  if (workClass !== READ_ONLY_CI_OBSERVATION_CLASS) {
   throw new FetchAllowanceError('fetch allowance is limited to the '
-   + `${READ_ONLY_CI_OBSERVATION_CLASS} read-only class, got ${JSON.stringify(workClass)}`);
+   + `${READ_ONLY_CI_OBSERVATION_CLASS} read-only class or `
+   + `${MUTATING_PUBLICATION_CLASS} at the default allowance, `
+   + `got ${JSON.stringify(workClass)}`);
  }
  return {allowance: assertTurnFetchAllowance(allowance), workClass};
 }
@@ -80,6 +96,33 @@ export function assertReadOnlyObservationContext(context: unknown): void {
   const named = foreign.map(tool => JSON.stringify(asRecord(tool)?.name ?? null)).join(', ');
   throw new FetchAllowanceError(`read-only observation context names capabilities outside `
    + `${JSON.stringify(READ_ONLY_CI_OBSERVATION_TOOLS)}: ${named}`);
+ }
+}
+
+/**
+ * Mutating-context assertion: if a turn context names any mutating publication
+ * capability, its allowance must be the default. A raised allowance combined
+ * with a mutating capability is refused; the refusal is durable evidence, not a
+ * silent fallback.
+ */
+export function assertMutatingPublicationContext(context: unknown, allowance?: unknown): void {
+ const rec = asRecord(context);
+ const tools = rec?.tools;
+ if (!Array.isArray(tools)) {
+  // No tools array is not a mutating context by name; nothing to assert.
+  return;
+ }
+ const mutating = tools.filter(tool => {
+  const name = asRecord(tool)?.name;
+  return typeof name === 'string' && MUTATING_PUBLICATION_TOOLS.includes(name);
+ });
+ if (mutating.length === 0) return;
+ const resolved = allowance === undefined ? rec?.allowance : allowance;
+ if (resolved !== DEFAULT_TURN_FETCH_ALLOWANCE) {
+  const named = mutating.map(tool => JSON.stringify(asRecord(tool)?.name ?? null)).join(', ');
+  throw new FetchAllowanceError(`mutating publication context `
+   + `${named} requires the default ${DEFAULT_TURN_FETCH_ALLOWANCE}-fetch `
+   + `allowance, got ${JSON.stringify(resolved)}`);
  }
 }
 
