@@ -906,4 +906,90 @@ calls, caller-constructed confirmations. Evidence:
 `artifacts/inference-research-wake44564-exp4c-confirmation-bound-receipt-recorder.md`;
 `SITE_HOME/research/inference-continuity/scratch/exp4c-receipt-wake44564/results.json`.
 
+## Experiment 4d: a receipt must name effect-side evidence the boundary re-reads (wake 44760)
+
+### Hypothesis
+
+Experiment 4c closed the 4b caller-side findings for honest observations and
+left one measured residual limit (its P2 probe): `record_receipt` writes a
+`completed` outcome for a caller-*asserted* `committed` confirmation even when
+the effect side holds no record bound to the operation. The assertion persists
+in the outcome, so it is auditable, but nothing detects it — the recorder
+trusts the caller's `inspection` block.
+
+That limit is closable without teaching the boundary any capability's
+semantics or asking it to guess. A committed confirmation must name the effect
+side's own durable record (`evidence.artifact`) and the `sha256` of its bytes;
+the recorder re-reads exactly those bytes, recomputes the digest, and requires
+the record to name this operation. A recorded receipt is then bound to
+evidence any third party can re-read from the outcome alone, and an assertion
+no effect-side record supports is refused instead of recorded. The boundary
+still cannot decide whether the effect really happened; it can now refuse to
+launder an assertion that has no re-inspectable evidence.
+
+### Materially new variable vs 4c
+
+The confirmation carries verifiable evidence instead of a free-form hint, and
+the recorder reads the effect side under the caller-named `evidence_root`
+before writing. This is the first experiment in the family where a decision
+depends on bytes the boundary itself reads rather than on records it owns.
+
+### Method
+
+1. Same choreography as 4c (`scratch/exp4c-receipt-wake44564/exp4c.py`): real
+   caller subprocesses `SIGKILL`ed between the mutating `execute` and the
+   outcome append, fresh successor and reader processes, zero provider calls,
+   frozen identity. The keyed effect artifact is the report 4c wrote
+   (`operation_id` + `head_sha`); the unkeyed effect side is the append log
+   with no identity.
+2. The successor builds its confirmation from what it actually observed:
+   `artifact` = the effect-side file it read, `sha256` = the digest of those
+   bytes, `executions` = the durable counter. `record_receipt` re-reads the
+   artifact under `evidence_root`, recomputes the digest, parses the record and
+   requires `operation_id` to equal this operation.
+3. A third fresh process re-reads the artifact named in the recorded outcome,
+   recomputes the digest and compares it to `result.evidence.sha256` — the
+   receipt is checked by a reader that never executed anything.
+4. Probes (fresh processes, after the point's decisions): P2 asserts
+   `committed` against the unkeyed append log *naming that log with its real
+   digest*; P2b asserts `committed` naming a path that does not exist; P2c
+   names the real keyed report with a wrong digest; P2d names an artifact
+   outside `evidence_root`.
+
+### Pre-registered expected durable state per point (written before the fixture is implemented)
+
+| point | confirmation given | `record_receipt` | outcome lines written | store after |
+|---|---|---|---|---|
+| keyed-P3 (kill after artifact write, before outcome) ×3 | artifact=report, real digest, name+executions 1 (effect side `committed`) | `completed`, `executions` 1, `result.confirmed_by=effect-side-evidence`, `result.evidence.sha256` = real digest | 1 | fresh reader `completed`, open_intents 0, re-dispatch `AlreadyExecuted`, independent re-read digest matches |
+| unkeyed-P3 ×3 (append log, no identity) | honest `indeterminate` | `unknown` / `effect-unconfirmed` | 0 | store stays `started-without-outcome`, re-dispatch `unknown`, executions 1 |
+| P2 probe | asserted `committed`, artifact=append log with its real digest | `unknown` / `effect-evidence-unbound` | 0 | store stays `started-without-outcome`, re-dispatch `unknown` |
+| P2b probe | asserted `committed`, artifact path absent | `unknown` / `effect-evidence-unreadable` | 0 | no write |
+| P2c probe | asserted `committed`, real report path, wrong digest | `unknown` / `effect-evidence-mismatch` | 0 | no write |
+| P2d probe | artifact outside `evidence_root` | `ValueError` before any read | 0 | no write |
+| C (kill after start, before artifact write) | honest `pending` | `unknown` / `effect-unconfirmed` | 0 | keep-open-UNKNOWN |
+| P0 (reserved, never dispatched) | `committed` with valid evidence | `unknown` / `effect-confirmed-without-start` | 0 | reservation still dispatches exactly once |
+
+Falsification: any second executor execution on the keyed/unkeyed/C points; any
+`committed` confirmation recorded without the named artifact being re-read
+successfully, digest-matching, and naming this operation; any refusal that
+still appends an outcome line; the independent reader failing to reproduce the
+digest recorded in the outcome; P0's reservation refused a dispatch.
+
+### Acceptance
+
+The 4c P2 residual limit is detected deterministically (refused, nothing
+written) while the honest keyed reconciliation still records exactly one
+execution and a third party can re-verify the recorded evidence from the
+outcome alone; every refusal writes nothing; the boundary stays fail closed for
+every unconfirmed state; no exactly-once claim beyond the durable record.
+
+### Instrument
+
+`opencode-go/deepseek-v4.1-flash` (this turn's model marker; the experiment
+itself uses zero provider calls — a deterministic subprocess fixture).
+
+### Status
+
+Preregistered at wake 44760, before the fixture and the source change exist.
+
 ## Future experiments (not yet planned)
