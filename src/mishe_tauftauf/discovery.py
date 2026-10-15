@@ -4084,10 +4084,13 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     checks — beside ``all_bad``'s audit of all four classes. The trial also
     drops out-of-home paths (A-only here) and unparseable publications
     (coverage-incomplete here) as ``evidence_unavailable``, so the two counts
-    agree only while no such row exists. State is ``drift`` when any checked
-    outcome violates, including when other publications have incomplete
-    coverage; otherwise incomplete coverage, unavailable input or no eligible
-    event is ``unknown``.
+    agree only while no such row exists. The sample's field order is the pane's
+    visible-prefix order — the standing-audit cause, the live window, the read
+    watermark, then the coverage tier — because the pane clips a sample to 120
+    cells and a verdict must carry its cause inside that prefix. State is
+    ``drift`` when any checked outcome violates, including when other
+    publications have incomplete coverage; otherwise incomplete coverage,
+    unavailable input or no eligible event is ``unknown``.
 
     The under-artifacts test resolves the stored path first, so a ``..``
     segment cannot pass it lexically. D counts distinct stored path strings:
@@ -4150,10 +4153,15 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     bad_last = ",".join(f"{role}@{ts.strftime('%Y-%m-%dT%H:%M:%SZ')}"
                         for role, ts in bad_last_rows) or "none"
     count_excluded = sum(1 for row in checked if "B" in row[4])
-    parts = [f"read_at={read_at} bound={len(checked)} latest_roles={len(latest)} "
+    # Field order is the pane's visible-prefix order, not a listing order: the
+    # pane clips a sample to 120 cells, so a drift verdict whose cause sits past
+    # that prefix reaches the reader as DRIFT with every visible field clean.
+    # Verdict cause, then the live window, then the read watermark that bounds
+    # it, then the coverage tier.
+    parts = [f"all_bad={len(violations)} count_excluded={count_excluded} "
              f"latest_bad={len(latest_bad_roles)} latest_bad_roles={named_bad} "
-             f"latest_bad_last={bad_last} "
-             f"all_bad={len(violations)} count_excluded={count_excluded}"]
+             f"latest_bad_last={bad_last} read_at={read_at} "
+             f"bound={len(checked)} latest_roles={len(latest)}"]
     if incomplete:
         parts.append(f"coverage_incomplete={len(incomplete)} sequences=" +
                      ",".join(str(row["sequence"]) for row in incomplete[:3]))
@@ -5298,6 +5306,10 @@ def _notify_scan(home: Path, snapshot: dict[str, object],
                 detail = json.dumps((item.get("reason"), item.get("provenance")), sort_keys=True)
             elif item["kind"] == "declaration" or state != "verified":
                 detail = sample_text
+                if identifier == "sense.ledger.evidence-binding":
+                    space = detail.find(" ")
+                    if space >= 0:
+                        detail = detail[space + 1:]
             elif identifier == "sense.proc.cpu-busy":
                 detail = "high" if re.search(r"(?:^|\s)high(?:$|\s)", sample_text) else "not-high"
             elif identifier == "sense.thermal.hwmon":
