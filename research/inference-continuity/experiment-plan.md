@@ -2094,6 +2094,27 @@ C; per-arm marker bytes/hashes/line counts, journal row sets, store
 executions, provider tokens/elapsed, retries/fallback. No production source
 change; no activation; no adoption claim.
 
+**Amendment (wake 51902, committed before any arm ran).** The preregistered
+selector `opencode-go/deepseek-v4.1-flash` (reasoning `high`) is
+route-unavailable on this workspace: arm A's single provider turn returned
+HTTP 400 `This Go model requires Global regions. Select Global in your
+workspace's Privacy settings to use it.` — fail-closed (no dispatch, no
+effect, no usage, one `fetch_ledger` dispatch, journal preserved; usage zero,
+not synthesized). A bounded probe (one zero-tool turn per candidate,
+`selector-probe.json`) then measured: `opencode-go/longcat-2.5-preview-free`
+/`minimal` done (44 tokens), `nvidia/z-ai/glm-5.3` /`high` done (20 tokens),
+`opencode-go/glm-5.3-flash` /`high` 429 `Go usage limit exceeded
+retry-after-ms=45933000` (~12.75 h). Substituted second selector:
+`nvidia/z-ai/glm-5.3`, reasoning `high` — the workspace's configured
+`default` model role, so the reasoning level is its role default (forced
+co-variable, recorded), chosen as the most reliable available instrument
+after the arm budget was already spent once on a route failure.
+`opencode-go/longcat-2.5-preview-free` /`minimal` (same provider as 4l) is
+the recorded route-available fallback for the next wake. Variable control
+otherwise unchanged: fixture byte-identical except SELECTOR, REASONING,
+WRITER/SOURCE_ID wake tags and the staging parent; LINE, TASK, capability
+semantics, loop caps and the caller/journal/reconcile seams unchanged.
+
 **Deferral trigger.** If the route is unavailable in an arm (the recorded
 intermittent 429 window) or the model cannot drive the capability, the arm
 fails closed and records UNKNOWN with its own evidence; the replication
