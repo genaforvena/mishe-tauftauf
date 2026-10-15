@@ -1194,6 +1194,120 @@ def test_record_receipt_writes_nothing_for_an_unallocated_operation(tmp_path):
     assert (tmp_path / "effects" / "outcomes.jsonl").read_text() == ""
 
 
+# -- read-side evidence binding (Experiments 4e) ----------------------------
+
+
+def recorded_receipt(tmp_path, world):
+    """An interrupted effect and a receipt recorded from its evidence."""
+    interrupted_boundary(tmp_path, [])
+    artifact, digest = effect_record(world)
+    successor = boundary(tmp_path, lambda call: pytest.fail("executed again"),
+                         writer_id="loop-2")
+    receipt = successor.record_receipt(OP_ID, committed((artifact, digest)),
+                                       evidence_root=world)
+    assert receipt["status"] == "completed"
+    return artifact, digest, receipt
+
+
+def journal_bytes(tmp_path):
+    store = tmp_path / "effects"
+    return {name: (store / name).read_bytes()
+            for name in ("intents.jsonl", "starts.jsonl", "outcomes.jsonl")}
+
+
+def test_a_recorded_receipt_re_verifies_and_the_verification_writes_nothing(tmp_path):
+    world = tmp_path / "world"
+    world.mkdir()
+    artifact, digest, receipt = recorded_receipt(tmp_path, world)
+    before = journal_bytes(tmp_path)
+
+    reader = boundary(tmp_path, lambda call: pytest.fail("executed again"),
+                      writer_id="reader-3")
+    verdict = reader.verify_receipt_evidence(OP_ID, evidence_root=world)
+    assert (verdict["verified"], verdict["failure"]) == (True, None)
+    assert verdict["artifact"] == receipt["result"]["evidence"]["artifact"]
+    assert verdict["recorded_sha256"] == digest
+    assert verdict["observed_sha256"] == digest
+    assert journal_bytes(tmp_path) == before
+
+
+def test_a_recorded_receipt_stops_verifying_when_the_evidence_bytes_change(tmp_path):
+    """The write side never re-reads; the read side names both digests."""
+    world = tmp_path / "world"
+    world.mkdir()
+    artifact, digest, _receipt = recorded_receipt(tmp_path, world)
+    artifact.write_text(json.dumps({"operation_id": OP_ID,
+                                    "kind": "owned-effect",
+                                    "appended": True}) + "\n", encoding="utf-8")
+    changed = hashlib.sha256(artifact.read_bytes()).hexdigest()
+
+    reader = EffectLedger(tmp_path / "effects", writer_id="reader-3")
+    verdict = reader.verify_receipt_evidence(OP_ID, evidence_root=world)
+    assert (verdict.verified, verdict.failure) == (False,
+                                                   "effect-evidence-mismatch")
+    assert verdict.recorded_sha256 == digest
+    assert verdict.observed_sha256 == changed
+    # The durable receipt is untouched: the unchanged read path still answers
+    # `completed`, which is exactly the gap this read side makes detectable.
+    assert reader.reconcile(OP_ID).status == "completed"
+
+
+def test_restoring_the_evidence_bytes_restores_the_verdict(tmp_path):
+    world = tmp_path / "world"
+    world.mkdir()
+    artifact, digest, _receipt = recorded_receipt(tmp_path, world)
+    original = artifact.read_bytes()
+    artifact.write_bytes(b"tampered\n")
+
+    reader = EffectLedger(tmp_path / "effects", writer_id="reader-3")
+    assert reader.verify_receipt_evidence(OP_ID).failure \
+        == "effect-evidence-mismatch"
+    artifact.write_bytes(original)
+    verdict = reader.verify_receipt_evidence(OP_ID)
+    assert verdict.verified is True
+    assert verdict.observed_sha256 == digest
+
+
+def test_a_recorded_receipt_stops_verifying_when_the_evidence_is_deleted(tmp_path):
+    world = tmp_path / "world"
+    world.mkdir()
+    artifact, digest, _receipt = recorded_receipt(tmp_path, world)
+    artifact.unlink()
+
+    verdict = EffectLedger(tmp_path / "effects", writer_id="reader-3") \
+        .verify_receipt_evidence(OP_ID, evidence_root=world)
+    assert verdict.failure == "effect-evidence-unreadable"
+    assert verdict.recorded_sha256 == digest
+    assert verdict.observed_sha256 is None
+
+
+def test_verification_distinguishes_no_outcome_from_an_outcome_that_is_not_a_receipt(
+        tmp_path):
+    world = tmp_path / "world"
+    world.mkdir()
+    reader = boundary(tmp_path, lambda call: {"ok": True})
+    absent = reader.verify_receipt_evidence("effect-never-issued")
+    assert (absent["verified"], absent["failure"]) == (False, "no-outcome")
+    dispatched = reader(NATIVE_CALL)
+    assert dispatched["status"] == "completed"
+    verdict = reader.verify_receipt_evidence(dispatched["operation_id"])
+    assert (verdict["verified"], verdict["failure"]) == (False, "not-a-receipt")
+    assert verdict["artifact"] is None
+
+
+def test_a_receipt_is_not_verified_against_another_evidence_root(tmp_path):
+    world = tmp_path / "world"
+    world.mkdir()
+    recorded_receipt(tmp_path, world)
+    other = tmp_path / "other"
+    other.mkdir()
+    before = journal_bytes(tmp_path)
+    with pytest.raises(ValueError, match="outside the evidence root"):
+        EffectLedger(tmp_path / "effects", writer_id="reader-3") \
+            .verify_receipt_evidence(OP_ID, evidence_root=other)
+    assert journal_bytes(tmp_path) == before
+
+
 def test_boundary_recover_reports_a_call_that_never_arrived(tmp_path):
     dispatch = boundary(tmp_path, lambda call: {"ok": True})
     assert dispatch.recover(NATIVE_CALL) is None
