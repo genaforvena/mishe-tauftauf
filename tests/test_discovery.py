@@ -6706,3 +6706,21 @@ def test_server_keeper_unknown_when_session_receipt_missing(monkeypatch, tmp_pat
     monkeypatch.delenv("MISHE_SEED_SESSION", raising=False)
     result = discovery._host_server_keeper(tmp_path / "empty")
     assert result["state"] == "unknown"
+
+
+def test_notify_scan_ignores_read_at_only_drift_changes(tmp_path):
+    home = tmp_path / "site"
+    (home / "discovery").mkdir(parents=True, exist_ok=True)
+    path = home / "discovery" / "sample.json"
+    rid = "sense.ledger.evidence-binding"
+    sample_one = "read_at=2026-10-15T08:00:00Z bound=1 latest_roles=1 latest_bad=0 latest_bad_roles=none latest_bad_last=none all_bad=1 count_excluded=0"
+    sample_two = "read_at=2026-10-15T08:01:00Z bound=1 latest_roles=1 latest_bad=0 latest_bad_roles=none latest_bad_last=none all_bad=1 count_excluded=0"
+    readings_one = [{"id": rid, "kind": "read", "state": "drift", "sample": sample_one}]
+    readings_two = [{"id": rid, "kind": "read", "state": "drift", "sample": sample_two}]
+    snapshot_one = {"created": "2026-10-10T12:00:00Z", "node": "test", "observations": readings_one}
+    snapshot_two = {"created": "2026-10-10T12:01:00Z", "node": "test", "observations": readings_two}
+    discovery._notify_scan(home, snapshot_one, None, path)
+    before = len(Feed(home).entries())
+    discovery._notify_scan(home, snapshot_two, snapshot_one, path)
+    after = len(Feed(home).entries())
+    assert after == before
