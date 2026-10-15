@@ -24,6 +24,9 @@ silently treating them as commands. New adapters require an explicit, reviewed
 addition of their exact path; a directory-wide exemption would make the
 constraint ineffective.
 
+The checker writes a JSON report to `--out` or, by default,
+`<home>/artifacts/check-docs-command-names.json`, creating parent directories.
+
 `proc_table.py` decodes external process and tmux tables. It parses the `ps`
 parent/child columns, `tmux list-panes` pid list, and single tmux pane fields;
 `pane_start_command` is decoded as shell argv with quoting errors rejected. A
