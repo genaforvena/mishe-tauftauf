@@ -53,21 +53,15 @@ faults, not a scene. `discover show` prints published light and radio readings
 as `sense.space.light` and `sense.space.host-radio`; a checkout scan can also
 read `sense.body.redmi10`.
 
-The Redmi reader (source commit `40aa387`) is loaded at the served pin
-`e8405b875122`, and the checkout scan reads `sense.body.redmi10` from the
-linked consumer. The reading reaches the checkout, but the acceleration channel
-is not always readable (`unknown/value` when not); a readable value is device
-evidence including gravity, never person-movement. A stale consumer poll, or all
-three channels stale, is RED only while the tailnet peer is online or active; a
-down, unreadable or absent peer keeps the loss verdict UNKNOWN. The linked
-Android Body detector checks JSON `Online OR Active` rather than a literal
-`offline` text for the same reason. Health reports this monitor verified within
-its exercised scope. Do not infer phone failure from a missing or unreadable row.
+The linked Android Body consumer can supply Redmi readings to the checkout scan
+as `sense.body.redmi10`. A readable acceleration sample is device evidence,
+including gravity, not a human-movement label. A missing or unreadable row is
+not by itself evidence of phone failure; use the current source-bound
+observation and its detector evidence for freshness and failure status. A local
+collection spool is not delivered sensor evidence.
 
-Note3 light remains UNKNOWN/collect-only: the consumer is polled but publishes
-no light value, and no fresh paired Note3 interval is established. A local
-collection spool is not delivered sensor evidence. A camera fault reaches the
-health pane's `SYSTEM ZERO` line as a named cause.
+This host's camera fault reaches the health pane's `SYSTEM ZERO` line as a named
+cause.
 
 Two further readings cover this host's own network path instead of its space:
 its wired Ethernet link state as `sense.net.ethernet` and its tailnet peer
@@ -76,7 +70,7 @@ reachability alone cannot distinguish an unreachable device from a silent
 producer.
 
 Individual sensor readings and personal analysis belong in private site
-records; this page reports only source, deployment and freshness status.
+records; this page reports only capabilities, acceptance and honest limits.
 Reading rules and limits are in [operating the plant](operating.md) and
 [how it works](how-it-works.md).
 
