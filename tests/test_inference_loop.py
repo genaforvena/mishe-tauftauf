@@ -661,7 +661,8 @@ def test_crash_between_dispatch_and_tool_result_reconciles_from_effect_store(tmp
     assert final["used_ids"] == [CALL["id"]]
 
 
-def test_recovered_effect_reaches_fresh_model_turn_and_completes_obligation(tmp_path):
+def test_recovered_effect_reaches_fresh_model_turn_without_redispatch(tmp_path):
+    """Recovered input reaches a new session; completion is forced by its test predicate."""
     from contextlib import nullcontext
     from mishe_tauftauf.inference_loop import reconcile_caller_journal
     from mishe_tauftauf.inference_effects import EffectBoundary
