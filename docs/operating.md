@@ -136,19 +136,21 @@ published sample, or acquire a new bounded one:
 "$SITE/bin/mishe-tauftauf" --home "$SITE" discover scan
 ```
 
-`discover show` prints the latest published scan, which carries the Note3
-light reading as `sense.space.light` and this host's own Bluetooth and Wi-Fi
-adapter state as `sense.space.host-radio`. It also records the linked Android
-Body consumer's Redmi10 reading as `sense.body.redmi10`; the Senses pane reads
-that retained consumer state on each render, so it does not wait for another
-core scan. `discover scan` takes one new sample instead of reading a published
-one, so acquiring is an action rather than an inspection. This host's wired
-Ethernet link state and tailnet peer status read as `sense.net.ethernet` and
-`sense.net.tailnet-peer` — per interface and per peer, with a missing binary,
-a non-zero exit, text that does not decode, or a backend state other than
-`Running` named as a problem rather than read as calm. The camera fault surface
-is read into the health check and reaches a reader as a named cause on the
-health pane's `SYSTEM ZERO` line, not as its own detail line.
+`discover show` prints the latest published scan, which carries the Note3 light
+reading as `sense.space.light` and this host's Bluetooth and Wi-Fi adapter
+state as `sense.space.host-radio`. The checkout also reads the linked Android
+Body consumer's Redmi10 state as `sense.body.redmi10`, and its Senses renderer
+refreshes that file on each render. This change is not in the currently served
+release (`7ae246660833f172f72ff7404ca0bc65b9cc8290`); its latest scan has no
+Redmi row, so live-pane visibility is not yet verified. `discover scan` takes
+one new sample instead of reading a published one, so acquiring is an action
+rather than an inspection. This host's wired Ethernet link state and tailnet
+peer status read as `sense.net.ethernet` and `sense.net.tailnet-peer` — per
+interface and per peer, with a missing binary, a non-zero exit, text that does
+not decode, or a backend state other than `Running` named as a problem rather
+than read as calm. The camera fault surface is read into the health check and
+reaches a reader as a named cause on the health pane's `SYSTEM ZERO` line, not
+as its own detail line.
 
 The light reading is capped at 30 seconds, or the producer's shorter validity,
 and a missing, unreadable, delayed or expired boundary stays UNKNOWN instead

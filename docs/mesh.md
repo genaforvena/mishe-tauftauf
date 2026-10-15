@@ -46,22 +46,24 @@ rejects the record whole rather than trusting a readable subset, and the
 affected verdict reads UNKNOWN with the scan attempt retained
 ([operating the plant](operating.md), [how it works](how-it-works.md)).
 
-Four owned surfaces are read, not collected: the Note3 light feed, the linked
-Android Body consumer's retained Redmi10 readings, this host's own Bluetooth
-and Wi-Fi adapter state, and this host's camera fault state — faults, not a
-scene. `discover show` prints the published light and radio readings as
-`sense.space.light` and `sense.space.host-radio`; its scan also carries
-`sense.body.redmi10`. The Senses pane refreshes that Redmi10 consumer read
-directly, so it remains visible between scans. Missing, unreadable or stale
-Redmi10 evidence stays UNKNOWN; acceleration includes gravity and is not
+The checkout reads four owned surfaces rather than collecting them: the Note3
+light feed, the linked Android Body consumer's retained Redmi10 readings, this
+host's Bluetooth and Wi-Fi adapter state, and this host's camera fault state —
+faults, not a scene. `discover show` prints published light and radio readings
+as `sense.space.light` and `sense.space.host-radio`; the checkout scan also
+reads `sense.body.redmi10`. This Redmi integration is not yet in the served
+release (`7ae246660833f172f72ff7404ca0bc65b9cc8290`), whose latest scan has no
+Redmi row; active-pane visibility remains unverified. Missing, unreadable or
+stale Redmi10 evidence stays UNKNOWN; acceleration includes gravity and is not
 evidence of human movement, while phone/host clock agreement remains explicit.
 A camera fault reaches the health pane's `SYSTEM ZERO` line as a named cause.
 The reading rules, commands and limits are in [operating the plant](operating.md)
 and [how it works](how-it-works.md).
 
-The latest published scan (2026-10-15T10:56:47Z) reported Note3 light as
-`UNKNOWN` (`light-stream-frozen`; last receipt 2026-10-14T06:13:52Z); no current
-Note3 light sample was available.
+The latest published scan (`2026-10-15T11:37:14Z`, served pin
+`7ae246660833f172f72ff7404ca0bc65b9cc8290`) reported Note3 light as `UNKNOWN`
+(`light-stream-frozen`; last receipt `2026-10-14T06:13:52Z`); no current Note3
+light sample was available.
 
 Two further readings cover this host's own network path instead of its space:
 its wired Ethernet link state as `sense.net.ethernet` and its tailnet peer
