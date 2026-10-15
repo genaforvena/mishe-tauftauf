@@ -155,6 +155,29 @@ def extract_message_content(event):
     return role, text_content
 
 
+def _assistant_status(event, final=False):
+    """Map an assistant message_event to a canonical status.
+
+    OMP signals provider failures via stopReason/errorMessage fields on the
+    message. A provider error or aborted turn must never become "ok", even if
+    the event also carries partial content. A length-truncated reply is
+    "partial" rather than "ok". Otherwise a completed final is "ok" and an
+    in-progress one is "partial".
+    """
+    msg = event.get("message", {})
+    stop_reason = msg.get("stopReason") or event.get("stopReason")
+    error_message = msg.get("errorMessage") or event.get("errorMessage")
+    if stop_reason == "error" or error_message:
+        return "error"
+    if stop_reason == "length" or stop_reason == "truncated":
+        return "partial"
+    if stop_reason == "aborted":
+        return "error"
+    if final:
+        return "ok"
+    return "partial"
+
+
 def map_event(event, session_id, sequence):
     """Map one OMP event to a canonical record (or None to skip).
 
@@ -231,7 +254,7 @@ def map_event(event, session_id, sequence):
                 "capability": "agent.message",
                 "request": {"role": role, "content": content},
                 "timestamp": event.get("timestamp", ""),
-                "status": "partial",
+                "status": _assistant_status(event, final=False),
             }
 
     if etype == "message_update":
@@ -259,7 +282,7 @@ def map_event(event, session_id, sequence):
             "capability": "agent.message",
             "request": {"role": role, "content": content},
             "timestamp": event.get("timestamp", ""),
-            "status": "ok",
+            "status": _assistant_status(event, final=True),
         }
 
     if etype == "thinking_delta":
