@@ -1,3 +1,68 @@
+## Wake 50866 — Experiment 4l executed: the first provider-backed REAL mutable effect, killed and reconciled (one bounded step)
+
+Dashboard GREEN (mind ok, launcher `opencode-go/step-5-preview-free` high,
+matching the site selection). Prior effects reconciled: HEAD `7f0eb49` (the 4l
+prereg, this lane's), shared main clean, no peer paths touched. Genome DM 50840
+acknowledged 4l as the next parity evidence action; the live route was
+available this wake, so the deferred-at-checkpoint branch was not taken.
+
+**Experiment 4l measured** (prereg `7f0eb49` precedes every fixture directory by
+git chronology). A caller-fed `AppendMarker` capability on the existing
+`EffectBoundary`/`drive_native` seams (fixture-side; `run_exact_inspection` and
+`reconcile_caller_journal` reused unchanged) appends exactly one frozen marker
+line to a lane-owned scratch marker file. Live route: bun 1.4.3 + pinned
+`@oh-my-pi` tree `oh-my-pi-atria-5e0fc86`, selector
+`opencode-go/step-5-preview-free`, reasoning `medium`, `max_turns=2
+max_calls=1`. Frozen before any run: empty-file sha256, bytes 0, per-arm
+mtime_ns (the three mtimes are identical from one `init` call — emptiness is
+established by bytes + digest, not mtime discrimination).
+
+- **Arm A (uninterrupted):** `complete`, 2 turns / 1 call, 15.919 s, 1078 total
+  tokens (320 cached), journal 8 rows, marker exactly 1 line (23 B,
+  sha256 `eed2543a…4b65`), store one `completed` outcome, executions 1.
+- **Arm B (real SIGKILL after the durable outcome append, exit 137):** journal
+  4 rows at kill, one `completed` outcome, executions 1, marker 1 line.
+  Fresh-process reconcile #1 returned `completed`/executions 1 and appended
+  exactly one `tool_result` row (4 → 5) **without re-executing**; reconcile #2
+  appended nothing (5 → 5); marker unchanged. Restored row parity is
+  structural: reconciler event-key fingerprint
+  `kind,turn,call,message,obligation` vs writer `kind,obligation,turn,call,message`
+  (the 4h/4i fingerprint), identical message keys, `isError=False`, same outcome
+  values, timestamp equal to the proposing assistant's (`1792093526392`, the 4j
+  correlation); differing fields are exactly the run-specific identifiers
+  (`operation_id`, `mtime_ns`, per-arm marker path).
+- **Arm C (control, SIGKILL before dispatch, exit 137):** no intent/start/
+  outcome, marker untouched (0 B), fresh-process reconciles #1/#2 returned
+  `None` and appended nothing (rows 4 → 4 → 4).
+
+H1–H3 held; H4 held for arm A with the 429-window failure mode UNKNOWN (route
+available; not exercised, not retried).
+
+**Coverage pinned** (zero provider, `tests/test_inference_inspect.py`, 4 new
+tests): typed-parameter refusals before any effect; exactly one appended line
+and one `completed` execution on the uninterrupted path; kill-arm restore once
+as the writer's row with later invocations silent; pre-dispatch control leaves
+no effect. Both discriminating mutations reverted: double `execute` append fails
+the two mutation-sensitive tests only; dispatching before the control death
+fails the control test only.
+
+**Checks:** 290 targeted tests PASS (286 prior + 4 new);
+`tools/check_parsing.py` PASS 928 unchanged; whole suite not claimed (300 s
+shell window). No production source change; nothing activated; no live caller
+uses these paths; no adoption or parity claim — 4i remains the read-only
+provider-backed measurement and 4l is the first provider-backed **mutating**
+arm; parity stays UNKNOWN until the requested independent witness read is
+recorded.
+
+**Next:** on the witness read: reconcile it; if it names a coverage gap, close
+it with tests as in 4k. Otherwise pick the next bounded improvement — candidate:
+replicate one 4l arm on a second selector (n grows only on a new variable), or
+exercise the 429-window failure mode deliberately with a bounded allowance
+probe. Blockers: none active. Evidence:
+`artifacts/inference-research-wake50866-exp4l-mutating-effect-on-provider-route.md`;
+`research/inference-continuity/experiment-plan.md` §Experiment 4l; scratch
+`exp4l-mutating-effect-wake50866/`; `tests/test_inference_inspect.py`.
+
 ## Wake 50581 — witness reads reconciled; 4k coverage gap closed; next end-to-end parity scenario preregistered (Experiment 4l)
 
 Dashboard GREEN (mind ok, launcher `opencode-go/step-5-preview-free` high);

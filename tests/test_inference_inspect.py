@@ -1,9 +1,12 @@
 import hashlib
 import json
+import os
 from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 
+from mishe_tauftauf.inference_effects import EffectBoundary
 from mishe_tauftauf.inference_inspect import (
     prepare_exact_inspection, reconcile_caller_journal, run_exact_inspection,
 )
@@ -969,3 +972,299 @@ def test_resume_from_a_multi_call_journal_matches_the_reader_state(
             target.read_text().splitlines()]
     assert [row['kind'] for row in rows] == ['checkpoint', 'model_input',
                                              'model_output', 'stop']
+
+
+# Experiment 4l (wake 50866): the caller-fed mutating capability, pinned
+# zero-provider. The live arms are scratch evidence; these tests keep the
+# exactly-once-mutation invariant permanently observable.
+
+_MARKER_LINE = 'one marker line'
+
+
+class MarkerRefused(RuntimeError):
+    pass
+
+
+class _AppendMarker:
+    """The mutating twin of ExactInspect: one caller-frozen line append."""
+
+    def __init__(self, path, store, *, obligation, writer_id, cancelled):
+        self.path, self.line = path, _MARKER_LINE
+        self.cancelled = cancelled
+        self.boundary = EffectBoundary(
+            store, writer_id=writer_id, obligation=obligation,
+            authority=f'append-marker:{path}:1',
+            capability_version='marker-append-test-v1', execute=self.execute)
+
+    def validate(self, call):
+        if self.cancelled():
+            raise MarkerRefused('cancelled')
+        if type(call) is not dict or call.get('type') != 'toolCall':
+            raise MarkerRefused('call-shape')
+        if type(call.get('id')) is not str or not call['id']:
+            raise MarkerRefused('call-id')
+        if call.get('name') != 'append_marker':
+            raise MarkerRefused('capability')
+        args = call.get('arguments')
+        if type(args) is not dict or set(args) != {'line'}:
+            raise MarkerRefused('arguments-schema')
+        if type(args['line']) is not str or args['line'] != self.line:
+            raise MarkerRefused('line-scope')
+
+    def append(self):
+        fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW)
+        try:
+            data = (self.line + '\n').encode('utf-8')
+            written = 0
+            while written < len(data):
+                written += os.write(fd, data[written:])
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        return {'path': self.path, 'line': self.line, 'appended': 1,
+                'bytes': os.stat(self.path).st_size,
+                'sha256': hashlib.sha256(Path(self.path).read_bytes()).hexdigest()}
+
+    def execute(self, ledger_call):
+        self.validate(ledger_call['native_call'])
+        return self.append()
+
+    def __call__(self, call):
+        try:
+            self.validate(call)
+        except MarkerRefused as exc:
+            return {'status': 'not-started', 'result': {'refusal': str(exc)}}
+        return self.boundary(call)
+
+
+def _prepare_marker(tmp_path, name):
+    marker = tmp_path / f'{name}-marker.txt'
+    marker.write_bytes(b'')
+    directory = tmp_path / name
+    directory.mkdir()
+    obligation = {'source_id': 'marker-obligation', 'path': str(marker),
+                  'reason': 'Append exactly one owned marker line',
+                  'omissions': ['other effects']}
+    executor = _AppendMarker(str(marker), directory / 'effects',
+                             obligation=obligation, writer_id='marker-caller',
+                             cancelled=lambda: False)
+    tool = {'name': 'append_marker',
+            'description': 'Append exactly one caller-frozen marker line.',
+            'parameters': {'type': 'object', 'properties': {
+                'line': {'type': 'string', 'enum': [_MARKER_LINE]}},
+                'required': ['line'], 'additionalProperties': False}}
+    context = {'messages': [{'role': 'user', 'content': 'Append one marker '
+                             'line, once.', 'timestamp': 1}], 'tools': [tool]}
+    manifest = {'obligation': obligation, 'context': context,
+                'selector': 'synthetic', 'writer_id': 'marker-caller',
+                'capability_version': 'marker-append-test-v1',
+                'max_turns': 2, 'max_calls': 1, 'limits': []}
+    return marker, manifest, executor
+
+
+def _marker_call(call_id):
+    return {'type': 'toolCall', 'id': call_id, 'name': 'append_marker',
+            'arguments': {'line': _MARKER_LINE}}
+
+
+def _marker_turns():
+    return [
+        NativeTurn('done', {'role': 'assistant',
+                            'content': [_marker_call('marker-provider-id')],
+                            'stopReason': 'toolUse', 'timestamp': 7}, 'toolUse'),
+        NativeTurn('done', {'role': 'assistant', 'content': [],
+                            'stopReason': 'stop'}, 'stop')]
+
+
+def _marker_comparable(message):
+    outcome = json.loads(message['content'][0]['text'])
+    return ({key: value for key, value in message.items() if key != 'content'},
+            {key: value for key, value in outcome.items()
+             if key not in ('operation_id', 'reconciliation_ref', 'result')},
+            {key: value for key, value in outcome['result'].items()
+             if key not in ('mtime_ns', 'sha256', 'path')})
+
+
+def test_out_of_schema_marker_selection_never_starts(tmp_path):
+    """Experiment 4l: the executor's typed parameter checks refuse a foreign
+    capability, an altered line and extra arguments before any effect."""
+    marker, _, executor = _prepare_marker(tmp_path, 'refused')
+    for change in ('capability', 'line', 'extra'):
+        call = _marker_call('refused-id')
+        if change == 'capability':
+            call['name'] = 'inspect'
+        elif change == 'line':
+            call['arguments']['line'] = 'model-owned line'
+        else:
+            call['arguments']['count'] = 2
+        assert executor(call)['status'] == 'not-started'
+        assert executor.boundary.recover(call) is None
+    assert marker.read_bytes() == b''
+
+
+def test_mutating_caller_path_appends_exactly_one_marker_per_call(tmp_path):
+    """Experiment 4l (H1 baseline): the uninterrupted scripted caller path
+    executes the mutation exactly once, records one execution, and stops
+    complete with the frozen line appended.
+    """
+    marker, manifest, executor = _prepare_marker(tmp_path, 'uninterrupted')
+
+    class Session:
+        def __init__(self):
+            self.turns = _marker_turns()
+
+        def turn(self, context):
+            return self.turns.pop(0)
+
+    @contextmanager
+    def open_session():
+        yield Session()
+
+    result = run_exact_inspection(open_session, tmp_path / 'uninterrupted',
+                                  manifest, executor,
+                                  complete=lambda context: True)
+    assert result['status'] == 'complete'
+    assert result['calls'] == 1
+    assert marker.read_bytes() == (_MARKER_LINE + '\n').encode('utf-8')
+    outcomes = [json.loads(line) for line in
+                (tmp_path / 'uninterrupted/effects/outcomes.jsonl')
+                .read_text().splitlines()]
+    assert [row['status'] for row in outcomes] == ['completed']
+    assert [row['executions'] for row in outcomes] == [1]
+
+
+def test_kill_after_the_mutating_outcome_restores_without_a_second_append(
+        tmp_path):
+    """Experiment 4l (H1/H2/H3): losing the caller before its result row
+    restores the receipt once — structurally the row the uninterrupted writer
+    appends — executes the mutation exactly once, and leaves the marker at one
+    line with every later invocation silent.
+    """
+    marker, manifest, executor = _prepare_marker(tmp_path, 'crashed')
+
+    class Session:
+        def __init__(self):
+            self.turns = _marker_turns()
+
+        def turn(self, context):
+            return self.turns.pop(0)
+
+    @contextmanager
+    def open_session():
+        yield Session()
+
+    import mishe_tauftauf.inference_inspect as inspection
+    from mishe_tauftauf.inference_loop import drive_native
+
+    original = inspection.drive_native
+
+    def interrupting_drive(session, context, **options):
+        record = options['record']
+
+        def interrupted(event):
+            if event['kind'] == 'tool_result':
+                raise InterruptedError('process lost before receipt')
+            record(event)
+
+        options['record'] = interrupted
+        return original(session, context, **options)
+
+    inspection.drive_native = interrupting_drive
+    try:
+        with pytest.raises(InterruptedError, match='process lost'):
+            run_exact_inspection(open_session, tmp_path / 'crashed', manifest,
+                                 executor, complete=lambda context: True)
+    finally:
+        inspection.drive_native = original
+
+    journal = tmp_path / 'crashed/journal.jsonl'
+    rows = lambda: [json.loads(line) for line in journal.read_text().splitlines()]
+    assert marker.read_bytes() == (_MARKER_LINE + '\n').encode('utf-8')
+    outcomes = [json.loads(line) for line in
+                (tmp_path / 'crashed/effects/outcomes.jsonl')
+                .read_text().splitlines()]
+    assert [row['executions'] for row in outcomes] == [1]
+    restored = _row_for(journal, 'marker-provider-id')
+    assert restored['isError'] is False
+    assert restored['timestamp'] == 7
+    assert list(_event_for(journal, 'marker-provider-id')) == [
+        'kind', 'turn', 'call', 'message', 'obligation']
+    # run_exact_inspection's finally already restored once; a second
+    # invocation appends nothing and re-executes nothing.
+    assert len([row for row in rows() if row['kind'] == 'proposal']) == 1
+    assert len([row for row in rows() if row['kind'] == 'tool_result']) == 1
+    assert reconcile_caller_journal(journal, executor.boundary,
+                                    authorized=lambda call: True) is None
+    assert len([row for row in rows() if row['kind'] == 'tool_result']) == 1
+    assert marker.read_bytes() == (_MARKER_LINE + '\n').encode('utf-8')
+
+    reference_marker, reference_manifest, reference_executor = _prepare_marker(
+        tmp_path, 'reference')
+
+    @contextmanager
+    def open_reference():
+        yield Session()
+
+    run_exact_inspection(open_reference, tmp_path / 'reference',
+                         reference_manifest, reference_executor,
+                         complete=lambda context: True)
+    reference = _row_for(tmp_path / 'reference/journal.jsonl',
+                         'marker-provider-id')
+    assert _marker_comparable(restored) == _marker_comparable(reference)
+    assert list(_event_for(tmp_path / 'reference/journal.jsonl',
+                           'marker-provider-id')) == [
+        'kind', 'obligation', 'turn', 'call', 'message']
+
+
+def test_kill_before_the_mutating_dispatch_leaves_no_effect(tmp_path):
+    """Experiment 4l (control): a caller lost before the boundary binds has no
+    durable state. The fresh-process recovery finds nothing to restore, appends
+    nothing, and the marker was never touched.
+    """
+    marker, manifest, executor = _prepare_marker(tmp_path, 'control')
+    directory = tmp_path / 'control'
+
+    class Killer:
+        """Stands in for the process death at the pre-dispatch seam."""
+
+        def __init__(self, inner):
+            self.inner = inner
+
+        def __call__(self, call):
+            raise InterruptedError('process lost before dispatch')
+
+        def validate(self, call):
+            return self.inner.validate(call)
+
+        @property
+        def cancelled(self):
+            return self.inner.cancelled
+
+        @property
+        def boundary(self):
+            return self.inner.boundary
+
+    class Session:
+        def __init__(self):
+            self.turns = _marker_turns()
+
+        def turn(self, context):
+            return self.turns.pop(0)
+
+    @contextmanager
+    def open_session():
+        yield Session()
+
+    with pytest.raises(InterruptedError, match='process lost before dispatch'):
+        run_exact_inspection(open_session, directory, manifest,
+                             Killer(executor), complete=lambda context: True)
+
+    journal = directory / 'journal.jsonl'
+    rows_before = journal.read_bytes()
+    assert marker.read_bytes() == b''
+    outcomes = (directory / 'effects/outcomes.jsonl')
+    assert not outcomes.exists() or outcomes.read_text() == ''
+    for _ in range(2):
+        assert reconcile_caller_journal(journal, executor.boundary,
+                                        authorized=lambda call: True) is None
+        assert journal.read_bytes() == rows_before

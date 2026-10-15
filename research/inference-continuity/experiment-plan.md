@@ -1873,7 +1873,7 @@ Verification: 286 passed (inspect + loop + effects + worker + transport; 283
 prior + 3 new); `tools/check_parsing.py` PASS 928 unchanged. Same whole-suite
 limit: not claimed. No source change; no activation.
 
-## Experiment 4l: the full provider→tool→effect→durable-receipt→recovery chain with a REAL mutating effect (preregistered wake 50581; not yet executed)
+## Experiment 4l: the full provider→tool→effect→durable-receipt→recovery chain with a REAL mutating effect (executed wake 50866)
 
 ### Why this scenario (answers Genome DM 50255 / audit §5 / dispatch §6)
 
@@ -1960,5 +1960,67 @@ evidence; the scenario is deferred to the next wake with the frozen inputs
 retained, not retried blind. Named trigger for disposition: Genome's
 2026-10-16T08:00Z checkpoint or the first wake with an available route,
 whichever is earlier.
+
+### Executed (wake 50866, live provider, n=1 per arm, one host, one route)
+
+Chronology: prereg commit `7f0eb49` (wake 50581) precedes every fixture
+directory created this wake. Route: bun 1.4.3 + pinned `@oh-my-pi` tree
+`oh-my-pi-atria-5e0fc86`, selector `opencode-go/step-5-preview-free`, worker
+reasoning `medium`, `max_turns=2 max_calls=1`. Fixture
+(`scratch/exp4l-mutating-effect-wake50866/exp4l_fixture.py`): caller-fed
+`AppendMarker` capability on the existing `EffectBoundary`/`drive_native`
+seams, reusing `run_exact_inspection`/`reconcile_caller_journal` unchanged;
+`execute` appends exactly one frozen marker line to a lane-owned scratch
+marker file. Frozen before any run: marker sha256 `e3b0c442…b855` (empty-file
+digest), bytes 0, mtime_ns `1792093496657377570` per arm (the three mtimes are
+identical — one `init` call on a coarse-granularity filesystem; emptiness is
+established by bytes + digest, not mtime discrimination).
+
+| metric | arm A (uninterrupted) | arm B (kill after outcome) | arm C (control, kill before dispatch) |
+|---|---|---|---|
+| exit | 0, `complete` | 137 (SIGKILL after the outcome append) | 137 (SIGKILL before dispatch) |
+| turns / calls | 2 / 1 | 1 turn / 1 call, killed post-outcome | 1 turn / 1 call, killed pre-dispatch |
+| provider tokens | 1078 total (371 + 707; 320 cached) | not observable post-kill | not observable post-kill |
+| marker file | exactly 1 line, 23 B, sha256 `eed2543a…4b65` | exactly 1 line, 23 B, same digest | untouched, 0 B |
+| store executions | 1 (`completed`) | 1 (`completed`) — no redispatch | none |
+| journal rows | 8 (checkpoint, model_input, model_output, proposal, tool_result, model_input, model_output, stop) | 4 at kill → 5 after reconcile #1 → 5 after reconcile #2 | 4 → 4 → 4 |
+| reconcile | n/a (writer) | #1 `completed`, executions 1; #2 appends nothing | #1 `None`; #2 `None` |
+
+Restored-row parity (H2) is **structural**: the restored row's event key order
+is the reconciler's `kind,turn,call,message,obligation` vs the writer's
+`kind,obligation,turn,call,message` (the 4h/4i writer fingerprint); message
+keys, `isError=False`, `turn`, and the outcome's values (`status=completed`,
+`executions=1`, `result.appended=1`, `result.bytes=23`, frozen line) match; the
+restored timestamp `1792093526392` equals the proposing assistant's recorded
+timestamp (the 4j correlation; `messages[-1]` coincides in the single-call
+shape). The differing fields are exactly the run-specific identifiers the
+prereg allowed: `operation_id`, `mtime_ns`, per-arm marker path.
+
+Disposition: H1 held (one appended marker per call in every arm; the kill arm's
+fresh-process reconcile restored without re-executing; the control arm mutated
+nothing). H2 held with the structural qualification above. H3 held (first
+reconcile sufficient, second silent). H4 held for arm A; the 429-window failure
+mode was not exercised (the route was available) and stays UNKNOWN.
+
+Regression coverage (`tests/test_inference_inspect.py`, zero provider, 4 new
+tests): refusal of foreign capability / altered line / extra arguments before
+any effect; exactly one appended line and one `completed` execution on the
+uninterrupted path; the kill arm restores the receipt once as the writer's row
+with every later invocation silent and the marker at one line; the pre-dispatch
+control leaves no effect, no store rows and a byte-unchanged journal.
+Discriminating mutations both reverted: `execute` appending twice fails the two
+mutation-sensitive tests only; the control wrapper dispatching before dying
+fails the control test only.
+
+Verification: 290 targeted tests pass (286 prior + 4 new);
+`tools/check_parsing.py` PASS 928 unchanged. No production source change;
+nothing activated. Limits: n=1 per arm; one host; one route; fixture-driven
+arms (no production caller, no adoption or parity claim); zero-provider scripted
+smoke; external-mind token comparison not run (UNKNOWN, not zero); 429 window
+UNKNOWN; fsync is not power-loss durability. Evidence:
+`artifacts/inference-research-wake50866-exp4l-mutating-effect-on-provider-route.md`;
+scratch `exp4l-mutating-effect-wake50866/{freeze.json,armA/armA.json,armB/armB.json,armC/armC.json,smoke/smoke.json}`.
+Independent witness read requested (DM to witness); parity remains UNKNOWN until
+that read is recorded.
 
 ## Future experiments (not yet planned)
