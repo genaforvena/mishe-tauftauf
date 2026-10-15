@@ -994,6 +994,7 @@ def _mind_wedge_suspects() -> dict:
             "panes": panes, "with_log": with_log, "foreign": foreign, "kind": "read"}
 
 WATCH_WAIT_SAMPLE_GAP_SECONDS = 3.0
+_WATCH_VERDICTS = frozenset({"watch-treadmill", "watch-docs-treadmill"})
 """Seconds between the two pane captures a watch-wait verdict compares.
 
 Long enough that a live TUI frame advances its elapsed timer between reads
@@ -1520,28 +1521,37 @@ with no open outbound DM is pausing on its own, not stalled on a gate.
 """
 
 def _mind_loop_stall(home: Path, now: datetime | None = None) -> dict[str, object]:
-    """Flag any role stuck in a record-only loop behind an aging resolver gate.
+    """Flag any role stuck in a no-decision-change loop behind an aging gate.
 
     Generalizes inference-research DM 20438 (self-flagged 73/80 record-only,
     5,0 stagnation, 24h gate-wait on senses + witness legs): the mind sensed
     its own loop manually and waited a day for legs. This producer fires on
-    the same shape for any role without anyone self-flagging: treadmill
-    verdict watch-treadmill AND an open outbound DM older than the gate
-    bound. Either half alone is not a stall (steady-state record runs exist;
-    young gates resolve). State is drift when a role stalls, verified when
-    no role pairs both halves, unknown when the treadmill or tape is
-    unreadable. The sample names stalled roles with gate age so the wake
-    routes to the gate owner, not the stalled mind.
+    the same shape for any role without anyone self-flagging: a treadmill
+    verdict (record-only lane, or the docs-book lane) AND an open outbound DM
+    older than the gate bound. Either half alone is not a stall (steady-state
+    record runs exist; young gates resolve). State is drift when a role
+    stalls, verified when no role pairs both halves, unknown when both lanes
+    and the tape are unreadable. The sample names stalled roles with gate age
+    so the wake routes to the gate owner, not the stalled mind.
     """
     if now is None:
         now = datetime.now(timezone.utc)
     treadmill = _mind_treadmill(home)
-    if treadmill.get("state") != "verified":
+    docs = _mind_docs_treadmill(home)
+    if treadmill.get("state") != "verified" and docs.get("state") != "verified":
         return {"id": "sense.mind.loop-stall", "state": "unknown",
                 "sample": "treadmill reading unavailable", "kind": "read"}
-    roles = treadmill.get("roles", {})
-    treadmilling = sorted(role for role, pair in roles.items()
-                          if isinstance(pair, dict) and pair.get("verdict") == "watch-treadmill")
+    # A no-decision-change lane is a stall when it is stuck behind an aging
+    # resolver gate. Both lanes share the gate read: the record lane and the
+    # docs-book lane are independent detectors of the same shape, so either
+    # verdict names the treadmilling role. The docs lane otherwise fires with
+    # no consumer — emitted but never routed — so the demonstrated churn pattern
+    # would stay invisible to the resolver.
+    treadmilling = sorted(
+        role for reading in (treadmill, docs)
+        if reading.get("state") == "verified"
+        for role, pair in reading.get("roles", {}).items()
+        if isinstance(pair, dict) and pair.get("verdict") in _WATCH_VERDICTS)
     if not treadmilling:
         return {"id": "sense.mind.loop-stall", "state": "verified",
                 "sample": "stall=0 treadmilling=none", "kind": "read",
