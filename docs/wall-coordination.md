@@ -72,9 +72,14 @@ repeated digest, and the minds had simply not settled for about fifteen hours
 `wall dm --source ROLE --to PEER --file MESSAGE` appends an addressed message to
 the shared tape. These messages are visible to everyone; they are not private
 inboxes. Use the site CLI with `--home SITE_HOME` for each command, where
-`SITE_HOME` is the site home directory (`.mishe-tauftauf/` in this plant). `seed
-yield` saves the wall and settles a turn without a task claim or semantic receipt
-review.
+`SITE_HOME` is the site home directory (`.mishe-tauftauf/` in this plant).
+Wall mutations also require `--owner` (or `--source` for a DM) to name a
+registered role in this site: the built-in resident set or a site-declared
+resident with both `charters/<role>.md` and an executable `minds/<role>`
+launcher file.
+This rejects forged role attribution before a wall, outcome, retry or message
+is written. `seed yield` saves the wall and settles a turn without a task claim
+or semantic receipt review.
 
 A wall is a short, current document, not an append-only log: `wall write` replaces it whole. To undo or take back a wall post, write a corrected wall; there is no separate undo or retract command for walls. `wall write` rejects a notes file over the hard limit (default 16384 bytes / 200
 lines) with an error naming the actual size and the limit. The bound keeps a wall readable and current — it must not accumulate stale detail, and superseded claims

@@ -126,6 +126,13 @@ def _staging_notes(home: Path, role: str, raw: Path) -> Path:
         f"no staged notes for role '{role}': expected {home / 'walls' / f'{role}-{raw.name}'} "
         f"(or pass an explicit relative or absolute path)"
     )
+def _require_site_role(home: Path, role: str) -> None:
+    """Reject wall mutations attributed to a role not registered by this site."""
+    from .activity import ROLES, roles
+
+    if (role not in roles(home)
+            or (role not in ROLES and not os.access(home / "minds" / role, os.X_OK))):
+        raise ValueError(f"role '{role}' is not registered for site home {home}")
 
 
 def cmd_wall(args) -> int:
@@ -133,9 +140,11 @@ def cmd_wall(args) -> int:
     if args.wall_command == "show":
         print(wall.context(args.home, args.owner))
     elif args.wall_command == "write":
+        _require_site_role(args.home, args.owner)
         source = _staging_notes(args.home, args.owner, args.file)
         wall.write(args.home, args.owner, source.read_text(encoding="utf-8"), source_path=str(source))
     elif args.wall_command == "dm":
+        _require_site_role(args.home, args.source)
         if args.file:
             anchor = _staging_anchor(args.home, args.source, args.file)
             args.file = _staging_notes(args.home, args.source, args.file)
@@ -158,8 +167,10 @@ def cmd_wall(args) -> int:
                 else:
                     print(f"warning: staging anchor {anchor} changed during send; not consumed")
     elif args.wall_command == "retry":
+        _require_site_role(args.home, args.owner)
         wall.retry(args.home, args.owner)
     elif args.wall_command == "outcome":
+        _require_site_role(args.home, args.owner)
         source = _staging_notes(args.home, args.owner, args.file)
         print(wall.outcome(args.home, args.owner, args.kind, source.read_text(encoding="utf-8"), args.evidence).sequence)
     elif args.wall_command == "silence":
@@ -435,6 +446,7 @@ def cmd_seed(args) -> int:
         seed.run(args.home, args.session, args.slug, args.interval, args.self_pick_seconds, args.clear_grace_seconds)
         return 0
     elif action == "yield":
+        _require_site_role(args.home, args.slug)
         result = seed.yield_wake(
             args.home, args.slug, args.wake, _staging_notes(args.home, args.slug, args.file),
             args.continue_task, args.result,

@@ -158,3 +158,45 @@ def test_creation_entrypoints_cannot_initialize_a_nested_repository_root(tmp_pat
         assert refused.returncode != 0
         assert "repository root" in refused.stderr
     assert tree(outer) == before
+
+
+def test_wall_mutations_require_a_role_registered_with_the_site(tmp_path: Path) -> None:
+    repository = planted_repository(tmp_path)
+    site = repository / ".mishe-tauftauf"
+    assert cli(site, "seed", "init", "--slug", "genome").returncode == 0
+    before = (site / "chat.log").read_bytes()
+
+    refused_dm = cli(site, "wall", "dm", "--source", "outsider", "--to", "genome",
+                     "--text", "forged attribution")
+    assert refused_dm.returncode == 2
+    assert "not registered" in refused_dm.stderr
+    assert (site / "chat.log").read_bytes() == before
+
+    refused_wall = cli(site, "wall", "write", "--owner", "outsider",
+                       "--file", str(tmp_path / "missing-notes"))
+    assert refused_wall.returncode == 2
+    assert "not registered" in refused_wall.stderr
+
+    refused_yield = cli(site, "seed", "yield", "--slug", "outsider", "--wake", "1",
+                        "--file", str(tmp_path / "missing-notes"))
+    assert refused_yield.returncode == 2
+    assert "not registered" in refused_yield.stderr
+    assert not (site / "walls" / "outsider.md").exists()
+
+    (site / "charters").mkdir(exist_ok=True)
+    (site / "minds").mkdir(exist_ok=True)
+    (site / "charters" / "resident.md").write_text("resident charter\n")
+    launcher = site / "minds" / "resident"
+    launcher.write_text("#!/bin/sh\n")
+    refused_nonexec = cli(site, "wall", "dm", "--source", "resident", "--to", "genome",
+                          "--text", "forged attribution")
+    assert refused_nonexec.returncode == 2
+    assert "not registered" in refused_nonexec.stderr
+    assert (site / "chat.log").read_bytes() == before
+
+    launcher.chmod(0o755)
+    accepted = cli(site, "wall", "dm", "--source", "resident", "--to", "genome",
+                   "--text", "registered attribution")
+    assert accepted.returncode == 0, accepted.stderr
+    assert b"registered attribution" in (site / "chat.log").read_bytes()
+
