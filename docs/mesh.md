@@ -55,18 +55,17 @@ read `sense.body.redmi10`.
 
 The Redmi reader is in source commit `40aa387`, but activation reverted after
 the helper failed to observe the selected source root; the cause remains
-unknown. The latest core scan (`2026-10-15T12:58:25Z`, scan
-`d03b942d10f647a88a217a5186c7f1c1`, served pin
-`7ae246660833f172f72ff7404ca0bc65b9cc8290`) still has no Redmi row and reports
+unknown. The latest core scan (`2026-10-15T13:28:32Z`, scan
+`ddbfcf506b67453092d1ffb278890fb6`, served pin
+`7ae246660833f172f72ff7404ca0bc65b9cc8290`) has no Redmi row and reports
 Note3 light UNKNOWN/collect-only, last received at `2026-10-14T06:13:52Z`.
-The Android Body consumer separately read Redmi cursor 8320 at 12:55:31Z:
-acceleration sampled at 12:54:47Z and received at 12:55:11Z, magnitude
-7.761 m/s² including gravity; light was 46 lux. The eight-row acceleration
-spread was 3.751 m/s². This device data has conditional clock freshness; its
-phone/host time offset still combines unknown clock skew and delivery latency,
-and installed APK/source binding remains unverified. It is not evidence of
-human movement or delivery to the core scan or pane; pane visibility remains
-unverified.
+The Android Body consumer separately read Redmi cursor 10100 at 13:32:11Z:
+light was 1784 lux, sampled at 13:31:50Z and received at 13:32:11Z. Its
+freshness is clock-conditional; phone/host skew and delivery latency remain
+unseparated, and installed APK/source binding is unverified. Redmi Wi-Fi is
+disconnected, BLE scan is stale with `SecurityException`, and stillness remains
+UNKNOWN. These consumer readings are not evidence of human movement or delivery
+to the core scan or pane; pane visibility remains unverified.
 A camera fault reaches the health pane's `SYSTEM ZERO` line as a named cause.
 Reading rules, commands and limits are in [operating the plant](operating.md)
 and [how it works](how-it-works.md).
