@@ -1291,3 +1291,113 @@ def test_health_keeps_a_plant_owned_server_keeper_clean(tmp_path: Path, monkeypa
                         lambda _home: {"observations": [keeper]})
     health(home)
     assert "server-keeper" not in (home / "observations" / "health").read_text(encoding="utf-8")
+
+
+def _redmi_monitor_home(tmp_path: Path) -> Path:
+    home = _service_home(tmp_path, ["steady.service"])
+    android_home = tmp_path / "android-body" / ".mishe-tauftauf"
+    (android_home / "health").mkdir(parents=True)
+    (android_home / "health" / "services.json").write_text("[]", encoding="utf-8")
+    registry = {"version": 1, "sites": [{"session": "android-body", "home": str(android_home)}]}
+    (home / "health" / "linked-sites.json").write_text(json.dumps(registry), encoding="utf-8")
+    return home
+
+
+@pytest.mark.parametrize(("reason", "online", "active", "expected"), [
+    ("consumer-poll-stale", False, True, "RED"),
+    ("channel-not-current", True, False, "RED"),
+    ("consumer-poll-stale", False, False, "UNKNOWN"),
+])
+def test_health_routes_redmi_loss_using_online_or_active_peer(
+        tmp_path: Path, monkeypatch, reason: str, online: bool, active: bool,
+        expected: str) -> None:
+    home = _redmi_monitor_home(tmp_path)
+    _fake_systemctl(monkeypatch, "Id=steady.service\nActiveState=active\nSubState=running\nNRestarts=0\n")
+    channels = {kind: "stale" for kind in ("battery", "light", "acceleration")}
+    reading = {"id": "sense.body.redmi10", "state": "unknown",
+               "reason": reason, "channels": channels}
+    peer_status = {"id": "sense.net.tailnet-peer", "state": "verified",
+                   "peers": {"Redmi 10": {"online": online, "active": active}}}
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.read_redmi10", lambda _home: reading)
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views._tailnet_peer_read",
+                        lambda: peer_status)
+
+    rendered = health(home)
+    report = (home / "observations" / "health").read_text(encoding="utf-8")
+    if expected == "RED":
+        assert "REDMI10 MONITOR: RED poll-stale-live-path" in rendered
+        assert report.startswith("FAIL health internal check")
+        assert "redmi10-poll-stale-live-path" in report
+        assert "STATE: RED" in rendered
+    else:
+        assert "REDMI10 MONITOR: UNKNOWN poll-stale-peer-not-live" in rendered
+        assert report.startswith("UNKNOWN health Redmi10 monitor poll-stale-peer-not-live")
+        assert "STATE: UNKNOWN — Redmi10 monitor poll-stale-peer-not-live" in rendered
+
+
+def test_health_keeps_redmi_monitor_unknown_when_tailnet_is_unreadable(
+        tmp_path: Path, monkeypatch) -> None:
+    home = _redmi_monitor_home(tmp_path)
+    _fake_systemctl(monkeypatch, "Id=steady.service\nActiveState=active\nSubState=running\nNRestarts=0\n")
+    reading = {"id": "sense.body.redmi10", "state": "unknown",
+               "reason": "consumer-poll-stale"}
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.read_redmi10", lambda _home: reading)
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views._tailnet_peer_read",
+                        lambda: {"id": "sense.net.tailnet-peer", "state": "unknown", "peers": {}})
+
+    rendered = health(home)
+    report = (home / "observations" / "health").read_text(encoding="utf-8")
+    assert "REDMI10 MONITOR: UNKNOWN tailnet-state-unavailable" in rendered
+    assert report.startswith("UNKNOWN health Redmi10 monitor tailnet-state-unavailable")
+
+
+def test_health_keeps_fresh_redmi_data_green_without_tailnet_read(
+        tmp_path: Path, monkeypatch) -> None:
+    home = _redmi_monitor_home(tmp_path)
+    _fake_systemctl(monkeypatch, "Id=steady.service\nActiveState=active\nSubState=running\nNRestarts=0\n")
+    reading = {"id": "sense.body.redmi10", "state": "verified",
+               "channels": {kind: "fresh-clock-conditional"
+                            for kind in ("battery", "light", "acceleration")}}
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.read_redmi10", lambda _home: reading)
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views._tailnet_peer_read",
+                        lambda: (_ for _ in ()).throw(AssertionError("fresh data does not need tailnet")))
+
+    rendered = health(home)
+    report = (home / "observations" / "health").read_text(encoding="utf-8")
+    assert "REDMI10 MONITOR: VERIFIED consumer-current" in rendered
+    assert report.startswith("PASS health internal checks at ")
+    assert "STATE: GREEN" in rendered
+
+
+def test_health_keeps_redmi_monitor_unknown_when_reader_evidence_is_missing(
+        tmp_path: Path, monkeypatch) -> None:
+    home = _redmi_monitor_home(tmp_path)
+    _fake_systemctl(monkeypatch, "Id=steady.service\nActiveState=active\nSubState=running\nNRestarts=0\n")
+    reading = {"id": "sense.body.redmi10", "state": "unknown",
+               "reason": "consumer-state-missing"}
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.read_redmi10", lambda _home: reading)
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views._tailnet_peer_read",
+                        lambda: (_ for _ in ()).throw(AssertionError("missing reader does not prove loss")))
+
+    rendered = health(home)
+    report = (home / "observations" / "health").read_text(encoding="utf-8")
+    assert "REDMI10 MONITOR: UNKNOWN consumer-not-current" in rendered
+    assert report.startswith("UNKNOWN health Redmi10 monitor consumer-not-current")
+
+
+def test_health_keeps_a_partial_redmi_channel_stale_as_unknown(
+        tmp_path: Path, monkeypatch) -> None:
+    home = _redmi_monitor_home(tmp_path)
+    _fake_systemctl(monkeypatch, "Id=steady.service\nActiveState=active\nSubState=running\nNRestarts=0\n")
+    reading = {"id": "sense.body.redmi10", "state": "unknown",
+               "reason": "channel-not-current",
+               "channels": {"battery": "stale", "light": "fresh-clock-conditional",
+                            "acceleration": "fresh-clock-conditional"}}
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.read_redmi10", lambda _home: reading)
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views._tailnet_peer_read",
+                        lambda: (_ for _ in ()).throw(AssertionError("partial channel loss is not whole-body loss")))
+
+    rendered = health(home)
+    report = (home / "observations" / "health").read_text(encoding="utf-8")
+    assert "REDMI10 MONITOR: UNKNOWN consumer-not-current" in rendered
+    assert report.startswith("UNKNOWN health Redmi10 monitor consumer-not-current")

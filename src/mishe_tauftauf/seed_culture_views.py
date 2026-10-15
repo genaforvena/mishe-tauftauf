@@ -16,13 +16,50 @@ from .access import list_requests, recoveries, retired_requests
 from .ci_watch import line as ci_line
 from . import clear_journal
 from . import scan_freshness
-from .discovery import (latest, producer_label, scan_attempt, _space_light,
-                        _space_light_name_freeze, _space_light_read)
+from .discovery import (latest, producer_label, scan_attempt, _tailnet_peer_read,
+                        _space_light, _space_light_name_freeze, _space_light_read)
 from .body_perception import SENSE_ID, read_redmi10
 from .host_radio import decode_cam_events, decode_cam_manifest, decode_cam_state, decode_urb_failures
 from . import proc_table
 from .space_text import nonblank
 from .seed import recorded_session
+
+
+def _redmi_monitor(home: Path) -> tuple[str, str]:
+    """Name stale Redmi delivery only when the peer's structured path is live."""
+    reading = read_redmi10(home)
+    if not isinstance(reading, dict) or reading.get("id") != SENSE_ID:
+        return "unknown", "reader-unavailable"
+    channels = reading.get("channels")
+    if reading.get("state") == "verified":
+        if (isinstance(channels, dict)
+                and all(channels.get(kind) == "fresh-clock-conditional"
+                        for kind in ("battery", "light", "acceleration"))):
+            return "verified", "consumer-current"
+        return "unknown", "reader-state-inconsistent"
+    # One stale channel is not a whole-body loss; require the full feed to stall.
+    stopped = reading.get("reason") == "consumer-poll-stale"
+    if (not stopped and reading.get("reason") == "channel-not-current"
+            and isinstance(channels, dict)):
+        stopped = all(channels.get(kind) == "stale"
+                      for kind in ("battery", "light", "acceleration"))
+    if not stopped:
+        return "unknown", "consumer-not-current"
+    peer_status = _tailnet_peer_read()
+    if (not isinstance(peer_status, dict)
+            or peer_status.get("id") != "sense.net.tailnet-peer"
+            or peer_status.get("state") != "verified"):
+        return "unknown", "tailnet-state-unavailable"
+    peers = peer_status.get("peers")
+    peer = peers.get("Redmi 10") if isinstance(peers, dict) else None
+    if not isinstance(peer, dict):
+        return "unknown", "redmi-peer-unavailable"
+    online, active = peer.get("online"), peer.get("active")
+    if type(online) is not bool or type(active) is not bool:
+        return "unknown", "redmi-peer-state-invalid"
+    if online or active:
+        return "red", "poll-stale-live-path"
+    return "unknown", "poll-stale-peer-not-live"
 
 
 def _report(home: Path, slug: str, verdict: str) -> None:
@@ -622,6 +659,9 @@ def health(home: Path) -> str:
     except (OSError, ValueError):
         expected = set()
     windows_unknown = ""
+    redmi_unknown = ""
+    redmi_status: str | None = None
+    redmi_detail = ""
     missing = extra = dead = []
     pane_rows: list[tuple[str, str, str, str]] = []
     if not session:
@@ -787,6 +827,15 @@ def health(home: Path) -> str:
                 lines.append(f"LINKED SITE {label}: UNKNOWN — service status unavailable")
             else:
                 lines.append(f"LINKED SITE {label}: PASS")
+    android_sites = ([site for site in sites
+                      if isinstance(site, dict) and site.get("session") == "android-body"]
+                     if sites is not None else [])
+    if len(android_sites) == 1:
+        redmi_status, redmi_detail = _redmi_monitor(home)
+        lines.append(f"REDMI10 MONITOR: {redmi_status.upper()} {redmi_detail}")
+    elif len(android_sites) > 1:
+        redmi_status, redmi_detail = "unknown", "linked-site-ambiguous"
+        lines.append(f"REDMI10 MONITOR: UNKNOWN {redmi_detail}")
     lines.append(ci_line(home))
     from .wall_view import pane_lease_lines
     lease_lines, lease_state = pane_lease_lines(home)
@@ -805,6 +854,10 @@ def health(home: Path) -> str:
         causes.append("windows-dead=" + ",".join(dead))
     if failed_services:
         causes.append("services=" + ",".join(failed_services))
+    if redmi_status == "red":
+        causes.append("redmi10-" + redmi_detail)
+    elif redmi_status == "unknown":
+        redmi_unknown = redmi_detail
     # Fold the runtime import-root check in, so a latched RED from the pane's
     # STATE line is also named in the durable report. The pane's own RUNTIME
     # line reads DRIFT when a covered service imports another root; an invalid
@@ -879,6 +932,9 @@ def health(home: Path) -> str:
     if causes:
         verdict = f"FAIL health internal check at {at} — " + "; ".join(causes)
         lines.append("STATE: RED — internal check needs repair")
+    elif redmi_unknown:
+        verdict = f"UNKNOWN health Redmi10 monitor {redmi_unknown} at {at}"
+        lines.append(f"STATE: UNKNOWN — Redmi10 monitor {redmi_unknown}")
     elif windows_unknown:
         verdict = f"UNKNOWN health {windows_unknown} at {at}"
         lines.append(f"STATE: UNKNOWN — {windows_unknown}")
