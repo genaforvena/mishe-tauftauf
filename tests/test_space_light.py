@@ -171,10 +171,10 @@ def test_invalid_or_uncovered_evidence_never_reports_current_lux(mutation):
     lambda e: e.update(event_id="forged"),
     lambda e: e["from"].update(sequence=14),
     lambda e: e["to"].update(sequence=15),
-    lambda e: e["from"].update(phone_sample_epoch_s=NOW - 31),
+    lambda e: e["from"].update(consumer_receipt_epoch_s=NOW - 31),
     lambda e: e["to"].update(consumer_receipt_epoch_s=NOW + 1),
     lambda e: e.update(bucket_from=5),
-    lambda e: e.update(validity_seconds=1),
+    lambda e: e.update(validity_seconds=0.5),
 ])
 def test_bad_history_does_not_invalidate_current_light_or_emit_event(mutation):
     data = event_data()
@@ -299,6 +299,41 @@ def test_phone_clock_behind_host_does_not_trigger_false_stale():
     assert row["state"] == "verified"
     assert row["reason"] == "fresh-clock-conditional"
     assert row["current_lux"] == 14.431
+
+def test_span_exceeding_validity_still_verifies_with_clock_bound():
+    """Span (receipt - phone = latency + skew) exceeding the validity cap is not
+    malformed evidence: skew is measured at ~25.5s and can grow, so a span-based
+    bound would reject healthy samples. Staleness is checked against the receipt
+    (host-side arrival) separately. A skew-behind phone clock must produce a
+    clock verdict (clock_bound set), not malformed-boundary.
+    """
+    data = boundary()
+    data["nodes"][0]["light"]["phone_sample_epoch_s"] = NOW - 40
+    data["nodes"][0]["light"]["consumer_receipt_epoch_s"] = NOW - 2
+    data["nodes"][0]["light"]["status_reason"] = "clock-skew-behind-host"
+    row = discovery._space_light(data, NOW)
+    assert row["state"] == "verified"
+    assert row["reason"] == "fresh-clock-conditional"
+    assert row["clock_bound"] == "clock-skew-behind-host"
+    assert row["current_lux"] == 14.431
+
+
+def test_event_with_skew_behind_phone_clock_still_verifies():
+    """Event branch: phone stamps far behind host (now - phone > event_validity)
+    but receipts fresh (now - receipt <= event_validity). The event window check
+    uses receipt referent (host-side arrival), not phone stamps. A skew-behind
+    phone clock must not cause invalid-or-expired-historical-transition.
+    """
+    data = event_data()
+    event = data["nodes"][0]["last_light_transition"]
+    event["from"]["phone_sample_epoch_s"] = NOW - 40
+    event["to"]["phone_sample_epoch_s"] = NOW - 39
+    event["from"]["consumer_receipt_epoch_s"] = NOW - 2
+    event["to"]["consumer_receipt_epoch_s"] = NOW - 1
+    row = discovery._space_light(data, NOW)
+    assert row["state"] == "verified"
+    assert row["event_id"] == "note3:session-a:14"
+    assert row.get("event_reason") is None
 
 
 def test_null_lux_gap_outranks_the_delayed_status_flag():

@@ -4238,12 +4238,19 @@ def _space_light_age(light: dict, now: float) -> str | None:
     return f"last-receipt={_space_stamp(receipt)} age={_space_age(now - receipt)}"
 
 
-def _space_endpoint(item: dict, validity: float) -> tuple[float, float]:
+def _space_endpoint(item: dict) -> tuple[float, float]:
+    """Validate one light endpoint's shape and causality.
+
+    The span (receipt - phone = latency + skew) has no upper bound: phone clock
+    skew behind the host is measured at ~25.5 s and can grow, so a span-based
+    validity check would reject healthy samples. Staleness is checked against
+    the receipt (host-side arrival) separately, not here.
+    """
     phone, receipt = item["phone_sample_epoch_s"], item["consumer_receipt_epoch_s"]
     if (not _space_number(phone) or not _space_number(receipt)
             or type(item["sequence"]) is not int or item["sequence"] < 0
             or not _space_number(item["lux"]) or item["lux"] < 0
-            or not 0 <= receipt - phone <= validity):
+            or receipt < phone):
         raise ValueError("invalid endpoint")
     return phone, receipt
 
@@ -4318,7 +4325,7 @@ def _space_light(data: object, now: float) -> dict:
         if (light["status"] != "fresh-clock-conditional"
                 or light["delayed_at_receipt"] is not False):
             return unknown("light-not-current-or-delayed", _space_light_age(light, now))
-        phone, receipt = _space_endpoint(light, validity)
+        phone, receipt = _space_endpoint(light)
         if node["cursor"] < light["sequence"]:
             return unknown("invalid-sequence")
         collection_age = light["age_ms_at_phone_collection"]
@@ -4351,8 +4358,8 @@ def _space_light(data: object, now: float) -> dict:
                     raise ValueError("invalid event validity")
                 event_validity = min(validity, event_validity)
                 start, end = event["from"], event["to"]
-                start_phone, start_receipt = _space_endpoint(start, event_validity)
-                end_phone, end_receipt = _space_endpoint(end, event_validity)
+                start_phone, start_receipt = _space_endpoint(start)
+                end_phone, end_receipt = _space_endpoint(end)
                 if (event["kind"] != "measured_light_bucket_transition"
                         or event["source"] != node["source"] or event["session"] != node["session"]
                         or event["event_id"] != f"note3:{node['session']}:{end['sequence']}"
@@ -4360,7 +4367,7 @@ def _space_light(data: object, now: float) -> dict:
                         or not 0 <= end_phone - start_phone <= event_validity
                         or end_receipt < start_receipt
                         or any(not 0 <= now - value <= event_validity
-                               for value in (start_phone, start_receipt, end_phone, end_receipt))):
+                               for value in (start_receipt, end_receipt))):
                     raise ValueError("invalid event provenance or window")
                 buckets = tuple(math.floor(math.log2(1 + point["lux"])) for point in (start, end))
                 if (buckets[0] == buckets[1] or type(event["bucket_from"]) is not int
