@@ -93,6 +93,13 @@ def redact_display_age(line: str) -> str:
     return AGE_TOKEN_RE.sub(lambda m: "age=<age>" if m.group().startswith("age=") else "last-phone=<phone>" if m.group().startswith("last-phone=") else "idle <idle>", line)
 
 
+def redact_redmi_cursor(line: str, *, slug: str) -> str:
+    """Exclude the live Redmi cursor from the observation digest, not the pane."""
+    if slug == "senses" and line.startswith("UNKNOWN sense.body.redmi10:"):
+        return re.sub(r"\bc=\d+\b", "c=<cursor>", line)
+    return line
+
+
 def discover(home: Path) -> list[str]:
     directory = home / "top-pains"
     if not directory.exists():

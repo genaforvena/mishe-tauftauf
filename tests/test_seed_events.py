@@ -116,5 +116,26 @@ def test_a_real_meaning_change_still_refires_the_observation_digest():
     # Recovery: a fresh source_state is meaning too.
     resumed = held.replace("source_state=unknown", "source_state=verified")
     assert _observation_text("senses", held) != _observation_text("senses", resumed)
+
     assert _observation_text("senses", held) != _observation_text(
         "senses", held.replace("STATE: UNKNOWN", "STATE: GREEN"))
+
+
+def test_redmi_cursor_in_rendered_unknown_line_does_not_change_digest():
+    frame = ("UNKNOWN sense.body.redmi10: Redmi10 c=17000 sid=7afa3a15 "
+             "b=0.87 L=35lux |a|=unknown/value source_state=unknown\n"
+             "STATE: UNKNOWN — 7 senses need a checked read\n")
+    advanced = frame.replace("c=17000", "c=17008")
+
+    assert "c=17008" in advanced
+    assert _observation_text("senses", frame) == _observation_text("senses", advanced)
+    assert _digest(_observation_text("senses", frame)) == \
+        _digest(_observation_text("senses", advanced))
+    assert _observation_text("senses", frame) != _observation_text(
+        "senses", frame.replace("L=35lux", "L=36lux"))
+    assert _observation_text("senses", frame) != _observation_text(
+        "senses", frame.replace("sid=7afa3a15", "sid=new-session"))
+    assert _observation_text("senses", frame) != _observation_text(
+        "senses", frame.replace("source_state=unknown", "source_state=verified"))
+
+
