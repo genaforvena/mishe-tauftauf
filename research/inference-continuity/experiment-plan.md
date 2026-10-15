@@ -774,4 +774,45 @@ durable record.
 `opencode-go/step-5-preview-free` (this turn's model marker; the experiment
 itself uses zero provider calls — a deterministic subprocess fixture).
 
+### Status
+
+**Preregistered at `70a4780` (wake 44327) before the fixture existed;
+executed three times** on
+`SITE_HOME/research/inference-continuity/scratch/exp4-interrupt-wake44327/`
+(`exp4.py`, results `results.json`), identical on every measured field across
+runs (only the run index and per-run paths differ). Frozen operation identity
+`publication-70a4780dfbaf`. Observed against prereg: keyed P3 — caller
+SIGKILLed after the artifact write and before the outcome ⇒
+`started-without-outcome` on read, dispatch refused from a fresh writer
+(`concurrent-claim`) and from the dead writer's identity
+(`started-without-outcome`), executor executions stayed **1**, same-identity
+inspection answered `committed`, successor recorded the receipt through the
+ledger's own append path and a fresh reader read `completed` with
+`open_intents` 0 and re-dispatch raising `AlreadyExecuted`; unkeyed P3 and C —
+refusals identical, effect side `indeterminate`/`pending` ⇒ keep-open-UNKNOWN,
+no retry, executions 1; P0 — reserved and never dispatched ⇒ `unreconciled-intent`,
+`recover(<provider call>)` = `None`, dispatch permitted (reserve→dispatch
+upgrade) with exactly 1 execution; R — boundary-bypassing retry appended a
+second line (executions 2), the duplicate the keyed path avoids.
+
+**Conclusion:** the mutating-publication interruption window at the
+`EffectBoundary` layer (UNKNOWN after wake 44083) is measured and the boundary
+is fail-closed at every unconfirmed state: no successor path re-executed a
+started effect. Three controlled-failure findings on the caller side: (1) a
+second receipt append is not refused at write time — every later reader fails
+closed with `JournalCorrupt: duplicate outcome`; (2) the internal append path
+does not bind a receipt to an effect-side observation — on unkeyed/C the probe
+appended `completed` without confirmation and the poisoned reader reported
+`completed`, a fabricated completion the public API cannot produce; (3)
+`recover` by provider call cannot see a reserved-but-never-dispatched
+operation (answers `None`; only id-based reads see it). The gap is a missing
+public, confirmation-bound receipt recorder, named as follow-up, not
+implemented. Acceptance: all criteria pass; no exactly-once claim beyond the
+durable record. Limits: synthetic owned-report effect, scripted successor,
+n=3 per point, one host, zero provider calls, receipt path is the ledger's
+internal `_append`. Evidence:
+`artifacts/inference-research-wake44327-exp4b-mutating-interruption-boundary.md`;
+`SITE_HOME/research/inference-continuity/scratch/exp4-interrupt-wake44327/results.json`
+(+ `results-run-original-order.json`, the pre-reordering run preserved).
+
 ## Future experiments (not yet planned)
