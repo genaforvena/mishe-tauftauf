@@ -42,6 +42,7 @@ _NOT_PRODUCED_STATUSES = ("partial",)
 # reports a partial effect must still parse rather than corrupt the journal. It is
 # reserved for the caller, not an unimplemented branch of this boundary.
 _OPERATION_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
+_EVIDENCE_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 _RESERVATION_MARKER = "reserved"
 
 
@@ -325,6 +326,64 @@ def request_digest(request: Mapping[str, Any], authority: str,
         digest.update(b"\n")
         digest.update(canonical_request(native_call).encode("utf-8"))
     return digest.hexdigest()
+
+
+def _evidence_target(confirmation: Mapping[str, Any],
+                     evidence_root: Path | str | None,
+                     ) -> tuple[Path, str]:
+    """The effect-side artifact a committed confirmation names, and its digest.
+
+    A caller error (a missing or malformed `evidence` object, or a path outside
+    the caller's own evidence root) raises before any read, so a receipt is
+    never written from a confirmation the recorder cannot even address.
+    """
+    evidence = confirmation.get("evidence")
+    if not isinstance(evidence, Mapping):
+        raise ValueError("a committed confirmation must carry an evidence object")
+    artifact = evidence.get("artifact")
+    digest = evidence.get("sha256")
+    if not isinstance(artifact, str) or not artifact:
+        raise ValueError("evidence.artifact must be a nonempty path string")
+    if not isinstance(digest, str) or not _EVIDENCE_DIGEST_RE.match(digest):
+        raise ValueError(
+            "evidence.sha256 must be a lowercase hex sha256 digest of the "
+            "artifact's bytes")
+    if evidence_root is None:
+        return Path(artifact).resolve(), digest
+    root = Path(evidence_root).resolve()
+    path = Path(artifact)
+    resolved = (path if path.is_absolute() else root / path).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        raise ValueError(
+            f"evidence artifact {artifact!r} is outside the evidence root "
+            f"{str(root)!r}") from None
+    return resolved, digest
+
+
+def _re_read_evidence(artifact: Path, digest: str, operation_id: str,
+                      ) -> tuple[str | None, dict[str, Any] | None]:
+    """Re-read the named artifact and bind it to this operation.
+
+    Returns `(failure, observation)`; exactly one is not None. The recorder
+    reads the effect side itself here, so the recorded receipt is checkable
+    against bytes that existed at write time rather than against an assertion.
+    """
+    try:
+        raw = artifact.read_bytes()
+    except OSError:
+        return "effect-evidence-unreadable", None
+    if hashlib.sha256(raw).hexdigest() != digest:
+        return "effect-evidence-mismatch", None
+    try:
+        record = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return "effect-evidence-malformed", None
+    if not isinstance(record, Mapping) or record.get("operation_id") != operation_id:
+        return "effect-evidence-unbound", None
+    return None, {"artifact": str(artifact), "sha256": digest,
+                  "operation_id": operation_id}
 
 
 class EffectLedger:
@@ -801,8 +860,10 @@ class EffectLedger:
                              native_call=intent.native_call)
 
     def record_receipt(self, operation_id: str,
-                       confirmation: Mapping[str, Any]) -> EffectOutcome:
-        """Record a receipt for an effect confirmed on the effect side.
+                       confirmation: Mapping[str, Any],
+                       *, evidence_root: Path | str | None = None,
+                       ) -> EffectOutcome:
+        """Record a receipt for an effect confirmed by re-readable evidence.
 
         A successor that finds a start record with no outcome can observe the
         effect side under the operation's own identity and reconcile the store
@@ -810,13 +871,20 @@ class EffectLedger:
         outcome without executing: the outcome means "the world holds the
         effect", never "this writer performed it".
 
-        The receipt is bound to the confirmation it was given. A committed
-        confirmation names this operation id and states an observed execution
-        count of at least one; an unconfirmed observation — `indeterminate`,
-        `pending`, absent — writes nothing and the operation stays `unknown`.
-        The ledger cannot see the effect side, so an *asserted* confirmation is
-        recorded, not verified: the assertion is persisted verbatim inside the
-        outcome's `result` so the receipt is auditable after the fact.
+        The receipt is bound to the evidence it names, not to an assertion. A
+        committed confirmation must name the effect side's own durable record
+        (`evidence.artifact`) and the `sha256` of that record's bytes; the
+        ledger re-reads exactly those bytes, recomputes the digest, parses the
+        record, and requires its `operation_id` to be this operation. Only then
+        is the outcome written, and its `result` carries the artifact path and
+        the digest so any later reader can re-read and re-check the same bytes.
+        An unconfirmed observation — `indeterminate`, `pending`, absent — and a
+        committed confirmation whose record is missing (`effect-evidence-
+        unreadable`), altered (`effect-evidence-mismatch`), unparseable
+        (`effect-evidence-malformed`) or bound to another operation
+        (`effect-evidence-unbound`) writes nothing and the operation stays
+        `unknown`. `evidence_root`, when given, is the only directory an
+        artifact may be read from.
 
         An operation that already has an outcome raises `AlreadyExecuted`
         before any write, so a second receipt append is refused here instead
@@ -831,6 +899,8 @@ class EffectLedger:
             raise ValueError("confirmation must be an object")
         committed = confirmation.get("inspection") == "committed"
         executions: int | None = None
+        artifact: Path | None = None
+        digest: str | None = None
         if committed:
             named = confirmation.get("operation_id")
             if named != operation_id:
@@ -843,6 +913,7 @@ class EffectLedger:
                 raise ValueError("a committed confirmation must carry an "
                                  "observed executions count of at least 1")
             executions = observed
+            artifact, digest = _evidence_target(confirmation, evidence_root)
         with self._locked():
             if operation_id in self._read_outcomes():
                 raise AlreadyExecuted(
@@ -861,9 +932,17 @@ class EffectLedger:
                                      failure="effect-confirmed-without-start",
                                      reconciliation_ref=self._intent_ref(operation_id),
                                      native_call=intent.native_call)
+            assert artifact is not None and digest is not None
+            failure, observation = _re_read_evidence(artifact, digest, operation_id)
+            if failure is not None:
+                return EffectOutcome(operation_id=operation_id, status="unknown",
+                                     failure=failure,
+                                     reconciliation_ref=self._intent_ref(operation_id),
+                                     native_call=intent.native_call)
             outcome = EffectOutcome(
                 operation_id=operation_id, status="completed",
-                result={"confirmed_by": "effect-side-confirmation",
+                result={"confirmed_by": "effect-side-evidence",
+                        "evidence": observation,
                         "confirmation": _snapshot(confirmation)},
                 executions=executions, native_call=intent.native_call)
             self._append(self.outcomes_path, outcome.to_record())
@@ -1250,25 +1329,32 @@ class EffectBoundary:
         return effect_outcome_for(self.ledger.reconcile(operation_id))
 
     def record_receipt(self, operation_id: str,
-                       confirmation: Mapping[str, Any]) -> dict[str, Any]:
+                       confirmation: Mapping[str, Any],
+                       *, evidence_root: Path | str | None = None,
+                       ) -> dict[str, Any]:
         """Reconcile a confirmed effect-side observation into the store.
 
         The successor's route for the window Experiment 4b measured: a start
         record with no outcome whose effect the successor can observe under
         the operation's own identity. A receipt is written only for a
-        confirmation that names this operation and reads `committed` with an
-        observed execution count; every other observation leaves the operation
-        `unknown` and writes nothing, so an unconfirmed effect is never
-        recorded as a completion. An operation that already has an outcome
-        raises `AlreadyExecuted` before any write.
+        confirmation that names this operation, reads `committed` with an
+        observed execution count, and names evidence the ledger re-reads:
+        `evidence.artifact` (an effect-side record) and `evidence.sha256` (the
+        digest of that record's bytes), whose parsed record must name this
+        operation. Every other observation — unconfirmed, unreadable, altered,
+        unparseable or bound to another operation — leaves the operation
+        `unknown` and writes nothing, so an effect no evidence supports is
+        never recorded as a completion. An operation that already has an
+        outcome raises `AlreadyExecuted` before any write. `evidence_root`
+        bounds the directories an artifact may be read from.
 
-        The receipt records the effect as observed, not as performed: the
-        outcome's `result` carries the confirmation verbatim and `executions`
-        is the effect side's count. The ledger cannot see the effect side, so
-        a confirmation is trusted as an auditable record, never verified.
+        The receipt records the effect as evidenced, not as performed: the
+        outcome's `result` carries the artifact path, its digest and the
+        confirmation verbatim, so a later reader can re-read the same bytes.
         """
         return effect_outcome_for(
-            self.ledger.record_receipt(operation_id, confirmation))
+            self.ledger.record_receipt(operation_id, confirmation,
+                                       evidence_root=evidence_root))
 
     def status(self, operation_id: str) -> dict[str, Any] | None:
         """The durable state a fresh process reads, or None if never allocated."""

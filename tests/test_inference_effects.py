@@ -6,6 +6,7 @@ with real subprocess kills, not mocked returns.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -931,7 +932,7 @@ def test_boundary_start_without_outcome_is_unknown_to_a_successor(tmp_path):
     assert (store / "outcomes.jsonl").read_text().strip() == ""
 
 
-# -- confirmation-bound receipt recorder (Experiment 4c) --------------------
+# -- evidence-bound receipt recorder (Experiments 4c/4d) --------------------
 
 OP_ID = "effect-call_native-fc_native-d3129ff9ce3f"
 
@@ -949,20 +950,41 @@ def interrupted_boundary(tmp_path, calls):
     return b
 
 
-COMMITTED = {"inspection": "committed", "operation_id": OP_ID, "executions": 1,
-             "evidence": {"keyed-report": True, "identity_match": True}}
+def effect_record(directory, *, operation_id: str = OP_ID,
+                  name: str = "effect-side-record.json"):
+    """The effect side's own durable record and the digest of its bytes."""
+    path = Path(directory) / name
+    path.write_text(json.dumps({"operation_id": operation_id,
+                                "kind": "owned-effect"}) + "\n",
+                    encoding="utf-8")
+    return path, hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def committed(artifact, *, operation_id: str = OP_ID,
+              executions: int = 1) -> dict:
+    """A committed confirmation naming evidence the recorder re-reads."""
+    path, digest = artifact
+    return {"inspection": "committed", "operation_id": operation_id,
+            "executions": executions,
+            "evidence": {"artifact": path.name, "sha256": digest}}
 
 
 def test_record_receipt_reconciles_a_confirmed_effect_without_executing(tmp_path):
     calls = []
     interrupted_boundary(tmp_path, calls)
+    world = tmp_path / "world"
+    world.mkdir()
+    confirmation = committed(effect_record(world))
     successor = boundary(tmp_path, lambda call: pytest.fail("executed again"),
                          writer_id="loop-2")
-    receipt = successor.record_receipt(OP_ID, COMMITTED)
+    receipt = successor.record_receipt(OP_ID, confirmation,
+                                       evidence_root=world)
     assert receipt["status"] == "completed"
     assert receipt["executions"] == 1
-    assert receipt["result"]["confirmed_by"] == "effect-side-confirmation"
-    assert receipt["result"]["confirmation"] == COMMITTED
+    assert receipt["result"]["confirmed_by"] == "effect-side-evidence"
+    assert receipt["result"]["evidence"]["sha256"] \
+        == confirmation["evidence"]["sha256"]
+    assert receipt["result"]["confirmation"] == confirmation
     assert len(calls) == 1  # only the interrupted dispatch ran
 
     fresh = boundary(tmp_path, lambda call: pytest.fail("executed again"),
@@ -972,6 +994,113 @@ def test_record_receipt_reconciles_a_confirmed_effect_without_executing(tmp_path
     assert fresh.open_intents() == []
     with pytest.raises(AlreadyExecuted):
         fresh(NATIVE_CALL)
+
+
+def test_recorded_evidence_is_re_readable_by_an_independent_reader(tmp_path):
+    """A reader that never executed anything re-checks the receipt's bytes."""
+    interrupted_boundary(tmp_path, [])
+    world = tmp_path / "world"
+    world.mkdir()
+    artifact, _ = effect_record(world)
+    # build the confirmation from the bytes as they were at write time
+    confirmation = committed((artifact,
+                              hashlib.sha256(artifact.read_bytes()).hexdigest()))
+    recorded = boundary(tmp_path, lambda call: None, writer_id="loop-2") \
+        .record_receipt(OP_ID, confirmation, evidence_root=world)
+    assert recorded["status"] == "completed"
+
+    reader = EffectLedger(tmp_path / "effects", writer_id="reader-3")
+    evidence = reader.reconcile(OP_ID).result["evidence"]
+    re_read = Path(evidence["artifact"])
+    assert hashlib.sha256(re_read.read_bytes()).hexdigest() == evidence["sha256"]
+    assert json.loads(re_read.read_text())["operation_id"] == OP_ID
+
+
+def test_a_committed_receipt_is_refused_when_the_named_evidence_is_absent(tmp_path):
+    interrupted_boundary(tmp_path, [])
+    world = tmp_path / "world"
+    world.mkdir()
+    artifact, digest = effect_record(world)
+    artifact.unlink()
+    successor = boundary(tmp_path, lambda call: None, writer_id="loop-2")
+    reply = successor.record_receipt(OP_ID, committed((artifact, digest)),
+                                     evidence_root=world)
+    assert (reply["status"], reply["failure"]) == ("unknown",
+                                                   "effect-evidence-unreadable")
+    assert (tmp_path / "effects" / "outcomes.jsonl").read_text() == ""
+    assert successor.reconcile(OP_ID)["failure"] == "started-without-outcome"
+
+
+def test_a_committed_receipt_is_refused_when_the_named_evidence_changed(tmp_path):
+    """A digest asserted for other bytes is a mismatch, not a receipt."""
+    interrupted_boundary(tmp_path, [])
+    world = tmp_path / "world"
+    world.mkdir()
+    artifact, _ = effect_record(world)
+    successor = boundary(tmp_path, lambda call: None, writer_id="loop-2")
+    stale = (artifact, hashlib.sha256(b"bytes before the effect side changed").hexdigest())
+    reply = successor.record_receipt(OP_ID, committed(stale), evidence_root=world)
+    assert (reply["status"], reply["failure"]) == ("unknown",
+                                                   "effect-evidence-mismatch")
+    assert (tmp_path / "effects" / "outcomes.jsonl").read_text() == ""
+    assert successor.reconcile(OP_ID)["failure"] == "started-without-outcome"
+
+
+def test_a_committed_receipt_is_refused_when_the_evidence_names_another_operation(
+        tmp_path):
+    """The real unkeyed append log the 4c P2 probe laundered is now refused."""
+    interrupted_boundary(tmp_path, [])
+    world = tmp_path / "world"
+    world.mkdir()
+    log = world / "append.log"
+    log.write_text(json.dumps({"ts": 1.0, "note": "no operation identity"}) + "\n")
+    digest = hashlib.sha256(log.read_bytes()).hexdigest()
+    asserted = {"inspection": "committed", "operation_id": OP_ID, "executions": 1,
+                "evidence": {"artifact": "append.log", "sha256": digest}}
+    successor = boundary(tmp_path, lambda call: None, writer_id="loop-2")
+    reply = successor.record_receipt(OP_ID, asserted, evidence_root=world)
+    assert (reply["status"], reply["failure"]) == ("unknown",
+                                                   "effect-evidence-unbound")
+    assert (tmp_path / "effects" / "outcomes.jsonl").read_text() == ""
+    assert successor.reconcile(OP_ID)["failure"] == "started-without-outcome"
+
+
+def test_a_committed_receipt_is_refused_when_the_evidence_is_malformed(tmp_path):
+    interrupted_boundary(tmp_path, [])
+    world = tmp_path / "world"
+    world.mkdir()
+    path = world / "effect-side-record.json"
+    path.write_text("{not json\n")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    reply = boundary(tmp_path, lambda call: None, writer_id="loop-2") \
+        .record_receipt(OP_ID, {"inspection": "committed", "operation_id": OP_ID,
+                                "executions": 1,
+                                "evidence": {"artifact": path.name,
+                                             "sha256": digest}},
+                        evidence_root=world)
+    assert (reply["status"], reply["failure"]) == ("unknown",
+                                                   "effect-evidence-malformed")
+    assert (tmp_path / "effects" / "outcomes.jsonl").read_text() == ""
+
+
+def test_a_committed_receipt_cannot_name_evidence_outside_its_root(tmp_path):
+    interrupted_boundary(tmp_path, [])
+    world = tmp_path / "world"
+    world.mkdir()
+    outside, digest = effect_record(tmp_path, name="outside-record.json")
+    successor = boundary(tmp_path, lambda call: None, writer_id="loop-2")
+    with pytest.raises(ValueError):
+        successor.record_receipt(OP_ID, {"inspection": "committed",
+                                         "operation_id": OP_ID, "executions": 1,
+                                         "evidence": {"artifact": str(outside),
+                                                      "sha256": digest}},
+                                 evidence_root=world)
+    with pytest.raises(ValueError):
+        successor.record_receipt(OP_ID, {"inspection": "committed",
+                                         "operation_id": OP_ID, "executions": 1,
+                                         "evidence": "maybe"},
+                                 evidence_root=world)
+    assert (tmp_path / "effects" / "outcomes.jsonl").read_text() == ""
 
 
 def test_record_receipt_refuses_an_unconfirmed_effect_and_stays_unknown(tmp_path):
@@ -996,10 +1125,14 @@ def test_record_receipt_refuses_an_unconfirmed_effect_and_stays_unknown(tmp_path
 
 def test_a_second_receipt_is_refused_at_write_time_not_at_read_time(tmp_path):
     interrupted_boundary(tmp_path / "one", [])
+    world = tmp_path / "one" / "world"
+    world.mkdir()
+    confirmation = committed(effect_record(world))
     first = boundary(tmp_path / "one", lambda call: None, writer_id="loop-2")
-    assert first.record_receipt(OP_ID, COMMITTED)["status"] == "completed"
+    assert first.record_receipt(OP_ID, confirmation,
+                                evidence_root=world)["status"] == "completed"
     with pytest.raises(AlreadyExecuted):
-        first.record_receipt(OP_ID, COMMITTED)
+        first.record_receipt(OP_ID, confirmation, evidence_root=world)
     outcomes = (tmp_path / "one" / "effects" / "outcomes.jsonl").read_text()
     assert outcomes.count("\n") == 1
     reader = boundary(tmp_path / "one", lambda call: None, writer_id="reader-3")
@@ -1025,11 +1158,18 @@ def test_record_receipt_refuses_a_confirmation_that_names_another_operation(tmp_
 
 
 def test_record_receipt_refuses_a_confirmed_effect_it_never_started(tmp_path):
-    """A reservation that was never dispatched earns no receipt."""
+    """A reservation that was never dispatched earns no receipt.
+
+    The state refusal precedes evidence verification: even evidence that names
+    this operation is refused when no start record exists.
+    """
+    world = tmp_path / "world"
+    world.mkdir()
+    confirmation = committed(effect_record(world))
     dispatch = boundary(tmp_path, lambda call: {"ok": True})
     dispatch.reserve(OP_ID, capability="inspect",
                      arguments={"path": "owned-evidence"})
-    reply = dispatch.record_receipt(OP_ID, COMMITTED)
+    reply = dispatch.record_receipt(OP_ID, confirmation, evidence_root=world)
     assert reply["status"] == "unknown"
     assert reply["failure"] == "effect-confirmed-without-start"
     assert (tmp_path / "effects" / "outcomes.jsonl").read_text() == ""
@@ -1043,8 +1183,11 @@ def test_record_receipt_refuses_a_confirmed_effect_it_never_started(tmp_path):
 
 
 def test_record_receipt_writes_nothing_for_an_unallocated_operation(tmp_path):
+    world = tmp_path / "world"
+    world.mkdir()
+    confirmation = committed(effect_record(world))
     successor = boundary(tmp_path, lambda call: None, writer_id="loop-2")
-    reply = successor.record_receipt(OP_ID, COMMITTED)
+    reply = successor.record_receipt(OP_ID, confirmation, evidence_root=world)
     assert reply["status"] == "unknown"
     assert reply["failure"] == "no-intent"
     assert (tmp_path / "effects" / "intents.jsonl").read_text() == ""
