@@ -2121,6 +2121,66 @@ fails closed and records UNKNOWN with its own evidence; the replication
 defers to the next wake with the frozen inputs retained — never a blind
 retry.
 
+### Executed (wake 51902, second selector `nvidia/z-ai/glm-5.3` reasoning `high`, n=1 per arm, one host)
+
+Chronology: prereg `4cb0dd3` and selector-substitution amendment `9bddba4`
+(the measured 400/429 route facts above) both precede every arm directory in
+`scratch/exp4l-second-selector-wake51902/`. Fixture byte-identical to
+wake-50866's except SELECTOR/REASONING/tags/staging; same LINE
+(`exp4l marker wake50866`), TASK, capability `marker-append-v1`, caps
+(`max_turns=2 max_calls=1`), and unchanged `run_exact_inspection` /
+`EffectBoundary` / `reconcile_caller_journal` seams. Freeze before any run:
+all three markers 0 bytes, empty-file sha256 `e3b0c442…b855`, identical
+mtime_ns `1792097725052595710`.
+
+| metric | arm A (uninterrupted) | arm B (kill after outcome) | arm C (control) |
+|---|---|---|---|
+| exit / status | 0, `complete` | 137 (SIGKILL post-outcome) | 137 (SIGKILL pre-dispatch) |
+| turns / calls | 2 / 1 | 1 turn / 1 call, killed post-outcome | 1 turn / 1 call, killed pre-dispatch |
+| provider tokens | 289 total (249 in / 40 out), 9.259 s | 268 on the killed turn (post-kill ledger UNKNOWN) | UNKNOWN post-kill |
+| marker file | exactly 1 line, 23 B, sha256 `eed2543a…4b65` | exactly 1 line, 23 B, same digest | untouched, 0 B |
+| store executions | 1 (`completed`) | 1 (`completed`) — no redispatch | none |
+| journal rows | 8 | 4 at kill → 5 after reconcile #1 → 5 after #2 | 4 → 4 → 4 |
+| reconcile | n/a (writer) | #1 `completed`, executions 1; #2 `None` | #1 `None`; #2 `None` |
+
+H1 held: one appended marker line per executed call in every arm; the kill
+arm's fresh-process reconcile restored without re-executing (executions
+stayed 1); the control arm mutated nothing. H2 held with the structural
+qualification: of 20 flattened fields in the `tool_result` row, exactly 5
+differ between arm A's writer row and arm B's restored row — `.call.id`,
+`.message.toolCallId` (the provider call ids), `.message.timestamp` (run
+timestamp), `.obligation.path` (per-arm marker path) and the outcome JSON
+inside `.message.content[0].text` (its `operation_id`, per-arm path,
+`mtime_ns`); all 15 remaining fields, including `status=completed`,
+`executions=1`, `appended=1`, `bytes=23`, `line`, `sha256`, are identical.
+The restored timestamp is not the proposing assistant's here (1792097744216
+vs 1792097726812 — the 4j correlation did not hold on this shape); it stays a
+structural, not byte-identical, parity claim. H3 held (first reconcile
+sufficient, second silent). H4 held for arm A (durable per-call cost record:
+289 tokens, 9.259 s, 1 dispatch, proposal/result rows).
+
+Route facts recorded this wake (fail-closed, no retry): the preregistered
+`opencode-go/deepseek-v4.1-flash` returned HTTP 400 `This Go model requires
+Global regions…` on its one turn — no dispatch, no effect, usage 0, one
+`fetch_ledger` dispatch, journal preserved (arm payload retained in
+`armA/`); the bounded probe (`selector_probe.py` → `selector-probe.json`)
+then measured `opencode-go/longcat-2.5-preview-free` /`minimal` done (44
+tokens), `nvidia/z-ai/glm-5.3` /`high` done (20 tokens), and
+`opencode-go/glm-5.3-flash` /`high` 429 `Go usage limit exceeded
+retry-after-ms=45933000` (~12.75 h) — the same intermittent 429 class,
+currently with a long window.
+
+Limits: n=1 per arm; one host; the replication's own selector substitution
+means the "second selector" variable is the selector string (which also
+changed provider, opencode-go → nvidia); no production caller, no adoption
+or parity claim; the live-route 429 window stays UNKNOWN (the 400/429 route
+failures here are availability facts, not the in-stream 429 semantics 4m
+left open); fsync is not power-loss durability; whole-suite status
+unclaimed; author-reported checks stay author-reported. Evidence: scratch
+`exp4l-second-selector-wake51902/{freeze.json,results.json,armA/armA.json,
+armB/armB.json,armC/armC.json,selector-probe.json}`; artifact
+`.mishe-tauftauf/artifacts/inference-research-wake51902-exp4l-second-selector-replication.md`.
+
 ## Experiment 4m: the provider 429 window inside the dead-letter gap — effect done, receipt not yet durable (preregistered wake 51409)
 
 ### Why this scenario
