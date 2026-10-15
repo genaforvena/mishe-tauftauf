@@ -50,28 +50,21 @@ The checkout reads four owned surfaces rather than collecting them: the Note3
 light feed, the linked Android Body consumer's retained Redmi10 readings, this
 host's Bluetooth and Wi-Fi adapter state, and this host's camera fault state —
 faults, not a scene. `discover show` prints published light and radio readings
-as `sense.space.light` and `sense.space.host-radio`; the checkout scan also
-reads `sense.body.redmi10`. The reader is in source commit `40aa387`, but its
-activation reverted after the helper failed to observe the selected source
-root; the exact cause remains unknown, and the served release is still
-`7ae246660833f172f72ff7404ca0bc65b9cc8290`. Its 12:07:56Z scan has no Redmi
-row. A separate Android Body consumer read at 12:13Z had fresh Redmi readings
-(55 lux, acceleration magnitude 9.861 m/s² including gravity, battery 0.99
-charging); this does not establish delivery to the served scan or pane. Missing,
-unreadable or stale Redmi10 evidence stays UNKNOWN; the ~21-second phone/host
-sample-to-receipt difference remains unattributed. Note3 is stale, so no
-cross-body interval is currently available, and acceleration is not evidence of
-human movement.
-A camera fault reaches the health pane's `SYSTEM ZERO` line as a named cause.
-The reading rules, commands and limits are in [operating the plant](operating.md)
-and [how it works](how-it-works.md).
+as `sense.space.light` and `sense.space.host-radio`; a checkout scan can also
+read `sense.body.redmi10`.
 
-The latest Discover dashboard scan (`2026-10-15T12:18:05Z`, served pin
-`7ae246660833f172f72ff7404ca0bc65b9cc8290`) still reports Note3 light as
-UNKNOWN and collect-only; its last receipt was `2026-10-14T06:13:52Z`, with no
-current sample. Its summary also reports changes in ledger evidence-binding,
-ghost homes and gate latency; it does not establish Redmi data or pane
-visibility.
+The Redmi reader is in source commit `40aa387`, but activation reverted after
+the helper failed to observe the selected source root; the cause remains
+unknown. The latest scan (`2026-10-15T12:48:09Z`, served pin
+`7ae246660833f172f72ff7404ca0bc65b9cc8290`) has no Redmi row and reports
+Note3 light UNKNOWN/collect-only, last received at `2026-10-14T06:13:52Z`.
+Android Body's comparison of 12:38Z and 12:44Z samples shows light changing
+from 1 to 73 lux and acceleration spread from 0.455 to 3.068 m/s²; this is a
+device-level change, not evidence of human movement or delivery to the core
+scan or pane. Pane visibility remains unverified.
+A camera fault reaches the health pane's `SYSTEM ZERO` line as a named cause.
+Reading rules, commands and limits are in [operating the plant](operating.md)
+and [how it works](how-it-works.md).
 
 Two further readings cover this host's own network path instead of its space:
 its wired Ethernet link state as `sense.net.ethernet` and its tailnet peer
