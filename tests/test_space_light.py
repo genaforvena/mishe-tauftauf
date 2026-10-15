@@ -963,6 +963,73 @@ def test_pane_keeps_a_seconds_wide_gap_a_gap(tmp_path: Path, current_endpoint, p
         assert "light-stream-frozen" not in rendered
 
 
+def _live_boundary(tmp_path: Path, event: dict | None) -> Path:
+    """A site boundary whose light sample is fresh at render time, with an
+    optional publisher transition, so the pane's event branch re-derives."""
+    now = time.time()
+    data = boundary() if event is None else event_data()
+    data["generated_at_utc"] = stamp(now)
+    node = data["nodes"][0]
+    node["last_poll_utc"] = stamp(now)
+    node["light"].update(phone_sample_epoch_s=now - 20, consumer_receipt_epoch_s=now - 2)
+    (tmp_path / "body").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "body" / "space.json").write_text(json.dumps(data), encoding="utf-8")
+    return tmp_path
+
+
+def test_pane_distinguishes_a_refused_transition_from_an_absent_one(
+        tmp_path: Path, current_endpoint) -> None:
+    """Both cases leave event_id absent, so the pane must name the refusal:
+    a refused transition is not the same reading as a producer publishing
+    none."""
+    refused = discover(_transition_site(tmp_path / "refused"))
+    absent_home = _live_boundary(tmp_path / "absent", None)
+    _write_scan(absent_home, [])
+    assert ("historical transition not retained: "
+            "invalid-or-expired-historical-transition") in refused
+    assert "historical transition not retained" not in discover(absent_home)
+
+
+def _transition_site(tmp_path: Path) -> Path:
+    now = time.time()
+    data = event_data()
+    data["generated_at_utc"] = stamp(now)
+    node = data["nodes"][0]
+    node["last_poll_utc"] = stamp(now)
+    node["light"].update(phone_sample_epoch_s=now - 1, consumer_receipt_epoch_s=now)
+    transition = node["last_light_transition"]
+    transition["from"].update(phone_sample_epoch_s=now - 2,
+                              consumer_receipt_epoch_s=now - 1)
+    transition["to"].update(phone_sample_epoch_s=now - 1, consumer_receipt_epoch_s=now)
+    # A time-independent refusal: the declared bucket no longer matches the
+    # endpoints' own lux, so the rejection does not depend on the render now.
+    transition["bucket_from"] = 5
+    (tmp_path / "body").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "body" / "space.json").write_text(json.dumps(data), encoding="utf-8")
+    _write_scan(tmp_path, [])
+    return tmp_path
+
+
+@pytest.mark.parametrize("pane", [discover, senses])
+def test_pane_names_the_refusal_not_a_silent_drop(tmp_path, current_endpoint, pane):
+    rendered = pane(_transition_site(tmp_path / "site"))
+    assert ("historical transition not retained: "
+            "invalid-or-expired-historical-transition") in rendered
+
+
+@pytest.mark.parametrize("pane", [discover, senses])
+def test_pane_names_an_absent_transition_without_inventing_a_refusal(
+        tmp_path, current_endpoint, pane):
+    home = _live_boundary(tmp_path / "site", None)
+    _write_scan(home, [])
+    rendered = pane(home)
+    assert "event_reason=" not in rendered
+    assert "not retained" not in rendered
+    if pane is senses:
+        # The absence reading still says the token; only the refusal adds the
+        # reason beside it.
+        assert "retained_historical_event=none;" in rendered
+
 def test_fresh_sample_is_not_retained_as_a_null_observation(tmp_path):
     data = boundary()
     now = time.time()

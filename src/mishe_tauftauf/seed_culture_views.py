@@ -138,6 +138,12 @@ def _observation_reading(item: dict[str, object], freshness: str,
                   f"clock={'unverified; ' + bound if bound else 'unverified'}")
         if current.get("event_sample"):
             detail += "; retained history: " + current["event_sample"]
+        elif nonblank(current.get("event_reason")) is not None:
+            # A transition the reader refused and a producer that published
+            # none both leave event_id absent; naming the refusal keeps the
+            # pane from reporting the two as the same reading.
+            detail += ("; historical transition not retained: "
+                       + str(current["event_reason"]))
         return state, f"{state.upper()} {identity}: {detail}"
     if identity.startswith("sense.journal."):
         # Any journal sense carries the same bounds contract: a count over a
@@ -239,11 +245,15 @@ def senses(home: Path) -> str:
         clock_bound = nonblank(space.get("clock_bound"))
         clock_text = (clock_bound
                       if clock_bound is not None else "phone/host clock agreement unverified")
+        event_id = space.get("event_id")
+        event_text = f"retained_historical_event={event_id or 'none'}"
+        if nonblank(space.get("event_reason")) is not None and event_id is None:
+            event_text += f" event_reason={space['event_reason']}"
         lines.append(f"UNKNOWN SPACE: {clock_text}; "
                      f"boundary_state={space['state']} reason={space['reason']} "
                      f"provenance={provenance.get('source', 'unknown')} "
                      f"session={provenance.get('session', 'unknown')} "
-                     f"retained_historical_event={space.get('event_id') or 'none'}; "
+                     f"{event_text}; "
                      "baseline/restart/recovery are not physical transitions")
         lines.append(f"SCAN: {snapshot.get('created', 'unknown')} freshness={freshness} "
                      f"utc_consistency={consistency} producer={producer_label(home, snapshot.get('producer'))}")
