@@ -583,3 +583,188 @@ def test_reconciled_row_for_an_untimestamped_assistant_is_unchanged(tmp_path):
     reconcile_caller_journal(journal_path, executor.boundary,
                              authorized=lambda call: True)
     assert _row_for(journal_path, call_a['id'])['timestamp'] == 0
+
+
+def _multi_call_crashed(tmp_path, monkeypatch, *, interrupt):
+    """Run the real caller path into a multi-call interruption and return the
+    journal plus the untouched reconcile arguments.
+
+    `interrupt('before_row'|'after_row', call_id)` selects the kill point:
+    inside the record callback before the named result row is durable, or once
+    it is durable and before any later row.
+    """
+    import mishe_tauftauf.inference_inspect as inspection
+    from mishe_tauftauf.inference_loop import drive_native
+
+    source = tmp_path / 'evidence'
+    source.write_bytes(b'owned evidence\n')
+    manifest, executor = _prepared_inspection(tmp_path, 'crashed', source)
+    call_a = _inspect_call('first-provider-id', source)
+    call_b = _inspect_call('second-provider-id', source)
+
+    class Session:
+        def turn(self, context):
+            return NativeTurn('done', {'role': 'assistant',
+                                       'content': [call_a, call_b],
+                                       'stopReason': 'toolUse',
+                                       'timestamp': 7}, 'toolUse')
+
+    @contextmanager
+    def open_session():
+        yield Session()
+
+    def interrupting_drive(session, context, **options):
+        record = options['record']
+
+        def interrupted(event):
+            if event['kind'] == 'tool_result':
+                call_id = event['message']['toolCallId']
+                if interrupt[0] == 'before_row' and call_id == interrupt[1]:
+                    raise InterruptedError('process lost before receipt')
+                record(event)
+                if interrupt[0] == 'after_row' and call_id == interrupt[1]:
+                    raise InterruptedError('process lost after receipt')
+                return
+            record(event)
+
+        options['record'] = interrupted
+        return drive_native(session, context, **options)
+
+    monkeypatch.setattr(inspection, 'drive_native', interrupting_drive)
+    with pytest.raises(InterruptedError, match='process lost'):
+        run_exact_inspection(open_session, tmp_path / 'crashed', manifest,
+                             executor, complete=lambda context: False)
+    monkeypatch.undo()
+
+    def authorized(call):
+        return True
+
+    return tmp_path / 'crashed/journal.jsonl', executor, authorized, call_b
+
+
+def test_multi_call_kill_before_result_restores_one_receipt_per_invocation(
+        tmp_path, monkeypatch):
+    """Experiment 4k (H1/H2): under a multi-call turn the write-ahead writer
+    leaves at most one lost receipt per interruption. The caller's `finally`
+    reconcile restores it; a second invocation appends nothing and the store
+    holds nothing left to restore.
+    """
+    journal, executor, authorized, _ = _multi_call_crashed(
+        tmp_path, monkeypatch, interrupt=('before_row', 'second-provider-id'))
+    rows = lambda: [json.loads(line) for line in
+                    journal.read_text().splitlines()]
+    before = len([row for row in rows() if row['kind'] == 'tool_result'])
+    state = read_native_journal(journal)
+    assert state['pending_calls'] == []
+    assert len([row for row in rows() if row['kind'] == 'tool_result']) == before
+
+    # run_exact_inspection's finally already reconciled once: the restored row
+    # is present and the boundary is ready again.
+    assert read_native_journal(journal)['status'] == 'ready'
+    second = reconcile_caller_journal(journal, executor.boundary,
+                                      authorized=authorized)
+    assert second is None
+    assert len([row for row in rows() if row['kind'] == 'tool_result']) == before
+
+
+def test_multi_call_kill_before_first_result_restores_only_that_call(
+        tmp_path, monkeypatch):
+    """Experiment 4k (H1): the other lost-receipt position — the first call's
+    dispatch — restores exactly that call, leaves the sibling pending with no
+    durable outcome, and a second invocation appends nothing.
+    """
+    journal, executor, authorized, call_b = _multi_call_crashed(
+        tmp_path, monkeypatch, interrupt=('before_row', 'first-provider-id'))
+    state = read_native_journal(journal)
+    assert [call['id'] for call in state['pending_calls']] == [call_b['id']]
+    assert _row_for(journal, 'first-provider-id')['timestamp'] == 7
+    # The sibling was never dispatched: no receipt exists to restore, so the
+    # reconciler must not synthesize one.
+    assert executor.boundary.recover(call_b) is None
+    second = reconcile_caller_journal(journal, executor.boundary,
+                                      authorized=authorized)
+    assert second is None
+    assert [call['id'] for call in
+            read_native_journal(journal)['pending_calls']] == [call_b['id']]
+
+
+def test_kill_between_a_result_and_the_next_proposal_restores_nothing(
+        tmp_path, monkeypatch):
+    """Experiment 4k (H2): a kill in the window between a durable result row
+    and the next call's proposal loses no receipt. The reconciler appends
+    nothing on every invocation, the journal stays readable, and the stranded
+    sibling stays visibly pending for the successor.
+    """
+    journal, executor, authorized, call_b = _multi_call_crashed(
+        tmp_path, monkeypatch, interrupt=('after_row', 'first-provider-id'))
+    rows_before = journal.read_bytes()
+    assert reconcile_caller_journal(journal, executor.boundary,
+                                    authorized=authorized) is None
+    assert journal.read_bytes() == rows_before
+    state = read_native_journal(journal)
+    assert state['status'] == 'unknown'
+    assert state['proposed_call'] is None
+    assert [call['id'] for call in state['pending_calls']] == [call_b['id']]
+    assert executor.boundary.recover(call_b) is None
+
+
+def test_receipt_for_a_call_without_a_proposal_row_is_never_restored(
+        tmp_path, monkeypatch):
+    """Experiment 4k (H4, unreachable shape): a completed effect for a call
+    with no proposal row exists only under a writer that dispatches a sibling
+    before recording the earlier call's result — no current writer does. The
+    reconciler's one-row-per-invocation shape bounds that limit to the safe
+    direction: nothing is appended, the journal stays valid, the receipt is
+    left for the successor to see.
+    """
+    import mishe_tauftauf.inference_inspect as inspection
+    from mishe_tauftauf.inference_loop import drive_native
+
+    source = tmp_path / 'evidence'
+    source.write_bytes(b'owned evidence\n')
+    manifest, executor = _prepared_inspection(tmp_path, 'crashed', source)
+    call_a = _inspect_call('first-provider-id', source)
+    call_b = _inspect_call('second-provider-id', source)
+    seeded = _inspect_call('seeded-provider-id', source)
+
+    class Session:
+        def turn(self, context):
+            return NativeTurn('done', {'role': 'assistant',
+                                       'content': [call_a, call_b],
+                                       'stopReason': 'toolUse',
+                                       'timestamp': 7}, 'toolUse')
+
+    @contextmanager
+    def open_session():
+        yield Session()
+
+    def seeding_drive(session, context, **options):
+        record = options['record']
+
+        def interrupted(event):
+            if (event['kind'] == 'tool_result'
+                    and event['message']['toolCallId'] == call_a['id']):
+                record(event)
+                # A writer that dispatches before the next proposal row: no
+                # current writer produces this shape.
+                executor.boundary(seeded)
+                raise InterruptedError('process lost after receipt')
+            record(event)
+
+        options['record'] = interrupted
+        return drive_native(session, context, **options)
+
+    monkeypatch.setattr(inspection, 'drive_native', seeding_drive)
+    with pytest.raises(InterruptedError, match='process lost'):
+        run_exact_inspection(open_session, tmp_path / 'crashed', manifest,
+                             executor, complete=lambda context: False)
+    monkeypatch.undo()
+
+    journal = tmp_path / 'crashed/journal.jsonl'
+    rows_before = journal.read_bytes()
+    assert reconcile_caller_journal(journal, executor.boundary,
+                                    authorized=lambda call: True) is None
+    assert journal.read_bytes() == rows_before
+    # The journal still reads, and the stranded receipt is visible in the store.
+    assert read_native_journal(journal)['status'] == 'unknown'
+    assert executor.boundary.recover(seeded)['status'] == 'completed'

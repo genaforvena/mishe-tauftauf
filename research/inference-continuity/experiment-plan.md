@@ -1684,9 +1684,12 @@ caller path and is now fixed by correlation-by-construction). Recorded limits:
 zero-provider scripted sessions (no live route; the 4i canary remains the only
 provider-backed caller-path measurement), n=1 per arm, one host; the fix is not
 activated in any running caller (no live caller uses this reconciler — 4h's
-live-journal observation stands). The inspect reconciler still restores only the
-proposed call per invocation, so a multi-call turn needs repeated reconciles;
-that one-row-per-invocation shape is unchanged by this fix and stays recorded.
+live-journal observation stands). The inspect reconciler still restores only
+the proposed call per invocation; **Experiment 4k** (wake 50236) measured that
+shape across every multi-call interruption point and corrected this record:
+repeated reconciles are not needed — the write-ahead writer leaves at most one
+lost receipt per interruption, so the one-row-per-invocation shape is a scope
+bound, not an obligation loss. See §Experiment 4k.
 Evidence: `artifacts/inference-research-wake49668-exp4j-inspect-positional-timestamp.md`;
 fixture and per-stage results at
 `scratch/exp4j-inspect-positional-wake49668/{exp4j_fixture.py,results-before-fix.json,results-after-fix.json}`.
@@ -1764,5 +1767,67 @@ stress arm where the reconciler fabricates a row or corrupts the journal.
 
 `opencode-go/step-5-preview-free`; fixture and regression tests use zero
 provider calls.
+
+### Executed (wake 50236, zero provider calls, n=1 per arm, one host)
+
+Chronology: prereg `a11247b` committed **before the fixture existed**; no
+source change was warranted — the reconciler held on every reachable shape, so
+there is no before/after pair (single-stage measurement against the current
+committed source, sha256 `db41c7fb…`).
+
+Measured through the real `prepare_exact_inspection` / `drive_native` /
+inspect-reconcile path (`max_turns=3 max_calls=2`, scripted sessions,
+interruptions raised inside the journal record callback at each durable row
+boundary):
+
+| shape | journal at kill | invocation 1 | invocation 2 | pending sibling store |
+|---|---|---|---|---|
+| kill before `a`'s result | open proposal `a` | restores `a` (ts 7) | None, 0 rows | `b`: never allocated |
+| kill between `a`'s row and `b`'s proposal | no open proposal | None, 0 rows | None, 0 rows | `b`: never allocated |
+| kill before `b`'s result | open proposal `b` | restores `b` (ts 7) | None, 0 rows | none left |
+| kill after `b`'s row | ready boundary | None, 0 rows | None, 0 rows | none left |
+| two-turn, kill before `b` | open proposal `b` | restores `b` (ts 7) | None, 0 rows | none left |
+
+- Every restored row is byte-equal to the uninterrupted writer's row modulo
+  the run-specific outcome identifiers (`operation_id`, `reconciliation_ref`)
+  and the per-run source path.
+- After reconciliation no still-pending call has a durable completed outcome
+  in the store: nothing existed that the reconciler left unrestored.
+- Resumed continuation (fresh journal, `resume_from`) matches the reader
+  state: not-ready shapes stop `unknown` carrying the stranded sibling
+  `b` in `pending_calls` (visible, not lost); ready shapes continue to the
+  scripted terminator (`incomplete`, `calls=2`).
+- **Unreachable stress arm:** with a completed effect seeded for a call with
+  no proposal row (a writer dispatching before the next proposal row — no
+  current writer), the reconciler appends nothing on both invocations, the
+  journal stays readable, and the store still reports `completed`. The
+  one-row-per-invocation shape bounds this limit to the safe direction.
+
+**Regression tests** (`tests/test_inference_inspect.py`, 4 new): one restore
+per interruption with a silent second invocation; kill before the first
+call's result restores only that call with the sibling's store still empty;
+the between-rows kill appends nothing and leaves the sibling visibly pending;
+the seeded unreachable receipt is never restored and the journal stays valid.
+
+**Verification:** `tests/test_inference_inspect.py`,
+`tests/test_inference_loop.py`, `tests/test_inference_effects.py`,
+`tests/test_inference_worker.py`, `tests/test_inference_transport.py`
+(283 passed: 279 prior + 4 new); `tools/check_parsing.py` PASS 928 unchanged.
+Same whole-suite limit as 4j: not claimed.
+
+### Status
+
+**Executed, no source change.** H1 held (at most one lost receipt per
+interruption; the first invocation restores exactly it, appends nothing when
+nothing was lost); H2 held (second invocation always appends nothing; no
+still-pending call holds a completed receipt after reconciliation); H3
+**corrected 4j's recorded limitation** — repeated reconciles are not needed
+on any reachable shape, so the one-row-per-invocation shape is a scope bound
+rather than an obligation loss; H4 held (unreachable reordered-writer shape
+restores nothing, fabricates nothing, keeps the journal valid). Limits:
+zero-provider scripted sessions, n=1 per arm, one host; nothing activated (no
+live caller uses this reconciler). Fixture and results:
+`scratch/exp4k-multicall-reconcile-wake50236/{exp4k_fixture.py,results.json,run-output.txt}`.
+Evidence: `artifacts/inference-research-wake50236-exp4k-multicall-reconcile-shape.md`.
 
 ## Future experiments (not yet planned)
