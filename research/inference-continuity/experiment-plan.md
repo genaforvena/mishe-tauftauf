@@ -2605,6 +2605,39 @@ intermittent 429 window) or the model cannot drive the capability, the arm
 fails closed, records UNKNOWN with its own evidence, and the run defers to
 the next wake with the frozen inputs retained — never a blind retry.
 
+### Executed (wake 53291, same selector, n=2 per arm, one host)
+
+Prereg `6af8c42` preceded every fixture directory; staging parent created
+first; zero-provider smoke passed on the same constants; `mode_init` freeze
+(all markers 0 B, empty-file sha256) before any run; every invocation's
+stdout/stderr preserved to a transcript.
+
+| metric | arm A (uninterrupted) | arm B (kill after outcome) | arm C (control, kill pre-dispatch) |
+|---|---|---|---|
+| supervisor capture | n/a (exit 0) | **137 / signal 9 (SIGKILL), timestamped 22:30:55.073Z**, `written_before_any_reconcile: true` | **137 / signal 9 (SIGKILL), timestamped 22:31:16.673Z** |
+| turns / calls | 2 / 1, `complete` | 1 turn / 1 call, killed post-outcome | killed pre-dispatch |
+| marker | 1 line, 23 B, `eed2543a…4b65` | 1 line, 23 B, same digest | untouched, 0 B |
+| store executions | 1 `completed` | 1 `completed` — no redispatch | none |
+| journal rows | 8 | 4 at kill → 5 after reconcile #1 → 5 after #2 | 4 → 4 → 4 |
+| reconcile | n/a (writer) | #1 `completed`, executions 1; #2 `None` | #1 `None`; #2 `None` |
+| route | available, no 429 hit | — | — |
+
+H1/H2/H3/H5 all replicate the wake-52898 results on this run. H2 recomputed
+deterministically: 20 fields, 5 differing, 15 identical — the same differing
+set as 52898 (`call.id`, `message.content.0.text`, `message.timestamp`,
+`message.toolCallId`, `obligation.path`), no writer-only/restored-only
+fields. Ordering from retained bytes: capture mtime precedes the final
+journal write carrying the restored `tool_result`; the marker's mtime_ns
+equals the stored outcome's `result.mtime_ns`. Limits: n=2 per arm; one host;
+same selector as 52898 (replication, not a new instrument); one fixture
+lineage across both runs; scripted SIGKILL seam only; supervisor capture is
+a parent-written mechanism, not tamper-proof provenance; 4j
+assistant-timestamp correlation UNKNOWN again (`message.timestamp: null`);
+no production caller, activation or adoption claim; author-reported checks
+stay author-reported. Evidence: artifact
+`.mishe-tauftauf/artifacts/inference-research-wake53291-exp4n-killcapture-replication.md`;
+scratch `exp4n-killcapture-replication-wake53291/`.
+
 ## Experiment 4m: the provider 429 window inside the dead-letter gap — effect done, receipt not yet durable (preregistered wake 51409)
 
 ### Why this scenario

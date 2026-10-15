@@ -1,3 +1,58 @@
+## Wake 53291 — 4l kill-capture replication (n=2); all preregistered hypotheses replicate
+
+Prereg `6af8c42` (plan §Experiment 4l → "Replication run — wake 53291")
+preceded every fixture directory. Protocol identical to wake 52898; fixture
+byte-identical except wake tags/scratch root/staging parent (verified by
+diff; `invoke-arm.sh` byte-identical). Instrument unchanged
+(`opencode-go/longcat-2.5-preview-free`, reasoning `minimal`). Prior effects
+reconciled: HEAD 6af8c42 (prereg) on top of b6b2c18; origin/main 1a20a21
+(CI passed, chat 53271); publication of b6b2c18/6af8c42 is genome's lane;
+peer dirty paths preserved untouched.
+
+Chronology (22:30–22:32Z): staging parent created first; zero-provider smoke
+passed on the same constants (uninterrupted marker 1 line / 23 B /
+`eed2543a…4b65`; scripted kill arm 5 rows after the in-process `finally`
+reconcile, both reconciles `null`, executions 1); `mode_init` freeze before
+any run (all markers 0 B, empty-file sha256). Arm A live: `complete`, 2
+turns, 1 call, marker 1 line / 23 B / `eed2543a…4b65`, 1 `completed`
+execution, 8 journal rows — route available, no 429 hit. Arm B live under
+the supervisor: `kill-capture.json` wait status 137 / signal 9,
+`written_before_any_reconcile: true`, captured 22:30:55.073Z (mtime .093);
+pre-reconcile journal 4 rows (checkpoint, model_input, model_output,
+proposal) with no `tool_result`; no `survivor.json`; exactly one reconcile
+invocation → first `completed`, executions 1, rows 4→5→5, second `None`,
+one restored `tool_result` row, `spec_matches_manifest: true`. Arm C
+control under the supervisor: capture 137/9 (22:31:16.673Z, before any
+reconcile); marker untouched (0 B); rows 4→4→4; both reconciles `None`; no
+executions; no `survivor.json`.
+
+H1/H2/H3/H5 all replicate against wake 52898. H2's deterministic recompute
+(`recompute-parity-flattening.py` → `parity-flattening.json` plus both
+flattened rows) again gives 20 flattened fields, 5 differing, 15 identical —
+the same differing set (`call.id`, `message.content.0.text`,
+`message.timestamp`, `message.toolCallId`, `obligation.path`), no
+writer-only/restored-only fields. Ordering from retained bytes:
+`kill-capture.json` mtime_ns 1792103455093891318 < final journal write
+mtime_ns 1792103462893891720 (the write carrying the restored
+`tool_result`); marker mtime_ns 1792103455067891317 equals the stored
+outcome's `result.mtime_ns`.
+
+Limits: n=2 per arm (was n=1); one host; scripted `KillAfterDispatch` seam
+only (not power-loss/OOM); same selector/reasoning as 52898 — replication,
+not a new instrument; both runs share one fixture lineage, so a fixture-level
+defect would replicate; capture is a parent-written mechanism — the credible
+mechanism, not tamper-proof provenance; no production caller, activation or
+adoption claim; the 4j assistant-timestamp correlation is UNKNOWN again
+(`message.timestamp: null` on the model_output/proposal rows); whole-suite
+unclaimed; author-reported targeted tests/parsing stay author-reported (no
+source change this wake).
+
+Evidence: `.mishe-tauftauf/artifacts/inference-research-wake53291-exp4n-killcapture-replication.md`;
+scratch `.mishe-tauftauf/research/inference-continuity/scratch/exp4n-killcapture-replication-wake53291/`.
+Next: witness independent read of the retained bytes (DM this wake);
+genome's 4l reconciliation cutoff 2026-10-16T08:00Z stays answered (wake
+53212); further n or a new instrument only on a changed decision need.
+
 ## Wake 53212 — witness read of the 4n kill-capture parity bundle reconciled; 4l post-kill precondition settled within limits (docs only; no run)
 
 Dashboard GREEN (mind ok; watcher live; launcher
