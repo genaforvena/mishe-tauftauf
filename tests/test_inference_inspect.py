@@ -10,8 +10,11 @@ from mishe_tauftauf.inference_effects import EffectBoundary
 from mishe_tauftauf.inference_inspect import (
     prepare_exact_inspection, reconcile_caller_journal, run_exact_inspection,
 )
-from mishe_tauftauf.inference_loop import read_native_journal
+from mishe_tauftauf.inference_loop import (
+    NativeJournal, read_native_journal, recover_native,
+)
 from mishe_tauftauf.inference_transport import NativeTurn
+from mishe_tauftauf.inference_worker import WorkerError
 
 
 def prepare(tmp_path, **changes):
@@ -1268,3 +1271,168 @@ def test_kill_before_the_mutating_dispatch_leaves_no_effect(tmp_path):
         assert reconcile_caller_journal(journal, executor.boundary,
                                         authorized=lambda call: True) is None
         assert journal.read_bytes() == rows_before
+
+
+# Experiment 4m (wake 51409): the provider 429 window at the turn seam, pinned
+# zero-provider. The scripted session raises the wake-37876-shaped upstream
+# 429 WorkerError between turns on the unchanged production seams — loop
+# journal/reconcile semantics, not live-route timing.
+
+_429_DIAGNOSTIC = ('native provider fetch budget exhausted after 2 of 2 fetches '
+                   'permitted for experiment-2-read-only-ci-observation; '
+                   'upstream HTTP 429 Too Many Requests (transient)')
+_429_LEDGER = {'allowance': 2, 'workClass': 'experiment-2-read-only-ci-observation',
+               'dispatches': 2,
+               'upstream_failure': {'kind': 'status', 'status': 429,
+                                    'statusText': 'Too Many Requests'}}
+
+
+def _upstream_429():
+    """The live route's observed intermittent failure, raised at the seam."""
+    failure = WorkerError(_429_DIAGNOSTIC)
+    failure.fetch_ledger = dict(_429_LEDGER)
+    return failure
+
+
+def _provider_429_arm(tmp_path, name, *, fail_at):
+    """One 429 arm on the unchanged seams: fail_at=0 fails before any dispatch
+    (D1); fail_at=1 fails after the durable outcome append and the tool_result
+    emission (D2). Returns the arm directory, marker path and executor.
+    """
+    marker, manifest, executor = _prepare_marker(tmp_path, name)
+    directory = tmp_path / name
+    served = iter(() if fail_at == 0 else _marker_turns()[:1])
+
+    class Session:
+        def turn(self, context):
+            try:
+                return next(served)
+            except StopIteration:
+                raise _upstream_429() from None
+
+    @contextmanager
+    def open_session():
+        yield Session()
+
+    with pytest.raises(WorkerError, match='429 Too Many Requests'):
+        run_exact_inspection(open_session, directory, manifest, executor,
+                             complete=lambda context: True)
+    return directory, marker, executor
+
+
+def test_provider_429_before_dispatch_leaves_no_effect(tmp_path):
+    """Experiment 4m (H4): the upstream 429 raised at turn 0 fails closed — no
+    proposal, outcome, execution or marker byte, the failure named on the
+    journal beside its fetch ledger, and every fresh reconcile silent.
+    """
+    directory, marker, executor = _provider_429_arm(
+        tmp_path, 'before-dispatch', fail_at=0)
+    journal = directory / 'journal.jsonl'
+    rows = [json.loads(line) for line in journal.read_text().splitlines()]
+    assert [row['kind'] for row in rows] == ['checkpoint', 'model_input',
+                                             'model_failure']
+    assert rows[-1]['turn'] == 0
+    assert rows[-1]['error'] == {'type': 'WorkerError',
+                                 'message': _429_DIAGNOSTIC}
+    assert rows[-1]['fetch_ledger'] == _429_LEDGER
+    state = read_native_journal(journal)
+    assert state['status'] == 'unknown'
+    assert state['turns'] == state['calls'] == 0
+    assert state['model_failure'] == {'type': 'WorkerError',
+                                      'message': _429_DIAGNOSTIC}
+    assert state['fetch_ledger'] == [_429_LEDGER]
+    assert marker.read_bytes() == b''
+    outcomes = directory / 'effects' / 'outcomes.jsonl'
+    assert not outcomes.exists() or outcomes.read_text() == ''
+    preserved = journal.read_bytes()
+    for _ in range(2):
+        assert reconcile_caller_journal(journal, executor.boundary,
+                                        authorized=lambda call: True) is None
+        assert journal.read_bytes() == preserved
+
+
+def test_provider_429_after_the_durable_outcome_keeps_exactly_once(tmp_path):
+    """Experiment 4m (H1/H2): the 429 raised at turn 1, after the durable
+    outcome append and receipt emission, leaves exactly one marker line and one
+    completed execution; two fresh reconciles append nothing and execute
+    nothing; the failure stays a named unknown with its diagnostic and fetch
+    ledger on the model_failure row; the receipt already written is the row the
+    uninterrupted writer would have written.
+    """
+    directory, marker, executor = _provider_429_arm(
+        tmp_path, 'after-outcome', fail_at=1)
+    journal = directory / 'journal.jsonl'
+    rows = [json.loads(line) for line in journal.read_text().splitlines()]
+    assert [row['kind'] for row in rows] == [
+        'checkpoint', 'model_input', 'model_output', 'proposal', 'tool_result',
+        'model_input', 'model_failure']
+    assert rows[-1]['turn'] == 1
+    assert rows[-1]['error'] == {'type': 'WorkerError',
+                                 'message': _429_DIAGNOSTIC}
+    assert rows[-1]['fetch_ledger'] == _429_LEDGER
+    state = read_native_journal(journal)
+    assert state['status'] == 'unknown'
+    assert state['turns'] == state['calls'] == 1
+    assert state['model_failure'] == {'type': 'WorkerError',
+                                      'message': _429_DIAGNOSTIC}
+    line = (_MARKER_LINE + '\n').encode('utf-8')
+    assert marker.read_bytes() == line
+    outcomes = [json.loads(row) for row in
+                (directory / 'effects/outcomes.jsonl').read_text().splitlines()]
+    assert [row['status'] for row in outcomes] == ['completed']
+    assert [row['executions'] for row in outcomes] == [1]
+    preserved = journal.read_bytes()
+    for _ in range(2):
+        assert reconcile_caller_journal(journal, executor.boundary,
+                                        authorized=lambda call: True) is None
+        assert journal.read_bytes() == preserved
+        assert marker.read_bytes() == line
+    reference_marker, reference_manifest, reference_executor = _prepare_marker(
+        tmp_path, 'reference')
+
+    @contextmanager
+    def open_reference():
+        yield _Scripted(_marker_turns())
+
+    run_exact_inspection(open_reference, tmp_path / 'reference',
+                         reference_manifest, reference_executor,
+                         complete=lambda context: True)
+    receipt = _row_for(journal, 'marker-provider-id')
+    reference = _row_for(tmp_path / 'reference/journal.jsonl',
+                         'marker-provider-id')
+    assert _marker_comparable(receipt) == _marker_comparable(reference)
+    assert reference_marker.read_bytes() == line
+
+
+def test_recovery_after_a_provider_429_constructs_no_session(tmp_path):
+    """Experiment 4m (H3): a fresh-process recovery of a 429-failed journal
+    stops unknown, constructs no provider session and re-dispatches nothing —
+    no blind retry, nothing re-executed, the marker and store unchanged.
+    """
+    directory, marker, executor = _provider_429_arm(
+        tmp_path, 'recovery', fail_at=1)
+    executions_before = [json.loads(row) for row in
+                         (directory / 'effects/outcomes.jsonl')
+                         .read_text().splitlines()]
+    with NativeJournal(tmp_path / 'recovery.jsonl') as journal:
+        result = recover_native(
+            directory / 'journal.jsonl',
+            open_session=lambda **kw: pytest.fail('429 journal replayed'),
+            dispatch=lambda call: pytest.fail('unexpected redispatch'),
+            record=journal, phase=lambda call: None,
+            cancelled=lambda: False, authorized=lambda call: True,
+            complete=lambda context: pytest.fail('synthesized completion'))
+    assert result['status'] == 'unknown'
+    rows = [json.loads(line) for line in
+            (tmp_path / 'recovery.jsonl').read_text().splitlines()]
+    assert [row['kind'] for row in rows] == ['checkpoint', 'stop']
+    assert rows[-1]['status'] == 'unknown'
+    assert marker.read_bytes() == (_MARKER_LINE + '\n').encode('utf-8')
+    assert [json.loads(row) for row in
+            (directory / 'effects/outcomes.jsonl').read_text().splitlines()
+            ] == executions_before
+    durable = executor.boundary.recover(
+        {'type': 'toolCall', 'id': 'marker-provider-id',
+         'name': 'append_marker', 'arguments': {'line': _MARKER_LINE}})
+    assert durable['status'] == 'completed'
+    assert durable['executions'] == 1
