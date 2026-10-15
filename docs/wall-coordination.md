@@ -154,7 +154,7 @@ more severe class; `artifacts/` is a proxy for a file made for this one
 outcome, and a bound artifact is retained evidence, not a scaffold to clean up
 once the outcome is recorded. Correct an already-bound artifact by writing a
 new artifact and citing it in a new outcome; the earlier outcome cannot be
-rebound, so an in-place edit drops it from the count permanently. To undo, cancel or correct a recorded outcome, write a new artifact and record a new outcome — an outcome cannot be removed, rebound or edited in place.
+rebound, so an in-place edit drops it from the count permanently.
 The four requirements are independent — under `artifacts/` (A), unedited (B), present
 (C), cited once (D): a file can be unedited yet sit outside `artifacts/`, be
 missing, or be cited by a second outcome, and is ineligible for that reason
