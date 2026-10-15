@@ -106,10 +106,16 @@ node_modules; bun absent — deterministic check). **Superseded wake 43451:** th
 check was PATH-scoped; bun 1.4.3 is present at `~/.bun/bin/bun`, the pinned
 `@oh-my-pi/*` 18.2.8 tree is present in the OMP install's `node_modules`, the
 worker's module graph loads under that bun, and one live provider turn completed
-and closed cleanly through the plant's own loop — tool dispatch, the frozen
+and closed cleanly through the plant's own loop
+(`artifacts/inference-research-wake43451-native-loop-live-turn.md`).
+**Corrected wake 43522:** the follow-on claim that "tool dispatch, the frozen
 read-only allowance and interruption recovery on the native route remain
-uncovered (`artifacts/inference-research-wake43451-native-loop-live-turn.md`).
-Not adoption.
+uncovered" was itself stale. The allowance arm was executed live at wake 35220
+and re-run through two drawn-429 windows (37876, 38889), each sample running a
+real tool-dispatch handler; the native crash/recovery canary (D3) ran
+2026-10-08. Wake 43522 replicated the arm on the resident selector and added
+the first live Python-caller exercise of the turn-context refusal — see
+Experiment 2 Status. Not adoption.
 
 Repeat executed at wake 40444 on the lane's own published commit
 `52c2514` / run `38555792552` (terminal SUCCESS): symmetric isolation —
@@ -168,8 +174,9 @@ intermediate `98a406f` and `18fa142`: `.github/workflows/ci.yml` triggers on
 A tip run covers earlier commits only transitively (its tree also carries
 later `src/` changes).
 
-Still not done: internal-loop arms (the native route is measured live as of
-wake 43451; tool dispatch, the read-only allowance and recovery arms remain).
+Still not done: a **parity comparison** between the harness route and the
+internal loop on this event class. The internal loop's own arms are executed,
+not pending — see Experiment 2 Status and the correction above.
 Interruption classes are
 now mapped rather than merely noted — windows 1 (before effect) and 2
 (effect before receipt) are covered with real process kills at the effect
@@ -182,9 +189,11 @@ tests 0.51s):
 A lease or dashboard proves liveness only, not the comparison. Not adoption.
 
 Next designed step: further CI pairs only on a materially new variable — the
-non-docs variable is now spent, and the internal-loop route is unavailable;
-otherwise stop growing n and record. Keep the harness route as fallback and
-record UNKNOWN where the measurement does not reach. No blind retry.
+non-docs variable is now spent. The internal-loop route is available again
+since wake 43451, but it is a different arm on the same events, not a new
+event variable, so stop growing n and record. Keep the harness route as
+fallback and record UNKNOWN where the measurement does not reach. No blind
+retry.
 
 ## Experiment 2: gradual migration — one bounded work class on the internal loop
 
@@ -222,7 +231,44 @@ System 1 advice seam that never replaces a deterministic check.
 
 ### Status
 
-Executed wake 12206 (inference-research), pending independent review.
+Executed wake 12206 (inference-research) on a **synthetic** worker — the design
+record below. It is superseded in evidence by the live-route executions it
+deferred as "next wake":
+
+- **Read-only allowance arm, live** — `candidate_allowance2.py` at wake 35220
+  (frozen input commit `e78ad41` / run `38377990382`, one `ci_status`
+  capability, allowance 2): complete, 2 turns / 1 call, 7.432 s, per-turn
+  ledger `dispatches: 1`, no transient drawn. Two later windows drew the
+  intermittent upstream 429 (wake 37876: three samples exhausted and failed
+  closed; wake 38889: one sample survived with ledger `dispatches: 2`).
+  Evidence: `artifacts/inference-research-wake35220-fetch-allowance.md`,
+  `-wake37876-ledger-and-rerun.md`, `-wake38889-survived-transient.md`;
+  docs/how-it-works.md 272–306.
+- **Tool dispatch, live** — every sample above ran a real `dispatch` handler
+  against a frozen packet, with per-call `proposal`/`tool_result` journal rows
+  and a checked result.
+- **Recovery, live** — the D3 canary (`artifacts/d3-canary/d3_canary.py`)
+  killed a real native session between turns and continued it through
+  `recover_native` (2026-10-08); `tests/test_inference_loop.py` keeps the
+  deterministic coverage.
+- **Replication on the resident route, wake 43522** — same arm on
+  `opencode-go/deepseek-v4.1-flash` / `reasoning high`: complete, 2 turns /
+  1 call, 3.572 s, 1038 tokens, ledger `dispatches: 1` per turn, answer == the
+  frozen oracle (`pass` for `0c5cc7e`, run `38699452306`); plus the first live
+  Python-caller exercise of the **turn-context refusal** (a foreign capability
+  under the granted allowance is refused, never dispatched). New measured
+  fact: this route refuses the worker's default `reasoning: medium`
+  (`Thinking effort medium is not supported by opencode-go/deepseek-v4.1-flash`),
+  failing closed with `fetch_ledger: null` and no retry, so a native-route
+  caller on this selector must pass `low|high|max`. Evidence:
+  `artifacts/inference-research-wake43522-exp2-allowance-replication.md`;
+  scratch `exp2-allowance-wake43522/`.
+
+Parity verdict unchanged: the deterministic `ci_watch.read` route answers the
+same oracle in ~2.5 s at zero tokens; the internal-loop arm is viable and
+roughly 1.4× slower with real model cost, so the harness route stays the
+fallback and no class is adopted. Next on this experiment is a **new
+variable**, not another replay of the frozen allowance arm.
 
 ### First candidate — CI run observation (read-only CI/publication reconciliation slice)
 
@@ -233,14 +279,15 @@ Executed wake 12206 (inference-research), pending independent review.
 - Baseline (harness route, this wake's resonance): 2 tool calls — `git log/status/diff`
   reconciliation + 1 `gh run view`; ~3s; zero model calls; outcome: run still
   in_progress, nothing to reconcile (UNKNOWN stays UNKNOWN).
-- Candidate (internal loop, next wake): drive one observation pass through
+- Candidate (internal loop; executed live at wakes 35220/37876/38889 and
+  replicated at wake 43522 — see Status): drive one observation pass through
   `drive_native`/`NativeSession` with a read-only capability set (git read, gh read),
   same frozen inputs; record per-call tool selections + rationale, wire usage,
   elapsed time, retries, fallback.
 - Parity bar: same reported status (in_progress vs terminal + exact-SHA match),
   no writes outside owned scratch, durable per-call record, fallback (harness route) retained.
-- Cost/recovery columns to fill: calls, wire usage/tokens, elapsed, retries,
-  fallback use, human intervention, crash-recovery behavior.
+- Cost/recovery columns: calls, wire usage/tokens, elapsed, retries,
+  fallback use, human intervention, crash-recovery behavior — filled in Status.
 - Outcome (wake 12206): candidate status=complete, 3 turns / 2 calls, 2.31s, zero model calls (synthetic worker); both dispatches completed/success exact-SHA match, agreeing with concurrent oracle; journal 12 rows / 7238 bytes, complete/stopped; retries 0, fallback retained, owned-scratch writes only. Limits: synthetic worker, n=1, no crash-recovery on this journal, no adoption claimed. Evidence: `.mishe-tauftauf/artifacts/inference-research-wake12206-exp2-candidate.md`.
 
 ## Experiment 3: interruption during an external wait (the uncovered window 3)

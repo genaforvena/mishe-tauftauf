@@ -247,6 +247,17 @@ The caller still supplies the provider worker, current authority, durable
 effects and recovery. This transport does not activate a resident or establish
 credential/account parity.
 
+The open request forwards an explicit `reasoning` effort to the provider
+(`NativeSession(..., reasoning=...)`, default `medium`). A route may refuse the
+requested effort before any turn: measured 2026-10-15 on
+`opencode-go/deepseek-v4.1-flash`, the default `medium` is rejected
+(`Thinking effort medium is not supported by opencode-go/deepseek-v4.1-flash.
+Supported efforts: low, high, max`) and the session fails closed — a
+`model_failure` row with a null fetch ledger, no completion and no retry. A
+native-route caller on such a route must name a supported effort explicitly.
+Evidence: wake 43522,
+`artifacts/inference-research-wake43522-exp2-allowance-replication.md`.
+
 The packaged native provider session permits at most one underlying `fetch`
 dispatch per turn by default, including lower-level HTTP retries and encoding
 fallback. The bound is the named constant `DEFAULT_TURN_FETCH_ALLOWANCE` in
