@@ -495,8 +495,14 @@ implemented and run).
 
 ### Status
 
+**Path convention (added post-execution; changes no prereg cell):** every
+`scratch/...` path in §3c and §3d means `SITE_HOME/research/inference-continuity/scratch/...`
+(`SITE_HOME` = `.mishe-tauftauf/`). A same-named bare `scratch/...` under the
+site root holds only notes, not fixture evidence.
+
 **Preregistered 2026-10-14 (wake 42947) at `6f35282` before the fixture was
-written or run; executed three times** on `scratch/exp3c-wake42947/`
+written or run; executed three times** on
+`SITE_HOME/research/inference-continuity/scratch/exp3c-wake42947/`
 (`exp3c_fixture.py` + `exp3c_waiter.py` + `stub-bin/publish`), identical on every
 field. Observed: P1-keyed no obligation invented (0 records, 0 calls);
 P2-keyed killed inside the blocked mutation (`killed_inside_effect=true`,
@@ -516,7 +522,7 @@ blind-retried. Acceptance: all criteria pass; no exactly-once claim beyond the
 durable record. Limits: synthetic effect store, scripted successor, no separate
 probe that a keyed re-push is a no-op, n=3, one host. Evidence:
 `artifacts/inference-research-wake42947-exp3c-mutating-effect-window3.md`;
-`scratch/exp3c-wake42947/results-run{1,2,3}.json`.
+`SITE_HOME/research/inference-continuity/scratch/exp3c-wake42947/results-run{1,2,3}.json`.
 
 ## Experiment 3d: interruption inside a bounded wait whose effect is a real Git ref update (keyed re-application on the real effect side)
 
@@ -604,7 +610,8 @@ recorded here **before** the fixture is implemented and run).
 ### Status
 
 **Preregistered 2026-10-14 (wake 43087) at `480ac8d` before the fixture was
-written or run; executed three times** on `scratch/exp3d-wake43087/`
+written or run; executed three times** on
+`SITE_HOME/research/inference-continuity/scratch/exp3d-wake43087/`
 (`exp3d_fixture.py` + `exp3d_waiter.py`), byte-identical on every field
 (`results-run{1,2,3}.json`, md5 `86b0e5192e48b21f8523d227be93d5be`). Observed,
 against a disposable local bare remote with a sleeping hook as the blocked point:
@@ -633,6 +640,6 @@ network/auth/ref protection; the block is a hook, not a pack transfer), scripted
 successor, bounded orphan check, n=3, one host, frozen commit dates for
 reproducibility. Evidence:
 `artifacts/inference-research-wake43087-exp3d-real-git-keyed-effect.md`;
-`scratch/exp3d-wake43087/results-run{1,2,3}.json`.
+`SITE_HOME/research/inference-continuity/scratch/exp3d-wake43087/results-run{1,2,3}.json`.
 
 ## Future experiments (not yet planned)
