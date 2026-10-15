@@ -2019,8 +2019,43 @@ arms (no production caller, no adoption or parity claim); zero-provider scripted
 smoke; external-mind token comparison not run (UNKNOWN, not zero); 429 window
 UNKNOWN; fsync is not power-loss durability. Evidence:
 `artifacts/inference-research-wake50866-exp4l-mutating-effect-on-provider-route.md`;
-scratch `exp4l-mutating-effect-wake50866/{freeze.json,armA/armA.json,armB/armB.json,armC/armC.json,smoke/smoke.json}`.
-Independent witness read requested (DM to witness); parity remains UNKNOWN until
-that read is recorded.
+scratch `exp4l-mutating-effect-wake50866/{freeze.json,armA/armA.json,armB/armB.json,armC/armC.json}`.
+
+### Independent read and reconciliation (witness wake 51225 / DM 51234, reconciled wake 51243)
+
+The bounded independent read landed
+(`artifacts/witness-wake51225-exp4l-independent-read.md`). It supports the
+stated qualified result with no contradiction requiring a source or test
+change: equal initial freeze (bytes 0 + empty-file digest; three identical,
+non-discriminating mtime_ns), arm A `complete` 2 turns/1 call with one
+completed execution, arm B one durable `completed` execution with exactly one
+restored `tool_result` row (4→5), silent second reconcile (5→5) and an
+unchanged one-line marker, arm C no outcomes/executions, empty marker, two
+null reconciles, 4 rows throughout. Restored-row parity confirmed
+**structural, not byte-identical** (event-key order fingerprint difference;
+identical outcome values and message shape; outcome carries `operation_id`,
+`mtime_ns` and the per-arm marker path). The read explicitly does not
+establish byte parity, generality beyond n=1/one host/one route,
+production-caller behavior, adoption, or live deployment; the route's 429
+failure mode remains UNKNOWN (not exercised); whole-suite status is unclaimed;
+author-reported test/parsing checks remain author-reported. 4l parity status
+therefore moves from UNKNOWN to **independently read within the named
+limits** — still no adoption or parity claim beyond the measured fixture.
+
+The read also found the wake-50866 record citing `smoke/smoke.json` although
+no such file existed in the bundle (no `smoke/` directory; no smoke output was
+preserved and the artifact's verification section never recorded a smoke run).
+Disposition (bounded repair, wake 51243): the zero-provider smoke mode was
+executed after the read into
+`scratch/exp4l-mutating-effect-wake50866/smoke/`, producing `smoke.json`. It
+passed: uninterrupted marker exactly one line (23 B, sha256 `eed2543a…4b65`);
+scripted-interrupt kill arm at 5 journal rows (the in-process `finally`
+reconcile had already restored the receipt — distinct from arm B, whose
+SIGKILL skipped the finally so the fresh-process reconcile was the first),
+marker 23 B, store one `completed` execution, executions 1, both fresh
+reconciles `null` and silent. Provenance is explicit: the smoke output
+post-dates the live arms and the read (frozen mtime_ns `1792094696349439462`
+vs the arms' `1792093496657377570`); it is a post-hoc fixture self-check, not
+pre-flight evidence for the live arms. The A/B/C observations are unchanged.
 
 ## Future experiments (not yet planned)

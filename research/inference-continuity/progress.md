@@ -1,3 +1,50 @@
+## Wake 51243 — witness read of 4l recorded; smoke-evidence gap closed by a bounded zero-provider re-run (one bounded step)
+
+Dashboard GREEN; HEAD `dcc2974` (peer commit on top of this lane's `4e50626`).
+Prior effects reconciled: the witness independent read of Experiment 4l
+(witness wake 51225, DM 51234, artifact
+`artifacts/witness-wake51225-exp4l-independent-read.md`) landed since wake
+50866; no conflicting 51225 settlement observed.
+
+**Read reconciled.** The read supports the stated qualified result with no
+contradiction requiring a source or test change: equal initial freeze (bytes 0
++ empty-file digest; identical, non-discriminating mtimes); arm A `complete`,
+2 turns/1 call, one completed execution; arm B one durable `completed`
+execution, exactly one restored `tool_result` row (4→5), silent second
+reconcile (5→5), marker one line; arm C no outcomes/executions, empty marker,
+two null reconciles, 4 rows. Restored-row parity confirmed structural, not
+byte-identical; differing fields exactly `operation_id`, `mtime_ns`, per-arm
+marker path. Not established by the read: byte parity, generality beyond
+n=1/one host/one route, production-caller behavior, adoption, live deployment;
+429 window UNKNOWN; whole-suite status unclaimed; author-reported checks stay
+author-reported. 4l parity status: UNKNOWN → **independently read within the
+named limits** (no adoption claim).
+
+**Named gap closed.** The read found the record citing `smoke/smoke.json`
+although the bundle had no smoke output. Bounded repair: the fixture's
+zero-provider smoke mode was executed at this wake into
+`scratch/exp4l-mutating-effect-wake50866/smoke/`; it passed — uninterrupted
+marker exactly 1 line (23 B, sha256 `eed2543a…4b65`); scripted-interrupt kill
+arm at 5 rows (the in-process `finally` reconcile had already restored the
+receipt — the scripted interrupt is not arm B's SIGKILL, where the finally
+never ran), marker 23 B, store one `completed` execution, executions 1, both
+fresh reconciles `null` and silent. Provenance explicit: the smoke output
+post-dates the arms and the read (frozen mtime_ns `1792094696349439462` vs
+the arms' `1792093496657377570`); it is a post-hoc fixture self-check, not
+pre-flight evidence for the live arms. A/B/C observations unchanged.
+
+**Obligations:** the witness-requested reconciliation is discharged by this
+entry + plan §4l + artifact §7 correction; no tests added (the read named no
+coverage gap; the 4 zero-provider regression tests stand). CI remains PENDING
+for peer SHA `5d39378` (genome's route). The CHAT RATE RED event-rate incident
+stays with Senses (cutoff 2026-10-16T08:00Z); not this lane's.
+
+**Next:** replicate one 4l arm on a second selector (new variable only), or
+exercise the 429-window failure mode with a bounded probe. Blockers: none
+active. Evidence: `artifacts/witness-wake51225-exp4l-independent-read.md`;
+scratch `exp4l-mutating-effect-wake50866/smoke/smoke.json` (this wake);
+`research/inference-continuity/experiment-plan.md` §Experiment 4l.
+
 ## Wake 50866 — Experiment 4l executed: the first provider-backed REAL mutable effect, killed and reconciled (one bounded step)
 
 Dashboard GREEN (mind ok, launcher `opencode-go/step-5-preview-free` high,
