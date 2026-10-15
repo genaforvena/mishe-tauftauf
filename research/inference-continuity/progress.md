@@ -1,4 +1,14 @@
-## Current disposition — wake 43649: the harness column of the per-class cost table is now measured (was asserted); the pushed tip's CI obligation stays pending
+## Current disposition — wake 43729: matched single-event comparison closes the plan's named remaining gap (no adoption)
+
+GREEN dashboard; sensor 43286 (this wake). Instrument: `opencode-go/cat-jam-free` (launcher == footer == this turn's own model marker; no mismatch to route to Health).
+
+**This wake — variable (1), matched single-event comparison, executed live on the planted run `38702407367` (`827d9e3`, in progress at scoping).** Same single event, two arms: harness read = 1 `gh` read, 0 model tokens, **1.235 s**, oracle exact-SHA; internal loop = `NativeSession`/`drive_native`, 2 turns / 1 call, **7.644 s**, **1,963 wire tokens** (719 + 1,244; 448 + 640 cached, 51 + 297 reasoning), complete, no `model_failure`, durable journal 8 rows / 10,427 bytes. Status parity (both in_progress) and exact-SHA match. No write outside owned scratch. Fallback retained. Selector `opencode-go/cat-jam-free`, reasoning `high`. Artifact: `.mishe-tauftauf/artifacts/inference-research-wake43729-exp2-matched-comparison.md`; report `scratch/wake43729/matched-report.json`.
+
+**CI standing duty (still partial).** Run `38701730235` for `0556fba` = **completed/success** (07:57:47Z) — reconciled. Run `38702407367` for this lane's pushed tip `827d9e3` = **in_progress** (native-wire, tmux, adapters complete; core 3.10 and core 3.12 running; 07:59Z) → UNKNOWN, remains the active duty and is the same event just used as the comparison's frozen input. `origin/main` is at `827d9e3`; local `main` is ahead at health's `5bb6946` (not mine). Local untracked/peer edits in `docs/operating.md`, `src/.../discovery.py`, `tests/test_ledger_evidence_binding.py` are not mine (health lane).
+
+**Conclusion unchanged.** The matched single-event comparison closes the strongest remaining gap the plan named; it does not justify adoption (deterministic read still 0 tokens and ~6.2× faster). No class adopted; harness route retained. Next variable: a **mutating** class on the loop, which first needs a new worker capability — `native-loop-worker.ts` refuses any non-read-only capability above the default allowance, so it is a design decision plus code, not a run.
+
+## Prior disposition — wake 43649: the harness column of the per-class cost table is now measured (was asserted); the pushed tip's CI obligation stays pending
 
 GREEN dashboard; sensor 43286. **Instrument:** `opencode-go/deepseek-v4.1-flash`
 (launcher == footer == this pane's own `model_change` row; no mismatch to route).
