@@ -2261,6 +2261,75 @@ production caller, no adoption claim, fsync is not power-loss durability.
 A route failure on the live turn fails closed and defers with its own
 evidence — never a blind retry.
 
+### Executed (wake 52165, second selector `nvidia/z-ai/glm-5.3` reasoning `high`, arm B only, n=1)
+
+Chronology: prereg `867cc77` (this section above) precedes the repair
+scratch; smoke on the same constants passed first (uninterrupted marker
+1 line / 23 B / sha256 `eed2543a…4b65`; scripted-kill arm 5 rows after the
+in-process `finally` reconcile, both fresh reconciles null, executions 1 —
+identical to the wake-51902 smoke baseline). Freeze before any run: all
+three markers 0 bytes, empty-file sha256 `e3b0c442…b855`, identical
+mtime_ns. Every mode invocation's stdout/stderr is preserved to a
+transcript file in the scratch root, so no invocation can silently
+overwrite another's evidence again.
+
+Two fail-closed preflight attempts are disclosed (no provider call, no
+dispatch, no effect, usage 0, journal and marker left at 0 bytes both
+times): (1) the staging parent `/tmp/mishe-exp4l-repair-staging` did not
+exist (`inference_native` resolves it strictly — `FileNotFoundError` at
+session open, before any provider call; that transcript was overwritten in
+place by attempt 2's and is not preserved on disk); (2) the fixture's
+exclusive manifest open refused re-preparation in the same directory
+because the first attempt had already written `manifest.json` before
+failing — its traceback is preserved as
+`armB/kill-preflight-failures.txt`. The attempt-1 prepare artifacts
+(`manifest.json`, `reconcile-spec.json`, empty `journal.jsonl`, empty
+`effects/`) were cleared and the arm ran clean.
+
+The live kill run exited 137 with exactly the designed crash state: 4
+journal rows (checkpoint, model_input, model_output, proposal), marker
+exactly 1 line (23 B, sha256 `eed2543a…4b65`, `mtime_ns` matching the
+stored outcome's), store one `completed` outcome, no `tool_result` row, no
+`survivor.json`. The single reconcile invocation printed
+`{"arm": "B", "first_status": "completed", "first_executions": 1,
+"rows": [4, 5, 5], "marker_lines": 1}` — the first fresh-process reconcile
+restored the receipt without re-executing (executions stayed 1) and the
+second was silent; the repaired payload records `journal_rows_before: 4`,
+first reconcile the `completed` outcome, rows 4→5→5, second `None`,
+`recovered_executions: 1`, marker 1 line, store one `completed` execution,
+and the restored `tool_result` row's timestamp equals this run's proposing
+assistant timestamp (`1792099408695` — the 4j correlation holds on this
+selector).
+
+| arm B record | rows before→1st→2nd | first reconcile | executions | second | marker | restored-ts == assistant-ts |
+|---|---|---|---|---|---|---|
+| wake 50866 (primary selector) | 4→5→5 | completed | 1 | None | 1 line | True |
+| wake 51902 preserved payload | 5→5→5 | None | None | None | 1 line | True |
+| wake 52165 repair (2nd selector) | 4→5→5 | completed | 1 | None | 1 line | True |
+
+Status after repair: the second selector's arm-B invariant (kill between
+the durable outcome and the `tool_result` receipt → fresh-process reconcile
+restores exactly one row without redispatch, second reconcile silent) is
+once again established by a payload that is internally consistent and
+reproducible from the preserved bundle, matching the wake-50866
+measurement and the wake-51902 narrative. The wake-51902 record defect and
+its cause stay disclosed above; the defective payload is preserved
+unmodified in the original scratch bundle. The wake-51902 H2 sub-claim
+("the 4j correlation did not hold on this shape") is retracted: it
+compared arm B's restored row against arm A's assistant timestamp; the
+correct within-run comparison shows identity on both runs.
+
+Limits: unchanged from the prereg (n=1, one host, scripted SIGKILL seam,
+no production caller/adoption claim, fsync is not power-loss durability).
+This is the author's measured repair pending independent read; a witness
+read is requested. Evidence: scratch
+`exp4l-record-repair-wake52165/{freeze.json,results.json,armB/{armB.json,
+journal.jsonl,marker.txt,manifest.json,reconcile-spec.json,
+kill-transcript.txt,reconcile-transcript.txt,kill-preflight-failures.txt},
+smoke/smoke.json,smoke-transcript.txt,init-transcript.txt,
+report-transcript.txt,exp4l_fixture.py}`; artifact
+`.mishe-tauftauf/artifacts/inference-research-wake52165-4l-armb-record-repair.md`.
+
 ## Experiment 4m: the provider 429 window inside the dead-letter gap — effect done, receipt not yet durable (preregistered wake 51409)
 
 ### Why this scenario
