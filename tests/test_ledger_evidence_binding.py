@@ -235,4 +235,39 @@ def test_evidence_binding_drift_cause_survives_the_pane_clip(tmp_path):
     assert "read_at" in result
     _state, line = _observation_reading(result, "recent", home)
     assert cause in line
+
+
+def test_evidence_binding_pane_keeps_the_read_watermark_when_the_live_window_is_clean(tmp_path):
+    """The watermark fits the same prefix while no role is live-bad.
+
+    The sample leads with the drift cause, so what follows it competes for the
+    pane's 120 cells: a clean live window (`latest_bad=0`, its roles and stamps
+    all `none`) leaves room for `read_at=`, and a live-bad window's role names
+    and stamps take that room instead. The cause is what must always survive.
+    """
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "walls").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    # bob's B violation is historical: a later clean outcome repairs the live
+    # window while the append-only standing audit keeps the row.
+    stale = home / "artifacts" / "stale.md"
+    stale.write_text("original\n")
+    stale_digest = _write_evidenced_outcome(home, "bob", stale)
+    stale.write_text("edited after record\n")
+    fresh = home / "artifacts" / "fresh.md"
+    fresh.write_text("write-once\n")
+    fresh_digest = _write_evidenced_outcome(home, "bob", fresh)
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "bob",
+         f"[record] records/{stale_digest}.json sha256={stale_digest}\n"),
+        (2, "2026-10-06T17:30:00Z", "bob",
+         f"[record] records/{fresh_digest}.json sha256={fresh_digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    assert result["state"] == "drift"
+    assert result["latest_bad"] == 0
+    cause = f"all_bad={result['all_bad']} count_excluded={result['count_excluded']}"
+    _state, line = _observation_reading(result, "recent", home)
+    assert cause in line
     assert "read_at=" in line
