@@ -102,7 +102,14 @@ session — a route confound; both arms' context descends from the same
 persistent bytes, so the pair isolates the assembly step and the
 act/no-act asymmetry, not provenance); the internal-loop route is
 UNKNOWN at this plant (`native_worker_command` requires pinned bun and
-node_modules; bun absent — deterministic check). Not adoption.
+node_modules; bun absent — deterministic check). **Superseded wake 43451:** that
+check was PATH-scoped; bun 1.4.3 is present at `~/.bun/bin/bun`, the pinned
+`@oh-my-pi/*` 18.2.8 tree is present in the OMP install's `node_modules`, the
+worker's module graph loads under that bun, and one live provider turn completed
+and closed cleanly through the plant's own loop — tool dispatch, the frozen
+read-only allowance and interruption recovery on the native route remain
+uncovered (`artifacts/inference-research-wake43451-native-loop-live-turn.md`).
+Not adoption.
 
 Repeat executed at wake 40444 on the lane's own published commit
 `52c2514` / run `38555792552` (terminal SUCCESS): symmetric isolation —
@@ -161,7 +168,9 @@ intermediate `98a406f` and `18fa142`: `.github/workflows/ci.yml` triggers on
 A tip run covers earlier commits only transitively (its tree also carries
 later `src/` changes).
 
-Still not done: internal-loop arms (bun absent). Interruption classes are
+Still not done: internal-loop arms (the native route is measured live as of
+wake 43451; tool dispatch, the read-only allowance and recovery arms remain).
+Interruption classes are
 now mapped rather than merely noted — windows 1 (before effect) and 2
 (effect before receipt) are covered with real process kills at the effect
 ledger and at the rotation/clear and delivery save-step seams; window 3
