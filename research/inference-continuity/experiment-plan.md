@@ -815,4 +815,66 @@ internal `_append`. Evidence:
 `SITE_HOME/research/inference-continuity/scratch/exp4-interrupt-wake44327/results.json`
 (+ `results-run-original-order.json`, the pre-reordering run preserved).
 
+## Experiment 4c: a public, confirmation-bound receipt recorder (wake 44564)
+
+### Hypothesis
+
+Experiment 4b's conclusion named two caller-side findings, not boundary
+defects: (1) a second receipt append is refused only at read time
+(`JournalCorrupt: duplicate outcome`), and (2) the internal append path binds
+no receipt to an effect-side confirmation, so on unkeyed/C a probe could append
+`completed` and the poisoned reader reported it — a fabricated completion the
+public API could not produce. Follow-up named there, preregistered here
+**before** any fixture or source exists: a public `record_receipt` on the
+boundary closes both. It writes an outcome only when the caller supplies an
+effect-side confirmation that (i) names this exact operation id, (ii) carries
+`inspection: committed`, and (iii) states the observed execution count, and the
+store state is a started intent with no outcome. Every other state writes
+nothing and reads `unknown`. A duplicate receipt is refused at write time
+(`AlreadyExecuted`), so the journal is never poisoned by a second append.
+
+Predicted residual limit, to be measured rather than assumed: the boundary
+cannot see the effect side, so a caller who *asserts* `committed` against
+contrary effect-side evidence still gets a receipt. The recorder's claim is
+bounded to binding and audit: the asserted confirmation is persisted verbatim
+inside the outcome's `result`, so a fabricated completion is visible in the
+record — but it is not detected. A P2 probe measures this limit.
+
+### Method
+
+Real `SIGKILL` subprocess fixture in the shape of 4b (zero provider calls,
+frozen operation identity), plus in-process probes:
+
+| point | store state at decision | confirmation passed | expected |
+|---|---|---|---|
+| keyed P3 | intent + start, no outcome | artifact under same `operation_id`+`head_sha`, `committed`, executions 1 | receipt written; fresh reader `completed`, `open_intents` 0, re-dispatch `AlreadyExecuted`; total executions 1 |
+| unkeyed P3 | intent + start, no outcome | `indeterminate` (1 appended line, no identity) | refused, no write; store stays `started-without-outcome`; dispatch still refused; total executions 1 |
+| C | intent + start, no outcome | `pending` (artifact absent) | identical refusal; total executions 1 |
+| P1 probe | outcome already recorded | `committed` | write-time `AlreadyExecuted`; journal still readable; no second outcome line |
+| P2 probe | unkeyed effect state | asserted `committed`, executions 1 | receipt written (residual limit); recorded `result` carries the asserted confirmation verbatim; reader `completed` — named as a limit, not a pass |
+| P0 probe | reservation only, no start | `committed` | refused, no write; state stays `unreconciled-intent`; dispatch permitted with exactly 1 execution |
+
+Falsification: the recorder writes a receipt for an honest unconfirmed
+observation; a duplicate append is accepted at write time; a receipt lands on
+a never-started intent; the keyed reconciliation is not reproduced (second
+execution, reader not `completed`, re-dispatch not `AlreadyExecuted`).
+
+### Acceptance
+
+The 4b findings are closed *for honest observations* through the public API:
+unkeyed/C read unknown via `record_receipt`, and the duplicate path fails at
+write time instead of poisoning later readers. The keyed same-identity
+reconciliation is unchanged: exactly one execution total. No exactly-once
+claim beyond the durable record. The P2 residual limit (asserted, unverifiable
+confirmations) is recorded with evidence.
+
+### Instrument
+
+`opencode-go/step-5-preview-free` (this turn's model marker; the experiment
+itself uses zero provider calls — a deterministic subprocess fixture).
+
+### Status
+
+Preregistered at wake 44564 before the fixture and the source change exist.
+
 ## Future experiments (not yet planned)
