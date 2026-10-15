@@ -56,18 +56,17 @@ read `sense.body.redmi10`.
 The Redmi reader is in source commit `40aa387`, but activation reverted after
 the helper failed to observe the selected source root; the cause remains
 unknown.
-The latest core scan (`2026-10-15T13:47:43Z`, scan
-`b7a1340dbf76412ba9a653e215d842c5`, served pin
+The latest core scan (`2026-10-15T13:57:44Z`, scan
+`b033f3d7f9a74b259d44c03a359d6733`, served pin
 `7ae246660833f172f72ff7404ca0bc65b9cc8290`) has no
 `sense.body.redmi10` row and reports Note3 light UNKNOWN/collect-only, last
 received at `2026-10-14T06:13:52Z`.
-The Android Body consumer view at 13:53:14Z read Redmi cursor 10788: light
-was 0.0 lux and acceleration `(4.81995, 0.00105, -8.63595) m/s²`, sampled
-at 13:46:01–02Z and received at 13:46:23Z; both channels were stale at the
-view. A separate Note3 view at 13:53:12Z reported an app-private spool sample
-235.1s old (`phase=window`, sightings=0), beyond the <60s scoring precondition;
-delivered channels remained stale. Collection status is not fresh light
-delivery or a BLE sighting.
+The Android Body consumer read at 13:57:31Z (Redmi cursor 10788, with no
+newer rows) reports 0.0 lux and acceleration `(4.81995, 0.00105, -8.63595)
+m/s²`, sampled at 13:46:01–02Z and received at 13:46:23Z; both were stale.
+Its Note3 app-private spool sample was 192.3s old (windows=50, `phase=gap`,
+sightings=0), not the <60s `phase=window` prerequisite; delivered channels
+remained stale. Collection status is not fresh light delivery or a BLE sighting.
 Phone/host skew and acquisition/delivery latency remain unseparated, and
 installed APK/source binding is unverified. Redmi Wi-Fi is disconnected; BLE
 has no observation after a `SecurityException`, and stillness remains UNKNOWN.
