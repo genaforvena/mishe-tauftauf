@@ -165,24 +165,43 @@ def test_invalid_or_uncovered_evidence_never_reports_current_lux(mutation):
     assert row["event_id"] is None
 
 
-@pytest.mark.parametrize("mutation", [
-    lambda e: e.update(source="other"),
-    lambda e: e.update(session="other"),
-    lambda e: e.update(event_id="forged"),
-    lambda e: e["from"].update(sequence=14),
-    lambda e: e["to"].update(sequence=15),
-    lambda e: e["from"].update(consumer_receipt_epoch_s=NOW - 31),
-    lambda e: e["to"].update(consumer_receipt_epoch_s=NOW + 1),
-    lambda e: e.update(bucket_from=5),
-    lambda e: e.update(validity_seconds=0.5),
+@pytest.mark.parametrize("mutation, expected", [
+    (lambda e: e.update(source="other"), "event-identity-mismatch"),
+    (lambda e: e.update(session="other"), "event-identity-mismatch"),
+    (lambda e: e.update(event_id="forged"), "event-identity-mismatch"),
+    (lambda e: e["from"].update(sequence=14), "event-identity-mismatch"),
+    (lambda e: e["to"].update(sequence=15), "event-identity-mismatch"),
+    (lambda e: e["from"].update(consumer_receipt_epoch_s=NOW - 31),
+     "event-receipt-before-phone"),
+    (lambda e: e["to"].update(consumer_receipt_epoch_s=NOW + 1), "event-window-future"),
+    (lambda e: e.update(bucket_from=5), "event-bucket-mismatch"),
+    (lambda e: e.update(validity_seconds=0.5), "event-phone-span"),
+    (lambda e: e["from"].update(consumer_receipt_epoch_s=NOW - 3),
+     "event-receipt-before-phone"),
+    # The end receipt precedes the start receipt while each endpoint still
+    # follows its own phone stamp: the order class, not a negative span.
+    (lambda e: (e["from"].update(consumer_receipt_epoch_s=NOW),
+                e["to"].update(consumer_receipt_epoch_s=NOW - 1)),
+     "event-receipt-order"),
+    (lambda e: e.pop("from"), "event-malformed-shape"),
+    # Both receipts older than the declared validity, each still behind its own
+    # phone stamp: the routine expiry class, the one the corpus actually shows.
+    (lambda e: (e["from"].update(phone_sample_epoch_s=NOW - 35,
+                                 consumer_receipt_epoch_s=NOW - 31),
+                e["to"].update(phone_sample_epoch_s=NOW - 30,
+                               consumer_receipt_epoch_s=NOW - 28)),
+     "event-window-expired"),
 ])
-def test_bad_history_does_not_invalidate_current_light_or_emit_event(mutation):
+def test_bad_history_does_not_invalidate_current_light_or_emit_event(mutation, expected):
+    """The refusal names the predicate that failed: routine receipt-window
+    expiry must not read like an identity, span, order, clock or bucket
+    contradiction."""
     data = event_data()
     mutation(data["nodes"][0]["last_light_transition"])
     row = discovery._space_light(data, NOW)
     assert row["current_lux"] == 31
     assert row["event_id"] is None
-    assert row["event_reason"] == "invalid-or-expired-historical-transition"
+    assert row["event_reason"] == expected
 
 
 def notify(home, current, previous=None, now=NOW):
@@ -322,7 +341,7 @@ def test_event_with_skew_behind_phone_clock_still_verifies():
     """Event branch: phone stamps far behind host (now - phone > event_validity)
     but receipts fresh (now - receipt <= event_validity). The event window check
     uses receipt referent (host-side arrival), not phone stamps. A skew-behind
-    phone clock must not cause invalid-or-expired-historical-transition.
+    phone clock must not refuse the transition.
     """
     data = event_data()
     event = data["nodes"][0]["last_light_transition"]
@@ -986,7 +1005,7 @@ def test_pane_distinguishes_a_refused_transition_from_an_absent_one(
     absent_home = _live_boundary(tmp_path / "absent", None)
     _write_scan(absent_home, [])
     assert ("historical transition not retained: "
-            "invalid-or-expired-historical-transition") in refused
+            "event-bucket-mismatch") in refused
     assert "historical transition not retained" not in discover(absent_home)
 
 
@@ -1014,7 +1033,7 @@ def _transition_site(tmp_path: Path) -> Path:
 def test_pane_names_the_refusal_not_a_silent_drop(tmp_path, current_endpoint, pane):
     rendered = pane(_transition_site(tmp_path / "site"))
     assert ("historical transition not retained: "
-            "invalid-or-expired-historical-transition") in rendered
+            "event-bucket-mismatch") in rendered
 
 
 @pytest.mark.parametrize("pane", [discover, senses])

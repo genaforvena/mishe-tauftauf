@@ -4256,6 +4256,19 @@ def _space_endpoint(item: dict) -> tuple[float, float]:
     return phone, receipt
 
 
+def _space_span_negative(item: object) -> bool:
+    """Whether an endpoint's host receipt precedes its own phone sample.
+
+    A negative span is impossible on a healthy feed — the host cannot receive a
+    sample before the phone stamped it — so it names a clock or provenance
+    anomaly rather than an unusable field.
+    """
+    if not isinstance(item, dict):
+        return False
+    phone, receipt = item.get("phone_sample_epoch_s"), item.get("consumer_receipt_epoch_s")
+    return _space_number(phone) and _space_number(receipt) and receipt < phone
+
+
 def _space_clock_bound(light: object) -> str | None:
     """The publisher's own clock-skew bound, carried as opaque text.
 
@@ -4269,6 +4282,23 @@ def _space_clock_bound(light: object) -> str | None:
     if not isinstance(light, dict):
         return None
     return nonblank(light.get("status_reason"))
+
+
+class _SpaceEventRefused(Exception):
+    """A historical transition the reader will not retain, naming its failed predicate.
+
+    The reason travels to the pane verbatim, so the routine class must not read
+    like the defects: a transition older than the producer's own validity is
+    expected on nearly every read, while an identity, phone-span, receipt-order,
+    future-receipt or bucket contradiction means the publisher's referent or
+    clock changed. Collapsing them into one string made a regression and routine
+    expiry the same reading.
+    """
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
 
 def _space_light(data: object, now: float) -> dict:
     """Validate original evidence; publication and polling never renew a sample."""
@@ -4356,25 +4386,31 @@ def _space_light(data: object, now: float) -> dict:
             try:
                 event_validity = event["validity_seconds"]
                 if not _space_number(event_validity) or event_validity <= 0:
-                    raise ValueError("invalid event validity")
+                    raise _SpaceEventRefused("event-malformed-shape")
                 event_validity = min(validity, event_validity)
                 start, end = event["from"], event["to"]
+                if any(_space_span_negative(point) for point in (start, end)):
+                    raise _SpaceEventRefused("event-receipt-before-phone")
                 start_phone, start_receipt = _space_endpoint(start)
                 end_phone, end_receipt = _space_endpoint(end)
                 if (event["kind"] != "measured_light_bucket_transition"
                         or event["source"] != node["source"] or event["session"] != node["session"]
                         or event["event_id"] != f"note3:{node['session']}:{end['sequence']}"
-                        or not start["sequence"] < end["sequence"] <= light["sequence"]
-                        or not 0 <= end_phone - start_phone <= event_validity
-                        or end_receipt < start_receipt
-                        or any(not 0 <= now - value <= event_validity
-                               for value in (start_receipt, end_receipt))):
-                    raise ValueError("invalid event provenance or window")
+                        or not start["sequence"] < end["sequence"] <= light["sequence"]):
+                    raise _SpaceEventRefused("event-identity-mismatch")
+                if not 0 <= end_phone - start_phone <= event_validity:
+                    raise _SpaceEventRefused("event-phone-span")
+                if end_receipt < start_receipt:
+                    raise _SpaceEventRefused("event-receipt-order")
+                if any(value > now for value in (start_receipt, end_receipt)):
+                    raise _SpaceEventRefused("event-window-future")
                 buckets = tuple(math.floor(math.log2(1 + point["lux"])) for point in (start, end))
                 if (buckets[0] == buckets[1] or type(event["bucket_from"]) is not int
                         or type(event["bucket_to"]) is not int
                         or buckets != (event["bucket_from"], event["bucket_to"])):
-                    raise ValueError("invalid transition")
+                    raise _SpaceEventRefused("event-bucket-mismatch")
+                if any(now - value > event_validity for value in (start_receipt, end_receipt)):
+                    raise _SpaceEventRefused("event-window-expired")
                 row["event_id"] = event["event_id"]
                 row["event_sequence"] = end["sequence"]
                 row["event_sample"] = (
@@ -4382,8 +4418,10 @@ def _space_light(data: object, now: float) -> dict:
                     f" -> #{end['sequence']} {end['lux']:g}lux; "
                     f"phone={_space_stamp(start_phone)}->{_space_stamp(end_phone)}; "
                     f"fresh-clock-conditional provenance={node['source']} session={node['session']}")
+            except _SpaceEventRefused as refused:
+                row["event_reason"] = refused.reason
             except (KeyError, TypeError, ValueError, AttributeError, OverflowError):
-                row["event_reason"] = "invalid-or-expired-historical-transition"
+                row["event_reason"] = "event-malformed-shape"
         return row
     except (KeyError, TypeError, ValueError, AttributeError, OverflowError):
         return unknown("malformed-boundary")
