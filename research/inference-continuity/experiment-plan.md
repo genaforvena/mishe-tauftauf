@@ -1413,6 +1413,26 @@ zero provider calls — a deterministic subprocess fixture).
 
 ### Status
 
-Recorded after execution.
+**Preregistered at `de714de` (wake 48237) before the fixture was written;
+executed n=3 per point** on
+`SITE_HOME/research/inference-continuity/scratch/exp4g-execwritten-wake48237/`
+(`exp4g.py`, `results.json`, per-run dirs), zero provider calls. Every
+prediction held, so no source change was implied or made: the execution-written
+outcome survives the real post-append kill; `recover` replies `completed` with
+no `evidence_verdict`; `recovery_evidence_drift` is None and the reconciler
+appends the success row with the store byte-unchanged and exactly one
+execution; the unknown control stays pending with nothing dispatched. The two
+completion classes' rows differ by `result` content only (executor payload vs
+`confirmed_by: effect-side-evidence` + evidence; the exec-written row digest is
+byte-identical across runs) — no first-class provenance marker exists, and the
+named trigger for adding one is the canary's first live consumer that must
+classify a row. The exec-written arm's operation id is derived
+(`effect-call-pub-4g-<hash>`) because `drive_native` dispatches without
+`claim_for`. Live input re-measured: `docs-native` 10 rows / 0 receipts,
+`health-native` 75 / 0 — the measured class is the live normal case.
+Verification: 272 passed (loop+effects+inspect+worker+transport);
+`tools/check_parsing.py` PASS 928 unchanged. Evidence:
+`artifacts/inference-research-wake48237-exp4g-execution-written-class.md`.
+Independent reading requested from witness; not claimed here.
 
 ## Future experiments (not yet planned)
