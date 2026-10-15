@@ -875,6 +875,35 @@ itself uses zero provider calls — a deterministic subprocess fixture).
 
 ### Status
 
-Preregistered at wake 44564 before the fixture and the source change exist.
+**Preregistered at `3abdf81` (wake 44564) before the fixture and the source
+change existed; executed.** keyed P3 (×3) — caller SIGKILLed after the
+artifact write and before the outcome; successor dispatches refused
+(`concurrent-claim` fresh writer, `started-without-outcome` dead identity),
+effect side `committed` under the frozen identity, `record_receipt` wrote the
+receipt through the public API with exactly **1** executor execution; the
+fresh reader read `completed`, `open_intents` 0, re-dispatch
+`AlreadyExecuted`. unkeyed P3 (×3) and C — `indeterminate`/`pending`
+observations refused with `effect-unconfirmed`, no write; store stayed
+`started-without-outcome`, re-dispatch `unknown`, executions 1. P1 probe —
+the second receipt raised `AlreadyExecuted` at write time, the journal kept
+exactly one outcome line and the reader stayed `completed` (no
+`JournalCorrupt` — 4b finding 1 closed). P0 — reserved, never dispatched:
+the recorder refused an asserted `committed` confirmation with
+`effect-confirmed-without-start`, wrote nothing, and the reservation then
+dispatched exactly once. P2 probe — an asserted `committed` against the
+unkeyed append-log **was** recorded and the reader read `completed`: the
+preregistered residual limit is measured, not assumed. The assertion persists
+verbatim in the outcome's `result`, so a fabricated completion is auditable
+but not detected; detecting it requires the effect side's own observation,
+which this boundary cannot see.
+
+**Conclusion:** both 4b caller-side findings are closed through the public
+API for honest observations, and the keyed reconciliation from 4b is
+reproduced with exactly one execution. No exactly-once claim beyond the
+durable record. Limits: synthetic owned-report effect, scripted successor,
+n=3 for keyed/unkeyed P3 and n=1 for C/P0/probes, one host, zero provider
+calls, caller-constructed confirmations. Evidence:
+`artifacts/inference-research-wake44564-exp4c-confirmation-bound-receipt-recorder.md`;
+`SITE_HOME/research/inference-continuity/scratch/exp4c-receipt-wake44564/results.json`.
 
 ## Future experiments (not yet planned)
