@@ -253,7 +253,29 @@ def read_redmi10(home: Path, now: float | None = None) -> dict[str, object]:
             "sample": sample, "source": REDMI_SOURCE, "cursor": cursor,
             "session": session,
             "channel_provenance": channel_provenance,
-            "light_transition": transition,
-            "acceleration_phone_sample_epoch_s": phone_time,
+            "light_transition": transition,            "acceleration_phone_sample_epoch_s": phone_time,
             "acceleration_consumer_receipt_epoch_s": receipt_time,
             "channels": statuses, "details": details}
+
+LIGHT_SENSE_ID = "sense.body.redmi10.light"
+
+def read_redmi10_light(home: Path, now: float | None = None) -> dict[str, object]:
+    """Return the fresh carried-device light reading even when motion is absent."""
+    base = read_redmi10(home, now)
+    if not isinstance(base, dict) or base.get("id") != SENSE_ID:
+        return {"id": LIGHT_SENSE_ID, "kind": "read", "state": "unknown",
+                "reason": "composite-reader-unavailable",
+                "sample": "Redmi10 light UNKNOWN: reader unavailable",
+                "source": REDMI_SOURCE}
+    channels = base.get("channels") if isinstance(base.get("channels"), dict) else {}
+    light_status = channels.get("light", "stale")
+    state = "verified" if light_status == "fresh-clock-conditional" else "unknown"
+    reason = "fresh-clock-conditional" if state == "verified" else str(base.get("reason", "channel-not-current"))
+    sample = str(base.get("sample", "Redmi10 light unknown"))
+    return {"id": LIGHT_SENSE_ID, "kind": "read", "state": state, "reason": reason,
+            "sample": sample, "source": REDMI_SOURCE,
+            "cursor": base.get("cursor"), "session": base.get("session"),
+            "channels": {"light": light_status},
+            "light_transition": base.get("light_transition"),
+            "details": ("Redmi10 light sense inherits Redmi consumer provenance; "
+                        "acceleration may be unavailable without hiding carried light context.")}

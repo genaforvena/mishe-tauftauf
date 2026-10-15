@@ -19,7 +19,7 @@ from . import scan_freshness
 from .discovery import (latest, producer_label, scan_attempt, _tailnet_peer_read,
                         _space_clock_domains_read, _space_light, _space_light_name_freeze,
                         _space_light_read)
-from .body_perception import SENSE_ID, read_redmi10
+from .body_perception import SENSE_ID, read_redmi10, read_redmi10_light, LIGHT_SENSE_ID
 from .host_radio import decode_cam_events, decode_cam_manifest, decode_cam_state, decode_urb_failures
 from . import proc_table
 from .space_text import nonblank
@@ -263,6 +263,7 @@ def senses(home: Path) -> str:
     snapshot = latest(home)
     attempt_line, attempt_failure = _attempt_reading(home, snapshot)
     redmi = read_redmi10(home)
+    redmi_light = read_redmi10_light(home)
     lines.append(attempt_line)
     if snapshot is None:
         verdict = "UNKNOWN senses no discovery sample"
@@ -281,6 +282,7 @@ def senses(home: Path) -> str:
                        and item.get("id") not in {"sense.space.light", SENSE_ID}]
         space = _space_light_read(home)
         senses_rows.append(redmi)
+        senses_rows.append(redmi_light)
         senses_rows.append(space)
         senses_rows.extend(_space_clock_domains_read(home))
         unknown = 0
