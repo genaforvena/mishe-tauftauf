@@ -55,6 +55,9 @@ fault reaches the health pane's `SYSTEM ZERO` line as a named cause. Each
 keeps a missing, unreadable or broken read visibly UNKNOWN rather than calm;
 the reading rules, the command that takes one, and their limits are in
 [operating the plant](operating.md) and [how it works](how-it-works.md).
+The latest scan (2026-10-15T10:56:47Z) reported Note3 light as `UNKNOWN`
+(`light-stream-frozen`; last receipt 2026-10-14T06:13:52Z); no current light
+sample was available.
 
 Two further readings cover this host's own network path instead of its space:
 its wired Ethernet link state as `sense.net.ethernet` and its tailnet peer
