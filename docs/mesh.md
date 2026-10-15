@@ -66,10 +66,12 @@ A camera fault reaches the health pane's `SYSTEM ZERO` line as a named cause.
 The reading rules, commands and limits are in [operating the plant](operating.md)
 and [how it works](how-it-works.md).
 
-The latest dashboard scan (`2026-10-15T12:07:56Z`, served pin
-`7ae246660833f172f72ff7404ca0bc65b9cc8290`) reported Note3 light as UNKNOWN
-and collect-only; its last receipt was `2026-10-14T06:13:52Z`, with no current
-Note3 light sample available.
+The latest Discover dashboard scan (`2026-10-15T12:18:05Z`, served pin
+`7ae246660833f172f72ff7404ca0bc65b9cc8290`) still reports Note3 light as
+UNKNOWN and collect-only; its last receipt was `2026-10-14T06:13:52Z`, with no
+current sample. Its summary also reports changes in ledger evidence-binding,
+ghost homes and gate latency; it does not establish Redmi data or pane
+visibility.
 
 Two further readings cover this host's own network path instead of its space:
 its wired Ethernet link state as `sense.net.ethernet` and its tailnet peer
