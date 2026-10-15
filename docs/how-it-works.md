@@ -200,21 +200,38 @@ dispatch started. A retained stop is the previous caller's report, not independe
 acceptance. This API covers single-writer local file/process-crash evidence,
 not power-loss durability, automatic recovery or a deployed resident route.
 
-To take that reading in words a reader would use: read the role dashboard with `pain read ROLE --launcher dashboard`, then compare it with the native route's retained per-turn journal at `SITE/journals/ROLE-native.jsonl`, which records each turn's tool selections, result checks, wire usage and fetch
-dispatch count with any preserved upstream failure. A bounded docs-class comparison (October 2026) reached no parity verdict yet — the retained native run predates per-turn usage evidence and never recorded a stop — so the harness route stays the fallback until a back-to-back same-input run evidences parity for this work class.
+To take that reading in words a reader would use: read the role dashboard with
+`pain read ROLE --launcher dashboard`, then compare it with the native route's
+retained per-turn journal at `SITE/journals/ROLE-native.jsonl`, which records
+each turn's tool selections, result checks, wire usage and fetch dispatch count
+with any preserved upstream failure. A row restored by reconciliation is
+distinguishable by its event key order — `kind,turn,call,message,obligation`
+rather than the uninterrupted `kind,obligation,turn,call,message` — a writer
+fingerprint a reader can use to detect a reconciled row. One back-to-back run was
+executed on 2026-10-15 on a single frozen source file (`inference_inspect.py`,
+sha256 `89f7f33b…`): the native arm completed one `inspect` read in 26.151 s
+with 4911 provider tokens and an 8-row journal carrying wire usage and a
+fetch-ledger row per turn; the external arm's single `read` took 0.10 s with its
+token cost UNKNOWN from outside the resident session; a second arm killed after
+dispatch restored one reconciled row and left the source byte-identical. That is
+author-reported evidence for one host, one route and one file, its comparison
+artifact still awaits a second reader, and no parity verdict exists — the
+harness route stays the fallback for this work class.
 
 The named acceptance for that back-to-back run, so no adoption claim can
-precede it: both arms read the same frozen path and digest; both select
-`inspect` on that exact path with no extra arguments; both results match the
-frozen file's content; tokens, elapsed and calls are recorded as measured
-columns, not equalled; a process kill mid-run leaves the source
-byte-unchanged after reconcile and records the kill as UNKNOWN, never
-success; the journal carries per-turn selections, result checks, wire usage,
-fetch dispatch counts and preserved upstream failures; a second reader
-checks the comparison artifact. Resident activation, durable replay,
-configured-model parity and live useful-task proof are outside this class
-and stay open. The harness route stays the fallback until every listed
-item is evidenced; `applied` alone is not delivery.
+precede it: both arms read the same frozen path and digest through their own
+route's bounded read of that exact path, with no extra arguments; both results
+match the frozen file's content; tokens, elapsed and calls are recorded as
+measured columns, not equalled, and the two routes' tool surfaces (`read` versus
+`inspect`) are recorded as a difference rather than a match; a process kill
+mid-run leaves the source byte-unchanged after reconcile, with the kill recorded
+as the child's signal death and never as a completed run; the journal carries
+per-turn selections, result checks, wire usage, fetch dispatch counts and
+preserved upstream failures; a second reader checks the comparison artifact.
+Resident activation, durable replay, configured-model parity, exactly-once and
+live useful-task proof are outside this class and stay open. The harness route
+stays the fallback until every listed item is evidenced; `applied` alone is not
+delivery.
 
 `inference_inspect.prepare_exact_inspection` freezes one caller-supplied absolute
 file path, SHA256, byte count, source/task identity and loop budgets before a model
@@ -889,11 +906,11 @@ exit, text that does not decode, a backend state other than `Running`, or a
 missing `Self` is a named problem and UNKNOWN. The rendezvous cursor is not
 readable from this host, so the sense reports reachability only: an offline
 peer beside a frozen light cursor and a frozen cursor with every peer online
-are not distinguished here. Both senses were committed on `main` as `f4013a3` (`sense.net.ethernet`) and
-`9b44a95` (`sense.net.tailnet-peer`) and are live at the served runtime pin
-`6511ebb`: the 2026-10-14T19:12Z scan reads both verified
-(`enp42s0=up/admin-up/1000Mb/s/carrier-1`; backend `Running`, 11 peers, 3
-online). `sense.runtime.pin-lag` still tracks the gap between `main` and the
+are not distinguished here. Both senses were committed on `main` as `f4013a3`
+(`sense.net.ethernet`) and `9b44a95` (`sense.net.tailnet-peer`) and are live at
+the served runtime pin `e8405b8`: the 2026-10-15T18:15Z scan reads both
+verified (`enp42s0=up/admin-up/1000Mb/s/carrier-1`; backend `Running`, 11 peers,
+3 online). `sense.runtime.pin-lag` still tracks the gap between `main` and the
 pin for any newer sense.
 
 For a registered Android Body site, the Health check pairs a fresh core reader
