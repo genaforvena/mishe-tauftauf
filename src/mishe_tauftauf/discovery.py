@@ -5415,7 +5415,8 @@ def _notify_scan(home: Path, snapshot: dict[str, object],
         ("; ".join(f"{item['id']} — {item['sample']}" for item in nonverified
                    if str(item["state"]) == state) or "none") + "."
         for state in sorted({str(item["state"]) for item in nonverified})] + [
-             f"Full sample: {artifact.resolve()}.",
+             (f"Full sample: {artifact.resolve()}." if artifact.exists()
+              else f"Full sample: absent ({artifact.resolve()})."),
              "Next: senses should verify useful unknown or drift readings or record why the source is unavailable; "
              "discover should seek one new useful read."]
     Feed(home).append("discover", "\n".join(lines))
