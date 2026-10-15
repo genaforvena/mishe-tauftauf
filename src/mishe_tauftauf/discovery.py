@@ -5309,19 +5309,37 @@ def _notify_scan(home: Path, snapshot: dict[str, object],
                 if identifier == "sense.ledger.evidence-binding":
                     # Notification identity ignores the volatile read_at token
                     # anywhere in the sample; the token stays in stored/reader-
-                    # facing data. Text handled by slicing, not parsing.
+                    # facing data. Matched on a token boundary, so a reordered
+                    # producer sample cannot drop other fields into the slot.
+                    # Boundary-correct, position-independent removal of the
+                    # volatile read_at token; keeps it out of identity while
+                    # preserving it in stored/reader-facing data. Uses only
+                    # slicing so discovery stays outside the parsing boundary.
                     _needle = "read_at="
-                    _pos = detail.find(_needle)
-                    while _pos >= 0:
-                        _end = detail.find(" ", _pos)
-                        if _end >= 0:
-                            detail = detail[:_pos] + detail[_end + 1:]
+                    _out = ""
+                    _i = 0
+                    _n = len(detail)
+                    while True:
+                        _idx = detail.find(_needle, _i)
+                        if _idx < 0:
+                            _out += detail[_i:]
+                            break
+                        _boundary = (_idx == 0 or detail[_idx - 1] == " ")
+                        _end = detail.find(" ", _idx)
+                        if _end < 0:
+                            _end = _n
+                        if _boundary and _end > _idx + len(_needle):
+                            _start = _idx - 1 if (_idx > 0 and detail[_idx - 1] == " ") else _idx
+                            _out += detail[_i:_start]
+                            _i = _end
                         else:
-                            if _pos > 0 and detail[_pos - 1] == " ":
-                                detail = detail[:_pos - 1]
-                            else:
-                                detail = detail[:_pos]
-                        _pos = detail.find(_needle)
+                            _out += detail[_i:_idx + len(_needle)]
+                            _i = _idx + len(_needle)
+                    detail = _out
+                    while len(detail) > 0 and detail[0] == " ":
+                        detail = detail[1:]
+                    while len(detail) > 0 and detail[-1] == " ":
+                        detail = detail[:-1]
             elif identifier == "sense.proc.cpu-busy":
                 detail = "high" if re.search(r"(?:^|\s)high(?:$|\s)", sample_text) else "not-high"
             elif identifier == "sense.thermal.hwmon":
