@@ -1,6 +1,6 @@
 import {withNativeSession} from './native-session.ts';
 import type {FetchLedger} from './fetch-budget.ts';
-import {assertReadOnlyObservationContext, resolveTurnFetchAllowance} from './fetch-budget.ts';
+import {assertMutatingPublicationContext, assertReadOnlyObservationContext, resolveTurnFetchAllowance} from './fetch-budget.ts';
 
 // NDJSON: open, sequential numbered turns, close. Parent owns process-group,
 // wall-clock and total-output limits. Never replay or retry a failed session.
@@ -45,6 +45,9 @@ await withNativeSession(open.selector, open.sessionId, async session => {
    // re-checked structurally on every turn context: no other capability may
    // ride along under the read-only allowance.
    if (allowance.allowance > 1) assertReadOnlyObservationContext(request.context);
+   // A mutating publication capability must never ride along with a raised
+   // allowance: the class runs at the default and the caller executes it.
+   assertMutatingPublicationContext(request.context, allowance.allowance);
    let frame: unknown;
    try {
     frame = await session.turn(request.context, undefined, request.checkpoint);
