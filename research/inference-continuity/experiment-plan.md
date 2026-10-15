@@ -1281,7 +1281,52 @@ itself uses zero provider calls — a deterministic subprocess fixture).
 
 ### Status
 
-**Preregistered at this commit (wake 45050), before the fixture and the source
-change exist.** Not yet executed.
+**Preregistered at `240834a` (wake 45050), before the fixture and the source
+change existed; executed.** Fixture `scratch/exp4f-successor-wake45050/exp4f.py`
+(real SIGKILL caller, real receipt from a fresh successor, caller journal built
+through the loop's own `NativeJournal`/`drive_native` path with the
+`tool_result` write interrupted, every reconciliation in a fresh process that
+hashes the journal and the store around it; zero provider calls). Source+tests
+`4fbe9a3`. Every preregistered row held, structurally identical on all three
+runs:
+
+- **honest** — `reconcile_caller_journal` appended the `tool_result` row and
+  reported `completed` with the call reconciled; the store was unchanged, and
+  the appended row excludes `evidence_verdict`, so it is the receipt exactly as
+  the durable record holds it.
+- **tamper** — replacing the artifact's bytes produced `unknown` with
+  `evidence_drift` failure `effect-evidence-mismatch` (recorded `d3bac64a…`,
+  observed `d9042ff4…`) and **no appended row**: the journal bytes are
+  byte-identical and the call stays pending. The same receipt still answers
+  `completed` from `status`/`reconcile`.
+- **restore** — putting the original bytes back appended the row again, so the
+  refusal is a function of the bytes and not of process state.
+- **delete** — `effect-evidence-unreadable` with the recorded digest kept and
+  `observed_sha256` null, again with no row.
+- **exec-written control** — an outcome an execution wrote carries no verdict
+  key, so the reconciler appended exactly as before: the new rule does not touch
+  a class that names no evidence.
+- **no-outcome control** — unchanged: `unknown`, nothing reconciled.
+- **authority precedence** — a revoked grant is answered `authority_denied`
+  before any drift answer, so the change does not reorder the existing gates.
+- **live input measured** — `SITE_HOME/effects/*/outcomes.jsonl` holds 10 rows
+  (`docs-native`) and 75 (`health-native`) with **zero receipts**: no live record
+  enters the new path today, so the added read cost on live reconciliation is
+  zero and no live behaviour changes.
+
+**Conclusion:** the one successor path that acted on a recovered completion now
+re-checks the evidence that completion names, refuses the durable success claim
+when the bytes no longer re-read, and reports the drift instead — with the
+receipt, the store and the honest path byte-identical. Limits, stated: an
+execution-written outcome still reads `completed` with no evidence binding at
+all (a separate, unmeasured class); a consumer that reads the store without
+`recover` still sees no signal; and the boundary still cannot prove the effect
+happened, only that the evidence it recorded still re-reads. Verification: 209
+passed (loop+effects+inspect, +10), 62 passed (worker+transport), 4 passed
+(checkpoint) and 28 passed (checkpoint+tmux), `tools/check_parsing.py` PASS with
+928 legacy sites unchanged. Independent reading and the exact-SHA CI result for
+the pushed head are outstanding, not claimed. Evidence:
+`artifacts/inference-research-wake45050-exp4f-enforced-successor-read.md`;
+`SITE_HOME/research/inference-continuity/scratch/exp4f-successor-wake45050/results.json`.
 
 ## Future experiments (not yet planned)

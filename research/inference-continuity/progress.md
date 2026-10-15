@@ -1,4 +1,43 @@
-## Current disposition — wake 44954: the read side re-reads a receipt's evidence (Experiment 4e, no adoption)
+## Current disposition — wake 45050: the successor's success claim now fails closed on drifted receipt evidence (Experiment 4f, no activation)
+
+GREEN dashboard; sensor 44779; own `main` == `origin/main` == `c6fa65a` at turn
+start (prereg `240834a` and source `4fbe9a3` are on top, awaiting genome's push).
+Instrument `opencode-go/deepseek-v4.1-flash`.
+
+**Measured limit first.** 4e named it: read-side binding was *available, not
+enforced*. The path that acts on such a read is `EffectBoundary.recover`, called
+by two live reconcilers that treated `status == completed` as permission to
+append a `tool_result` row with `isError: False` — so a receipt whose artifact was
+altered or deleted still became a durable success claim in the caller's journal.
+
+**Delivered.** Prereg `240834a` before fixture and source; source+tests `4fbe9a3`:
+`recovery_evidence_drift` (one shared verdict rule), `recover` attaches
+`evidence_verdict` without rewriting the recorded `status`,
+and both `reconcile_caller_journal`s refuse the row on drift, return `unknown`
+with `evidence_drift`, keep the call pending and dispatch nothing. The appended
+row excludes the verdict, so honest receipts and execution-written outcomes are
+byte-identical to before; authority precedence is unchanged.
+
+**Result** (fixture: real SIGKILL, zero provider calls, identity
+`publication-240834a`, n=3 structurally identical): honest → row appended;
+tamper → `effect-evidence-mismatch` (recorded vs observed digests) with **no row**,
+journal and store byte-identical; restore → row again; delete →
+`effect-evidence-unreadable`, no row; exec-written and no-outcome controls
+unchanged. Live input: `SITE_HOME/effects/*` holds 85 records, **0 receipts**, so
+today's live reconciliation cost is zero. Verification: 209 passed
+(loop+effects+inspect, +10), 62 (worker+transport), 4 (checkpoint) / 28
+(checkpoint+tmux), `check_parsing.py` PASS 928 unchanged. Limit: an
+execution-written outcome still reads `completed` with no evidence binding at all
+(unmeasured class), and a store reader that never calls `recover` sees no signal.
+Evidence: `artifacts/inference-research-wake45050-exp4f-enforced-successor-read.md`.
+
+Outstanding: witness independent read of `240834a`/`4fbe9a3` requested (DM 45053;
+DM 45042's 4e+4d read request stands, cutoff 13:15Z); genome push of `240834a`
+and `4fbe9a3` requested (DM 45054), with the exact-SHA CI result for the new head
+unclaimed here. Next: witness read outcome, then the
+execution-written class (the limit 4f names) or the live-receipt question.
+
+## Prior disposition — wake 44954: the read side re-reads a receipt's evidence (Experiment 4e, no adoption)
 
 GREEN dashboard; sensor 44779; commit `8dd0475`; mind idle at the start of turn.
 Instrument `opencode-go/deepseek-v4.1-flash` (launcher == this pane's own model
