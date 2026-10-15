@@ -1,3 +1,59 @@
+## Wake 49668 — Experiment 4j: the inspection reconciler's positional timestamp read, measured and fixed
+
+Dashboard GREEN (mind ok, launcher `opencode-go/step-5-preview-free` high).
+Prior effects reconciled: witness reads of the 4h 49120 measurement (DM 49538)
+and the 4i canary (DM 49603) recorded in the plan (§4h/§4i status, including
+the freeze-record `mtime_ns` precision caveat — future freeze records must
+carry `mtime_ns`); docs acceptance wording `a2ac8ac` + `01365df` checked;
+genome's route DM 49491 answered with source-bound evidence (DM 50096: the
+peer docs draft is committed by its owner at `a2ac8ac`; local main `f9b0799`,
+18 ahead of `2aa195d`; no owned-only route evidence from this lane — the
+blocker stays genome's with the 2026-10-16T08:00Z checkpoint).
+
+**Experiment 4j (prereg `f9b0799`, committed before the fixture existed).**
+The inspect caller's `reconcile_caller_journal` restored the row's `timestamp`
+from `recovery['context']['messages'][-1]` — the positional read 4h replaced in
+the loop writer. Measured through the real caller path
+(`prepare_exact_inspection` + `drive_native` + the inspect reconcile,
+`max_turns=2 max_calls=2`, scripted sessions, zero provider calls, n=1 per
+arm, stage-isolated source copies):
+
+- **Before-fix:** every current-writer shape coincides (single-call 7/7;
+  multi-call before `b` 7/7 where `messages[-1]` is the sibling result row;
+  multi-call before `a` 7/7; two-turn 7/7; untimestamped 0/0), each restored
+  row byte-equal to the uninterrupted `drive_native` row modulo the
+  run-specific `operation_id`/`reconciliation_ref`. The **legacy-sibling** arm
+  (sibling result row stamped 0 — the pre-4h loop-reconciler writer convention
+  measured in 4h) **diverged: restored 0 against the proposing assistant's 7
+  and the uninterrupted writer's 7**.
+- **Fix:** the inspect reconciler now correlates the proposing assistant by
+  call id through the 4h helper, exported as `proposing_assistant`
+  (`_proposing_assistant` rename; loop call site updated); docstring and
+  comments name the invariant the positional read silently depended on.
+- **After-fix:** every arm holds, legacy-sibling restored 7, byte-equal to the
+  uninterrupted row modulo volatile identifiers.
+
+**Acceptance:** multi-call caller-path row equals the uninterrupted writer's
+row; a legacy sibling row no longer copies 0; untimestamped assistants
+unchanged — pinned by three new regression tests in
+`tests/test_inference_inspect.py`. Limits: scripted sessions (no live route),
+n=1 per arm, one host; the fix is not activated in any running caller (no live
+caller uses this reconciler); the inspect reconciler still restores one row
+per invocation (recorded, unchanged).
+
+**Checks:** 279 targeted tests PASS (217 inference trio incl. 3 new + 62
+worker/transport); `tools/check_parsing.py` PASS 928. The whole-suite run
+exceeds the 300 s shell window (interrupted); not claimed — the run suites
+cover every touched module. Evidence:
+`artifacts/inference-research-wake49668-exp4j-inspect-positional-timestamp.md`;
+`scratch/exp4j-inspect-positional-wake49668/` (fixture, per-stage results,
+stage-isolated pre-fix source copy).
+
+**Next:** witness independent read of the 4j artifact rides the next settled
+wake; genome route remains genome's at the 2026-10-16T08:00Z checkpoint; next
+experiment choice after the witness read (candidate: the multi-call one-row-
+per-invocation reconcile shape, now the only known limitation of the inspect
+reconciler).
 ## Wake 49430 — operator's bounded internal-loop canary executed live (no adoption claim)
 
 Executed operator DM 49390. Frozen one source file before any run

@@ -1635,4 +1635,60 @@ where the positional and correlated reads agree.
 `opencode-go/step-5-preview-free`; the fixture and regression tests use zero
 provider calls.
 
+### Executed (wake 49668, zero provider calls, n=1 per arm, one host)
+
+Chronology: prereg `f9b0799` committed **before the fixture existed**; fixture
+`exp4j_fixture.py` then measured the unfixed positional read (before-fix),
+then the fix landed, then the same fixture re-ran (after-fix).
+
+**Before-fix** (`results-before-fix.json`; positional
+`recovery['context']['messages'][-1]` still in place): every current-writer
+shape coincided — single-call (7/7), multi-call crash before `b` (7/7;
+`messages[-1]` is `a`'s result row, ts 7), multi-call crash before `a` (7/7),
+two-turn (7/7), untimestamped assistant (0/0) — each restored row
+byte-equal to the uninterrupted `drive_native` row modulo the run-specific
+`operation_id`/`reconciliation_ref`. The **legacy-sibling** arm (last message a
+sibling `toolResult` stamped `0`, the pre-4h loop-reconciler writer convention
+measured in 4h) **diverged: restored `0` against the proposing assistant's `7`
+and the uninterrupted writer's `7`**.
+
+**Fix:** `inference_inspect.reconcile_caller_journal` now derives the timestamp
+through explicit correlation by the 4h helper (`proposing_assistant`, made
+public from `_proposing_assistant`; the loop's call site updated for the
+rename), replacing the positional read. No behavior change for any other
+field; untimestamped assistants still restore 0.
+
+**After-fix** (`results-after-fix.json`): every arm holds, including
+legacy-sibling (restored 7, byte-equal to the uninterrupted row modulo the
+volatile outcome identifiers).
+
+**Regression tests** (`tests/test_inference_inspect.py`): the multi-call
+caller-path row equals the uninterrupted writer's row byte-for-byte; the
+legacy-sibling journal restores the proposing assistant's timestamp (7) where
+`messages[-1]` is 0; the untimestamped assistant is unchanged (0).
+
+**Verification:** `tests/test_inference_inspect.py`,
+`tests/test_inference_loop.py`, `tests/test_inference_effects.py` (217 passed:
+214 prior + 3 new) plus `tests/test_inference_worker.py`,
+`tests/test_inference_transport.py` (62) = **279 passed**;
+`tools/check_parsing.py` PASS 928 unchanged. The whole-suite run exceeds this
+plant's 300 s shell window and is not claimed here; the inference suites cover
+every path this change touches.
+
+### Status
+
+**Executed.** H1 held (the positional read coincides on every current-writer
+shape, through the real `prepare_exact_inspection` / `drive_native` /
+inspect-reconcile path with `max_calls=2`); H2 held (divergence exists in the
+caller path and is now fixed by correlation-by-construction). Recorded limits:
+zero-provider scripted sessions (no live route; the 4i canary remains the only
+provider-backed caller-path measurement), n=1 per arm, one host; the fix is not
+activated in any running caller (no live caller uses this reconciler — 4h's
+live-journal observation stands). The inspect reconciler still restores only the
+proposed call per invocation, so a multi-call turn needs repeated reconciles;
+that one-row-per-invocation shape is unchanged by this fix and stays recorded.
+Evidence: `artifacts/inference-research-wake49668-exp4j-inspect-positional-timestamp.md`;
+fixture and per-stage results at
+`scratch/exp4j-inspect-positional-wake49668/{exp4j_fixture.py,results-before-fix.json,results-after-fix.json}`.
+
 ## Future experiments (not yet planned)
