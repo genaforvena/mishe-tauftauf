@@ -5307,9 +5307,21 @@ def _notify_scan(home: Path, snapshot: dict[str, object],
             elif item["kind"] == "declaration" or state != "verified":
                 detail = sample_text
                 if identifier == "sense.ledger.evidence-binding":
-                    space = detail.find(" ")
-                    if space >= 0:
-                        detail = detail[space + 1:]
+                    # Notification identity ignores the volatile read_at token
+                    # anywhere in the sample; the token stays in stored/reader-
+                    # facing data. Text handled by slicing, not parsing.
+                    _needle = "read_at="
+                    _pos = detail.find(_needle)
+                    while _pos >= 0:
+                        _end = detail.find(" ", _pos)
+                        if _end >= 0:
+                            detail = detail[:_pos] + detail[_end + 1:]
+                        else:
+                            if _pos > 0 and detail[_pos - 1] == " ":
+                                detail = detail[:_pos - 1]
+                            else:
+                                detail = detail[:_pos]
+                        _pos = detail.find(_needle)
             elif identifier == "sense.proc.cpu-busy":
                 detail = "high" if re.search(r"(?:^|\s)high(?:$|\s)", sample_text) else "not-high"
             elif identifier == "sense.thermal.hwmon":

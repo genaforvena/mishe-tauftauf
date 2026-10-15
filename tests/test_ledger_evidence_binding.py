@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 
 from mishe_tauftauf import discovery
+from mishe_tauftauf.seed_culture_views import _clip_sample, _observation_reading
 from tests.test_discovery import _binding_tape, _write_evidenced_outcome
 
 
@@ -201,3 +202,37 @@ def test_evidence_binding_absent_file_flagged_as_C_not_B(tmp_path):
     assert result["latest_bad_roles"] == ["alice(C)"]
     assert result["violations"] == [
         "alice@2026-10-06T17:00:00Z:artifacts/absent.md(C)"]
+
+
+def test_evidence_binding_drift_cause_survives_the_pane_clip(tmp_path):
+    """The pane clips a sample to 120 cells, so a drift verdict must carry its
+    standing-audit cause inside that prefix.
+
+    ``93c1f3f`` put the read watermark first in this sample. On the live store
+    (``bound=1430 latest_roles=10``) those 29 extra cells pushed ``all_bad=``
+    past the clip and the pane rendered ``DRIFT … latest_bad_last=none…`` — a
+    verdict with every visible field clean and its cause gone. The cause fields
+    lead the sample so no clip budget can drop them; ``read_at`` stays in the
+    sample and the observation dict.
+    """
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "walls").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    wall_file = home / "walls" / "alice.md"
+    wall_file.write_text("wall file\n")
+    digest = _write_evidenced_outcome(home, "alice", wall_file)
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "alice",
+         f"[record] records/{digest}.json sha256={digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    assert result["state"] == "drift"
+    cause = f"all_bad={result['all_bad']} count_excluded={result['count_excluded']}"
+    assert result["sample"].startswith(cause)
+    assert cause in _clip_sample(result["sample"])
+    assert "read_at=" in result["sample"]
+    assert "read_at" in result
+    _state, line = _observation_reading(result, "recent", home)
+    assert cause in line
+    assert "read_at=" in line
