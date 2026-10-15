@@ -1407,7 +1407,110 @@ def _mind_treadmill(home: Path) -> dict:
             "validity": {"sampled": sampled, "window_commits": TREADMILL_WINDOW_COMMITS,
                          "min_wakes": TREADMILL_MIN_WAKES}}
 
+
+def _docs_treadmill_class(files: list[str]) -> str:
+    """Name one commit's frontier class from git's name-only list.
+
+    ``docs-refresh`` means every touched path sits under ``docs/``: the
+    commit moves the book, not the implementation frontier (``src/``,
+    ``tests/``). ``implementation`` names a commit that touches the
+    frontier, whatever else it touches. Everything else (research notes,
+    merge commits with no name-only files) reads ``other``. No subject
+    markers: the demonstrated refresh pattern renews scan-derived status
+    text under many subject shapes, and a path test generalizes without
+    tying coverage to one literal phrasing.
+    """
+    if files and all(name[:5] == "docs/" for name in files):
+        return "docs-refresh"
+    if any(name[:4] == "src/" or name[:6] == "tests/" for name in files):
+        return "implementation"
+    return "other"
+
+
+def _docs_treadmill_fold(commits: list[dict]) -> dict:
+    """Fold one role's newest-first stream into refresh stagnation + change.
+
+    Pure: no subprocess, no clock. Stagnation counts the leading run of
+    ``docs-refresh`` commits; change counts the complement inside the
+    ``TREADMILL_MIN_WAKES`` head window. Only the leading run is read, so
+    an older refresh tail cannot mask a recent implementation wake.
+    """
+    stagnation = 0
+    for entry in commits:
+        if _docs_treadmill_class(entry.get("files", [])) == "docs-refresh":
+            stagnation += 1
+        else:
+            break
+    window = commits[:TREADMILL_MIN_WAKES]
+    change = sum(1 for entry in window
+                 if _docs_treadmill_class(entry.get("files", [])) != "docs-refresh")
+    return {"stagnation": stagnation, "change": change}
+
+
+def _mind_docs_treadmill(home: Path) -> dict:
+    """Docs-book churn rollup over each role's commit stream.
+
+    Rule TD (docs treadmill): a role whose leading run holds at least
+    ``TREADMILL_MIN_WAKES`` consecutive docs-only commits with zero
+    change in the head window reads ``watch-docs-treadmill`` — the turn
+    renews scan-derived book text (sample IDs, cursors, status lines)
+    with no implementation movement, the pattern the 2026-10-15
+    operator audit demonstrated as ``sense.mind.treadmill``'s blind
+    spot. Any frontier-touching commit in the run, or a run under five,
+    reads ``clean``. No commits, or a checkout git cannot read, stays
+    UNKNOWN: absence of evidence is not a clean bill.
+
+    Coverage note: this detector ADDS the docs-book lane beside the
+    narrow record-file lane; it does not replace it and schedules
+    nothing — it only routes the pattern to the health rollup, which
+    decides. Artifact-only churn cannot appear here because the plant
+    gitignores ``.mishe-*``; such commits are not in the log.
+    """
+    checkout = Path(home).resolve().parent
+    try:
+        head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
+                              text=True, timeout=5, cwd=checkout)
+    except (OSError, subprocess.TimeoutExpired):
+        return {"id": "sense.mind.docs-treadmill", "state": "unknown",
+                "sample": "checkout HEAD unreadable", "roles": {}, "kind": "read"}
+    if head.returncode != 0:
+        return {"id": "sense.mind.docs-treadmill", "state": "unknown",
+                "sample": "not a git checkout", "roles": {}, "kind": "read"}
+    sampled = head.stdout[:40]
+    roles = ["inference-research", "body-research", "docs", "health", "senses",
+             "discover", "genome", "witness", "research-methods", "operator-view"]
+    pairs: dict[str, dict] = {}
+    unreadable = 0
+    worst = "clean"
+    for role in roles:
+        commits = _treadmill_commits(checkout, role)
+        if commits is None:
+            unreadable += 1
+            continue
+        if not commits:
+            pairs[role] = {"stagnation": 0, "change": 0, "verdict": "unknown",
+                           "detail": "no commits in window"}
+            continue
+        fold = _docs_treadmill_fold(commits)
+        verdict = ("watch-docs-treadmill" if fold["stagnation"] >= TREADMILL_MIN_WAKES
+                   and fold["change"] == 0 else "clean")
+        if verdict == "watch-docs-treadmill":
+            worst = "watch-docs-treadmill"
+        pairs[role] = {**fold, "verdict": verdict,
+                       "detail": f"leading docs-only run over {len(commits)} commits"}
+    sample = "docs-treadmill=" + worst + " " + " ".join(
+        f"{role}(stag={pairs[role]['stagnation']},change={pairs[role]['change']})"
+        for role in sorted(pairs))
+    if unreadable:
+        sample += f" unreadable={unreadable}"
+    state = "verified" if pairs else "unknown"
+    return {"id": "sense.mind.docs-treadmill", "state": state, "sample": sample,
+            "roles": pairs, "verdict": worst, "kind": "read",
+            "consumer": "health mishe-wide treadmill rollup",
+            "validity": {"sampled": sampled, "window_commits": TREADMILL_WINDOW_COMMITS,
+                         "min_wakes": TREADMILL_MIN_WAKES}}
 LOOP_STALL_GATE_HOURS = 6.0
+
 """Hours an open resolver gate may age before a treadmilling role reads stalled.
 
 Inference waited ~24h (pause 12:11Z to next-day cutoff); six hours catches the
@@ -5044,6 +5147,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_mind_wedge_suspects())
     observed.append(_mind_watch_wait(home))
     observed.append(_mind_treadmill(home))
+    observed.append(_mind_docs_treadmill(home))
     observed.append(_mind_loop_stall(home))
     observed.append(_ledger_delivery_invariant(home))
     observed.append(_ledger_dv_binding(home))

@@ -6081,6 +6081,49 @@ def test_treadmill_ci_without_concluded_is_other_change():
         "inference-research wake 1: CI watch pending") == "other-change"
 
 
+def _docs_refresh_commit(subject="docs wake 46638: refresh Redmi consumer status"):
+    return {"subject": subject,
+            "files": ["docs/mesh.md"]}
+
+
+def test_docs_treadmill_positive_control_is_docs_only_chain():
+    commits = [_docs_refresh_commit() for _ in range(7)]
+    fold = discovery._docs_treadmill_fold(commits)
+    assert fold == {"stagnation": 7, "change": 0}
+
+
+def test_docs_treadmill_negative_control_impl_breaks_stagnation():
+    commits = [_docs_refresh_commit() for _ in range(4)] + [_impl_commit()]
+    fold = discovery._docs_treadmill_fold(commits)
+    assert fold == {"stagnation": 4, "change": 1}
+
+
+def test_docs_treadmill_short_run_below_threshold():
+    fold = discovery._docs_treadmill_fold([_docs_refresh_commit() for _ in range(3)])
+    assert fold == {"stagnation": 3, "change": 0}
+
+
+def test_docs_treadmill_mixed_docs_src_commit_is_implementation():
+    assert discovery._docs_treadmill_class(
+        ["docs/mesh.md", "src/mishe_tauftauf/seed.py"]) == "implementation"
+
+
+def test_docs_treadmill_research_only_commit_is_other():
+    assert discovery._docs_treadmill_class(
+        ["research/notes.md"]) == "other"
+
+
+def test_docs_treadmill_empty_file_list_is_other():
+    assert discovery._docs_treadmill_class([]) == "other"
+
+
+def test_docs_treadmill_rollup_unknown_when_not_a_checkout(tmp_path):
+    home = tmp_path / "site"
+    (home / "handoffs").mkdir(parents=True)
+    reading = discovery._mind_docs_treadmill(home)
+    assert reading["id"] == "sense.mind.docs-treadmill"
+    assert reading["state"] == "unknown"
+
 def _treadmill_home_with_handoff(tmp_path, text="wake 1 notes"):
     home = tmp_path / "site"
     (home / "handoffs").mkdir(parents=True, exist_ok=True)
