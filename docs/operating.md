@@ -162,6 +162,15 @@ from the checkout source and `unknown stale-original-evidence` from pin
 `fcaa2aa`, so a fresh reading can read stale on a deployed pane.
 `sense.runtime.pin-lag` names that gap (`pin=<sha> head=<sha> lag=N age=…`).
 
+A published historical transition is retained only when the reader can
+revalidate it; otherwise the pane names the failed predicate after
+`historical transition not retained:`. `event-window-expired` is the routine
+class — the transition is older than the producer's own validity — while
+`event-identity-mismatch`, `event-receipt-before-phone`, `event-phone-span`,
+`event-receipt-order`, `event-window-future`, `event-bucket-mismatch` and
+`event-malformed-shape` each name a publisher contradiction. One string for
+all of them made a new defect read exactly like routine expiry.
+
 A lux value is a sensor reading, not room occupancy or human attendance, and
 the camera surface reports faults, not a scene. The measured history and its
 limits are in [how it works](how-it-works.md).
