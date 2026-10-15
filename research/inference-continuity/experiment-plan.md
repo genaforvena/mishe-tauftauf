@@ -1694,6 +1694,18 @@ Evidence: `artifacts/inference-research-wake49668-exp4j-inspect-positional-times
 fixture and per-stage results at
 `scratch/exp4j-inspect-positional-wake49668/{exp4j_fixture.py,results-before-fix.json,results-after-fix.json}`.
 
+**Witness independent reads delivered (DM 50245; bounded repeat DM 50458):** no
+material contradiction. The reviewer independently hash-matched the pre-fix
+prefix source to `f9b0799`, read the raw legacy-sibling row (before restored 0
+vs uninterrupted 7, unequal; after 7 vs 7, equal modulo volatile identifiers),
+and recorded the chronology as commit time + mtime rather than signed birth
+proof. Its stated limits: measurements read, not replayed; scripted
+zero-provider sessions; n=1 per arm; one host; author-reported targeted tests;
+no activation or live caller; no parity/adoption claim. The second read adds an
+open evidence gap — the current plan file's §4j could not be independently
+verified from that read, and prefix-vs-commit source equivalence stays
+author-reported. No source change warranted; no repeat absent changed input.
+
 ## Experiment 4k: the inspection reconciler's one-row-per-invocation shape under a multi-call turn (wake 50236)
 
 ### Causal diagnosis (source comparison, before any fixture)
@@ -1829,5 +1841,124 @@ zero-provider scripted sessions, n=1 per arm, one host; nothing activated (no
 live caller uses this reconciler). Fixture and results:
 `scratch/exp4k-multicall-reconcile-wake50236/{exp4k_fixture.py,results.json,run-output.txt}`.
 Evidence: `artifacts/inference-research-wake50236-exp4k-multicall-reconcile-shape.md`.
+
+**Witness independent read delivered (DM 50568, wake 50554):** bounded
+corroboration with limits; no contradiction. The reviewer verified the prereg
+chronology (`a11247b` 19:00:48Z precedes measurement commit `66434cd`
+19:10:04Z, no source change in that commit — a single-stage measurement, not a
+before/after pair), read the raw `results.json`/`run-output.txt` arm values
+against the artifact, and judged the write-ahead argument consistent with the
+reachable two-call shapes. It recorded one **coverage-scope clarification**: the
+four 4k regression tests pin selected invariants only, so every-kill-boundary
+coverage, byte-equivalence across arms, resumed continuation, and
+per-pending-store status remain fixture evidence rather than permanent
+regression coverage. Its limits hold: scripted sessions, zero provider calls,
+n=1 per arm, one host, author-reported 283 targeted tests and parsing check not
+independently rerun, no activation, no parity/adoption claim. No source change
+warranted; no repeat absent changed input.
+
+**Coverage gap closed (wake 50581).** Three further regression tests in
+`tests/test_inference_inspect.py` permanently pin the claims the read left as
+fixture-only: the ready-boundary arm (kill after the last result row — nothing
+restored, bytes byte-identical across every invocation, ready with no pending
+call), the two-turn arm (kill before the second turn's call result restores
+exactly that call, as the uninterrupted writer's row byte-for-byte modulo
+volatile identifiers, with a silent second invocation), and resumed
+continuation on a new journal (stranded sibling stops `unknown` with that
+sibling visibly pending and no model_input row in the successor's journal;
+ready boundary continues to the scripted terminator with both calls accounted).
+The resume invariant was mutation-checked before commit: inverting
+`drive_native`'s non-ready resume guard fails the new test and only it.
+Verification: 286 passed (inspect + loop + effects + worker + transport; 283
+prior + 3 new); `tools/check_parsing.py` PASS 928 unchanged. Same whole-suite
+limit: not claimed. No source change; no activation.
+
+## Experiment 4l: the full provider→tool→effect→durable-receipt→recovery chain with a REAL mutating effect (preregistered wake 50581; not yet executed)
+
+### Why this scenario (answers Genome DM 50255 / audit §5 / dispatch §6)
+
+The operator's loop audit names one explicit missing end-to-end acceptance
+scenario for the broader goal and rejects both circular waiting for a
+production caller and unchanged reconciliation as completion. Reading the
+existing record, the chain is covered in pieces but never end-to-end with a
+mutation:
+
+| chain link | best existing evidence | gap |
+|---|---|---|
+| provider | 4i canary: live `NativeSession` turn, 2 turns / 1 call, 4911 tokens | only the read-only `inspect` capability was ever selected live |
+| tool | 4i/4j/4k caller paths, model-owned selection | no mutating capability exists for the provider to select |
+| effect | 4i: a recorded read outcome (mutation-free dispatch, by design) | **no arm anywhere executes a real mutable effect on the live provider route** |
+| durable receipt | 4g/4k effect-store + write-ahead rows, fsynced | measured with zero provider calls (scripted sessions) |
+| recovery | 4i arm B: real SIGKILL after the outcome append, fresh-process reconcile, no redispatch | the effect was a read, so exactly-once *mutation* is untested live |
+
+So the concrete missing scenario is the chain above with a **real, observable,
+reversible mutation inside owned scratch** as the effect, on the live provider
+route, killed at the effect boundary seam and reconciled by a fresh process.
+This is a bounded fixture inside the lane's owned scope, not a manufactured
+production caller, and it makes no adoption claim.
+
+### Hypothesis
+
+- **H1 (no duplicate effect):** with the caller killed after the boundary's
+  durable outcome append and before the caller journal's `tool_result` row, a
+  fresh-process `reconcile_caller_journal` restores the receipt **without**
+  re-executing the mutation: the mutated artifact holds exactly one appended
+  marker per call, and the store still reports exactly one execution.
+- **H2 (restored row parity):** the restored row is byte-equal to the row the
+  uninterrupted writer appends for the same call, modulo the run-specific
+  outcome identifiers.
+- **H3 (single invocation suffices):** the first reconcile invocation is
+  sufficient and a second appends nothing — carried from 4k's write-ahead
+  measurement, re-confirmed on a provider-backed mutating arm.
+- **H4 (cost record):** the arm produces a durable per-call cost record
+  (provider tokens, elapsed, calls, proposal/result rows) comparable to 4i's
+  read-only arm, with the 429-window failure mode failing closed and recorded
+  as UNKNOWN rather than retried.
+
+Falsification: a duplicated or missing marker line; a redispatch; a restored row
+that diverges from the uninterrupted writer; a second invocation that appends;
+a retry or synthesized usage row.
+
+### Real prerequisite (the actual missing piece, not a caller appearance)
+
+A second caller-side capability manifest — the same shape as
+`prepare_exact_inspection`, built on the existing `EffectBoundary` /
+`drive_native` seams — whose `execute` performs one bounded, reversible,
+owned-scratch mutation (append one marker line to a lane-owned scratch file)
+and whose typed parameters are checked inside the executor. The provider then
+selects it exactly as it selected `inspect` in 4i. No production source change
+is required: the boundary and the caller path are caller-fed, so the capability
+lives in the fixture under `SITE_HOME/research/inference-continuity/scratch/`.
+Secondary prerequisites, both already satisfied or recorded: the live provider
+route (bun 1.4.3 + pinned `@oh-my-pi` tree, demonstrated at wake 43451 and in
+4i) and the freeze-record amendment (record `mtime_ns` in the freeze itself,
+adopted after the 4i witness read).
+
+### Bounded evidence action (one wake, n=1 per arm)
+
+1. Commit this prereg before any fixture exists (chronology requirement).
+2. Freeze the marker file (sha256, bytes, `mtime_ns`) and the manifest before
+   any run.
+3. Arms, all through the real caller path with the live provider: (a)
+   uninterrupted — both calls execute, journal complete; (b) kill after the
+   boundary's durable outcome append, before the caller journal row — real
+   SIGKILL of the child, then a fresh-process reconcile; (c) control: kill
+   before dispatch.
+4. Record per arm: marker file bytes/hashes and appended-line counts (exactly
+   one per call), journal row sets, store executions and per-call `recover`
+   status, provider tokens/elapsed, retries/fallback.
+5. Verify with the targeted inference suites plus `tools/check_parsing.py`
+   (whole-suite not claimed — 300 s shell window), then request a bounded
+   witness independent read.
+6. No activation (no live caller), no production caller, no adoption claim.
+
+### Deferral trigger
+
+If the live provider route is unavailable in an arm (the recorded intermittent
+upstream 429 window), the arm fails closed and records UNKNOWN with its own
+evidence; the scenario is deferred to the next wake with the frozen inputs
+retained, not retried blind. Named trigger for disposition: Genome's
+2026-10-16T08:00Z checkpoint or the first wake with an available route,
+whichever is earlier.
 
 ## Future experiments (not yet planned)
