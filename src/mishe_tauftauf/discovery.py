@@ -4094,6 +4094,7 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     two names for one inode (hardlink aliasing) both read clean.
     """
     coverage = classify_outcomes(home, EVIDENCE_BINDING_CLAUSE_TIME)
+    read_at = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     incomplete = coverage["incomplete"]
     if coverage["unavailable"]:
         return {"id": "sense.ledger.evidence-binding", "state": "unknown",
@@ -4149,7 +4150,7 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     bad_last = ",".join(f"{role}@{ts.strftime('%Y-%m-%dT%H:%M:%SZ')}"
                         for role, ts in bad_last_rows) or "none"
     count_excluded = sum(1 for row in checked if "B" in row[4])
-    parts = [f"bound={len(checked)} latest_roles={len(latest)} "
+    parts = [f"read_at={read_at} bound={len(checked)} latest_roles={len(latest)} "
              f"latest_bad={len(latest_bad_roles)} latest_bad_roles={named_bad} "
              f"latest_bad_last={bad_last} "
              f"all_bad={len(violations)} count_excluded={count_excluded}"]
@@ -4164,7 +4165,7 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
             parts.append(f"+{len(violations) - 3}more")
     return {"id": "sense.ledger.evidence-binding",
             "state": "drift" if violations else "unknown" if incomplete else "verified",
-            "sample": " ".join(parts), "kind": "read",
+            "sample": " ".join(parts), "kind": "read", "read_at": read_at,
             "bound": len(checked), "latest_roles": len(latest),
             "latest_bad": len(latest_bad_roles),
             "latest_bad_roles": [f"{role}({classes})" for role, classes in latest_bad_roles],

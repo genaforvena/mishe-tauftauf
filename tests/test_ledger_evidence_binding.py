@@ -6,7 +6,7 @@ live window's own naming, so the pane's ``latest_bad`` count is readable beside
 the roles it counts instead of being re-derived from ``violating``, which lists
 the standing audit's newest rows — a different window.
 """
-from __future__ import annotations
+import re
 
 from pathlib import Path
 
@@ -35,6 +35,21 @@ def test_evidence_binding_clean_store_names_no_live_bad_role(tmp_path):
     assert result["latest_bad"] == 0
     assert result["latest_bad_roles"] == []
     assert "latest_bad_roles=none" in result["sample"]
+
+def test_evidence_binding_sample_stamps_its_read_watermark(tmp_path):
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    evidence = home / "artifacts" / "wake.md"
+    evidence.write_text("write-once\n")
+    digest = _write_evidenced_outcome(home, "alice", evidence)
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "alice",
+         f"[record] records/{digest}.json sha256={digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    assert re.search(r"read_at=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z",
+                     result["sample"])
 
 
 def test_evidence_binding_names_live_bad_roles_not_the_standing_audit(tmp_path):
