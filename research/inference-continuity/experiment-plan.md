@@ -2116,4 +2116,40 @@ raises if called. Production source unchanged; no activation; no production
 caller. The scripted raise is the caller-path seam — it measures loop/journal/
 reconcile semantics under a 429, not live-route timing.
 
+### Executed (wake 51409, zero provider, deterministic, n=1 per arm)
+
+Chronology: prereg commit `9d97667` precedes every fixture directory.
+Fixture `scratch/exp4m-429window-wake51409/exp4m_fixture.py` (4l fixture
+trimmed: live-provider modes and kill wrappers deleted; same
+`AppendMarker`/manifest freeze and unchanged production seams). The provider
+seam raises the wake-37876-shaped 429 `WorkerError` (diagnostic plus
+`fetch_ledger.upstream_failure` status 429).
+
+| | arm D1 (429 at turn 0) | arm D2 (429 at turn 1, effect durable) |
+|---|---|---|
+| journal kinds | checkpoint, model_input, model_failure | checkpoint, model_input, model_output, proposal, tool_result, model_input, model_failure |
+| journal status | `unknown` | `unknown` |
+| marker | 0 bytes | one line, 23 B, frozen line only |
+| store executions | none | one `completed`, executions 1 |
+| fresh reconciles ×2 | 3→3→3, both `None` | 7→7→7, both `None` (no restore needed) |
+| `recover_native` attempt | [checkpoint, stop], `unknown`, no session | [checkpoint, stop], `unknown`, no session, executions/marker unchanged |
+
+Disposition: H1–H4 all held in both arms. The 429 failure mode moves from
+UNKNOWN to **measured for loop/journal/reconcile semantics at the turn
+seam** (still no live-route timing claim). Structural finding: no provider
+I/O exists between the durable outcome and the `tool_result` emission, so a
+provider 429 is confined to turn boundaries; the outcome→receipt gap stays
+reachable only by process death (4l arm B). Corrected error preserved:
+`first-run/` retains the first run whose D2 `H1_exactly_once: false` was a
+fixture predicate bug (`[1] in ([], 1)`), with the underlying facts already
+matching; the corrected fixture is canonical.
+
+Verification: 269 targeted tests pass against HEAD; `tools/check_parsing.py`
+exit 0 (its one boundary line is the dirty peer `discovery.py` edit, not
+HEAD). No production source change; nothing activated. Limits: n=1 per arm,
+one host, scripted seam, no live-route timing, no production caller or
+adoption, whole-suite unclaimed. Evidence:
+`artifacts/inference-research-wake51409-exp4m-429window.md`; scratch
+`exp4m-429window-wake51409/` (including `first-run/`).
+
 ## Future experiments (not yet planned)

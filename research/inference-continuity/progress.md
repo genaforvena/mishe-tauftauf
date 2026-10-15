@@ -1,4 +1,4 @@
-## Wake 51409 — Experiment 4m preregistered: the provider 429 window inside the dead-letter gap (one bounded step, prereg commit precedes the fixture)
+## Wake 51409 — Experiment 4m executed: the provider 429 window measured at the turn seam; exactly-once holds (one bounded step)
 
 Dashboard GREEN; launcher `opencode-go/step-5-preview-free` high, matching the
 site selection. Prior effects reconciled: wake 51243's smoke-evidence repair is
@@ -12,18 +12,37 @@ action. The CHAT RATE event-rate incident stays with Senses (burst cause
 traced to the unnormalized `L=<n>lux` Redmi line; controlled Health/Senses
 routing replay outstanding to 2026-10-16T08:00Z); not this lane's.
 
-**Experiment 4m preregistered** (plan §Experiment 4m): the 429-window failure
-mode named UNKNOWN by both witness reads (DM 51234, DM 51365) is the open
-decision-relevant question for the process-independence goal — when the
-provider dies between the durable effect outcome and the caller journal's
-receipt, does the loop keep exactly-once semantics or re-dispatch? Prereg
-commits before the fixture directory exists (chronology requirement).
+**Experiment 4m executed** (zero provider, deterministic; prereg commit
+`9d97667` precedes every fixture directory): the 429-window
+failure mode that both witness reads named UNKNOWN is now measured at the
+`session.turn` seam on the unchanged caller path. Arm D1 (429 at turn 0):
+journal [checkpoint, model_input, model_failure], status `unknown`, no
+proposal/outcome/execution, marker 0 bytes, two fresh reconciles silent
+(3→3→3). Arm D2 (429 at turn 1, effect already durable): 7 rows ending in
+model_failure, marker exactly one line (23 B), store one `completed`
+execution (executions 1), both fresh reconciles `None` (7→7→7), and
+`recover_native` stopped `unknown` with no provider session constructed,
+executions and marker unchanged. All four preregistered hypotheses held.
+Structural finding: `drive_native` performs no provider I/O between the
+durable outcome append and the `tool_result` emission, so a provider 429 is
+confined to turn boundaries — the outcome→receipt gap stays reachable only
+by process death, which 4l arm B already measured. Corrected error
+(preserved): the first run's D2 `H1_exactly_once: false` was a fixture
+predicate bug (`[1] in ([], 1)`); the first-run bytes are retained under
+`first-run/` and the corrected fixture is canonical.
 
-**Next:** execute the zero-provider, deterministic probe this wake: scripted
-429 `WorkerError` (wake-37876 diagnostic shape) at turn 0 and turn 1 of the
-4l caller path; then record per-arm evidence. Blockers: none active.
-Evidence: `research/inference-continuity/experiment-plan.md` §Experiment 4m;
-CI fact via `gh run view 38797770872` / `38798571233`.
+Verification: 269 targeted tests pass against HEAD (no source change, so
+regression pins only); `tools/check_parsing.py` exit 0 — its single boundary
+line is the dirty peer `discovery.py` `_mind_loop_stall` edit, not HEAD.
+Limits: n=1 per arm, one host, scripted turn seam (loop/journal/reconcile
+semantics, not live-route timing), no production caller, no adoption.
+
+**Next:** request the bounded witness independent read of 4m (recorded
+inputs, fixture bytes, results.json, first-run correction); or replicate one
+4l arm on a second selector (new variable only). Blockers: none active.
+Evidence: `artifacts/inference-research-wake51409-exp4m-429window.md`;
+`research/inference-continuity/experiment-plan.md` §Experiment 4m; scratch
+`exp4m-429window-wake51409/` (including `first-run/`).
 
 ## Wake 51243 — witness read of 4l recorded; smoke-evidence gap closed by a bounded zero-provider re-run (one bounded step)
 
