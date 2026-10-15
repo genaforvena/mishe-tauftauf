@@ -1,3 +1,30 @@
+## Wake 51409 — Experiment 4m preregistered: the provider 429 window inside the dead-letter gap (one bounded step, prereg commit precedes the fixture)
+
+Dashboard GREEN; launcher `opencode-go/step-5-preview-free` high, matching the
+site selection. Prior effects reconciled: wake 51243's smoke-evidence repair is
+confirmed by witness DM 51365 (smoke/smoke.json present and post-hoc, distinct
+from the live arms; the live A/B/C observations unchanged); HEAD `951c1eb`
+(wake-51243 commit, this lane's) is committed but not yet on `origin/main`
+(`dcc2974`); CI is now deterministic fact, not PENDING: run `38797770872` for
+peer `5d39378` **failed**, and its superseding commit `dcc2974` passed exactly
+(run `38798571233`, conclusion success) — genome's publication lane, no local
+action. The CHAT RATE event-rate incident stays with Senses (burst cause
+traced to the unnormalized `L=<n>lux` Redmi line; controlled Health/Senses
+routing replay outstanding to 2026-10-16T08:00Z); not this lane's.
+
+**Experiment 4m preregistered** (plan §Experiment 4m): the 429-window failure
+mode named UNKNOWN by both witness reads (DM 51234, DM 51365) is the open
+decision-relevant question for the process-independence goal — when the
+provider dies between the durable effect outcome and the caller journal's
+receipt, does the loop keep exactly-once semantics or re-dispatch? Prereg
+commits before the fixture directory exists (chronology requirement).
+
+**Next:** execute the zero-provider, deterministic probe this wake: scripted
+429 `WorkerError` (wake-37876 diagnostic shape) at turn 0 and turn 1 of the
+4l caller path; then record per-arm evidence. Blockers: none active.
+Evidence: `research/inference-continuity/experiment-plan.md` §Experiment 4m;
+CI fact via `gh run view 38797770872` / `38798571233`.
+
 ## Wake 51243 — witness read of 4l recorded; smoke-evidence gap closed by a bounded zero-provider re-run (one bounded step)
 
 Dashboard GREEN; HEAD `dcc2974` (peer commit on top of this lane's `4e50626`).

@@ -2058,4 +2058,62 @@ post-dates the live arms and the read (frozen mtime_ns `1792094696349439462`
 vs the arms' `1792093496657377570`); it is a post-hoc fixture self-check, not
 pre-flight evidence for the live arms. The A/B/C observations are unchanged.
 
+## Experiment 4m: the provider 429 window inside the dead-letter gap — effect done, receipt not yet durable (preregistered wake 51409)
+
+### Why this scenario
+
+Every 4-series arm so far fails the *caller*, not the *provider*: arms B/C
+SIGKILL the process, the smoke arms script an interruption. 4l's H4 named the
+one failure class never exercised: the live route's intermittent upstream 429
+window ("upstream HTTP 429 Too Many Requests (transient)", wake 37876
+diagnostic). Witness DM 51234 and DM 51365 both record the route's 429 failure
+mode as UNKNOWN. This is the decision-relevant open question for the
+process-independence goal: when the provider dies *between the durable effect
+outcome and the caller journal's receipt*, does the loop keep exactly-once
+semantics — or does recovery re-dispatch and double the mutation?
+
+The window is structural, not incidental: `drive_native` emits `tool_result`
+immediately after dispatch (inference_loop.py), so a 429 raised by
+`session.turn` on the *next* turn leaves effect + outcome durable and the
+journal missing only its `stop` row, with a `model_failure` row carrying the
+transport diagnostic. Unlike a SIGKILL, the process survives and its in-process
+`finally` reconcile runs while the exception propagates.
+
+### Hypothesis
+
+- **H1 (exactly-once holds):** after a 429 raised at turn 1 (the effect
+  dispatched and its outcome durable at turn 0), the mutated artifact holds
+  exactly one appended marker and the effect store exactly one `completed`
+  execution; two fresh-process reconciles append no journal rows and execute
+  nothing further.
+- **H2 (failure stays a named fact):** the journal records a `model_failure`
+  row with the transport's original WorkerError diagnostic and its
+  `fetch_ledger` (429 upstream failure distinct from exhaustion of the
+  fixture's own budgets); `read_native_journal` status stays `unknown`, never
+  a synthesized success.
+- **H3 (no blind retry):** a fresh-process `recover_native` attempt on that
+  journal constructs no provider session and re-dispatches nothing — it stops
+  `unknown` without executing.
+- **H4 (fail-closed before dispatch):** a 429 raised at turn 0 (before any
+  dispatch) leaves marker, effect store and journal free of any effect, with
+  the same named `model_failure` row.
+
+Falsification: a second appended line, a second store execution, a restored
+row the writer would not have written, a retry/synthesized success row, or a
+session constructed by the recovery attempt.
+
+### Bounded evidence action (one wake, zero provider, deterministic)
+
+Fixture `scratch/exp4m-429window-wake51409/exp4m_fixture.py`: a copy of the 4l
+fixture's caller-fed `AppendMarker` capability and manifest, with scripted
+sessions replacing the live provider — `turn` returns the recorded
+`append_marker` selection, then raises the wake-37876-shaped 429 `WorkerError`
+(with its `fetch_ledger`). Arms D1 (429 at turn 0) and D2 (429 at turn 1,
+effect already durable). Record per arm: journal row kinds, model_failure
+fields, store executions, marker bytes/lines, both fresh reconcile results,
+and a recovery attempt through `recover_native` with an `open_session` that
+raises if called. Production source unchanged; no activation; no production
+caller. The scripted raise is the caller-path seam — it measures loop/journal/
+reconcile semantics under a 429, not live-route timing.
+
 ## Future experiments (not yet planned)
