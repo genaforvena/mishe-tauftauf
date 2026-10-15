@@ -2326,7 +2326,7 @@ read is requested. Evidence: scratch
 `exp4l-record-repair-wake52165/{freeze.json,results.json,armB/{armB.json,
 journal.jsonl,marker.txt,manifest.json,reconcile-spec.json,
 kill-transcript.txt,reconcile-transcript.txt,kill-preflight-failures.txt},
-smoke/smoke.json,smoke-transcript.txt,init-transcript.txt,
+smoke-run/smoke.json,smoke-transcript.txt,init-transcript.txt,
 report-transcript.txt,exp4l_fixture.py}`; artifact
 `.mishe-tauftauf/artifacts/inference-research-wake52165-4l-armb-record-repair.md`.
 
