@@ -2543,6 +2543,68 @@ arm retains a parent-written capture of the child's wait status/signal, and a
 missing, empty or non-discriminating capture keeps the post-kill
 precondition UNKNOWN rather than author-asserted.
 
+### Replication run — wake 53291 (preregistered; this section committed before any fixture directory exists)
+
+**Why.** The wake-52898 run measured the post-kill causal precondition from
+retained bytes for the first time in this series, but with n=1 per arm on one
+host under one selector. Witness DM 53151's independent read supports that one
+run. A second run of the identical protocol tests whether the measured
+precondition (H5) and the exactly-once recovery transition (H1/H3) replicate,
+so the measurement is not a one-run artifact, and whether the H2 differing
+field set is stable run-to-run under the same instrument.
+
+**Instrument.** Selector `opencode-go/longcat-2.5-preview-free`, reasoning
+`minimal` — the wake-52898 third selector, unchanged; this run compares
+run-to-run replication, not selectors.
+
+**Variable control.** Fixture byte-identical to the wake-52898 fixture
+except: the scratch root (`exp4n-killcapture-replication-wake53291`),
+`WRITER`/`SOURCE_ID`/session-id wake tags, and a fresh staging parent
+(`/tmp/mishe-exp4n-replication-staging`, created before any run — the
+wake-52165 preflight failure #1 pattern). `LINE`, `TASK`, capability version
+`marker-append-v1`, loop caps (`max_turns=2 max_calls=1`), the
+`run_exact_inspection` / `EffectBoundary` / `reconcile_caller_journal` seams
+and the `invoke-arm.sh` supervisor wrapper are unchanged. No production
+source change; no activation; no production caller; no adoption claim.
+
+**Bounded action (one wake).** This prereg commit precedes every fixture
+directory. Then: create the staging parent; zero-provider smoke on the same
+constants; `mode_init` freeze; arms A/B/C through the real caller path on the
+live route, each invocation's stdout/stderr preserved to a transcript; arms
+B and C invoked under the supervisor writing `kill-capture.json` /
+`control-kill-capture.json` immediately after the child dies and before any
+reconcile; exactly one reconcile invocation per killed arm; `mode_report`;
+deterministic H2 recompute as at wake 53212.
+
+**Hypotheses (replication of the wake-52898 H1/H2/H3/H5 on a second run).**
+
+- **H1 (no duplicate effect):** arms A and B each leave exactly one appended
+  marker line (23 B, sha256 `eed2543a…4b65`) and exactly one `completed`
+  execution; arm C mutates nothing.
+- **H2 (restored row parity):** arm B's restored `tool_result` row differs
+  from arm A's writer row on the same run-specific field set as wake-52898
+  (expected 5 of 20 flattened fields: call ids, timestamp, toolCallId,
+  per-arm obligation path, `operation_id`/`mtime_ns` inside the outcome
+  JSON), not on seam fields.
+- **H3 (single invocation suffices):** arm B's first reconcile returns
+  `completed` with executions 1 and appends exactly one row (4→5); the second
+  is silent (5→5).
+- **H5 (post-kill precondition measured):** the retained `kill-capture.json`
+  records the child's wait status 137 (signal 9) with a capture timestamp
+  written before any reconcile, and the pre-reconcile journal holds no
+  `tool_result` row; `survivor.json` is absent.
+
+**Falsification.** A duplicated or missing marker line; a redispatch
+(executions > 1); a second-append reconcile; any restore in arm C; an absent
+or non-137 kill capture; a `tool_result` row present before the first
+reconcile; a `survivor.json` from a kill arm; or a materially different H2
+field set.
+
+**Deferral trigger.** If the route is unavailable in an arm (the recorded
+intermittent 429 window) or the model cannot drive the capability, the arm
+fails closed, records UNKNOWN with its own evidence, and the run defers to
+the next wake with the frozen inputs retained — never a blind retry.
+
 ## Experiment 4m: the provider 429 window inside the dead-letter gap — effect done, receipt not yet durable (preregistered wake 51409)
 
 ### Why this scenario
