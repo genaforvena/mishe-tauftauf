@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 import shlex
 
-from .feed import Feed
+from .feed import Feed, publication_lock
 from .chat_protocol import decode_lifecycle
 from .outcome_events import classify_outcomes
 from .outcome_publication import OUTCOME_KINDS
@@ -77,15 +77,17 @@ def outcome(home: Path, role: str, kind: str, text: str, evidence: Path):
     data = evidence.read_bytes()
     if not data:
         raise ValueError("outcome evidence must not be empty")
-    # D-check: refuse an already-bound evidence path
-    bound = _bound_evidence_paths(home)
     evidence_str = str(evidence)
-    if evidence_str in bound:
-        raise ValueError(f"outcome evidence path already bound: {evidence_str}")
-    return Feed(home).append_record(role, f"Wall outcome {kind} by {role}\n{text.strip()}",
-        {"role": role, "kind": kind, "text": text.strip(),
-         "evidence": {"path": str(evidence), "sha256": hashlib.sha256(data).hexdigest()}},
-        kind="wall-outcome")
+    # Serialize the read/check/publish transaction across processes. Feed.append
+    # takes this lock too; publication_lock is reentrant within this thread.
+    with publication_lock(home):
+        bound = _bound_evidence_paths(home)
+        if evidence_str in bound:
+            raise ValueError(f"outcome evidence path already bound: {evidence_str}")
+        return Feed(home).append_record(role, f"Wall outcome {kind} by {role}\n{text.strip()}",
+            {"role": role, "kind": kind, "text": text.strip(),
+             "evidence": {"path": str(evidence), "sha256": hashlib.sha256(data).hexdigest()}},
+            kind="wall-outcome")
 
 
 def observation_text(role: str, sensor: str) -> str:

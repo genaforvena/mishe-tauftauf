@@ -1,5 +1,6 @@
 from datetime import datetime, timezone, timedelta
 import hashlib
+import multiprocessing
 import json
 import os
 import subprocess
@@ -11,6 +12,17 @@ from mishe_tauftauf.feed import Feed
 def setup_wall(home):
     (home / "coordination-mode.json").write_text(json.dumps({"mode": "wall", "until": (datetime.now(timezone.utc)+timedelta(hours=10)).isoformat()}))
 
+
+
+def _concurrent_wall_outcome(home, evidence, role, barrier, results):
+    from mishe_tauftauf import wall
+    barrier.wait()
+    try:
+        wall.outcome(home, role, "accepted", f"Concurrent outcome by {role}.", evidence)
+    except ValueError as exc:
+        results.put(("refused", str(exc)))
+    else:
+        results.put(("published", role))
 
 def _backdate_entry(home, sequence, timestamp):
     """Rewrite one feed entry header's timestamp, leaving its body untouched."""
@@ -1060,6 +1072,33 @@ def test_wall_outcome_refuses_already_bound_evidence_path(tmp_path):
     # Second outcome with the same evidence path must be refused
     with pytest.raises(ValueError, match="already bound"):
         wall.outcome(tmp_path, "health", "accepted", "Second outcome.", evidence)
+
+
+def test_wall_outcome_concurrent_duplicate_is_refused(tmp_path):
+    """Two processes cannot bind one evidence path in concurrent publications."""
+    setup_wall(tmp_path)
+    evidence = tmp_path / "artifacts" / "sample.md"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text("shared evidence")
+    context = multiprocessing.get_context("fork")
+    barrier = context.Barrier(2)
+    results = context.Queue()
+    workers = [
+        context.Process(target=_concurrent_wall_outcome,
+                        args=(tmp_path, evidence, role, barrier, results))
+        for role in ("discover", "health")
+    ]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=15)
+    assert all(not worker.is_alive() for worker in workers)
+    assert [worker.exitcode for worker in workers] == [0, 0]
+    outcomes = [results.get(timeout=2) for _ in workers]
+    assert sorted(result[0] for result in outcomes) == ["published", "refused"]
+    assert sum("already bound" in result[1] for result in outcomes if result[0] == "refused") == 1
+    assert len([entry for entry in Feed(tmp_path).entries()
+                if entry.body.startswith("Wall outcome ")]) == 1
 
 
 def test_wall_outcome_allows_distinct_evidence_paths(tmp_path):
