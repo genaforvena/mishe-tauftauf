@@ -60,8 +60,7 @@ not by itself evidence of phone failure; use the current source-bound
 observation and its detector evidence for freshness and failure status. A local
 collection spool is not delivered sensor evidence.
 
-This host's camera fault reaches the health pane's `SYSTEM ZERO` line as a named
-cause.
+A camera fault reaches the health pane's `SYSTEM ZERO` line as a named cause.
 
 Two further readings cover this host's own network path instead of its space:
 its wired Ethernet link state as `sense.net.ethernet` and its tailnet peer
