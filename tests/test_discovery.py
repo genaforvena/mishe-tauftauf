@@ -6124,6 +6124,36 @@ def test_docs_treadmill_rollup_unknown_when_not_a_checkout(tmp_path):
     assert reading["id"] == "sense.mind.docs-treadmill"
     assert reading["state"] == "unknown"
 
+
+def test_docs_treadmill_rollup_positive_and_clean(monkeypatch, tmp_path):
+    """The docs lane's rollup wiring names a firing role and a clean one.
+
+    The pure fold is covered above; this covers the part it cannot: the
+    rollup must turn a >=5 docs-only leading run with zero change into
+    ``watch-docs-treadmill`` and leave a role with an implementation commit
+    in the run ``clean``. Without it, a wiring defect could emit a
+    ``verified`` rollup that routes nothing while the fold tests still pass.
+    """
+    commits = {"docs": [_docs_refresh_commit() for _ in range(6)],
+               "health": [_impl_commit()]}
+
+    class Head:
+        returncode = 0
+        stdout = "c3c6194\n"
+
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: Head())
+    monkeypatch.setattr(discovery, "_treadmill_commits",
+                        lambda checkout, role, limit=60: list(commits.get(role, [])))
+    result = discovery._mind_docs_treadmill(tmp_path)
+    assert result["id"] == "sense.mind.docs-treadmill"
+    assert result["state"] == "verified"
+    assert result["verdict"] == "watch-docs-treadmill"
+    assert result["roles"]["docs"]["verdict"] == "watch-docs-treadmill"
+    assert result["roles"]["docs"]["stagnation"] == 6
+    assert result["roles"]["health"]["verdict"] == "clean"
+    assert result["validity"]["min_wakes"] == 5
+
+
 def _treadmill_home_with_handoff(tmp_path, text="wake 1 notes"):
     home = tmp_path / "site"
     (home / "handoffs").mkdir(parents=True, exist_ok=True)
@@ -6658,6 +6688,70 @@ def test_loop_stall_unknown_when_treadmill_unreadable(monkeypatch, tmp_path):
     home.mkdir()
     result = discovery._mind_loop_stall(home)
     assert result["state"] == "unknown"
+
+
+def test_loop_stall_drift_when_docs_lane_plus_mature_gate(monkeypatch, tmp_path):
+    """The docs-book lane routes through the same gate as the record lane.
+
+    A docs-churning role with a mature open gate is the demonstrated loop
+    shape; without this wiring the lane fires with no consumer and the stall
+    never reaches the dashboard's cause list.
+    """
+    from mishe_tauftauf import discovery
+
+    monkeypatch.setattr(discovery, "_mind_treadmill",
+                        lambda home: {"state": "verified", "roles": {}})
+    monkeypatch.setattr(discovery, "_mind_docs_treadmill",
+                        lambda home: {"state": "verified",
+                                      "roles": {"docs": {"verdict": "watch-docs-treadmill"}}})
+    monkeypatch.setattr(discovery, "_coord_dm_disposition_age",
+                        lambda home, now=None: {"state": "verified", "stall": 1,
+                                               "oldest_open": "genome:7h"})
+    home = tmp_path / "site"
+    home.mkdir()
+    result = discovery._mind_loop_stall(home)
+    assert result["state"] == "drift"
+    assert result["stalled"] == ["docs@genome:7h"]
+
+
+def test_loop_stall_verified_when_docs_lane_gate_young(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    monkeypatch.setattr(discovery, "_mind_treadmill",
+                        lambda home: {"state": "verified", "roles": {}})
+    monkeypatch.setattr(discovery, "_mind_docs_treadmill",
+                        lambda home: {"state": "verified",
+                                      "roles": {"docs": {"verdict": "watch-docs-treadmill"}}})
+    monkeypatch.setattr(discovery, "_coord_dm_disposition_age",
+                        lambda home, now=None: {"state": "verified", "stall": 0,
+                                               "oldest_open": ""})
+    home = tmp_path / "site"
+    home.mkdir()
+    result = discovery._mind_loop_stall(home)
+    assert result["state"] == "verified"
+    assert result["stalled"] == []
+
+
+def test_loop_stall_ignores_unknown_docs_lane(monkeypatch, tmp_path):
+    """An unreadable docs lane is not a clean bill and not a stall input.
+
+    A role that cannot be read stays out of ``treadmilling``; the record lane
+    still decides, and a broken docs lane alone never reads clean.
+    """
+    from mishe_tauftauf import discovery
+
+    monkeypatch.setattr(discovery, "_mind_treadmill",
+                        lambda home: {"state": "verified", "roles": {}})
+    monkeypatch.setattr(discovery, "_mind_docs_treadmill",
+                        lambda home: {"state": "unknown", "roles": {}})
+    monkeypatch.setattr(discovery, "_coord_dm_disposition_age",
+                        lambda home, now=None: {"state": "verified", "stall": 1,
+                                               "oldest_open": "genome:7h"})
+    home = tmp_path / "site"
+    home.mkdir()
+    result = discovery._mind_loop_stall(home)
+    assert result["state"] == "verified"
+    assert result["stalled"] == []
 
 
 def _keeper_display(pid):
