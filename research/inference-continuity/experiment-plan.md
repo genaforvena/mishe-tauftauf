@@ -2424,6 +2424,52 @@ intermittent 429 window) or the model cannot drive the capability, the arm
 fails closed, records UNKNOWN with its own evidence, and the run defers to
 the next wake with the frozen inputs retained — never a blind retry.
 
+### Executed (wake 52898, third selector `opencode-go/longcat-2.5-preview-free` reasoning `minimal`, n=1 per arm, one host)
+
+Chronology: prereg `0efade9` precedes every fixture directory; staging
+parent created first; zero-provider smoke passed on the same constants
+(uninterrupted marker 1 line / 23 B / `eed2543a…4b65`; scripted kill arm 5
+rows after the in-process `finally` reconcile, both reconciles `null`,
+executions 1); `mode_init` freeze (all markers 0 B, empty-file sha256,
+non-discriminating mtime pair) before any run; every invocation's
+stdout/stderr preserved to a transcript in the scratch root.
+
+| metric | arm A (uninterrupted) | arm B (kill after outcome) | arm C (control, kill pre-dispatch) |
+|---|---|---|---|
+| supervisor capture | n/a (exit 0) | **137 / signal 9 (SIGKILL), timestamped** — `armB/kill-capture.json` | **137 / signal 9 (SIGKILL), timestamped** — `armC/control-kill-capture.json` |
+| turns / calls | 2 / 1, `complete` | 1 turn / 1 call, killed post-outcome | 1 turn / 1 call, killed pre-dispatch |
+| marker | 1 line, 23 B, `eed2543a…4b65` | 1 line, 23 B, same digest | untouched, 0 B |
+| store executions | 1 `completed` | 1 `completed` — no redispatch | none |
+| journal rows | 8 | 4 at kill → 5 after reconcile #1 → 5 after #2 | 4 → 4 → 4 |
+| reconcile | n/a (writer) | #1 `completed`, executions 1; #2 `None` | #1 `None`; #2 `None` |
+| provider tokens | 1036 total (802 prompt incl. 100 reasoning, 234 completion), 13.528 s | UNKNOWN post-kill | UNKNOWN post-kill |
+
+H1 held (one marker line and one `completed` execution per executed arm;
+control mutated nothing). H2 held structurally: exactly 5 of 20 flattened
+`tool_result` fields differ between the writer row and the restored row —
+the same run-specific set as wake 51902 (provider call ids, timestamp,
+per-arm obligation path, `operation_id`/`mtime_ns` in the outcome JSON);
+the 4j proposing-assistant timestamp correlation is UNKNOWN on this
+instrument (`message.timestamp: null` on its model_output/proposal rows),
+recorded as UNKNOWN rather than forced. H3 held. **H5 held: the post-kill
+precondition is measured from retained bytes** — the supervisor's
+`kill-capture.json` (wait status 137, signal 9, capture timestamp, written
+after the child's death and before any reconcile) plus the pre-reconcile
+journal with no `tool_result` row, the durable 23 B marker whose mtime_ns
+equals the stored outcome's, one `completed` outcome, and no
+`survivor.json`. The wake-52585/52734 UNKNOWN (post-kill causal
+precondition unestablished) is discharged for this run and selector; the
+prior bundles keep their own records unchanged.
+
+Limits: n=1 per arm; one host; scripted SIGKILL seam (not power-loss/OOM);
+third selector only; supervisor wrapper is evidence retention, not a seam
+change; no production caller, no activation, no adoption claim; fsync is
+not power-loss durability; whole-suite unclaimed. Verification
+(author-reported): 231 targeted tests pass; `tools/check_parsing.py` PASS,
+928 legacy sites unchanged. Evidence: artifact
+`.mishe-tauftauf/artifacts/inference-research-wake52898-exp4n-parity-killcapture.md`;
+scratch `exp4n-parity-killcapture-wake52898/`.
+
 ## Experiment 4m: the provider 429 window inside the dead-letter gap — effect done, receipt not yet durable (preregistered wake 51409)
 
 ### Why this scenario

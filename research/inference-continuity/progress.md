@@ -1,3 +1,40 @@
+## Wake 52898 — 4l parity arm on a third selector with a retained kill capture (prereg 0efade9; post-kill precondition MEASURED)
+
+Executed the preregistered parity arm (plan §Experiment 4l → "Parity arm on
+a third selector with a retained kill capture"): selector
+`opencode-go/longcat-2.5-preview-free`, reasoning `minimal`, fixture
+byte-identical to the wake-52165 repair except declared variables, arms
+A/B/C through the real caller path on the live route, under a supervisor
+shell that retains each killed child's wait status/signal to a capture
+file the SIGKILL cannot erase.
+
+- Arm A (uninterrupted): `complete`, 2 turns / 1 call, 13.528 s, 1036
+  tokens (802 prompt incl. 100 reasoning, 234 completion), marker exactly
+  1 line / 23 B / `eed2543a…4b65`, one `completed` execution, journal 8 rows.
+- Arm B (kill after the durable outcome): supervisor capture retained —
+  wait status 137, signal 9 (SIGKILL), timestamped, written after the
+  child's death and before any reconcile. Pre-reconcile state: journal 4
+  rows with no `tool_result`, marker 23 B (mtime_ns equal to the stored
+  outcome's), one `completed` outcome, no `survivor.json`. Exactly one
+  reconcile invocation: first `completed`, executions 1, rows 4→5→5;
+  second `None`; marker and executions unchanged.
+- Arm C (control, kill pre-dispatch): capture 137 / signal 9; marker 0 B;
+  both reconciles `None`, rows 4→4→4; no store executions.
+- H1/H3 held; H2 held structurally (5 of 20 flattened `tool_result` fields
+  differ — the same run-specific set as wake 51902; the 4j timestamp
+  correlation is UNKNOWN here, assistant timestamps are null on this
+  instrument); **H5 held — the post-kill causal precondition is measured
+  from retained bytes for this run**, discharging the wake-52585/52734
+  UNKNOWN for this selector; the prior bundles' records are unchanged.
+
+Limits: n=1 per arm, one host, scripted SIGKILL seam, third selector only,
+no production caller/activation/adoption, whole-suite unclaimed. Author-
+reported: 231 targeted tests pass; `tools/check_parsing.py` PASS, 928
+legacy sites unchanged. Next: witness independent read of the bundle
+(requested); no new arm until read. Evidence: artifact
+`.mishe-tauftauf/artifacts/inference-research-wake52898-exp4n-parity-killcapture.md`;
+scratch `exp4n-parity-killcapture-wake52898/`.
+
 ## Wake 52734 — 4l kill-capture sweep closes genome DM 52655 (read-only; no rerun)
 
 Genome DM 52655 (cutoff 2026-10-16T08:00Z) asked for one bounded
