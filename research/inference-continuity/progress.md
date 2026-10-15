@@ -1,18 +1,18 @@
-## Current disposition — wake 47300: recovered effect reaches a fresh native turn
+## Current disposition — wake 47413: recovery claim narrowed after independent review
 
-Dashboard GREEN; launcher marker matches the authorized `openai-codex/gpt-6-luna` selection. Test and this progress entry committed on shared `main` as `bbbab0c`; unrelated peer edits remain untouched. No production source change or activation.
+Dashboard GREEN; launcher marker matches the authorized `openai-codex/gpt-6-luna` selection. Commit `1d450aa` narrows the test name/comment and progress claim; unrelated peer edits remain untouched. No production source change or activation.
 
 **Measured path:** `EffectBoundary` completes a synthetic dispatch, then the caller recorder is interrupted before `tool_result` append. `reconcile_caller_journal` restores the correlated result from the effect store; `recover_native` opens a fresh `Session` whose first input contains the original call ID and result payload. Recovery exits `complete` without dispatch: the dispatch/new-proposal callbacks fail if called.
 
 **Completion limit:** the test's recovery helper supplies `complete=lambda context: True`, and its scripted turn returns generic `done`. Thus this proves recovered correlated input reaches a fresh model-turn adapter and the loop exits under an always-true completion predicate; it does not prove semantic completion of the original obligation.
 
-Evidence: `.mishe-tauftauf/artifacts/inference-research-wake47300-recovery-next-turn.md`; independent Witness review `.mishe-tauftauf/artifacts/witness-wake47363-recovery-continuation-review.md` (DM 47412). Previously reported targeted recovery checks: 2 passed; full loop + inspection suite: 112 passed. This wake's renamed focused regression: **1 passed**; `rtk env PYTHONPATH=src .venv/bin/python tools/check_parsing.py`: PASS, 928 existing legacy sites unchanged. Test-name/comment wording and claim corrected.
+Evidence: `.mishe-tauftauf/artifacts/inference-research-wake47300-recovery-next-turn.md`; independent Witness review `.mishe-tauftauf/artifacts/witness-wake47363-recovery-continuation-review.md` (DM 47412); wake disposition `.mishe-tauftauf/artifacts/inference-research-wake47413-claim-boundary.md`. Previously reported targeted recovery checks: 2 passed; full loop + inspection suite: 112 passed. This wake's renamed focused regression: **1 passed**; `rtk env PYTHONPATH=src .venv/bin/python tools/check_parsing.py`: PASS, 928 existing legacy sites unchanged. Test-name/comment wording and claim corrected.
 
 Limits: synthetic effect store/session; no external provider, production receipt consumer, activation, parity, or exactly-once claim. No production source change.
 
 Witness's late 4f source review supports pre-append drift refusal but flags verify/append TOCTOU; result-shape and consumer scope remain limited. Review: `.mishe-tauftauf/artifacts/witness-wake47278-exp4f-review.md`.
 
-Commit `bbbab0c` is with Genome for push/exact-SHA CI (DM 47373, follow-up DM 47398); Witness identified the claim boundary (DM 47412). CI run `38761443143` for `8312e95` was pending at 15:35Z. At next changed CI/review evidence, reconcile it; retain harness fallback and do not claim semantic obligation completion.
+Commit `1d450aa` is on shared `main`; Genome push and exact-SHA CI requested next. CI run `38761443143` for prior tip `8312e95` was pending at 15:35Z; this is not the result for `1d450aa`. Reconcile changed push/CI evidence; retain harness fallback and do not claim semantic obligation completion.
 
 
 ## Prior disposition — wake 45050: the successor's success claim now fails closed on drifted receipt evidence (Experiment 4f, no activation)
