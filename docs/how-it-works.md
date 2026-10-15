@@ -638,6 +638,23 @@ includes gravity; it is device evidence, not a human movement, presence or
 continuous-carrying claim. The human's carrying context remains contextual, not
 sensor-certified.
 
+The source cursor remains in structured provenance and the pane's source-limits
+detail, but not in the human-analysis summary that drives observation wakes.
+This prevents a cursor-only advance from repeatedly waking the mind when the
+session, measured values and channel/status verdicts are unchanged. New sensor
+values, session changes and failure/recovery transitions remain visible to the
+observation digest; the live pane still shows the advancing cursor.
+
+The shared `SITE/body/space.json` also carries a per-node `clock_domain`
+verdict. Core Senses publishes a separate `sense.space.clock-domain.<node>` row
+for each node (including Note3 and Redmi10). `status=ok` is verified only when
+the finite nominal offset lies inside its bounds and the sample remains within
+its declared validity. Absent, malformed, inconsistent, future or expired
+clock evidence remains UNKNOWN. This measurement supports timestamp conversion;
+it does not establish sensor-stream liveness or refresh stale light/acceleration
+rows. Each source keeps its own session and delivery evidence, and clock
+agreement alone never authorizes cross-body fusion.
+
 The class needs the reader's own retained null origin to survive between reads.
 A freeze onset is recorded beside that origin and routed once per streak: the
 first naming of a sustained freeze writes `discovery/space-light-freeze.json`

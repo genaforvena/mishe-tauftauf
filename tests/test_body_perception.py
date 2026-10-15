@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from mishe_tauftauf import body_perception, seed_culture_views
+from mishe_tauftauf.seed import _observation_text
 
 
 SOURCE = "http://127.0.0.1:8765/node/redmi10"
@@ -101,6 +102,43 @@ def test_redmi_reader_exposes_fresh_samples_with_source_and_uncertainty(tmp_path
     assert "not person-movement evidence" in row["details"]
 
 
+def test_cursor_progress_stays_visible_without_changing_observation_summary(tmp_path: Path) -> None:
+    now = 1_800_000_000.0
+    core, state_path, state = _linked_state(tmp_path, now)
+    state["latest"]["acceleration"]["received"] = now - 60
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    first = body_perception.read_redmi10(core, now)
+
+    def frame(row):
+        return (f"UNKNOWN {row['id']}: {row['sample']}\n"
+                f"REDMI10 SOURCE/LIMITS: {row['details']}\n"
+                "STATE: UNKNOWN — 1 source read unverified")
+    first_observation = _observation_text("senses", frame(first))
+    state["cursor"] = 4
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    advanced = body_perception.read_redmi10(core, now)
+
+    assert advanced["state"] == "unknown"
+    assert advanced["cursor"] == 4
+    assert "cursor=4" in advanced["details"]
+    assert advanced["sample"] == first["sample"]
+    assert _observation_text("senses", frame(advanced)) == first_observation
+    state["cursor"] = 5
+    state["latest"]["light"]["sequence"] = 5
+    state["latest"]["light"]["fields"]["lux"] = "102"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    changed_sensor = body_perception.read_redmi10(core, now)
+    assert changed_sensor["sample"] != first["sample"]
+    assert _observation_text("senses", frame(changed_sensor)) != first_observation
+
+    state["session"] = "new-session"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    changed_session = body_perception.read_redmi10(core, now)
+    assert changed_session["sample"] != changed_sensor["sample"]
+    assert _observation_text("senses", frame(changed_session)) != \
+        _observation_text("senses", frame(changed_sensor))
+
+
 def test_senses_pane_refreshes_linked_redmi_without_waiting_for_a_scan(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     now = time.time()
@@ -123,7 +161,7 @@ def test_senses_pane_refreshes_linked_redmi_without_waiting_for_a_scan(
 
     rendered = seed_culture_views.senses(core)
 
-    assert "VERIFIED sense.body.redmi10: Redmi10 c=3" in rendered
+    assert "VERIFIED sense.body.redmi10: Redmi10 sid=7afa3a15" in rendered
     assert "REDMI10 SOURCE/LIMITS: source=" + SOURCE in rendered
     assert "Wi-Fi disconnected" in rendered
     assert "not person-movement evidence" in rendered

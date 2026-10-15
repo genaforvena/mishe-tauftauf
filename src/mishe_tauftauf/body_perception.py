@@ -203,7 +203,9 @@ def read_redmi10(home: Path, now: float | None = None) -> dict[str, object]:
     acceleration_text = (f"{magnitude:.2f}m/s² incl-g"
                          if statuses["acceleration"] == "fresh-clock-conditional" and magnitude is not None
                          else statuses["acceleration"])
-    sample = (f"Redmi10 c={cursor} sid={session[:8]} b={battery_text} L={light_text} "
+    # Cursor progress remains in structured provenance/details, not the
+    # observation summary: cursor-only advances must not re-wake the mind.
+    sample = (f"Redmi10 sid={session} b={battery_text} L={light_text} "
               f"|a|={acceleration_text}")
     status = ("verified" if all(value == "fresh-clock-conditional"
                                 for value in statuses.values()) else "unknown")

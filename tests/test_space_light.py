@@ -282,6 +282,79 @@ def test_expired_fresh_claim_names_age():
     assert "last-receipt=" in row["sample"] and stamp(NOW - 2) in row["sample"]
 
 
+def clock_domain(**overrides):
+    value = {"version": 1, "status": "ok", "offset_nominal_s": 24.7,
+             "offset_min_s": 24.2, "offset_max_s": 25.2,
+             "observed_at_epoch_s": NOW - 10, "validity_seconds": 3600,
+             "samples": 3, "source": "tools/clock_offset.py",
+             "reason": None, "jump": None}
+    value.update(overrides)
+    return value
+
+
+def clock_boundary():
+    data = boundary()
+    data["nodes"][0]["clock_domain"] = clock_domain()
+    data["nodes"].append({"node": "redmi10", "clock_domain": clock_domain(
+        status="absent", offset_nominal_s=None, offset_min_s=None, offset_max_s=None,
+        observed_at_epoch_s=None, validity_seconds=None, samples=0,
+        source=None, reason="no-clock-domain-file")})
+    return data
+
+
+def test_all_node_clock_domains_preserve_absence_and_gate_stale_or_inconsistent():
+    data = clock_boundary()
+    rows = discovery._space_clock_domains(data, NOW)
+    assert [row["id"] for row in rows] == [
+        "sense.space.clock-domain.note3", "sense.space.clock-domain.redmi10"]
+    assert rows[0]["state"] == "verified"
+    assert "bounds=[+24.200,+25.200]s" in rows[0]["sample"]
+    assert rows[1]["state"] == "unknown"
+    assert rows[1]["reason"] == "no-clock-domain-file"
+
+    data["nodes"][0]["clock_domain"]["observed_at_epoch_s"] = NOW - 3600.001
+    assert discovery._space_clock_domains(data, NOW)[0]["reason"] == "clock-domain-expired"
+    data["nodes"][0]["clock_domain"] = clock_domain(offset_nominal_s=25.3)
+    assert discovery._space_clock_domains(data, NOW)[0]["reason"] == \
+        "inconsistent-clock-domain-interval"
+
+
+def test_all_node_clock_domain_malformed_or_missing_boundary_is_unknown():
+    data = clock_boundary()
+    data["nodes"][0]["clock_domain"]["samples"] = True
+    assert discovery._space_clock_domains(data, NOW)[0]["reason"] == \
+        "malformed-clock-domain"
+    data["nodes"] = [data["nodes"][0]]
+    assert discovery._space_clock_domains(data, NOW)[1]["reason"] == \
+        "missing-or-duplicate-node"
+
+
+def test_clock_domain_decoder_rejects_non_integer_version():
+    assert space_text.decode_clock_domain(clock_domain(version=True)) is None
+
+
+def test_oversized_clock_number_stays_unknown():
+    data = clock_boundary()
+    data["nodes"][0]["clock_domain"]["offset_nominal_s"] = 10 ** 1000
+    row = discovery._space_clock_domains(data, NOW)[0]
+    assert row["state"] == "unknown"
+
+
+def test_clock_domain_reader_includes_additional_nodes():
+    data = clock_boundary()
+    data["nodes"].append({"node": "tablet", "clock_domain": clock_domain()})
+    rows = discovery._space_clock_domains(data, NOW)
+    assert rows[-1]["id"] == "sense.space.clock-domain.tablet"
+    assert rows[-1]["state"] == "verified"
+
+
+
+
+def test_space_boundary_decoder_rejects_unusable_node_identity():
+    text = json.dumps({"schema_version": 1, "producer": discovery.SPACE_PRODUCER,
+                       "nodes": [{"node": "bad node"}]})
+    assert space_text.decode_space_boundary(text) is None
+
 def test_unknown_without_valid_receipt_epoch_omits_age():
     data = boundary()
     data["nodes"][0]["light"].update(status="stale", consumer_receipt_epoch_s=None)
