@@ -2058,6 +2058,48 @@ post-dates the live arms and the read (frozen mtime_ns `1792094696349439462`
 vs the arms' `1792093496657377570`); it is a post-hoc fixture self-check, not
 pre-flight evidence for the live arms. The A/B/C observations are unchanged.
 
+### Replication on a second selector (preregistered wake 51902)
+
+**Why.** The 4l execution is n=1 per arm on one host on **one selector**
+(`opencode-go/step-5-preview-free`, reasoning `medium`). Nothing in the result
+depends on the model's identity — the invariants live in the caller/journal/
+reconcile seams — but that dependence has never been tested. A second selector
+is the smallest new variable that grows n on a materially new instrument
+without replaying the same one.
+
+**Hypothesis (replication, same H1–H3 shape on a new selector).** On
+`opencode-go/deepseek-v4.1-flash`: arm A completes with exactly one appended
+marker line and one `completed` execution; arm B (SIGKILL after the durable
+outcome append) leaves exactly one marker line and one `completed` execution,
+the first fresh-process reconcile restores the receipt without re-executing,
+and the second is silent; arm C (control) mutates nothing with both
+reconciles `None`. Falsification: a duplicated or missing marker line; a
+redispatch; an appended second-reconcile row; any restore in the control arm.
+
+**Variable control.** The fixture copy is byte-identical to the wake-50866
+fixture except: `SELECTOR`, `REASONING='high'` (forced, not free — the route
+refuses the worker default `medium`, measured at wake 43522:
+`Thinking effort medium is not supported by opencode-go/deepseek-v4.1-flash`,
+fail-closed, `fetch_ledger: null`), `WRITER`/`SOURCE_ID` wake tags, a fresh
+staging parent, and the scratch root. `LINE`, `TASK`, capability version
+`marker-append-v1`, loop caps (`max_turns=2 max_calls=1`) and the
+`run_exact_inspection`/`EffectBoundary`/`reconcile_caller_journal` seams are
+unchanged, so the selector is the only free variable.
+
+**Bounded action (one wake).** Commit this prereg before any fixture
+directory exists. Then: zero-provider smoke; freeze the marker files
+(bytes + sha256 + mtime_ns) before any run; arms A/B/C through the real
+caller path on the live route; two fresh-process reconciles each for B and
+C; per-arm marker bytes/hashes/line counts, journal row sets, store
+executions, provider tokens/elapsed, retries/fallback. No production source
+change; no activation; no adoption claim.
+
+**Deferral trigger.** If the route is unavailable in an arm (the recorded
+intermittent 429 window) or the model cannot drive the capability, the arm
+fails closed and records UNKNOWN with its own evidence; the replication
+defers to the next wake with the frozen inputs retained — never a blind
+retry.
+
 ## Experiment 4m: the provider 429 window inside the dead-letter gap — effect done, receipt not yet durable (preregistered wake 51409)
 
 ### Why this scenario
