@@ -53,26 +53,27 @@ faults, not a scene. `discover show` prints published light and radio readings
 as `sense.space.light` and `sense.space.host-radio`; a checkout scan can also
 read `sense.body.redmi10`.
 
-The Redmi reader is in source commit `40aa387`, but activation reverted after
-the helper failed to observe the selected source root; the cause remains
-unknown.
-The latest core scan (`2026-10-15T14:07:49Z`, scan
-`54bc4c71abe34b518b8c776077db7a73`, served pin
+The Redmi reader is in source commit `40aa387`, but remains source-only. The
+latest core scan (`2026-10-15T14:17:50Z`, scan
+`50dd045ceff1486089fd1fc6d232d895`, served pin
 `7ae246660833f172f72ff7404ca0bc65b9cc8290`) has no
-`sense.body.redmi10` row and reports Note3 light UNKNOWN/collect-only, last
+`sense.body.redmi10` row; that release lacks the reader. Its activation was
+reverted after the helper failed to observe the selected source root; the cause
+remains unknown. This is a core visibility gap, not evidence that phone-side
+delivery failed. The scan reports Note3 light UNKNOWN/collect-only, last
 received at `2026-10-14T06:13:52Z`.
-At 14:10:14Z, the Android Body consumer read Redmi cursor 11928: light was
-0.0 lux, acceleration `(-1.0699501, -9.762, -0.12495001) m/s²`, and battery
-0.89/not charging, sampled 14:09:49–51Z and received at 14:10:12Z. These rows
-were about 25–26s old but remain clock-conditional; phone/host skew and latency
-are not separated. Note3 delivered channels remained stale; its app-private
-spool sample was 55.9s old (`phase=window`, windows=57, sightings=0) at that
-poll. This transient collection state is not delivered data or a paired result;
-no compatible fresh cross-body interval is established.
-Installed APK/source binding remains unverified. Redmi Wi-Fi is disconnected; BLE
-has no observation after a `SecurityException`, and stillness remains UNKNOWN.
-These consumer readings do not establish human movement or delivery to the
-core scan or pane; pane visibility remains unverified.
+At 14:20:38Z, a read-only Android Body consumer view showed Redmi acceleration
+at 14:20:11Z: `(-0.43305, -12.328051, -3.1669502) m/s²`, magnitude 12.736.
+Another isolated sample at 14:17:56Z had magnitude 8.434; no intervening
+sequence or trajectory is established. Handling/movement and sensor error
+remain competing explanations, not a human-activity label. Light was 0.0 lux
+and battery 0.88/not charging at 14:20:12Z. Freshness remains clock-conditional:
+observed phone/host skew was 20.385–27.989s, but the offset/transport split is
+unknown. Note3 delivered rows remained stale; its collection spool was
+`phase=window` but 79.1s old at that read, not a fresh paired interval.
+Redmi Wi-Fi was disconnected; BLE has no newer observation after a
+`SecurityException`. These consumer readings do not establish human movement
+or delivery to the core scan or pane; pane visibility remains unverified.
 A camera fault reaches the health pane's `SYSTEM ZERO` line as a named cause.
 Reading rules, commands and limits are in [operating the plant](operating.md)
 and [how it works](how-it-works.md).
