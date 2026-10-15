@@ -306,3 +306,53 @@ def test_refused_existing_run_does_not_reconcile_its_journal(tmp_path, monkeypat
                              complete=lambda context: False)
     assert journal.read_bytes() == preserved
     assert sessions == [True]
+
+
+def test_reconcile_appends_no_success_claim_when_the_receipt_evidence_drifted(
+        tmp_path, receipt_recovery_case):
+    """A completion recorded from evidence that no longer re-reads is refused.
+
+    The store still holds the receipt; the bytes it named were replaced, so the
+    successor writes no tool_result and the call stays pending with the verdict
+    preserved (Experiment 4f).
+    """
+    from mishe_tauftauf.inference_effects import EffectBoundary
+
+    case = receipt_recovery_case(tmp_path)
+    case['artifact'].write_bytes(b'replaced bytes\n')
+    path = tmp_path / 'drift.jsonl'
+    path.write_bytes(case['journal'])
+
+    boundary = EffectBoundary(case['store'], writer_id='loop-3',
+                              obligation={'source': 'owned-event'},
+                              execute=lambda call: pytest.fail('executed again'),
+                              authority='test:authority')
+    result = reconcile_caller_journal(path, boundary,
+                                      authorized=lambda call: True)
+
+    assert result['status'] == 'unknown'
+    assert result['evidence_drift']['call'] == case['call']['id']
+    assert result['evidence_drift']['failure'] == 'effect-evidence-mismatch'
+    assert result['outcome']['status'] == 'completed'
+    assert path.read_bytes() == case['journal']
+    assert read_native_journal(path)['pending_calls'] == [case['call']]
+
+
+def test_reconcile_appends_the_row_for_a_verified_receipt(
+        tmp_path, receipt_recovery_case):
+    """The same path restores the claim while the evidence still re-reads."""
+    from mishe_tauftauf.inference_effects import EffectBoundary
+
+    case = receipt_recovery_case(tmp_path)
+    path = tmp_path / 'honest.jsonl'
+    path.write_bytes(case['journal'])
+
+    boundary = EffectBoundary(case['store'], writer_id='loop-3',
+                              obligation={'source': 'owned-event'},
+                              execute=lambda call: pytest.fail('executed again'),
+                              authority='test:authority')
+    result = reconcile_caller_journal(path, boundary,
+                                      authorized=lambda call: True)
+
+    assert result['status'] == 'completed'
+    assert read_native_journal(path)['pending_calls'] == []

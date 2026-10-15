@@ -1,4 +1,5 @@
 import io
+import hashlib
 import json
 import os
 
@@ -917,6 +918,107 @@ def test_real_subprocess_crash_during_execute_reconciles_without_redispatch(tmp_
     assert final["stopped"] is False
     assert final["pending_calls"] == [CALL]
     assert final["calls"] == 0
+
+
+# -- Experiment 4f: no success claim for a receipt whose evidence drifted ------
+
+def store_bytes(store):
+    return {name: (store / name).read_bytes()
+            for name in ("intents.jsonl", "starts.jsonl", "outcomes.jsonl")}
+
+
+@pytest.mark.parametrize("damage,failure", [
+    ("replace", "effect-evidence-mismatch"),
+    ("delete", "effect-evidence-unreadable"),
+])
+def test_reconcile_refuses_the_success_row_for_drifted_receipt_evidence(
+        tmp_path, receipt_recovery_case, damage, failure):
+    """The acting successor read path fails closed when evidence stopped re-reading.
+
+    The store still says completed; the bytes the receipt named no longer
+    re-read, so the successor must not turn that record into its own durable
+    success claim. Nothing is dispatched, nothing is written, and the verdict is
+    reported for whoever restores the evidence.
+    """
+    case = receipt_recovery_case(tmp_path)
+    if damage == "replace":
+        case["artifact"].write_bytes(b"replaced bytes\n")
+        observed = hashlib.sha256(b"replaced bytes\n").hexdigest()
+    else:
+        case["artifact"].unlink()
+        observed = None
+    path = tmp_path / "drift.jsonl"
+    path.write_bytes(case["journal"])
+    before_store = store_bytes(case["store"])
+
+    from mishe_tauftauf.inference_loop import reconcile_caller_journal
+    result = reconcile_caller_journal(
+        path, case["store"], writer_id="loop-3", authority="test:authority",
+        authorized=lambda call: True)
+
+    assert result["status"] == "unknown"
+    assert result["reconciled"] == []
+    entry = result["evidence_drift"][0]
+    assert entry["call"] == case["call"]["id"]
+    assert entry["failure"] == failure
+    assert entry["recorded_sha256"] == case["digest"]
+    assert entry["observed_sha256"] == observed
+    assert path.read_bytes() == case["journal"]          # no row appended
+    assert store_bytes(case["store"]) == before_store    # receipt untouched
+    assert read_native_journal(path)["pending_calls"] == [case["call"]]
+
+
+def test_reconcile_appends_the_record_again_once_the_evidence_is_restored(
+        tmp_path, receipt_recovery_case):
+    """The refusal is a function of the bytes: restore them and the claim lands."""
+    case = receipt_recovery_case(tmp_path)
+    original = case["artifact"].read_bytes()
+    case["artifact"].write_bytes(b"replaced bytes\n")
+
+    from mishe_tauftauf.inference_loop import reconcile_caller_journal
+    path = tmp_path / "refused.jsonl"
+    path.write_bytes(case["journal"])
+    refused = reconcile_caller_journal(
+        path, case["store"], writer_id="loop-3", authority="test:authority",
+        authorized=lambda call: True)
+    assert refused["status"] == "unknown"
+
+    case["artifact"].write_bytes(original)
+    restored = tmp_path / "restored.jsonl"
+    restored.write_bytes(case["journal"])
+    result = reconcile_caller_journal(
+        restored, case["store"], writer_id="loop-3", authority="test:authority",
+        authorized=lambda call: True)
+
+    assert result == {"status": "completed", "reconciled": [case["call"]["id"]]}
+    rows = [json.loads(line) for line in restored.read_text().splitlines()]
+    event = [row for row in rows if row["kind"] == "tool_result"][-1]
+    assert event["call"] == case["call"]
+    assert event["message"]["isError"] is False
+    record = json.loads(event["message"]["content"][0]["text"])
+    assert record["status"] == "completed"
+    # The read-side verdict is a fact about this read, not part of the durable
+    # record: the appended row is the receipt exactly as a reader would see it.
+    assert "evidence_verdict" not in record
+    assert read_native_journal(restored)["pending_calls"] == []
+    assert read_native_journal(restored)["calls"] == 1
+
+
+def test_reconcile_reports_revoked_authority_before_receipt_drift(
+        tmp_path, receipt_recovery_case):
+    """A revoked grant is answered as such even when the evidence also drifted."""
+    case = receipt_recovery_case(tmp_path)
+    case["artifact"].write_bytes(b"replaced bytes\n")
+    path = tmp_path / "revoked.jsonl"
+    path.write_bytes(case["journal"])
+
+    from mishe_tauftauf.inference_loop import reconcile_caller_journal
+    result = reconcile_caller_journal(
+        path, case["store"], writer_id="loop-3", authority="test:authority",
+        authorized=lambda call: False)
+
+    assert result == {"status": "authority_denied", "reconciled": []}
+    assert path.read_bytes() == case["journal"]
 
 
 class _Burst:

@@ -11,7 +11,7 @@ import re
 import stat
 from pathlib import Path
 
-from .inference_effects import EffectBoundary
+from .inference_effects import EffectBoundary, recovery_evidence_drift
 from .inference_loop import NativeJournal, drive_native, read_native_journal
 
 class InspectionRefused(RuntimeError):
@@ -160,7 +160,10 @@ def prepare_exact_inspection(directory, *, source_path, source_sha, source_bytes
 def reconcile_caller_journal(journal_path, boundary, *, authorized):
     """Restore a completed effect receipt after the caller lost its result row.
 
-    Unknown effect state or revoked authority never appends a result or dispatches.
+    Unknown effect state or revoked authority never appends a result or
+    dispatches. A completion recorded from effect-side evidence is restored only
+    while the evidence it named still re-reads: on drift this returns `unknown`
+    with `evidence_drift` and appends nothing, leaving the call pending.
     """
     path = Path(journal_path)
     if not path.exists() or path.stat().st_size == 0:
@@ -175,6 +178,10 @@ def reconcile_caller_journal(journal_path, boundary, *, authorized):
     outcome = boundary.recover(call)
     if outcome is None or outcome.get('status') != 'completed':
         return outcome
+    evidence = recovery_evidence_drift(outcome)
+    if evidence is not None:
+        return {'status': 'unknown', 'outcome': outcome,
+                'evidence_drift': {'call': call['id'], **evidence}}
 
     fd = os.open(path, os.O_WRONLY | os.O_APPEND)
     try:
@@ -186,7 +193,10 @@ def reconcile_caller_journal(journal_path, boundary, *, authorized):
         assistant = recovery['context']['messages'][-1]
         message = {'role': 'toolResult', 'toolCallId': call['id'],
                    'toolName': call['name'], 'content': [{'type': 'text',
-                   'text': json.dumps(outcome, ensure_ascii=False, allow_nan=False)}],
+                   'text': json.dumps({key: value
+                                       for key, value in outcome.items()
+                                       if key != 'evidence_verdict'},
+                                      ensure_ascii=False, allow_nan=False)}],
                    'isError': False, 'timestamp': assistant.get('timestamp', 0)}
         event = {'kind': 'tool_result', 'turn': turn, 'call': call,
                  'message': message, 'obligation': recovery['obligation']}
