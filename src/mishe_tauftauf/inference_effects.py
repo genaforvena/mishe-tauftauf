@@ -800,6 +800,75 @@ class EffectLedger:
                              reconciliation_ref=self._intent_ref(intent.operation_id),
                              native_call=intent.native_call)
 
+    def record_receipt(self, operation_id: str,
+                       confirmation: Mapping[str, Any]) -> EffectOutcome:
+        """Record a receipt for an effect confirmed on the effect side.
+
+        A successor that finds a start record with no outcome can observe the
+        effect side under the operation's own identity and reconcile the store
+        to it here. This is the only entry point that writes a `completed`
+        outcome without executing: the outcome means "the world holds the
+        effect", never "this writer performed it".
+
+        The receipt is bound to the confirmation it was given. A committed
+        confirmation names this operation id and states an observed execution
+        count of at least one; an unconfirmed observation — `indeterminate`,
+        `pending`, absent — writes nothing and the operation stays `unknown`.
+        The ledger cannot see the effect side, so an *asserted* confirmation is
+        recorded, not verified: the assertion is persisted verbatim inside the
+        outcome's `result` so the receipt is auditable after the fact.
+
+        An operation that already has an outcome raises `AlreadyExecuted`
+        before any write, so a second receipt append is refused here instead
+        of poisoning every later reader with a duplicate record. A confirmed
+        effect with no start record is refused: the store cannot accept an
+        effect it never began.
+        """
+        if not _OPERATION_ID_RE.match(operation_id):
+            raise ValueError(
+                f"operation_id {operation_id!r} must match [A-Za-z0-9_.:-]+")
+        if not isinstance(confirmation, Mapping):
+            raise ValueError("confirmation must be an object")
+        committed = confirmation.get("inspection") == "committed"
+        executions: int | None = None
+        if committed:
+            named = confirmation.get("operation_id")
+            if named != operation_id:
+                raise ValueError(
+                    f"confirmation names operation {named!r}, not "
+                    f"{operation_id!r}")
+            observed = confirmation.get("executions")
+            if isinstance(observed, bool) or not isinstance(observed, int) \
+                    or observed < 1:
+                raise ValueError("a committed confirmation must carry an "
+                                 "observed executions count of at least 1")
+            executions = observed
+        with self._locked():
+            if operation_id in self._read_outcomes():
+                raise AlreadyExecuted(
+                    f"operation_id {operation_id} already has an outcome record")
+            intent = self._read_intents().get(operation_id)
+            if intent is None:
+                return EffectOutcome(operation_id=operation_id, status="unknown",
+                                     failure="no-intent")
+            if not committed:
+                return EffectOutcome(operation_id=operation_id, status="unknown",
+                                     failure="effect-unconfirmed",
+                                     reconciliation_ref=self._intent_ref(operation_id),
+                                     native_call=intent.native_call)
+            if operation_id not in self._read_starts():
+                return EffectOutcome(operation_id=operation_id, status="unknown",
+                                     failure="effect-confirmed-without-start",
+                                     reconciliation_ref=self._intent_ref(operation_id),
+                                     native_call=intent.native_call)
+            outcome = EffectOutcome(
+                operation_id=operation_id, status="completed",
+                result={"confirmed_by": "effect-side-confirmation",
+                        "confirmation": _snapshot(confirmation)},
+                executions=executions, native_call=intent.native_call)
+            self._append(self.outcomes_path, outcome.to_record())
+            return outcome
+
     def open_intents(self) -> Sequence[EffectIntent]:
         """Every intent a fresh process still has to reconcile.
 
@@ -1179,6 +1248,27 @@ class EffectBoundary:
     def reconcile(self, operation_id: str) -> dict[str, Any]:
         """Read durable state for one operation without executing anything."""
         return effect_outcome_for(self.ledger.reconcile(operation_id))
+
+    def record_receipt(self, operation_id: str,
+                       confirmation: Mapping[str, Any]) -> dict[str, Any]:
+        """Reconcile a confirmed effect-side observation into the store.
+
+        The successor's route for the window Experiment 4b measured: a start
+        record with no outcome whose effect the successor can observe under
+        the operation's own identity. A receipt is written only for a
+        confirmation that names this operation and reads `committed` with an
+        observed execution count; every other observation leaves the operation
+        `unknown` and writes nothing, so an unconfirmed effect is never
+        recorded as a completion. An operation that already has an outcome
+        raises `AlreadyExecuted` before any write.
+
+        The receipt records the effect as observed, not as performed: the
+        outcome's `result` carries the confirmation verbatim and `executions`
+        is the effect side's count. The ledger cannot see the effect side, so
+        a confirmation is trusted as an auditable record, never verified.
+        """
+        return effect_outcome_for(
+            self.ledger.record_receipt(operation_id, confirmation))
 
     def status(self, operation_id: str) -> dict[str, Any] | None:
         """The durable state a fresh process reads, or None if never allocated."""

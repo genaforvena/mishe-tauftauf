@@ -931,6 +931,126 @@ def test_boundary_start_without_outcome_is_unknown_to_a_successor(tmp_path):
     assert (store / "outcomes.jsonl").read_text().strip() == ""
 
 
+# -- confirmation-bound receipt recorder (Experiment 4c) --------------------
+
+OP_ID = "effect-call_native-fc_native-d3129ff9ce3f"
+
+
+def interrupted_boundary(tmp_path, calls):
+    """A boundary whose executor died: intent and start, no outcome."""
+    def boom(call):
+        calls.append(call)
+        raise RuntimeError("caller killed mid-effect")
+
+    b = boundary(tmp_path, boom)
+    reply = b(NATIVE_CALL)
+    assert reply["status"] == "unknown"
+    assert reply["failure"] == "capability-failed"
+    return b
+
+
+COMMITTED = {"inspection": "committed", "operation_id": OP_ID, "executions": 1,
+             "evidence": {"keyed-report": True, "identity_match": True}}
+
+
+def test_record_receipt_reconciles_a_confirmed_effect_without_executing(tmp_path):
+    calls = []
+    interrupted_boundary(tmp_path, calls)
+    successor = boundary(tmp_path, lambda call: pytest.fail("executed again"),
+                         writer_id="loop-2")
+    receipt = successor.record_receipt(OP_ID, COMMITTED)
+    assert receipt["status"] == "completed"
+    assert receipt["executions"] == 1
+    assert receipt["result"]["confirmed_by"] == "effect-side-confirmation"
+    assert receipt["result"]["confirmation"] == COMMITTED
+    assert len(calls) == 1  # only the interrupted dispatch ran
+
+    fresh = boundary(tmp_path, lambda call: pytest.fail("executed again"),
+                     writer_id="reader-3")
+    assert fresh.reconcile(OP_ID)["status"] == "completed"
+    assert fresh.recover(NATIVE_CALL)["status"] == "completed"
+    assert fresh.open_intents() == []
+    with pytest.raises(AlreadyExecuted):
+        fresh(NATIVE_CALL)
+
+
+def test_record_receipt_refuses_an_unconfirmed_effect_and_stays_unknown(tmp_path):
+    for observation, name in (
+            ({"inspection": "indeterminate", "lines": 1}, "unkeyed"),
+            ({"inspection": "pending", "present": False}, "no-artifact")):
+        calls = []
+        directory = tmp_path / name
+        directory.mkdir()
+        interrupted_boundary(directory, calls)
+        successor = boundary(directory, lambda call: pytest.fail("executed again"),
+                             writer_id="loop-2")
+        reply = successor.record_receipt(OP_ID, observation)
+        assert reply["status"] == "unknown"
+        assert reply["failure"] == "effect-unconfirmed"
+        assert (directory / "effects" / "outcomes.jsonl").read_text() == ""
+        redispatch = successor.reconcile(OP_ID)
+        assert redispatch["status"] == "unknown"
+        assert redispatch["failure"] == "started-without-outcome"
+        assert len(calls) == 1  # still only the interrupted dispatch
+
+
+def test_a_second_receipt_is_refused_at_write_time_not_at_read_time(tmp_path):
+    interrupted_boundary(tmp_path / "one", [])
+    first = boundary(tmp_path / "one", lambda call: None, writer_id="loop-2")
+    assert first.record_receipt(OP_ID, COMMITTED)["status"] == "completed"
+    with pytest.raises(AlreadyExecuted):
+        first.record_receipt(OP_ID, COMMITTED)
+    outcomes = (tmp_path / "one" / "effects" / "outcomes.jsonl").read_text()
+    assert outcomes.count("\n") == 1
+    reader = boundary(tmp_path / "one", lambda call: None, writer_id="reader-3")
+    assert reader.reconcile(OP_ID)["status"] == "completed"
+
+
+def test_record_receipt_refuses_a_confirmation_that_names_another_operation(tmp_path):
+    interrupted_boundary(tmp_path, [])
+    successor = boundary(tmp_path, lambda call: None, writer_id="loop-2")
+    for bad, why in (
+            ({"inspection": "committed", "operation_id": "effect-other",
+              "executions": 1}, "other operation named"),
+            ({"inspection": "committed", "operation_id": OP_ID}, "no executions"),
+            ({"inspection": "committed", "operation_id": OP_ID,
+              "executions": 0}, "zero executions"),
+            ({"inspection": "committed", "operation_id": OP_ID,
+              "executions": "1"}, "count not an int")):
+        with pytest.raises(ValueError):
+            successor.record_receipt(OP_ID, bad)
+    with pytest.raises(ValueError):
+        successor.record_receipt(OP_ID, ["not", "an", "object"])
+    assert (tmp_path / "effects" / "outcomes.jsonl").read_text() == ""
+
+
+def test_record_receipt_refuses_a_confirmed_effect_it_never_started(tmp_path):
+    """A reservation that was never dispatched earns no receipt."""
+    dispatch = boundary(tmp_path, lambda call: {"ok": True})
+    dispatch.reserve(OP_ID, capability="inspect",
+                     arguments={"path": "owned-evidence"})
+    reply = dispatch.record_receipt(OP_ID, COMMITTED)
+    assert reply["status"] == "unknown"
+    assert reply["failure"] == "effect-confirmed-without-start"
+    assert (tmp_path / "effects" / "outcomes.jsonl").read_text() == ""
+    assert dispatch.reconcile(OP_ID)["failure"] == "unreconciled-intent"
+    # The reservation is still dispatchable, exactly once.
+    executed = []
+    dispatch = boundary(tmp_path, lambda call: executed.append(call) or {"ok": True},
+                        writer_id="loop-2")
+    assert dispatch(NATIVE_CALL, claim_for=OP_ID)["status"] == "completed"
+    assert len(executed) == 1
+
+
+def test_record_receipt_writes_nothing_for_an_unallocated_operation(tmp_path):
+    successor = boundary(tmp_path, lambda call: None, writer_id="loop-2")
+    reply = successor.record_receipt(OP_ID, COMMITTED)
+    assert reply["status"] == "unknown"
+    assert reply["failure"] == "no-intent"
+    assert (tmp_path / "effects" / "intents.jsonl").read_text() == ""
+    assert (tmp_path / "effects" / "outcomes.jsonl").read_text() == ""
+
+
 def test_boundary_recover_reports_a_call_that_never_arrived(tmp_path):
     dispatch = boundary(tmp_path, lambda call: {"ok": True})
     assert dispatch.recover(NATIVE_CALL) is None
