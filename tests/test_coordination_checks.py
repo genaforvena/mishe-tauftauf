@@ -58,6 +58,29 @@ def test_dependencies_and_conditional_are_distinct():
     assert any(a["kind"] == "conditional-ready" and a["severity"] == "SUSPICIOUS" for a in findings)
 
 
+def test_open_kernel_sync_task_after_matching_site_success_is_red():
+    sha = "a" * 40
+    identity = "kernel-sync-0123456789ab-android-body"
+    entries = [
+        FeedEntry(1, "now", "sync", f"[task] {identity} owner=genome source=core-sync"),
+        FeedEntry(2, "now", "sync", "[site-sync] " + json.dumps(
+            {"target": "android-body", "core_sha": sha})),
+        FeedEntry(3, "now", "sync", "[site-sync] " + json.dumps(
+            {"target": "other-site", "core_sha": sha})),
+    ]
+
+    findings = [item for item in anomalies(entries) if item["kind"] == "stale-kernel-sync"]
+    assert len(findings) == 1
+    assert findings[0]["severity"] == "RED"
+    assert findings[0]["sequences"] == [1, 2]
+
+
+def test_malformed_site_sync_completion_is_unknown():
+    entries = [FeedEntry(1, "now", "sync", "[site-sync] not-json")]
+    assert any(item["kind"] == "invalid-context" and item["severity"] == "UNKNOWN"
+               for item in anomalies(entries))
+
+
 def test_missing_and_dropped_producers():
     entries = [task(1, 'a'), state(2, 'a', status='waiting', retry_task='absent'), task(3, 'b'), FeedEntry(4, 'now', 'senses', '[dropped] b superseded'), task(5, 'c'), state(6, 'c', status='waiting', retry_task='b')]
     assert {a['kind'] for a in anomalies(entries)} >= {'missing-producer', 'dropped-producer'}

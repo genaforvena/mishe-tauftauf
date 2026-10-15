@@ -10,10 +10,11 @@ control logic the new site's language. This does not require strict typing or a
 single predetermined schema: ordinary Python values are sufficient.
 
 The literal approved adapter files are in `parsing-policy.json`. They cover chat
-lifecycle decoding, feed framing, immutable record envelopes, the wall-outcome
-publication text, external renderer/filter input, CLI arguments, the human
-operator view and the durable effect ledger. The site window manifest and the
-wall-clear journals described below are approved adapters too.
+lifecycle and linked-site sync decoding, feed framing, immutable record
+envelopes, task-coordination findings, wall-outcome publication text, external
+renderer/filter input, CLI arguments, the human operator view and the durable
+effect ledger. The site window manifest and the wall-clear journals described
+below are approved adapters too.
 
 The ledger reads its append-only UTF-8 JSONL journals as a boundary:
 invalid encoding or malformed records fail closed and remain intact as evidence.
