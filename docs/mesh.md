@@ -61,14 +61,14 @@ The latest core scan (`2026-10-15T13:57:44Z`, scan
 `7ae246660833f172f72ff7404ca0bc65b9cc8290`) has no
 `sense.body.redmi10` row and reports Note3 light UNKNOWN/collect-only, last
 received at `2026-10-14T06:13:52Z`.
-The Android Body consumer read at 13:57:31Z (Redmi cursor 10788, with no
-newer rows) reports 0.0 lux and acceleration `(4.81995, 0.00105, -8.63595)
-m/s²`, sampled at 13:46:01–02Z and received at 13:46:23Z; both were stale.
-Its Note3 app-private spool sample was 192.3s old (windows=50, `phase=gap`,
-sightings=0), not the <60s `phase=window` prerequisite; delivered channels
-remained stale. Collection status is not fresh light delivery or a BLE sighting.
-Phone/host skew and acquisition/delivery latency remain unseparated, and
-installed APK/source binding is unverified. Redmi Wi-Fi is disconnected; BLE
+At 14:03:09Z, the Android Body consumer read Redmi cursor 11588: light was
+0.0 lux, acceleration `(1.8970501, -8.19705, -5.3910003) m/s²`, and battery
+0.9/not charging, sampled 14:02:43–45Z and received at 14:03:05Z. These rows
+were 24–26s old but remain clock-conditional; phone/host skew and transport
+latency are not separated. Note3 delivered channels remained stale; its
+app-private spool sample was 229.9s old. No compatible fresh cross-body
+interval or delivered light/BLE evidence is established.
+Installed APK/source binding remains unverified. Redmi Wi-Fi is disconnected; BLE
 has no observation after a `SecurityException`, and stillness remains UNKNOWN.
 These consumer readings do not establish human movement or delivery to the
 core scan or pane; pane visibility remains unverified.
