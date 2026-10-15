@@ -359,7 +359,7 @@ def test_reconcile_appends_the_row_for_a_verified_receipt(
     assert read_native_journal(path)['pending_calls'] == []
 
 
-def _prepared_inspection(tmp_path, name, source):
+def _prepared_inspection(tmp_path, name, source, *, max_turns=2, max_calls=2):
     return prepare_exact_inspection(
         tmp_path / name,
         source_path=str(source),
@@ -367,7 +367,7 @@ def _prepared_inspection(tmp_path, name, source):
         source_bytes=source.stat().st_size, source_id='actual-obligation',
         task='Read the exact owned evidence', selector='synthetic',
         writer_id='actual-caller', cancelled=lambda: False,
-        max_turns=2, max_calls=2)
+        max_turns=max_turns, max_calls=max_calls)
 
 
 def _inspect_call(call_id, source):
@@ -379,6 +379,13 @@ def _row_for(journal_path, call_id):
     rows = [json.loads(line) for line in
             journal_path.read_text().splitlines()]
     return next(row['message'] for row in rows if row['kind'] == 'tool_result'
+                and row['message']['toolCallId'] == call_id)
+
+
+def _event_for(journal_path, call_id):
+    rows = [json.loads(line) for line in
+            journal_path.read_text().splitlines()]
+    return next(row for row in rows if row['kind'] == 'tool_result'
                 and row['message']['toolCallId'] == call_id)
 
 
@@ -768,3 +775,197 @@ def test_receipt_for_a_call_without_a_proposal_row_is_never_restored(
     # The journal still reads, and the stranded receipt is visible in the store.
     assert read_native_journal(journal)['status'] == 'unknown'
     assert executor.boundary.recover(seeded)['status'] == 'completed'
+
+
+def test_kill_after_the_last_result_row_restores_nothing(tmp_path, monkeypatch):
+    """Experiment 4k (H1/H2): the ready-boundary interruption point. The last
+    call's result row is already durable, so the caller's `finally` reconcile
+    appends nothing, every later invocation stays silent, and the journal stays
+    a ready boundary holding no pending call — nothing was lost, so nothing is
+    restored and no pending call is left without its receipt.
+    """
+    journal, executor, authorized, _ = _multi_call_crashed(
+        tmp_path, monkeypatch, interrupt=('after_row', 'second-provider-id'))
+    preserved = journal.read_bytes()
+    state = read_native_journal(journal)
+    assert state['status'] == 'ready'
+    assert state['proposed_call'] is None
+    assert state['pending_calls'] == []
+    assert state['calls'] == 2
+
+    for _ in range(2):
+        assert reconcile_caller_journal(journal, executor.boundary,
+                                        authorized=authorized) is None
+        assert journal.read_bytes() == preserved
+        state = read_native_journal(journal)
+        assert state['status'] == 'ready'
+        assert state['pending_calls'] == []
+        assert state['calls'] == 2
+
+
+def _inspection_turns(source):
+    """One scripted session: one call per turn, then a stop turn.
+
+    Shared by the interrupted run and its uninterrupted reference so both arms
+    select the same calls with the same timestamps in the same order.
+    """
+    return [
+        NativeTurn('done', {'role': 'assistant',
+                            'content': [_inspect_call('first-provider-id',
+                                                      source)],
+                            'stopReason': 'toolUse', 'timestamp': 7}, 'toolUse'),
+        NativeTurn('done', {'role': 'assistant',
+                            'content': [_inspect_call('second-provider-id',
+                                                      source)],
+                            'stopReason': 'toolUse', 'timestamp': 7}, 'toolUse'),
+        NativeTurn('done', {'role': 'assistant', 'content': [],
+                            'stopReason': 'stop'}, 'stop')]
+
+
+class _Scripted:
+    """A session replaying pre-written turns; no provider is involved."""
+
+    def __init__(self, turns):
+        self.turns = list(turns)
+
+    def turn(self, context):
+        return self.turns.pop(0)
+
+
+def _two_turn_crashed(tmp_path, monkeypatch):
+    """Lose the process before the second turn's call result row (Experiment
+    4k's two-turn arm) and return the journal plus the reconcile arguments.
+    """
+    import mishe_tauftauf.inference_inspect as inspection
+    from mishe_tauftauf.inference_loop import drive_native
+
+    source = tmp_path / 'evidence'
+    source.write_bytes(b'owned evidence\n')
+    manifest, executor = _prepared_inspection(tmp_path, 'crashed', source,
+                                              max_turns=3)
+    call_b = _inspect_call('second-provider-id', source)
+
+    @contextmanager
+    def open_session():
+        yield _Scripted(_inspection_turns(source))
+
+    drive = inspection.drive_native
+
+    def interrupting_drive(session, context, **options):
+        record = options['record']
+
+        def interrupted(event):
+            if (event['kind'] == 'tool_result'
+                    and event['message']['toolCallId'] == call_b['id']):
+                raise InterruptedError('process lost before receipt')
+            record(event)
+
+        options['record'] = interrupted
+        return drive(session, context, **options)
+
+    monkeypatch.setattr(inspection, 'drive_native', interrupting_drive)
+    with pytest.raises(InterruptedError, match='process lost'):
+        run_exact_inspection(open_session, tmp_path / 'crashed', manifest,
+                             executor, complete=lambda context: False)
+    monkeypatch.undo()
+
+    def authorized(call):
+        return True
+
+    return tmp_path / 'crashed/journal.jsonl', executor, authorized
+
+
+def test_two_turn_kill_before_result_restores_that_call_as_the_writers_row(
+        tmp_path, monkeypatch):
+    """Experiment 4k (H1) across a turn boundary: the second turn's call is
+    the one whose receipt is lost, the first reconcile restores exactly it as
+    the row `drive_native` would have appended, a second invocation appends
+    nothing, and the journal reaches a ready boundary holding no pending call.
+    """
+    journal, executor, authorized = _two_turn_crashed(tmp_path, monkeypatch)
+    state = read_native_journal(journal)
+    assert state['status'] == 'ready'
+    assert state['pending_calls'] == []
+    assert state['calls'] == 2
+    assert state['turns'] == 2
+    row = _row_for(journal, 'second-provider-id')
+    assert _event_for(journal, 'second-provider-id')['turn'] == 1
+    assert row['timestamp'] == 7
+
+    preserved = journal.read_bytes()
+    assert reconcile_caller_journal(journal, executor.boundary,
+                                    authorized=authorized) is None
+    assert journal.read_bytes() == preserved
+
+    source = tmp_path / 'evidence'
+    reference_manifest, reference_executor = _prepared_inspection(
+        tmp_path, 'uninterrupted', source, max_turns=3)
+    reference = tmp_path / 'uninterrupted/journal.jsonl'
+
+    @contextmanager
+    def full_session():
+        yield _Scripted(_inspection_turns(source))
+
+    outcome = run_exact_inspection(full_session, tmp_path / 'uninterrupted',
+                                   reference_manifest, reference_executor,
+                                   complete=lambda context: False)
+    assert outcome['status'] == 'incomplete'
+    assert outcome['calls'] == 2
+    assert _comparable(row) == _comparable(
+        _row_for(reference, 'second-provider-id'))
+
+
+def test_resume_from_a_multi_call_journal_matches_the_reader_state(
+        tmp_path, monkeypatch):
+    """Experiment 4k: a successor driving a NEW journal from the interrupted
+    one sees exactly the reconstructed reader state. A stranded pending sibling
+    stops `unknown` with that sibling visibly pending (never lost, never
+    redispatch — no proposal or result row in the successor's journal); a ready
+    boundary continues to the scripted terminator with both calls accounted.
+    """
+    from mishe_tauftauf.inference_loop import NativeJournal, drive_native
+
+    def resume(journal_path, executor, name):
+        state = read_native_journal(journal_path)
+        target = tmp_path / name / 'journal.jsonl'
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with NativeJournal(target) as journal:
+            outcome = drive_native(
+                _Scripted([NativeTurn('done', {'role': 'assistant',
+                                               'content': [],
+                                               'stopReason': 'stop'}, 'stop')]),
+                state['context'], obligation=state['obligation'],
+                max_turns=state['budgets']['turns'],
+                max_calls=state['budgets']['calls'], dispatch=executor,
+                record=journal, phase=lambda call: None,
+                cancelled=lambda: False, authorized=lambda call: True,
+                complete=lambda context: False, resume_from=journal_path)
+        return outcome, target
+
+    arm = tmp_path / 'stranded'
+    arm.mkdir()
+    stranded, executor, _, _ = _multi_call_crashed(
+        arm, monkeypatch, interrupt=('after_row', 'first-provider-id'))
+    call_b = _inspect_call('second-provider-id', arm / 'evidence')
+
+    arm = tmp_path / 'ready'
+    arm.mkdir()
+    ready, executor, _, _ = _multi_call_crashed(
+        arm, monkeypatch, interrupt=('after_row', 'second-provider-id'))
+
+    outcome, target = resume(stranded, executor, 'stranded-resume')
+    assert outcome['status'] == 'unknown'
+    assert [call['id'] for call in outcome['pending_calls']] == [call_b['id']]
+    assert outcome['calls'] == 1
+    rows = [json.loads(line) for line in
+            target.read_text().splitlines()]
+    assert [row['kind'] for row in rows] == ['checkpoint', 'stop']
+
+    outcome, target = resume(ready, executor, 'ready-resume')
+    assert outcome['status'] == 'incomplete'
+    assert outcome['calls'] == 2
+    assert outcome['turns'] == 2
+    rows = [json.loads(line) for line in
+            target.read_text().splitlines()]
+    assert [row['kind'] for row in rows] == ['checkpoint', 'model_input',
+                                             'model_output', 'stop']
