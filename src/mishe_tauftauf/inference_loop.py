@@ -246,7 +246,7 @@ class NativeJournalError(ValueError):
 
 
 
-def _proposing_assistant(messages, call_id):
+def proposing_assistant(messages, call_id):
     """The recorded assistant message that proposed `call_id`, or None.
 
     A restored `tool_result` row must carry the timestamp of the assistant
@@ -351,7 +351,7 @@ def reconcile_caller_journal(
         # this call: the proposing assistant's recorded timestamp, not a
         # synthesized one, so a continued session's next model input is
         # message-identical to the uninterrupted continuation's.
-        assistant = _proposing_assistant(state['context']['messages'], call['id'])
+        assistant = proposing_assistant(state['context']['messages'], call['id'])
         message = {
             "role": "toolResult",
             "toolCallId": call["id"],

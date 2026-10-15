@@ -12,7 +12,8 @@ import stat
 from pathlib import Path
 
 from .inference_effects import EffectBoundary, recovery_evidence_drift
-from .inference_loop import NativeJournal, drive_native, read_native_journal
+from .inference_loop import (NativeJournal, drive_native, proposing_assistant,
+                             read_native_journal)
 
 class InspectionRefused(RuntimeError):
     """Evidence or current capability authority no longer matches."""
@@ -163,7 +164,11 @@ def reconcile_caller_journal(journal_path, boundary, *, authorized):
     Unknown effect state or revoked authority never appends a result or
     dispatches. A completion recorded from effect-side evidence is restored only
     while the evidence it named still re-reads: on drift this returns `unknown`
-    with `evidence_drift` and appends nothing, leaving the call pending.
+    with `evidence_drift` and appends nothing, leaving the call pending. The
+    restored row carries the proposing assistant's recorded timestamp, derived
+    by correlating the call to the assistant that proposed it — never the
+    positional `messages[-1]`, whose value only coincides while every result row
+    was stamped by the proposing assistant's timestamp.
     """
     path = Path(journal_path)
     if not path.exists() or path.stat().st_size == 0:
@@ -190,14 +195,26 @@ def reconcile_caller_journal(journal_path, boundary, *, authorized):
             raise RuntimeError('caller journal changed during reconciliation')
         if not authorized(call):
             return {'status': 'authority_denied', 'outcome': outcome}
-        assistant = recovery['context']['messages'][-1]
+        # The appended row is the row the uninterrupted writer would have
+        # appended for this call — including the proposing assistant's recorded
+        # timestamp — so a continued session's next model input is
+        # message-identical to the uninterrupted continuation's. The assistant
+        # is correlated by the call it proposed (Experiment 4j), not read
+        # positionally as `messages[-1]`: that value only coincides while every
+        # result row in the journal was stamped by a writer that propagates the
+        # proposing assistant's timestamp, and a sibling row stamped otherwise
+        # silently restores the wrong one.
+        assistant = proposing_assistant(recovery['context']['messages'],
+                                        call['id'])
         message = {'role': 'toolResult', 'toolCallId': call['id'],
                    'toolName': call['name'], 'content': [{'type': 'text',
                    'text': json.dumps({key: value
                                        for key, value in outcome.items()
                                        if key != 'evidence_verdict'},
                                       ensure_ascii=False, allow_nan=False)}],
-                   'isError': False, 'timestamp': assistant.get('timestamp', 0)}
+                   'isError': False,
+                   'timestamp': (assistant.get('timestamp', 0)
+                                 if assistant else 0)}
         event = {'kind': 'tool_result', 'turn': turn, 'call': call,
                  'message': message, 'obligation': recovery['obligation']}
         data = (json.dumps(event, ensure_ascii=False, allow_nan=False) + '\n').encode()

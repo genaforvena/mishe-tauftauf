@@ -1,4 +1,5 @@
 import hashlib
+import json
 from contextlib import contextmanager
 
 import pytest
@@ -356,3 +357,229 @@ def test_reconcile_appends_the_row_for_a_verified_receipt(
 
     assert result['status'] == 'completed'
     assert read_native_journal(path)['pending_calls'] == []
+
+
+def _prepared_inspection(tmp_path, name, source):
+    return prepare_exact_inspection(
+        tmp_path / name,
+        source_path=str(source),
+        source_sha=hashlib.sha256(source.read_bytes()).hexdigest(),
+        source_bytes=source.stat().st_size, source_id='actual-obligation',
+        task='Read the exact owned evidence', selector='synthetic',
+        writer_id='actual-caller', cancelled=lambda: False,
+        max_turns=2, max_calls=2)
+
+
+def _inspect_call(call_id, source):
+    return {'type': 'toolCall', 'id': call_id, 'name': 'inspect',
+            'arguments': {'path': str(source)}}
+
+
+def _row_for(journal_path, call_id):
+    rows = [json.loads(line) for line in
+            journal_path.read_text().splitlines()]
+    return next(row['message'] for row in rows if row['kind'] == 'tool_result'
+                and row['message']['toolCallId'] == call_id)
+
+
+def _comparable(message):
+    outcome = json.loads(message['content'][0]['text'])
+    return {key: value for key, value in message.items() if key != 'content'}, \
+        {key: value for key, value in outcome.items()
+         if key not in ('operation_id', 'reconciliation_ref')}
+
+
+def test_reconciled_multi_call_row_is_the_uninterrupted_writers_row(
+        tmp_path, monkeypatch):
+    """Experiment 4j (H1): under a multi-call inspection turn the row the
+    caller path restores is byte-for-byte the row `drive_native` appends for
+    the same call — including the proposing assistant's timestamp. Before the
+    fix the positional `messages[-1]` read made this correct only by
+    coincidence (the sibling result row carried the same timestamp).
+    """
+    import mishe_tauftauf.inference_inspect as inspection
+    from mishe_tauftauf.inference_loop import drive_native
+
+    source = tmp_path / 'evidence'
+    source.write_bytes(b'owned evidence\n')
+    manifest, executor = _prepared_inspection(tmp_path, 'crashed', source)
+    call_a = _inspect_call('first-provider-id', source)
+    call_b = _inspect_call('second-provider-id', source)
+
+    class Session:
+        def turn(self, context):
+            return NativeTurn('done', {'role': 'assistant',
+                                       'content': [call_a, call_b],
+                                       'stopReason': 'toolUse',
+                                       'timestamp': 7}, 'toolUse')
+
+    @contextmanager
+    def open_session():
+        yield Session()
+
+    def interrupt_before_second(session, context, **options):
+        record = options['record']
+
+        def interrupted(event):
+            if (event['kind'] == 'tool_result'
+                    and event['message']['toolCallId'] == call_b['id']):
+                raise InterruptedError('process lost before receipt')
+            record(event)
+
+        options['record'] = interrupted
+        return drive_native(session, context, **options)
+
+    monkeypatch.setattr(inspection, 'drive_native', interrupt_before_second)
+    with pytest.raises(InterruptedError, match='process lost'):
+        run_exact_inspection(open_session, tmp_path / 'crashed', manifest,
+                             executor, complete=lambda context: False)
+
+    journal = tmp_path / 'crashed/journal.jsonl'
+    row = _row_for(journal, call_b['id'])
+    assert row['timestamp'] == 7
+    state = read_native_journal(journal)
+    assert state['pending_calls'] == []
+    assert state['context']['messages'][-1] == row
+
+    monkeypatch.undo()
+    reference_manifest, reference_executor = _prepared_inspection(
+        tmp_path, 'uninterrupted', source)
+    reference = tmp_path / 'uninterrupted/journal.jsonl'
+
+    class Full:
+        turns = [NativeTurn('done', {'role': 'assistant',
+                                     'content': [call_a, call_b],
+                                     'stopReason': 'toolUse',
+                                     'timestamp': 7}, 'toolUse'),
+                 NativeTurn('done', {'role': 'assistant', 'content': [],
+                                     'stopReason': 'stop'}, 'stop')]
+
+        def turn(self, context):
+            return self.turns.pop(0)
+
+    @contextmanager
+    def full_session():
+        yield Full()
+
+    run_exact_inspection(full_session, tmp_path / 'uninterrupted',
+                         reference_manifest, reference_executor,
+                         complete=lambda context: False)
+    expected = _row_for(reference, call_b['id'])
+    assert _comparable(row) == _comparable(expected)
+
+
+def test_reconciled_row_after_a_legacy_sibling_row_is_the_proposing_timestamp(
+        tmp_path):
+    """Experiment 4j (H2): the divergence the positional read still carried.
+
+    A sibling `toolResult` row stamped 0 — the pre-4h loop reconciler's writer
+    convention, measured in Experiment 4h's before-fix fixture — used to be
+    copied onto the restored row. The caller path now restores the pending
+    call's proposing assistant's timestamp, equal to the uninterrupted writer's
+    row for the same call.
+    """
+    from mishe_tauftauf.inference_loop import NativeJournal, drive_native
+
+    source = tmp_path / 'evidence'
+    source.write_bytes(b'owned evidence\n')
+    manifest, executor = _prepared_inspection(tmp_path, 'crashed', source)
+    call_a = _inspect_call('first-provider-id', source)
+    call_b = _inspect_call('second-provider-id', source)
+    journal_path = tmp_path / 'crashed/journal.jsonl'
+    with NativeJournal(journal_path) as journal:
+        def record(event):
+            if event['kind'] != 'tool_result':
+                journal(event)
+                return
+            if event['message']['toolCallId'] == call_b['id']:
+                raise InterruptedError('process lost before receipt')
+            if event['message']['toolCallId'] == call_a['id']:
+                row = json.loads(json.dumps(event))
+                row['message']['timestamp'] = 0  # pre-4h writer convention
+                journal(row)
+                return
+            journal(event)
+
+        class Session:
+            def turn(self, context):
+                return NativeTurn('done', {'role': 'assistant',
+                                           'content': [call_a, call_b],
+                                           'stopReason': 'toolUse',
+                                           'timestamp': 7}, 'toolUse')
+
+        with pytest.raises(InterruptedError, match='process lost'):
+            drive_native(Session(), manifest['context'],
+                         obligation=manifest['obligation'], max_turns=2,
+                         max_calls=2, dispatch=executor, record=record,
+                         phase=lambda call: None, cancelled=lambda: False,
+                         authorized=lambda call: True,
+                         complete=lambda context: False)
+
+    # The positional source is the sibling row stamped 0.
+    assert read_native_journal(journal_path)['context']['messages'][-1] \
+        ['timestamp'] == 0
+    result = reconcile_caller_journal(journal_path, executor.boundary,
+                                      authorized=lambda call: True)
+    assert result['status'] == 'completed'
+    row = _row_for(journal_path, call_b['id'])
+    assert row['timestamp'] == 7
+
+    reference_manifest, reference_executor = _prepared_inspection(
+        tmp_path, 'uninterrupted', source)
+    reference = tmp_path / 'uninterrupted/journal.jsonl'
+
+    class Full:
+        turns = [NativeTurn('done', {'role': 'assistant',
+                                     'content': [call_a, call_b],
+                                     'stopReason': 'toolUse',
+                                     'timestamp': 7}, 'toolUse'),
+                 NativeTurn('done', {'role': 'assistant', 'content': [],
+                                     'stopReason': 'stop'}, 'stop')]
+
+        def turn(self, context):
+            return self.turns.pop(0)
+
+    @contextmanager
+    def full_session():
+        yield Full()
+
+    run_exact_inspection(full_session, tmp_path / 'uninterrupted',
+                         reference_manifest, reference_executor,
+                         complete=lambda context: False)
+    assert _comparable(row) == _comparable(
+        _row_for(reference, call_b['id']))
+
+
+def test_reconciled_row_for_an_untimestamped_assistant_is_unchanged(tmp_path):
+    """Experiment 4j: no proposing timestamp restores 0, exactly as before."""
+    from mishe_tauftauf.inference_loop import NativeJournal, drive_native
+
+    source = tmp_path / 'evidence'
+    source.write_bytes(b'owned evidence\n')
+    manifest, executor = _prepared_inspection(tmp_path, 'crashed', source)
+    call_a = _inspect_call('only-provider-id', source)
+    journal_path = tmp_path / 'crashed/journal.jsonl'
+    with NativeJournal(journal_path) as journal:
+        def record(event):
+            if event['kind'] == 'tool_result':
+                raise InterruptedError('process lost before receipt')
+            journal(event)
+
+        class Session:
+            def turn(self, context):
+                return NativeTurn('done', {'role': 'assistant',
+                                           'content': [call_a],
+                                           'stopReason': 'toolUse'},
+                                   'toolUse')
+
+        with pytest.raises(InterruptedError, match='process lost'):
+            drive_native(Session(), manifest['context'],
+                         obligation=manifest['obligation'], max_turns=2,
+                         max_calls=2, dispatch=executor, record=record,
+                         phase=lambda call: None, cancelled=lambda: False,
+                         authorized=lambda call: True,
+                         complete=lambda context: False)
+
+    reconcile_caller_journal(journal_path, executor.boundary,
+                             authorized=lambda call: True)
+    assert _row_for(journal_path, call_a['id'])['timestamp'] == 0
