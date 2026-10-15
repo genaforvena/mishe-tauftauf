@@ -1175,4 +1175,113 @@ activation and no class adoption. Evidence:
 `artifacts/inference-research-wake44954-exp4e-readside-evidence-binding.md`;
 `SITE_HOME/research/inference-continuity/scratch/exp4e-readtime-wake44954/results.json`.
 
+## Experiment 4f: the successor's journal reconciliation refuses a receipt whose evidence no longer re-reads (wake 45050)
+
+### Hypothesis
+
+4e gave the boundary a read-side re-check (`verify_receipt_evidence`) and
+measured its limit: *available, not enforced* — the verifier is a new query, and
+every pre-existing read path still answers the recorded outcome verbatim. The
+successor path that acts on such a read is `EffectBoundary.recover(call)`,
+called by two live reconcilers (`inference_loop.reconcile_caller_journal` and
+`inference_inspect.reconcile_caller_journal`). Both treat `status ==
+completed` as permission to append a durable `tool_result` row marked
+`isError: False`, so a receipt whose named artifact was altered or deleted
+still becomes a durable success claim in the caller's own journal — the
+successor believes an effect precisely when the boundary no longer holds
+evidence for it.
+
+Hypothesis: a bounded enforcement at that one acting read path — `recover`
+carries the receipt's read-side verdict beside the unchanged recorded `status`,
+and both reconcilers refuse to append the success row when that verdict is not
+verified — turns drift into an honest, non-retryable unknown for the successor,
+while honest receipts and execution-written outcomes keep byte-identical
+behaviour. Nothing is executed, nothing is written to the store, and the receipt
+itself is never modified: the refusal is a function of the bytes, so restoring
+the bytes restores the success row.
+
+### Materially new variable vs 4e
+
+The verdict now *changes an action* that a successor takes — whether it emits a
+durable success claim into its own caller journal — rather than being a query a
+reader may ignore. It is also the first experiment in the family whose
+enforcement point is a caller-journal write, and the first that must leave a
+whole existing class (execution-written outcomes, which name no evidence)
+untouched while refusing another.
+
+### Method
+
+1. Choreography as 4d/4e (`scratch/exp4e-readtime-wake44954/exp4e.py`): real
+   caller subprocess `SIGKILL`ed between the mutating `execute` and the outcome
+   append; fresh successor process records the receipt from the effect side
+   under the frozen operation identity; zero provider calls.
+2. New: a real caller journal holding one pending call for that operation, built
+   through the loop's own `NativeJournal`/`drive_native` path (the same crash
+   choreography the existing reconcile tests use), so the reconciler under test
+   is the live function, not a re-implementation.
+3. Points, each in a fresh process, with the journal's bytes hashed before and
+   after: `honest` (bytes unchanged) → success row appended; `tamper`
+   (artifact's bytes replaced) → no row appended; `delete` (artifact removed) →
+   no row appended; `restore` (original bytes put back) → success row appended
+   again; `execwritten` (an outcome recorded by an execution, not a receipt) →
+   unchanged behaviour; `nooutcome` (no outcome record) → unchanged behaviour.
+4. `EffectBoundary.recover(call)` is read directly as well, so the reply shape
+   the reconcilers act on is recorded for a receipt, a drifted receipt and an
+   execution-written outcome (`evidence_verdict` present/absent, `status`
+   unchanged in every case).
+5. Live input measurement, deterministic: count receipts in the plant's real
+   effect stores (`SITE_HOME/effects/*/outcomes.jsonl`) to state how much added
+   read cost the enforcement can have on today's live records.
+
+The read-side verdict is a reply-level fact, not part of the durable record: the
+reconcilers exclude `evidence_verdict` from the `tool_result` row they append, so
+an honest receipt still produces today's exact row bytes, and the store and the
+receipt stay unmodified. A refusal returns the reconciler's own status `unknown`
+while `outcome`/`reconciled` still report what the store and journal hold, and
+names the drift as evidence (artifact, recorded digest, observed digest, failure)
+for a resolver. `inference_loop.reconcile_caller_journal` appends the rows of
+non-drifted calls and returns `unknown` with `evidence_drift` whenever any
+pending call's receipt fails to verify; `inference_inspect.reconcile_caller_journal`
+returns the same refusal as `{'status': 'unknown', 'outcome': …, 'evidence_drift': …}`
+without appending.
+
+### Pre-registered expected states (written before the fixture and the source change exist)
+
+| point | bytes at reconcile time | `recover` reply | reconciler action | store/receipt |
+|---|---|---|---|---|
+| honest receipt | unchanged | `status` completed, `evidence_verdict.verified` true, failure None | success `tool_result` appended, `reconciled` names the call | unchanged, 0 writes from the check |
+| tamper | replaced bytes | `status` completed (record unchanged), verdict failure `effect-evidence-mismatch`, `observed_sha256` = new digest | no row appended, status `unknown`, drift named, call still pending, nothing dispatched | receipt unchanged |
+| delete | artifact absent | `status` completed, verdict failure `effect-evidence-unreadable` | no row appended, drift named, call still pending | receipt unchanged |
+| restore | original bytes again | `status` completed, verdict verified true | success row appended again | receipt unchanged |
+| execwritten | outcome from an execution | no `evidence_verdict` key at all | unchanged (success row appended, as today) | unchanged |
+| nooutcome | no outcome record | `status` unknown, no verdict | unchanged (no row, call pending) | unchanged |
+| every point | — | `status` never differs from the record | — | both journals byte-identical across the verification itself |
+
+Falsification: a drifted receipt still producing an appended success row; an
+honest receipt whose appended row differs from today's; an execution-written
+outcome blocked by the new rule; any store write during `recover` or the
+refusal; a verdict reported for bytes the receipt did not name; a refusal that
+retries or dispatches the capability.
+
+### Acceptance
+
+On the live successor path, a receipt whose evidence no longer re-reads no
+longer becomes a durable success claim, with the drift named and the receipt
+preserved; honest receipts and execution-written outcomes behave exactly as
+before, byte-identically; the recorded `status` is never rewritten to express a
+read-side verdict. Residual, named rather than hidden: an execution-written
+outcome still reads `completed` with no evidence binding at all (nothing to
+re-read, so the new rule cannot cover it — a separate class, not measured here),
+and a consumer that reads the store without `recover` still reads `completed`.
+
+### Instrument
+
+`opencode-go/deepseek-v4.1-flash` (this turn's model marker; the experiment
+itself uses zero provider calls — a deterministic subprocess fixture).
+
+### Status
+
+**Preregistered at this commit (wake 45050), before the fixture and the source
+change exist.** Not yet executed.
+
 ## Future experiments (not yet planned)
