@@ -4064,6 +4064,149 @@ def _repo_branch_inventory(home: Path) -> dict[str, object]:
             "strays": strays,
             "drift": drift_names}
 
+_RELEASE_RETENTION_KEEP = 8
+"""Unreferenced release worktrees kept beyond the live set before the reading reads
+drift. ``coordination/site_sync.py`` creates one per green SHA applied to a linked
+site and removes none, so a bounded keep is provenance and rollback while an
+unbounded set is a leak; the prune is genome's lane, this reading is its detector."""
+
+_RELEASE_RETENTION_MAX_BYTES = 2 * 2**30
+"""Byte ceiling on the whole ``releases`` tree, so a plant that keeps few but large
+releases still reads drift."""
+
+_RELEASE_RETENTION_GROWTH_WINDOW_DAYS = 7
+"""Trailing window for the created-release count reported as growth evidence."""
+
+
+def _referenced_release_names(unit_root: Path | None = None) -> set[str]:
+    """Release shas referenced by a live process environment or an installed unit.
+
+    A live process names its release in ``PYTHONPATH``; an installed unit names it
+    in ``Environment``, and ``systemctl show`` exposes only running units, so the
+    unit *files* are read for a configured-but-stopped pin. Only a full 40-hex name
+    is returned: a placeholder such as ``releases/0`` is not a release. An
+    unreadable source contributes nothing, so an empty set means nothing was read,
+    never that no release is referenced.
+    """
+    refs: set[str] = set()
+    try:
+        for pid_dir in os.scandir("/proc"):
+            if not pid_dir.name.isdigit():
+                continue
+            try:
+                blob = Path(f"/proc/{pid_dir.name}/environ").read_bytes()
+            except (OSError, ValueError):
+                continue
+            refs.update(proc_table.release_names(blob))
+    except OSError:
+        pass
+    if unit_root is None:
+        unit_root = Path.home() / ".config" / "systemd" / "user"
+    if unit_root.is_dir():
+        for path in list(unit_root.rglob("*.service")) + list(unit_root.rglob("*.conf")):
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            refs.update(proc_table.release_names(text))
+    return refs
+
+
+def _release_tree_bytes(root: Path) -> int | None:
+    """Total apparent size of ``root`` in bytes, or None when it cannot be measured.
+
+    The walk is bounded by the filesystem: an unreadable entry contributes
+    nothing, and an unreadable root reads unmeasured rather than zero.
+    """
+    total = 0
+    try:
+        for dirpath, _dirnames, filenames in os.walk(root):
+            for name in filenames:
+                try:
+                    total += os.lstat(os.path.join(dirpath, name)).st_size
+                except OSError:
+                    continue
+    except OSError:
+        return None
+    return total
+
+
+def _repo_release_retention(home: Path, now: datetime | None = None) -> dict[str, object]:
+    """Report the plant-owned release-worktree accumulation against a retention bound.
+
+    ``coordination/site_sync.py::_release_source`` creates one detached worktree at
+    ``releases/<sha>`` per green SHA applied to a linked site (and the core pin is
+    expressed the same way) and nothing in the repo removes it. ``branch-inventory``
+    reports the worktree count as a level, which cannot show that the level is an
+    unbounded leak: 371 unreferenced releases and 1.3 GiB of plant-owned bytes read
+    the same as a handful. This reading classifies each ``releases/`` entry as live
+    (referenced by a live process environment or an installed unit) or reclaimable,
+    reports the oldest unreferenced age and the trailing-window creation count, and
+    reads drift when the unreferenced set exceeds the retention bound
+    (``_RELEASE_RETENTION_KEEP`` newest, plus a bytes ceiling).
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    site = Path(home).resolve()
+    releases = site / "releases"
+    unknown = {"id": "sense.repo.release-retention", "state": "unknown", "kind": "read"}
+    if not releases.is_dir():
+        return {**unknown, "sample": "releases directory absent"}
+
+    def age_days(path: Path) -> float | None:
+        try:
+            return (now.timestamp() - path.stat().st_mtime) / 86400.0
+        except OSError:
+            return None
+
+    referenced = _referenced_release_names()
+    entries = sorted(p for p in releases.iterdir() if p.is_dir())
+    worktrees = [p for p in entries if (p / ".git").exists()]
+    live = [p for p in worktrees if p.name in referenced]
+    reclaimable = [p for p in worktrees if p.name not in referenced]
+    legacy = [p for p in entries if not (p / ".git").exists()]
+    newest = sorted(reclaimable, key=lambda p: (age_days(p) is None, age_days(p) or 0.0))
+    kept = newest[:_RELEASE_RETENTION_KEEP]
+    over = newest[_RELEASE_RETENTION_KEEP:]
+    oldest = age_days(newest[-1]) if newest else None
+    cutoff = now.timestamp() - _RELEASE_RETENTION_GROWTH_WINDOW_DAYS * 86400.0
+    created = 0
+    for path in worktrees:
+        try:
+            if path.stat().st_mtime >= cutoff:
+                created += 1
+        except OSError:
+            continue
+    total_bytes = _release_tree_bytes(releases)
+
+    reasons: list[str] = []
+    if over:
+        reasons.append(f"{len(over)} unreferenced releases beyond keep={_RELEASE_RETENTION_KEEP}")
+    if total_bytes is not None and total_bytes > _RELEASE_RETENTION_MAX_BYTES:
+        reasons.append(f"{total_bytes / 2**30:.1f} GiB exceeds "
+                       f"{_RELEASE_RETENTION_MAX_BYTES / 2**30:.0f} GiB")
+    state = "drift" if reasons else "verified"
+    oldest_text = "none" if oldest is None else f"{oldest:.1f}d"
+    bytes_text = "unread" if total_bytes is None else f"{total_bytes / 2**30:.2f}GiB"
+    sample = (f"worktrees={len(worktrees)} live={len(live)} reclaimable={len(reclaimable)} "
+              f"legacy={len(legacy)} kept={len(kept)} over={len(over)} "
+              f"oldest={oldest_text} "
+              f"created{_RELEASE_RETENTION_GROWTH_WINDOW_DAYS}d={created} "
+              f"bytes={bytes_text}")
+    if reasons:
+        sample += " reasons=" + "|".join(reasons)
+    return {"id": "sense.repo.release-retention", "state": state, "sample": sample,
+            "kind": "read", "worktrees": len(worktrees), "live": len(live),
+            "reclaimable": len(reclaimable), "legacy": len(legacy), "kept": len(kept),
+            "over": len(over),
+            "oldest_days": None if oldest is None else round(oldest, 2),
+            "created_recent": created, "bytes": total_bytes,
+            "live_names": sorted(p.name for p in live),
+            "reclaimable_names": sorted(p.name for p in reclaimable)[:5],
+            "reasons": reasons}
+
+
+
 GHOST_FILE_LIMIT = 10_000
 """Enumeration bound across ghost-home trees: an exact count to the limit, then
 a lower bound with ``files_at_least`` set, so a scan stays bounded while a
@@ -5842,6 +5985,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_runtime_drift_across_sites(home))
     observed.append(_runtime_pin_lag(home))
     observed.append(_repo_branch_inventory(home))
+    observed.append(_repo_release_retention(home))
     observed.append(_ghost_site_homes(home))
     observed.append(_coord_dm_disposition_age(home))
     observed.append(_coord_authorship_fog(home))
