@@ -673,8 +673,8 @@ detail. The served pin's `UNKNOWN sense.body.redmi10` row can also expose its
 The checkout redacts that cursor token before hashing (`be8ec0b`), and its
 producer sample no longer carries one (`522f6da`), so on checkout bytes the
 digest-bound pane row holds no cursor token and the cursor-redaction rule is
-a redundant guard.
-is a loaded-bytes question, not a source one: the served pin `e8405b8` predates
+a redundant guard. That is a loaded-bytes question, not a source one: the
+served pin `e8405b8` predates
 both changes and still hashes the advancing cursor and the row's ambient-light
 reading, so cursor-only and lux-only advances both change the pin's digest. New
 sensor values, session changes and failure/recovery transitions remain visible
