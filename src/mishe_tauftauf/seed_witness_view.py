@@ -201,33 +201,73 @@ def _wedge_reading(home: Path, session: str) -> tuple[dict[str, dict], str | Non
     return suspects, None
 
 
-def _watch_wait_reading(home: Path, session: str) -> tuple[dict[str, dict], str | None]:
-    """PID-bound watch-wait positives and aggregate unavailability.
+def _watch_wait_panes(home: Path, session: str) -> tuple[dict[str, dict], str | None]:
+    """PID-bound pane verdicts and aggregate unavailability.
 
     Mirrors ``_wedge_reading``: each verdict carries its tmux session, so a
-    verdict binds only to the same session's live pane pid. A ``watch-wait``
-    verdict is tool-blocked (named long-poll + confirmed external state), not
-    a wedge; every other verdict (``active``, ``suspect``, ``pane-dead``,
-    ``unknown``) leaves the HELD line unchanged.
+    verdict binds only to the same session's live pane pid. Every verdict is
+    returned, not just ``watch-wait``: the held-line composite reads
+    ``suspect`` (frozen/no-growth pane — escalate), ``unknown`` (capture
+    unreadable — never clean), ``pane-dead`` (supervisor route), and
+    ``active``/``watch-wait`` (the hold stands).
     """
     from .seed import _watch_wait_evidence
     reported, unavailable = _watch_wait_evidence(home)
     if unavailable is not None:
         return {}, unavailable
-    waiting: dict[str, dict] = {}
+    panes: dict[str, dict] = {}
     for pane in reported:
-        if pane.get("verdict") != "watch-wait":
-            continue
         window, pid = pane["window"], pane["pid"]
         if pane.get("session") == session and pid == _mind_pane_pid(session, window):
-            waiting[window] = pane
-    return waiting, None
+            panes[window] = pane
+    return panes, None
 
 
 def _watch_wait_note(pane: dict) -> str:
     """One-line watch-wait evidence, in the shape the sense publishes."""
     return (f"pattern={pane.get('pattern')} run={pane.get('run_id')} "
             f"sampled={pane.get('sampled')}")
+
+
+def _held_pane_verdict(panes: dict[str, dict], role: str) -> tuple[str, str]:
+    """Classify ``role``'s held pane as ``(marker, note)`` for the HELD line.
+
+    ``marker`` is ``"WEDGE-SUSPECT"`` for a frozen/no-growth pane — an
+    overdue turn whose pane no longer produces, which a plain idle-gate hold
+    cannot see — ``"UNKNOWN"`` for an unreadable capture, ``"RED"`` for a
+    dead pane, or ``""`` when the pane is tool-blocked/active or unobserved
+    and the hold stands. ``note`` is one line of the sense's own evidence.
+    """
+    pane = panes.get(role)
+    if not pane:
+        return "", ""
+    verdict = pane.get("verdict")
+    if verdict == "watch-wait":
+        return "", f"WATCH-WAIT {_watch_wait_note(pane)}"
+    if verdict == "active":
+        return "", "pane active; content growing"
+    if verdict == "suspect":
+        return "WEDGE-SUSPECT", str(pane.get("detail") or "suspect")
+    if verdict == "unknown":
+        return "UNKNOWN", str(pane.get("detail") or "unknown")
+    if verdict == "pane-dead":
+        return "RED", str(pane.get("detail") or "pane-dead")
+    return "", f"pane {verdict}"
+
+
+def _hold_age_minutes(receipt, now: datetime | None = None) -> float | None:
+    """Minutes since ``receipt`` was written, or ``None`` when unparseable.
+
+    The hold's age is the wake's age: the supervisor woken it at
+    ``receipt.timestamp`` and the mind has not settled it since. Timestamp
+    decoding stays on the ``feed`` boundary, not here.
+    """
+    from .feed import entry_timestamp
+    woken = entry_timestamp(receipt)
+    if woken is None:
+        return None
+    now = now or datetime.now(timezone.utc)
+    return (now - woken).total_seconds() / 60.0
 
 
 def _wedge_note(suspect: dict) -> str:
@@ -312,7 +352,7 @@ def render(home: Path) -> str:
                   else "; per-role coverage UNKNOWN; useful progress not established"))
     lines.append(f"  Evidence: {home / 'discovery'} sense.mind.wedge-suspect; "
                  "inspect producer on unavailable evidence, not a busy-pane restart")
-    waiting, wait_reason = _watch_wait_reading(home, session)
+    panes, wait_reason = _watch_wait_panes(home, session)
     lines.append("WATCH-WAIT: " +
                  (f"UNKNOWN — {wait_reason}; owner=senses"
                   if wait_reason else "AVAILABLE — fresh verified aggregate") +
@@ -339,6 +379,7 @@ def render(home: Path) -> str:
             if not stalls:
                 lines.append("CLEAR STALL: GREEN — no overdue settled wake")
             faulted: list[str] = []
+            unknown_faulted: list[str] = []
             for role, receipt in sorted(stalls.items()):
                 wake = decode_lifecycle(receipt).wake
                 owner = "witness" if role == "health" else "health"
@@ -355,21 +396,48 @@ def render(home: Path) -> str:
                         continue
                     # A hold observes the idle gate only, not useful progress.
                     # Provider-error evidence can also name a streaming pane.
-                    # A watch-wait pane is tool-blocked (named long-poll with
-                    # confirmed external state), not wedged: render WATCH-WAIT
-                    # on the HELD line so the human stops eyeballing the pane.
-                    watch = waiting.get(role)
+                    # Cross the hold with the pane's own verdict so a frozen
+                    # pane escalates, an unreadable capture reads UNKNOWN and a
+                    # dead pane reads RED — never clean (discover E2, DM 61947).
+                    marker, note = _held_pane_verdict(panes, role)
+                    age = _hold_age_minutes(receipt)
+                    suffix = f" · held={age:.0f}min" if age is not None else ""
+                    if marker == "WEDGE-SUSPECT":
+                        lines.append(f"CLEAR STALL: WEDGE-SUSPECT {role} wake={wake} yield={receipt.sequence} "
+                                     f"{note}{suffix}")
+                        lines.append(f"  Evidence: {Feed(home).path} settled={receipt.timestamp}; "
+                                     "held with a frozen pane — recover the pane engine before the wake can settle")
+                        wedged.append(role)
+                        continue
+                    if marker == "UNKNOWN":
+                        lines.append(f"CLEAR STALL: UNKNOWN {role} wake={wake} yield={receipt.sequence} "
+                                     f"{note}{suffix}")
+                        lines.append(f"  Evidence: {Feed(home).path} settled={receipt.timestamp}; "
+                                     "recheck once the pane capture is readable")
+                        unknown_faulted.append(role)
+                        continue
+                    if marker == "RED":
+                        lines.append(f"CLEAR STALL: RED {role} wake={wake} yield={receipt.sequence} "
+                                     f"owner={owner} {note}{suffix}")
+                        lines.append(f"  Evidence: {Feed(home).path} settled={receipt.timestamp}; "
+                                     "route to supervisor/health — pane dead")
+                        faulted.append(role)
+                        continue
                     lines.append(f"CLEAR STALL: HELD {role} wake={wake} yield={receipt.sequence} "
                                  "mind not idle; supervisor holding rotation"
                                  + (f" · wedge-suspect={_wedge_note(suspect)}" if suspect else "")
-                                 + (f" · WATCH-WAIT {_watch_wait_note(watch)}" if watch else ""))
+                                 + (f" · {note}" if note else "")
+                                 + suffix)
                     lines.append(f"  Evidence: {Feed(home).path} settled={receipt.timestamp}; "
                                  "recheck after the mind's turn ends")
                     continue
                 lines.append(f"CLEAR STALL: RED {role} wake={wake} yield={receipt.sequence} owner={owner}")
                 lines.append(f"  Evidence: {Feed(home).path} settled={receipt.timestamp}; inspect supervisor and idle prompt before repair")
                 faulted.append(role)
-            if faulted:
+            if unknown_faulted:
+                verdict = (f"UNKNOWN witness overdue clear {','.join(unknown_faulted)} "
+                           "pane capture unreadable")
+            elif faulted:
                 verdict = f"FAIL witness overdue clear {','.join(faulted)} needs checked supervisor repair"
         except (ValueError, TypeError, OverflowError) as exc:
             lines.append(f"CLEAR STALL: UNKNOWN — receipt timing unavailable: {exc}")
@@ -380,6 +448,7 @@ def render(home: Path) -> str:
             if not pends:
                 lines.append("STALE PEND: GREEN — no overdue pending wake")
             faulted: list[str] = []
+            unknown_faulted: list[str] = []
             for role, receipt in sorted(pends.items()):
                 wake = decode_lifecycle(receipt).observation
                 owner = "witness" if role == "health" else "health"
@@ -395,20 +464,48 @@ def render(home: Path) -> str:
                         wedged.append(role)
                         continue
                     # A hold observes the idle gate only, not useful progress.
-                    # A watch-wait pane is tool-blocked, not wedged: render
-                    # WATCH-WAIT on the HELD line like the clear-stall path.
-                    watch = waiting.get(role)
+                    # Cross the hold with the pane's own verdict: a frozen pane
+                    # escalates, an unreadable capture reads UNKNOWN and a dead
+                    # pane reads RED — never clean (discover E2, DM 61947).
+                    marker, note = _held_pane_verdict(panes, role)
+                    age = _hold_age_minutes(receipt)
+                    suffix = f" · held={age:.0f}min" if age is not None else ""
+                    if marker == "WEDGE-SUSPECT":
+                        lines.append(f"STALE PEND: WEDGE-SUSPECT {role} wake={wake} pending={receipt.sequence} "
+                                     f"{note}{suffix}")
+                        lines.append(f"  Evidence: {Feed(home).path} woken={receipt.timestamp}; "
+                                     "held with a frozen pane — recover the pane engine before the wake can settle")
+                        wedged.append(role)
+                        continue
+                    if marker == "UNKNOWN":
+                        lines.append(f"STALE PEND: UNKNOWN {role} wake={wake} pending={receipt.sequence} "
+                                     f"{note}{suffix}")
+                        lines.append(f"  Evidence: {Feed(home).path} woken={receipt.timestamp}; "
+                                     "recheck once the pane capture is readable")
+                        unknown_faulted.append(role)
+                        continue
+                    if marker == "RED":
+                        lines.append(f"STALE PEND: RED {role} wake={wake} pending={receipt.sequence} "
+                                     f"owner={owner} {note}{suffix}")
+                        lines.append(f"  Evidence: {Feed(home).path} woken={receipt.timestamp}; "
+                                     "route to supervisor/health — pane dead")
+                        faulted.append(role)
+                        continue
                     lines.append(f"STALE PEND: HELD {role} wake={wake} pending={receipt.sequence} "
                                  "mind not idle; supervisor holding delivery"
                                  + (f" · wedge-suspect={_wedge_note(suspect)}" if suspect else "")
-                                 + (f" · WATCH-WAIT {_watch_wait_note(watch)}" if watch else ""))
+                                 + (f" · {note}" if note else "")
+                                 + suffix)
                     lines.append(f"  Evidence: {Feed(home).path} woken={receipt.timestamp}; "
                                  "recheck after the mind's turn ends")
                     continue
                 lines.append(f"STALE PEND: RED {role} wake={wake} pending={receipt.sequence} owner={owner}")
                 lines.append(f"  Evidence: {Feed(home).path} woken={receipt.timestamp}; inspect supervisor and idle prompt before repair")
                 faulted.append(role)
-            if faulted:
+            if unknown_faulted:
+                verdict = (f"UNKNOWN witness overdue pending wake {','.join(unknown_faulted)} "
+                           "pane capture unreadable")
+            elif faulted:
                 verdict = f"FAIL witness overdue pending wake {','.join(faulted)} needs checked supervisor repair"
         except (ValueError, TypeError, OverflowError) as exc:
             lines.append("STALE PEND: UNKNOWN — receipt timing unavailable: " + str(exc))

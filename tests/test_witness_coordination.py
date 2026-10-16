@@ -509,19 +509,105 @@ def test_watch_wait_pane_renders_on_held_stale_pend(tmp_path, monkeypatch):
     assert 'WEDGE-SUSPECT' not in output
 
 
-def test_non_wait_verdict_leaves_held_line_unchanged(tmp_path, monkeypatch):
-    # active / suspect / pane-dead / unknown verdicts are not tool-blocked
-    # evidence: the HELD line renders without WATCH-WAIT.
+def test_suspect_pane_escalates_the_held_clear_stall(tmp_path, monkeypatch):
+    # discover E2 (DM 61947): an overdue turn whose pane no longer produces
+    # escalates instead of re-reading HELD. A frozen pane has no wait pattern
+    # and no growth, so the plain idle-gate hold cannot see it.
     entries = [entry(1, 'seed', 'seed wake audit observation=1'),
                entry(2, 'seed', 'seed yield audit wake=1')]
     busy_mind(tmp_path, monkeypatch, entries)
     monkeypatch.setenv('MISHE_SEED_SESSION', 'test')
     watch_wait_scan(tmp_path, [{'window': 'audit', 'pid': 1, 'session': 'test',
-                                'verdict': 'suspect', 'pattern': None,
-                                'run_id': None, 'sampled': 'now'}])
+                                'verdict': 'suspect',
+                                'detail': 'frame frozen, no wait pattern',
+                                'pattern': None, 'run_id': None, 'sampled': 'now'}])
     output = render(tmp_path)
-    assert 'CLEAR STALL: HELD audit wake=1 yield=2' in output
-    assert 'WATCH-WAIT pattern' not in output
+    assert ('CLEAR STALL: WEDGE-SUSPECT audit wake=1 yield=2 '
+            'frame frozen, no wait pattern · held=') in output
+    assert 'CLEAR STALL: HELD' not in output
+    assert 'STATE: RED' in output
+    assert (tmp_path / 'observations' / 'witness').read_text() == \
+        'FAIL witness wedge-suspect mind audit needs checked recovery\n'
+
+
+def test_suspect_pane_escalates_the_held_stale_pend(tmp_path, monkeypatch):
+    entries = [entry(1, 'seed', 'seed wake audit observation=1')]
+    busy_mind(tmp_path, monkeypatch, entries)
+    monkeypatch.setenv('MISHE_SEED_SESSION', 'test')
+    watch_wait_scan(tmp_path, [{'window': 'audit', 'pid': 1, 'session': 'test',
+                                'verdict': 'suspect',
+                                'detail': 'frame alive, no wait pattern, no growth',
+                                'pattern': None, 'run_id': None, 'sampled': 'now'}])
+    output = render(tmp_path)
+    assert ('STALE PEND: WEDGE-SUSPECT audit wake=1 pending=1 '
+            'frame alive, no wait pattern, no growth · held=') in output
+    assert 'STALE PEND: HELD' not in output
+    assert (tmp_path / 'observations' / 'witness').read_text() == \
+        'FAIL witness wedge-suspect mind audit needs checked recovery\n'
+
+
+def test_unreadable_pane_capture_keeps_the_held_line_unknown(tmp_path, monkeypatch):
+    entries = [entry(1, 'seed', 'seed wake audit observation=1')]
+    busy_mind(tmp_path, monkeypatch, entries)
+    monkeypatch.setenv('MISHE_SEED_SESSION', 'test')
+    watch_wait_scan(tmp_path, [{'window': 'audit', 'pid': 1, 'session': 'test',
+                                'verdict': 'unknown',
+                                'detail': 'pane capture unreadable',
+                                'pattern': None, 'run_id': None}])
+    output = render(tmp_path)
+    assert 'STALE PEND: UNKNOWN audit wake=1 pending=1 pane capture unreadable · held=' in output
+    assert 'STALE PEND: HELD' not in output
+    assert 'STALE PEND: RED' not in output
+    assert (tmp_path / 'observations' / 'witness').read_text() == \
+        'UNKNOWN witness overdue pending wake audit pane capture unreadable\n'
+
+
+def test_dead_pane_reads_red_never_clean(tmp_path, monkeypatch):
+    entries = [entry(1, 'seed', 'seed wake audit observation=1')]
+    busy_mind(tmp_path, monkeypatch, entries)
+    monkeypatch.setenv('MISHE_SEED_SESSION', 'test')
+    watch_wait_scan(tmp_path, [{'window': 'audit', 'pid': 1, 'session': 'test',
+                                'verdict': 'pane-dead',
+                                'detail': 'both captures empty',
+                                'pattern': None, 'run_id': None}])
+    output = render(tmp_path)
+    assert ('STALE PEND: RED audit wake=1 pending=1 owner=health '
+            'both captures empty · held=') in output
+    assert 'STALE PEND: HELD' not in output
+    assert 'STATE: RED' in output
+
+
+def test_active_pane_stays_held_without_escalating(tmp_path, monkeypatch):
+    entries = [entry(1, 'seed', 'seed wake audit observation=1')]
+    busy_mind(tmp_path, monkeypatch, entries)
+    monkeypatch.setenv('MISHE_SEED_SESSION', 'test')
+    watch_wait_scan(tmp_path, [{'window': 'audit', 'pid': 1, 'session': 'test',
+                                'verdict': 'active',
+                                'detail': 'normalized content grew',
+                                'pattern': None, 'run_id': None}])
+    output = render(tmp_path)
+    assert ('STALE PEND: HELD audit wake=1 pending=1 mind not idle; '
+            'supervisor holding delivery · pane active; content growing · held=') in output
+    assert 'WEDGE-SUSPECT' not in output
+    assert 'STATE: RED' not in output
+
+
+def test_suspect_pane_without_an_overdue_wake_is_not_escalated(tmp_path, monkeypatch):
+    # discover E2's discrimination: the composite needs the overdue wake too.
+    # A settled role's suspect pane is an idle prompt, not a held turn.
+    entries = [entry(1, 'seed', 'seed wake audit observation=1'),
+               entry(2, 'seed', 'seed yield audit wake=1'),
+               entry(3, 'seed', 'seed clear audit after=1')]
+    busy_mind(tmp_path, monkeypatch, entries)
+    monkeypatch.setenv('MISHE_SEED_SESSION', 'test')
+    watch_wait_scan(tmp_path, [{'window': 'audit', 'pid': 1, 'session': 'test',
+                                'verdict': 'suspect',
+                                'detail': 'frame frozen, no wait pattern',
+                                'pattern': None, 'run_id': None}])
+    output = render(tmp_path)
+    assert 'CLEAR STALL: GREEN' in output
+    assert 'STALE PEND: GREEN' in output
+    assert 'WEDGE-SUSPECT' not in output
 
 
 def test_watch_wait_for_another_sessions_pane_is_not_surfaced(tmp_path, monkeypatch):
