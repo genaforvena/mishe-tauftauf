@@ -6184,6 +6184,274 @@ def test_docs_treadmill_rollup_positive_and_clean(monkeypatch, tmp_path):
     assert result["roles"]["health"]["verdict"] == "clean"
     assert result["validity"]["min_wakes"] == 5
 
+def _wake_entry(sequence, role, observation):
+    from mishe_tauftauf.feed import FeedEntry
+    return FeedEntry(
+        sequence=sequence,
+        timestamp=f"2026-10-15T13:{sequence:02d}:00Z",
+        source="seed",
+        body=f"seed wake {role} observation={observation} event={sequence}")
+
+
+class _MockFeed:
+    def __init__(self, entries):
+        self._entries = entries
+    def entries(self):
+        return self._entries
+
+
+def test_artifact_recurrence_positive_same_observation_no_commits(monkeypatch, tmp_path):
+    """Three wakes sharing one observation with no new commits fires."""
+    entries = [_wake_entry(i, "docs", 43288) for i in range(1, 6)]
+    monkeypatch.setattr(discovery, "Feed", lambda home: _MockFeed(entries))
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "abc123\n"})())
+    monkeypatch.setattr(discovery, "_treadmill_commits",
+                        lambda checkout, role, limit=60, since=None: [])
+    result = discovery._mind_artifact_recurrence(tmp_path)
+    assert result["id"] == "sense.mind.artifact-recurrence"
+    assert result["state"] == "verified"
+    assert result["verdict"] == "watch-artifact-recurrence"
+    assert result["roles"]["docs"]["verdict"] == "watch-artifact-recurrence"
+    assert result["roles"]["docs"]["resolver"] == "docs"
+    assert result["resolver"] == "docs"
+    assert result["roles"]["docs"]["detail"] == (
+        "last 3 wakes share observation 43288 with no new commits since their interval")
+
+
+def test_artifact_recurrence_negative_control_new_commits(monkeypatch, tmp_path):
+    """Same observation but new commits means legitimate progress — clean."""
+    entries = [_wake_entry(i, "docs", 43288) for i in range(1, 6)]
+    monkeypatch.setattr(discovery, "Feed", lambda home: _MockFeed(entries))
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "abc123\n"})())
+    monkeypatch.setattr(discovery, "_treadmill_commits",
+                        lambda checkout, role, limit=60, since=None: [{"subject": "docs wake 1", "files": ["docs/mesh.md"]}])
+    result = discovery._mind_artifact_recurrence(tmp_path)
+    assert result["verdict"] == "clean"
+    assert result["roles"]["docs"]["verdict"] == "clean"
+    assert result["roles"]["docs"]["resolver"] is None
+    assert result["resolver"] is None
+
+
+def test_artifact_recurrence_negative_control_different_observations(monkeypatch, tmp_path):
+    """Different observations mean the frontier moved — clean."""
+    entries = [_wake_entry(i, "docs", 43288 + i) for i in range(1, 6)]
+    monkeypatch.setattr(discovery, "Feed", lambda home: _MockFeed(entries))
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "abc123\n"})())
+    monkeypatch.setattr(discovery, "_treadmill_commits",
+                        lambda checkout, role, limit=60, since=None: [])
+    result = discovery._mind_artifact_recurrence(tmp_path)
+    assert result["verdict"] == "clean"
+    assert result["roles"]["docs"]["verdict"] == "clean"
+
+
+def test_artifact_recurrence_short_run_below_threshold(monkeypatch, tmp_path):
+    """Fewer than 3 wakes is not enough evidence — clean."""
+    entries = [_wake_entry(i, "docs", 43288) for i in range(1, 3)]
+    monkeypatch.setattr(discovery, "Feed", lambda home: _MockFeed(entries))
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "abc123\n"})())
+    monkeypatch.setattr(discovery, "_treadmill_commits",
+                        lambda checkout, role, limit=60, since=None: [])
+    result = discovery._mind_artifact_recurrence(tmp_path)
+    assert result["verdict"] == "clean"
+    assert result["roles"]["docs"]["verdict"] == "clean"
+
+
+def test_artifact_recurrence_unknown_when_not_a_checkout(tmp_path):
+    """Not a git checkout stays UNKNOWN."""
+    home = tmp_path / "site"
+    (home / "handoffs").mkdir(parents=True)
+    result = discovery._mind_artifact_recurrence(home)
+    assert result["id"] == "sense.mind.artifact-recurrence"
+    assert result["state"] == "unknown"
+    assert result["sample"] == "not a git checkout"
+
+
+def test_artifact_recurrence_unknown_when_feed_unreadable(monkeypatch, tmp_path):
+    """Unreadable feed stays UNKNOWN."""
+    class BadFeed:
+        def entries(self):
+            raise OSError("no feed")
+    monkeypatch.setattr(discovery, "Feed", lambda home: BadFeed())
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "abc123\n"})())
+    result = discovery._mind_artifact_recurrence(tmp_path)
+    assert result["state"] == "unknown"
+    assert result["sample"] == "feed unreadable"
+
+
+def test_artifact_recurrence_rollup_wiring(monkeypatch, tmp_path):
+    """The rollup names a firing role and leaves a progressing role clean."""
+    entries = ([_wake_entry(i, "docs", 43288) for i in range(1, 6)]
+               + [_wake_entry(i, "health", 100 + i) for i in range(10, 15)])
+    monkeypatch.setattr(discovery, "Feed", lambda home: _MockFeed(entries))
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "abc123\n"})())
+    monkeypatch.setattr(discovery, "_treadmill_commits",
+                        lambda checkout, role, limit=60, since=None: [])
+    result = discovery._mind_artifact_recurrence(tmp_path)
+    assert result["state"] == "verified"
+    assert result["verdict"] == "watch-artifact-recurrence"
+    assert result["roles"]["docs"]["verdict"] == "watch-artifact-recurrence"
+    assert result["roles"]["health"]["verdict"] == "clean"
+    assert result["validity"]["min_wakes"] == 3
+
+def test_artifact_recurrence_tail_slice_mixed_history(monkeypatch, tmp_path):
+    """A head-distinct/tail-same history fires; head-only slicing misses it.
+
+    The three oldest wakes carry distinct observations and the three newest
+    share one. Slicing the tape's head reads "observations vary" and misses
+    the recurrence; slicing its tail reads the run. The unique count and
+    the detail are tail-based for the same reason.
+    """
+    entries = ([_wake_entry(i, "docs", 1000 + i) for i in range(1, 4)]
+               + [_wake_entry(i, "docs", 43288) for i in range(4, 7)])
+    monkeypatch.setattr(discovery, "Feed", lambda home: _MockFeed(entries))
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "abc123\n"})())
+    monkeypatch.setattr(discovery, "_treadmill_commits",
+                        lambda checkout, role, limit=60, since=None: [])
+    result = discovery._mind_artifact_recurrence(tmp_path)
+    assert result["verdict"] == "watch-artifact-recurrence"
+    assert result["roles"]["docs"]["verdict"] == "watch-artifact-recurrence"
+    assert result["roles"]["docs"]["detail"] == (
+        "last 3 wakes share observation 43288 with no new commits since their interval")
+    # The last five wakes are 1002,1003,43288,43288,43288 -> three unique; a
+    # head-based count over 1001,1002,1003,43288,43288 would read four.
+    assert result["roles"]["docs"]["unique_observations"] == 3
+    assert result["resolver"] == "docs"
+    assert result["roles"]["docs"]["resolver"] == "docs"
+
+
+def test_artifact_recurrence_commit_inside_interval_clears(monkeypatch, tmp_path):
+    """A commit inside the recent wakes' interval is progress — clean."""
+    entries = [_wake_entry(i, "docs", 43288) for i in range(1, 6)]
+    monkeypatch.setattr(discovery, "Feed", lambda home: _MockFeed(entries))
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "abc123\n"})())
+    seen = {}
+
+    def fake_commits(checkout, role, limit=60, since=None):
+        seen["since"] = since
+        return ([{"subject": "docs wake 1", "files": ["docs/mesh.md"]}]
+                if since is not None else [])
+
+    monkeypatch.setattr(discovery, "_treadmill_commits", fake_commits)
+    result = discovery._mind_artifact_recurrence(tmp_path)
+    # The interval starts at the oldest of the last three wakes (13:03Z).
+    assert seen["since"] == datetime(2026, 10, 15, 13, 3, tzinfo=timezone.utc)
+    assert result["verdict"] == "clean"
+    assert result["roles"]["docs"]["verdict"] == "clean"
+
+
+def test_artifact_recurrence_commit_before_interval_still_fires(monkeypatch, tmp_path):
+    """A commit older than the recent wakes' interval is stale, not progress.
+
+    This is the failure the unbounded window hid: the whole 60-commit window
+    held a commit, so a same-observation tail read clean even though the mind
+    made no commit inside the interval it keeps re-waking in.
+    """
+    entries = [_wake_entry(i, "docs", 43288) for i in range(1, 6)]
+    monkeypatch.setattr(discovery, "Feed", lambda home: _MockFeed(entries))
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "abc123\n"})())
+    seen = {}
+
+    def fake_commits(checkout, role, limit=60, since=None):
+        seen["since"] = since
+        return ([] if since is not None
+                else [{"subject": "docs wake 1", "files": ["docs/mesh.md"]}])
+
+    monkeypatch.setattr(discovery, "_treadmill_commits", fake_commits)
+    result = discovery._mind_artifact_recurrence(tmp_path)
+    assert seen["since"] is not None
+    assert result["verdict"] == "watch-artifact-recurrence"
+    assert result["resolver"] == "docs"
+
+
+def _unstamped_wake_entry(sequence, role, observation):
+    """A wake entry whose timestamp is absent — an unboundable interval."""
+    from mishe_tauftauf.feed import FeedEntry
+    return FeedEntry(
+        sequence=sequence,
+        timestamp="",
+        source="seed",
+        body=f"seed wake {role} observation={observation} event={sequence}")
+
+
+def test_artifact_recurrence_unreadable_commits_is_unknown(monkeypatch, tmp_path):
+    """A None commit read is inconclusive: the role stays with verdict unknown.
+
+    Path A (research-methods DM 57036): dropping the role on a None read left
+    the top-level verdict clean, so an unreadable git stream read as a clean
+    bill for the role that was recurring.
+    """
+    entries = [_wake_entry(i, "docs", 43288) for i in range(1, 6)]
+    monkeypatch.setattr(discovery, "Feed", lambda home: _MockFeed(entries))
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "abc123\n"})())
+    monkeypatch.setattr(discovery, "_treadmill_commits",
+                        lambda checkout, role, limit=60, since=None: None)
+    result = discovery._mind_artifact_recurrence(tmp_path)
+    assert result["verdict"] == "unknown"
+    assert result["resolver"] == "docs"
+    assert result["roles"]["docs"]["verdict"] == "unknown"
+    assert result["roles"]["docs"]["detail"] == "commit stream unreadable"
+    assert result["roles"]["docs"]["resolver"] == "docs"
+    assert "unreadable=1" in result["sample"]
+
+
+def test_artifact_recurrence_unboundable_interval_is_unknown(monkeypatch, tmp_path):
+    """All-None wake stamps cannot bound the interval: unknown, not clean.
+
+    Path B (research-methods DM 57036): falling back to a since=None read made
+    the whole window the interval, so a commit predating every wake cleared the
+    role. The detector must not make that read at all.
+    """
+    entries = [_unstamped_wake_entry(i, "docs", 43288) for i in range(1, 6)]
+    monkeypatch.setattr(discovery, "Feed", lambda home: _MockFeed(entries))
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "abc123\n"})())
+    calls = []
+
+    def fake_commits(checkout, role, limit=60, since=None):
+        calls.append(since)
+        return [{"subject": "stale", "files": ["docs/mesh.md"]}]
+
+    monkeypatch.setattr(discovery, "_treadmill_commits", fake_commits)
+    result = discovery._mind_artifact_recurrence(tmp_path)
+    assert calls == []
+    assert result["verdict"] == "unknown"
+    assert result["roles"]["docs"]["verdict"] == "unknown"
+    assert result["roles"]["docs"]["detail"] == "wake interval unboundable: no wake stamp"
+    assert result["roles"]["docs"]["resolver"] == "docs"
+    assert result["resolver"] == "docs"
+    assert "unboundable=1" in result["sample"]
+
+
+def test_treadmill_unreadable_stream_keeps_role_in_the_rollup(monkeypatch, tmp_path):
+    """The main treadmill lane keeps an unreadable role visible as unknown."""
+    class Head:
+        returncode = 0
+        stdout = "abc123\n"
+
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: Head())
+    monkeypatch.setattr(discovery, "_treadmill_commits",
+                        lambda checkout, role, limit=60: (None if role == "docs" else []))
+    result = discovery._mind_treadmill(tmp_path)
+    assert result["roles"]["docs"]["verdict"] == "unknown"
+    assert result["roles"]["docs"]["detail"] == "commit stream unreadable"
+    assert result["verdict"] == "unknown"
+    assert "unreadable=1" in result["sample"]
+
+
+def test_docs_treadmill_unreadable_stream_keeps_role_in_the_rollup(monkeypatch, tmp_path):
+    """The docs lane keeps an unreadable role visible as unknown."""
+    class Head:
+        returncode = 0
+        stdout = "abc123\n"
+
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: Head())
+    monkeypatch.setattr(discovery, "_treadmill_commits",
+                        lambda checkout, role, limit=60: (None if role == "docs" else []))
+    result = discovery._mind_docs_treadmill(tmp_path)
+    assert result["roles"]["docs"]["verdict"] == "unknown"
+    assert result["roles"]["docs"]["detail"] == "commit stream unreadable"
+    assert result["verdict"] == "unknown"
+    assert "unreadable=1" in result["sample"]
+
 
 def _treadmill_home_with_handoff(tmp_path, text="wake 1 notes"):
     home = tmp_path / "site"
