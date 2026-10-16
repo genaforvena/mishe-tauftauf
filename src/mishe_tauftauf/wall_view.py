@@ -107,6 +107,88 @@ def pane_lease_lines(home: Path) -> tuple[list[str], str]:
     return [f"PANE LEASE: GREEN {advancing} renderers advancing"], "GREEN"
 
 
+def _live_import_roots(pid: int) -> list[str] | None:
+    """Import roots a live process runs, or ``None`` when its environ is unreadable.
+
+    Decoding belongs to ``proc_table``; only the read/unreadable distinction is
+    kept here, because the adapter's empty list cannot tell a process that names
+    no PYTHONPATH from one whose ``/proc`` entry is gone.
+    """
+    from .proc_table import pane_environ_pythonpath, pane_root
+    try:
+        raw = Path("/proc", str(pid), "environ").read_bytes()
+    except OSError:
+        return None
+    return [pane_root(component) for component in pane_environ_pythonpath(raw)]
+
+
+def _renderer_pids(session: str) -> dict[str, int] | None:
+    """Upper-pane pid per window, or ``None`` when the session cannot be read."""
+    from .proc_table import pane_windows
+    try:
+        result = subprocess.run(
+            ["tmux", "list-panes", "-s", "-t", session, "-F",
+             "#{window_name} #{pane_index} #{pane_dead} #{pane_pid}"],
+            capture_output=True, text=True, timeout=2)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode:
+        return None
+    return {window: int(pid) for window, index, _dead, pid in pane_windows(result.stdout)
+            if index == "0"}
+
+
+def renderer_bytes_lines(home: Path) -> tuple[list[str], str]:
+    """Name top-pane renderers whose live import root is not the pin.
+
+    ``top-pains/<window>`` documents that its renderer runs the release the pin
+    names, but nothing read the running process: the RUNTIME line reads
+    systemd's configured ``Environment`` (units only), and the pane lease proves
+    only that the renderer is advancing. A window the plant's refresh loop does
+    not cover therefore kept a superseded release while every reading stayed
+    GREEN (measured on ``ledger``: pin 1543b3a, live d7bf4e4). This reads each
+    renderer's own ``/proc/<pid>/environ``. An unreadable session, pin or
+    process is UNKNOWN, never silently GREEN.
+    """
+    session = os.environ.get("MISHE_SEED_SESSION", "")
+    if not session:
+        return [], "UNKNOWN"
+    from .window_manifest import read as read_window_manifest
+    try:
+        expected = read_window_manifest(home)
+    except (OSError, ValueError):
+        return [], "UNKNOWN"
+    renderers = sorted(window for window in expected
+                       if (home / "top-pains" / window).is_file())
+    if not renderers:
+        return [], "UNKNOWN"
+    try:
+        from .runtime_source import source_for
+        pinned = str(source_for(home, Path(__file__).resolve().parents[2]).resolve())
+    except (OSError, TypeError, ValueError) as exc:
+        return [f"RENDERER BYTES: UNKNOWN — {exc}"], "UNKNOWN"
+    pids = _renderer_pids(session)
+    if pids is None:
+        return [f"RENDERER BYTES: UNKNOWN — session {session} unreadable"], "UNKNOWN"
+    stale: list[str] = []
+    unreadable: list[str] = []
+    for window in renderers:
+        pid = pids.get(window)
+        roots = None if pid is None else _live_import_roots(pid)
+        if roots is None:
+            unreadable.append(window)
+            continue
+        live = [str(Path(root).resolve()) for root in roots]
+        if live and all(root == pinned for root in live):
+            continue
+        stale.append(f"{window}(live={','.join(live) if live else 'none'})")
+    if stale:
+        return [f"RENDERER BYTES: RED pin={pinned} stale={';'.join(stale)}"], "DRIFT"
+    if unreadable:
+        return [f"RENDERER BYTES: UNKNOWN pin={pinned} unreadable={','.join(unreadable)}"], "UNKNOWN"
+    return [f"RENDERER BYTES: GREEN pin={pinned} renderers={len(renderers)}"], "GREEN"
+
+
 def _runtime_state(home: Path, root: Path,
                    service_roots: dict[str, list[str]] | None = None) -> tuple[str, str]:
     """The runtime verdict and its line, comparing the pin with the service roots.
@@ -263,13 +345,19 @@ def render(home: Path, role: str) -> str:
             lines.append(f"UNKNOWN patch {path.stem}: {exc}")
     lines.extend(service_lines)
     lease_state = None
+    bytes_state = None
     if role == "health":
         lease_lines, lease_state = pane_lease_lines(home)
         lines.extend(lease_lines)
-    if runtime_state == "DRIFT" and service_note.startswith("GREEN"):
-        service_note = "RED — runtime drift: service import roots differ from the pinned release"
-    if lease_state == "STALE" and service_note.startswith("GREEN"):
-        service_note = "RED — a top-pane renderer lease stopped advancing"
+        bytes_lines, bytes_state = renderer_bytes_lines(home)
+        lines.extend(bytes_lines)
+    if service_note.startswith("GREEN"):
+        if runtime_state == "DRIFT":
+            service_note = "RED — runtime drift: service import roots differ from the pinned release"
+        elif lease_state == "STALE":
+            service_note = "RED — a top-pane renderer lease stopped advancing"
+        elif bytes_state == "DRIFT":
+            service_note = "RED — a top-pane renderer imports a superseded release"
     lines.append("STATE: " + service_note)
     return "\n".join(lines) + "\n"
 

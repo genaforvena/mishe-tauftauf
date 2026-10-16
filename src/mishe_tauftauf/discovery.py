@@ -3235,9 +3235,9 @@ def _head_rewinds(home: Path) -> dict[str, object]:
     checkout_root = Path(home).resolve().parent
     unknown = {"id": "sense.repo.head-rewinds", "state": "unknown", "kind": "read"}
 
-    def run(*args: str, timeout: float = 10) -> subprocess.CompletedProcess | None:
+    def run(*args: str, timeout: float = 10, text: bool = True) -> subprocess.CompletedProcess | None:
         try:
-            return subprocess.run(["git", *args], capture_output=True, text=True,
+            return subprocess.run(["git", *args], capture_output=True, text=text,
                                   timeout=timeout, cwd=checkout_root)
         except (OSError, subprocess.TimeoutExpired):
             return None
@@ -3261,7 +3261,7 @@ def _head_rewinds(home: Path) -> dict[str, object]:
         return {"id": "sense.repo.head-rewinds", "state": "verified",
                 "sample": "dropped=0", "dropped": 0, "lossless": 0,
                 "needs_review": 0, "absent": 0, "kind": "read"}
-    archive = run("archive", "HEAD", timeout=30)
+    archive = run("archive", "HEAD", timeout=30, text=False)
     if archive is None or archive.returncode != 0:
         return {**unknown, "sample": "HEAD tree unreadable"}
     lossless = review = absent = 0
