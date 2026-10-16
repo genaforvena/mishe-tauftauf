@@ -2,7 +2,13 @@ import copy
 import io
 import os
 import select
+import shutil
+import subprocess
+import sys
 import termios
+import time
+import uuid
+from pathlib import Path
 
 import pytest
 
@@ -183,3 +189,48 @@ def test_quiet_input_disables_only_echo_and_restores_after_exception():
     non_tty = io.StringIO('unchanged prompt\n')
     with quiet_input(non_tty) as stream:
         assert stream.read() == 'unchanged prompt\n'
+
+
+@pytest.mark.skipif(not shutil.which('tmux'), reason='tmux unavailable')
+def test_context_rotation_keeps_last_screen_and_append_only_transcript(tmp_path):
+    socket = 'native-story-' + uuid.uuid4().hex
+    transcript = tmp_path / 'story.log'
+    emitter = tmp_path / 'emit.py'
+    emitter.write_text(
+        'import sys, time\n'
+        'from mishe_tauftauf.native_story import story_output, retain_scrollback\n'
+        'with story_output(sys.stdout, sys.argv[1]) as output:\n'
+        '    print(sys.argv[2], file=output, flush=True)\n'
+        '    retain_scrollback(output)\n'
+        '    time.sleep(30)\n', encoding='utf-8')
+    environment = dict(os.environ)
+    environment['PYTHONPATH'] = str(Path(__file__).resolve().parents[1] / 'src')
+
+    def tmux(*args, check=True):
+        return subprocess.run(
+            ['tmux', '-L', socket, *args], env=environment,
+            capture_output=True, text=True, check=check, timeout=5)
+
+    def observe(expected):
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            captured = tmux('capture-pane', '-p', '-S', '-', '-t', 'story:0.0').stdout
+            if expected in captured:
+                return captured
+            time.sleep(0.02)
+        pytest.fail(f'missing story output {expected!r}:\n{captured}')
+
+    first = 'Previous wake: real final command result and settlement'
+    second = '=== Context cleared; fresh model context ==='
+    try:
+        tmux('-f', '/dev/null', 'new-session', '-d', '-s', 'story',
+             '-x', '100', '-y', '18', sys.executable, str(emitter), str(transcript), first)
+        observe(first)
+        tmux('respawn-pane', '-k', '-t', 'story:0.0',
+             sys.executable, str(emitter), str(transcript), second)
+        after = observe(second)
+        assert first in after
+        assert after.index(first) < after.index(second)
+        assert transcript.read_text(encoding='utf-8').splitlines() == [first, second]
+    finally:
+        tmux('kill-server', check=False)
