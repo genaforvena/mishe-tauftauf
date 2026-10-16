@@ -1,264 +1,184 @@
-# mishe-tauftauf
+# Mishe
 
-**A small, plantable culture for development through self-observation.**
+**A local development culture for agents that observe their work, act on it, and check the result.**
 
-Mishe gives agents a way to observe the work they are doing, the evidence behind
-their conclusions, and the machinery they depend on—then use those observations
-to choose and check the next step. That work can be software development,
-an experimental study, or improving Mishe itself.
+Mishe runs coding agents alongside an owned Git checkout. They share live checks,
+a conversation, and durable notes: what matters, what they tried, what the evidence
+says, and what needs to happen next. Fresh agent contexts pick up that work rather
+than starting over.
 
-Give it a Linux host and an installed coding agent. Refreshing checks, shared
-text panes, a work log, and durable handoffs keep goals, results, and unknowns
-visible across fresh agent contexts. The current implementation lives alongside
-an owned Git worktree; Git stores reusable code and delivers reviewed changes.
-**The worktree is the substrate, not the purpose.**
+Use it to develop software, carry an experimental study forward, or improve
+Mishe itself. The point is not to keep agents busy or dashboards green. It is to
+make useful progress—and notice when the work or the checks are wrong.
 
-Think sourdough starter for a development process. Except this one is supposed
-to tell you when it hasn't risen.
+## Start with your coding agent
 
-## What you actually get
+The easiest way in is to **clone this repository and run an agent inside it**.
+You do not need to learn the coordination commands first.
 
-Attach to the tmux session and you see the same evidence the agents see:
-
-- **Checks above, agent below.** Each resident window has a refreshing status pane
-  and a coding agent's working pane. A moving timestamp means the display is alive,
-  not that the system is healthy.
-- **One shared text log.** `chat.log` records who is doing what, what they checked,
-  what remains, and where the evidence lives.
-- **Work that survives a fresh context.** A supervisor replaces a settled agent
-  process when it is idle. The next wake delivers the charter and the owed
-  obligation, and the live pane shows the saved wall, so purpose and unfinished
-  work survive the rotation.
-- **Progress beyond commits.** A project's checks can expose experiment results,
-  data provenance, resource limits, and unfinished review—not just builds and CI.
-  A successful command need not mean the underlying goal has been achieved.
-- **A loop that can repair itself.** Agents may improve Mishe's own code, checks,
-  or instructions within their owned scope. Shared source still needs verification
-  and independent review before landing.
-
-Mishe supplies the coordination and observation loop, **not the language model**.
-You bring the agent CLI and its authentication. It is a local development practice,
-not a hosted service, a sandbox, or a promise that every repair will be correct.
-
-## Start here
-
-Read [Mesh, in view](docs/mesh.md) for the living workflow. Every fresh plant uses
-edited walls, addressed chat, one shared checkout and the single main branch.
-[Wall coordination](docs/wall-coordination.md) covers the commands and recovery.
-To load just one section from a
-longer guide, run this AWK command from the repository root. Set `file`
-and `title` to a maintained document and its exact heading text (at any depth):
-
-```sh
-file='docs/operating.md'
-title='Inspect the running plant'
-awk -v title="$title" '
-  {
-    if ($0 ~ /^#+ /) {
-      level = length($0) - length(substr($0, match($0, /[^#]/)))
-      if (show && level <= target) show = 0
-      if (substr($0, level + 2) == title) {
-        n++
-        show = 1
-        target = level
-      }
-    }
-    if (show) {
-      if (n == 1) block[++lines] = $0
-    }
-  }
-  END {
-    if (n != 1) {
-      print "expected one matching heading; found " (n + 0) > "/dev/stderr"
-      exit 2
-    }
-    for (i = 1; i <= lines; i++) print block[i]
-  }
-' "$file"
-```
-
-The selector buffers before printing, so a missing or duplicate heading exits
-with status 2 and emits no candidate section. It stops at the next heading of
-the same or higher level, preserving nested subsections when selected. The file
-and title above are examples; this is text extraction, not a search of the
-whole book, a validated command catalogue, or evidence that returned
-instructions are safe to execute. Check the command's exit status before using
-its output. AWK is ordinary text extraction, not evidence that a topic is
-absent.
-
-The selector is intentionally shown here as the bootstrap. Read this entry
-point first, then use its extraction command to load a specific maintained
-section only when the next question warrants it. It does not discover the file
-or title for you; follow the links and headings visible in this book.
-
-The book itself is written for ordinary search: every reader-facing command is
-named where its practice is described, so searching for the goal rather than
-only the topic reaches the instructions. That rule is checked against the
-shipped command list rather than assumed — `python
-tools/check_leaf_invocation_coverage.py` reports which commands no reader
-page names, auditing the release the plant serves — and it is why no index,
-registry, or capability catalogue is maintained beside these pages.
-Every uncovered command carries a recorded disposition — retired, internal,
-install-time, or vocabulary that lives on another command — or prints as a
-naming gap, so the uncovered list can only change for a stated reason.
-
-| You want to… | Read |
-| --- | --- |
-| Plant it and watch one real task | [Getting started](docs/getting-started.md) |
-| Understand the roles, checks, and handoffs | [How it works](docs/how-it-works.md) |
-| Inspect, recover, or update a running plant | [Operating guide](docs/operating.md) |
-| Read the rules an agent must follow | [Agent contract](AGENTS.md) and [seed doctrine](src/mishe_tauftauf/seed_doctrine.md) |
-
-A **plant** is one running instance. Its **site** is the local directory holding
-its log, checks, charters, and evidence. A **mind** is the coding agent in a lower
-pane. No botany qualification required.
-
-## Plant your first instance
-
-You need **Linux, Python 3.10+, Git, tmux, an installed and authenticated coding
-agent, and a working user systemd manager** for the persistent setup. GitHub CLI
-(`gh`) with access to the repository is needed for GitHub Actions readings; missing
-CI access is reported as `UNKNOWN`, not success.
-
-From a fresh clone:
+You need Linux, Python 3.10+, Git, tmux, and an installed, authenticated coding
+agent such as Codex or OMP. Persistent operation also needs a working user
+systemd manager. Mishe supplies neither the model nor its credentials; agent
+usage counts against your provider's limits or credits. GitHub CLI (`gh`) with
+repository access enables GitHub Actions readings; without that evidence, CI
+stays `UNKNOWN`.
 
 ```bash
 git clone https://github.com/genaforvena/mishe-tauftauf.git
 cd mishe-tauftauf
-python3 -m coordination.launcher --engine-command codex
-tmux attach -t mishe-seed
+codex
 ```
 
-**This starts real agents and enables background user services.** Agent work may
-consume provider credits and change the owned worktree. The site is ignored by
-Git; the code is not. Read the [setup guide](docs/getting-started.md) first if you
-want a manually supervised setup or to plant another project. Planting another
-worktree also adds or refreshes a marked agent-contract block in its `AGENTS.md`.
+Substitute your own agent command, such as `omp`, for `codex`. Then give it this
+request:
 
-The names above are fresh-clone defaults. If the checkout already has a plant,
-the launcher reuses it: use the site and session printed by the command rather
-than assuming `mishe-seed`.
+> Plant Mishe in this checkout using the `plant-mishe` skill at
+> `.agents/skills/plant-mishe/SKILL.md`. Check the prerequisites and existing
+> state first; reuse an existing plant rather than starting a duplicate.
+> For a fresh plant, use my working agent CLI and set up persistent operation.
+> Follow one bounded task through its real result and a fresh agent context.
+> Show me how to inspect it, and report anything failed, missing, or still unverified.
 
-A successful launch is only the beginning of the check. The setup guide walks
-through a real task, its live pane, its artifact, and its completion record.
+**Planting starts several real agents and enables background user services.**
+They can change the owned checkout using your account's access. This is not an
+OS sandbox. Use a repository and account you intend them to work in. If you want
+a supervised trial instead, replace the persistent-operation sentence with
+“Use a fresh `--no-services` setup”; the [setup guide](docs/getting-started.md#try-it-without-installing-services)
+explains its limits. Neither detaching tmux nor closing your terminal stops a
+persistent plant.
 
-## How the loop works
+The [planting skill](.agents/skills/plant-mishe/SKILL.md) gives the agent the
+preflight, installation, and verification procedure. If your agent does not
+automatically load repository skills, ask it to read that file explicitly.
+Missing tools or model access must be reported, not treated as a successful setup.
 
-```text
-observe → choose one bounded step → act → check the live result
-   ↑                                           ↓
-next wake ← fresh context ← wall + artifact + shared log
-```
+### Prefer to run the launcher yourself?
 
-Scripts decide reproducible facts; agents choose what to do about them. Checks
-report healthy (`GREEN`), failed (`RED`), or missing/stale/conflicting evidence
-(`UNKNOWN`). **Unknown is not a reassuring shade of green.**
-
-Self-observation means more than watching the host. It includes asking whether
-the work's evidence supports its claims, whether a task actually advanced, and
-whether Mishe's own checks and coordination are telling the truth. An observed
-gap can change the next experiment, the plan, or the machinery—not only the code.
-
-### In practice: tiny-fleet's research loop
-
-The running plant in [tiny-fleet](https://github.com/genaforvena/tiny-fleet) is
-working toward reproducible research, not merely keeping a repository tidy.
-Its project-specific panes expose experiment progress, provenance gaps, and
-pending independent review. Agents inspect evaluation artifacts, reconcile
-claims with the recorded experiments, and carry the remaining work through
-handoffs.
-
-In the live instance inspected on 30 September 2026, operational health checks
-passed while research acceptance remained `UNKNOWN`: experimental outputs
-existed, but provenance and review obligations were still open. The agents also
-identified a stale sample in their own evidence display. This is the point of
-the loop: **observe the work, question the observation, develop from what it
-reveals.** It is not a claim that the study is complete.
-
-The [concept guide](docs/how-it-works.md#development-is-not-just-repository-maintenance)
-explains how those project-specific checks fit the generic runtime.
-
-These resident roles ship by default and share the work:
-
-| Role | Responsibility |
-| --- | --- |
-| `discover` | Explore capabilities and related literature; assess applicability and propose new frontier experiments. |
-| `senses` | Build reliable, temporally valid readings, including new senses crossed from existing ones, with honest failure states. |
-| `health` | Keep the local feed, panes, and services working. |
-| `genome` | Improve reusable source, push the single `main` branch, and check its CI. |
-| `witness` | Follow open work and compare completion claims with evidence. |
-| `docs` | Keep the repository's README and reader docs a small, current, well-edited book. |
-| `research-methods` | Assess whether research questions, experiments, and conclusions advance an answer, and help implement bounded improvements. |
-
-A site can declare additional residents by adding a `charters/<slug>.md` charter
-and an executable `minds/<slug>` launcher; planting preserves their windows and
-counts their activity, so the built-in roles are a default rather than a fixed set.
-
-There is also a permissions panel and an operator shell. The operator is the human
-owner, not a role or a gate; the shell is a convenience. Roles identify
-responsibilities, not walls around files: any mind can pursue an owned repair,
-while authors commit their own scoped work on the single `main` branch and genome
-pushes it and checks CI. The [coordination guide](docs/wall-coordination.md)
-explains shared source, blocker resolution and verified delivery. The
-[concept guide](docs/how-it-works.md) explains the observation and wake loop.
-
-## Scope, not a force field
-
-Plant only in systems and worktrees you own or are authorized to maintain.
-Charters define intended authority; they do not enforce an operating-system
-sandbox. The permission ledger records scoped operator decisions—it does not
-grant Linux permissions or unlock a device.
-
-This seed borrows culture from [lte-workstation](https://github.com/genaforvena/lte-workstation),
-but **does not inherit authority over that mesh, remote nodes, accounts, or devices**.
-It starts with bounded local readings, not someone else's sensors. It needs your
-project's real build, test, service, and data checks to know what healthy means
-for that project.
-
-## Evidence, not just atmosphere
-
-For a concrete repair in this repository, see the
-[false-CI-unknown case study](docs/how-it-works.md#case-study-a-false-ci-unknown).
-It follows a bad reading through reproduction, review, push, and replacement CI.
-An agent saying “fixed” is a claim. The check is the receipt.
-
-## Find your way around the checkout
-For a focused reader lookup, the [operating guide](docs/operating.md) begins
-with linked sections for site discovery and inspection; the AWK example above
-loads just one section when the full guide is unnecessary.
-
-| Path | What belongs there |
-| --- | --- |
-| `src/mishe_tauftauf/` | Installable runtime and CLI; reusable production code. |
-| `coordination/` | Checkout-only planting and linked-site release commands. |
-| `tests/` | Automated behavioral checks. |
-| `docs/` | Reader guides: setup, mental model, and operations. |
-| `instructions/`, `skills/`, `.agents/skills/` | Mind instructions and agent/operator workflows. |
-| `.mishe-seed/` or `.mishe-tauftauf/` | Ignored local state: logs, customized charters, handoffs, checks, and artifacts. |
-
-A fresh clone gets the reusable code and default rules, not another host's living
-state. A local lesson becomes shared behavior only when deliberately promoted
-into reviewed source. The [culture mapping](instructions/mesh-culture.md) records
-which mesh rules this smaller seed actually carries.
-
-For checkout development, with the local test environment available:
+From a fresh clone with the prerequisites above:
 
 ```bash
-PYTHONPATH=src .venv/bin/pytest -q
+export TMUX_TMPDIR="/tmp/tmux-$(id -u)/${PWD##*/}"
+python3 -m coordination.launcher --engine-command 'codex'
 ```
 
-Tests check behavior in isolation. The running caller, live pane, and shared log
-check whether it is actually wired. Both matter.
+No Python package install is required. The launcher prints the actual session
+and service result. Fresh defaults are site `.mishe-seed/` and tmux session
+`mishe-seed`; existing plants can have different names. Attach to the **reported**
+session from the same terminal, retaining that socket setting—for the fresh default:
 
-Optional adapters are shipped as package modules: `python -m mishe_tauftauf.jev_judge`
-for the hosted Jev judge and `python -m mishe_tauftauf.omp_mind` for one-shot OMP
-invocations. The latter requires `MISHE_TAUFTAUF_WORKSPACE`; hosted Jev requires
-its TypeSafe credentials. The repository does not include a demo directory.
+```bash
+env -u TMUX tmux attach -t mishe-seed
+```
 
-The optional [Chat Completions adapter](docs/completions-judge.md) uses an
-explicit provider and model; configured diagnostic checks grant no completion
-or dispatch authority. [Private publication checks](docs/publication-checks.md)
-preflight drafts with a deterministic prose guard and an optional semantic
-checker.
+Follow [Getting started](docs/getting-started.md) for the first task, manual
+supervision, another agent command, or planting another owned project. Do not
+rerun the launcher just to read a running plant: it can refresh and restart
+services. Use the [inspection guide](docs/operating.md#inspect-the-running-plant).
+
+## What you will see
+
+A **plant** is a running instance. Its **site** is an ignored directory inside
+the worktree containing local state. A **mind** is a resident agent process.
+
+Each resident's tmux window has **checks above and the agent below**. The upper
+pane shows observations and the resident's current wall; the lower pane shows
+its work. A moving timestamp proves the display is alive, not that the work is
+correct.
+
+The residents share:
+
+- **Live checks:** build and CI results, service health, experiment evidence, or
+  other readings chosen for the project. `GREEN` means a named check passed;
+  `RED` means failure; `UNKNOWN` means evidence is missing, stale, or inconclusive.
+- **Walls:** short, edited notes with current work, findings, blockers, and the
+  next action. Detailed evidence stays in artifacts, not an ever-growing summary.
+- **A shared conversation:** addressed messages and results in `chat.log`.
+  Messages to a resident are visible to everyone, not private DMs.
+- **Fresh contexts:** supervisors wake agents when work is due and rotate them
+  after settlement and an idle boundary. The next context gets its purpose and
+  reads the current evidence; walls and artifacts preserve unfinished work.
+
+The default residents divide attention, not file ownership:
+
+| Resident | Focus |
+| --- | --- |
+| `discover` | Investigate capabilities, literature, and useful experiments. |
+| `senses` | Build trustworthy readings and expose uncertainty. |
+| `health` | Keep local services, panes, and observations working. |
+| `genome` | Develop reusable source, push `main`, and check CI. |
+| `witness` | Compare claims with evidence and follow unresolved work. |
+| `docs` | Keep the reader's book clear and current. |
+| `research-methods` | Improve research questions, experiments, and conclusions. |
+
+There is also a permissions panel and an operator shell. **The operator is you**,
+not another agent or an approval pane. Sites can add residents and project-specific
+checks; the default roster is a starting point.
+
+With default tmux bindings, press **Ctrl-b**, release it, then `w` to choose a
+window, `o` to switch panes, or `d` to detach. Use the operator shell or another
+terminal for diagnostics; do not type into a busy agent's pane.
+
+## How to tell it is working
+
+```text
+observe → choose a bounded step → act → check the real result
+   ↑                                           ↓
+next wake ← fresh context ← wall + artifact + shared conversation
+```
+
+Ask the planting agent to demonstrate one small task—for example, read a real
+`/proc/loadavg` sample and cite the discovery artifact. Inspect the reading,
+the artifact, and the live pane, then follow the actual wake's settlement and
+idle rotation. On the next wake, check that the fresh context can continue from
+its wall. [The first-task walkthrough](docs/getting-started.md#4-give-it-one-real-bounded-task)
+has the commands and acceptance checks.
+
+A launcher exit, an agent saying “done,” or a settled wake is not proof of a
+useful result. Missing CI access must stay `UNKNOWN`; a live renderer must not
+turn a stale reading green. A repair needs a causal explanation, a checked live
+result, a recovery path, and continuing observation that routes recurrence to
+someone who can act.
+
+Scripts should decide reproducible facts. Agents choose what to do about the
+remaining questions. Self-observation includes questioning the checks themselves,
+not just watching CPU load. The [false-CI-unknown case study](docs/how-it-works.md#case-study-a-false-ci-unknown)
+shows that distinction in a real repair.
+
+## Scope and limits
+
+- **Local, not hosted.** You supply the host and agent access. Most residents use
+  authenticated agent CLIs. The experimental internal loop calls the provider
+  library directly; [agent-step experiments](docs/agent-step-experiments.md)
+  distinguish implemented mechanisms from proposals and live acceptance.
+- **Authority is not isolation.** Charters and the permission ledger record
+  intended scope; they do not enforce Linux permissions. Plant only in systems
+  you own or are authorized to maintain. No authority over other nodes,
+  accounts, devices, or private data is inherited from this repository.
+- **Shared source, local state.** Residents work in one checkout on the single
+  `main` branch, preserve each other's edits, and commit their own scoped work.
+  Chat, observations, customized launchers, and artifacts stay in the ignored
+  site. A clone does not include another host's living state.
+- **Source is not delivery.** Running residents can use pinned releases or
+  snapshots. A commit or passing test does not prove the live caller loaded it.
+  Changes to running code need independent reading, checked activation, and a
+  tested recovery path.
+
+## Where to go next
+
+| You want to… | Read |
+| --- | --- |
+| Set up a plant and watch one task | [Getting started](docs/getting-started.md) |
+| Understand observations, roles, and fresh contexts | [How it works](docs/how-it-works.md) |
+| Inspect, recover, stop, or update a plant | [Operating guide](docs/operating.md) |
+| Coordinate shared work and verify delivery | [Wall coordination](docs/wall-coordination.md) |
+| Read the current development culture | [Mesh](docs/mesh.md) |
+| See the agent's rules | [Agent contract](AGENTS.md) and [seed doctrine](src/mishe_tauftauf/seed_doctrine.md) |
+
+For development: `src/mishe_tauftauf/` contains the runtime and CLI;
+`coordination/` contains checkout-only planting and linked-release commands;
+`tests/` contains behavioral checks. Instructions and workflows live in
+`instructions/`, `skills/`, and `.agents/skills/`. With a local test environment,
+run `PYTHONPATH=src .venv/bin/pytest -q`; tests complement, not replace, observing
+the changed path in use.
 
 **[CC0 1.0](LICENSE)** — take it, fork it, grow your own. Keep the checks honest.
