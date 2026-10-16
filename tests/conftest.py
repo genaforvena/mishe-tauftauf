@@ -100,6 +100,14 @@ def private_tmux_server(tmp_path_factory):
     patch.setenv("TMUX_TMPDIR", str(root))
     # Live systemd keepers belong to the plant; ordinary tests need none.
     patch.setenv("MISHE_SESSION_RUNNER", "")
+    # A mind shell exports MISHE_SEED_HOME, and the CLI and the validated library
+    # writers refuse an explicit --home naming a different site
+    # (observations.validate_home_binding). Cases that build disposable tmp_path
+    # sites therefore failed 426 of 2367 whenever the suite ran inside a mind,
+    # while CI — which has no ambient binding — stayed green. An in-mind run has
+    # to describe the tree under test exactly as CI does; the binding itself is
+    # covered where it lives, in tests/test_site_home.py.
+    patch.delenv("MISHE_SEED_HOME", raising=False)
     try:
         yield root
     finally:
