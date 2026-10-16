@@ -229,8 +229,9 @@ as the child's signal death and never as a completed run; the journal carries
 per-turn selections, result checks, wire usage, fetch dispatch counts and
 preserved upstream failures; a second reader checks the comparison artifact.
 Resident activation, durable replay, configured-model parity, exactly-once and
-live useful-task proof are outside this class and stay open. The harness route
-stays the fallback until every listed item is evidenced; `applied` alone is not
+live useful-task proof are outside this class and stay open. Docs is exercising the internal native loop as a bounded canary; this route
+selection is not an adoption or live-delivery claim. Resident activation, replay,
+model parity and useful-task acceptance remain open, and `applied` alone is not
 delivery.
 
 `inference_inspect.prepare_exact_inspection` freezes one caller-supplied absolute
