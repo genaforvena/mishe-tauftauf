@@ -55,7 +55,8 @@ def _load(home: Path) -> list[dict[str, str]]:
         raise RuntimeError(f"invalid linked-site registry: {path}")
     sites = data["sites"]
     if any(not isinstance(row, dict) or
-           not all(isinstance(row.get(key), str) for key in ("home", "session", "sha"))
+           not all(isinstance(row.get(key), str) for key in ("home", "session", "sha")) or
+           ("observed_sha" in row and not isinstance(row["observed_sha"], str))
            for row in sites):
         raise RuntimeError(f"invalid linked-site record: {path}")
     return sites
@@ -257,6 +258,23 @@ def _close_stale_sync_tasks(core_home: Path, target: Path, task: str, sha: str) 
         Feed(feed_home).append("sync", f"[site-sync] {marker}")
 
 
+def _diff_has_changes(baseline: str, sha: str, *pathspec: str) -> bool:
+    result = subprocess.run(
+        ["git", "-C", str(KERNEL), "diff", "--no-renames", "--quiet",
+         baseline, sha, "--", *pathspec],
+        capture_output=True, text=True, timeout=20)
+    if result.returncode not in (0, 1):
+        raise RuntimeError(f"git diff failed with exit status {result.returncode}")
+    return result.returncode == 1
+
+
+def _docs_only_delta(baseline: str, sha: str) -> bool:
+    docs = (":(glob)docs/*.md", ":(glob)docs/**/*.md")
+    non_docs = (".", ":(exclude,glob)docs/*.md", ":(exclude,glob)docs/**/*.md")
+    return _diff_has_changes(baseline, sha, *docs) and not _diff_has_changes(
+        baseline, sha, *non_docs)
+
+
 def sync_registered_sites(core_home: Path, ci: dict[str, str], *, runtime_only: bool = False) -> list[str]:
     """Apply the exact green local commit to clean, owned sites; retry later on a hold."""
     if core_home.parent.resolve() != KERNEL or ci.get("state") != "pass":
@@ -273,11 +291,16 @@ def sync_registered_sites(core_home: Path, ci: dict[str, str], *, runtime_only: 
         sha = ci["sha"]
         outcomes = []
         for row in sites:
-            if row["sha"] == sha and not row.get("error"):
+            if not row.get("error") and (row["sha"] == sha or row.get("observed_sha") == sha):
                 continue
             target = Path(row["home"])
             task = f"kernel-sync-{sha[:12]}-{target.parent.name}"
             try:
+                baseline = row.get("observed_sha", row["sha"])
+                if baseline and _docs_only_delta(baseline, sha):
+                    _update_site(core_home, target, observed_sha=sha)
+                    outcomes.append(f"docs-only {target.parent} {sha[:12]}")
+                    continue
                 _target_state(target, row["session"], runtime_only=runtime_only)
                 release = _release_source(core_home, sha)
                 if _git(release, "rev-parse", "HEAD") != sha or _git(release, "status", "--porcelain"):
@@ -297,7 +320,7 @@ def sync_registered_sites(core_home: Path, ci: dict[str, str], *, runtime_only: 
                 _verify(target, row["session"])
                 if _git(release, "rev-parse", "HEAD") != sha or _git(release, "status", "--porcelain"):
                     raise RuntimeError("release changed during linked-site refresh")
-                _update_site(core_home, target, sha=sha, error=None)
+                _update_site(core_home, target, sha=sha, observed_sha=sha, error=None)
                 _close_stale_sync_tasks(core_home, target, task, sha)
                 detail = f"Replanted {target.parent} from core {sha}; expected top panes and resident services are live."
                 core_tag = f"[done] {task}" if row.get("error") else f"[sync] core sha={sha}"
