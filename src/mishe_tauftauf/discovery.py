@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import bisect
+import io
 import ast
 
 import hashlib
@@ -12,6 +13,8 @@ import time
 import re
 import shutil
 import selectors
+import tarfile
+import tempfile
 import subprocess
 from subprocess import TimeoutExpired as _TimeoutExpired
 from datetime import datetime, timedelta, timezone
@@ -3198,6 +3201,102 @@ _SENSE_EMITTERS = ("discovery.py", "body_perception.py")
 """Modules that own ``sense.*`` id literals; all are scanned for staleness."""
 
 
+
+_HEAD_REWIND_REFLOG_LIMIT = 40
+_HEAD_REWIND_COMMIT_LIMIT = 4
+_HEAD_REWIND_PATH_LIMIT = 12
+
+
+def _head_rewinds(home: Path) -> dict[str, object]:
+    """Classify reflog-dropped commits' changed paths against HEAD's tree.
+
+    A reset in the shared checkout drops the commits that were HEAD before it.
+    When those bytes were re-committed the work survives and the drop is
+    lossless; when they were not, the work is gone and a mind must notice.
+    The discriminator is per path: ``git apply --check`` of the dropped
+    commit's own hunk against HEAD's tree. Reverse-apply succeeds when the
+    change is already present (lossless for that path), forward-apply when it
+    is absent (a real loss candidate), and neither when the path was
+    re-committed in a modified form. That third bucket is reported as its own
+    verdict — it needs a mind's judgment, not a byte-level claim — and is
+    never folded into "lossless".
+
+    HEAD's tree is extracted to a temporary directory before any apply, so a
+    peer's uncommitted edit in the shared checkout cannot make a lost change
+    read as present. A git failure reads UNKNOWN rather than "nothing
+    dropped": an unreadable reflog is not evidence that nothing was lost.
+    """
+    checkout_root = Path(home).resolve().parent
+    unknown = {"id": "sense.repo.head-rewinds", "state": "unknown", "kind": "read"}
+
+    def run(*args: str, timeout: float = 10) -> subprocess.CompletedProcess | None:
+        try:
+            return subprocess.run(["git", *args], capture_output=True, text=True,
+                                  timeout=timeout, cwd=checkout_root)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+
+    reflog = run("reflog", "--format=%H %gs", "-n", str(_HEAD_REWIND_REFLOG_LIMIT))
+    if reflog is None or reflog.returncode != 0:
+        return {**unknown, "sample": "reflog unreadable"}
+    dropped: list[str] = []
+    seen: set[str] = set()
+    for sha, _message in proc_table.git_reflog_entries(reflog.stdout):
+        if sha in seen:
+            continue
+        seen.add(sha)
+        ancestor = run("merge-base", "--is-ancestor", sha, "HEAD")
+        if ancestor is not None and ancestor.returncode == 0:
+            continue
+        dropped.append(sha)
+        if len(dropped) >= _HEAD_REWIND_COMMIT_LIMIT:
+            break
+    if not dropped:
+        return {"id": "sense.repo.head-rewinds", "state": "verified",
+                "sample": "dropped=0", "dropped": 0, "lossless": 0,
+                "needs_review": 0, "absent": 0, "kind": "read"}
+    archive = run("archive", "HEAD", timeout=30)
+    if archive is None or archive.returncode != 0:
+        return {**unknown, "sample": "HEAD tree unreadable"}
+    lossless = review = absent = 0
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            with tarfile.open(fileobj=io.BytesIO(archive.stdout), mode="r:*") as tar:
+                tar.extractall(Path(td), filter="data")
+            tree = Path(td)
+            for sha in dropped:
+                names = run("diff-tree", "--no-commit-id", "--name-only", "-r", sha)
+                if names is None or names.returncode != 0:
+                    return {**unknown, "sample": f"changed paths unreadable: {sha[:7]}"}
+                for path in proc_table.git_path_names(names.stdout)[:_HEAD_REWIND_PATH_LIMIT]:
+                    patch = run("show", sha, "--", path)
+                    if patch is None or patch.returncode != 0:
+                        return {**unknown, "sample": f"patch unreadable: {sha[:7]}"}
+                    if _applies(tree, patch.stdout, reverse=True):
+                        lossless += 1
+                    elif _applies(tree, patch.stdout, reverse=False):
+                        absent += 1
+                    else:
+                        review += 1
+    except (OSError, subprocess.TimeoutExpired):
+        return {**unknown, "sample": "HEAD tree unreadable"}
+    state = "drift" if (review or absent) else "verified"
+    return {"id": "sense.repo.head-rewinds", "state": state,
+            "sample": (f"dropped={len(dropped)} lossless={lossless} "
+                       f"needs_review={review} absent={absent}"),
+            "dropped": len(dropped), "lossless": lossless,
+            "needs_review": review, "absent": absent, "kind": "read"}
+
+
+def _applies(tree: Path, patch: str, *, reverse: bool) -> bool:
+    """Whether ``patch`` applies to ``tree``; a failed check is False, not an error."""
+    args = ["git", "apply", "--check"] + (["-R"] if reverse else []) + ["-"]
+    try:
+        result = subprocess.run(args, input=patch, capture_output=True, text=True,
+                                timeout=10, cwd=tree)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
 def _runtime_pin_lag(home: Path, now: datetime | None = None) -> dict[str, object]:
     """Count the commits between the runtime pin and the checkout HEAD.
 
@@ -5478,6 +5577,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_ledger_delivery_invariant(home))
     observed.append(_ledger_dv_binding(home))
     observed.append(_ledger_evidence_binding(home))
+    observed.append(_head_rewinds(home))
     observed.append(_space_light_read(home))
     observed.append(read_redmi10(home))
     observed.append(read_redmi10_light(home))
