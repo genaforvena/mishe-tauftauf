@@ -234,7 +234,7 @@ def write(home: Path, role: str, text: str, source_path: str | None = None) -> N
     wall_path = home / "walls" / f"{role}.md"
     from .wall_text import document_digest
     digest = document_digest(text)
-    _reject_peer_wall_copy(home, role, text, digest)
+    _reject_peer_wall_copy(home, role, text, digest, source_path)
     _write_handoff(wall_path, text)
     # handoffs/<role>.md is the launcher-facing projection of these same notes:
     # runtime.py:_context reads it as CURRENT HANDOFF and wall.settle's
@@ -250,7 +250,8 @@ def write(home: Path, role: str, text: str, source_path: str | None = None) -> N
     _audit_log(home, role, source_path, wall_path, digest)
 
 
-def _reject_peer_wall_copy(home: Path, role: str, text: str, digest: str) -> None:
+def _reject_peer_wall_copy(home: Path, role: str, text: str, digest: str,
+                           source_path: str | None = None) -> None:
     """Reject notes identical to another role's wall.
 
     A restore/context document renders every peer wall undelimited into one
@@ -268,6 +269,9 @@ def _reject_peer_wall_copy(home: Path, role: str, text: str, digest: str) -> Non
     android-body's discover wall on 2026-10-11 07:5xZ — matches nothing current
     and used to pass. The write audit records a digest per accepted write, so
     the same document is also refused when any other role wrote it earlier.
+    A refusal is recorded through ``_audit_refusal``: the paste class clobbered
+    three walls on 2026-10-10 and one on 2026-10-11, and the caller's pane was
+    its only trace, so recurrence had no durable record.
     """
     from .activity import roles
     from .wall_text import is_peer_copy
@@ -277,13 +281,14 @@ def _reject_peer_wall_copy(home: Path, role: str, text: str, digest: str) -> Non
     for name in sorted(peers):
         path = home / "walls" / f"{name}.md"
         if path.is_file() and is_peer_copy(text, path.read_bytes()):
+            _audit_refusal(home, role, source_path, home / "walls" / f"{role}.md", "peer-copy")
             raise ValueError(
                 f"refusing to write wall {role}: notes are identical to peer wall {name}. "
                 "The restore document renders every role's wall in one text — copy from your "
                 "own wall section only, or rewrite your current plan from your own evidence. "
                 f"If {name} needs this content, {name} writes it."
             )
-    _reject_peer_history_copy(home, role, digest)
+    _reject_peer_history_copy(home, role, digest, source_path)
 
 
 _AUDIT_HISTORY_LIMIT = 4000
@@ -304,18 +309,22 @@ def _recent_audit_entries(home: Path) -> list[dict]:
     return decode_audit_entries(text)[-_AUDIT_HISTORY_LIMIT:]
 
 
-def _reject_peer_history_copy(home: Path, role: str, digest: str) -> None:
+def _reject_peer_history_copy(home: Path, role: str, digest: str,
+                              source_path: str | None = None) -> None:
     """Refuse notes whose digest matches a document another role wrote earlier.
 
     The live-wall guard cannot see a peer wall that has since been replaced, so
     the audit history is the continuing observation of that failure class. Own
     rewrites of unchanged content match the writer's own earlier digests and are
     unaffected; blank notes carry no document to confuse and are skipped.
+    A refusal here is recorded through ``_audit_refusal``, so a recurrence of
+    the superseded-wall paste is countable rather than pane-only.
     """
     for entry in reversed(_recent_audit_entries(home)):
         if entry.get("role") == role or not entry.get("digest"):
             continue
         if entry["digest"] == digest:
+            _audit_refusal(home, role, source_path, home / "walls" / f"{role}.md", "peer-copy-history")
             raise ValueError(
                 f"refusing to write wall {role}: notes are identical to a document "
                 f"{entry['role']} wrote at {entry.get('ts', 'an unrecorded time')}. "
