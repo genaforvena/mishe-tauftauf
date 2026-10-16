@@ -650,5 +650,106 @@ class MindPaneTests(unittest.TestCase):
         self.assertIn("mind-pane-missing: docs", line)
 
 
+
+class SocketDerivationTests(unittest.TestCase):
+    def test_socket_for_home_derives_per_site_socket(self):
+        from mishe_tauftauf import tmux as tmux_module
+        home = Path("/home/user/test-site/.mishe-tauftauf")
+        with mock.patch.dict(tmux_module.os.environ, {"TMUX_TMPDIR": ""}):
+            socket = tmux_module._socket_for_home(home)
+        self.assertEqual(socket, "/tmp/tmux-1000/test-site/tmux-1000/default")
+
+    def test_socket_for_home_honors_inherited_tmux_tmpdir(self):
+        from mishe_tauftauf import tmux as tmux_module
+        home = Path("/home/user/test-site/.mishe-tauftauf")
+        with mock.patch.dict(tmux_module.os.environ, {"TMUX_TMPDIR": "/tmp/tmux-1000/custom"}):
+            socket = tmux_module._socket_for_home(home)
+        # Site-root contract (seed._new_session): an inherited TMUX_TMPDIR already
+        # pins the site, so the home is not appended a second time.
+        self.assertEqual(socket, "/tmp/tmux-1000/custom/tmux-1000/default")
+
+    def test_session_owner_falls_back_to_ambient_socket(self):
+        from mishe_tauftauf import tmux as tmux_module
+
+        def result(returncode, stdout):
+            return subprocess.CompletedProcess([], returncode, stdout.encode(), b"")
+
+        calls = []
+        def fake_tmux(*args, **kwargs):
+            calls.append((args, kwargs))
+            if "socket" in kwargs:
+                return result(1, "")
+            return result(0, "/home/user/test-site/.mishe-tauftauf")
+
+        with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux), \
+                mock.patch.dict(tmux_module.os.environ, {"TMUX_TMPDIR": ""}):
+            owner = tmux_module.session_owner("test-session", home=Path("/home/user/test-site/.mishe-tauftauf"))
+
+        self.assertEqual(owner, "/home/user/test-site/.mishe-tauftauf")
+        self.assertEqual(len(calls), 2)
+        self.assertIn("socket", calls[0][1])
+        self.assertNotIn("socket", calls[1][1])
+
+    def test_session_owner_with_home_passes_socket(self):
+        from mishe_tauftauf import tmux as tmux_module
+
+        def result(returncode, stdout):
+            return subprocess.CompletedProcess([], returncode, stdout.encode(), b"")
+
+        calls = []
+        def fake_tmux(*args, **kwargs):
+            calls.append((args, kwargs))
+            return result(0, "/home/user/test-site/.mishe-tauftauf")
+
+        with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux), \
+                mock.patch.dict(tmux_module.os.environ, {"TMUX_TMPDIR": ""}):
+            owner = tmux_module.session_owner("test-session", home=Path("/home/user/test-site/.mishe-tauftauf"))
+
+        self.assertEqual(owner, "/home/user/test-site/.mishe-tauftauf")
+        args, kwargs = calls[0]
+        self.assertIn("socket", kwargs)
+        self.assertIn("test-site", kwargs["socket"])
+
+    def test_owns_session_passes_home_to_session_owner(self):
+        from mishe_tauftauf import tmux as tmux_module
+
+        def result(returncode, stdout):
+            return subprocess.CompletedProcess([], returncode, stdout.encode(), b"")
+
+        calls = []
+        def fake_tmux(*args, **kwargs):
+            calls.append((args, kwargs))
+            return result(0, "/home/user/test-site/.mishe-tauftauf")
+
+        with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux), \
+                mock.patch.dict(tmux_module.os.environ, {"TMUX_TMPDIR": ""}):
+            owned = tmux_module.owns_session(Path("/home/user/test-site/.mishe-tauftauf"), "test-session")
+
+        self.assertTrue(owned)
+        args, kwargs = calls[0]
+        self.assertIn("socket", kwargs)
+        self.assertIn("test-site", kwargs["socket"])
+
+    def test_session_owner_without_home_backward_compat(self):
+        from mishe_tauftauf import tmux as tmux_module
+
+        def result(returncode, stdout):
+            return subprocess.CompletedProcess([], returncode, stdout.encode(), b"")
+
+        calls = []
+        def fake_tmux(*args, **kwargs):
+            calls.append((args, kwargs))
+            return result(0, "/home/user/test-site/.mishe-tauftauf")
+
+        with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux):
+            owner = tmux_module.session_owner("test-session")
+
+        self.assertEqual(owner, "/home/user/test-site/.mishe-tauftauf")
+        args, kwargs = calls[0]
+        self.assertNotIn("socket", kwargs)
 if __name__ == "__main__":
     unittest.main()
