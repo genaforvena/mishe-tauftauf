@@ -4503,6 +4503,135 @@ def test_branch_inventory_reports_a_sanctioned_nonmain_worktree(tmp_path):
     assert reading["drift"] == []
 
 
+def _release(home: Path, sha: str, *, worktree: bool = True, age_days: float = 0.0) -> Path:
+    """Create one ``releases/<sha>`` entry; a git worktree carries a ``.git`` file."""
+    path = home / "releases" / sha
+    path.mkdir(parents=True, exist_ok=True)
+    if worktree:
+        (path / ".git").write_text("gitdir: /nonexistent\n", encoding="utf-8")
+    stamp = datetime.now(timezone.utc).timestamp() - age_days * 86400.0
+    os.utime(path, (stamp, stamp))
+    return path
+
+
+def _bounded_bytes(monkeypatch) -> None:
+    monkeypatch.setattr(discovery, "_release_tree_bytes", lambda root: 1024)
+
+
+def test_release_retention_absent_releases_reads_unknown(tmp_path, monkeypatch):
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir()
+    _bounded_bytes(monkeypatch)
+    monkeypatch.setattr(discovery, "_referenced_release_names", lambda: set())
+    reading = discovery._repo_release_retention(home)
+    assert reading["state"] == "unknown"
+    assert reading["sample"] == "releases directory absent"
+
+
+def test_release_retention_bounded_keeps_read_verified(tmp_path, monkeypatch):
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir()
+    live = "a" * 40
+    _release(home, live, age_days=30)
+    for i in range(4):
+        _release(home, f"{i:040x}", age_days=30 - i)
+    monkeypatch.setattr(discovery, "_referenced_release_names", lambda: {live})
+    _bounded_bytes(monkeypatch)
+    reading = discovery._repo_release_retention(home)
+    assert reading["state"] == "verified"
+    assert reading["worktrees"] == 5
+    assert reading["live"] == 1
+    assert reading["reclaimable"] == 4
+    assert reading["kept"] == 4
+    assert reading["over"] == 0
+
+
+def test_release_retention_over_keep_reads_drift(tmp_path, monkeypatch):
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir()
+    live = "b" * 40
+    _release(home, live, age_days=30)
+    for i in range(20):
+        _release(home, f"{i + 1:040x}", age_days=30 - i)
+    monkeypatch.setattr(discovery, "_referenced_release_names", lambda: {live})
+    _bounded_bytes(monkeypatch)
+    reading = discovery._repo_release_retention(home)
+    assert reading["state"] == "drift"
+    assert reading["reclaimable"] == 20
+    assert reading["over"] == 20 - discovery._RELEASE_RETENTION_KEEP
+    assert "beyond keep" in reading["sample"]
+
+
+def test_release_retention_byte_ceiling_reads_drift(tmp_path, monkeypatch):
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir()
+    live = "c" * 40
+    _release(home, live, age_days=30)
+    for i in range(2):
+        _release(home, f"{i + 1:040x}", age_days=30 - i)
+    monkeypatch.setattr(discovery, "_referenced_release_names", lambda: {live})
+    monkeypatch.setattr(discovery, "_release_tree_bytes", lambda root: 3 * 2**30)
+    reading = discovery._repo_release_retention(home)
+    assert reading["state"] == "drift"
+    assert reading["bytes"] == 3 * 2**30
+    assert "GiB exceeds" in reading["sample"]
+
+
+def test_release_retention_legacy_copy_is_not_a_worktree(tmp_path, monkeypatch):
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir()
+    live = "d" * 40
+    _release(home, live, age_days=30)
+    legacy = home / "releases" / "0a95df6f"
+    legacy.mkdir(parents=True, exist_ok=True)
+    os.utime(legacy, (datetime.now(timezone.utc).timestamp() - 30 * 86400.0,) * 2)
+    monkeypatch.setattr(discovery, "_referenced_release_names", lambda: {live})
+    _bounded_bytes(monkeypatch)
+    reading = discovery._repo_release_retention(home)
+    assert reading["legacy"] == 1
+    assert reading["worktrees"] == 1
+    assert reading["reclaimable"] == 0
+
+
+def test_release_retention_reads_a_configured_unit_file_reference(tmp_path):
+    from mishe_tauftauf import discovery
+
+    unit_root = tmp_path / "units"
+    unit_root.mkdir()
+    sha = "e" * 40
+    (unit_root / "mishe-x.service").write_text(
+        f"Environment=PYTHONPATH=/home/u/.mishe-tauftauf/releases/{sha}/src\n",
+        encoding="utf-8")
+    assert sha in discovery._referenced_release_names(unit_root)
+
+
+def test_release_retention_reports_oldest_age_and_recent_creations(tmp_path, monkeypatch):
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir()
+    live = "f" * 40
+    _release(home, live, age_days=30)
+    _release(home, f"{1:040x}", age_days=12)
+    _release(home, f"{2:040x}", age_days=1)
+    monkeypatch.setattr(discovery, "_referenced_release_names", lambda: {live})
+    _bounded_bytes(monkeypatch)
+    reading = discovery._repo_release_retention(home)
+    assert reading["oldest_days"] > 11
+    assert reading["created_recent"] == 1
+    assert "created7d=1" in reading["sample"]
+
+
 def test_branch_inventory_drift_on_an_external_nonmain_worktree(tmp_path):
     from mishe_tauftauf import discovery
 
