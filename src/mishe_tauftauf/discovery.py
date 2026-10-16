@@ -21,7 +21,8 @@ from uuid import uuid4
 from . import omp_pane, proc_table, space_text
 from .body_perception import read_redmi10, read_redmi10_light
 from .activity import roles as seated_roles
-from .feed import Feed, parse_feed, publication_lock
+from .feed import Feed, FeedEntry, entry_timestamp as _feed_entry_timestamp, parse_feed, publication_lock
+from .chat_protocol import decode_lifecycle, ProtocolError
 from .host_radio import (BLUETOOTH_ROOT, COMMAND_TIMEOUT_SECONDS, NET_ROOT,
                          RFKILL_ROOT, admin_up, bluetooth_controllers, carrier_state,
                          controller_state, decode_git_log_lines,
@@ -1265,7 +1266,8 @@ def _treadmill_fold(commits: list[dict]) -> dict:
     return {"stagnation": stagnation, "change": change}
 
 
-def _treadmill_commits(checkout: Path, role: str, limit: int = TREADMILL_WINDOW_COMMITS) -> list[dict] | None:
+def _treadmill_commits(checkout: Path, role: str, limit: int = TREADMILL_WINDOW_COMMITS,
+                       since: datetime | None = None) -> list[dict] | None:
     """Newest-first ``{subject, files}`` commits for one role, or None.
 
     Role owns the commits its wake message names: the subject carries
@@ -1274,11 +1276,18 @@ def _treadmill_commits(checkout: Path, role: str, limit: int = TREADMILL_WINDOW_
     role and bounds the subprocess read. ``None`` means the stream is
     unreadable (no git, a non-work-tree checkout, a git failure): the
     caller holds UNKNOWN rather than reading an unreadable stream as clean.
+
+    ``since`` bounds the read to commits at or after that instant, so a
+    caller can ask whether progress happened inside a specific interval
+    (a role's recent wake window) instead of anywhere in the ``limit``
+    window. ``since=None`` keeps the whole window.
     """
+    command = ["git", "log", "--format=SUBJECT:%s", "--name-only", f"-{limit}"]
+    if since is not None:
+        command.append(f"--since={since.isoformat()}")
     try:
         result = subprocess.run(
-            ["git", "log", "--format=SUBJECT:%s", "--name-only", f"-{limit}"],
-            capture_output=True, text=True, timeout=10, cwd=checkout)
+            command, capture_output=True, text=True, timeout=10, cwd=checkout)
     except (OSError, subprocess.TimeoutExpired):
         return None
     if result.returncode != 0:
@@ -1325,7 +1334,41 @@ def _treadmill_previous_digests(home: Path) -> dict[str, str]:
     return digests
 
 
-def _mind_treadmill(home: Path) -> dict:
+def _mind_role_coverage(home: Path, role: str, now: datetime,
+                        entries: list | None) -> dict[str, object]:
+    """Per-role temporal coverage: wall update, settled yield, idle, pending.
+
+    The commit stream shows what landed; this shows whether the mind is
+    still waking, settling and writing — the busy-idle vs wedged distinction
+    the treadmill verdict alone cannot give (witness DM 52175, routed by
+    body-research DM 52299). The wall mtime and the seed receipt state are
+    read directly; an unreadable source yields None fields, never a guessed
+    value.
+    """
+    try:
+        wall_mtime = (home / "walls" / f"{role}.md").stat().st_mtime
+        wall_updated = datetime.fromtimestamp(
+            wall_mtime, timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    except OSError:
+        wall_updated = None
+    last_yield: int | None = None
+    last_wake_at: datetime | None = None
+    pending: int | None = None
+    if entries is not None:
+        try:
+            from . import seed
+            (_digest, pending, last_yield, _clear, _obs, _woken, last_wake_at,
+             _cont) = seed._state(home, role, entries=entries)
+        except (OSError, ValueError):
+            pass
+    idle_s = None
+    if last_wake_at is not None:
+        idle_s = max(0, int((now - last_wake_at).total_seconds()))
+    return {"wall_updated": wall_updated, "last_yield": last_yield,
+            "idle_s": idle_s, "pending": pending}
+
+
+def _mind_treadmill(home: Path, now: datetime | None = None) -> dict:
     """Stagnation + change accumulators over each role's commit stream.
 
     Rule T (treadmill): a role whose leading run holds at least
@@ -1345,6 +1388,15 @@ def _mind_treadmill(home: Path) -> dict:
     handoff text renames the wake every turn, so gating on it would silence
     the detector while the commit stream still shows no movement.
 
+    Coverage leg: each role's pair carries temporal coverage from the seed
+    receipts and the wall file — ``wall_updated`` (wall mtime), ``last_yield``
+    (last settled wake), ``idle_s`` (seconds since the last wake) and
+    ``pending`` (open wake, when one is unsettled). The legs answer different
+    questions: the commit fold names a manufacturing loop, the coverage
+    fields name whether the mind is alive — busy mid-turn, settled and
+    idle, or wedged. Coverage reads that cannot be made yield None fields;
+    the verdict never turns on them.
+
     The sample names every role's ``stagnation``/``change`` pair; the
     verdict that matters to witness/health rendering is the worst one.
     Consumer is health's mishe-wide rollup (which roles treadmill this
@@ -1352,6 +1404,8 @@ def _mind_treadmill(home: Path) -> dict:
     to be universal. Validity is the sampled HEAD: a new commit
     invalidates the fold.
     """
+    if now is None:
+        now = datetime.now(timezone.utc)
     checkout = Path(home).resolve().parent
     try:
         head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
@@ -1366,13 +1420,28 @@ def _mind_treadmill(home: Path) -> dict:
     roles = ["inference-research", "body-research", "docs", "health", "senses",
              "discover", "genome", "witness", "research-methods", "operator-view"]
     previous = _treadmill_previous_digests(home)
+    entries: list | None = None
+    try:
+        entries = Feed(home).entries()
+    except (OSError, ValueError):
+        entries = None
     pairs: dict[str, dict] = {}
     unreadable = 0
     worst = "clean"
     for role in roles:
         commits = _treadmill_commits(checkout, role)
         if commits is None:
+            # An unreadable stream is inconclusive, not clean: keep the role in
+            # the pairs with an unknown verdict so the rollup shows the hole
+            # instead of dropping the role from the reading entirely.
             unreadable += 1
+            if worst == "clean":
+                worst = "unknown"
+            pairs[role] = {"stagnation": 0, "change": 0, "verdict": "unknown",
+                           "detail": "commit stream unreadable",
+                           "handoff": _treadmill_handoff_digest(home, role),
+                           "handoff_moved": None,
+                           **_mind_role_coverage(home, role, now, entries)}
             continue
         digest = _treadmill_handoff_digest(home, role)
         old = previous.get(role)
@@ -1382,7 +1451,8 @@ def _mind_treadmill(home: Path) -> dict:
         if not commits:
             pairs[role] = {"stagnation": 0, "change": 0, "verdict": "unknown",
                            "detail": "no commits in window",
-                           "handoff": digest, "handoff_moved": handoff_moved}
+                           "handoff": digest, "handoff_moved": handoff_moved,
+                           **_mind_role_coverage(home, role, now, entries)}
             continue
         fold = _treadmill_fold(commits)
         verdict = ("watch-treadmill" if fold["stagnation"] >= TREADMILL_MIN_WAKES
@@ -1391,7 +1461,8 @@ def _mind_treadmill(home: Path) -> dict:
             worst = "watch-treadmill"
         pairs[role] = {**fold, "verdict": verdict,
                        "detail": f"leading record-only run over {len(commits)} commits",
-                       "handoff": digest, "handoff_moved": handoff_moved}
+                       "handoff": digest, "handoff_moved": handoff_moved,
+                       **_mind_role_coverage(home, role, now, entries)}
     sample = "treadmill=" + worst + " " + " ".join(
         f"{role}(stag={pairs[role]['stagnation']},change={pairs[role]['change']})"
         for role in sorted(pairs))
@@ -1486,7 +1557,13 @@ def _mind_docs_treadmill(home: Path) -> dict:
     for role in roles:
         commits = _treadmill_commits(checkout, role)
         if commits is None:
+            # Inconclusive, not clean: the role stays in the rollup with an
+            # unknown verdict instead of vanishing from it.
             unreadable += 1
+            if worst == "clean":
+                worst = "unknown"
+            pairs[role] = {"stagnation": 0, "change": 0, "verdict": "unknown",
+                           "detail": "commit stream unreadable"}
             continue
         if not commits:
             pairs[role] = {"stagnation": 0, "change": 0, "verdict": "unknown",
@@ -1510,6 +1587,189 @@ def _mind_docs_treadmill(home: Path) -> dict:
             "consumer": "health mishe-wide treadmill rollup",
             "validity": {"sampled": sampled, "window_commits": TREADMILL_WINDOW_COMMITS,
                          "min_wakes": TREADMILL_MIN_WAKES}}
+
+ARTIFACT_RECURRENCE_MIN_WAKES = 3
+ARTIFACT_RECURRENCE_WINDOW_WAKES = 5
+
+def _entry_timestamp(entry: FeedEntry) -> datetime | None:
+    """Decode a feed entry's ISO timestamp to an aware UTC datetime.
+
+    ``None`` means the stamp is absent or unparseable; a caller that cannot
+    bound its interval from the tape must not read that as clean.
+    """
+    return _feed_entry_timestamp(entry)
+
+def _mind_artifact_recurrence(home: Path, now: datetime | None = None) -> dict:
+    """Detect artifact-only unchanged-frontier recurrence.
+
+    Rule AR (artifact recurrence): a role whose last
+    ``ARTIFACT_RECURRENCE_MIN_WAKES`` consecutive wakes all use the same
+    observation number, with no new commits inside that wake interval, reads
+    ``watch-artifact-recurrence`` — the turn manufactures its successor's
+    identical obligation with no input movement, the pattern the 2026-10-15
+    operator audit demonstrated as ``sense.mind.treadmill``'s blind spot
+    for non-commit churn.
+
+    The tape is read oldest-first and the tail is the evidence: a role whose
+    first wakes share an observation is history, not recurrence, and a role
+    whose last three wakes share one is. The commit leg is bounded by the
+    interval those wakes span — a commit before it is stale and cannot clear
+    the verdict, a commit inside it is progress and does.
+
+    Coverage note: this detector ADDS the wake-pattern lane beside the
+    commit-stream lanes; it does not replace them. A role with new commits
+    between wakes is ``clean`` (legitimate multi-turn progress). A role with
+    different observation numbers is ``clean`` (observation changed). A role
+    with no wake history is ``clean`` (no evidence of recurrence). Missing
+    or unreadable feed data stays ``unknown``: absence of evidence is not a
+    clean bill.
+
+    Inconclusive legs: a same-observation role whose commit leg cannot be read
+    (``_treadmill_commits`` returns ``None``) and one whose interval cannot be
+    bounded (no wake stamp in the recurrence window) both keep the role in the
+    reading with verdict ``unknown`` and ``resolver=<role>``, and the
+    top-level verdict is ``unknown`` when no stronger verdict fires; the sample
+    carries ``unreadable=<n>`` and ``unboundable=<n>``. Dropping such a role
+    read as ``clean``, and falling back to an unbounded commit read let a
+    commit predating every wake clear the role (research-methods DMs
+    57036/57055). The sensor ``state`` still reports whether the reading was
+    made; the verdict carries the uncertainty, as it already did for a role
+    with no commits in the window.
+    Routing: the output carries a ``resolver`` field naming the role whose
+    continuation policy should be reviewed — the detector does not schedule
+    or suppress anything.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    checkout = Path(home).resolve().parent
+    try:
+        head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
+                              text=True, timeout=5, cwd=checkout)
+    except (OSError, subprocess.TimeoutExpired):
+        return {"id": "sense.mind.artifact-recurrence", "state": "unknown",
+                "sample": "checkout HEAD unreadable", "roles": {}, "kind": "read"}
+    if head.returncode != 0:
+        return {"id": "sense.mind.artifact-recurrence", "state": "unknown",
+                "sample": "not a git checkout", "roles": {}, "kind": "read"}
+    sampled = head.stdout[:40]
+    roles = ["inference-research", "body-research", "docs", "health", "senses",
+             "discover", "genome", "witness", "research-methods", "operator-view"]
+    entries: list | None = None
+    try:
+        entries = Feed(home).entries()
+    except (OSError, ValueError):
+        entries = None
+    if entries is None:
+        return {"id": "sense.mind.artifact-recurrence", "state": "unknown",
+                "sample": "feed unreadable", "roles": {}, "kind": "read"}
+    # Collect wake events per role in tape order (oldest first); the
+    # detector's evidence is the tail of that history.
+    wake_history: dict[str, list[tuple[int, datetime | None]]] = {role: [] for role in roles}
+    for entry in entries:
+        if entry.source != "seed":
+            continue
+        try:
+            control = decode_lifecycle(entry)
+        except ProtocolError:
+            continue
+        if control is None or control.kind != "wake":
+            continue
+        role = control.role
+        if role in wake_history and control.observation is not None:
+            wake_history[role].append((control.observation, _entry_timestamp(entry)))
+    pairs: dict[str, dict] = {}
+    unreadable = 0
+    unboundable = 0
+    worst = "clean"
+    worst_role: str | None = None
+    for role in roles:
+        history = wake_history[role]
+        observations = [observation for observation, _stamp in history]
+        if not observations:
+            pairs[role] = {"wakes": 0, "unique_observations": 0,
+                           "verdict": "clean", "detail": "no wake history",
+                           "resolver": None}
+            continue
+        # The most recent wakes are the evidence: an identical old run is
+        # history, not recurrence.
+        recent = observations[-ARTIFACT_RECURRENCE_MIN_WAKES:]
+        same_observation = (len(recent) >= ARTIFACT_RECURRENCE_MIN_WAKES
+                            and len(set(recent)) == 1)
+        window_start: datetime | None = None
+        commits: list[dict] = []
+        if same_observation:
+            stamps = [stamp for _observation, stamp
+                      in history[-ARTIFACT_RECURRENCE_MIN_WAKES:]]
+            window_start = next((stamp for stamp in stamps if stamp is not None), None)
+            if window_start is None:
+                # No stamp in the recurrence window bounds the interval, so the
+                # commit leg cannot be read inside it. Reading the whole window
+                # instead would let a commit predating every wake clear the role
+                # (research-methods DM 57036, path B). Inconclusive, not clean.
+                unboundable += 1
+                if worst == "clean":
+                    worst, worst_role = "unknown", role
+                pairs[role] = {"wakes": len(observations),
+                               "unique_observations": len(set(
+                                   observations[-ARTIFACT_RECURRENCE_WINDOW_WAKES:])),
+                               "verdict": "unknown",
+                               "detail": "wake interval unboundable: no wake stamp",
+                               "resolver": role}
+                continue
+            commits = _treadmill_commits(checkout, role, since=window_start)
+            if commits is None:
+                # An unreadable commit leg is inconclusive evidence: the role
+                # keeps an unknown verdict and names itself as the resolver, so
+                # a git read failure cannot read as a clean bill.
+                unreadable += 1
+                if worst == "clean":
+                    worst, worst_role = "unknown", role
+                pairs[role] = {"wakes": len(observations),
+                               "unique_observations": len(set(
+                                   observations[-ARTIFACT_RECURRENCE_WINDOW_WAKES:])),
+                               "verdict": "unknown",
+                               "detail": "commit stream unreadable",
+                               "resolver": role}
+                continue
+        has_new_commits = len(commits) > 0
+        if same_observation and not has_new_commits:
+            verdict = "watch-artifact-recurrence"
+            worst = "watch-artifact-recurrence"
+            worst_role = role
+            detail = (f"last {len(recent)} wakes share observation "
+                      f"{recent[0]} with no new commits since their interval")
+            resolver = role
+        elif same_observation and has_new_commits:
+            verdict = "clean"
+            detail = (f"last {len(recent)} wakes share observation "
+                      f"{recent[0]} but {len(commits)} new commits")
+            resolver = None
+        else:
+            verdict = "clean"
+            recent_window = observations[-ARTIFACT_RECURRENCE_WINDOW_WAKES:]
+            unique = len(set(recent_window))
+            detail = (f"observations vary ({unique} unique in last "
+                      f"{len(recent_window)} wakes)")
+            resolver = None
+        pairs[role] = {"wakes": len(observations),
+                       "unique_observations": len(set(
+                           observations[-ARTIFACT_RECURRENCE_WINDOW_WAKES:])),
+                       "verdict": verdict, "detail": detail,
+                       "resolver": resolver}
+    sample = "artifact-recurrence=" + worst + " " + " ".join(
+        f"{role}(wakes={pairs[role]['wakes']},uniq={pairs[role]['unique_observations']})"
+        for role in sorted(pairs))
+    if unreadable:
+        sample += f" unreadable={unreadable}"
+    if unboundable:
+        sample += f" unboundable={unboundable}"
+    state = "verified" if pairs else "unknown"
+    return {"id": "sense.mind.artifact-recurrence", "state": state,
+            "sample": sample, "roles": pairs, "verdict": worst, "kind": "read",
+            "consumer": "health mishe-wide treadmill rollup",
+            "resolver": worst_role,
+            "validity": {"sampled": sampled,
+                         "min_wakes": ARTIFACT_RECURRENCE_MIN_WAKES}}
 LOOP_STALL_GATE_HOURS = 6.0
 
 """Hours an open resolver gate may age before a treadmilling role reads stalled.
@@ -3897,7 +4157,6 @@ SETTLE_RESULT_WINDOW = 100
 """Trailing settlements one result-mix sample covers."""
 SETTLE_INCIDENT_GAP_SECONDS = 60 * 60
 """Blocked settlements closer than this belong to one incident."""
-from .chat_protocol import decode_lifecycle
 
 
 def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[str, object]:
@@ -5156,6 +5415,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_mind_treadmill(home))
     observed.append(_mind_docs_treadmill(home))
     observed.append(_mind_loop_stall(home))
+    observed.append(_mind_artifact_recurrence(home))
     observed.append(_ledger_delivery_invariant(home))
     observed.append(_ledger_dv_binding(home))
     observed.append(_ledger_evidence_binding(home))
