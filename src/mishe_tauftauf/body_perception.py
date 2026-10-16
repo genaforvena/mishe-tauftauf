@@ -200,15 +200,12 @@ def read_redmi10(home: Path, now: float | None = None) -> dict[str, object]:
     light_text = (f"{lux:g}lux"
                   if statuses["light"] == "fresh-clock-conditional" and lux is not None
                   else statuses["light"])
-    acceleration_fields = fields_by_kind["acceleration"]
-    acceleration_source_reason = (acceleration_fields.get("reason")
-                                 if isinstance(acceleration_fields, dict) else None)
-    acceleration_text = (f"{magnitude:.2f}m/s² incl-g"
-                         if statuses["acceleration"] == "fresh-clock-conditional" and magnitude is not None
-                         else (str(acceleration_source_reason)
-                               if isinstance(acceleration_source_reason, str)
-                               and acceleration_source_reason
-                               else statuses["acceleration"]))
+    if statuses["acceleration"] == "fresh-clock-conditional" and magnitude is not None:
+        acceleration_text = f"{magnitude:.2f}m/s² incl-g"
+    elif statuses["acceleration"] == "stale":
+        acceleration_text = "motion-leg-absent"
+    else:
+        acceleration_text = statuses["acceleration"]
     # Cursor progress remains in structured provenance/details, not the
     # observation summary: cursor-only advances must not re-wake the mind.
     sample = (f"Redmi10 sid={session} b={battery_text} L={light_text} "
@@ -590,7 +587,7 @@ def read_redmi10_dense_baseline(home: Path, now: float | None = None) -> dict[st
                f"tail-bytes={DENSE_TAIL_BYTES} window-rows={total_count}; "
                f"last-light={light_text} at epoch {last_light_epoch}; "
                f"last-charging={charging_text} at epoch {last_battery_epoch}; "
-               f"accel-availability={accel_ratio:.1%}; "
+               f"delivery-coverage={accel_ratio:.1%}; "
                f"break={break_seconds:.1f}s; "
                "phone/host clock split unknown; acceleration includes gravity "
                "and is not person-movement evidence.")
