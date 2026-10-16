@@ -2180,6 +2180,81 @@ def test_head_rewinds_bounds_dropped_commits_and_paths(tmp_path, monkeypatch):
     assert result["dropped"] == discovery._HEAD_REWIND_COMMIT_LIMIT
     assert result["needs_review"] == discovery._HEAD_REWIND_COMMIT_LIMIT * discovery._HEAD_REWIND_PATH_LIMIT
 
+def _scan(home: Path, created: str, free_bytes: int) -> None:
+    """Write a minimal scan file with one verified disk.free observation."""
+    discovery = home / "discovery"
+    discovery.mkdir(exist_ok=True)
+    doc = {"created": created,
+           "observations": [{"id": "sense.disk.free", "state": "verified",
+                             "sample": free_bytes}]}
+    (discovery / f"scan-{created.replace(':', '')}.json").write_text(
+        json.dumps(doc), encoding="utf-8")
+
+
+def test_disk_trend_no_corpus_reads_unknown(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir()
+    result = discovery._disk_trend(home)
+    assert result["state"] == "unknown"
+    assert result["sample"] == "discovery corpus unavailable"
+
+
+def test_disk_trend_fewer_than_two_samples_reads_unknown(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir()
+    _scan(home, "2026-10-16T17:00:00Z", 70 * 2**30)
+    result = discovery._disk_trend(home)
+    assert result["state"] == "unknown"
+    assert "fewer than 2" in result["sample"]
+
+
+def test_disk_trend_short_span_reads_unknown(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir()
+    _scan(home, "2026-10-16T17:00:00Z", 70 * 2**30)
+    _scan(home, "2026-10-16T17:05:00Z", 70 * 2**30)
+    result = discovery._disk_trend(home)
+    assert result["state"] == "unknown"
+    assert "span" in result["sample"]
+
+
+def test_disk_trend_stable_reads_verified(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir()
+    now = datetime(2026, 10, 16, 17, 0, 0, tzinfo=timezone.utc)
+    for i in range(200):
+        ts = (now - timedelta(minutes=10 * i)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _scan(home, ts, 70 * 2**30)
+    result = discovery._disk_trend(home, now=now)
+    assert result["state"] == "verified"
+    assert "min24=" in result["sample"]
+    assert result["samples"] == 200
+
+
+def test_disk_trend_fast_drain_reads_drift(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir()
+    now = datetime(2026, 10, 16, 17, 0, 0, tzinfo=timezone.utc)
+    for i in range(200):
+        ts = (now - timedelta(minutes=10 * (199 - i))).strftime("%Y-%m-%dT%H:%M:%SZ")
+        free = int((300 - i * 100 / 144) * 2**30)
+        _scan(home, ts, free)
+    result = discovery._disk_trend(home, now=now)
+    assert result["state"] == "drift"
+    assert "drain" in result["sample"]
+
+
+def test_disk_trend_low_minimum_reads_drift(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir()
+    now = datetime(2026, 10, 16, 17, 0, 0, tzinfo=timezone.utc)
+    for i in range(200):
+        ts = (now - timedelta(minutes=10 * i)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _scan(home, ts, 15 * 2**30)
+    result = discovery._disk_trend(home, now=now)
+    assert result["state"] == "drift"
+    assert "below" in result["sample"]
+
 
 def _fake_git_show(checkout: Path):
     """A ``git show <sha>:<rel>`` handler serving the worktree file under ``checkout``."""
