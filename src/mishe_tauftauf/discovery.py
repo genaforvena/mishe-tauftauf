@@ -3190,6 +3190,9 @@ def _format_age(delta: timedelta) -> str:
 _SERVED_STALENESS_LIMIT = 64
 """Sense ids retained per staleness reading; the rest are counted, not listed."""
 
+_SENSE_EMITTERS = ("discovery.py", "body_perception.py")
+"""Modules that own ``sense.*`` id literals; all are scanned for staleness."""
+
 
 def _runtime_pin_lag(home: Path, now: datetime | None = None) -> dict[str, object]:
     """Count the commits between the runtime pin and the checkout HEAD.
@@ -3302,25 +3305,61 @@ def _runtime_pin_lag(home: Path, now: datetime | None = None) -> dict[str, objec
 def _served_staleness(checkout_root: Path, pin: str, head_sha: str) -> tuple[list[str], str | None]:
     """Count senses whose producing code changed between pin and HEAD.
 
-    For each ``sense.*`` id literal in the checkout's emitter, find the
+    For each ``sense.*`` id literal in the checkout's emitters, find the
     innermost producing function (or the exact emitting statement when the
-    id sits in the aggregator ``sample()``), then run ``git log -L`` for that
-    unit's line range. Non-empty output means the unit changed after the
-    served pin, so a served sample for that id may not reflect HEAD behaviour.
+    id sits in the aggregator ``sample()``); when the id is a module-level
+    constant, use the functions that reference it. Then run ``git log -L``
+    for each unit's line range. Non-empty output means the unit changed after
+    the served pin, so a served sample for that id may not reflect HEAD
+    behaviour.
+
+    Every module in ``_SENSE_EMITTERS`` is scanned, so a sense defined outside
+    the discovery aggregator is still named when its producer changed.
 
     Returns ``(stale_ids, reason)``: the sorted stale sense ids, or an empty
     list with a reason string when staleness cannot be computed (git failure,
     unreadable emitter). The caller reports UNKNOWN when reason is non-None.
     """
-    emitter = checkout_root / "src" / "mishe_tauftauf" / "discovery.py"
+    stale: set[str] = set()
+    for name in _SENSE_EMITTERS:
+        rel = f"src/mishe_tauftauf/{name}"
+        source, err = _committed_source(checkout_root, rel, head_sha)
+        if err is not None:
+            return [], err
+        try:
+            tree = ast.parse(source)
+        except SyntaxError as exc:
+            return [], f"emitter unparseable: {exc}"
+        stale |= _emitter_stale_ids(tree, rel, pin, head_sha, checkout_root)
+    return sorted(stale), None
+
+
+def _committed_source(checkout_root: Path, rel: str, head_sha: str) -> tuple[str, str | None]:
+    """The emitter bytes at ``head_sha``.
+
+    ``git log -L`` traces committed line ranges, so the AST line numbers must
+    come from the same revision: reading the worktree would shift them whenever
+    the checkout is dirty and misattribute staleness.
+    """
     try:
-        source = emitter.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return [], "emitter unreadable"
-    try:
-        tree = ast.parse(source)
-    except SyntaxError as exc:
-        return [], f"emitter unparseable: {exc}"
+        shown = subprocess.run(["git", "show", f"{head_sha}:{rel}"],
+                               capture_output=True, text=True, encoding="utf-8",
+                               timeout=5, cwd=checkout_root)
+    except (OSError, UnicodeDecodeError, _TimeoutExpired):
+        return "", "emitter unreadable"
+    if shown.returncode != 0:
+        return "", "emitter unreadable"
+    return shown.stdout, None
+
+
+def _is_sense_id(value: str) -> bool:
+    """Whether a string literal names a ``sense.*`` id."""
+    return len(value) > 6 and value[:6] == "sense." and value.count(".") >= 2
+
+
+def _emitter_stale_ids(tree: ast.AST, rel: str, pin: str, head_sha: str,
+                       checkout_root: Path) -> set[str]:
+    """Ids in one parsed emitter whose producing unit changed in ``pin..head``."""
     funcs = [n for n in ast.walk(tree)
              if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
 
@@ -3328,44 +3367,62 @@ def _served_staleness(checkout_root: Path, pin: str, head_sha: str) -> tuple[lis
         candidates = [f for f in funcs if f.lineno <= line <= f.end_lineno]
         return min(candidates, key=lambda f: f.end_lineno - f.lineno) if candidates else None
 
-    def producing_unit(line: int) -> tuple[int, int] | None:
-        """The (start, end) line range of the producing unit for this id."""
-        func = innermost(line)
-        if func is None:
-            return None
+    def statement_range(func, line: int) -> tuple[int, int]:
         if func.name == "sample":
             for stmt in ast.walk(func):
                 if (isinstance(stmt, ast.stmt)
                         and not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef))
                         and stmt.lineno <= line <= stmt.end_lineno):
                     return (stmt.lineno, stmt.end_lineno)
-            return (func.lineno, func.end_lineno)
         return (func.lineno, func.end_lineno)
+
+    # A ``sense.*`` id may be a module-level constant (``SENSE_ID = "sense.…"``)
+    # whose producers are the functions that reference it. Map each such
+    # constant to those functions so the id is still attributed to real code.
+    const_line: dict[str, int] = {}
+    for stmt in tree.body:
+        if (isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Constant)
+                and isinstance(stmt.value.value, str) and _is_sense_id(stmt.value.value)):
+            for target in stmt.targets:
+                if isinstance(target, ast.Name):
+                    const_line[target.id] = stmt.value.lineno
+    referenced: dict[str, set] = {name: set() for name in const_line}
+    for func in funcs:
+        for node in ast.walk(func):
+            if isinstance(node, ast.Name) and node.id in referenced:
+                referenced[node.id].add(func)
+    line_to_const = {line: name for name, line in const_line.items()}
+
+    def units_for(line: int) -> list[tuple[int, int]]:
+        func = innermost(line)
+        if func is not None:
+            return [statement_range(func, line)]
+        name = line_to_const.get(line)
+        if name is None:
+            return []
+        return [(f.lineno, f.end_lineno) for f in referenced[name]]
 
     stale: set[str] = set()
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
             continue
         sid = node.value
-        if not (len(sid) > 6 and sid[:6] == "sense." and sid.count(".") >= 2):
+        if not _is_sense_id(sid):
             continue
-        unit = producing_unit(node.lineno)
-        if unit is None:
-            continue
-        start, end = unit
-        try:
-            log_result = subprocess.run(
-                ["git", "log", "--oneline", "-L",
-                 f"{start},{end}:src/mishe_tauftauf/discovery.py",
-                 f"{pin}..{head_sha}"],
-                capture_output=True, text=True, timeout=5, cwd=checkout_root)
-            if log_result.returncode != 0:
+        for start, end in units_for(node.lineno):
+            try:
+                log_result = subprocess.run(
+                    ["git", "log", "--oneline", "-L",
+                     f"{start},{end}:{rel}", f"{pin}..{head_sha}"],
+                    capture_output=True, text=True, timeout=5, cwd=checkout_root)
+                if log_result.returncode != 0:
+                    continue
+                if decode_git_log_lines(log_result.stdout):
+                    stale.add(sid)
+                    break
+            except (OSError, _TimeoutExpired):
                 continue
-            if decode_git_log_lines(log_result.stdout):
-                stale.add(sid)
-        except (OSError, _TimeoutExpired):
-            continue
-    return sorted(stale), None
+    return stale
 
 
 def _host_session_stability(home: Path) -> dict[str, object]:
