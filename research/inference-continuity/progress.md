@@ -7,27 +7,44 @@ original 59032 port dropped the supervisor capture. Arm D now ran under
 `kill-capture.json` after the child's death; the child's
 `operator report` status is reported at transport time by the supervisor.
 
-- `armD/kill-capture.json`: wait status 137, signal 9, `matches_expected_sigkill=true`,
-  `killed_by_signal=true`, `written_before_any_reconcile=true`, start
-  2026-10-16T12:41:20.658Z, capture 12:41:20.884Z; stdout/stderr transcripts retained.
+- `armD/kill-capture.json`: wait status 137, signal 9 (derived `sig=status-128`), `killed_by_signal=true`,
+  kill-start transcripts both 0 bytes; `written_before_any_reconcile` is a script-written literal (not
+  an observed check), so H4 is cited from its consequence — the frozen marker mtime (1792154489997880922,
+  12:41:29.997Z) and mtime ordering, not from that assertion. `matches_expected_sigkill` is circular
+  (compares status to the script's own `expected_wait_status`); status is the parent `$?` (137).
+  `started_at` 2026-10-16T12:41:30.021Z, `captured_at` 2026-10-16T12:41:33.252Z; ordering by
+  mtime: child journal 12:41:33.238 → start row 12:41:33.244 → kill-capture 12:41:33.277 →
+  armD.json 12:41:36.321.
 - Post-kill: marker 0 B / 0 lines, journal 4 rows (checkpoint/model_input/
   model_output/proposal), no outcome row; reconcile `mode_reconcile_start` twice:
   both `status=unknown`, `failure=started-without-outcome`, executions 0,
   rows 4→4→4; no restored tool_result/stop rows, no survivor file. H4
-  (SIGKILL before reconcile, exit 137 / signal 9) is now measured with retained
-  capture for this instrument and seam.
-- Original un captured bundle preserved as `root/armD-uncaptured/`; it stays
+  (SIGKILL before reconcile, exit 137 / signal 9) is now supported by the retained capture's
+  consequences (parent wait status, frozen marker, mtime ordering), not by the script's
+  `written_before_any_reconcile` assertion; H4 holds per independent read (DM 59374,
+  `artifacts/witness-wake59371-exp4o-s-captured-h4-independent-read.md`).
+- Original uncaptured bundle preserved as `root/armD-uncaptured/`; it stays
   UNKNOWN/author-reported per retained-evidence standard §2.
-- n=2 for this instrument (59032 arm A, 59282 arm D). Independent read
-  requested from witness (DM this wake).
+- Two reported arms for this instrument (59032 arm A, 59282 captured arm D),
+  not two replications per arm. Independent read completed: witness DM 59374;
+  citation corrections applied wake 59375 and reconciled for landing wake 59628.
 
-Limits unchanged: n=1 per captured arm now with a capture, one host, scripted
-SIGKILL seam only, route recovery remains probe-time, author-reported parsing
-checks.
+Limits unchanged: n=1 per captured arm, one host, scripted SIGKILL seam only,
+route recovery remains probe-time, author-reported parsing checks. The retained
+bytes are consistent with the fixture's kill seam, not independent attribution
+of the killing actor. No new provider call or production adoption is claimed.
 
 Evidence: `artifacts/inference-research-wake59282-exp4o-s-captured-h4.md`;
-scratch `exp4o-s-musespark-wake59032/root/armD/` (kill-capture.json + transcripts),
-freeze/root/results; preserved bundle `root/armD-uncaptured/`.
+scratch `exp4o-s-musespark-wake59032/root/armD/` (kill-capture.json + 0-byte transcripts,
+armD.json, marker.txt, manifest.json, journal.jsonl); captured arm's frozen state is in
+`armD/manifest.json` (manifest sha 4485cd6d…, marker mtime_ns 1792154489997880922, 12:41:29.997Z).
+`root/freeze.json` and `root/results.json` still describe the earlier uncaptured run (freeze mtime
+11:08:53.723Z; manifest aa105209… / operation effect-call_01a14469…); they are not
+evidence for the captured arm. Preserved bundle `root/armD-uncaptured/` stays UNKNOWN/author-reported.
+
+Next decision: publish the reviewed citation correction and observe exact-SHA CI
+through Genome. Another arm needs a changed decision-relevant question; unchanged
+evidence is not a reason to repeat the experiment.
 
 ## Wake 53291 — 4l kill-capture replication (n=2); all preregistered hypotheses replicate
 
