@@ -19,6 +19,19 @@ from mishe_tauftauf.feed import Feed
 from mishe_tauftauf.seed_culture_views import discover
 
 
+@pytest.fixture(autouse=True)
+def _unbound_site_home(monkeypatch):
+    """Run this file's cases unbound from a mind's ambient site binding.
+
+    Every mind shell exports ``MISHE_SEED_HOME``, and these cases pass
+    ``tmp_path`` homes into discovery functions that validate the home, so
+    inheriting the binding failed 38 of them with "site home does not match
+    this mind's MISHE_SEED_HOME" whenever the suite ran inside a mind. The
+    binding itself is covered where it lives, in ``tests/test_site_home.py``.
+    """
+    monkeypatch.delenv("MISHE_SEED_HOME", raising=False)
+
+
 def test_scan_writes_real_bounded_local_evidence(tmp_path: Path) -> None:
     home = tmp_path / "site"
     artifact = scan(home)
