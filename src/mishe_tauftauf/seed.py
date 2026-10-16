@@ -115,6 +115,38 @@ def _watch_wait_evidence(home: Path) -> tuple[list[dict], str | None]:
             return [], "watch-wait pane identity malformed"
     return reported, None
 
+def _treadmill_evidence(home: Path) -> tuple[dict[str, dict], str | None]:
+    """Per-role coverage from the newest treadmill reading, or unavailable.
+
+    Same newest-scan gate as ``_wedge_evidence``: exactly one verified
+    ``sense.mind.treadmill`` reading, its roles carrying the coverage fields
+    the producer stamps (wall update, last settled yield, idle, pending).
+    Availability is the reading's, not proof of useful progress — the
+    consumer renders what each role last did and lets the human judge.
+    """
+    observations, unavailable = _newest_scan_observations(home)
+    if unavailable is not None:
+        return {}, unavailable
+    readings = [row for row in observations
+                if isinstance(row, dict) and row.get("id") == "sense.mind.treadmill"]
+    if len(readings) != 1:
+        return {}, "treadmill reading missing or ambiguous"
+    observation = readings[0]
+    if observation.get("state") != "verified":
+        return {}, "treadmill reading not verified"
+    roles = observation.get("roles")
+    if not isinstance(roles, dict) or any(not isinstance(row, dict) for row in roles.values()):
+        return {}, "treadmill roles malformed"
+    for row in roles.values():
+        wall_updated = row.get("wall_updated")
+        if wall_updated is not None and not isinstance(wall_updated, str):
+            return {}, "treadmill wall_updated malformed"
+        for field in ("last_yield", "idle_s", "pending"):
+            value = row.get(field)
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+                return {}, f"treadmill {field} malformed"
+    return roles, None
+
 
 def _fresh_wedge_suspect(home: Path, role: str, pid: str) -> bool:
     """Return true only for valid fresh wedge evidence bound to this live pane.

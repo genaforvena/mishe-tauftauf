@@ -15,7 +15,7 @@ from .ci_watch import line as ci_line
 from .seed_board import open_tasks, repeated_no_change, work_receipts
 from . import task_state
 from .coordination_checks import anomalies
-from .seed import _wedge_evidence, recorded_session
+from .seed import _wedge_evidence, _treadmill_evidence, recorded_session
 
 # Stages whose refusals cannot be superseded by a live caller, so they must not
 # latch as the witness pane's standing publication result (docs/publication-checks.md):
@@ -242,6 +242,30 @@ def _wedge_note(suspect: dict) -> str:
     return (f"chain={suspect.get('chain')} span={suspect.get('span_minutes')}min "
             f"src={rendered} cause={suspect.get('cause')}")
 
+def _coverage_line(roles: dict[str, dict]) -> str:
+    """Render per-role coverage: wall update, settled yield, idle, pending.
+
+    The busy-idle vs wedged distinction the commit stream cannot give: a
+    role whose wall and yield keep moving is alive however stagnant its
+    commits look. Absolute timestamps and seqs are stable evidence; idle
+    seconds advance per render, which is the point — the pane shows
+    liveness now, not a stale receipt.
+    """
+    segments = []
+    for role in sorted(roles):
+        row = roles[role]
+        wall = row.get("wall_updated") or "none"
+        last_yield = row.get("last_yield")
+        idle_s = row.get("idle_s")
+        pending = row.get("pending")
+        segment = (f"{role} wall={wall} "
+                   f"yield={last_yield if last_yield is not None else 'none'} "
+                   f"idle={idle_s if idle_s is not None else 'none'}s")
+        if pending is not None:
+            segment += f" pending={pending}"
+        segments.append(segment)
+    return "; ".join(segments)
+
 
 def render(home: Path) -> str:
     lines = ["DESIRED STATE: planted channels stay live and coordination gaps stay visible"]
@@ -279,10 +303,13 @@ def render(home: Path) -> str:
     if ci.startswith("CI: FAIL") and verdict.startswith("PASS"):
         verdict = "FAIL witness CI failure needs genome follow-through"
     wedges, monitor_reason = _wedge_reading(home, session)
+    coverage_roles, _coverage_reason = _treadmill_evidence(home)
+    coverage = _coverage_line(coverage_roles) if coverage_roles else ""
     lines.append("MIND MONITOR: " +
                  (f"UNKNOWN — {monitor_reason}; owner=health"
                   if monitor_reason else "AVAILABLE — fresh verified aggregate") +
-                 "; per-role coverage UNKNOWN; useful progress not established")
+                 ("; per-role coverage " + coverage if coverage
+                  else "; per-role coverage UNKNOWN; useful progress not established"))
     lines.append(f"  Evidence: {home / 'discovery'} sense.mind.wedge-suspect; "
                  "inspect producer on unavailable evidence, not a busy-pane restart")
     waiting, wait_reason = _watch_wait_reading(home, session)
