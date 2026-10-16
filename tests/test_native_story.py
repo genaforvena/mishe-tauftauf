@@ -193,7 +193,12 @@ def test_quiet_input_disables_only_echo_and_restores_after_exception():
 
 @pytest.mark.skipif(not shutil.which('tmux'), reason='tmux unavailable')
 def test_context_rotation_keeps_last_screen_and_append_only_transcript(tmp_path):
-    socket = 'native-story-' + uuid.uuid4().hex
+    # tmux builds the socket path as $TMUX_TMPDIR/tmux-<uid>/<name>, and the
+    # session fixture points TMUX_TMPDIR at pytest's tmp root: the 45-char
+    # 'native-story-' name reached 108 bytes there, the sun_path limit, so tmux
+    # exited 1 with ENAMETOOLONG instead of exercising the rotation. Keep the
+    # name short enough for any pytest root path.
+    socket = 'nstory-' + uuid.uuid4().hex[:12]
     transcript = tmp_path / 'story.log'
     emitter = tmp_path / 'emit.py'
     emitter.write_text(
