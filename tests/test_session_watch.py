@@ -119,6 +119,34 @@ def test_persistent_red_routes_once_until_state_or_reason_changes(tmp_path,monke
                     "resident pane missing or dead"]
 
 
+def test_a_second_red_episode_after_green_routes_again(tmp_path,monkeypatch):
+    """GREEN ends a (state, reason) episode. Before the reset, `routed_key`
+    survived the whole process lifetime, so a condition that recurred after a
+    healthy spell never routed again: the 20 RED episodes between 18:17Z and
+    21:34Z on 2026-10-16 shared the 16:38Z route key and produced no alert."""
+    monkeypatch.delenv("MISHE_SEED_HOME", raising=False)
+    routes=[]
+    monkeypatch.setattr(watch,"notify",lambda _:None)
+    monkeypatch.setattr(watch,"route",lambda *a:routes.append(a[1]["reason"]))
+    clock={"now":200,"loops":0}
+    monkeypatch.setattr(watch.time,"monotonic",lambda:clock["now"])
+    states=[{"available":True,"identity":"x","panes_live":False,"dashboard_live":True},
+            {"available":True,"identity":"x","panes_live":True,"dashboard_live":True},
+            {"available":True,"identity":"x","panes_live":False,"dashboard_live":True}]
+    def observe(*a):
+        return dict(states[clock["loops"]])
+    def sleep(_):
+        clock["now"]+=5
+        clock["loops"]+=1
+        if clock["loops"]>=len(states):
+            raise _Halt
+    monkeypatch.setattr(watch,"observe",observe)
+    monkeypatch.setattr(watch.time,"sleep",sleep)
+    with pytest.raises(_Halt):
+        watch.run(tmp_path,"fixture")
+    assert routes==["resident pane missing or dead","resident pane missing or dead"]
+
+
 def test_boolean_restart_history_is_malformed():
     previous={"observed_at":100,"identity":"owned-id","changes":[True]}
     assert watch.assess(current(),previous,105)["state"]=="UNKNOWN"

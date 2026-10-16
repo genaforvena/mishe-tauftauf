@@ -149,6 +149,13 @@ def run(home: Path, session: str) -> None:
         # episode produced 12 indistinguishable DMs by 14:00Z). A failed route
         # still retries at the bounded 120s interval so a broken transport
         # fails visibly instead of silently dropping the condition.
+        # GREEN ends the episode: without this reset `routed_key` survived the
+        # whole process lifetime, so a condition that recurred after a healthy
+        # spell never routed again (20 RED episodes 18:17Z-21:34Z on 2026-10-16
+        # went unrouted while the same (state, reason) key was still held).
+        if row["state"] == "GREEN":
+            routed_key = None
+            route_failed = False
         if row["state"] != "GREEN" and (route_key != routed_key or
                                         (route_failed and time.monotonic() - last_route >= 120)):
             last_route = time.monotonic()
