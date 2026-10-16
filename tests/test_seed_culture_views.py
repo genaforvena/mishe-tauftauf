@@ -336,6 +336,43 @@ def test_senses_shows_the_host_radio_verdict_from_the_scan(tmp_path: Path, curre
     assert "VERIFIED sense.space.host-radio: BLE hci0 powered=yes adv-instances=0/5" in rendered
 
 
+
+def test_senses_renders_each_carried_body_sense_once_from_the_live_read(
+        tmp_path: Path, current_endpoint) -> None:
+    """A scan copy must not add a second, disagreeing row beside the live read."""
+    home = tmp_path / "site"
+    _write_scan(home, [
+        {"id": "sense.proc.loadavg", "state": "verified", "sample": "1.23", "kind": "read"},
+        {"id": "sense.body.redmi10.light", "state": "verified", "kind": "read",
+         "sample": "Redmi10 sid=scan-copy L=0lux"},
+        {"id": "sense.body.redmi10.delivery-gaps", "state": "verified", "kind": "read",
+         "sample": "gaps-24h=99 last-onset=2026-01-01T00:00:00Z"},
+    ])
+    rendered = senses(home)
+    for identity in ("sense.body.redmi10", "sense.body.redmi10.light",
+                     "sense.body.redmi10.delivery-gaps"):
+        assert rendered.count(identity + ":") == 1, identity
+    assert "scan-copy" not in rendered
+    assert "gaps-24h=99" not in rendered
+
+
+
+def test_senses_keeps_a_live_body_read_when_the_scan_is_stale(
+        tmp_path: Path, monkeypatch) -> None:
+    """The scan's freshness must not turn a just-taken live read into UNKNOWN."""
+    home = tmp_path / "site"
+    _write_scan(home, [
+        {"id": "sense.proc.loadavg", "state": "verified", "sample": "1.23", "kind": "read"},
+    ])
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views._scan_reading",
+                        lambda _snapshot: ("stale", "consistent"))
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.read_redmi10_delivery_gaps",
+                        lambda _home: {"id": "sense.body.redmi10.delivery-gaps",
+                                       "kind": "read", "state": "verified",
+                                       "reason": "gap-log-current",
+                                       "sample": "gaps-24h=2 last-onset=2026-10-16T09:02:52Z"})
+    rendered = senses(home)
+    assert "VERIFIED sense.body.redmi10.delivery-gaps: gaps-24h=2" in rendered
 @pytest.mark.parametrize("pane", [discover, senses])
 def test_pane_clips_a_long_sample_at_a_field_boundary_with_a_marker(
         tmp_path: Path, current_endpoint, pane) -> None:

@@ -285,3 +285,180 @@ def read_redmi10_light(home: Path, now: float | None = None) -> dict[str, object
             "light_transition": base.get("light_transition"),
             "details": ("Redmi10 light sense inherits Redmi consumer provenance; "
                         "acceleration may be unavailable without hiding carried light context.")}
+
+
+GAP_SENSE_ID = "sense.body.redmi10.delivery-gaps"
+GAP_LOG_NAME = "class-c-delivery-gap-detectors.jsonl"
+EXCURSION_LOG_NAME = "excursion-log-redmi10.txt"
+#: Both logs are bounded by the producer at 128 lines; the caps leave room for
+#: the widest line each format can carry, so a full log is never read as
+#: oversized and silently loses the reading it holds.
+MAX_GAP_LOG_BYTES = 65536
+MAX_EXCURSION_LOG_BYTES = 262144
+#: The recurrence window: how far back the reported halt count reaches.
+GAP_WINDOW_SECONDS = 86400.0
+
+#: The carried-body rows the Senses pane re-reads at render time, so their
+#: freshness is the render's, never the discovery scan's.
+BODY_SENSE_IDS = frozenset({SENSE_ID, LIGHT_SENSE_ID, GAP_SENSE_ID})
+
+
+def _gaps_unknown(reason: str, **extra: object) -> dict[str, object]:
+    row: dict[str, object] = {
+        "id": GAP_SENSE_ID, "kind": "read", "state": "unknown", "reason": reason,
+        "sample": f"Redmi10 delivery gaps UNKNOWN: {reason}", "source": REDMI_SOURCE}
+    row.update(extra)
+    return row
+
+
+def _read_text(path: Path, limit: int) -> tuple[str | None, str | None]:
+    try:
+        with path.open("rb") as stream:
+            raw = stream.read(limit + 1)
+    except FileNotFoundError:
+        return None, "missing"
+    except OSError:
+        return None, "unreadable"
+    if len(raw) > limit:
+        return None, "oversized"
+    try:
+        return raw.decode("utf-8"), None
+    except UnicodeDecodeError:
+        return None, "malformed"
+
+
+def _gap_records(text: str) -> tuple[list[dict[str, object]] | None, int]:
+    """Parse the consumer's class-C halt records; ``None`` when any line is bad.
+
+    A line that does not carry the published shape is counted, never guessed at:
+    the count would be a lower bound, so the caller reports UNKNOWN instead of a
+    number a reader could take for the whole history.
+    """
+    records: list[dict[str, object]] = []
+    bad = 0
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            bad += 1
+            continue
+        detected = record.get("detected_at") if isinstance(record, dict) else None
+        received = _finite_number(record.get("last_received_epoch_s")) if isinstance(record, dict) else None
+        try:
+            stamp = datetime.fromisoformat(detected) if isinstance(detected, str) else None
+        except ValueError:
+            stamp = None
+        if (not isinstance(record, dict)
+                or record.get("kind") != "class-c-delivery-gap"
+                or type(record.get("cursor")) is not int
+                or not 0 <= record["cursor"] <= MAX_SEQUENCE
+                or not isinstance(record.get("session"), str) or not record["session"].strip()
+                or received is None
+                or type(record.get("host_stopped")) not in (bool, type(None))
+                or stamp is None or stamp.tzinfo is None):
+            bad += 1
+            continue
+        records.append({"detected_epoch_s": stamp.timestamp(), "last_received_epoch_s": received,
+                        "cursor": record["cursor"], "session": record["session"],
+                        "host_stopped": record["host_stopped"]})
+    return (None, bad) if bad else (records, 0)
+
+
+def _worst_batch_delay(text: str) -> float | None:
+    """Widest receipt-minus-collection span in the retained excursion lines, in seconds.
+
+    That span is how long a halted batch waited before the consumer received it:
+    the flushed rows keep their phone sample times but not their receipt times.
+    """
+    worst: float | None = None
+    for line in text.splitlines():
+        if not line.startswith("excursion emitted=") or " node=redmi10 " not in line:
+            continue
+        for token in line.split():
+            if not token.startswith("acquisition_span_ms="):
+                continue
+            high = _finite_number(token.partition("=")[2].partition(",")[2])
+            if high is None or high < 0:
+                return None
+            if worst is None or high > worst:
+                worst = high
+    return None if worst is None else worst / 1000.0
+
+
+def _lag_text(seconds: float) -> str:
+    """A compact floor-rounded duration; the exact seconds stay structured.
+
+    The pane clips a long sample at 120 cells, and a corrupted log can carry an
+    absurd finite span, so the rendered token is bounded whatever the input is.
+    """
+    whole = int(seconds)
+    if whole < 60:
+        return f"{whole}s"
+    minutes = whole // 60
+    if minutes < 60:
+        return f"{minutes}m"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h{minutes % 60}m"
+    return f"{hours // 24}d{hours % 24}h"
+
+
+def read_redmi10_delivery_gaps(home: Path, now: float | None = None) -> dict[str, object]:
+    """Count the consumer's detected Redmi delivery halts over the last day.
+
+    A halt is the consumer's class-C verdict: no new record for its window while
+    polls keep succeeding, with no armed class-A or class-B cause. It is the
+    phenomenon that leaves receipt ages in the retained window far behind the
+    phone sample times, so a reader needs it before treating a Redmi window as
+    contemporaneous. Counts are by detection time and say nothing about how long
+    each halt lasted or why it started.
+    """
+    current = time.time() if now is None else _finite_number(now)
+    if current is None:
+        return _gaps_unknown("reader-clock-invalid")
+    android_home, error = _linked_android_home(home)
+    if error is not None or android_home is None:
+        return _gaps_unknown(error or "linked-android-body-home-unknown")
+    perception = android_home / "body" / "perception"
+    text, error = _read_text(perception / GAP_LOG_NAME, MAX_GAP_LOG_BYTES)
+    if error is not None or text is None:
+        return _gaps_unknown(f"gap-log-{error or 'unreadable'}")
+    records, bad = _gap_records(text)
+    if records is None:
+        return _gaps_unknown("gap-log-malformed", malformed=bad)
+    if not records:
+        return _gaps_unknown("gap-log-empty")
+    records.sort(key=lambda record: record["detected_epoch_s"])
+    if any(record["detected_epoch_s"] > current + 5 for record in records):
+        return _gaps_unknown("gap-log-clock-future")
+    window = [record for record in records
+              if current - record["detected_epoch_s"] <= GAP_WINDOW_SECONDS]
+    last = records[-1]
+    excursion, excursion_error = _read_text(perception / EXCURSION_LOG_NAME, MAX_EXCURSION_LOG_BYTES)
+    delay = _worst_batch_delay(excursion) if excursion is not None else None
+    delay_text = _lag_text(delay) if delay is not None else (
+        f"unknown-{excursion_error}" if excursion_error is not None else "unknown")
+    delay_exact = f"{delay:g}s" if delay is not None else "unknown"
+    stopped = last["host_stopped"]
+    stopped_text = "unknown" if stopped is None else ("true" if stopped else "false")
+    sample = (f"gaps-24h={len(window)} last-onset={_utc(last['last_received_epoch_s'])} "
+              f"host-stopped={stopped_text} max-receipt-lag={delay_text}")
+    details = (f"source=linked android-body body/perception/{GAP_LOG_NAME}; "
+               f"window={GAP_WINDOW_SECONDS:.0f}s since={_utc(records[0]['detected_epoch_s'])} "
+               f"records={len(records)} malformed={bad}; "
+               "detector=consumer class-C (delivery halted while polls succeed); "
+               "host-stopped is the detector's own adb read, not a delivery verdict; "
+               f"max-receipt-lag={delay_text} ({delay_exact}) is the widest "
+               "receipt-minus-collection span over the "
+               f"retained {EXCURSION_LOG_NAME} lines, so a flushed batch keeps its phone "
+               "sample times but not its receipt times; halt length and cause are not "
+               "derivable from this log.")
+    return {"id": GAP_SENSE_ID, "kind": "read", "state": "verified", "reason": "gap-log-current",
+            "sample": sample, "source": REDMI_SOURCE,
+            "gaps_24h": len(window), "gap_records": len(records),
+            "last_onset_epoch_s": last["last_received_epoch_s"],
+            "last_gap_session": last["session"], "last_gap_cursor": last["cursor"],
+            "host_stopped": stopped, "max_receipt_lag_s": delay,
+            "window_seconds": GAP_WINDOW_SECONDS, "details": details}

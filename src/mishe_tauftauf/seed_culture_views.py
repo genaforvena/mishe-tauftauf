@@ -19,7 +19,8 @@ from . import scan_freshness
 from .discovery import (latest, producer_label, scan_attempt, _tailnet_peer_read,
                         _space_clock_domains_read, _space_light, _space_light_name_freeze,
                         _space_light_read)
-from .body_perception import SENSE_ID, read_redmi10, read_redmi10_light, LIGHT_SENSE_ID
+from .body_perception import (BODY_SENSE_IDS, SENSE_ID, read_redmi10,
+                              read_redmi10_delivery_gaps, read_redmi10_light)
 from .host_radio import decode_cam_events, decode_cam_manifest, decode_cam_state, decode_urb_failures
 from . import proc_table
 from .space_text import nonblank
@@ -264,6 +265,7 @@ def senses(home: Path) -> str:
     attempt_line, attempt_failure = _attempt_reading(home, snapshot)
     redmi = read_redmi10(home)
     redmi_light = read_redmi10_light(home)
+    delivery_gaps = read_redmi10_delivery_gaps(home)
     lines.append(attempt_line)
     if snapshot is None:
         verdict = "UNKNOWN senses no discovery sample"
@@ -275,20 +277,31 @@ def senses(home: Path) -> str:
         lines.append(redmi_line)
         if isinstance(redmi.get("details"), str):
             lines.append("REDMI10 SOURCE/LIMITS: " + redmi["details"])
+        for body_row in (redmi_light, delivery_gaps):
+            _, body_line = _observation_reading(body_row, "recent", home)
+            lines.append(body_line)
     else:
         freshness, consistency = _scan_reading(snapshot)
+        # The carried-body rows are re-read here rather than taken from the
+        # scan: the scan runs on its own cadence, so a snapshot copy would age
+        # behind the pane and render a second, disagreeing copy of a row the
+        # pane already reads live.
         senses_rows = [item for item in snapshot.get("observations", [])
                        if str(item.get("id", "")).startswith("sense.")
-                       and item.get("id") not in {"sense.space.light", SENSE_ID}]
+                       and item.get("id") not in {"sense.space.light", *BODY_SENSE_IDS}]
         space = _space_light_read(home)
         senses_rows.append(redmi)
         senses_rows.append(redmi_light)
+        senses_rows.append(delivery_gaps)
         senses_rows.append(space)
         senses_rows.extend(_space_clock_domains_read(home))
         unknown = 0
         unavailable = 0
         for item in senses_rows:
-            item_freshness = "recent" if item.get("id") == SENSE_ID else freshness
+            # The carried-body rows are re-read at render time, so the scan's
+            # own freshness does not age them: a stale scan must not turn a
+            # just-taken live read into a second UNKNOWN.
+            item_freshness = "recent" if item.get("id") in BODY_SENSE_IDS else freshness
             state, line = _observation_reading(item, item_freshness, home)
             unknown += state not in {"verified", "unavailable"}
             unavailable += state == "unavailable"
