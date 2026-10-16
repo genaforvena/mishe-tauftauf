@@ -2492,6 +2492,37 @@ def test_evidence_binding_clean_store(tmp_path):
     assert result["latest_bad"] == 0
     assert result["all_bad"] == 0
 
+
+
+def test_evidence_binding_allows_scan_and_dm_paths_but_reports_edit(tmp_path):
+    home = tmp_path / "site"
+    (home / "discovery").mkdir(parents=True)
+    (home / "dms").mkdir()
+    scan = home / "discovery" / "scan-test.json"
+    dm = home / "dms" / "DM-test.md"
+    scan.write_text('{"scan":1}\n')
+    dm.write_text("immutable DM\n")
+    scan_digest = _write_evidenced_outcome(home, "alice", scan)
+    dm_digest = _write_evidenced_outcome(home, "bob", dm)
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "alice",
+         f"[record] records/{scan_digest}.json sha256={scan_digest}\n"),
+        (2, "2026-10-06T17:30:00Z", "bob",
+         f"[record] records/{dm_digest}.json sha256={dm_digest}\n"),
+    ])
+
+    clean = discovery._ledger_evidence_binding(home)
+    assert clean["state"] == "verified"
+    assert clean["policy"] == "eligible-paths-v2"
+    assert clean["all_bad"] == 0
+
+    scan.write_text('{"scan":2}\n')
+    drift = discovery._ledger_evidence_binding(home)
+    assert drift["state"] == "drift"
+    assert drift["all_bad"] == 1
+    assert drift["latest_bad_roles"] == ["alice(B)"]
+    assert any("scan-test.json(B)" in item for item in drift["violations"])
+    assert not any("DM-test.md" in item for item in drift["violations"])
 def test_notify_scan_labels_non_verified_readings_by_state(tmp_path):
     readings = [
         {"id": "sense.a", "kind": "read", "state": "verified", "sample": "ok"},

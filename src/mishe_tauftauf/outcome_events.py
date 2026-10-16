@@ -11,6 +11,7 @@ from .outcome_publication import (
     decode_evidence,
     decode_text,
     decode_timestamp,
+    eligible_evidence_path,
     first_significant_line,
     has_outcome_prefix,
     parse_header,
@@ -19,6 +20,7 @@ from .outcome_publication import (
     reference_lines,
     sole_final_reference,
 )
+
 
 
 def classify_outcomes(home: Path, clause_time: datetime) -> dict:

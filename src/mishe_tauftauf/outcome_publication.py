@@ -49,6 +49,44 @@ WORK_CHANNEL_PREFIX = '[work] channel=witness '
 HANDOFF_MARKER = 'HANDOFF:\n'
 
 
+def eligible_evidence_path(home, value) -> bool:
+    """Decode an owned-site evidence path against the explicit allowlist.
+
+    The caller checks existence and nonempty bytes. This predicate also serves
+    the observer, where a missing formerly eligible path must remain class C.
+    """
+    from pathlib import Path
+    home = Path(home).resolve()
+    path = Path(value)
+    if path.is_absolute():
+        try:
+            relative = path.relative_to(home)
+        except ValueError:
+            return False
+    else:
+        relative = path
+    if any(part in {".", ".."} for part in relative.parts):
+        return False
+    candidate = path if path.is_absolute() else home / path
+    try:
+        resolved = candidate.resolve()
+        parts = resolved.relative_to(home).parts
+    except (OSError, RuntimeError, ValueError):
+        return False
+    current = home
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            return False
+    if len(parts) == 2 and parts[0] == "artifacts":
+        return True
+    if len(parts) == 2 and parts[0] == "discovery":
+        return parts[1].startswith("scan-") and parts[1].endswith(".json")
+    if len(parts) == 2 and parts[0] == "dms":
+        return parts[1].endswith(".md")
+    return False
+
+
 @dataclass(frozen=True)
 class OutcomePublication:
     """One decoded wall-outcome publication body.

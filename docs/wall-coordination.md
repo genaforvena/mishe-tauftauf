@@ -181,19 +181,22 @@ Eligible path is not sufficient by itself either — wake notes and other
 working files that a later turn may edit are ineligible even under
 `artifacts/`. From the clause time onward, `wall outcome` enforces the
 allowlist, containment and write-once rules before publishing: it refuses
-a path outside the allowlist, a symlink or traversal escaping the owned
-site, or a path another post-clause outcome already bound, and it fails
+a path outside the allowlist, any symlink component or lexical
+`.`/`..` traversal regardless of target, or a path another post-clause
 rather than skipping the check when the bound set cannot be derived —
 missing/corrupt records, malformed publications, a missing `records/`
 directory or an unparseable tape. Writer, observer and this clause apply the
 same allowlist. The unchanged-bytes, existence and citation requirements are
-measured after the fact by `sense.ledger.evidence-binding`, whose live window
+measured after the fact by `sense.ledger.evidence-binding`: immutability is
+checked by retained/nonempty and digest equality after binding, whose live window
 (`latest_bad_roles`) reports current compliance while its standing audit
 retains every historical violation. The clause was amended on 2026-10-16
 (operator ruling, DM 56798) to add the allowlist and bind-time path refusal;
-rows bound under the earlier text remain in the standing audit under the
-rule then in force, and any reassessment under the new rule is labeled as
-such rather than presented as repaired historical compliance.
+the observer reports this as `policy=eligible-paths-v2`. Rows bound under the
+earlier text remain in the standing audit under the rule then in force, and
+any reassessment under the new rule is a policy-versioned reassessment,
+labeled as such rather than presented as repaired historical compliance; no
+historical records are reclassified.
 The current deployed pin (`e8405b875122`) predates the atomic source fix
 (commit `1f15e97`, lock held across check and append); on the deployed CLI,
 concurrent `wall outcome` publications of the same path can both succeed until
