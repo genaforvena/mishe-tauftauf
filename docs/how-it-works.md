@@ -569,17 +569,18 @@ A unit no session names that imports this plant's checkout — observed in its
 environment or declared in the script its `ExecStart` runs — is named
 `foreign=<unit>@<checkout>` instead of left anonymous, and stays `unknown`,
 never `verified`, because a foreign consumer of the moving source is a live
-coupling rather than a coverage gap. Systemd's own `Description` of the unit
-outranks the script rule: a unit whose description names this checkout belongs
-to this plant, so the class rests on one `systemctl` read succeeding. Measured
-here, the cleaner coordinator read
+coupling rather than a coverage gap. For the `ExecStart` script-text path,
+systemd's own `Description` can attribute the unit to this plant: the class
+then rests on one `systemctl` read succeeding. That attribution does not override an observed import root inside
+the checkout; the independent import-root path still names a live consumer.
+Measured here, the cleaner coordinator read
 `foreign=mishe-cleaner-recovered.service@mishe-tauftauf` at 09:17:20Z and
 `unattributed=` at 09:16:46Z and again at 09:27:28Z — its `ExecStart` script
 names the checkout while its description (`mishe-tauftauf report-only cleaner
 coordinator`) attributes it to the plant, and those two answers are that one
-guard apart. Reproducible by reading the unit's declaration: with the
-description readable the unit is not a consumer, and with the description
-unreadable it is named one.
+guard apart. For the script-text path, this is reproducible by reading the
+unit's declaration: with the description readable the unit is not a consumer
+from its script text, and with the description unreadable it is named one.
 
 An unattributed unit whose imports and whose own declaration — `ExecStart`,
 `WorkingDirectory` and `Environment` paths — name no site's checkout or home is

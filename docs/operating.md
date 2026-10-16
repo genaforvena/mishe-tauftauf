@@ -571,15 +571,17 @@ comparison is unevidenced, not clean.
 The same `UNKNOWN` reading names a foreign consumer of the checkout as
 `foreign=<unit>@<checkout>` when the unit's import root or its `ExecStart` script
 names the plant, so a live consumer of the moving source is visible rather than
-counted as an anonymous gap. A unit whose systemd `Description` names the plant
-is attributed to the plant instead, so the class rests on that one read
-succeeding: measured at 09:17:20Z the cleaner coordinator read
+counted as an anonymous gap. For the `ExecStart` script-text path, a unit
+whose systemd `Description` names the plant is attributed to the plant instead,
+so that class rests on that one read succeeding. An observed import root inside the checkout remains
+a foreign consumer through the independent import-root path. Measured at
+09:17:20Z the cleaner coordinator read
 `foreign=mishe-cleaner-recovered.service@mishe-tauftauf` between two scans, at
 09:16:46Z and 09:27:28Z, that read it `unattributed`, its script naming the
 checkout while its description attributes it to the plant. It read
 `unattributed=mishe-cleaner-recovered.service` again at 09:57Z, with the same
-byte-set serving both answers, so the claim follows the description read and not
-the bytes.
+byte-set serving both answers, so that script-text claim follows the
+description read and not the bytes; it does not negate an import-root observation.
 An unattributed unit whose import root and whose
 own declared `ExecStart`, `WorkingDirectory` and `Environment` paths name no
 site's checkout or home is a host tool beside the sites, named
