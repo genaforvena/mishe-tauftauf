@@ -11,6 +11,7 @@ in its process environment, decoded by the same rule everywhere it is read.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -94,6 +95,34 @@ def git_log_entries(raw: str) -> list[dict]:
     flush()
     return entries
 
+
+
+def git_reflog_entries(raw: str) -> list[tuple[str, str]]:
+    """Newest-first ``(sha, message)`` pairs from ``git reflog --format=%H %gs``.
+
+    Each line is ``<sha> <message>``; the reflog records every HEAD movement,
+    so a caller filters the messages it cares about. A line without both a sha
+    and a non-blank message yields no entry rather than a guess, so the caller
+    attributes only rewinds it can actually read.
+    """
+    entries: list[tuple[str, str]] = []
+    for line in raw.splitlines():
+        parts = line.split(" ", 1)
+        if len(parts) != 2 or re.fullmatch(r"[0-9a-f]{40}", parts[0]) is None:
+            continue
+        if not parts[1].strip():
+            continue
+        entries.append((parts[0], parts[1].strip()))
+    return entries
+
+
+def git_path_names(raw: str) -> list[str]:
+    """Path names from ``git diff-tree --no-commit-id --name-only -r`` output.
+
+    One path per line; blank lines yield no path. The caller bounds how many
+    it classifies, so an unbounded diff cannot make the reader slow.
+    """
+    return [line.strip() for line in raw.splitlines() if line.strip()]
 
 def pane_commands(raw: str) -> list[tuple[str, str, str, str]]:
     """(session, pid, start_command, current_path) from a four-field pane table.
