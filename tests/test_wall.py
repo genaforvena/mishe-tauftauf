@@ -1335,7 +1335,7 @@ def test_dashboard_flags_runtime_drift_against_the_pin(tmp_path, monkeypatch):
     state, line = wall_view._runtime_state(home, running, {"unit.service": [str(pinned)]})
     assert state == "MATCH" and line.endswith("MATCH")
     state, line = wall_view._runtime_state(home, running, {"unit.service": [str(tmp_path / "other")]})
-    assert state == "DRIFT" and line.endswith("DRIFT") and str(pinned) in line
+    assert state == "DRIFT" and "unit.service" in line and str(pinned) in line
     # The release coordinator is declared on the development checkout, not the pin.
     state, line = wall_view._runtime_state(
         home, running, {"session-coordination.service": [str(tmp_path)]})
@@ -1389,6 +1389,32 @@ def test_dashboard_runtime_drift_downgrades_the_state_line(tmp_path, monkeypatch
     assert "STATE: RED — runtime drift: service import roots differ from the pinned release" in drifted
     assert "STATE: GREEN" not in drifted
 
+
+def test_dashboard_runtime_drift_names_undeclared_units(tmp_path, monkeypatch):
+    from mishe_tauftauf import runtime_source, wall_view
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health/services.json").write_text(json.dumps(["alpha.service", "beta.service", "gamma.service"]))
+    (home / "health/runtime-release.json").write_text("{}")
+    monkeypatch.setattr(wall_view, "ci_line", lambda *a: "CI: PASS")
+    pinned = tmp_path / "pinned"
+
+    def commands(command, **kwargs):
+        output = ("pinned\n" if "rev-parse" in command else "" if "status" in command else
+                  "Id=alpha.service\nActiveState=active\nSubState=running\nNRestarts=0\n"
+                  f"Environment=PYTHONPATH={pinned}/src\n"
+                  "Id=beta.service\nActiveState=active\nSubState=running\nNRestarts=0\n"
+                  f"Environment=PYTHONPATH={pinned}/src\n"
+                  "Id=gamma.service\nActiveState=active\nSubState=running\nNRestarts=0\n"
+                  f"Environment=PYTHONPATH={tmp_path}/other/src\n")
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    monkeypatch.setattr(wall_view.subprocess, "run", commands)
+    monkeypatch.setattr(runtime_source, "source_for", lambda h, default: pinned)
+    text = wall_view.render(home, "genome")
+    assert "gamma.service" in text
+    assert "alpha.service" not in text.split("DRIFT")[0].split("services=")[1]
+    assert "DRIFT — undeclared: gamma.service" in text
 
 def test_dashboard_declares_the_coordination_checkout_exception(tmp_path, monkeypatch):
     from mishe_tauftauf import runtime_source, wall_view

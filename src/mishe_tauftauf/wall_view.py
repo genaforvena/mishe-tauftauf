@@ -144,7 +144,7 @@ def _runtime_state(home: Path, root: Path,
         else:
             undeclared.append(unit)
     if undeclared:
-        return "DRIFT", f"{line} DRIFT"
+        return "DRIFT", f"{line} DRIFT — undeclared: {','.join(undeclared)}"
     if declared:
         return "DECLARED", f"{line} DECLARED — {','.join(declared)} observes the checkout"
     return "MATCH", f"{line} MATCH"
