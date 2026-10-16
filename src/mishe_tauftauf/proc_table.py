@@ -194,6 +194,21 @@ def read_pane_pythonpath(pid: str) -> list[str]:
     except OSError:
         return []
     return pane_environ_pythonpath(raw)
+RELEASE_NAME = re.compile(r"releases/([0-9a-f]{40})(?![0-9a-f])")
+"""A release directory name, as a process environment or unit text names it."""
+
+
+def release_names(raw: bytes | str) -> list[str]:
+    """Release directory names a process environment or unit text names.
+
+    A live process names its release in ``PYTHONPATH`` and an installed unit in
+    ``Environment``; both are external text, so the extraction lives at this
+    boundary and the caller acts on the decoded names. Only a full 40-hex name is
+    returned: a placeholder such as ``releases/0`` is not a release. Undecodable
+    bytes are replaced, never guessed.
+    """
+    text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
+    return sorted(set(RELEASE_NAME.findall(text)))
 
 def read_pane_cmdline(pid: str) -> str:
     """The pane process's ``/proc/<pid>/cmdline`` as a single string.

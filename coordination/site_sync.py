@@ -12,6 +12,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from mishe_tauftauf import release_retention
 from mishe_tauftauf.chat_protocol import decode_kernel_sync_target
 from mishe_tauftauf.ci_watch import latest, read
 from mishe_tauftauf.feed import Feed
@@ -245,6 +246,34 @@ def _release_source(core_home: Path, sha: str) -> Path:
     return checked_source(release, sha)[0]
 
 
+def _prune_releases(core_home: Path, protect: set[str]) -> list[str]:
+    """Remove release worktrees nothing references; the store is otherwise unbounded.
+
+    ``_release_source`` installs one detached worktree per green SHA and nothing
+    removed them: 371 of 373 were referenced by nothing (discover wake 60974).
+    The reference set lives in ``mishe_tauftauf.release_retention``; the registry
+    it protects is read here, by its writer, so the module interprets no JSON.
+    An unreadable registry is a reason to skip, not to reclaim. Removal never
+    forces: ``git worktree remove`` refuses a dirty or locked worktree, and
+    every name is a commit on ``main``, so a removed release returns with
+    ``git worktree add --detach releases/<sha> <sha>``.
+    """
+    try:
+        rows = _load(core_home)
+        candidates = release_retention.reclaimable_releases(
+            core_home, protect=protect, registry_rows=rows)
+    except (OSError, RuntimeError, ValueError):
+        return []
+    removed = []
+    for release in candidates:
+        try:
+            _git(KERNEL, "worktree", "remove", str(release))
+        except RuntimeError:
+            continue  # dirty or locked: leave it for a later cycle
+        removed.append(release.name)
+    return removed
+
+
 def _close_stale_sync_tasks(core_home: Path, target: Path, task: str, sha: str) -> None:
     """Close every older task for this site after a successful replant.
 
@@ -365,6 +394,9 @@ def sync_registered_sites(core_home: Path, ci: dict[str, str], *, runtime_only: 
                     except (OSError, ValueError):
                         pass
                 outcomes.append(f"held {target.parent}: {error}")
+        pruned = _prune_releases(core_home, protect={sha})
+        if pruned:
+            outcomes.append(f"pruned {len(pruned)} release worktrees")
         return outcomes
 
 
