@@ -28,15 +28,19 @@ def _python_command(home: Path, *args: str) -> list[str]:
     return ["env", f"PYTHONPATH={search_path}", sys.executable, "-m", "mishe_tauftauf", *args]
 
 
-def _tmux(*args: str, check: bool = True) -> subprocess.CompletedProcess[bytes]:
+def _tmux(*args: str, check: bool = True, socket: str | None = None) -> subprocess.CompletedProcess[bytes]:
     if shutil.which("tmux") is None:
         raise TmuxError("tmux executable is unavailable")
+    cmd = ["tmux"]
+    if socket:
+        cmd.extend(["-S", socket])
+    cmd.extend(args)
     environment = os.environ.copy()
     if environment.get("TMUX_TMPDIR"):
         # An inherited pane socket otherwise overrides the explicit test/site
         # directory, turning fixture kill-server into a live-server teardown.
         environment.pop("TMUX", None)
-    result = subprocess.run(["tmux", *args], capture_output=True, env=environment)
+    result = subprocess.run(cmd, capture_output=True, env=environment)
     if check and result.returncode:
         raise TmuxError(result.stderr.decode("utf-8", "replace").strip() or f"tmux {' '.join(args)} failed")
     return result
@@ -137,17 +141,17 @@ def stop(home: Path, session: str = "mishe-tauftauf") -> None:
         raise TmuxError(f"refusing to remove unowned session {session!r}")
     _tmux("kill-session", "-t", session)
 
-def list_sessions() -> list[str]:
-    """All session names on the shared tmux server, or [] when tmux is missing."""
+def list_sessions(socket: str | None = None) -> list[str]:
+    """All session names on a specific tmux socket (or default), or [] when tmux is missing."""
     if shutil.which("tmux") is None:
         return []
-    result = _tmux("list-sessions", "-F", "#{session_name}", check=False)
+    result = _tmux("list-sessions", "-F", "#{session_name}", check=False, socket=socket)
     if result.returncode:
         return []
     return [line for line in result.stdout.decode("utf-8", "replace").splitlines() if line]
 
 
-def _pane_descendants(session: str) -> list[int]:
+def _pane_descendants(session: str, socket: str | None = None) -> list[int]:
     """Every pid under a session's panes, the panes themselves included.
 
     A seed mind is started in its own session so closing a pane cannot SIGHUP an
@@ -155,7 +159,7 @@ def _pane_descendants(session: str) -> list[int]:
     pane still lives its parent link is intact, so the tree is read before the
     session is killed and reaped afterwards.
     """
-    result = _tmux("list-panes", "-t", session, "-F", "#{pane_pid}", check=False)
+    result = _tmux("list-panes", "-t", session, "-F", "#{pane_pid}", check=False, socket=socket)
     if result.returncode:
         return []
     pending = pane_pids(result.stdout)
@@ -167,6 +171,30 @@ def _pane_descendants(session: str) -> list[int]:
         pending.extend(children.get(pid, ()))
     return found
 
+def _all_tmux_sockets() -> list[str]:
+    """All tmux sockets under /tmp, including pytest TMUX_TMPDIR directories.
+
+    The orphan sweeper needs to scan every socket, not just the default one,
+    because pytest fixtures create per-test sockets via TMUX_TMPDIR. Orphaned
+    test sessions on those sockets are invisible to the default-socket sweep.
+    """
+    sockets: set[str] = set()
+    # Default socket
+    uid = os.getuid()
+    default = Path(f"/tmp/tmux-{uid}/default")
+    if default.exists():
+        sockets.add(str(default))
+    # Pytest sockets: /tmp/pytest-of-*/mishe-test-tmux*/tmux-*/default
+    for tmpdir in Path("/tmp").glob("pytest-of-*"):
+        for socket in tmpdir.glob("*/*/tmux-*/default"):
+            if socket.exists():
+                sockets.add(str(socket))
+    # Any other tmux sockets directly under /tmp
+    for socket in Path("/tmp").glob("tmux-*/default"):
+        if socket.exists():
+            sockets.add(str(socket))
+    return sorted(sockets)
+
 
 def sweep_orphan_test_sessions() -> list[str]:
     """Kill mishe-tauftauf-test-* sessions whose owning pid is dead.
@@ -177,29 +205,33 @@ def sweep_orphan_test_sessions() -> list[str]:
     that pid is gone the session is orphaned. The pane's detached children are
     reaped with it, or a leaked mind keeps running with no owner. Returns the
     names of sessions killed.
+
+    Scans all tmux sockets under /tmp, including pytest TMUX_TMPDIR sockets,
+    so isolated test sessions are also reapable.
     """
     killed: list[str] = []
-    for session in list_sessions():
-        if not session.startswith("mishe-tauftauf-test-"):
-            continue
-        pid_str = session[len("mishe-tauftauf-test-"):].split("-", 1)[0]
-        try:
-            pid = int(pid_str)
-        except ValueError:
-            continue
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            descendants = _pane_descendants(session)
-            _tmux("kill-session", "-t", session, check=False)
-            for child in descendants:
-                try:
-                    os.kill(child, signal.SIGKILL)
-                except OSError:
-                    pass
-            killed.append(session)
-        except PermissionError:
-            pass
+    for socket in _all_tmux_sockets():
+        for session in list_sessions(socket):
+            if not session.startswith("mishe-tauftauf-test-"):
+                continue
+            pid_str = session[len("mishe-tauftauf-test-"):].split("-", 1)[0]
+            try:
+                pid = int(pid_str)
+            except ValueError:
+                continue
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                descendants = _pane_descendants(session, socket=socket)
+                _tmux("kill-session", "-t", session, check=False, socket=socket)
+                for child in descendants:
+                    try:
+                        os.kill(child, signal.SIGKILL)
+                    except OSError:
+                        pass
+                killed.append(session)
+            except PermissionError:
+                pass
     return killed
 
 
