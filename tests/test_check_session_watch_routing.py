@@ -102,7 +102,8 @@ def test_stale_state_and_alert_are_unknown(tmp_path):
     report = _MODULE.check(home, NOW, 60.0, 600.0)
     assert report["verdict"] == "UNKNOWN"
     assert report["exit"] == 3
-    assert sum("stale" in text for text in report["limits"]) == 2, report["limits"]
+    assert any(text.startswith("alert file stale") for text in report["limits"]), report["limits"]
+    assert any(text.startswith("detector state stale") for text in report["limits"]), report["limits"]
 
 
 def test_red_state_without_any_routed_dm_is_red(tmp_path):
@@ -171,3 +172,64 @@ def test_unrouted_alert_is_red_even_when_the_detector_reads_green(tmp_path):
     assert report["verdict"] == "RED"
     assert report["exit"] == 2
     assert any("not routed" in text for text in report["failures"]), report["failures"]
+
+
+def _events(home, rows):
+    (home / "health" / "session-watch-events.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows))
+    return home
+
+
+def _episode(state, reason, offset):
+    return {"state": state, "reason": reason, "observed_at": NOW + offset}
+
+
+def test_episode_recurring_after_green_without_a_route_is_red(tmp_path):
+    """The routed_key lifetime defect: an episode that recurs after a GREEN is
+    produced on the event tape and never routed. Signals 1 and 2 are both quiet
+    (the alert file is frozen at the old route and the state reads GREEN), so the
+    episode signal is the only reader for this class."""
+    home = _home(tmp_path, rows=[(_stamp(-3600), "session-watch", _DM_BODY)],
+                 state={"observed_at": NOW - 20, "state": "GREEN", "changes": []})
+    _events(home, [_episode("RED", "resident pane missing or dead", -3600),
+                   _episode("GREEN", "owned session, panes and dashboard live", -3500),
+                   _episode("RED", "resident pane missing or dead", -60)])
+    report = _MODULE.check(home, NOW, 60.0, 600.0)
+    assert report["verdict"] == "RED"
+    assert report["exit"] == 2
+    assert any("never delivered" in text for text in report["failures"]), report["failures"]
+
+
+def test_episode_routed_at_its_onset_is_green(tmp_path):
+    home = _home(tmp_path, rows=[(_stamp(-50), "session-watch", _DM_BODY)],
+                 state={"observed_at": NOW - 20, "state": "GREEN", "changes": []},
+                 alert_offset=-55)
+    _events(home, [_episode("RED", "resident pane missing or dead", -600),
+                   _episode("GREEN", "owned session, panes and dashboard live", -500),
+                   _episode("RED", "resident pane missing or dead", -60)])
+    report = _MODULE.check(home, NOW, 60.0, 600.0)
+    assert report["verdict"] == "GREEN"
+    assert report["failures"] == []
+
+
+def test_episode_rows_sharing_a_reason_are_one_episode(tmp_path):
+    """A rotating dead-pane name adds event rows to one episode without a second
+    route; the onset is the run's first row, so the route still covers it."""
+    home = _home(tmp_path, rows=[(_stamp(-590), "session-watch", _DM_BODY)],
+                 state={"observed_at": NOW - 20, "state": "GREEN", "changes": []},
+                 alert_offset=-585)
+    _events(home, [_episode("RED", "resident pane missing or dead", -600),
+                   _episode("RED", "resident pane missing or dead", -500)])
+    report = _MODULE.check(home, NOW, 60.0, 600.0)
+    assert report["verdict"] == "GREEN"
+    assert report["failures"] == []
+
+
+def test_undecodable_event_tape_is_unknown_not_a_crash(tmp_path):
+    home = _home(tmp_path, rows=[(_stamp(-3600), "session-watch", _DM_BODY)],
+                 state={"observed_at": NOW - 20, "state": "GREEN", "changes": []})
+    (home / "health" / "session-watch-events.jsonl").write_text("{not json\n")
+    report = _MODULE.check(home, NOW, 60.0, 600.0)
+    assert report["verdict"] == "UNKNOWN"
+    assert report["exit"] == 3
+    assert any("event tape" in text for text in report["limits"]), report["limits"]
