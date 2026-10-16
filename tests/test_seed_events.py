@@ -124,18 +124,41 @@ def test_a_real_meaning_change_still_refires_the_observation_digest():
 def test_redmi_cursor_in_rendered_unknown_line_does_not_change_digest():
     frame = ("UNKNOWN sense.body.redmi10: Redmi10 c=17000 sid=7afa3a15 "
              "b=0.87 L=35lux |a|=unknown/value source_state=unknown\n"
-             "STATE: UNKNOWN — 7 senses need a checked read\n")
+            "STATE: UNKNOWN — 7 senses need a checked read\n")
     advanced = frame.replace("c=17000", "c=17008")
 
     assert "c=17008" in advanced
     assert _observation_text("senses", frame) == _observation_text("senses", advanced)
     assert _digest(_observation_text("senses", frame)) == \
         _digest(_observation_text("senses", advanced))
+    # Ambient-light jitter inside one 25-lux band is presentation churn, not a
+    # new event (58/61/62/64lux replayed as digest-equal).
+    jittered = frame.replace("L=35lux", "L=36lux")
+    assert "L=36lux" in jittered
+    assert _observation_text("senses", frame) == _observation_text("senses", jittered)
+    # A real environmental transition crosses a band and must re-fire.
     assert _observation_text("senses", frame) != _observation_text(
-        "senses", frame.replace("L=35lux", "L=36lux"))
+        "senses", frame.replace("L=35lux", "L=62lux"))
     assert _observation_text("senses", frame) != _observation_text(
         "senses", frame.replace("sid=7afa3a15", "sid=new-session"))
     assert _observation_text("senses", frame) != _observation_text(
         "senses", frame.replace("source_state=unknown", "source_state=verified"))
+
+
+def test_redmi_lux_band_boundary_is_stable_across_band_edges():
+    frame = ("UNKNOWN sense.body.redmi10: Redmi10 c=17000 sid=7afa3a15 "
+             "b=0.87 L=24lux |a|=unknown/value source_state=unknown\n")
+    # 24 and 0 are one band; 25 starts the next.
+    assert _observation_text("senses", frame) == _observation_text(
+        "senses", frame.replace("L=24lux", "L=0lux"))
+    assert _observation_text("senses", frame) != _observation_text(
+        "senses", frame.replace("L=24lux", "L=25lux"))
+    # Fractional lux renders band the same as their integer floor.
+    assert _observation_text("senses", frame.replace("L=24lux", "L=25lux")) == \
+        _observation_text("senses", frame.replace("L=24lux", "L=25.9lux"))
+    # A non-Redmi light line (Note3) is not banded: its freshness wording is
+    # meaning and other lines must keep exact text.
+    note3 = "UNKNOWN sense.space.light: Note3 light ... L=35lux ..."
+    assert _observation_text("senses", note3) == note3
 
 

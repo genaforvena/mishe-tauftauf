@@ -94,9 +94,28 @@ def redact_display_age(line: str) -> str:
 
 
 def redact_redmi_cursor(line: str, *, slug: str) -> str:
-    """Exclude the live Redmi cursor from the observation digest, not the pane."""
+    """Exclude digest-volatile Redmi presentation values from the digest.
+
+    The senses pane renders the live Redmi row as one ``UNKNOWN`` line
+    containing a source cursor and an ambient-light reading. Both are
+    presentation-volatile while the reading's meaning is unchanged: the
+    cursor advances with every delivered sample, and ambient light jitters by
+    a few lux between scans (58/61/62/64lux on a device lying still in the
+    same light). An internal consumer that compares texts would treat that
+    churn as a new event and flood the observation feed, so the digest sees
+    ``c=<cursor>`` and a coarse ``L=<band>lux`` band. Banding keeps real
+    environmental transitions visible — 17lux and 62lux fall in different
+    bands — while absorbing jitter inside one band. The rendered pane is
+    untouched; this never rewrites what the human sees.
+    """
     if slug == "senses" and line.startswith("UNKNOWN sense.body.redmi10:"):
-        return re.sub(r"\bc=\d+\b", "c=<cursor>", line)
+        line = re.sub(r"\bc=\d+\b", "c=<cursor>", line)
+
+        def _band(match: re.Match) -> str:
+            lux = float(match.group(1))
+            return f"L=<{int(lux // 25) * 25}lux>"
+
+        line = re.sub(r"\bL=(\d+(?:\.\d+)?)lux\b", _band, line)
     return line
 
 
