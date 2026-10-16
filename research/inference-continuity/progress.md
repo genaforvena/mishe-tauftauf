@@ -1287,6 +1287,37 @@ dispositions are in `research/inference-continuity/experiment-plan.md`
   → probe wake 58952 → amendment wake 59011 and states that recovery is
   probe-time only.
 - No fixture directory, arm, effect or dispatch was attempted.
-- Next: prep a fixture on the amended selector (derived from
-  `exp4o-startkill-wake53436` with only selector/tags changed) and run
-  zero-provider smoke before any live arm, or stay deferred if route re-429s.
+- Actual follow-through: fixture 59032 (smoke passed); arm A complete
+  (marker 1 line, store executions=1); arm D kill-start remains unresolved
+  with marker 0 bytes and reconcile status `unknown` (see Wake 59055 entry
+  below). Route recovery remains probe-time only; no tracked docs change was
+  made by this wake at 59011.
+
+
+## Wake 59055 — Experiment 4o-s muse-spark arm A + arm D complete (docs-tracked report)
+
+- Selector: `opencode-go/muse-spark-1.3-contributor` / `minimal`; base fixture
+  `.mishe-tauftauf/research/inference-continuity/scratch/exp4o-s-musespark-wake59032/exp4o_fixture.py`.
+- Zero-provider smoke passed before live arm (artifact 59032): marker 1 line and
+  store executions=1 after smoke.
+- Arm A (uninterrupted): `result_status=complete`, turns=2, calls=1; marker
+  0→1 line (`exp4l marker wake50866`); store executions exactly 1; wire usage
+  731 + 939 tokens; journal 8 rows; no duplicate effect execution.
+- Arm D (`mode_kill_start`): SIGKILL, exit 137, after durable start record but
+  before marker append/effect. Post-kill: marker 0 bytes/0 lines; intent+start
+  records present; no outcome record; journal 4 rows (checkpoint, model_input,
+  model_output, proposal). Reconcile `mode_reconcile_start` twice: first and
+  second status `unknown`, failure `started-without-outcome`, executions 0; no
+  recovered tool_result/stop rows; marker remains 0 lines. Aggregate
+  `results.json` written.
+- Interpretation: kill-at-start leaves the durable start record as the only
+  witness; reconcile does not overclaim and leaves the effect UNKNOWN. Arm A
+  verifies the route is usable at this selector/reasoning only; no
+  duplicate/not-once violation occurred, and no interrupted effect was recovered.
+- Limits: n=1 per arm; one host; scripted SIGKILL seam; selector recovery is
+  probe-time; no production caller, adoption, activation, or pagination result.
+- Evidence: `.mishe-tauftauf/artifacts/inference-research-wake59043-exp4o-s-armA.md`,
+  `.mishe-tauftauf/artifacts/inference-research-wake59055-exp4o-s-armD.md`,
+  `.mishe-tauftauf/artifacts/inference-research-wake59032-exp4o-s-smoke.md`,
+  scratch `exp4o-s-musespark-wake59032/root/results.json`. Wall outcome recorded
+  at wake 59059.
