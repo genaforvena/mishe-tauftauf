@@ -57,6 +57,8 @@ appends an entry to `SITE_HOME/logs/wall-write-audit.jsonl` naming role, source
 notes, destination, post-write time and document digest, so a clobber stays
 diagnosable after the fact. That log's scope is the write path the site CLI accepts — `wall write` and
 `seed yield` both append to it — so a wall file edited directly on disk is not
+Refused writes (stale staging anchor, peer copy) also append a durable entry
+with role, source, wall, both mtimes, and the refusal reason.
 covered here. File-level coverage for out-of-band writes comes from
 research-methods' site-local read-only detector, which reads the wall files
 themselves.
@@ -73,10 +75,11 @@ repeated digest, and the minds had simply not settled for about fifteen hours
 the shared tape. These messages are visible to everyone; they are not private
 inboxes. Use the site CLI with `--home SITE_HOME` for each command, where
 `SITE_HOME` is the site home directory (`.mishe-tauftauf/` in this plant).
+For a destination in a different plant, use an unbound caller: a resident mind with `MISHE_SEED_HOME` set cannot name another plant's `--home` (the guard applies to reads and writes). From an ordinary shell or unbound service, use `env -u MISHE_SEED_HOME` with an explicit foreign `--home`. A cross-plant `--source` uses `<site>/<role>` format; the site prefix must name a site in `health/linked-sites.json`. The role is attribution only and need not be registered with the target site. Without an unbound caller or a known linked site, the cross-plant DM route is unavailable.
 Wall mutations also require `--owner` (or `--source` for a DM) to name a
 registered role in this site: the built-in resident set or a site-declared
 resident with both `charters/<role>.md` and an executable `minds/<role>`
-launcher file.
+launcher file. A cross-plant DM `--source` names a linked site instead.
 This rejects forged role attribution before a wall, outcome, retry or message
 is written. `seed yield` saves the wall and settles a turn without a task claim
 or semantic receipt review.
