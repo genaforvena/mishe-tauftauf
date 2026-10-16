@@ -31,6 +31,8 @@ def assess(current: dict, previous: dict | None, now: float) -> dict:
         state, reason = "UNKNOWN", "monitor evidence missing, malformed, future or stale"
     if current.get("available") is not True:
         state, reason = "RED", "owned session missing or ownership unavailable"
+    elif current.get("panes_live") is None:
+        state, reason = "UNKNOWN", "pane liveness check failed"
     elif current.get("panes_live") is not True:
         state, reason = "RED", "resident pane missing or dead"
     elif current.get("dashboard_live") is not True:
@@ -55,8 +57,8 @@ def observe(home: Path, session: str) -> dict:
     return {"identity": identity.stdout.strip() if identity.returncode == 0 else None,
             "available": owner.returncode == 0 and owner.stdout.strip() == str(home.resolve())
                          and identity.returncode == 0 and bool(identity.stdout.strip()),
-            "panes_live": panes.returncode == 0 and len(pane_states) >= 20
-                          and all(x == "0" for x in pane_states),
+            "panes_live": (None if panes.returncode != 0 else
+                           len(pane_states) >= 20 and all(x == "0" for x in pane_states)),
             "dashboard_live": dashboard.returncode == 0}
 
 
