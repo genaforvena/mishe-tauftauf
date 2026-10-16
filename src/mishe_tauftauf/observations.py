@@ -36,6 +36,17 @@ def validate_slug(slug: str) -> str:
     return slug
 
 
+def validate_home_binding(home: Path) -> Path:
+    """Keep a mind process bound to the site named by its supervisor."""
+    home = Path(home).resolve()
+    bound_home = os.environ.get("MISHE_SEED_HOME")
+    if bound_home is not None and home != Path(bound_home).resolve():
+        raise ValueError(
+            f"site home does not match this mind's MISHE_SEED_HOME: {home}"
+        )
+    return home
+
+
 def validate_home(home: Path) -> Path:
     """Reject missing homes, repository roots, and uninitialized plant directories.
 
@@ -43,7 +54,7 @@ def validate_home(home: Path) -> Path:
     worktree, or for a reserved .mishe-* home, require the initialized runtime
     layout before any writer can create a second conversation tape.
     """
-    home = Path(home)
+    home = validate_home_binding(Path(home))
     if not home.is_dir():
         raise ValueError(f"site home does not exist: {home}")
     resolved = home.resolve()

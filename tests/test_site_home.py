@@ -8,13 +8,21 @@ straight through to lock writers that created the tree first and validated never
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from mishe_tauftauf import seed
 from mishe_tauftauf.access import request as access_request
 from mishe_tauftauf.feed import Feed
+
+
+@pytest.fixture(autouse=True)
+def clear_inherited_site_binding(monkeypatch) -> None:
+    monkeypatch.delenv("MISHE_SEED_HOME", raising=False)
 
 
 def cli(home: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -92,6 +100,35 @@ def test_seed_home_variable_names_the_default_home(tmp_path: Path, monkeypatch) 
 
     monkeypatch.delenv("MISHE_TAUFTAUF_HOME")
     assert default_home() == Path(".mishe-tauftauf")
+
+
+def test_mind_home_binding_rejects_another_initialized_site(tmp_path: Path, monkeypatch) -> None:
+    repository = planted_repository(tmp_path)
+    canonical = repository / ".mishe-tauftauf"
+    wrong = repository / ".mishe-other"
+    assert cli(canonical, "seed", "init", "--slug", "genome").returncode == 0
+    assert cli(wrong, "seed", "init", "--slug", "witness").returncode == 0
+    before = tree(repository)
+    monkeypatch.setenv("MISHE_SEED_HOME", str(canonical))
+
+    refused = subprocess.run(
+        [sys.executable, "-m", "mishe_tauftauf", "--home", str(wrong),
+         "append", "--source", "test", "misrouted"],
+        text=True, capture_output=True, timeout=30, env=os.environ.copy())
+    fresh_wrong = repository / ".mishe-typo"
+    refused_init = subprocess.run(
+        [sys.executable, "-m", "mishe_tauftauf", "--home", str(fresh_wrong),
+         "seed", "init", "--slug", "witness"],
+        text=True, capture_output=True, timeout=30, env=os.environ.copy())
+    assert refused_init.returncode != 0
+    assert "does not match this mind's MISHE_SEED_HOME" in refused_init.stderr
+    assert not fresh_wrong.exists()
+    try:
+        Feed(wrong).append("test", "misrouted")
+    except ValueError as exc:
+        assert "does not match this mind's MISHE_SEED_HOME" in str(exc)
+    else:
+        raise AssertionError("library writer accepted a different initialized site")
 
 
 def test_init_still_plants_a_site_directly_inside_a_worktree(tmp_path: Path) -> None:
