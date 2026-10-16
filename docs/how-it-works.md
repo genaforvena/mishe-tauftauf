@@ -342,10 +342,11 @@ samples across two windows (three plus six, per the two rerun reports) on one
 route under one upstream-owned condition, with one surviving sample, is not a
 statistical claim, and terminal-status parity under
 the 429 condition stays unasserted: the candidate fails closed on three of
-six where the harness oracle read the frozen run successfully. That class is
-not this plant's work class, the activation has not landed, and the pinned
-release keeps the one-fetch session: the harness route stays the fallback
-meanwhile.
+six where the harness oracle read the frozen run successfully. That class is not this plant's Docs canary: the bounded native loop is
+being exercised for Docs, but this evidence does not establish adoption or live
+delivery. Resident activation, replay, model parity and useful-task acceptance
+remain open; the harness route stays fallback for work classes without an
+evidenced native route.
 The transport retries transient 408/429/5xx itself
 (`DEFAULT_MAX_ATTEMPTS`, six requests per dispatch), so on a route that answers
 one such transient with a second POST the diagnostic names the budget rather
@@ -428,7 +429,8 @@ auth discovery and exact model lookup. It closes returned auth after provider
 session disposal. Failure before auth discovery returns remains a dependency
 cleanup gap; fatal process containment is not proof of resource cleanup.
 Installed-wheel synthetic continuation is not real account/model parity or
-resident adoption. Preserve the existing harness route until a reviewed canary.
+resident adoption. Docs is exercising a bounded native canary; preserve the
+harness route for work classes without an evidenced native route.
 
 ### Development is not just repository maintenance
 
