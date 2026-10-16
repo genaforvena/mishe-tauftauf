@@ -19,7 +19,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from . import omp_pane, proc_table, space_text
-from .body_perception import read_redmi10, read_redmi10_delivery_gaps, read_redmi10_light
+from .body_perception import read_redmi10, read_redmi10_dense_baseline, read_redmi10_delivery_gaps, read_redmi10_light
 from .activity import roles as seated_roles
 from .feed import Feed, FeedEntry, entry_timestamp as _feed_entry_timestamp, parse_feed, publication_lock
 from .chat_protocol import decode_lifecycle, ProtocolError
@@ -5482,6 +5482,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(read_redmi10(home))
     observed.append(read_redmi10_light(home))
     observed.append(read_redmi10_delivery_gaps(home))
+    observed.append(read_redmi10_dense_baseline(home))
     observed.append(_host_radio_read())
     observed.append(_ethernet_read())
     observed.append(_tailnet_peer_read())
