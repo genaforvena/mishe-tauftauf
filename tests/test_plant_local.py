@@ -91,6 +91,20 @@ def test_silence_unit_follows_the_pinned_release(tmp_path: Path) -> None:
     assert "Restart=always" not in text
 
 
+def test_generated_units_use_distinct_durable_site_tmux_sockets(tmp_path, monkeypatch):
+    monkeypatch.setattr(plant.os, "getuid", lambda: 1000)
+    monkeypatch.setattr("mishe_tauftauf.runtime_source.source_for", lambda *a: tmp_path / "release")
+    first_home = tmp_path / "android-body/.mishe-tauftauf"
+    second_home = tmp_path / "mesh-home/.mishe-tauftauf"
+    unit = plant.unit_text(first_home, "android-body", "genome", "/usr/bin/python3")
+    silence = plant.silence_unit_text(first_home, "android-body", "/usr/bin/python3")
+    other = plant.unit_text(second_home, "mesh-home", "genome", "/usr/bin/python3")
+
+    assert "Environment=TMUX_TMPDIR=/tmp/tmux-1000/android-body\n" in unit
+    assert "Environment=TMUX_TMPDIR=/tmp/tmux-1000/android-body\n" in silence
+    assert "Environment=TMUX_TMPDIR=/tmp/tmux-1000/mesh-home\n" in other
+
+
 def test_replant_keeps_existing_operator_window_name(tmp_path: Path) -> None:
     module = vars(plant)
     site = tmp_path / "site"

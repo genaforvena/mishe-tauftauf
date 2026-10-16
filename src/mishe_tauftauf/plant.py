@@ -207,6 +207,11 @@ def _service_search_path(home: Path) -> str:
     return os.pathsep.join([site_bin, *rest])
 
 
+def _site_tmux_tmpdir(home: Path) -> Path:
+    """Use the user's default tmux socket root with a stable site subdirectory."""
+    return Path("/tmp") / f"tmux-{os.getuid()}" / home.parent.name
+
+
 def unit_text(home: Path, session: str, slug: str, python: str, *, operator_window: str | None = None) -> str:
     from .runtime_source import source_for
     source = source_for(home, ROOT)
@@ -226,7 +231,7 @@ def unit_text(home: Path, session: str, slug: str, python: str, *, operator_wind
     return (
         f"[Unit]\nDescription=Mishe {slug} resident channel\nAfter=default.target\n\n"
         "[Service]\nType=simple\n"
-        f"WorkingDirectory={home.parent}\n"
+        f"Environment=TMUX_TMPDIR={_site_tmux_tmpdir(home)}\n"
         f"Environment=PYTHONPATH={source / 'src'}\n"
         f"Environment=PATH={_service_search_path(home)}\n"
         f"ExecStart={command}\n"
@@ -246,9 +251,8 @@ def silence_unit_text(home: Path, session: str, python: str) -> str:
     from .runtime_source import source_for
     source = source_for(home, ROOT)
     return (
-        "[Unit]\nDescription=Mishe independent mind silence watcher\nAfter=default.target\n\n"
-        "[Service]\nType=simple\n"
         f"WorkingDirectory={home.parent}\n"
+        f"Environment=TMUX_TMPDIR={_site_tmux_tmpdir(home)}\n"
         f"Environment=PYTHONPATH={source / 'src'}\n"
         f"Environment=XDG_RUNTIME_DIR=/run/user/{os.getuid()}\n"
         f"ExecStart={python} -m mishe_tauftauf.activity --home {home} "
