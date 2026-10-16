@@ -734,3 +734,81 @@ def test_lease_age_is_measured_after_the_pane_is_captured(monkeypatch):
     monkeypatch.setattr(site_sync, "datetime", Clock)
     monkeypatch.setattr(site_sync, "_tmux", capture)
     assert site_sync._leases("example", {"genome"})["genome"] == clock[0]
+
+
+def _release_store(tmp_path: Path) -> tuple[Path, Path, list[str]]:
+    """A kernel whose core site holds one release worktree per committed release."""
+    kernel = tmp_path / "kernel"
+    kernel.mkdir()
+    subprocess.run(["git", "-C", str(kernel), "init", "-q"], check=True)
+    (kernel / "src").mkdir()
+    (kernel / "src/x.py").write_text("x")
+    shas: list[str] = []
+    for index in range(3):
+        (kernel / "src/x.py").write_text(f"x{index}")
+        subprocess.run(["git", "-C", str(kernel), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(kernel), "-c", "user.name=t", "-c", "user.email=t@e",
+                        "commit", "-qm", f"release {index}"], check=True)
+        shas.append(subprocess.check_output(
+            ["git", "-C", str(kernel), "rev-parse", "HEAD"], text=True).strip())
+    home = kernel / ".mishe-seed"
+    for sha in shas:
+        subprocess.run(["git", "-C", str(kernel), "worktree", "add", "--detach",
+                        str(home / "releases" / sha), sha], check=True, capture_output=True)
+    return kernel, home, shas
+
+
+def _stub_reclaimable(monkeypatch, home: Path, names: list[str]) -> None:
+    monkeypatch.setattr(site_sync.release_retention, "reclaimable_releases",
+                        lambda _home, protect=frozenset(), **_kwargs:
+                        [home / "releases" / name for name in names])
+
+
+def test_prune_removes_only_the_reclaimable_release_worktrees(tmp_path: Path, monkeypatch) -> None:
+    kernel, home, shas = _release_store(tmp_path)
+    monkeypatch.setattr(site_sync, "KERNEL", kernel)
+    _stub_reclaimable(monkeypatch, home, [shas[1]])
+    assert site_sync._prune_releases(home, protect=set()) == [shas[1]]
+    assert not (home / "releases" / shas[1]).exists()
+    assert (home / "releases" / shas[0]).exists()
+
+
+def test_prune_leaves_a_release_git_refuses_to_remove(tmp_path: Path, monkeypatch) -> None:
+    kernel, home, shas = _release_store(tmp_path)
+    monkeypatch.setattr(site_sync, "KERNEL", kernel)
+    _stub_reclaimable(monkeypatch, home, [shas[1]])
+
+    def refuse(*_args, **_kwargs):
+        raise RuntimeError("worktree is dirty")
+
+    monkeypatch.setattr(site_sync, "_git", refuse)
+    assert site_sync._prune_releases(home, protect=set()) == []
+    assert (home / "releases" / shas[1]).exists()
+
+
+def test_prune_is_skipped_when_the_reference_reading_fails(tmp_path: Path, monkeypatch) -> None:
+    kernel, home, shas = _release_store(tmp_path)
+    monkeypatch.setattr(site_sync, "KERNEL", kernel)
+
+    def unreadable(_home, **_kwargs):
+        raise ValueError("invalid linked-site registry")
+
+    monkeypatch.setattr(site_sync.release_retention, "reclaimable_releases", unreadable)
+    assert site_sync._prune_releases(home, protect=set()) == []
+    assert (home / "releases" / shas[1]).exists()
+
+
+def test_sync_reports_the_pruned_release_worktrees(tmp_path: Path, monkeypatch) -> None:
+    core_home, target = setup_sites(tmp_path, monkeypatch)
+    sha = "a" * 40
+    monkeypatch.setattr(site_sync, "_git", lambda workspace, *args: (
+        sha if args == ("rev-parse", "HEAD") else
+        str(workspace) if args == ("rev-parse", "--show-toplevel") else ""))
+    assert site_sync.register_site(target, "example")
+    site_sync._update_site(core_home, target, sha="old")
+    monkeypatch.setattr(site_sync, "_verify", lambda home, session: None)
+    monkeypatch.setattr(site_sync.subprocess, "run",
+                        lambda argv, **_kwargs: subprocess.CompletedProcess(argv, 0, "plant ready", ""))
+    monkeypatch.setattr(site_sync, "_prune_releases", lambda _home, protect: ["deadbeef"])
+    assert site_sync.sync_registered_sites(core_home, {"state": "pass", "sha": sha}) == [
+        f"synced {target.parent} {sha[:12]}", "pruned 1 release worktrees"]
