@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import termios
 import unicodedata
 from collections.abc import Mapping
@@ -24,6 +25,49 @@ def quiet_input(stream):
         yield stream
     finally:
         termios.tcsetattr(fd, termios.TCSANOW, original)
+
+
+class _StoryOutput:
+    def __init__(self, terminal, transcript):
+        self.terminal = terminal
+        self.transcript = transcript
+
+    def write(self, text):
+        written = self.transcript.write(text)
+        self.terminal.write(text)
+        return written
+
+    def flush(self):
+        self.transcript.flush()
+        self.terminal.flush()
+
+    def isatty(self):
+        return self.terminal.isatty()
+
+    def fileno(self):
+        return self.terminal.fileno()
+
+
+@contextmanager
+def story_output(terminal, path):
+    """Append readable output across process/context resets; never truncate it."""
+    with Path(path).open('a', encoding='utf-8', buffering=1) as transcript:
+        yield _StoryOutput(terminal, transcript)
+
+
+def retain_scrollback(stream):
+    """Move an append-only TTY's last screen into history before tmux respawns it.
+
+    tmux retains history on respawn, but discards the visible screen. Padding is
+    terminal-only, not part of the readable transcript. This does not reset the
+    model, send input or change terminal modes; call before releasing readiness.
+    """
+    stream.flush()
+    if stream.isatty():
+        fd = stream.fileno()
+        padding = b'\n' * os.get_terminal_size(fd).lines
+        while padding:
+            padding = padding[os.write(fd, padding):]
 
 
 def _safe(text):
