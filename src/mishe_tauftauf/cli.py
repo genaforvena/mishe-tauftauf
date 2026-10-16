@@ -143,7 +143,11 @@ def cmd_wall(args) -> int:
     elif args.wall_command == "write":
         _require_site_role(args.home, args.owner)
         source = _staging_notes(args.home, args.owner, args.file)
-        wall.write(args.home, args.owner, source.read_text(encoding="utf-8"), source_path=str(source))
+        text = source.read_text(encoding="utf-8")
+        wall.reject_stale_staging_anchor(
+            args.home, args.owner, text, source,
+            _staging_anchor(args.home, args.owner, args.file) is not None)
+        wall.write(args.home, args.owner, text, source_path=str(source))
     elif args.wall_command == "dm":
         _require_site_role(args.home, args.source)
         if args.file:

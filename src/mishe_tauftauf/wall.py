@@ -455,23 +455,25 @@ def restore(home: Path, role: str, session: str) -> str:
     )
 
 
-def _reject_stale_staging_anchor(home: Path, role: str, text: str, source_path: Path | None,
-                                 source_is_anchor: bool) -> None:
-    """Refuse a settle whose staging anchor would silently regress the wall.
+def reject_stale_staging_anchor(home: Path, role: str, text: str, source_path: Path | None,
+                                source_is_anchor: bool) -> None:
+    """Refuse a write whose staging anchor would silently regress the wall.
 
-    ``seed yield --file NOTES`` resolves a bare name to the role's own anchor
-    ``SITE_HOME/walls/<role>-NOTES`` (the resolver in ``cli`` names the anchor;
-    ``wall`` never re-derives it from the path text). A mind that keeps its plate
-    by editing ``SITE_HOME/walls/<role>.md`` directly — the shape the doctrine
-    names — and then settles with the bare anchor hands the settle the *previous*
-    wake's staged text, and ``settle`` writes that over the newer wall with no
-    error: the plate regresses and the wake's findings are lost (class:
-    android-body discover, wall reverted to a stale draft 2026-10-14; reproduced
-    in ``artifacts/discover-wake39796-anchor-clobber-repro.py``). The anchor is
-    only trusted when it is at least as new as the wall or already agrees with it;
+    ``wall write --file NOTES`` and ``seed yield --file NOTES`` resolve a bare
+    name to the role's own anchor ``SITE_HOME/walls/<role>-NOTES`` (the resolver
+    in ``cli`` names the anchor; ``wall`` never re-derives it from the path
+    text). An anchor left un-consumed by an earlier wake is then read as this
+    wake's plate: the write overwrites the newer wall with the stale anchor and
+    reports success, so the plate regresses and the wake's findings are lost
+    (class: android-body discover, wall reverted to a stale draft 2026-10-14,
+    reproduced in ``artifacts/discover-wake39796-anchor-clobber-repro.py``;
+    witness plate reverted to a wake 56136 draft on 2026-10-16 from an anchor
+    last staged at 02:10Z, reproduced in
+    ``artifacts/witness-wake58696-anchor-clobber-repro.py``). The anchor is only
+    trusted when it is at least as new as the wall or already agrees with it;
     otherwise the write fails closed with the remedy, and an explicit ``--file``
-    path (which the resolver never calls an anchor) stays the caller's deliberate
-    choice.
+    path (which the resolver never calls an anchor) stays the caller's
+    deliberate choice.
     """
     if not source_is_anchor or source_path is None:
         return
@@ -485,9 +487,8 @@ def _reject_stale_staging_anchor(home: Path, role: str, text: str, source_path: 
         return
     raise ValueError(
         f"staged notes {source} are older than the wall {wall_path} and differ from it; "
-        f"settling would regress the wall. Re-stage your current plate into {source.name} "
-        f"(or pass an explicit --file path), or run `wall write --owner {role} --file NOTES` "
-        "first if the anchor really is your current plate."
+        f"writing them would regress the wall. Re-stage your current plate into {source.name} "
+        "or pass an explicit --file path."
     )
 
 
@@ -515,7 +516,7 @@ def settle(home: Path, role: str, wake: int, text: str, continuation: bool, resu
             raise ValueError(f"wake {wake} is not pending for {role}")
         # Capture the anchor stat before any write so a restage mid-settle is
         # detected (mirrors the dm consumption path). The capture must precede
-        # ``_reject_stale_staging_anchor`` and the wall write; otherwise the
+        # ``reject_stale_staging_anchor`` and the wall write; otherwise the
         # comparison is two reads taken after the fact and the guard never fires.
         _source_anchor_stat = None
         _consume_anchor = False
@@ -525,7 +526,7 @@ def settle(home: Path, role: str, wake: int, text: str, continuation: bool, resu
                 _source_anchor_stat = Path(source_path).stat()
             except FileNotFoundError:
                 _source_anchor_stat = None
-        _reject_stale_staging_anchor(home, role, text, source_path, source_is_anchor)
+        reject_stale_staging_anchor(home, role, text, source_path, source_is_anchor)
         write(home, role, text)
         seed._write_handoff(home / "handoffs" / f"{role}.md", text)
         suffix = " continue=1" if continuation else ""

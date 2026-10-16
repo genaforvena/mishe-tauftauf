@@ -311,6 +311,44 @@ def test_wall_write_fails_closed_without_role_staging_anchor(tmp_path, monkeypat
     assert not (tmp_path / "walls" / "docs.md").exists()
 
 
+def test_wall_write_refuses_a_stale_staging_anchor_that_would_regress_the_wall(tmp_path):
+    """A bare-anchor write older than the wall fails closed instead of regressing the plate.
+
+    An anchor left un-consumed by an earlier wake is read as this wake's plate:
+    the write would overwrite the newer wall and report success, losing the
+    wake's findings (class: witness plate reverted to a wake 56136 draft on
+    2026-10-16 from an anchor last staged at 02:10Z; reproduction
+    ``artifacts/witness-wake58696-anchor-clobber-repro.py``).
+    """
+    setup_wall(tmp_path)
+    from mishe_tauftauf import cli
+    (tmp_path / "walls").mkdir()
+    anchor = tmp_path / "walls" / "genome-NOTES"
+    anchor.write_text("PLATE A: leaked from an earlier wake.\n", encoding="utf-8")
+    wall_path = tmp_path / "walls" / "genome.md"
+    wall_path.write_text("PLATE B: current plate.\n", encoding="utf-8")
+    os.utime(anchor, (1_700_000_000, 1_700_000_000))
+    os.utime(wall_path, (1_700_000_100, 1_700_000_100))
+    code = cli.main(["--home", str(tmp_path), "wall", "write", "--owner", "genome", "--file", "NOTES"])
+    assert code == 2
+    assert wall_path.read_text(encoding="utf-8") == "PLATE B: current plate.\n"
+
+
+def test_wall_write_accepts_a_staging_anchor_newer_than_the_wall(tmp_path):
+    """A freshly staged anchor is this wake's plate and is written."""
+    setup_wall(tmp_path)
+    from mishe_tauftauf import cli
+    (tmp_path / "walls").mkdir()
+    wall_path = tmp_path / "walls" / "genome.md"
+    wall_path.write_text("old plate\n", encoding="utf-8")
+    anchor = tmp_path / "walls" / "genome-NOTES"
+    anchor.write_text("new plate staged this wake\n", encoding="utf-8")
+    os.utime(wall_path, (1_700_000_000, 1_700_000_000))
+    os.utime(anchor, (1_700_000_100, 1_700_000_100))
+    code = cli.main(["--home", str(tmp_path), "wall", "write", "--owner", "genome", "--file", "NOTES"])
+    assert code == 0
+    assert wall_path.read_text(encoding="utf-8") == "new plate staged this wake\n"
+
 def test_seed_yield_refuses_a_stale_staging_anchor_that_would_regress_the_wall(tmp_path):
     """A bare-anchor settle older than a directly edited wall fails closed.
 
