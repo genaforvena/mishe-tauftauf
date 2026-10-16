@@ -267,6 +267,7 @@ def unit_text(home: Path, session: str, slug: str, python: str, *, operator_wind
     return (
         f"[Unit]\nDescription=Mishe {slug} resident channel\nAfter=default.target\n\n"
         "[Service]\nType=simple\n"
+        "UMask=0077\n"
         f"ExecStartPre=/usr/bin/mkdir -p {_site_tmux_tmpdir(home)}\n"
         f"Environment=TMUX_TMPDIR={_site_tmux_tmpdir(home)}\n"
         f"Environment=PYTHONPATH={source / 'src'}\n"
@@ -291,6 +292,7 @@ def silence_unit_text(home: Path, session: str, python: str) -> str:
         "[Unit]\nDescription=Mishe independent mind silence watcher\nAfter=default.target\n\n"
         "[Service]\nType=simple\n"
         f"WorkingDirectory={home.parent}\n"
+        "UMask=0077\n"
         f"ExecStartPre=/usr/bin/mkdir -p {_site_tmux_tmpdir(home)}\n"
         f"Environment=TMUX_TMPDIR={_site_tmux_tmpdir(home)}\n"
         f"Environment=PYTHONPATH={source / 'src'}\n"
