@@ -26,8 +26,12 @@ def _stop_superseded_units(session: str, keep_unit: str) -> None:
     disappeared (a server may host other sessions). But a superseded keeper whose
     replacement is confirmed running is a husk; stopping it prevents unbounded
     unit accumulation across raises.
+    Matching is by exact generated unit identity: the complete session prefix plus
+    exactly 32 lowercase hex characters and ``.service``. A broad prefix match would
+    also stop keepers of longer session names sharing the prefix (session ``owned``
+    would stop ``owned-session-other``'s keeper).
     """
-    prefix = session + "-session-"
+    identity = re.compile(re.escape(session) + r"-session-[0-9a-f]{32}\.service")
     try:
         result = subprocess.run(
             ["systemctl", "--user", "list-units", "--all", "--no-legend", "--plain"],
@@ -42,7 +46,7 @@ def _stop_superseded_units(session: str, keep_unit: str) -> None:
         if not parts:
             continue
         unit = parts[0]
-        if unit.startswith(prefix) and unit.endswith(".service") and unit != keep_unit:
+        if unit != keep_unit and identity.fullmatch(unit):
             stale.append(unit)
     for unit in stale:
         try:
