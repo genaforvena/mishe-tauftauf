@@ -704,6 +704,22 @@ reading, so cursor-only and lux-only advances both change the pin's digest. New
 sensor values, session changes and failure/recovery transitions remain visible
 either way, and the served pin's live pane row still shows the advancing cursor.
 
+Host USB attachment is deliberately *not* part of this row. The Redmi10
+onboarding notes describe a USB-loopback setup, and it is tempting to read the
+kernel's USB tree (or `adb devices`) as a device-present/device-gone verdict,
+but that premise was measured false on 2026-10-16: at 13:2xZ no Xiaomi
+interface was on the bus and `adb devices` listed only the Note3, while
+`redmi10` samples arrived fresh (phone sample 13:23:57Z, consumer receipt
+13:24:20Z, advancing cursor). The tailnet HTTPS rendezvous
+(`tailscale serve`, live since 07:57Z that day) gives the phone a path with no
+USB at all, so a missing interface proves nothing about delivery, and it was
+live throughout that morning's four-hour silence. A USB-derived "absent" would
+therefore be a false claim, and in the ordinary untethered configuration it
+would be an `unknown` token that pushes the channel states out of the clipped
+pane. The row keeps the honest verdict it can support: a stalled feed is
+`channel-not-current`, with the per-channel statuses and the delivery verdict
+carrying the evidence.
+
 The shared `SITE/body/space.json` also carries a per-node `clock_domain`
 verdict. Core Senses publishes a separate `sense.space.clock-domain.<node>` row
 for each node (including Note3 and Redmi10). `status=ok` is verified only when
