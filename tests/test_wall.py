@@ -333,6 +333,18 @@ def test_wall_write_refuses_a_stale_staging_anchor_that_would_regress_the_wall(t
     assert code == 2
     assert wall_path.read_text(encoding="utf-8") == "PLATE B: current plate.\n"
 
+def test_wall_write_refusal_audits_to_wall_write_audit_jsonl(tmp_path, monkeypatch):
+    """A refused stale-anchor write leaves a durable audit record.
+
+    The refusal is visible only to the mind's pane (stdout/stderr); without a
+    durable log line the same shape as the stale-module class (a live defect
+    with no recurrence record) recurs silently. This test verifies that
+    ``_audit_refusal`` writes to ``logs/wall-write-audit.jsonl`` with role,
+    source, wall, both mtimes, and the refusal reason.
+    """
+    monkeypatch.setenv("MISHE_SEED_HOME", str(tmp_path))
+    setup_wall(tmp_path)
+
 
 def test_wall_write_accepts_a_staging_anchor_newer_than_the_wall(tmp_path):
     """A freshly staged anchor is this wake's plate and is written."""
