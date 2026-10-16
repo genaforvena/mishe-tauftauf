@@ -21,6 +21,39 @@ class TmuxError(RuntimeError):
     pass
 
 
+def _socket_for_home(home: Path) -> str:
+    """The per-site tmux socket for a home, honoring inherited TMUX_TMPDIR.
+
+    Mirrors seed._new_session's derivation (site-root TMUX_TMPDIR, else the
+    per-site default under /tmp); duplicated here to avoid a circular import.
+    """
+    tmux_tmpdir = os.environ.get("TMUX_TMPDIR") or str(Path("/tmp") / f"tmux-{os.getuid()}" / home.parent.name)
+    return str(Path(tmux_tmpdir) / f"tmux-{os.getuid()}" / "default")
+def session_owner(session: str, home: Path | None = None) -> str | None:
+    """The home recorded on the session, or None while it is unset or absent.
+
+    When ``home`` is given, the per-site socket is derived from it (the same
+    way ``_new_session`` derives the socket) so callers that already hold a
+    home do not need to set TMUX_TMPDIR.  Without ``home`` the behaviour is
+    unchanged: an inherited TMUX_TMPDIR or the default socket is used.
+    """
+    if home is None:
+        result = _tmux("show-option", "-qv", "-t", session, OWNED_OPTION, check=False)
+    else:
+        socket = _socket_for_home(home)
+        result = _tmux("show-option", "-qv", "-t", session, OWNED_OPTION, check=False, socket=socket)
+        # Fall back to the inherited/common socket when the home-derived server
+        # does not contain this session (e.g. tests and legacy records).
+        if result.returncode != 0:
+            result = _tmux("show-option", "-qv", "-t", session, OWNED_OPTION, check=False)
+    if result.returncode != 0:
+        return None
+    return result.stdout.decode().strip() or None
+
+
+def owns_session(home: Path, session: str) -> bool:
+    return session_owner(session, home=home) == str(home.resolve())
+
 def _python_command(home: Path, *args: str) -> list[str]:
     """Carry the byte-set ``home`` pins into panes owned by an older tmux server."""
     from .runtime_source import pane_python_path
@@ -44,18 +77,6 @@ def _tmux(*args: str, check: bool = True, socket: str | None = None) -> subproce
     if check and result.returncode:
         raise TmuxError(result.stderr.decode("utf-8", "replace").strip() or f"tmux {' '.join(args)} failed")
     return result
-
-
-def session_owner(session: str) -> str | None:
-    """The home recorded on the session, or None while it is unset or absent."""
-    result = _tmux("show-option", "-qv", "-t", session, OWNED_OPTION, check=False)
-    if result.returncode != 0:
-        return None
-    return result.stdout.decode().strip() or None
-
-
-def owns_session(home: Path, session: str) -> bool:
-    return session_owner(session) == str(home.resolve())
 
 
 def await_owned(home: Path, session: str, timeout: float = 15.0) -> bool:
