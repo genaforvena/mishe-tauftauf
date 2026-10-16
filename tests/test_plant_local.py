@@ -102,6 +102,12 @@ def test_generated_units_use_distinct_durable_site_tmux_sockets(tmp_path, monkey
     silence = plant.silence_unit_text(first_home, "android-body", "/usr/bin/python3")
     other = plant.unit_text(second_home, "mesh-home", "genome", "/usr/bin/python3")
 
+    expected_pre = "ExecStartPre=/usr/bin/mkdir -p /tmp/tmux-1000/android-body\n"
+    assert expected_pre in unit
+    assert expected_pre in silence
+    assert "ExecStartPre=/usr/bin/mkdir -p /tmp/tmux-1000/mesh-home\n" in other
+    assert unit.index(expected_pre) < unit.index("Environment=TMUX_TMPDIR=")
+    assert silence.index(expected_pre) < silence.index("Environment=TMUX_TMPDIR=")
     assert "Environment=TMUX_TMPDIR=/tmp/tmux-1000/android-body\n" in unit
     assert "Environment=TMUX_TMPDIR=/tmp/tmux-1000/android-body\n" in silence
     assert "Environment=TMUX_TMPDIR=/tmp/tmux-1000/mesh-home\n" in other
