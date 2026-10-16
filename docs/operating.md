@@ -54,6 +54,8 @@ The launcher automatically searches for resident markers in `.mishe-seed` and `.
 
 For operator commands, keep passing `--home "$SITE"`. The CLI otherwise chooses `MISHE_SEED_HOME`, then the older `MISHE_TAUFTAUF_HOME` environment variable, then relative `.mishe-tauftauf`. Fresh resident mind launches export the canonical `MISHE_SEED_HOME` and prepend `SITE/bin` to `PATH`; an ordinary shell or an older process may not have either. A plausible path is not the same thing as your plant.
 
+When `MISHE_SEED_HOME` is set, it binds the CLI and validated library writers to that resolved site. An explicit `--home` naming a different site is rejected, including for initialization; only a process without that supervisor binding may deliberately address another site.
+
 ## Inspect the running plant
 
 These commands inspect the tape, sample, and live panes without sending a new task:

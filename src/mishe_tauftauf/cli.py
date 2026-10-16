@@ -16,7 +16,8 @@ from .feed import Feed, FeedError, parse_feed, utc_now
 from .judges import QUESTIONS, classify, controls, document, run_external
 from . import window_manifest
 
-from .observations import FOOTER_WAKE_LABEL, compose_frame, discover, executable, validate_home, validate_slug
+from .observations import (FOOTER_WAKE_LABEL, compose_frame, discover, executable,
+                           validate_home, validate_home_binding, validate_slug)
 from .predictions import PredictionError, append_prediction, pending_predictions, replay_predictions
 from .runtime import Coordinator, RuntimeConfig
 
@@ -887,6 +888,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     args.home = args.home.resolve()
     try:
+        validate_home_binding(args.home)
         if not (args.func is cmd_init or getattr(args, "seed_command", None) == "init"):
             validate_home(args.home)
         return args.func(args)
