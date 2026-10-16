@@ -298,8 +298,12 @@ MAX_EXCURSION_LOG_BYTES = 262144
 #: The recurrence window: how far back the reported halt count reaches.
 GAP_WINDOW_SECONDS = 86400.0
 
+DENSE_SENSE_ID = "sense.body.redmi10.dense-baseline"
 #: The carried-body rows the Senses pane re-reads at render time, so their
 #: freshness is the render's, never the discovery scan's.
+#: The dense baseline is deliberately excluded: it only updates on the
+#: scan renewal, so the pane renders its scan row under the scan freshness
+#: gate, keeping the producer's own stale/unknown verdict visible.
 BODY_SENSE_IDS = frozenset({SENSE_ID, LIGHT_SENSE_ID, GAP_SENSE_ID})
 
 
@@ -462,3 +466,138 @@ def read_redmi10_delivery_gaps(home: Path, now: float | None = None) -> dict[str
             "last_gap_session": last["session"], "last_gap_cursor": last["cursor"],
             "host_stopped": stopped, "max_receipt_lag_s": delay,
             "window_seconds": GAP_WINDOW_SECONDS, "details": details}
+
+#: Tail bytes read from the dense queue; at ~101 bytes/line this yields ~2500
+#: lines (~3.5 h at the observed 5 s cadence), bounding the analysis window.
+DENSE_TAIL_BYTES = 262144
+#: Rows retained for the compact summary; at 5 s cadence this is a ~2.8 h window.
+DENSE_WINDOW_ROWS = 2000
+#: Freshness gate for the dense-baseline verdict; matches ``FRESH_SECONDS``.
+DENSE_FRESH_SECONDS = 30.0
+
+
+def _read_tail(path: Path, limit: int) -> tuple[str | None, str | None]:
+    """Read the last ``limit`` bytes of a file, or None with a reason."""
+    try:
+        with path.open("rb") as stream:
+            stream.seek(0, 2)
+            size = stream.tell()
+            stream.seek(max(0, size - limit))
+            raw = stream.read(limit)
+    except FileNotFoundError:
+        return None, "missing"
+    except OSError:
+        return None, "unreadable"
+    try:
+        return raw.decode("utf-8"), None
+    except UnicodeDecodeError:
+        return None, "malformed"
+
+
+def _dense_unknown(reason: str) -> dict[str, object]:
+    return {"id": DENSE_SENSE_ID, "kind": "read", "state": "unknown", "reason": reason,
+            "sample": f"Redmi10 dense-baseline UNKNOWN: {reason}; source=linked Android Body consumer"}
+
+
+def _dense_light_class(lux: float) -> str:
+    if lux <= 0:
+        return "dark"
+    if lux < 50:
+        return "dim"
+    if lux < 1000:
+        return "bright"
+    return "very-bright"
+
+
+def read_redmi10_dense_baseline(home: Path, now: float | None = None) -> dict[str, object]:
+    """Compact carried-device context from the consumer's dense observation queue.
+
+    Reads the tail of the consumer's dense queue (append-only, ~5 s cadence) and
+    returns a bounded summary: last light class, charging state, acceleration
+    availability, and delivery break. The verdict is ``verified`` when the last
+    row is fresh (< ``DENSE_FRESH_SECONDS``), ``stale`` when it is older, and
+    ``unknown`` when the queue is unreadable. Deltas come from a fixed-cadence
+    re-read (the discovery scan renewal), not from the scan corpus.
+    """
+    current = time.time() if now is None else _finite_number(now)
+    if current is None:
+        return _dense_unknown("reader-clock-invalid")
+    android_home, error = _linked_android_home(home)
+    if error is not None or android_home is None:
+        return _dense_unknown(error or "linked-android-body-home-unknown")
+    queue = android_home / "body" / "queues" / DENSE_QUEUE_NAME
+    text, error = _read_tail(queue, DENSE_TAIL_BYTES)
+    if error is not None or text is None:
+        return _dense_unknown(f"dense-queue-{error or 'unreadable'}")
+    lines = text.splitlines()
+    if not lines:
+        return _dense_unknown("dense-queue-empty")
+    last_light_lux: float | None = None
+    last_light_epoch: int | None = None
+    last_charging: bool | None = None
+    last_battery_epoch: int | None = None
+    accel_count = 0
+    total_count = 0
+    first_epoch: int | None = None
+    last_epoch: int | None = None
+    for line in lines[-DENSE_WINDOW_ROWS:]:
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        try:
+            epoch = int(parts[1])
+        except ValueError:
+            continue
+        kind = parts[2]
+        total_count += 1
+        if first_epoch is None:
+            first_epoch = epoch
+        last_epoch = epoch
+        if kind == "light":
+            for part in parts[3:]:
+                if part.startswith("lux="):
+                    try:
+                        last_light_lux = float(part[4:])
+                        last_light_epoch = epoch
+                    except ValueError:
+                        pass
+                    break
+        elif kind == "battery":
+            for part in parts[3:]:
+                if part.startswith("charging="):
+                    val = part[9:]
+                    if val in ("true", "false"):
+                        last_charging = val == "true"
+                        last_battery_epoch = epoch
+                    break
+        elif kind == "acceleration":
+            accel_count += 1
+    if total_count == 0 or last_epoch is None:
+        return _dense_unknown("dense-queue-empty")
+    break_seconds = current - last_epoch
+    state = "verified" if break_seconds < DENSE_FRESH_SECONDS else "stale"
+    window_seconds = (last_epoch - first_epoch) if first_epoch is not None else 0
+    accel_ratio = accel_count / total_count if total_count > 0 else 0.0
+    light_class = _dense_light_class(last_light_lux) if last_light_lux is not None else "unknown"
+    light_text = f"{last_light_lux:g}lux {light_class}" if last_light_lux is not None else "unknown"
+    charging_text = ("yes" if last_charging else "no") if last_charging is not None else "unknown"
+    sample = (f"L={light_text} charging={charging_text} "
+              f"accel={accel_ratio:.0%} break={break_seconds:.0f}s "
+              f"window={window_seconds}s rows={total_count}")
+    details = (f"source=linked android-body body/queues/{DENSE_QUEUE_NAME}; "
+               f"tail-bytes={DENSE_TAIL_BYTES} window-rows={total_count}; "
+               f"last-light={light_text} at epoch {last_light_epoch}; "
+               f"last-charging={charging_text} at epoch {last_battery_epoch}; "
+               f"accel-availability={accel_ratio:.1%}; "
+               f"break={break_seconds:.1f}s; "
+               "phone/host clock split unknown; acceleration includes gravity "
+               "and is not person-movement evidence.")
+    return {"id": DENSE_SENSE_ID, "kind": "read", "state": state,
+            "reason": "dense-queue-current" if state == "verified" else "dense-queue-stale",
+            "sample": sample, "source": REDMI_SOURCE,
+            "last_light_lux": last_light_lux, "last_light_class": light_class,
+            "last_light_epoch_s": last_light_epoch,
+            "charging": last_charging, "charging_epoch_s": last_battery_epoch,
+            "accel_ratio": accel_ratio, "break_seconds": break_seconds,
+            "window_seconds": window_seconds, "row_count": total_count,
+            "details": details}

@@ -470,3 +470,11 @@ def test_delivery_gap_reader_rejects_a_future_detection_stamp(tmp_path: Path) ->
 
     assert row["state"] == "unknown"
     assert row["reason"] == "gap-log-clock-future"
+
+def test_dense_baseline_stays_out_of_the_render_time_body_rows() -> None:
+    """The dense baseline only updates on the discovery-scan renewal, so the
+    Senses pane has no render-time live read for it. Keeping its id out of
+    ``BODY_SENSE_IDS`` makes the pane render the scan row under the scan
+    freshness gate; adding it would filter the row out of the scan rows and
+    append nothing, dropping the reading from the pane silently."""
+    assert body_perception.DENSE_SENSE_ID not in body_perception.BODY_SENSE_IDS
