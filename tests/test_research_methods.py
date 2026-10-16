@@ -102,9 +102,9 @@ def test_linked_refresh_checks_research_methods_mind_and_lease(tmp_path, monkeyp
     (tmp_path / "chat.log").write_text("")
     rows = [f"{name} 0 0" for name in names]
     rows += [f"{name} 1 {int(dead and name == ROLE)}" for name in site_sync.ROLES]
-    monkeypatch.setattr(site_sync, "_tmux", lambda *_args: subprocess.CompletedProcess([], 0, "\n".join(rows).encode(), b""))
+    monkeypatch.setattr(site_sync, "_tmux", lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, "\n".join(rows).encode(), b""))
     calls = []
-    def leases(_session, leased):
+    def leases(_session, leased, **_kwargs):
         assert ROLE in leased
         calls.append(leased)
         return {name: datetime.now(timezone.utc) + timedelta(seconds=len(calls)) for name in leased}
