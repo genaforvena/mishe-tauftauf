@@ -359,10 +359,12 @@ def test_wall_write_refusal_audits_to_wall_write_audit_jsonl(tmp_path):
     entry = json.loads(audit_path.read_text(encoding="utf-8").splitlines()[-1])
     assert entry["role"] == "genome"
     assert entry["source"] == str(anchor)
-    assert entry["wall"].endswith("walls/genome.md")
+    assert entry["wall"] == str(wall_path)
     assert entry["reason"] == "stale-staging-anchor"
     assert entry["source_mtime"] == "2023-11-14T22:13:20+00:00"
     assert entry["wall_mtime"] == "2023-11-14T22:15:00+00:00"
+    assert "ts" in entry
+    assert "pid" in entry
 
 
 def test_wall_write_accepts_a_staging_anchor_newer_than_the_wall(tmp_path):
