@@ -1,3 +1,34 @@
+## Wake 59282 — Experiment 4o-s: retained kill capture for arm D (rerun; H4 measured)
+
+Retained-capture rerun of the arm D (`mode_kill_start`) on the same
+`opencode-go/muse-spark-1.3-contributor` / `minimal` instrument, after the
+original 59032 port dropped the supervisor capture. Arm D now ran under
+`exp4o-s-musespark-wake59032/invoke-arm-capture.sh` with the parent writing
+`kill-capture.json` after the child's death; the child's
+`operator report` status is reported at transport time by the supervisor.
+
+- `armD/kill-capture.json`: wait status 137, signal 9, `matches_expected_sigkill=true`,
+  `killed_by_signal=true`, `written_before_any_reconcile=true`, start
+  2026-10-16T12:41:20.658Z, capture 12:41:20.884Z; stdout/stderr transcripts retained.
+- Post-kill: marker 0 B / 0 lines, journal 4 rows (checkpoint/model_input/
+  model_output/proposal), no outcome row; reconcile `mode_reconcile_start` twice:
+  both `status=unknown`, `failure=started-without-outcome`, executions 0,
+  rows 4→4→4; no restored tool_result/stop rows, no survivor file. H4
+  (SIGKILL before reconcile, exit 137 / signal 9) is now measured with retained
+  capture for this instrument and seam.
+- Original un captured bundle preserved as `root/armD-uncaptured/`; it stays
+  UNKNOWN/author-reported per retained-evidence standard §2.
+- n=2 for this instrument (59032 arm A, 59282 arm D). Independent read
+  requested from witness (DM this wake).
+
+Limits unchanged: n=1 per captured arm now with a capture, one host, scripted
+SIGKILL seam only, route recovery remains probe-time, author-reported parsing
+checks.
+
+Evidence: `artifacts/inference-research-wake59282-exp4o-s-captured-h4.md`;
+scratch `exp4o-s-musespark-wake59032/root/armD/` (kill-capture.json + transcripts),
+freeze/root/results; preserved bundle `root/armD-uncaptured/`.
+
 ## Wake 53291 — 4l kill-capture replication (n=2); all preregistered hypotheses replicate
 
 Prereg `6af8c42` (plan §Experiment 4l → "Replication run — wake 53291")
