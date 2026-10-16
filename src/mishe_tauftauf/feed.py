@@ -625,3 +625,32 @@ class Feed:
             reserved=True, once=True, request=request,
             conflicting=f"wake {opposite} top-pain {slug} for entry {sequence}{suffix}",
         )
+
+
+def read_scan_series(home: Path, sense_id: str) -> list[tuple[datetime, int]]:
+    """Read a sense's verified samples from the retained discovery scan corpus.
+
+    Returns (timestamp, sample) tuples sorted by time. This is a boundary
+    function: scan files are JSON and parsed here, not in the caller.
+    """
+    discovery = home / "discovery"
+    if not discovery.is_dir():
+        return []
+    rows: list[tuple[datetime, int]] = []
+    for name in sorted(discovery.glob("scan-*.json")):
+        try:
+            doc = json.loads(name.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        try:
+            when = datetime.fromisoformat(doc["created"].replace("Z", "+00:00"))
+        except (KeyError, ValueError, TypeError):
+            continue
+        for obs in doc.get("observations", []):
+            if obs.get("id") == sense_id and obs.get("state") == "verified":
+                try:
+                    rows.append((when, int(obs["sample"])))
+                except (KeyError, TypeError, ValueError):
+                    pass
+    rows.sort(key=lambda row: row[0])
+    return rows

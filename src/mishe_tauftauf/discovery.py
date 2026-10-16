@@ -24,7 +24,7 @@ from uuid import uuid4
 from . import omp_pane, proc_table, space_text
 from .body_perception import read_redmi10, read_redmi10_dense_baseline, read_redmi10_delivery_gaps, read_redmi10_light
 from .activity import roles as seated_roles
-from .feed import Feed, FeedEntry, entry_timestamp as _feed_entry_timestamp, parse_feed, publication_lock
+from .feed import Feed, FeedEntry, entry_timestamp as _feed_entry_timestamp, parse_feed, publication_lock, read_scan_series
 from .chat_protocol import decode_lifecycle, ProtocolError
 from .host_radio import (BLUETOOTH_ROOT, COMMAND_TIMEOUT_SECONDS, NET_ROOT,
                          RFKILL_ROOT, admin_up, bluetooth_controllers, carrier_state,
@@ -3206,6 +3206,12 @@ _HEAD_REWIND_REFLOG_LIMIT = 40
 _HEAD_REWIND_COMMIT_LIMIT = 4
 _HEAD_REWIND_PATH_LIMIT = 12
 
+_DISK_TREND_FLOOR_BYTES = 10 * 2**30
+_DISK_TREND_NEAR_BYTES = 20 * 2**30
+_DISK_TREND_FAST_DRAIN_PER_DAY = 10 * 2**30
+_DISK_TREND_HORIZON_DAYS = 7
+_DISK_TREND_MIN_SPAN_HOURS = 6
+
 
 def _head_rewinds(home: Path) -> dict[str, object]:
     """Classify reflog-dropped commits' changed paths against HEAD's tree.
@@ -3297,6 +3303,65 @@ def _applies(tree: Path, patch: str, *, reverse: bool) -> bool:
     except (OSError, subprocess.TimeoutExpired):
         return False
     return result.returncode == 0
+
+def _disk_trend(home: Path, now: datetime | None = None) -> dict[str, object]:
+    """Derive a disk rate/floor verdict from the retained scan corpus.
+
+    A level cannot distinguish "stable at 66 GiB" from "draining at 40 GiB/day,
+    floor in 36 h". The retained discovery scan corpus already holds the series,
+    so the rate is derivable with no new collector. UNKNOWN when the corpus has
+    fewer than 2 samples or a span under 6 h.
+    """
+    current = datetime.now(timezone.utc) if now is None else now
+    if now is not None and now.tzinfo is None:
+        current = now.replace(tzinfo=timezone.utc)
+
+    rows = read_scan_series(home, "sense.disk.free")
+    if not rows:
+        return {"id": "sense.disk.trend", "state": "unknown",
+                "sample": "discovery corpus unavailable", "kind": "read"}
+
+    if len(rows) < 2:
+        return {"id": "sense.disk.trend", "state": "unknown",
+                "sample": f"fewer than 2 verified disk.free samples (n={len(rows)})", "kind": "read"}
+
+    span_h = (rows[-1][0] - rows[0][0]).total_seconds() / 3600.0
+    if span_h < _DISK_TREND_MIN_SPAN_HOURS:
+        return {"id": "sense.disk.trend", "state": "unknown",
+                "sample": f"span {span_h:.1f}h under {_DISK_TREND_MIN_SPAN_HOURS}h", "kind": "read"}
+
+    cutoff = current - timedelta(hours=24)
+    recent = [b for t, b in rows if t >= cutoff]
+    min24 = min(recent) if recent else rows[-1][1]
+
+    week = current - timedelta(days=7)
+    older = [r for r in rows if r[0] <= week]
+    anchor = older[-1] if older else rows[0]
+    days = (rows[-1][0] - anchor[0]).total_seconds() / 86400.0
+    drain = (anchor[1] - rows[-1][1]) / days if days > 0 else 0.0
+
+    days_to_floor = ((min24 - _DISK_TREND_FLOOR_BYTES) / drain) if drain > 0 else None
+
+    reasons: list[str] = []
+    if min24 < _DISK_TREND_NEAR_BYTES:
+        reasons.append(f"trailing-24h minimum {min24 / 2**30:.1f} GiB below {_DISK_TREND_NEAR_BYTES / 2**30:.0f} GiB")
+    if drain > _DISK_TREND_FAST_DRAIN_PER_DAY:
+        reasons.append(f"net drain {drain / 2**30:.1f} GiB/day above {_DISK_TREND_FAST_DRAIN_PER_DAY / 2**30:.0f} GiB/day")
+    if days_to_floor is not None and days_to_floor < _DISK_TREND_HORIZON_DAYS:
+        reasons.append(f"projected floor in {days_to_floor:.1f} days (< {_DISK_TREND_HORIZON_DAYS})")
+
+    state = "drift" if reasons else "verified"
+    sample = (f"min24={min24 / 2**30:.1f}GiB drain={drain / 2**30:.1f}GiB/day "
+              f"floor={days_to_floor:.1f}d" if days_to_floor is not None else
+              f"min24={min24 / 2**30:.1f}GiB drain={drain / 2**30:.1f}GiB/day")
+    if reasons:
+        sample += f" reasons={'|'.join(reasons)}"
+
+    return {"id": "sense.disk.trend", "state": state, "sample": sample,
+            "min24_bytes": min24, "drain_per_day": round(drain, 1),
+            "days_to_floor": None if days_to_floor is None else round(days_to_floor, 2),
+            "samples": len(rows), "span_hours": round(span_h, 2), "kind": "read"}
+
 def _runtime_pin_lag(home: Path, now: datetime | None = None) -> dict[str, object]:
     """Count the commits between the runtime pin and the checkout HEAD.
 
@@ -5578,6 +5643,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_ledger_dv_binding(home))
     observed.append(_ledger_evidence_binding(home))
     observed.append(_head_rewinds(home))
+    observed.append(_disk_trend(home))
     observed.append(_space_light_read(home))
     observed.append(read_redmi10(home))
     observed.append(read_redmi10_light(home))
