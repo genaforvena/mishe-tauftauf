@@ -127,8 +127,17 @@ def test_cursor_progress_stays_visible_without_changing_observation_summary(tmp_
     state["latest"]["light"]["sequence"] = 5
     state["latest"]["light"]["fields"]["lux"] = "102"
     state_path.write_text(json.dumps(state), encoding="utf-8")
+    in_band = body_perception.read_redmi10(core, now)
+    assert in_band["sample"] != first["sample"]
+    # Same-band ambient-light jitter (101→102lux) is presentation churn, not
+    # a digest event: the cursor advance is normalized away with the light.
+    assert _observation_text("senses", frame(in_band)) == first_observation
+
+    state["latest"]["light"]["fields"]["lux"] = "130"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
     changed_sensor = body_perception.read_redmi10(core, now)
     assert changed_sensor["sample"] != first["sample"]
+    # A cross-band environmental transition must reach the digest.
     assert _observation_text("senses", frame(changed_sensor)) != first_observation
 
     state["session"] = "new-session"
