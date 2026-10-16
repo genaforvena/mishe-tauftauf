@@ -2841,11 +2841,11 @@ note (`nvidia/z-ai/glm-5.3` / `high`) is not provably available in this
 resident process environment this wake: `NVIDIA_API_KEY` is not present in the
 process environment, and no independent authenticated probe was run. To keep
 the experiment runnable on an available opencode-go route, this prereg uses
-`opencode-go/glm-5.3-flash` / `minimal` as the divergent selector; the
+`opencode-go/glm-5.2` / `minimal` as the divergent selector (wake 56346 noted `glm-5.3-flash` supports only low/high/max, so it cannot use `minimal`; this preserves that reasoning level as a fixed control); the
 nvidia route remains a future replication if its credential route becomes
 available (no fabrication of availability).
 
-**Instrument.** Selector `opencode-go/glm-5.3-flash`, reasoning `minimal`
+**Instrument.** Selector `opencode-go/glm-5.2`, reasoning `minimal`
 (only the selector differs from 4o; `LINE`/`TASK`/capability version
 `marker-append-v1`, loop caps `max_turns=2 max_calls=1`, unchanged production
 seams).
