@@ -16,6 +16,7 @@ import pytest
 from mishe_tauftauf.discovery import _cpu_busy, latest, renew_scan, scan, scan_age
 from mishe_tauftauf import discovery
 from mishe_tauftauf.feed import Feed
+from mishe_tauftauf import seed_culture_views
 from mishe_tauftauf.seed_culture_views import discover
 
 
@@ -5601,6 +5602,41 @@ def test_drift_across_sites_names_a_foreign_unit_importing_the_checkout(
     assert f"foreign={unit}@{checkout.name}" in row["sample"]
     assert row["identity"]["foreign"] == {unit: str(checkout / "src")}
     assert row["identity"]["unattributed"] == []
+
+def test_drift_across_sites_keeps_its_reason_inside_the_pane_clip(
+        tmp_path: Path) -> None:
+    # The pane shortens a long sample at its tail, so a reading whose reason
+    # trails the informational host-scope list renders as an UNKNOWN the reader
+    # cannot explain: observed live 2026-10-16T11:05Z, the served row read
+    # "host-scope=mishe-cleaner-recovered.service,...-watch.service…" with the
+    # `foreign=` coupling clipped off.
+    pinned_sha: list[str] = []
+    other_pin = tmp_path / "releases" / "other"
+    _release_tree(other_pin, pinned_sha)
+    other = tmp_path / "site-other"
+    _pin(other, other_pin, pinned_sha[0], "mishe-other")
+    home = tmp_path / "plant"
+    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
+                             "sha": pinned_sha[0]}])
+    host_units = [f"mishe-host-tool-{index}.service" for index in range(6)]
+    foreign_unit = "mishe-seed-session-b0f90360ee89420ca40c3e7bfc16fd06.service"
+    checkout = tmp_path.resolve()
+    with patch.object(discovery, "_active_site_units",
+                      return_value=(host_units + [foreign_unit], None)), \
+            patch.object(discovery, "_unit_import_roots",
+                         return_value={foreign_unit: str(checkout / "src")}), \
+            patch.object(discovery, "_foreign_checkout_consumers", return_value={}), \
+            patch.object(discovery, "_unit_declared_paths",
+                         return_value=["/usr/bin/python3", "/home/host/tool"]), \
+            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
+        row = discovery._runtime_drift_across_sites(home)
+    assert row["state"] == "unknown"
+    assert row["identity"]["host_scope"] == sorted(host_units)
+    assert row["identity"]["foreign"] == {foreign_unit: str(checkout / "src")}
+    _, line = seed_culture_views._observation_reading(row, "recent")
+    # The unit alone: the same field also carries the tmp_path-derived checkout
+    # name, which a longer generated basetemp could push past the clip budget.
+    assert f"foreign={foreign_unit}@" in line
 
 def test_drift_across_sites_names_a_standalone_script_a_host_tool(
         tmp_path: Path) -> None:

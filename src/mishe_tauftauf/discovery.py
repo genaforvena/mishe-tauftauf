@@ -2588,8 +2588,12 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
         host_scope.append(unit)
         uninspectable.remove(unit)
 
-    if host_scope:
-        parts.append("host-scope=" + ",".join(sorted(host_scope)))
+    # The pane shortens a long sample at its tail (`seed_culture_views._clip_sample`),
+    # so the fields that decide this reading's state lead and the informational
+    # host-scope list trails them: a clipped `stale=` or `foreign=` would render as a
+    # reading the reader cannot explain.
+    if stale:
+        parts.append("stale=" + ",".join(f"{unit}@{Path(root).name}" for unit, root in sorted(stale.items())))
     if foreign:
         parts.append("foreign=" + ",".join(
             f"{unit}@{checkout_root.name}" for unit in sorted(foreign)))
@@ -2599,8 +2603,8 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
         parts.append("uninspectable=" + ",".join(uninspectable))
     if unpinned:
         parts.append("unpinned=" + ",".join(unpinned))
-    if stale:
-        parts.append("stale=" + ",".join(f"{unit}@{Path(root).name}" for unit, root in sorted(stale.items())))
+    if host_scope:
+        parts.append("host-scope=" + ",".join(sorted(host_scope)))
     state = "drift" if stale else "unknown" if unpinned or unattributed or uninspectable or foreign else "verified"
     return {"id": "sense.runtime.drift-across-sites", "state": state,
             "sample": " ".join(parts), "kind": "read",
