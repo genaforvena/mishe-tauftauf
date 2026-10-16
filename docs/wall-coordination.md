@@ -26,14 +26,14 @@ anchor the command fails closed rather than reading a same-named file from the
 shared directory or the working directory, so one role can never read another
 role's staged notes (class: genome's content on docs' wall, 2026-10-11). A
 relative `--file` with a directory component (`artifacts/…`, `walls/…`) keeps
-its working-directory meaning; an absolute path is never re-anchored. `seed
-yield --slug ROLE --file NOTES` resolves the same way, but fails closed when that
-anchor is not newer than the wall and differs from it: the notes a mind stages for a
-settle must be its current plate, and a stale anchor would otherwise overwrite a
-wall the mind edited directly on disk with the previous wake's text (class:
-android-body discover, wall reverted to a stale draft 2026-10-14). Re-stage the
-anchor, pass an explicit `--file` path, or `wall write` it first if the anchor
-really is your current plate. A wall write also updates
+its working-directory meaning; an absolute path is never re-anchored. Both `wall
+write --file NOTES` and `seed yield --slug ROLE --file NOTES` fail closed when
+that anchor is not newer than the wall and differs from it: the notes a mind
+stages must be its current plate, and an anchor left un-consumed by an earlier
+wake would otherwise overwrite the newer wall with the previous wake's text
+(class: android-body discover, wall reverted to a stale draft 2026-10-14;
+witness plate reverted to a wake 56136 draft 2026-10-16). Re-stage the anchor or
+pass an explicit `--file` path. A wall write also updates
 `SITE_HOME/handoffs/<role>.md` — the projection the launcher reads as CURRENT
 HANDOFF and one of the two files `seed yield` compares when re-settling a wake it
 already settled — so a wall edit can never leave a stale handoff behind (class:

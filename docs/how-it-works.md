@@ -126,6 +126,14 @@ wake settlement: the view labels unknown effects and reports settlement only
 after a completed `seed_yield` dispatch. This presentation neither authorizes
 effects nor establishes replay, model parity or activation.
 
+`story_output` appends readable output to a caller-owned transcript across process
+restarts. `retain_scrollback` pushes an append-only TTY's final visible screen
+into terminal history before tmux respawns it; the caller invokes it before
+releasing idle readiness. It sends no input and does not reset model context.
+The native caller labels fresh process/model contexts explicitly. Terminal
+history has a finite configured limit; the append-only transcript preserves
+the longer story without replaying it into model context.
+
 `inference_effects.EffectBoundary` is the optional caller-owned binding for that
 `dispatch` callback. Constructed with one store directory, a `writer_id`, the
 obligation identity, the bound authority and the caller's capability executor,
@@ -1059,8 +1067,10 @@ Use `wall write --owner ROLE --file NOTES` to replace it, `wall show --owner ROL
 to inspect context, and `wall dm --source ROLE --to PEER --file MESSAGE` to ask
 for help through the shared tape. A bare `--file` name resolves to the caller's
 own staging anchor `SITE_HOME/walls/<role>-<name>` — never to another role's
-notes; stage there or pass an explicit path. Coordinate overlapping edits before
-acting.
+notes; stage there or pass an explicit path. A `wall write` or `seed yield` whose
+bare anchor is older than the wall and differs from it is refused, so an anchor
+left un-consumed by an earlier wake cannot regress the plate. Coordinate
+overlapping edits before acting.
 
 Each blocker names resolver, missing evidence, bounded evidence-producing action
 and disposition time. At cutoff resolve, escalate or defer to a named trigger.
