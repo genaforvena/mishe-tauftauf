@@ -19,9 +19,10 @@ the deterministic parsing constraint and remaining migration debt. The operator
 dashboard keeps the current discussion and installed local commands beside the
 human's shell. A persistent supervisor restores its presentation after a restart
 and reports recoveries to health while preserving the human's running pane.
-Session startup waits for tmux itself to become available. Resident units use a
-per-site tmux socket, keeping each site's sessions isolated. Integration tests
-use a separate disposable tmux socket so their cleanup cannot close live panes.
+Session startup waits for tmux itself to become available. Resident units create
+their per-site tmux socket directory before launch and set `TMUX_TMPDIR`, keeping
+each site's sessions isolated. Integration tests use a separate disposable tmux
+socket so their cleanup cannot close live panes.
 
 The minds are `genome` (shared source and its CI), `health` (services, panes
 and observations), `witness` (contradictions and missed work), `discover`
