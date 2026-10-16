@@ -32,6 +32,14 @@ def test_dead_pane_is_red():
     row=current(); row["panes_live"]=False
     assert watch.assess(row,{"observed_at":100,"identity":"owned-id","changes":[]},105)["state"]=="RED"
 
+def test_tmux_command_failure_is_unknown_not_red():
+    """When tmux list-panes fails (returncode != 0), panes_live is None.
+    This must produce UNKNOWN (we don't know pane state), not RED (false alarm)."""
+    row=current(); row["panes_live"]=None
+    result = watch.assess(row,{"observed_at":100,"identity":"owned-id","changes":[]},105)
+    assert result["state"]=="UNKNOWN"
+    assert result["reason"]=="pane liveness check failed"
+
 
 def test_unreadable_dashboard_is_unknown():
     row=current(); row["dashboard_live"]=False
