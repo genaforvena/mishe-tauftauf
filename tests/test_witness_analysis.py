@@ -140,7 +140,9 @@ def test_wall_outcome_replaces_legacy_without_using_mutable_handoff(tmp_path):
     from mishe_tauftauf.witness_analysis import snapshot
     home, _ = site(tmp_path)
     legacy = Feed(home).append('seed', '[work] channel=witness wake=2\nHANDOFF:\nOld analysis')
-    evidence = home / 'evidence.txt'
+    evidence_dir = home / 'artifacts'
+    evidence_dir.mkdir()
+    evidence = evidence_dir / 'evidence.txt'
     evidence.write_text('measured result')
     report = outcome(home, 'witness', 'accepted', 'Current finding ' * 30, evidence)
     external = Feed(home).append('genome', 'New question')
@@ -165,7 +167,9 @@ def test_invalid_latest_outcome_is_unknown_not_stale_legacy(tmp_path, failure):
     from mishe_tauftauf.witness_analysis import snapshot
     home, _ = site(tmp_path)
     Feed(home).append('seed', '[work] channel=witness wake=2\nHANDOFF:\nOld analysis')
-    evidence = home / 'evidence.txt'
+    evidence_dir = home / 'artifacts'
+    evidence_dir.mkdir()
+    evidence = evidence_dir / 'evidence.txt'
     evidence.write_text('original result')
     latest = outcome(home, 'witness', 'hypothesis-changed', 'New finding', evidence)
     if failure == 'missing-reference':

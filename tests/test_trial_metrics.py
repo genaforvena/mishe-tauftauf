@@ -18,7 +18,9 @@ def site(tmp_path, monkeypatch):
 
 def test_metrics_count_only_in_window_outcomes_with_intact_evidence(tmp_path, monkeypatch):
     home = site(tmp_path, monkeypatch)
-    evidence = home / "evidence.txt"
+    evidence_dir = home / "artifacts"
+    evidence_dir.mkdir()
+    evidence = evidence_dir / "evidence.txt"
     evidence.write_text("bounded controlled comparison")
     start = datetime.now(timezone.utc)
     wall.outcome(home, "discover", "hypothesis-changed", "Changed the next experiment.", evidence)
