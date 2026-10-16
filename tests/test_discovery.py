@@ -2066,6 +2066,121 @@ def test_pin_lag_served_staleness_error_reads_unknown(tmp_path, monkeypatch):
     assert result["stale_sense_ids"] is None
 
 
+def _rewind_git(monkeypatch, *, reflog: str, dropped: set[str], applies: dict) -> None:
+    """Fake git for the head-rewind sense: reflog text, reachability, tree, paths, patches."""
+
+    def mock_run(cmd, **kwargs):
+        if cmd[:2] == ["git", "reflog"]:
+            return subprocess.CompletedProcess(cmd, 0, reflog, "")
+        if cmd[:3] == ["git", "merge-base", "--is-ancestor"]:
+            return subprocess.CompletedProcess(cmd, 0 if cmd[3] not in dropped else 1, "", "")
+        if cmd[:2] == ["git", "archive"]:
+            return subprocess.CompletedProcess(cmd, 0, b"", "")
+        if cmd[:2] == ["git", "diff-tree"]:
+            return subprocess.CompletedProcess(cmd, 0, applies["paths"], "")
+        if cmd[:2] == ["git", "show"]:
+            return subprocess.CompletedProcess(cmd, 0, f"PATCH {cmd[-1]}", "")
+        raise AssertionError(f"unexpected git command: {cmd}")
+
+    monkeypatch.setattr(discovery.subprocess, "run", mock_run)
+    monkeypatch.setattr(discovery.tarfile, "open", lambda **kwargs: _MockTar())
+    monkeypatch.setattr(discovery, "_applies",
+                        lambda tree, patch, *, reverse: applies["verdicts"][(patch, reverse)])
+
+
+class _MockTar:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+    def extractall(self, path, filter=None):
+        pass
+
+
+def test_head_rewinds_with_no_dropped_commit_reads_verified(tmp_path, monkeypatch):
+    home = tmp_path / "site"
+    home.mkdir()
+    _rewind_git(monkeypatch, reflog=f"{'a' * 40} reset: moving to HEAD~1\n",
+                dropped=set(), applies={"paths": "", "verdicts": {}})
+    result = discovery._head_rewinds(home)
+    assert result["state"] == "verified"
+    assert result["sample"] == "dropped=0"
+    assert result["dropped"] == 0
+
+
+def test_head_rewinds_present_change_reads_lossless(tmp_path, monkeypatch):
+    home = tmp_path / "site"
+    home.mkdir()
+    sha = "b" * 40
+    _rewind_git(monkeypatch, reflog=f"{sha} reset: moving to HEAD~1\n", dropped={sha},
+                applies={"paths": "src/a.py\n",
+                         "verdicts": {("PATCH src/a.py", True): True,
+                                      ("PATCH src/a.py", False): False}})
+    result = discovery._head_rewinds(home)
+    assert result["state"] == "verified"
+    assert result["sample"] == "dropped=1 lossless=1 needs_review=0 absent=0"
+
+
+def test_head_rewinds_absent_change_reads_drift(tmp_path, monkeypatch):
+    home = tmp_path / "site"
+    home.mkdir()
+    sha = "b" * 40
+    _rewind_git(monkeypatch, reflog=f"{sha} reset: moving to HEAD~1\n", dropped={sha},
+                applies={"paths": "src/a.py\n",
+                         "verdicts": {("PATCH src/a.py", True): False,
+                                      ("PATCH src/a.py", False): True}})
+    result = discovery._head_rewinds(home)
+    assert result["state"] == "drift"
+    assert result["sample"] == "dropped=1 lossless=0 needs_review=0 absent=1"
+
+
+def test_head_rewinds_recommitted_change_is_its_own_verdict(tmp_path, monkeypatch):
+    """A path that applies neither way is needs-review, never folded into lossless."""
+    home = tmp_path / "site"
+    home.mkdir()
+    sha = "b" * 40
+    _rewind_git(monkeypatch, reflog=f"{sha} reset: moving to HEAD~1\n", dropped={sha},
+                applies={"paths": "src/a.py\nsrc/b.py\n",
+                         "verdicts": {("PATCH src/a.py", True): False,
+                                      ("PATCH src/a.py", False): False,
+                                      ("PATCH src/b.py", True): True,
+                                      ("PATCH src/b.py", False): False}})
+    result = discovery._head_rewinds(home)
+    assert result["state"] == "drift"
+    assert result["sample"] == "dropped=1 lossless=1 needs_review=1 absent=0"
+
+
+def test_head_rewinds_unreadable_reflog_reads_unknown(tmp_path, monkeypatch):
+    home = tmp_path / "site"
+    home.mkdir()
+
+    def mock_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 1, "", "fatal: bad revision")
+
+    monkeypatch.setattr(discovery.subprocess, "run", mock_run)
+    result = discovery._head_rewinds(home)
+    assert result["state"] == "unknown"
+    assert result["sample"] == "reflog unreadable"
+
+
+def test_head_rewinds_bounds_dropped_commits_and_paths(tmp_path, monkeypatch):
+    """The reflog window and per-commit path cap keep an unbounded rewind cheap."""
+    home = tmp_path / "site"
+    home.mkdir()
+    shas = ["b" * 40, "c" * 40, "d" * 40, "e" * 40, "f" * 40]
+    reflog = "".join(f"{sha} reset: moving to HEAD~1\n" for sha in shas)
+    _rewind_git(monkeypatch, reflog=reflog, dropped=set(shas),
+                applies={"paths": "".join(f"src/f{i}.py\n" for i in range(99)),
+                         "verdicts": {(f"PATCH src/f{i}.py", True): False
+                                      for i in range(99)} | {
+                             (f"PATCH src/f{i}.py", False): False for i in range(99)}})
+    result = discovery._head_rewinds(home)
+    assert result["dropped"] == discovery._HEAD_REWIND_COMMIT_LIMIT
+    assert result["needs_review"] == discovery._HEAD_REWIND_COMMIT_LIMIT * discovery._HEAD_REWIND_PATH_LIMIT
+
+
 def _fake_git_show(checkout: Path):
     """A ``git show <sha>:<rel>`` handler serving the worktree file under ``checkout``."""
     def _run(cmd):
