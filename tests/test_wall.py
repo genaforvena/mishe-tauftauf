@@ -333,17 +333,36 @@ def test_wall_write_refuses_a_stale_staging_anchor_that_would_regress_the_wall(t
     assert code == 2
     assert wall_path.read_text(encoding="utf-8") == "PLATE B: current plate.\n"
 
-def test_wall_write_refusal_audits_to_wall_write_audit_jsonl(tmp_path, monkeypatch):
+def test_wall_write_refusal_audits_to_wall_write_audit_jsonl(tmp_path):
     """A refused stale-anchor write leaves a durable audit record.
 
     The refusal is visible only to the mind's pane (stdout/stderr); without a
     durable log line the same shape as the stale-module class (a live defect
-    with no recurrence record) recurs silently. This test verifies that
-    ``_audit_refusal`` writes to ``logs/wall-write-audit.jsonl`` with role,
-    source, wall, both mtimes, and the refusal reason.
+    with no recurrence record) recurs silently. This test drives the real
+    refusal and verifies that ``_audit_refusal`` writes to
+    ``logs/wall-write-audit.jsonl`` with role, source, wall, both mtimes, and
+    the refusal reason.
     """
-    monkeypatch.setenv("MISHE_SEED_HOME", str(tmp_path))
     setup_wall(tmp_path)
+    from mishe_tauftauf import cli
+    (tmp_path / "walls").mkdir()
+    anchor = tmp_path / "walls" / "genome-NOTES"
+    anchor.write_text("PLATE A: leaked from an earlier wake.\n", encoding="utf-8")
+    wall_path = tmp_path / "walls" / "genome.md"
+    wall_path.write_text("PLATE B: current plate.\n", encoding="utf-8")
+    os.utime(anchor, (1_700_000_000, 1_700_000_000))
+    os.utime(wall_path, (1_700_000_100, 1_700_000_100))
+    code = cli.main(["--home", str(tmp_path), "wall", "write", "--owner", "genome", "--file", "NOTES"])
+    assert code == 2
+    audit_path = tmp_path / "logs" / "wall-write-audit.jsonl"
+    assert audit_path.is_file()
+    entry = json.loads(audit_path.read_text(encoding="utf-8").splitlines()[-1])
+    assert entry["role"] == "genome"
+    assert entry["source"] == str(anchor)
+    assert entry["wall"].endswith("walls/genome.md")
+    assert entry["reason"] == "stale-staging-anchor"
+    assert entry["source_mtime"] == "2023-11-14T22:13:20+00:00"
+    assert entry["wall_mtime"] == "2023-11-14T22:15:00+00:00"
 
 
 def test_wall_write_accepts_a_staging_anchor_newer_than_the_wall(tmp_path):
