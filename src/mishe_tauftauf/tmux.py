@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from .observations import FOOTER_LEASE_RE, discover, strip_owned_chrome
-from .proc_table import children_by_parent, pane_pids, window_names
+from .proc_table import children_by_parent, pane_pids
 
 OWNED_OPTION = "@mishe-tauftauf-home"
 _LAST_REPAIR: dict[tuple[str, str], float] = {}
@@ -27,31 +27,63 @@ def _default_socket() -> str:
 
 
 def _socket_for_home(home: Path) -> str:
-    """The per-site tmux socket for a home, independent of inherited TMUX_TMPDIR.
+    """The per-site tmux socket for a home, honoring inherited TMUX_TMPDIR.
 
-    The socket is a function of the home alone. An ambient TMUX_TMPDIR — a
-    drop-in, a test harness, a foreign shell — must not redirect this home's
-    probes to another site's socket: a drop-in pointing TMUX_TMPDIR at the
-    core site made owns_session hold a live linked site forever
-    (android-body kernel-sync-6868441d20a6 held every 60s with "tmux session
+    Mirrors seed._new_session's derivation (site-root TMUX_TMPDIR, else the
+    per-site default under /tmp); duplicated here to avoid a circular import.
+    """
+    tmux_tmpdir = os.environ.get("TMUX_TMPDIR") or str(Path("/tmp") / f"tmux-{os.getuid()}" / home.parent.name)
+    return str(Path(tmux_tmpdir) / f"tmux-{os.getuid()}" / "default")
+
+
+def _site_socket(home: Path) -> str:
+    """The socket of ``home``'s own site root, derived from the home alone.
+
+    The ambient socket is the *caller's* site root, so a process carrying
+    another site's TMUX_TMPDIR cannot reach a target home through
+    :func:`_socket_for_home`: the coordinator unit's drop-in set it to the core
+    root, so every probe of a linked home derived the core socket and held a
+    live site every 60 s (android-body kernel-sync-6868441d20a6: "tmux session
     is not owned by linked site").
     """
     uid = os.getuid()
     return str(Path("/tmp") / f"tmux-{uid}" / home.parent.name / f"tmux-{uid}" / "default")
 
 
-def _session_socket(home: Path, session: str) -> str | None:
-    """The socket hosting ``session``: this home's own, else the legacy default.
+def _socket_candidates(home: Path) -> tuple[str, ...]:
+    """Every socket that may host a home's session, the caller's own first."""
+    return tuple(dict.fromkeys((_socket_for_home(home), _default_socket(), _site_socket(home))))
 
-    Probing only the ambient socket (the old behaviour) read a live owned
-    session on the site socket as absent whenever an inherited TMUX_TMPDIR
-    pointed elsewhere, so the supervisor raised a replacement whose supersede
-    step then cgroup-killed the real keeper (android-body/health 60386).
+
+def _recorded_owner(result: subprocess.CompletedProcess[bytes]) -> str | None:
+    """The owner a ``show-option`` probe recorded, or None when it did not answer."""
+    if result.returncode != 0:
+        return None
+    return result.stdout.decode().strip() or None
+
+
+def owned_socket(home: Path, session: str) -> str | None:
+    """The socket whose session records ``home`` as its owner, or None.
+
+    The caller's own socket is probed first, so the documented site-root
+    contract and the test harness are unchanged, and the legacy default stays
+    reachable for records raised before per-site sockets existed. The home's
+    own site socket is the last authority: a caller that carries a *foreign*
+    TMUX_TMPDIR — the release coordinator under its unit drop-in — finds there
+    the session its target owns instead of holding a live site forever.
+
+    Callers that write (kill, respawn, raise) must act on the socket this
+    returns, never on the ambient one, or a verified ownership could be
+    followed by a write to another site's server.
     """
-    for socket in dict.fromkeys((_socket_for_home(home), _default_socket())):
-        if _tmux("has-session", "-t", session, check=False, socket=socket).returncode == 0:
+    wanted = str(home.resolve())
+    for socket in _socket_candidates(home):
+        result = _tmux("show-option", "-qv", "-t", session, OWNED_OPTION, check=False, socket=socket)
+        if _recorded_owner(result) == wanted:
             return socket
     return None
+
+
 def session_owner(session: str, home: Path | None = None) -> str | None:
     """The home recorded on the session, or None while it is unset or absent.
 
@@ -59,16 +91,23 @@ def session_owner(session: str, home: Path | None = None) -> str | None:
     way ``_new_session`` derives the socket) so callers that already hold a
     home do not need to set TMUX_TMPDIR.  Without ``home`` the behaviour is
     unchanged: an inherited TMUX_TMPDIR or the default socket is used.
+
+    This stays ambient on purpose: a caller that may carry another site's
+    TMUX_TMPDIR uses :func:`owned_socket` instead, so no reader here can
+    disagree with a writer about which server it is talking to.
     """
     if home is None:
-        result = _tmux("show-option", "-qv", "-t", session, OWNED_OPTION, check=False, socket=_default_socket())
+        result = _tmux("show-option", "-qv", "-t", session, OWNED_OPTION, check=False)
     else:
-        result = _tmux("show-option", "-qv", "-t", session, OWNED_OPTION, check=False, socket=_socket_for_home(home))
+        socket = _socket_for_home(home)
+        result = _tmux("show-option", "-qv", "-t", session, OWNED_OPTION, check=False, socket=socket)
+        # Fall back to the inherited/common socket when the home-derived server
+        # does not contain this session (e.g. tests and legacy records). A live
+        # server answers a missing session with rc=0 and empty output, so the
+        # fallback must fire on either signal.
         if result.returncode != 0 or not result.stdout:
-            result = _tmux("show-option", "-qv", "-t", session, OWNED_OPTION, check=False, socket=_default_socket())
-    if result.returncode != 0:
-        return None
-    return result.stdout.decode().strip() or None
+            result = _tmux("show-option", "-qv", "-t", session, OWNED_OPTION, check=False)
+    return _recorded_owner(result)
 
 
 def owns_session(home: Path, session: str) -> bool:
@@ -121,10 +160,9 @@ def await_owned(home: Path, session: str, timeout: float = 15.0) -> bool:
 
 
 def start(home: Path, session: str = "mishe-tauftauf", interval: float = 5.0) -> None:
-    socket = _socket_for_home(home)
-    if _tmux("has-session", "-t", session, check=False, socket=socket).returncode != 0:
-        _tmux("new-session", "-d", "-s", session, "-n", "bootstrap", socket=socket)
-        _tmux("set-option", "-t", session, OWNED_OPTION, str(home.resolve()), socket=socket)
+    if _tmux("has-session", "-t", session, check=False).returncode != 0:
+        _tmux("new-session", "-d", "-s", session, "-n", "bootstrap")
+        _tmux("set-option", "-t", session, OWNED_OPTION, str(home.resolve()))
     elif not await_owned(home, session):
         raise TmuxError(f"session {session!r} exists but is not owned by {home}")
     command = _python_command(home, "--home", str(home), "pain", "watch")
@@ -134,18 +172,18 @@ def start(home: Path, session: str = "mishe-tauftauf", interval: float = 5.0) ->
         slugs = discover(home)
     for slug in slugs:
         target = f"{session}:{slug}"
-        if slug not in window_names(_tmux("list-windows", "-t", session, "-F", "#{window_name}", check=False, socket=socket).stdout):
-            _tmux("new-window", "-d", "-t", session, "-n", slug, "sh", socket=socket)
-            _tmux("set-option", "-p", "-t", f"{target}.0", "remain-on-exit", "on", socket=socket)
-            _tmux("split-window", "-v", "-t", target, "sh", "-c", "printf 'Mind surface ready\\n'; exec sh", socket=socket)
-            _tmux("respawn-pane", "-k", "-t", f"{target}.0", *command, slug, "--interval", str(interval), socket=socket)
-        _pane_list = _tmux("list-panes", "-t", target, "-F", "#{pane_index}", socket=socket)
-        if 1 not in pane_pids(_pane_list.stdout):
-            _tmux("split-window", "-v", "-t", target, "sh", "-c", "printf 'Mind surface ready\\n'; exec sh", socket=socket)
-        _tmux("set-option", "-p", "-t", f"{target}.1", "remain-on-exit", "on", socket=socket)
-        _tmux("select-layout", "-t", target, "even-vertical", socket=socket)
-    if "bootstrap" in window_names(_tmux("list-windows", "-t", session, "-F", "#{window_name}", socket=socket).stdout) and slugs:
-        _tmux("kill-window", "-t", f"{session}:bootstrap", socket=socket)
+        if _tmux("list-windows", "-t", session, "-F", "#{window_name}", check=False).stdout.decode().splitlines().count(slug) == 0:
+            _tmux("new-window", "-d", "-t", session, "-n", slug, "sh")
+            _tmux("set-option", "-p", "-t", f"{target}.0", "remain-on-exit", "on")
+            _tmux("split-window", "-v", "-t", target, "sh", "-c", "printf 'Mind surface ready\\n'; exec sh")
+            _tmux("respawn-pane", "-k", "-t", f"{target}.0", *command, slug, "--interval", str(interval))
+        panes = _tmux("list-panes", "-t", target, "-F", "#{pane_index}").stdout.decode().splitlines()
+        if "1" not in panes:
+            _tmux("split-window", "-v", "-t", target, "sh", "-c", "printf 'Mind surface ready\\n'; exec sh")
+        _tmux("set-option", "-p", "-t", f"{target}.1", "remain-on-exit", "on")
+        _tmux("select-layout", "-t", target, "even-vertical")
+    if "bootstrap" in _tmux("list-windows", "-t", session, "-F", "#{window_name}").stdout.decode().splitlines() and slugs:
+        _tmux("kill-window", "-t", f"{session}:bootstrap")
 
 
 def _install_observability(home: Path, session: str) -> None:
@@ -177,12 +215,11 @@ fi
 
 
 def stop(home: Path, session: str = "mishe-tauftauf") -> None:
-    socket = _socket_for_home(home)
-    if _tmux("has-session", "-t", session, check=False, socket=socket).returncode != 0:
+    if _tmux("has-session", "-t", session, check=False).returncode != 0:
         return
     if not owns_session(home, session):
         raise TmuxError(f"refusing to remove unowned session {session!r}")
-    _tmux("kill-session", "-t", session, socket=socket)
+    _tmux("kill-session", "-t", session)
 
 def list_sessions(socket: str | None = None) -> list[str]:
     """All session names on a specific tmux socket (or default), or [] when tmux is missing."""

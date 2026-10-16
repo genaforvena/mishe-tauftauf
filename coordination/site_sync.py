@@ -17,7 +17,7 @@ from mishe_tauftauf.ci_watch import latest, read
 from mishe_tauftauf.feed import Feed
 from mishe_tauftauf.observations import FOOTER_LEASE_RE
 from mishe_tauftauf.task_state import states as task_states
-from mishe_tauftauf.tmux import _socket_for_home, _tmux, owns_session
+from mishe_tauftauf.tmux import _socket_for_home, _tmux, owned_socket
 
 KERNEL = Path(__file__).resolve().parents[1]
 # Mind panes the refresh must find alive, and whose top-pane leases must advance.
@@ -128,7 +128,7 @@ def _target_state(home: Path, session: str, *, runtime_only: bool = False) -> No
     marker_words = marker.read_text(encoding="utf-8").split() if marker.is_file() else []
     if not marker_words or marker_words[0] != session:
         raise RuntimeError(f"linked site marker does not match {session}: {home}")
-    if not owns_session(home, session):
+    if owned_socket(home, session) is None:
         raise RuntimeError(f"tmux session is not owned by linked site: {session}")
     dirty = _git(workspace, "status", "--porcelain")
     if dirty and not runtime_only:
@@ -142,9 +142,12 @@ def _target_state(home: Path, session: str, *, runtime_only: bool = False) -> No
 def _verify(home: Path, session: str) -> None:
     """Check a linked site's panes, feed, services and pin before recording it.
 
-    Every tmux read is scoped to the target's per-site socket: the coordinator
-    unit sets only PYTHONPATH (no TMUX_TMPDIR), so an unscoped read queries the
-    core's default socket and holds a live linked site forever.
+    Every tmux read is scoped to the socket that actually hosts the target's
+    session: an unscoped read queries the coordinator's own socket and holds a
+    live linked site forever. The coordinator unit sets only PYTHONPATH, but a
+    drop-in that hands it the core root's TMUX_TMPDIR makes the ambient socket
+    the core's, so the target's own socket is the last authority
+    (android-body kernel-sync-6868441d20a6 held every 60 s).
 
     The checks are ordered cheapest-first so a hold names the first defect. The
     lease read tolerates one full renderer frame (:data:`RENDERER_FRAME`): a
@@ -155,7 +158,7 @@ def _verify(home: Path, session: str) -> None:
     that stops after a good read by the advancing check — and both stay bounded.
     """
     expected = set(json.loads((home / "health" / "windows.json").read_text(encoding="utf-8")))
-    socket = _socket_for_home(home)
+    socket = owned_socket(home, session) or _socket_for_home(home)
     result = _tmux("list-panes", "-s", "-t", session,
                    "-F", "#{window_name} #{pane_index} #{pane_dead}", socket=socket)
     panes = {}
@@ -313,10 +316,12 @@ def sync_registered_sites(core_home: Path, ci: dict[str, str], *, runtime_only: 
                 env = os.environ.copy()
                 env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
                 # The plant subprocess must see the target's per-site tmux
-                # socket the same way the site's own services do: the unit
-                # environment carries TMUX_TMPDIR, the coordinator's does not.
-                # Without it every unscoped _tmux read in seed.start and the
-                # mind-pane ensure paths queries the core's default socket.
+                # socket the same way the site's own services do. The
+                # coordinator's own socket may be a foreign site root (its unit
+                # drop-in hands it the core's), so the target root is pinned
+                # here regardless: without it every unscoped _tmux read in
+                # seed.start and the mind-pane ensure paths queries the core's
+                # socket.
                 from mishe_tauftauf.plant import _site_tmux_tmpdir
                 env["TMUX_TMPDIR"] = str(_site_tmux_tmpdir(target))
                 env["PYTHONPATH"] = os.pathsep.join(

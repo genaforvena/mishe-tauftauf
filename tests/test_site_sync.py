@@ -66,7 +66,7 @@ def setup_sites(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
     (target / ".seed-raised").write_text("example $2\n", encoding="utf-8")
     monkeypatch.setattr(site_sync, "_docs_only_delta", lambda _baseline, _sha: False)
     monkeypatch.setattr(site_sync, "KERNEL", kernel)
-    monkeypatch.setattr(site_sync, "owns_session", lambda _home, _session: True)
+    monkeypatch.setattr(site_sync, "owned_socket", lambda home, _session: site_sync._socket_for_home(home))
     monkeypatch.setattr(site_sync, "Feed", FakeFeed)
     monkeypatch.setattr(site_sync, "_release_source", lambda _home, _sha: kernel.parent / "release")
     FakeFeed.events = []
@@ -515,6 +515,56 @@ def test_verify_scopes_tmux_reads_to_the_targets_per_site_socket(tmp_path: Path,
     monkeypatch.setattr(site_sync, "_tmux", lambda *args, **kwargs: captured.append(kwargs) or tmux(*args, **kwargs))
     site_sync._leases("example", {"genome"}, socket=site_sync._socket_for_home(target))
     assert captured and captured[0]["socket"] == site_sync._socket_for_home(target)
+
+
+def test_verify_reads_the_site_socket_under_a_foreign_tmux_tmpdir(tmp_path: Path, monkeypatch) -> None:
+    # The coordinator unit's reboot-recovery drop-in (2026-10-16T12:25Z) sets
+    # TMUX_TMPDIR to the *core* root, so the ambient socket is the core's for
+    # every linked home. The target's own socket is the last authority: without
+    # it, android-body's live session read as unowned every 60s
+    # (kernel-sync-6868441d20a6 "tmux session is not owned by linked site").
+    _core_home, target = setup_sites(tmp_path, monkeypatch)
+    (target / "health").mkdir()
+    (target / "health" / "windows.json").write_text('["genome"]', encoding="utf-8")
+    (target / "health" / "services.json").write_text("[]", encoding="utf-8")
+    (target / "chat.log").write_text("", encoding="utf-8")
+    rows = [f"{name} 0 0" for name in site_sync.ROLES]
+    rows += [f"{name} 1 0" for name in site_sync.ROLES]
+    site_socket = f"/tmp/tmux-{os.getuid()}/{target.parent.name}/tmux-{os.getuid()}/default"
+    core_root = f"/tmp/tmux-{os.getuid()}/mishe-tauftauf"
+    calls = []
+
+    def tmux(*args, **kwargs):
+        calls.append((args, kwargs))
+        if args[0] == "show-option":
+            # Only the target's own socket records this linked home as owner.
+            if kwargs.get("socket") == site_socket:
+                return subprocess.CompletedProcess([], 0, str(target.resolve()).encode(), b"")
+            return subprocess.CompletedProcess([], 1, b"", b"")
+        if args[0] == "list-panes":
+            return subprocess.CompletedProcess([], 0, "\n".join(rows).encode(), b"")
+        stamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        return subprocess.CompletedProcess(
+            [], 0, f"-- pane live {stamp} · refresh 5s · ticks every frame --\n".encode(), b"")
+
+    from mishe_tauftauf import tmux as tmux_module
+
+    # owned_socket lives in tmux.py and probes through that module's _tmux, so
+    # both seams are mocked and the shared setup's own resolver is replaced by
+    # the real one; otherwise a real show-option decides the socket.
+    monkeypatch.setattr(tmux_module, "_tmux", tmux)
+    monkeypatch.setattr(site_sync, "_tmux", tmux)
+    monkeypatch.setattr(site_sync, "owned_socket", tmux_module.owned_socket)
+    monkeypatch.setattr(site_sync.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(site_sync, "_leases", lambda _session, leased, **_kwargs: {
+        name: datetime.now(timezone.utc) for name in leased})
+    with mock.patch.dict(site_sync.os.environ, {"TMUX_TMPDIR": core_root}):
+        assert site_sync.owned_socket(target, "example") == site_socket
+        site_sync._verify(target, "example")
+
+    reads = [kwargs["socket"] for args, kwargs in calls
+             if args[0] in ("list-panes", "capture-pane") and "socket" in kwargs]
+    assert reads and all(socket == site_socket for socket in reads)
 
 def test_sync_verifies_every_planted_mind_role() -> None:
     # The verified mind set must cover every chartered mind the plant launches;
