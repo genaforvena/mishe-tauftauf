@@ -668,8 +668,8 @@ includes gravity; it is device evidence, not a human movement, presence or
 continuous-carrying claim. The human's carrying context remains contextual, not
 sensor-certified.
 
-The source cursor remains in structured provenance and the pane's source-limits
-detail. The served pin's `UNKNOWN sense.body.redmi10` row can also expose its
+The source cursor remains in structured provenance and the pane's source-limits detail.
+The served pin's `UNKNOWN sense.body.redmi10` row can also expose its cursor.
 The checkout redacts that cursor token before hashing (`be8ec0b`), and its
 producer sample no longer carries one (`522f6da`), so on checkout bytes the
 digest-bound pane row holds no cursor token and the cursor-redaction rule is
