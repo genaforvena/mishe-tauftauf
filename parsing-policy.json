@@ -23,7 +23,8 @@
     "src/mishe_tauftauf/space_text.py",
     "tools/check_docs_command_names.py",
     "tools/check_parsing.py",
-    "tools/check_leaf_invocation_coverage.py"
+    "tools/check_leaf_invocation_coverage.py",
+    "tools/check_session_watch_routing.py"
   ],
   "legacy": {
     "coordination/launcher.py": {
