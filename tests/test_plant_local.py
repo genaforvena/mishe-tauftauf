@@ -572,6 +572,45 @@ def test_manifest_windows_empty_when_corrupt(tmp_path: Path) -> None:
     assert plant._manifest_windows(home) == []
 
 
+def test_renderer_windows_names_a_site_view_window(tmp_path: Path) -> None:
+    """A manifest view window with a top-pain is refreshed; tail and operator are not."""
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "top-pains").mkdir()
+    (home / "health" / "windows.json").write_text(
+        json.dumps(["ledger", "tail", "operator", "health"]) + "\n", encoding="utf-8")
+    for name in ("ledger", "operator", "health"):
+        (home / "top-pains" / name).write_text("renderer")
+    assert plant.renderer_windows(home) == {"ledger", "health"}
+
+
+def test_renderer_windows_empty_without_a_manifest(tmp_path: Path) -> None:
+    assert plant.renderer_windows(tmp_path / "site") == set()
+
+
+def test_refresh_slugs_skips_a_closed_manifest_view_window(tmp_path: Path) -> None:
+    """A stale manifest entry must skip, not abort: respawn-pane exits 1 when it is gone."""
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "top-pains").mkdir()
+    (home / "health" / "windows.json").write_text(
+        json.dumps(["ledger", "closed-view", "tail"]) + "\n", encoding="utf-8")
+    for name in ("ledger", "closed-view"):
+        (home / "top-pains" / name).write_text("renderer")
+    live = {"ledger", "tail", "health", "genome"}
+    assert plant.refresh_slugs(home, live) == ["genome", "health", "ledger"]
+
+
+def test_refresh_slugs_keeps_a_declared_resident_the_manifest_omits(tmp_path: Path) -> None:
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "charters").mkdir()
+    (home / "minds").mkdir()
+    (home / "charters" / "custom.md").write_text("charter\n", encoding="utf-8")
+    (home / "minds" / "custom").write_text("launcher\n", encoding="utf-8")
+    assert plant.refresh_slugs(home, {"custom", "health"}) == ["custom", "health"]
+
+
 def test_expected_windows_drops_a_retired_name_and_keeps_a_live_extra() -> None:
     required = {"operator", "health", "genome"}
     previous = ["operator", "codex", "tail", "genome"]

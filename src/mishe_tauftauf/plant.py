@@ -66,6 +66,42 @@ def _manifest_windows(home: Path) -> list[str]:
         return []
 
 
+def renderer_windows(home: Path) -> set[str]:
+    """Site view windows whose upper pane renders a ``top-pains/<name>`` dashboard.
+
+    ``_manifest_windows`` records every window a site relies on, but the
+    refresh loop named only roles, ``permissions`` and site-declared residents,
+    so a view window that is neither (``ledger``) kept the release it was
+    started with across every pin advance. Its renderer then imported a
+    superseded byte-set while ``top-pains/<name>`` documented it as the pin, and
+    no reading showed it: the RUNTIME line reads systemd's configured
+    ``Environment`` (units only) and the pane lease proves only that the
+    renderer is advancing. The ``operator`` window is excluded because
+    ``operator_view.ensure`` installs and respawns its dashboard on the pin
+    itself. An unreadable site returns an empty set.
+    """
+    try:
+        return {name for name in _manifest_windows(home)
+                if name != "operator" and (home / "top-pains" / name).is_file()}
+    except OSError:
+        return set()
+
+
+def refresh_slugs(home: Path, live: set[str]) -> list[str]:
+    """Windows whose upper renderer pane the plant respawns on the pin.
+
+    ``health/windows.json`` is rewritten only at the end of a plant, so between
+    plants it can name a view window the site has since closed. ``respawn-pane``
+    exits non-zero for a missing window and the default ``check=True`` would
+    then abort the plant before that rewrite, wedging every later plant on the
+    same stale name. Intersecting with the live window set skips such a name
+    instead of raising; a role, ``permissions`` or site-declared resident is
+    recreated earlier in the plant, so the intersection never drops one.
+    """
+    return sorted({*ROLES, "permissions", *site_declared_roles(home),
+                   *renderer_windows(home)} & live)
+
+
 def _expected_windows(required: set[str], previous: list[str], live: set[str]) -> list[str]:
     """Expected windows to record for the health check after a plant.
 
@@ -464,7 +500,13 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
         from .runtime_source import source_for
         source = source_for(home, ROOT)
         # Refresh only upper evidence panes. Running lower minds retain their work.
-        for slug in (*ROLES, "permissions", *site_declared_roles(home)):
+        # Every window that renders a top-pain is refreshed, not just the roles:
+        # a view window (``ledger``) that is neither a role nor a site-declared
+        # resident would otherwise keep the release it was started with while
+        # ``top-pains/<name>`` documented the pin.
+        refresh = refresh_slugs(home, set(_tmux(
+            "list-windows", "-t", session, "-F", "#{window_name}").stdout.decode().splitlines()))
+        for slug in refresh:
             _tmux("respawn-pane", "-k", "-t", f"{session}:{slug}.0", "env",
                   f"MISHE_SEED_SESSION={session}", f"PYTHONPATH={source / 'src'}",
                   sys.executable, "-m", "mishe_tauftauf", "--home", str(home),

@@ -1390,6 +1390,75 @@ def test_dashboard_runtime_drift_downgrades_the_state_line(tmp_path, monkeypatch
     assert "STATE: GREEN" not in drifted
 
 
+def test_renderer_bytes_names_a_superseded_release(tmp_path, monkeypatch):
+    """The measured ledger drift: pin 1543b3a, live d7bf4e4, every reading GREEN."""
+    from mishe_tauftauf import runtime_source, wall_view
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "top-pains").mkdir()
+    (home / "health/windows.json").write_text(json.dumps(["ledger", "tail"]))
+    (home / "top-pains/ledger").write_text("renderer")
+    pinned_path = (tmp_path / "releases/pin").resolve()
+    pinned = str(pinned_path)
+    old = str((tmp_path / "releases/old").resolve())
+    monkeypatch.setenv("MISHE_SEED_SESSION", "owned")
+    monkeypatch.setattr(runtime_source, "source_for", lambda h, default: pinned_path)
+    monkeypatch.setattr(wall_view, "_renderer_pids", lambda session: {"ledger": 4242})
+    monkeypatch.setattr(wall_view, "_live_import_roots", lambda pid: [pinned])
+    lines, state = wall_view.renderer_bytes_lines(home)
+    assert state == "GREEN" and "renderers=1" in lines[0]
+    # ``tail`` carries no top-pain, so it is not a renderer and not checked.
+    monkeypatch.setattr(wall_view, "_live_import_roots", lambda pid: [old])
+    lines, state = wall_view.renderer_bytes_lines(home)
+    assert state == "DRIFT" and "ledger" in lines[0] and old in lines[0]
+    # A renderer whose process cannot be read is UNKNOWN, never silently GREEN.
+    monkeypatch.setattr(wall_view, "_renderer_pids", lambda session: {})
+    lines, state = wall_view.renderer_bytes_lines(home)
+    assert state == "UNKNOWN" and "ledger" in lines[0]
+    monkeypatch.setattr(wall_view, "_renderer_pids", lambda session: {"ledger": 4242})
+    monkeypatch.setattr(wall_view, "_live_import_roots", lambda pid: None)
+    lines, state = wall_view.renderer_bytes_lines(home)
+    assert state == "UNKNOWN" and "ledger" in lines[0]
+
+
+def test_live_import_roots_keeps_unreadable_distinct_from_no_pythonpath(monkeypatch, tmp_path):
+    """``proc_table`` decodes; only the read/unreadable split is wall_view's."""
+    import pathlib
+    from mishe_tauftauf import wall_view
+    environ = tmp_path / "environ"
+    environ.write_bytes(b"HOME=/root\0PYTHONPATH=/site/releases/abc/src\0")
+    absent = tmp_path / "absent"
+    monkeypatch.setattr(wall_view, "Path",
+                        lambda *a: environ if a[0] == "/proc" else pathlib.Path(*a))
+    assert wall_view._live_import_roots(1) == ["/site/releases/abc"]
+    # A readable process that names no PYTHONPATH is empty, not unreadable.
+    environ.write_bytes(b"HOME=/root\0")
+    assert wall_view._live_import_roots(1) == []
+    monkeypatch.setattr(wall_view, "Path",
+                        lambda *a: absent if a[0] == "/proc" else pathlib.Path(*a))
+    assert wall_view._live_import_roots(1) is None
+
+
+def test_health_state_folds_renderer_byte_drift(tmp_path, monkeypatch):
+    from mishe_tauftauf import wall_view
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    monkeypatch.setattr(wall_view, "ci_line", lambda *a: "CI: PASS")
+    monkeypatch.setattr(wall_view, "_service_block", lambda h: (
+        [], {}, "GREEN — listed services running; CI reported separately"))
+    monkeypatch.setattr(wall_view, "_runtime_state", lambda *a, **k: ("MATCH", "RUNTIME: pin=x MATCH"))
+    monkeypatch.setattr(wall_view, "pane_lease_lines", lambda h: (
+        ["PANE LEASE: GREEN 12 renderers advancing"], "GREEN"))
+    monkeypatch.setattr(wall_view, "renderer_bytes_lines", lambda h: (
+        ["RENDERER BYTES: RED pin=x stale=ledger(live=y)"], "DRIFT"))
+    text = wall_view.render(home, "health")
+    assert "RENDERER BYTES: RED pin=x stale=ledger(live=y)" in text
+    assert "STATE: RED — a top-pane renderer imports a superseded release" in text
+    monkeypatch.setattr(wall_view, "renderer_bytes_lines", lambda h: (
+        ["RENDERER BYTES: GREEN pin=x renderers=12"], "GREEN"))
+    assert "STATE: GREEN — listed services running" in wall_view.render(home, "health")
+
+
 def test_dashboard_runtime_drift_names_undeclared_units(tmp_path, monkeypatch):
     from mishe_tauftauf import runtime_source, wall_view
     home = tmp_path / "site"
