@@ -350,6 +350,7 @@ class OrphanSweepTests(unittest.TestCase):
             return result(0, "")
 
         with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_all_tmux_sockets", return_value=["/tmp/test-socket"]), \
                 mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux), \
                 mock.patch.object(tmux_module.os, "kill", side_effect=ProcessLookupError):
             killed = tmux_module.sweep_orphan_test_sessions()
@@ -378,6 +379,7 @@ class OrphanSweepTests(unittest.TestCase):
             signalled.append((pid, sig))
 
         with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_all_tmux_sockets", return_value=["/tmp/test-socket"]), \
                 mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux), \
                 mock.patch.object(tmux_module, "children_by_parent",
                                   return_value={4242: [4243], 4243: [4244]}), \
@@ -412,6 +414,7 @@ class OrphanSweepTests(unittest.TestCase):
             signalled.append((pid, sig))
 
         with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_all_tmux_sockets", return_value=["/tmp/test-socket"]), \
                 mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux), \
                 mock.patch.object(tmux_module, "children_by_parent", side_effect=AssertionError("unreadable panes need no tree")), \
                 mock.patch.object(tmux_module.os, "kill", side_effect=fake_kill):
@@ -432,6 +435,7 @@ class OrphanSweepTests(unittest.TestCase):
             return result(0, "")
 
         with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_all_tmux_sockets", return_value=["/tmp/test-socket"]), \
                 mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux), \
                 mock.patch.object(tmux_module.os, "kill", return_value=None):
             killed = tmux_module.sweep_orphan_test_sessions()
@@ -449,6 +453,7 @@ class OrphanSweepTests(unittest.TestCase):
             return result(0, "")
 
         with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_all_tmux_sockets", return_value=["/tmp/test-socket"]), \
                 mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux), \
                 mock.patch.object(tmux_module.os, "kill", side_effect=ProcessLookupError):
             killed = tmux_module.sweep_orphan_test_sessions()
@@ -466,6 +471,7 @@ class OrphanSweepTests(unittest.TestCase):
             return result(0, "")
 
         with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_all_tmux_sockets", return_value=["/tmp/test-socket"]), \
                 mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux):
             killed = tmux_module.sweep_orphan_test_sessions()
         self.assertEqual(killed, [])
@@ -488,6 +494,7 @@ class OrphanSweepTests(unittest.TestCase):
             return result(0, "")
 
         with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_all_tmux_sockets", return_value=["/tmp/test-socket"]), \
                 mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux), \
                 mock.patch.object(tmux_module.os, "kill", side_effect=ProcessLookupError):
             killed = tmux_module.sweep_orphan_test_sessions()
@@ -508,6 +515,7 @@ class OrphanSweepTests(unittest.TestCase):
             return result(0, "")
 
         with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_all_tmux_sockets", return_value=["/tmp/test-socket"]), \
                 mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux):
             killed = tmux_module.sweep_orphan_test_sessions()
         self.assertEqual(killed, [])
@@ -524,10 +532,71 @@ class OrphanSweepTests(unittest.TestCase):
             return result(0, "")
 
         with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_all_tmux_sockets", return_value=["/tmp/test-socket"]), \
                 mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux), \
                 mock.patch.object(tmux_module.os, "kill", side_effect=PermissionError):
             killed = tmux_module.sweep_orphan_test_sessions()
         self.assertEqual(killed, [])
+
+    def test_sweep_kills_orphans_on_pytest_socket(self):
+        # Orphaned test sessions on pytest TMUX_TMPDIR sockets must be reapable.
+        from mishe_tauftauf import tmux as tmux_module
+
+        def result(returncode, stdout):
+            return subprocess.CompletedProcess([], returncode, stdout.encode(), b"")
+
+        calls = []
+        def fake_tmux(*args, **kwargs):
+            calls.append(args)
+            if args[0] == "list-sessions":
+                return result(0, "mishe-tauftauf-test-999999\n")
+            return result(0, "")
+
+        with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_all_tmux_sockets",
+                                  return_value=["/tmp/tmux-1000/default",
+                                                "/tmp/pytest-of-mesh-home/pytest-147/mishe-test-tmux0/tmux-1000/default"]), \
+                mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux), \
+                mock.patch.object(tmux_module.os, "kill", side_effect=ProcessLookupError):
+            killed = tmux_module.sweep_orphan_test_sessions()
+        # The orphan is found on the pytest socket, not the default socket.
+        self.assertEqual(killed, ["mishe-tauftauf-test-999999"])
+        self.assertIn(("kill-session", "-t", "mishe-tauftauf-test-999999"), calls)
+
+    def test_all_tmux_sockets_returns_empty_when_no_sockets(self):
+        # When no tmux sockets exist, the sweep finds nothing.
+        from mishe_tauftauf import tmux as tmux_module
+
+        with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module.Path, "glob", return_value=[]), \
+                mock.patch.object(tmux_module.Path, "exists", return_value=False):
+            sockets = tmux_module._all_tmux_sockets()
+        self.assertEqual(sockets, [])
+
+    def test_all_tmux_sockets_finds_pytest_sockets(self):
+        # _all_tmux_sockets must enumerate pytest TMUX_TMPDIR sockets.
+        from mishe_tauftauf import tmux as tmux_module
+
+        class FakePath:
+            def __init__(self, path):
+                self._path = path
+            def exists(self):
+                return True
+            def glob(self, pattern):
+                if self._path == "/tmp" and pattern == "pytest-of-*":
+                    return [FakePath("/tmp/pytest-of-mesh-home")]
+                if self._path == "/tmp/pytest-of-mesh-home" and pattern == "*/*/tmux-*/default":
+                    return [FakePath("/tmp/pytest-of-mesh-home/pytest-147/mishe-test-tmux0/tmux-1000/default")]
+                if self._path == "/tmp" and pattern == "tmux-*/default":
+                    return []
+                return []
+            def __str__(self):
+                return self._path
+
+        with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "Path", FakePath):
+            sockets = tmux_module._all_tmux_sockets()
+        self.assertIn("/tmp/pytest-of-mesh-home/pytest-147/mishe-test-tmux0/tmux-1000/default", sockets)
 
 
 class MindPaneTests(unittest.TestCase):
