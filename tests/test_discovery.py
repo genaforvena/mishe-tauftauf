@@ -7620,3 +7620,31 @@ def test_notify_scan_notifies_on_dv_binding_unavailable_reason_change(tmp_path):
     assert after == before + 3
     discovery._notify_scan(home, snapshot_five, previous, path)
     assert len(Feed(home).entries()) == after
+
+def test_notify_scan_notifies_on_dv_binding_fourth_unbound_phase(tmp_path):
+    """A 4th unbound phase is material even though the display cap hides it.
+
+    The sample displays `unbound[:3]` (discovery.py:1965-1967), so a 4th
+    phase does not appear in the sample text; the structured `unbound` count
+    carries the change into identity (wake 60035: witness residual E).
+    """
+    home = tmp_path / "site"
+    (home / "discovery").mkdir(parents=True, exist_ok=True)
+    path = home / "discovery" / "sample.json"
+    # 3 unbound phases: sample shows all 3
+    one = _dv_binding_reading(
+        "unbound=applied,health-stale-pend-detection,other "
+        "records=102 bool_dv=57", 102, 57, 3)
+    # 4 unbound phases: sample still shows first 3, structured count is 4
+    two = _dv_binding_reading(
+        "unbound=applied,health-stale-pend-detection,other "
+        "records=103 bool_dv=58", 103, 58, 4)
+    snapshot_one = {"created": "2026-10-16T13:25:00Z", "node": "test",
+                    "observations": [one]}
+    snapshot_two = {"created": "2026-10-16T13:35:00Z", "node": "test",
+                    "observations": [two]}
+    discovery._notify_scan(home, snapshot_one, None, path)
+    before = len(Feed(home).entries())
+    discovery._notify_scan(home, snapshot_two, snapshot_one, path)
+    after = len(Feed(home).entries())
+    assert after > before

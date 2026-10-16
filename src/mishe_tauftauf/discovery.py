@@ -5878,16 +5878,18 @@ def _notify_scan(home: Path, snapshot: dict[str, object],
                 # set (first three phases, matching the sample's own display
                 # granularity) and the unreadable-store reason identify the
                 # reading; the counts, the state and the reader-facing sample
-                # keep their form. Slicing only, so discovery stays outside the
-                # parsing boundary. A reading without the structured tier keeps
-                # sample-text identity.
+                # keep their form. The structured `unbound` count prefixes the
+                # identity so a 4th+ phase — hidden by the display cap — still
+                # notifies (wake 60035: witness residual E). Slicing only, so
+                # discovery stays outside the parsing boundary. A reading
+                # without the structured tier keeps sample-text identity.
                 _tier = f"records={item.get('records')} bool_dv={item.get('bool_dv')}"
                 _detail = str(item["sample"]).replace(_tier, "")
                 while len(_detail) > 0 and _detail[0] == " ":
                     _detail = _detail[1:]
                 while len(_detail) > 0 and _detail[-1] == " ":
                     _detail = _detail[:-1]
-                detail = _detail
+                detail = f"unbound_n={item.get('unbound')} " + _detail
             elif item["kind"] == "declaration" or state != "verified":
                 detail = sample_text
                 if identifier == "sense.ledger.evidence-binding":
