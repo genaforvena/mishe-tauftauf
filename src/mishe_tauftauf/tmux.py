@@ -43,8 +43,10 @@ def session_owner(session: str, home: Path | None = None) -> str | None:
         socket = _socket_for_home(home)
         result = _tmux("show-option", "-qv", "-t", session, OWNED_OPTION, check=False, socket=socket)
         # Fall back to the inherited/common socket when the home-derived server
-        # does not contain this session (e.g. tests and legacy records).
-        if result.returncode != 0:
+        # does not contain this session (e.g. tests and legacy records). A live
+        # server answers a missing session with rc=0 and empty output, so the
+        # fallback must fire on either signal.
+        if result.returncode != 0 or not result.stdout:
             result = _tmux("show-option", "-qv", "-t", session, OWNED_OPTION, check=False)
     if result.returncode != 0:
         return None
@@ -90,7 +92,7 @@ def await_owned(home: Path, session: str, timeout: float = 15.0) -> bool:
     wanted = str(home.resolve())
     deadline = time.monotonic() + timeout
     while True:
-        owner = session_owner(session)
+        owner = session_owner(session, home=home)
         if owner == wanted:
             return True
         if owner is not None:

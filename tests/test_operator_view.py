@@ -71,7 +71,7 @@ def test_ensure_waits_out_a_session_raised_before_its_owner_marker(tmp_path, mon
     """
     from mishe_tauftauf import operator_view, tmux
     owners = iter([None, None, str(tmp_path.resolve())])
-    monkeypatch.setattr(tmux, "session_owner", lambda session: next(owners, str(tmp_path.resolve())))
+    monkeypatch.setattr(tmux, "session_owner", lambda session, home=None: next(owners, str(tmp_path.resolve())))
     monkeypatch.setattr(operator_view, "_tmux", lambda *a, **kw: CompletedProcess(a, 0, b"%shell\n"))
     status = operator_view.ensure(tmp_path, "owned", "operator")
     assert "restored" in status
@@ -79,7 +79,7 @@ def test_ensure_waits_out_a_session_raised_before_its_owner_marker(tmp_path, mon
 
 def test_ensure_rejects_a_session_owned_by_another_home(tmp_path, monkeypatch):
     from mishe_tauftauf import operator_view, tmux
-    monkeypatch.setattr(tmux, "session_owner", lambda session: str(tmp_path / "elsewhere"))
+    monkeypatch.setattr(tmux, "session_owner", lambda session, home=None: str(tmp_path / "elsewhere"))
     monkeypatch.setattr(operator_view, "_tmux", lambda *a, **kw: CompletedProcess(a, 0, b""))
     with pytest.raises(ValueError, match="owned"):
         operator_view.ensure(tmp_path, "owned", "operator")
