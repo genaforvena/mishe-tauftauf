@@ -753,5 +753,58 @@ class SocketDerivationTests(unittest.TestCase):
         self.assertEqual(owner, "/home/user/test-site/.mishe-tauftauf")
         args, kwargs = calls[0]
         self.assertNotIn("socket", kwargs)
+
+    def test_session_owner_falls_back_when_home_server_lacks_the_session(self):
+        # A live per-site server answers a missing session with rc=0 and empty
+        # output; the fallback must fire on that signal too, or a legacy record
+        # whose session lives on the inherited socket holds forever.
+        from mishe_tauftauf import tmux as tmux_module
+
+        def result(returncode, stdout):
+            return subprocess.CompletedProcess([], returncode, stdout.encode(), b"")
+
+        calls = []
+        def fake_tmux(*args, **kwargs):
+            calls.append((args, kwargs))
+            if "socket" in kwargs:
+                return result(0, "")
+            return result(0, "/home/user/test-site/.mishe-tauftauf")
+
+        with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux), \
+                mock.patch.dict(tmux_module.os.environ, {"TMUX_TMPDIR": ""}):
+            owner = tmux_module.session_owner("test-session", home=Path("/home/user/test-site/.mishe-tauftauf"))
+
+        self.assertEqual(owner, "/home/user/test-site/.mishe-tauftauf")
+        self.assertEqual(len(calls), 2)
+        self.assertIn("socket", calls[0][1])
+        self.assertNotIn("socket", calls[1][1])
+
+    def test_await_owned_reads_the_home_socket(self):
+        # The coordinator's plant subprocess runs without TMUX_TMPDIR; an
+        # unscoped await_owned waits out its full timeout against the wrong
+        # server and then fails a live site (android-body/health DM 57861).
+        from mishe_tauftauf import tmux as tmux_module
+
+        def result(returncode, stdout):
+            return subprocess.CompletedProcess([], returncode, stdout.encode(), b"")
+
+        calls = []
+        def fake_tmux(*args, **kwargs):
+            calls.append((args, kwargs))
+            return result(0, "/home/user/test-site/.mishe-tauftauf")
+
+        with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux), \
+                mock.patch.object(tmux_module.time, "monotonic", side_effect=[0.0, 0.1]), \
+                mock.patch.object(tmux_module.time, "sleep", lambda _seconds: None), \
+                mock.patch.dict(tmux_module.os.environ, {"TMUX_TMPDIR": ""}):
+            owned = tmux_module.await_owned(
+                Path("/home/user/test-site/.mishe-tauftauf"), "test-session", timeout=15.0)
+
+        self.assertTrue(owned)
+        args, kwargs = calls[0]
+        self.assertIn("socket", kwargs)
+        self.assertIn("test-site", kwargs["socket"])
 if __name__ == "__main__":
     unittest.main()

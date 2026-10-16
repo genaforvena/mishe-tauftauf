@@ -17,7 +17,7 @@ from mishe_tauftauf.ci_watch import latest, read
 from mishe_tauftauf.feed import Feed
 from mishe_tauftauf.observations import FOOTER_LEASE_RE
 from mishe_tauftauf.task_state import states as task_states
-from mishe_tauftauf.tmux import _tmux, owns_session
+from mishe_tauftauf.tmux import _socket_for_home, _tmux, owns_session
 
 KERNEL = Path(__file__).resolve().parents[1]
 # Mind panes the refresh must find alive, and whose top-pane leases must advance.
@@ -142,6 +142,10 @@ def _target_state(home: Path, session: str, *, runtime_only: bool = False) -> No
 def _verify(home: Path, session: str) -> None:
     """Check a linked site's panes, feed, services and pin before recording it.
 
+    Every tmux read is scoped to the target's per-site socket: the coordinator
+    unit sets only PYTHONPATH (no TMUX_TMPDIR), so an unscoped read queries the
+    core's default socket and holds a live linked site forever.
+
     The checks are ordered cheapest-first so a hold names the first defect. The
     lease read tolerates one full renderer frame (:data:`RENDERER_FRAME`): a
     promotion or replant respawns every watcher pane, and the recreated pane
@@ -151,8 +155,9 @@ def _verify(home: Path, session: str) -> None:
     that stops after a good read by the advancing check — and both stay bounded.
     """
     expected = set(json.loads((home / "health" / "windows.json").read_text(encoding="utf-8")))
+    socket = _socket_for_home(home)
     result = _tmux("list-panes", "-s", "-t", session,
-                   "-F", "#{window_name} #{pane_index} #{pane_dead}")
+                   "-F", "#{window_name} #{pane_index} #{pane_dead}", socket=socket)
     panes = {}
     for row in result.stdout.decode().splitlines():
         name, index, dead = row.split()
@@ -171,7 +176,7 @@ def _verify(home: Path, session: str) -> None:
     # one that stops after a good read fails the advancing check after it.
     for attempt in range(2):
         try:
-            first = _leases(session, leased)
+            first = _leases(session, leased, socket=socket)
             break
         except RuntimeError:
             if attempt:
@@ -181,7 +186,7 @@ def _verify(home: Path, session: str) -> None:
     # Allow that whole cycle while retaining a finite frozen-renderer failure.
     for _ in range(3):
         time.sleep(6)
-        second = _leases(session, leased)
+        second = _leases(session, leased, socket=socket)
         if all(second[name] > first[name] for name in leased):
             break
     else:
@@ -210,10 +215,10 @@ def _verify(home: Path, session: str) -> None:
             raise RuntimeError("linked site CLI source is not pinned")
 
 
-def _leases(session: str, expected: set[str]) -> dict[str, datetime]:
+def _leases(session: str, expected: set[str], *, socket: str | None = None) -> dict[str, datetime]:
     observed: dict[str, datetime] = {}
     for name in expected:
-        result = _tmux("capture-pane", "-p", "-t", f"{session}:{name}.0", "-S", "-50")
+        result = _tmux("capture-pane", "-p", "-t", f"{session}:{name}.0", "-S", "-50", socket=socket)
         lines = result.stdout.decode("utf-8", "replace").splitlines()
         matches = [line for line in lines if FOOTER_LEASE_RE.fullmatch(line)]
         if not matches:
@@ -307,6 +312,13 @@ def sync_registered_sites(core_home: Path, ci: dict[str, str], *, runtime_only: 
                     raise RuntimeError("release is not clean at the green CI commit")
                 env = os.environ.copy()
                 env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+                # The plant subprocess must see the target's per-site tmux
+                # socket the same way the site's own services do: the unit
+                # environment carries TMUX_TMPDIR, the coordinator's does not.
+                # Without it every unscoped _tmux read in seed.start and the
+                # mind-pane ensure paths queries the core's default socket.
+                from mishe_tauftauf.plant import _site_tmux_tmpdir
+                env["TMUX_TMPDIR"] = str(_site_tmux_tmpdir(target))
                 env["PYTHONPATH"] = os.pathsep.join(
                     part for part in (str(release / "src"), env.get("PYTHONPATH", "")) if part)
                 result = subprocess.run(

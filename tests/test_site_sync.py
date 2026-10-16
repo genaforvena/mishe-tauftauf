@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import subprocess
+import os
+
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -93,6 +96,7 @@ def test_registered_site_syncs_once_after_green_ci(tmp_path: Path, monkeypatch) 
     assert site_sync._load(core_home)[0]["sha"] == sha
     assert [item[0] for item in calls] == ["plant", "verify"]
     assert str(site_sync.KERNEL.parent / "release/src") in child_environments[0]["PYTHONPATH"].split(":")
+    assert child_environments[0]["TMUX_TMPDIR"] == f"/tmp/tmux-{os.getuid()}/{target.parent.name}"
     assert site_sync.sync_registered_sites(core_home, ci) == []
     assert [item[0] for item in calls] == ["plant", "verify"]
     assert any(body.startswith(f"[sync] core sha={sha}") for _, body in FakeFeed.events)
@@ -436,7 +440,7 @@ def test_sync_verification_rejects_dead_top_with_live_bottom(tmp_path: Path, mon
         '["genome", "witness", "discover", "senses", "health", "permissions", "operator"]', encoding="utf-8")
     (target / "health" / "services.json").write_text("[]", encoding="utf-8")
 
-    def panes(*_args):
+    def panes(*_args, **_kwargs):
         rows = [f"{role} 0 {1 if role == 'health' else 0}\n{role} 1 0" for role in site_sync.ROLES]
         rows.append("operator 0 0")
         return subprocess.CompletedProcess([], 0, "\n".join(rows).encode(), b"")
@@ -459,18 +463,58 @@ def test_sync_verification_rejects_dead_docs_mind_pane(tmp_path: Path, monkeypat
     (target / "chat.log").write_text("", encoding="utf-8")
     names = ["genome", "witness", "discover", "senses", "health", "permissions", "docs"]
 
-    def panes(*_args):
+    def panes(*_args, **_kwargs):
         rows = [f"{name} 0 0" for name in (*names, "operator")]
         rows += [f"{name} 1 {1 if name == 'docs' else 0}" for name in names]
         return subprocess.CompletedProcess([], 0, "\n".join(rows).encode(), b"")
 
     stamps = iter(range(1000))
     monkeypatch.setattr(site_sync, "_tmux", panes)
-    monkeypatch.setattr(site_sync, "_leases", lambda _session, leased: {
+    monkeypatch.setattr(site_sync, "_leases", lambda _session, leased, **_kwargs: {
         name: datetime.now(timezone.utc) + timedelta(seconds=next(stamps)) for name in leased})
     with pytest.raises(RuntimeError, match="dead mind pane"):
         site_sync._verify(target, "example")
 
+
+def test_verify_scopes_tmux_reads_to_the_targets_per_site_socket(tmp_path: Path, monkeypatch) -> None:
+    # 36d8cd1/e387756/00ec44a pinned each linked site's tmux server to a
+    # per-site socket; the coordinator unit sets only PYTHONPATH, so an unscoped
+    # _tmux read queries the default socket and holds a live site forever
+    # (android-body/health DM 57861: "tmux session is not owned" every 60s).
+    _core_home, target = setup_sites(tmp_path, monkeypatch)
+    (target / "health").mkdir()
+    (target / "health" / "windows.json").write_text('["genome"]', encoding="utf-8")
+    (target / "health" / "services.json").write_text("[]", encoding="utf-8")
+    (target / "chat.log").write_text("", encoding="utf-8")
+    rows = [f"{name} 0 0" for name in site_sync.ROLES]
+    rows += [f"{name} 1 0" for name in site_sync.ROLES]
+    calls = []
+    real_leases = site_sync._leases
+
+    def tmux(*args, **kwargs):
+        calls.append(kwargs)
+        if args[0] == "list-panes":
+            return subprocess.CompletedProcess([], 0, "\n".join(rows).encode(), b"")
+        stamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        return subprocess.CompletedProcess(
+            [], 0, f"-- pane live {stamp} · refresh 5s · ticks every frame --\n".encode(), b"")
+
+    monkeypatch.setattr(site_sync, "_tmux", tmux)
+    monkeypatch.setattr(site_sync.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(site_sync, "_leases", lambda _session, leased, **_kwargs: {
+        name: datetime.now(timezone.utc) for name in leased})
+    # The coordinator's condition: no inherited TMUX_TMPDIR. Every read must
+    # target the site's own socket, never the core's default one.
+    with mock.patch.dict(site_sync.os.environ, {"TMUX_TMPDIR": ""}):
+        site_sync._verify(target, "example")
+        expected = f"/tmp/tmux-{os.getuid()}/{target.parent.name}/tmux-{os.getuid()}/default"
+        assert calls and all(kwargs["socket"] == expected for kwargs in calls)
+
+    site_sync._leases = real_leases
+    captured = []
+    monkeypatch.setattr(site_sync, "_tmux", lambda *args, **kwargs: captured.append(kwargs) or tmux(*args, **kwargs))
+    site_sync._leases("example", {"genome"}, socket=site_sync._socket_for_home(target))
+    assert captured and captured[0]["socket"] == site_sync._socket_for_home(target)
 
 def test_sync_verifies_every_planted_mind_role() -> None:
     # The verified mind set must cover every chartered mind the plant launches;
@@ -494,7 +538,7 @@ def test_sync_verifies_advancing_leases_and_allows_unrelated_window(tmp_path: Pa
     count = 0
     start = datetime.now(timezone.utc) - timedelta(seconds=7)
 
-    def tmux(*args):
+    def tmux(*args, **_kwargs):
         nonlocal count
         if args[0] == "list-panes":
             rows = [f"{name} 0 0" for name in names]
@@ -532,7 +576,7 @@ def test_sync_allows_one_refresh_cycle_after_a_pane_respawn(tmp_path: Path, monk
     rows = [f"{name} 0 0" for name in site_sync.ROLES]
     rows += [f"{name} 1 0" for name in site_sync.ROLES]
     monkeypatch.setattr(site_sync, "_tmux",
-                        lambda *_args: subprocess.CompletedProcess([], 0, "\n".join(rows).encode(), b""))
+                        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, "\n".join(rows).encode(), b""))
     monkeypatch.setattr(site_sync.time, "sleep", lambda _seconds: None)
     stamps = iter([
         datetime.now(timezone.utc) - timedelta(seconds=40),  # first read: respawned pane
@@ -541,7 +585,7 @@ def test_sync_allows_one_refresh_cycle_after_a_pane_respawn(tmp_path: Path, monk
     ])
     reads = 0
 
-    def leases(_session, leased):
+    def leases(_session, leased, **_kwargs):
         nonlocal reads
         if reads == 0:
             reads += 1
@@ -568,11 +612,11 @@ def test_sync_still_fails_a_frozen_renderer_after_one_refresh_cycle(tmp_path: Pa
     rows = [f"{name} 0 0" for name in site_sync.ROLES]
     rows += [f"{name} 1 0" for name in site_sync.ROLES]
     monkeypatch.setattr(site_sync, "_tmux",
-                        lambda *_args: subprocess.CompletedProcess([], 0, "\n".join(rows).encode(), b""))
+                        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, "\n".join(rows).encode(), b""))
     monkeypatch.setattr(site_sync.time, "sleep", lambda _seconds: None)
     reads = 0
 
-    def leases(_session, leased):
+    def leases(_session, leased, **_kwargs):
         nonlocal reads
         reads += 1
         raise RuntimeError("linked site top-pane lease is stale: example:genome age=41.0s")
@@ -597,12 +641,12 @@ def test_sync_respawn_tolerance_waits_a_full_renderer_frame(tmp_path: Path, monk
     rows = [f"{name} 0 0" for name in site_sync.ROLES]
     rows += [f"{name} 1 0" for name in site_sync.ROLES]
     monkeypatch.setattr(site_sync, "_tmux",
-                        lambda *_args: subprocess.CompletedProcess([], 0, "\n".join(rows).encode(), b""))
+                        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, "\n".join(rows).encode(), b""))
     waited: list[float] = []
     monkeypatch.setattr(site_sync.time, "sleep", lambda seconds: waited.append(seconds))
     calls = 0
 
-    def leases(_session, leased):
+    def leases(_session, leased, **_kwargs):
         nonlocal calls
         calls += 1
         if calls == 1:
@@ -632,7 +676,7 @@ def test_lease_age_is_measured_after_the_pane_is_captured(monkeypatch):
         def now(zone):
             return clock[0]
         fromisoformat = staticmethod(datetime.fromisoformat)
-    def capture(*args):
+    def capture(*args, **_kwargs):
         clock[0] += timedelta(seconds=0.5)
         stamp = clock[0].isoformat().replace('+00:00', 'Z')
         frame = f"-- pane live {stamp} · refresh 5s · ticks every frame --\n"
