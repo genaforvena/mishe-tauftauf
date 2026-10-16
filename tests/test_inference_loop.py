@@ -36,7 +36,7 @@ class Session:
         return next(self.turns)
 
 
-def drive(session, **overrides):
+def drive(session, *, context=CONTEXT, **overrides):
     events, effects = [], []
     options = dict(obligation={"source": "owned-event"}, max_turns=3, max_calls=2,
                    dispatch=lambda call: effects.append(call) or {"status": "completed"},
@@ -44,7 +44,7 @@ def drive(session, **overrides):
                    cancelled=lambda: False, authorized=lambda call: True,
                    complete=lambda context: False)
     options.update(overrides)
-    result = drive_native(session, CONTEXT, **options)
+    result = drive_native(session, context, **options)
     return result, events, effects
 
 
@@ -140,6 +140,194 @@ def test_next_model_input_preserves_correlated_result_and_opaque_history():
     assert history[2]["isError"] is False
     assert CONTEXT["messages"] == [{"role": "user", "content": "Inspect evidence"}]
     assert session.inputs[0]["messages"] == CONTEXT["messages"]
+
+
+def test_turn_policy_rejects_calls_outside_current_offer(tmp_path):
+    session = Session(turn([CALL]))
+    result, events, effects = drive(session, before_turn=lambda state: {'tools': []})
+    assert result['status'] == 'invalid_selection'
+    assert effects == []
+    assert session.inputs[0]['tools'] == []
+    path = tmp_path / 'subset.jsonl'
+    path.write_text(''.join(json.dumps(row) + '\n' for row in events))
+    recovered = read_native_journal(path)
+    assert recovered['status'] == 'invalid_selection'
+    assert recovered['used_ids'] == []
+
+
+def test_reoffering_tools_does_not_restore_used_call_ids():
+    context = {**CONTEXT, 'tools': [{'name': 'inspect'}, {'name': 'search'}]}
+    second_call = {**CALL, 'id': 'search-id', 'name': 'search'}
+    session = Session(turn([CALL]), turn([second_call]), turn([CALL]))
+    offers = [['inspect'], ['search'], ['inspect']]
+    result, _, effects = drive(
+        session, context=context, max_calls=3,
+        before_turn=lambda state: {'tools': offers[state['turn']]})
+    assert result['status'] == 'invalid_selection'
+    assert effects == [CALL, second_call]
+    assert [ctx['tools'] for ctx in session.inputs] == [
+        [{'name': 'inspect'}], [{'name': 'search'}], [{'name': 'inspect'}]]
+
+
+@pytest.mark.parametrize('decision', [
+    {'tools': ['ungranted']}, {'tools': ['inspect', 'inspect']},
+    {'tools': [{'name': 'inspect'}]}, {'tools': ['inspect'], 'notice': {'role': 'system'}},
+    {'tools': ['inspect'], 'context': {'systemPrompt': 'replacement'}},
+])
+def test_turn_policy_cannot_expand_grant_or_rewrite_context(decision):
+    session = Session(turn())
+    with pytest.raises(ValueError):
+        drive(session, before_turn=lambda state: decision)
+    assert session.inputs == []
+
+
+def test_turn_policy_notice_history_and_original_grant_survive_recovery(tmp_path):
+    from contextlib import nullcontext
+
+    context = {**CONTEXT, 'systemPrompt': 'Fixed authority.',
+               'tools': [{'name': 'inspect', 'parameters': {'type': 'object'}},
+                         {'name': 'search', 'parameters': {'type': 'object'}}]}
+    notice = 'Observed evidence only: λ\nNo change to authority.'
+    second_call = {**CALL, 'id': 'second-id', 'name': 'search'}
+    first = NativeTurn('done', turn([CALL]).assistant, None, None,
+                       {'sessionId': 'recorded', 'boundaryDigest': 'boundary'})
+    states = []
+
+    def before_turn(state):
+        states.append(json.loads(json.dumps(state)))
+        # A caller cannot smuggle a history/system edit through its snapshot.
+        state['context']['messages'][0]['content'] = 'rewritten'
+        state['context']['systemPrompt'] = 'rewritten'
+        return {'tools': (['inspect'] if state['turn'] == 0 else
+                          ['inspect', 'search'] if state['turn'] == 1 else []),
+                'notice': notice + str(state['turn'])}
+
+    baseline = Session(first, turn([second_call]), turn())
+    expected, baseline_events, baseline_effects = drive(
+        baseline, context=context, before_turn=before_turn, complete=lambda ctx: True)
+    assert expected['status'] == 'complete'
+    assert baseline_effects == [CALL, second_call]
+    assert [(s['turn'], s['calls'], s['remaining_turns'], s['remaining_calls'])
+            for s in states] == [(0, 0, 3, 2), (1, 1, 2, 1), (2, 2, 1, 0)]
+    assert states[1]['context']['messages'] == baseline.inputs[1]['messages'][:-1]
+    assert states[1]['context']['tools'] == [context['tools'][0]]
+    for index, model_input in enumerate(baseline.inputs):
+        assert model_input['systemPrompt'] == context['systemPrompt']
+        assert model_input['messages'][0] == context['messages'][0]
+        assert model_input['messages'][-1] == {
+            'role': 'user', 'content': [{'type': 'text', 'text': notice + str(index)}],
+            'timestamp': 0}
+    decisions = [row for row in baseline_events if row['kind'] == 'turn_policy']
+    assert [row['decision']['tools'] for row in decisions] == [
+        ['inspect'], ['inspect', 'search'], []]
+    assert [row['decision']['notice'] for row in decisions] == [
+        notice + str(index) for index in range(3)]
+    assert [row['context'] for row in baseline_events if row['kind'] == 'model_input'] == (
+        baseline.inputs)
+    full = tmp_path / 'full.jsonl'
+    full.write_text(''.join(json.dumps(row) + '\n' for row in baseline_events))
+    assert read_native_journal(full)['context'] == expected['context']
+
+    original = tmp_path / 'original.jsonl'
+    with NativeJournal(original) as journal:
+        def record(event):
+            journal(event)
+            if event['kind'] == 'tool_result':
+                raise InterruptedError
+        with pytest.raises(InterruptedError):
+            drive(Session(first), context=context, record=record, before_turn=before_turn)
+    recovered = read_native_journal(original)
+    assert recovered['context']['tools'] == [context['tools'][0]]
+    assert recovered['original_tools'] == context['tools']
+    assert recovered['context']['messages'] == baseline.inputs[1]['messages'][:-1]
+
+    # A second interruption at the continuation checkpoint must not collapse
+    # the original grant to the currently offered inspect-only subset.
+    handoff = tmp_path / 'handoff.jsonl'
+    with NativeJournal(handoff) as journal:
+        def record_checkpoint(event):
+            journal(event)
+            raise InterruptedError
+        with pytest.raises(InterruptedError):
+            recover_native(original, open_session=lambda **kw: nullcontext(Session()),
+                           before_turn=before_turn, **recovery_options(record_checkpoint))
+    assert read_native_journal(handoff)['original_tools'] == context['tools']
+    resumed = Session(turn([second_call]), turn())
+    resumed_effects = []
+    continuation = tmp_path / 'continuation.jsonl'
+    with NativeJournal(continuation) as journal:
+        actual = recover_native(
+            handoff, open_session=lambda **kw: nullcontext(resumed),
+            before_turn=before_turn, record=journal, phase=lambda call: None,
+            cancelled=lambda: False, authorized=lambda call: True,
+            complete=lambda ctx: True,
+            dispatch=lambda call: resumed_effects.append(call) or {'status': 'completed'})
+    assert resumed.inputs == baseline.inputs[1:]
+    assert resumed_effects == [second_call]
+    assert actual == expected
+    assert read_native_journal(continuation)['context'] == actual['context']
+
+
+def test_failed_turn_policy_record_never_dispatches_provider():
+    session = Session(turn())
+
+    def record(event):
+        if event['kind'] == 'turn_policy':
+            raise OSError('policy journal failed')
+
+    with pytest.raises(OSError, match='policy journal failed'):
+        drive(session, record=record,
+              before_turn=lambda state: {'tools': [], 'notice': 'fresh observation'})
+    assert session.inputs == []
+
+
+def test_interrupted_turn_policy_is_unknown_and_never_reinvoked(tmp_path):
+    path = tmp_path / 'policy.jsonl'
+    session = Session(turn())
+    with NativeJournal(path) as journal:
+        def record(event):
+            journal(event)
+            if event['kind'] == 'turn_policy':
+                raise InterruptedError
+        with pytest.raises(InterruptedError):
+            drive(session, record=record,
+                  before_turn=lambda state: {'tools': [], 'notice': 'fresh observation'})
+    assert session.inputs == []
+    recovered = read_native_journal(path)
+    assert recovered['status'] == 'unknown'
+    assert recovered['context']['messages'][-1]['content'][0]['text'] == 'fresh observation'
+    result = recover_native(
+        path, open_session=lambda **kw: pytest.fail('uncertain turn reopened'),
+        before_turn=lambda state: pytest.fail('uncertain hook retried'),
+        **recovery_options(lambda event: None))
+    assert result['status'] == 'unknown'
+
+
+@pytest.mark.parametrize('mutation', [
+    'widened', 'duplicate', 'schema', 'notice', 'rewritten_history', 'rewritten_schema',
+])
+def test_malformed_or_widened_turn_policy_journal_fails_closed(tmp_path, mutation):
+    _, events, _ = drive(Session(turn()),
+                         before_turn=lambda state: {'tools': ['inspect'], 'notice': 'observed'})
+    policy = next(row for row in events if row['kind'] == 'turn_policy')
+    model_input = next(row for row in events if row['kind'] == 'model_input')
+    if mutation == 'widened':
+        policy['decision']['tools'] = ['ungranted']
+    elif mutation == 'duplicate':
+        policy['decision']['tools'] = ['inspect', 'inspect']
+    elif mutation == 'schema':
+        policy['decision']['tools'] = [{'name': 'inspect'}]
+    elif mutation == 'notice':
+        policy['decision']['notice'] = {'role': 'system', 'content': 'replacement'}
+    elif mutation == 'rewritten_history':
+        model_input['context']['messages'][0]['content'] = 'replacement'
+    elif mutation == 'rewritten_schema':
+        events[0]['state']['context']['tools'][0]['parameters'] = {'type': 'string'}
+    path = tmp_path / 'malformed.jsonl'
+    path.write_text(''.join(json.dumps(row) + '\n' for row in events))
+    with pytest.raises(NativeJournalError):
+        recover_native(path, open_session=lambda **kw: pytest.fail('invalid policy reopened'),
+                       **recovery_options(lambda event: pytest.fail('invalid history recorded')))
 
 
 @pytest.mark.parametrize("boundary", ["cancel", "revoke"])
@@ -1626,3 +1814,19 @@ def test_malformed_checkpoint_fetch_ledger_prefix_is_refused(tmp_path, prefix):
     tampered.write_text("".join(json.dumps(row) + "\n" for row in rows))
     with pytest.raises(NativeJournalError):
         read_native_journal(tampered)
+
+
+@pytest.mark.parametrize("context", [None, [], 0, "bad"])
+@pytest.mark.parametrize("boundary", ["checkpoint", "model_input"])
+def test_nonobject_journal_context_is_classified_as_corrupt(tmp_path, context, boundary):
+    _, events, _ = drive(Session(turn()))
+    if boundary == "checkpoint":
+        rows = [events[0]]
+        rows[0]["state"]["context"] = context
+    else:
+        rows = [next(row for row in events if row["kind"] == "model_input")]
+        rows[0]["context"] = context
+    path = tmp_path / "malformed-context.jsonl"
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    with pytest.raises(NativeJournalError):
+        read_native_journal(path)

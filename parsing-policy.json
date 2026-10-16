@@ -2,6 +2,7 @@
   "boundaries": [
     "src/mishe_tauftauf/body_perception.py",
     "src/mishe_tauftauf/chat_protocol.py",
+    "src/mishe_tauftauf/docs_tools.py",
     "src/mishe_tauftauf/clear_journal.py",
     "src/mishe_tauftauf/cli.py",
     "src/mishe_tauftauf/feed.py",
