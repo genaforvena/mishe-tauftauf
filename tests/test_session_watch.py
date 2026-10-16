@@ -205,3 +205,21 @@ def test_pane_evidence_change_logs_new_event_without_a_second_route(tmp_path,mon
     events=(tmp_path/"health/session-watch-events.jsonl").read_text().splitlines()
     assert [row["reason"] for row in routes]==["resident pane missing or dead"]
     assert len(events)==2 and "genome.1" in events[-1]
+
+
+def test_route_appends_an_in_process_dm_to_health(tmp_path, monkeypatch):
+    """The detector routes in-process: a guarded CLI call rejected the
+    unregistered 'session-watch' source, so every RED alert was dropped. The
+    alert file stays as the detector's durable record, and the routing checker
+    compares its mtime with the newest routed DM."""
+    monkeypatch.delenv("MISHE_SEED_HOME", raising=False)
+    watch.route(tmp_path, {"state": "RED",
+                           "reason": "session identity changed within the last hour",
+                           "pane_evidence": "rc=0 panes=25 dead=none"})
+    feed = (tmp_path / "chat.log").read_text()
+    assert "session-watch" in feed
+    assert "[dm] to=health" in feed
+    assert "session identity changed within the last hour" in feed
+    alert = (tmp_path / "health/session-watch-alert.md").read_text()
+    assert "session identity changed within the last hour" in alert
+    assert "rc=0 panes=25 dead=none" in alert
