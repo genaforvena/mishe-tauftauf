@@ -204,7 +204,8 @@ def sweep_orphan_test_sessions() -> list[str]:
     (``mishe-tauftauf-test-{pid}`` plus an optional ``-<word>`` suffix); when
     that pid is gone the session is orphaned. The pane's detached children are
     reaped with it, or a leaked mind keeps running with no owner. Returns the
-    names of sessions killed.
+    names of sessions killed, each name once: a session visible on more than one
+    socket is reaped once and reported once.
 
     Scans all tmux sockets under /tmp, including pytest TMUX_TMPDIR sockets,
     so isolated test sessions are also reapable.
@@ -212,7 +213,7 @@ def sweep_orphan_test_sessions() -> list[str]:
     killed: list[str] = []
     for socket in _all_tmux_sockets():
         for session in list_sessions(socket):
-            if not session.startswith("mishe-tauftauf-test-"):
+            if not session.startswith("mishe-tauftauf-test-") or session in killed:
                 continue
             pid_str = session[len("mishe-tauftauf-test-"):].split("-", 1)[0]
             try:
