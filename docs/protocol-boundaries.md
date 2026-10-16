@@ -25,6 +25,13 @@ silently treating them as commands. New adapters require an explicit, reviewed
 addition of their exact path; a directory-wide exemption would make the
 constraint ineffective.
 
+`docs_tools.py` is the reader-text search boundary: it validates a literal query,
+enumerates `README.md` and immediate `docs/*.md`, and returns exact path/line/text
+matches. Casefold matching and line-ending removal do not interpret Markdown
+prose as protocol, commands or authority. Symlink pages are excluded; read/decode
+failures propagate instead of becoming no-hit evidence. The caller consumes the
+returned values without parsing the document again.
+
 The checker writes a JSON report to `--out` or, by default,
 `<home>/artifacts/check-docs-command-names.json`, creating parent directories.
 

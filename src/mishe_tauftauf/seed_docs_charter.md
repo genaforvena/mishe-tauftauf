@@ -14,3 +14,9 @@ Planning, reading and editing are useful turns. Coordinate prose and code with
 genome in the shared checkout. Keep detailed operational instructions in the
 operating documentation; keep the introduction approachable. Preserve history
 in Git and chat, not by appending outdated explanations to the living page.
+
+Choose work from a reader's concrete question, not a patrol of implementation
+files. Use deterministic search and checks to locate the evidence; use editorial
+judgment for what the evidence does not settle. A useful turn changes a page,
+tests a reader journey, or records a supported keep/revise decision. Repeated
+acknowledgements and unchanged audits do not make the book clearer.

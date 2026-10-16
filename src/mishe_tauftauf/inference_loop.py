@@ -59,10 +59,50 @@ def snapshot(value):
     return json.loads(json.dumps(value, ensure_ascii=False, allow_nan=False))
 
 
+def _tool_names(tools):
+    if (not isinstance(tools, list)
+            or any(not isinstance(tool, dict)
+                   or not isinstance(tool.get('name'), str) or not tool['name']
+                   for tool in tools)):
+        raise ValueError('tools must be named schemas')
+    names = [tool['name'] for tool in tools]
+    if len(set(names)) != len(names):
+        raise ValueError('duplicate capability names')
+    return names
+
+
+def _validate_tool_offer(context, original_tools):
+    names = _tool_names(context.get('tools', []))
+    granted = dict(zip(_tool_names(original_tools), original_tools))
+    if any(name not in granted or tool != granted[name]
+           for name, tool in zip(names, context.get('tools', []))):
+        raise ValueError('offered tools exceed original grant')
+
+
+def _apply_turn_policy(context, original_tools, decision):
+    if decision is None:
+        return
+    if (not isinstance(decision, dict)
+            or set(decision) not in ({'tools'}, {'tools', 'notice'})
+            or not isinstance(decision['tools'], list)
+            or any(not isinstance(name, str) for name in decision['tools'])
+            or len(set(decision['tools'])) != len(decision['tools'])
+            or ('notice' in decision and not isinstance(decision['notice'], str))):
+        raise ValueError('turn policy requires tool names and an optional string notice')
+    granted = dict(zip(_tool_names(original_tools), original_tools))
+    if any(name not in granted for name in decision['tools']):
+        raise ValueError('turn policy exceeds original grant')
+    context['tools'] = [snapshot(granted[name]) for name in decision['tools']]
+    if 'notice' in decision:
+        context['messages'].append({
+            'role': 'user', 'content': [{'type': 'text', 'text': decision['notice']}],
+            'timestamp': 0})
+
+
 def drive_native(session, context: dict, *, obligation: dict, max_turns: int,
                  max_calls: int, dispatch: Callable, record: Callable,
                  phase: Callable, cancelled: Callable, authorized: Callable,
-                 complete: Callable, resume_from=None) -> dict:
+                 complete: Callable, resume_from=None, before_turn=None) -> dict:
     """Drive native messages without flattening IDs, tool results or terminals.
 
     Capability selection is model-owned. typed argument validation and execution
@@ -74,16 +114,21 @@ def drive_native(session, context: dict, *, obligation: dict, max_turns: int,
     Caller must restore provider state and reconcile original effect authority;
     this API neither restores the session nor retries unresolved selections.
     record must target a new journal, never append to or replace resume_from.
+    before_turn receives a detached {turn, calls, remaining_turns,
+    remaining_calls, context}; turn is zero-based and remaining_turns includes
+    this turn. Return None to keep the offer, or {tools: [original grant names],
+    notice?: str}. Only exact original schemas may be re-offered. A notice is
+    appended verbatim as user observation, never system authority or a rewrite
+    of history. Its decision is journaled before provider input. Interrupted
+    policy/input boundaries cannot be retried by recovery.
     """
     for value in (max_turns, max_calls):
         if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
             raise ValueError('positive integer turn/call budgets required')
     context = snapshot(context)
     obligation = snapshot(obligation)
-    names = [tool['name'] for tool in context.get('tools', [])]
-    if len(set(names)) != len(names):
-        raise ValueError('duplicate capability names')
-    allowed = set(names)
+    original_tools = snapshot(context.get('tools', []))
+    _tool_names(original_tools)
     messages = context['messages']
     recovery = None
     if resume_from is not None:
@@ -94,6 +139,7 @@ def drive_native(session, context: dict, *, obligation: dict, max_turns: int,
             raise NativeJournalError('original lifetime budgets required')
         if recovery['context'] != context or recovery['obligation'] != obligation:
             raise NativeJournalError('continuation context or obligation changed')
+        original_tools = snapshot(recovery['original_tools'])
     used_ids = set(recovery['used_ids']) if recovery else set()
     executed = recovery['calls'] if recovery else 0
     turns = recovery['turns'] if recovery else 0
@@ -128,6 +174,7 @@ def drive_native(session, context: dict, *, obligation: dict, max_turns: int,
         'provider_checkpoint': recovery['provider_checkpoint'] if recovery else None,
         'model_failure': recovery['model_failure'] if recovery else None,
         'wire_usage': snapshot(wire_usages),
+        'original_tools': original_tools,
         'fetch_ledger': snapshot(fetch_ledgers),
     }
     emit('checkpoint', state=checkpoint)
@@ -136,6 +183,19 @@ def drive_native(session, context: dict, *, obligation: dict, max_turns: int,
     for index in range(turns, max_turns):
         if cancelled():
             return stop('cancelled')
+        if before_turn is not None:
+            decision = snapshot(before_turn(snapshot({
+                'turn': index, 'calls': executed,
+                'remaining_turns': max_turns - index,
+                'remaining_calls': max_calls - executed, 'context': context})))
+            # Validate on a detached context before persisting the decision;
+            # neither callback mutation nor failed persistence changes history.
+            selected_context = snapshot(context)
+            _apply_turn_policy(selected_context, original_tools, decision)
+            emit('turn_policy', turn=index, decision=decision)
+            context = selected_context
+            messages = context['messages']
+        allowed = set(_tool_names(context.get('tools', [])))
         emit('model_input', turn=index, context=context)
         if cancelled():
             return stop('cancelled')
@@ -212,7 +272,7 @@ def drive_native(session, context: dict, *, obligation: dict, max_turns: int,
 
 def recover_native(path, *, open_session: Callable, dispatch: Callable,
                    record: Callable, phase: Callable, cancelled: Callable,
-                   authorized: Callable, complete: Callable) -> dict:
+                   authorized: Callable, complete: Callable, before_turn=None) -> dict:
     """Continue journal-owned completed results through a fresh native session.
 
     open_session(checkpoint=...) must return a context manager for a fresh session.
@@ -229,7 +289,8 @@ def recover_native(path, *, open_session: Callable, dispatch: Callable,
                    max_turns=recovery['budgets']['turns'],
                    max_calls=recovery['budgets']['calls'], resume_from=path,
                    dispatch=dispatch, record=record, phase=phase,
-                   cancelled=cancelled, authorized=authorized, complete=complete)
+                   cancelled=cancelled, authorized=authorized, complete=complete,
+                   before_turn=before_turn)
     context = recovery['context']
     if (recovery['status'] != 'ready'
             or recovery['turns'] >= recovery['budgets']['turns']):
@@ -444,6 +505,7 @@ def read_native_journal(path):
 def _reconstruct_native(rows):
     obligation = rows[0]['obligation']
     context = None
+    original_tools = None
     pending = []
     proposed = None
     proposed_turn = None
@@ -480,6 +542,10 @@ def _reconstruct_native(rows):
                     or len(set(ids)) != len(ids) or calls > len(ids)):
                 raise NativeJournalError('invalid lifetime counters or IDs')
             context = snapshot(seed['context'])
+            if not isinstance(context, dict):
+                raise NativeJournalError('context must be an object')
+            original_tools = snapshot(seed.get('original_tools', context.get('tools', [])))
+            _validate_tool_offer(context, original_tools)
             provider_checkpoint = snapshot(seed.get('provider_checkpoint'))
             if not isinstance(context['messages'], list):
                 raise NativeJournalError('messages must be an ordered list')
@@ -526,12 +592,26 @@ def _reconstruct_native(rows):
                 raise NativeJournalError('completion without final answer')
             stopped = True
             continue
-        if kind == 'model_input':
-            if state not in ('initial', 'ready') or row['turn'] != turns:
+        if kind == 'turn_policy':
+            if (state != 'ready' or type(row['turn']) is not int or row['turn'] != turns
+                    or original_tools is None or budgets is None
+                    or turns >= budgets['turns']):
+                raise NativeJournalError('unexpected turn policy')
+            _apply_turn_policy(context, original_tools, row['decision'])
+            # The caller may have crashed after dispatching but before recording
+            # model_input. Never re-run the hook or replay this uncertain turn.
+            state, status = 'policy', 'unknown'
+        elif kind == 'model_input':
+            if state not in ('initial', 'ready', 'policy') or row['turn'] != turns:
                 raise NativeJournalError('unexpected model input')
             if context is not None and row['context'] != context:
                 raise NativeJournalError('next context disagrees with history')
             context = snapshot(row['context'])
+            if not isinstance(context, dict):
+                raise NativeJournalError('context must be an object')
+            if original_tools is None:
+                original_tools = snapshot(context.get('tools', []))
+            _validate_tool_offer(context, original_tools)
             if not isinstance(context['messages'], list):
                 raise NativeJournalError('messages must be an ordered list')
             state, status = 'input', 'unknown'
@@ -612,6 +692,7 @@ def _reconstruct_native(rows):
         else:
             raise NativeJournalError('unknown record kind')
     return {'obligation': snapshot(obligation), 'context': context,
+            'original_tools': snapshot(original_tools),
             'status': status, 'pending_calls': snapshot(pending),
             'proposed_call': snapshot(proposed) if proposed is not None else None,
             'proposed_turn': proposed_turn,
