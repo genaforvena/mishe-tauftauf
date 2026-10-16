@@ -657,7 +657,8 @@ class SocketDerivationTests(unittest.TestCase):
         home = Path("/home/user/test-site/.mishe-tauftauf")
         with mock.patch.dict(tmux_module.os.environ, {"TMUX_TMPDIR": ""}):
             socket = tmux_module._socket_for_home(home)
-        self.assertEqual(socket, "/tmp/tmux-1000/test-site/tmux-1000/default")
+        uid = tmux_module.os.getuid()
+        self.assertEqual(socket, f"/tmp/tmux-{uid}/test-site/tmux-{uid}/default")
 
     def test_socket_for_home_honors_inherited_tmux_tmpdir(self):
         from mishe_tauftauf import tmux as tmux_module
@@ -666,7 +667,8 @@ class SocketDerivationTests(unittest.TestCase):
             socket = tmux_module._socket_for_home(home)
         # Site-root contract (seed._new_session): an inherited TMUX_TMPDIR already
         # pins the site, so the home is not appended a second time.
-        self.assertEqual(socket, "/tmp/tmux-1000/custom/tmux-1000/default")
+        uid = tmux_module.os.getuid()
+        self.assertEqual(socket, f"/tmp/tmux-1000/custom/tmux-{uid}/default")
 
     def test_session_owner_falls_back_to_ambient_socket(self):
         from mishe_tauftauf import tmux as tmux_module
