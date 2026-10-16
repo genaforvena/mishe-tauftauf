@@ -74,7 +74,7 @@ def executable(path: Path) -> bool:
     return path.is_file() and os.access(path, os.X_OK)
 
 
-AGE_TOKEN_RE = re.compile(r"\bage=[0-9hms]+|\blast-phone=[0-9T:\+-]+|\bidle [0-9]+s")
+AGE_TOKEN_RE = re.compile(r"\bage=[0-9dhms]+|\blast-phone=[0-9T:\+-]+|\bidle [0-9]+s|\boldest=[A-Za-z0-9-]+:[0-9dhms]+")
 
 
 def redact_display_age(line: str) -> str:
@@ -90,7 +90,20 @@ def redact_display_age(line: str) -> str:
     (``age=unknown``) is a distinct value and is preserved, as is the rest of
     the line.
     """
-    return AGE_TOKEN_RE.sub(lambda m: "age=<age>" if m.group().startswith("age=") else "last-phone=<phone>" if m.group().startswith("last-phone=") else "idle <idle>", line)
+    def _redact(match: re.Match) -> str:
+        token = match.group(0)
+        if token.startswith("age="):
+            return "age=<age>"
+        if token.startswith("last-phone="):
+            return "last-phone=<phone>"
+        if token.startswith("idle "):
+            return "idle <idle>"
+        if token.startswith("oldest="):
+            role, _age = token.split(":", 1)
+            return f"{role}:<age>"
+        return token
+
+    return AGE_TOKEN_RE.sub(_redact, line)
 
 
 def redact_redmi_cursor(line: str, *, slug: str) -> str:
