@@ -270,7 +270,7 @@ def test_redmi_does_not_surface_malformed_light_transition(tmp_path: Path) -> No
     assert row["light_transition"] is None
     assert "measured-light-transition=" not in row["details"]
 
-def test_redmi_surfaces_acceleration_source_reason_when_not_fresh(tmp_path: Path) -> None:
+def test_redmi_shows_motion_leg_absent_when_acceleration_stale(tmp_path: Path) -> None:
     now = 1_800_000_000.0
     core, path, state = _linked_state(tmp_path, now)
     state["latest"]["acceleration"]["received"] = now - 31
@@ -280,7 +280,7 @@ def test_redmi_surfaces_acceleration_source_reason_when_not_fresh(tmp_path: Path
     row = body_perception.read_redmi10(core, now)
 
     assert row["state"] == "unknown"
-    assert "|a|=stale" in row["sample"]
+    assert "|a|=motion-leg-absent" in row["sample"]
 
 
 def test_redmi_light_sense_stays_verified_when_acceleration_is_stale(tmp_path: Path) -> None:
@@ -295,7 +295,7 @@ def test_redmi_light_sense_stays_verified_when_acceleration_is_stale(tmp_path: P
     assert row["id"] == body_perception.LIGHT_SENSE_ID
     assert row["state"] == "verified"
     assert row["channels"] == {"light": "fresh-clock-conditional"}
-    assert "|a|=stale" in row["sample"]
+    assert "|a|=motion-leg-absent" in row["sample"]
     assert "L=101lux" in row["sample"]
 
 
