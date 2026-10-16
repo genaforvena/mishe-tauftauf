@@ -82,6 +82,8 @@ def test_silence_unit_follows_the_pinned_release(tmp_path: Path) -> None:
     (home / "health").mkdir(parents=True)
     select_source(home, release, "core")
     text = plant.silence_unit_text(home, "core", "/usr/bin/python3")
+    assert text.startswith("[Unit]\n")
+    assert "\n[Service]\nType=simple\n" in text
     assert "mishe_tauftauf.activity --home " in text
     assert "--session core --interval 5" in text
     # Supervisors survive memory pressure ahead of disposable workers.

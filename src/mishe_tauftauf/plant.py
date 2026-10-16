@@ -251,6 +251,8 @@ def silence_unit_text(home: Path, session: str, python: str) -> str:
     from .runtime_source import source_for
     source = source_for(home, ROOT)
     return (
+        "[Unit]\nDescription=Mishe independent mind silence watcher\nAfter=default.target\n\n"
+        "[Service]\nType=simple\n"
         f"WorkingDirectory={home.parent}\n"
         f"Environment=TMUX_TMPDIR={_site_tmux_tmpdir(home)}\n"
         f"Environment=PYTHONPATH={source / 'src'}\n"
