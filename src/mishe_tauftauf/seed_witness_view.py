@@ -282,6 +282,33 @@ def _wedge_note(suspect: dict) -> str:
     return (f"chain={suspect.get('chain')} span={suspect.get('span_minutes')}min "
             f"src={rendered} cause={suspect.get('cause')}")
 
+
+def _delivery_note(home: Path, session: str, role: str, wake: int) -> str | None:
+    """Delivery evidence for an overdue wake, or None when the supervisor has none.
+
+    ``wall.deliver`` writes ``checks/wall-send-<role>-<wake>.json`` with
+    ``phase=delivered`` once it has pasted the wake into the mind pane, so that
+    record is the supervisor's own evidence that delivery happened. With it, an
+    alive and idle mind failed to settle the wake itself: the fault is the
+    mind's turn, not the supervisor's, and blaming the supervisor sends the
+    resolver to the wrong owner (measured: wake 59871 delivered 19:32:57Z, the
+    mind failing 429 at 19:39:50Z while the verdict read "needs checked
+    supervisor repair"). Without it — a missing, unreadable or malformed
+    record, a record not in the delivered phase, or a pane that is not live —
+    the existing attribution stands and the pane must be inspected before
+    repair, because a dead pane is the supervisor's to restore.
+    """
+    if not session or not _mind_pane_live(session, role):
+        return None
+    path = home / "checks" / f"wall-send-{role}-{wake}.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("phase") != "delivered":
+        return None
+    return f"delivery recorded at {data.get('at')} attempts={data.get('attempts')}"
+
 def _coverage_line(roles: dict[str, dict]) -> str:
     """Render per-role coverage: wall update, settled yield, idle, pending.
 
@@ -380,6 +407,7 @@ def render(home: Path) -> str:
                 lines.append("CLEAR STALL: GREEN — no overdue settled wake")
             faulted: list[str] = []
             unknown_faulted: list[str] = []
+            delivered_faulted: list[str] = []
             for role, receipt in sorted(stalls.items()):
                 wake = decode_lifecycle(receipt).wake
                 owner = "witness" if role == "health" else "health"
@@ -431,14 +459,26 @@ def render(home: Path) -> str:
                     lines.append(f"  Evidence: {Feed(home).path} settled={receipt.timestamp}; "
                                  "recheck after the mind's turn ends")
                     continue
-                lines.append(f"CLEAR STALL: RED {role} wake={wake} yield={receipt.sequence} owner={owner}")
-                lines.append(f"  Evidence: {Feed(home).path} settled={receipt.timestamp}; inspect supervisor and idle prompt before repair")
+                note = _delivery_note(home, session, role, wake)
+                if note:
+                    lines.append(f"CLEAR STALL: RED {role} wake={wake} yield={receipt.sequence} owner={owner} · {note}")
+                    lines.append(f"  Evidence: {Feed(home).path} settled={receipt.timestamp}; "
+                                 "mind alive and idle after a recorded delivery — "
+                                 "inspect the mind's turn, not the supervisor")
+                    delivered_faulted.append(role)
+                else:
+                    lines.append(f"CLEAR STALL: RED {role} wake={wake} yield={receipt.sequence} owner={owner}")
+                    lines.append(f"  Evidence: {Feed(home).path} settled={receipt.timestamp}; inspect supervisor and idle prompt before repair")
                 faulted.append(role)
             if unknown_faulted:
                 verdict = (f"UNKNOWN witness overdue clear {','.join(unknown_faulted)} "
                            "pane capture unreadable")
             elif faulted:
-                verdict = f"FAIL witness overdue clear {','.join(faulted)} needs checked supervisor repair"
+                if delivered_faulted:
+                    verdict = (f"FAIL witness overdue clear {','.join(faulted)} "
+                               "delivered but mind idle; inspect the mind's turn, not the supervisor")
+                else:
+                    verdict = f"FAIL witness overdue clear {','.join(faulted)} needs checked supervisor repair"
         except (ValueError, TypeError, OverflowError) as exc:
             lines.append(f"CLEAR STALL: UNKNOWN — receipt timing unavailable: {exc}")
             verdict = "UNKNOWN witness clear-stall receipt evidence"
@@ -449,6 +489,7 @@ def render(home: Path) -> str:
                 lines.append("STALE PEND: GREEN — no overdue pending wake")
             faulted: list[str] = []
             unknown_faulted: list[str] = []
+            delivered_faulted: list[str] = []
             for role, receipt in sorted(pends.items()):
                 wake = decode_lifecycle(receipt).observation
                 owner = "witness" if role == "health" else "health"
@@ -499,14 +540,26 @@ def render(home: Path) -> str:
                     lines.append(f"  Evidence: {Feed(home).path} woken={receipt.timestamp}; "
                                  "recheck after the mind's turn ends")
                     continue
-                lines.append(f"STALE PEND: RED {role} wake={wake} pending={receipt.sequence} owner={owner}")
-                lines.append(f"  Evidence: {Feed(home).path} woken={receipt.timestamp}; inspect supervisor and idle prompt before repair")
+                note = _delivery_note(home, session, role, receipt.sequence)
+                if note:
+                    lines.append(f"STALE PEND: RED {role} wake={wake} pending={receipt.sequence} owner={owner} · {note}")
+                    lines.append(f"  Evidence: {Feed(home).path} woken={receipt.timestamp}; "
+                                 "mind alive and idle after a recorded delivery — "
+                                 "inspect the mind's turn, not the supervisor")
+                    delivered_faulted.append(role)
+                else:
+                    lines.append(f"STALE PEND: RED {role} wake={wake} pending={receipt.sequence} owner={owner}")
+                    lines.append(f"  Evidence: {Feed(home).path} woken={receipt.timestamp}; inspect supervisor and idle prompt before repair")
                 faulted.append(role)
             if unknown_faulted:
                 verdict = (f"UNKNOWN witness overdue pending wake {','.join(unknown_faulted)} "
                            "pane capture unreadable")
             elif faulted:
-                verdict = f"FAIL witness overdue pending wake {','.join(faulted)} needs checked supervisor repair"
+                if delivered_faulted:
+                    verdict = (f"FAIL witness overdue pending wake {','.join(faulted)} "
+                               "delivered but mind idle; inspect the mind's turn, not the supervisor")
+                else:
+                    verdict = f"FAIL witness overdue pending wake {','.join(faulted)} needs checked supervisor repair"
         except (ValueError, TypeError, OverflowError) as exc:
             lines.append("STALE PEND: UNKNOWN — receipt timing unavailable: " + str(exc))
             verdict = "UNKNOWN witness stale-pend receipt evidence"
