@@ -297,13 +297,21 @@ def senses(home: Path) -> str:
         senses_rows.extend(_space_clock_domains_read(home))
         unknown = 0
         unavailable = 0
+        drift = 0
         for item in senses_rows:
             # The carried-body rows are re-read at render time, so the scan's
             # own freshness does not age them: a stale scan must not turn a
             # just-taken live read into a second UNKNOWN.
             item_freshness = "recent" if item.get("id") in BODY_SENSE_IDS else freshness
             state, line = _observation_reading(item, item_freshness, home)
-            unknown += state not in {"verified", "unavailable"}
+            # A drift row is a checked read whose own value is a drift state,
+            # not a read that never happened. Counting it as unchecked made the
+            # pane claim four readings needed a read while it printed those four
+            # as DRIFT on the same frame.
+            if state == "drift":
+                drift += 1
+            elif state not in {"verified", "unavailable"}:
+                unknown += 1
             unavailable += state == "unavailable"
             lines.append(line)
             if isinstance(item.get("details"), str):
@@ -333,9 +341,22 @@ def senses(home: Path) -> str:
         elif attempt_failure is not None:
             verdict = "UNKNOWN senses scan attempt record unavailable"
             lines.append("STATE: UNKNOWN — scan attempt record unavailable")
-        elif unknown:
-            verdict = f"UNKNOWN senses {unknown} unverified"
-            lines.append(f"STATE: UNKNOWN — {unknown} senses need a checked read or honest unavailable claim")
+        elif unknown or drift:
+            claims = []
+            if unknown:
+                claims.append(f"{unknown} senses need a checked read or honest unavailable claim")
+            if drift:
+                claims.append(f"{drift} checked readings report drift")
+            if not unknown:
+                # Every row was read: the pane is not green because those reads
+                # report drift. Saying so keeps the STATE line truthful, and the
+                # UNKNOWN token stays because it is what routes a drift to the
+                # mind's notification path.
+                claims.append("no reading is unchecked")
+            lines.append("STATE: UNKNOWN — " + "; ".join(claims))
+            verdict = "UNKNOWN senses " + "; ".join(
+                ([f"{unknown} unverified"] if unknown else []) +
+                ([f"{drift} report drift"] if drift else []))
         else:
             verdict = f"PASS senses {len(senses_rows)} verified samples"
             lines.append("STATE: GREEN — all wired sample reads verified")
