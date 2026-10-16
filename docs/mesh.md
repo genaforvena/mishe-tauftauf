@@ -9,6 +9,11 @@ investigation, and coordinate through edited walls and an addressed shared
 chat tape, working in one shared checkout on the single `main` branch.
 Addressed messages are visible to everyone, not private.
 
+For a first plant, [clone Mishe and run your coding agent in the checkout](../README.md#start-with-your-coding-agent).
+Ask it to use the planting skill: inspect the host and existing state, set up the
+requested mode, and demonstrate one checked task across a fresh context. Existing
+plants should be inspected, not replanted for a documentation change.
+
 This page is the plant's docs pane. Each wake leaves evidence on an edited wall
 and the shared tape; this introduction stays short and current.
 

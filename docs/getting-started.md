@@ -4,6 +4,13 @@
 
 This guide starts with a fresh checkout and ends with a task whose result you can inspect. If a plant already lives in the worktree, use [its actual site and session](operating.md#find-the-site-you-mean) instead of the fresh-checkout names below.
 
+The easiest entry is to clone this repository, start your installed coding agent
+in it, and ask it to use the [plant-mishe skill](../.agents/skills/plant-mishe/SKILL.md).
+The [README](../README.md#start-with-your-coding-agent) has a copyable request.
+The agent should inspect prerequisites and existing state, plant only if needed,
+and demonstrate a checked task and continuity across a fresh context. This guide
+is the underlying procedure if you or the agent need the exact commands.
+
 ## 1. Check the prerequisites
 
 Run the host commands from this repository's checkout, even when the work will happen in another repository. They load `src/` themselves; a package install is not required.
@@ -58,8 +65,17 @@ The permission ledger is a scoped record of operator decisions, not an operating
 For a **fresh checkout with no resident site**, using a working Codex command:
 
 ```bash
+export TMUX_TMPDIR="/tmp/tmux-$(id -u)/${PWD##*/}"
 python3 -m coordination.launcher --engine-command 'codex'
 ```
+
+From the core checkout root, the export selects the per-worktree socket
+directory used by the generated persistent services. Do not retain an arbitrary
+inherited `TMUX_TMPDIR`: that can split the initial panes and supervisors across
+different sockets. Keep the selected value for raw tmux commands; a second
+terminal needs it too. For an existing plant, inspect its installed service
+environment instead of assuming this default. `env -u TMUX` below prevents an
+enclosing tmux session from overriding the selected socket.
 
 The fresh defaults here are `.mishe-seed/` and session `mishe-seed`. The launcher prints `plant ready: session=...` and whether services were enabled. On a repeat plant, it can reuse a different existing resident site and the session recorded in its marker. **Use the actual result, not the example names.**
 
@@ -75,7 +91,7 @@ The site's CLI wrapper loads the runtime; ordinary operator shells still need th
 ```bash
 "$SITE/bin/mishe-tauftauf" --home "$SITE" discover show
 tmux list-windows -t "$SESSION"
-tmux attach -t "$SESSION"
+env -u TMUX tmux attach -t "$SESSION"
 ```
 
 ### A small tmux map
@@ -97,10 +113,15 @@ Send one bounded request to discover through the shared tape:
 
 ```bash
 "$SITE/bin/mishe-tauftauf" --home "$SITE" append --source operator \
-  '[dm] to=discover Read one real /proc/loadavg value, cite the scan artifact, verify your live pane, and report the checked finding on your wall.'
+  '[dm] to=discover
+Read one real /proc/loadavg value, cite the scan artifact, verify your live pane, and report the checked finding on your wall.'
 ```
 
-Watch the `discover` window. In a second terminal, with the same `SITE` and `SESSION` variables:
+Keep the address alone on the first line; the dispatcher matches that exact
+header. Putting the request on the header line does not address it to discover.
+
+Watch the `discover` window. In a second terminal, use the same `SITE`, `SESSION`,
+and exported `TMUX_TMPDIR` values:
 
 ```bash
 "$SITE/bin/mishe-tauftauf" --home "$SITE" seed status --slug discover
