@@ -19,56 +19,65 @@ def seeded_home(tmp_path: Path, name: str = "site") -> Path:
     return home
 
 
-def test_new_session_raises_the_server_in_its_own_unit(monkeypatch) -> None:
+def test_new_session_raises_the_server_in_its_own_unit(monkeypatch, tmp_path) -> None:
     from mishe_tauftauf import seed, session_runner
+    home = seeded_home(tmp_path)
+    monkeypatch.delenv("TMUX_TMPDIR", raising=False)
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
     monkeypatch.delenv("MISHE_SESSION_RUNNER", raising=False)
     monkeypatch.setattr(seed.shutil, "which", lambda name: "/usr/bin/systemd-run")
     calls = []
     monkeypatch.setattr(session_runner, "raise_session", lambda *a, **kw: calls.append((a, kw)))
-    seed._new_session("mishe-core", "genome", "/workspace")
+    seed._new_session(home, "mishe-core", "genome", "/workspace")
     assert calls == [(("mishe-core", "genome", "/workspace", Path("/run/user/1000/mishe-session-raises")),
-                      {"systemd_runner": "/usr/bin/systemd-run"})]
+                      {"systemd_runner": "/usr/bin/systemd-run",
+                       "tmux_tmpdir": f"/tmp/tmux-{os.getuid()}/workspace"})]
 
 
-def test_new_session_falls_back_to_plain_tmux_without_systemd(monkeypatch) -> None:
+def test_new_session_falls_back_to_plain_tmux_without_systemd(monkeypatch, tmp_path) -> None:
     from subprocess import CompletedProcess
 
     from mishe_tauftauf import seed
 
+    home = seeded_home(tmp_path)
     calls = []
+    monkeypatch.delenv("TMUX_TMPDIR", raising=False)
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
     monkeypatch.setattr(seed.shutil, "which", lambda name: "")
-    monkeypatch.setattr(seed, "_tmux", lambda *args, **kwargs: (calls.append(args), CompletedProcess(args, 0, b""))[1])
-    seed._new_session("mishe-core", "genome", "/workspace")
-    assert calls == [("new-session", "-d", "-s", "mishe-core", "-n", "genome", "-c", "/workspace", "sh")]
+    monkeypatch.setattr(seed, "_tmux", lambda *args, **kwargs: (calls.append((args, kwargs)), CompletedProcess(args, 0, b""))[1])
+    seed._new_session(home, "mishe-core", "genome", "/workspace")
+    assert calls == [(("new-session", "-d", "-s", "mishe-core", "-n", "genome", "-c", "/workspace", "sh"),
+                      {"socket": f"/tmp/tmux-{os.getuid()}/workspace/tmux-{os.getuid()}/default"})]
 
 
-def test_runner_override_selects_the_plain_tmux_path(monkeypatch) -> None:
+def test_runner_override_selects_the_plain_tmux_path(monkeypatch, tmp_path) -> None:
     from subprocess import CompletedProcess
 
     from mishe_tauftauf import seed
 
     # An explicit empty runner is the opt-out for hosts without systemd; it must
     # not fall back to a discovered systemd-run.
+    home = seeded_home(tmp_path)
     calls = []
+    monkeypatch.delenv("TMUX_TMPDIR", raising=False)
     monkeypatch.setenv("MISHE_SESSION_RUNNER", "")
-    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
     monkeypatch.setattr(seed.shutil, "which", lambda name: "/usr/bin/systemd-run")
-    monkeypatch.setattr(seed, "_tmux", lambda *args, **kwargs: (calls.append(args), CompletedProcess(args, 0, b""))[1])
+    monkeypatch.setattr(seed, "_tmux", lambda *args, **kwargs: (calls.append((args, kwargs)), CompletedProcess(args, 0, b""))[1])
     runs = []
     monkeypatch.setattr(seed.subprocess, "run", lambda argv, **kwargs: runs.append(argv))
-    seed._new_session("mishe-unit-test-session", "genome", "/workspace")
-    assert calls == [("new-session", "-d", "-s", "mishe-unit-test-session",
-                      "-n", "genome", "-c", "/workspace", "sh")]
+    seed._new_session(home, "mishe-unit-test-session", "genome", "/workspace")
+    assert calls == [(("new-session", "-d", "-s", "mishe-unit-test-session",
+                        "-n", "genome", "-c", "/workspace", "sh"),
+                       {"socket": f"/tmp/tmux-{os.getuid()}/workspace/tmux-{os.getuid()}/default"})]
     assert runs == []
 
 
-def test_new_session_attaches_when_a_peer_won_the_raise(monkeypatch) -> None:
+def test_new_session_attaches_when_a_peer_won_the_raise(monkeypatch, tmp_path) -> None:
     from subprocess import CalledProcessError, CompletedProcess
 
     from mishe_tauftauf import seed
 
+    home = seeded_home(tmp_path)
     # Concurrent supervisors race one fixed scope unit name, so every loser fails
     # with "unit was already loaded". A peer's session exists: attach, don't exit.
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
@@ -80,15 +89,16 @@ def test_new_session_attaches_when_a_peer_won_the_raise(monkeypatch) -> None:
 
     monkeypatch.setattr(seed.subprocess, "run", losing_run)
     monkeypatch.setattr(seed, "_tmux", lambda *args, **kwargs: CompletedProcess(args, 0, b""))
-    seed._new_session("mishe-core", "genome", "/workspace")
+    seed._new_session(home, "owned", "health", "/workspace")
 
 
-def test_new_session_reraises_when_no_peer_session_appears(monkeypatch) -> None:
+def test_new_session_reraises_when_no_peer_session_appears(monkeypatch, tmp_path) -> None:
     import pytest
     from subprocess import CalledProcessError, CompletedProcess
 
     from mishe_tauftauf import seed
 
+    home = seeded_home(tmp_path)
     # A raise that is not a lost race must stay fatal instead of being swallowed.
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
     monkeypatch.setenv("MISHE_SESSION_RUNNER", "/custom/session-runner")
@@ -103,7 +113,39 @@ def test_new_session_reraises_when_no_peer_session_appears(monkeypatch) -> None:
     clock = iter([0.0, 0.0, 1e9, 2e9])
     monkeypatch.setattr(seed.time, "monotonic", lambda: next(clock))
     with pytest.raises(CalledProcessError):
-        seed._new_session("mishe-core", "genome", "/workspace")
+        seed._new_session(home, "owned", "health", "/workspace")
+
+def test_new_session_pins_socket_without_inherited_env(monkeypatch, tmp_path) -> None:
+    from mishe_tauftauf import seed, session_runner
+
+    home = seeded_home(tmp_path)
+    # A supervisor launched without the unit's TMUX_TMPDIR must still raise on
+    # its own site's socket, never the default one (duplicate-session fork).
+    monkeypatch.delenv("TMUX_TMPDIR", raising=False)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    monkeypatch.delenv("MISHE_SESSION_RUNNER", raising=False)
+    monkeypatch.setattr(seed.shutil, "which", lambda name: "/usr/bin/systemd-run")
+    calls = []
+    monkeypatch.setattr(session_runner, "raise_session", lambda *a, **kw: calls.append((a, kw)))
+    seed._new_session(home, "mishe-core", "genome", "/workspace")
+    assert calls[0][1]["tmux_tmpdir"] == f"/tmp/tmux-{os.getuid()}/workspace"
+
+
+def test_new_session_prefers_inherited_env_socket(monkeypatch, tmp_path) -> None:
+    from mishe_tauftauf import seed, session_runner
+
+    home = seeded_home(tmp_path)
+    # A mind unit's TMUX_TMPDIR is the established socket convention and wins
+    # when present; the home-derived value is only the fallback.
+    monkeypatch.setenv("TMUX_TMPDIR", "/tmp/unit-site-socket")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    monkeypatch.delenv("MISHE_SESSION_RUNNER", raising=False)
+    monkeypatch.setattr(seed.shutil, "which", lambda name: "/usr/bin/systemd-run")
+    calls = []
+    monkeypatch.setattr(session_runner, "raise_session", lambda *a, **kw: calls.append((a, kw)))
+    seed._new_session(home, "mishe-core", "genome", "/workspace")
+    assert calls[0][1]["tmux_tmpdir"] == "/tmp/unit-site-socket"
+
 
 
 
