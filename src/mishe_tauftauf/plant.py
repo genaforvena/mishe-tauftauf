@@ -497,6 +497,7 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
     if status:
         print(status, flush=True)
     if (home / "health/runtime-release.json").exists():
+        from .proc_table import window_names
         from .runtime_source import source_for
         source = source_for(home, ROOT)
         # Refresh only upper evidence panes. Running lower minds retain their work.
@@ -504,8 +505,8 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
         # a view window (``ledger``) that is neither a role nor a site-declared
         # resident would otherwise keep the release it was started with while
         # ``top-pains/<name>`` documented the pin.
-        refresh = refresh_slugs(home, set(_tmux(
-            "list-windows", "-t", session, "-F", "#{window_name}").stdout.decode().splitlines()))
+        refresh = refresh_slugs(home, set(window_names(
+            _tmux("list-windows", "-t", session, "-F", "#{window_name}").stdout)))
         for slug in refresh:
             _tmux("respawn-pane", "-k", "-t", f"{session}:{slug}.0", "env",
                   f"MISHE_SEED_SESSION={session}", f"PYTHONPATH={source / 'src'}",
