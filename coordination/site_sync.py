@@ -33,6 +33,15 @@ ROLES = ("genome", "witness", "discover", "senses", "health", "docs", "research-
 # this at least as long as that cycle, or the first lease read after a promotion
 # still names the old footer and holds a site whose renderers are starting.
 RENDERER_FRAME = 20.0 + 2.0 + 5.0
+# A plant subprocess is a whole replant: `seed.start` for every role, the
+# top-pane respawns, the unit reconcile and one discovery scan (measured 40-65 s
+# on this host). On the largest linked site that exceeds the 240 s cap this
+# replaces: the android-body replant begun 2026-10-16T19:21:35Z was killed at
+# 240 s and recorded as a blocker, and its retry — with the units and panes
+# already on the new release — still took 152 s, so one release change bounced
+# the site's residents twice. 600 s leaves that measured work headroom while
+# still bounding a genuinely hung plant.
+PLANT_TIMEOUT_SECONDS = 600.0
 
 
 def resident_home() -> Path | None:
@@ -360,7 +369,7 @@ def sync_registered_sites(core_home: Path, ci: dict[str, str], *, runtime_only: 
                      "--workspace", str(target.parent), "--home", str(target), "--session", row["session"],
                      "--runtime-source", str(release),
                      *(["--runtime-only"] if runtime_only else [])],
-                    capture_output=True, text=True, timeout=240, env=env)
+                    capture_output=True, text=True, timeout=PLANT_TIMEOUT_SECONDS, env=env)
                 if result.returncode:
                     raise RuntimeError(result.stderr.strip()[-400:] or result.stdout.strip()[-400:] or "plant command failed")
                 _verify(target, row["session"])
