@@ -81,6 +81,7 @@ def test_hold_is_recorded_before_the_gate_refused_notice(tmp_path: Path, monkeyp
 
     monkeypatch.setattr(site_sync, "_target_state", _fail)
     monkeypatch.setattr(site_sync, "_git", _fail)
+    monkeypatch.setattr(site_sync, "_docs_only_delta", lambda *_args: False)
     monkeypatch.setattr(site_sync, "_verify", lambda *a, **k: None)
 
     order = []
