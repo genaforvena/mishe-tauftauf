@@ -320,3 +320,153 @@ def test_redmi_light_sense_preserves_measured_light_transition(tmp_path: Path) -
     row = body_perception.read_redmi10_light(core, now)
 
     assert row["light_transition"] == STABLE_TRANSITION
+
+
+def _linked_perception(tmp_path: Path) -> tuple[Path, Path]:
+    core = tmp_path / "core"
+    android = tmp_path / "android-body"
+    (core / "health").mkdir(parents=True)
+    (core / "health" / "linked-sites.json").write_text(json.dumps({
+        "version": 1,
+        "sites": [{"home": str(android), "session": "android-body", "sha": "a" * 40}],
+    }), encoding="utf-8")
+    perception = android / "body" / "perception"
+    perception.mkdir(parents=True)
+    return core, perception
+
+
+def _stamp(epoch: float) -> str:
+    return datetime.fromtimestamp(epoch, timezone.utc).isoformat()
+
+
+def _gap_line(detected: float, *, received: float, cursor: int = 10,
+              host_stopped: object = False) -> str:
+    return json.dumps({
+        "kind": "class-c-delivery-gap", "detected_at": _stamp(detected), "cursor": cursor,
+        "session": SESSION, "last_received_epoch_s": received, "window_seconds": 120.0,
+        "reason": "delivery halted with polls succeeding; no code=2, no null-lux freeze",
+        "host_stopped": host_stopped,
+    })
+
+
+def _excursion_line(span_min: float, span_max: float, *, node: str = "redmi10") -> str:
+    return (f"excursion emitted={_stamp(1_700_000_000)} node={node} session={SESSION} "
+            f"cursor_start=1 cursor_end=32 retained_count=32 window_truncated=true "
+            f"phone_elapsed_ms=1,2 acquisition_span_ms={span_min},{span_max} "
+            f"light_std=1.0 accel_guard=ok")
+
+
+def test_delivery_gap_reader_counts_recent_halts_and_receipt_lag(tmp_path: Path) -> None:
+    now = 1_800_000_000.0
+    core, perception = _linked_perception(tmp_path)
+    # Newest first: the log is append-ordered in production, so the reader's own
+    # ordering must be what makes the last record the most recent one.
+    (perception / body_perception.GAP_LOG_NAME).write_text("\n".join([
+        _gap_line(now - 600, received=now - 1000, cursor=200),
+        _gap_line(now - 3600, received=now - 4000, cursor=100),
+        _gap_line(now - 23 * 3600, received=now - 24 * 3600, cursor=75),
+        _gap_line(now - 25 * 3600, received=now - 26 * 3600, cursor=60),
+        _gap_line(now - 30 * 3600, received=now - 31 * 3600, cursor=50),
+    ]) + "\n", encoding="utf-8")
+    (perception / body_perception.EXCURSION_LOG_NAME).write_text("\n".join([
+        _excursion_line(1000.0, 2000.0),
+        # Another node's line is not this body's receipt lag, whatever it says.
+        _excursion_line(500_000.0, 999_999.0, node="note3"),
+        _excursion_line(5000.0, 9000.0),
+    ]) + "\n", encoding="utf-8")
+
+    row = body_perception.read_redmi10_delivery_gaps(core, now)
+
+    assert row["id"] == body_perception.GAP_SENSE_ID
+    assert row["state"] == "verified"
+    assert row["reason"] == "gap-log-current"
+    assert row["gaps_24h"] == 3
+    assert row["gap_records"] == 5
+    assert row["last_onset_epoch_s"] == now - 1000
+    assert row["last_gap_cursor"] == 200
+    assert row["host_stopped"] is False
+    assert row["max_receipt_lag_s"] == 9.0
+    expected_onset = datetime.fromtimestamp(now - 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert row["sample"] == (f"gaps-24h=3 last-onset={expected_onset} "
+                             "host-stopped=false max-receipt-lag=9s")
+    # A reading that is re-derived from the same source must not churn the
+    # scan's change identity with a growing age.
+    assert body_perception.read_redmi10_delivery_gaps(core, now)["sample"] == row["sample"]
+
+
+def test_delivery_gap_reader_absent_log_is_unknown(tmp_path: Path) -> None:
+    core, _perception = _linked_perception(tmp_path)
+
+    row = body_perception.read_redmi10_delivery_gaps(core, 1_800_000_000.0)
+
+    assert row["state"] == "unknown"
+    assert row["reason"] == "gap-log-missing"
+    assert "gap-log-missing" in row["sample"]
+
+
+def test_delivery_gap_reader_empty_log_is_unknown(tmp_path: Path) -> None:
+    core, perception = _linked_perception(tmp_path)
+    (perception / body_perception.GAP_LOG_NAME).write_text("\n", encoding="utf-8")
+
+    row = body_perception.read_redmi10_delivery_gaps(core, 1_800_000_000.0)
+
+    assert row["state"] == "unknown"
+    assert row["reason"] == "gap-log-empty"
+
+
+def test_delivery_gap_reader_malformed_line_cannot_claim_a_count(tmp_path: Path) -> None:
+    now = 1_800_000_000.0
+    core, perception = _linked_perception(tmp_path)
+    (perception / body_perception.GAP_LOG_NAME).write_text("\n".join([
+        _gap_line(now - 600, received=now - 1000),
+        '{"kind": "class-c-delivery-gap", "detected_at": "2026-10-16T09:04:54+00:00"',
+        _gap_line(now - 300, received=now - 700, cursor="77"),
+        _gap_line(now - 300, received=now - 700, host_stopped="no"),
+    ]) + "\n", encoding="utf-8")
+
+    row = body_perception.read_redmi10_delivery_gaps(core, now)
+
+    assert row["state"] == "unknown"
+    assert row["reason"] == "gap-log-malformed"
+    assert row["malformed"] == 3
+
+
+def test_delivery_gap_reader_oversized_log_is_unknown_not_a_prefix_count(
+        tmp_path: Path) -> None:
+    """A truncated read cannot be parsed as if it were the whole log."""
+    now = 1_800_000_000.0
+    core, perception = _linked_perception(tmp_path)
+    filler = _gap_line(now - 600, received=now - 1000) + "\n"
+    (perception / body_perception.GAP_LOG_NAME).write_text(
+        filler * 2 + "x" * body_perception.MAX_GAP_LOG_BYTES, encoding="utf-8")
+
+    row = body_perception.read_redmi10_delivery_gaps(core, now)
+
+    assert row["state"] == "unknown"
+    assert row["reason"] == "gap-log-oversized"
+
+
+def test_delivery_gap_reader_missing_excursion_log_keeps_the_halt_count(tmp_path: Path) -> None:
+    now = 1_800_000_000.0
+    core, perception = _linked_perception(tmp_path)
+    (perception / body_perception.GAP_LOG_NAME).write_text(
+        _gap_line(now - 600, received=now - 1000) + "\n", encoding="utf-8")
+
+    row = body_perception.read_redmi10_delivery_gaps(core, now)
+
+    assert row["state"] == "verified"
+    assert row["gaps_24h"] == 1
+    assert row["max_receipt_lag_s"] is None
+    assert "max-receipt-lag=unknown-missing" in row["sample"]
+
+
+def test_delivery_gap_reader_rejects_a_future_detection_stamp(tmp_path: Path) -> None:
+    now = 1_800_000_000.0
+    core, perception = _linked_perception(tmp_path)
+    (perception / body_perception.GAP_LOG_NAME).write_text(
+        _gap_line(now + 600, received=now - 1000) + "\n", encoding="utf-8")
+
+    row = body_perception.read_redmi10_delivery_gaps(core, now)
+
+    assert row["state"] == "unknown"
+    assert row["reason"] == "gap-log-clock-future"

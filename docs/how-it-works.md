@@ -681,8 +681,10 @@ schema, node, source, session, cursor and per-channel receipt metadata before it
 publishes `sense.body.redmi10`. Battery, light and acceleration are current
 only when their host consumer receipts (and any sensor-age field) are within
 30 seconds and the consumer is not in error or draining a backlog. The Senses
-pane re-reads this local file on each render; the ordinary discovery scan also
-stores a bounded reading for later resident analysis. Missing, malformed,
+pane re-reads this local file on each render and renders the carried-body rows
+from that live read alone; the ordinary discovery scan stores its own bounded
+reading for later resident analysis and change notification, and that stored
+copy never becomes a second pane row. Missing, malformed,
 future or stale receipts remain UNKNOWN rather than reusing a last-known value.
 The line preserves phone-sample time separately from consumer receipt time;
 without a clock-domain measurement their split is unknown. Wi-Fi RSSI is only a
@@ -729,6 +731,29 @@ clock evidence remains UNKNOWN. This measurement supports timestamp conversion;
 it does not establish sensor-stream liveness or refresh stale light/acceleration
 rows. Each source keeps its own session and delivery evidence, and clock
 agreement alone never authorizes cross-body fusion.
+
+Delivery halts are a separate row, `sense.body.redmi10.delivery-gaps`, read from
+the consumer's own class-C detector log
+(`body/perception/class-c-delivery-gap-detectors.jsonl`) and its bounded
+`excursion-log-redmi10.txt`. The row reports how many halts the consumer detected
+in the last 24 hours, the onset of the most recent one (the last sample received
+before it), the detector's own `host_stopped` adb read, and the widest
+receipt-minus-collection span in the retained excursion lines, rendered as a compact
+duration (`max-receipt-lag=3h9m`; the exact seconds stay in the details). That last
+number is what a reader needs before treating a Redmi window as contemporaneous: a
+halted batch is flushed late, so its rows keep their phone sample times but not their
+receipt times — the batch finalised at 2026-10-16T13:06:59Z carried a 3h09m span.
+Counts are by detection time, and the log carries neither how long a halt lasted
+nor why it started.
+
+Every failure state of this row is named and stays UNKNOWN rather than a partial
+count: `gap-log-missing`, `gap-log-empty`, `gap-log-unreadable`,
+`gap-log-oversized`, `gap-log-malformed` (any line whose shape does not match the
+published record) and `gap-log-clock-future` (a detection stamped ahead of the
+reading clock). Only the excursion log is allowed to fail alone, because it supplies
+one field and not the claim: the halt count stays verified and the lag reads
+`max-receipt-lag=unknown-missing`, `unknown-unreadable`, `unknown-oversized` or
+`unknown-malformed`.
 
 The class needs the reader's own retained null origin to survive between reads.
 A freeze onset is recorded beside that origin and routed once per streak: the
