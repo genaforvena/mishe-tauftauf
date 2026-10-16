@@ -636,19 +636,28 @@ def _record_mind_model(home: Path, slug: str, launcher: Path, reason: str) -> No
     Feed(home).append_runtime_once("mishe-tauftauf", marker)
 
 
-def _await_session(session: str, timeout: float = 15.0) -> bool:
+def _await_session(session: str, timeout: float = 15.0, socket: str | None = None) -> bool:
     """Wait for a peer supervisor's concurrent session raise to become visible."""
     deadline = time.monotonic() + timeout
-    while _tmux("has-session", "-t", session, check=False).returncode != 0:
+    while _tmux("has-session", "-t", session, check=False, socket=socket).returncode != 0:
         if time.monotonic() >= deadline:
             return False
         time.sleep(0.1)
     return True
 
 
-def _new_session(session: str, first_window: str, workspace: str) -> None:
-    """Raise outside seed cgroups and wait for the actual session, not a unit."""
+def _new_session(home: Path, session: str, first_window: str, workspace: str) -> None:
+    """Raise outside seed cgroups and wait for the actual session, not a unit.
+
+    The socket is the inherited TMUX_TMPDIR when a unit set it, else the
+    per-site socket derived from the home: a supervisor launched without the
+    unit environment must still raise on its own site's socket, never the
+    default one (duplicate-session fork on a foreign server).
+    """
+    from .plant import _site_tmux_tmpdir
     from .tmux import TmuxError
+    tmux_tmpdir = os.environ.get("TMUX_TMPDIR") or str(_site_tmux_tmpdir(home))
+    socket = str(Path(tmux_tmpdir) / f"tmux-{os.getuid()}" / "default")
     argv = ["new-session", "-d", "-s", session, "-n", first_window, "-c", workspace, "sh"]
     runner = os.environ.get("MISHE_SESSION_RUNNER")
     if runner is None:
@@ -659,24 +668,26 @@ def _new_session(session: str, first_window: str, workspace: str) -> None:
             try:
                 raise_session(session, first_window, workspace,
                               Path(os.environ["XDG_RUNTIME_DIR"]) / "mishe-session-raises",
-                              systemd_runner=runner)
+                              systemd_runner=runner, tmux_tmpdir=tmux_tmpdir)
             except RuntimeError as exc:
                 raise TmuxError(str(exc)) from exc
         else:
-            # Keep the literal legacy argv for installed adapters. No shell
-            # command string needs to be interpreted by the receiving boundary.
+            # Keep the literal legacy argv for installed adapters, with the
+            # per-site socket pinned the same way. No shell command string
+            # needs to be interpreted by the receiving boundary.
             raised = [runner, "--user", "--scope", "--collect", "--unit",
                       f"{session}-session.scope", "--description",
-                      f"Mishe resident session {session}", "tmux", *argv]
+                      f"Mishe resident session {session}", "env", "-u", "TMUX",
+                      "TMUX_TMPDIR=" + tmux_tmpdir, "tmux", *argv]
             try:
                 subprocess.run(raised, check=True)
             except subprocess.CalledProcessError:
-                if not _await_session(session):
+                if not _await_session(session, socket=socket):
                     raise
-            if not _await_session(session):
+            if not _await_session(session, socket=socket):
                 raise TmuxError(f"UNKNOWN session {session!r} unavailable after startup deadline")
         return
-    _tmux(*argv)
+    _tmux(*argv, socket=socket)
 
 
 def _ensure_contract_windows(home: Path, session: str, interval: float) -> None:
@@ -723,7 +734,7 @@ def start(home: Path, session: str, slug: str, interval: float) -> str:
         raise ValueError(f"seed {slug} needs executable top-pains/{slug} and minds/{slug}")
     created = _tmux("has-session", "-t", session, check=False).returncode != 0
     if created:
-        _new_session(session, slug, workspace)
+        _new_session(home, session, slug, workspace)
         _tmux("set-option", "-t", session, OWNED_OPTION, str(home.resolve()))
         identity = _tmux("display-message", "-p", "-t", session, "#{session_id}").stdout.decode().strip()
         (home / ".seed-raised").write_text(f"{session} {identity}\n", encoding="utf-8")

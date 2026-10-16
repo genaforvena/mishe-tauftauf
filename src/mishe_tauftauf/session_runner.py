@@ -57,16 +57,21 @@ def _stop_superseded_units(session: str, keep_unit: str) -> None:
 
 
 def raise_session(session: str, window: str, workspace: str, lock_dir: Path,
-                  timeout: float = 15.0, systemd_runner: str = "/usr/bin/systemd-run") -> None:
+                  timeout: float = 15.0, systemd_runner: str = "/usr/bin/systemd-run",
+                  tmux_tmpdir: str | None = None) -> None:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,120}", session):
         raise ValueError("invalid session identity")
     if not window or not Path(workspace).is_dir() or timeout <= 0:
         raise ValueError("invalid session window, workspace or timeout")
     lock_dir.mkdir(parents=True, exist_ok=True)
     environment = os.environ.copy()
-    private_dir = environment.get("TMUX_TMPDIR")
+    # An explicit per-site socket directory wins over the inherited one: a
+    # supervisor launched without the unit's TMUX_TMPDIR must still raise on
+    # its own site's socket, never the default one (duplicate-session fork).
+    private_dir = tmux_tmpdir if tmux_tmpdir is not None else environment.get("TMUX_TMPDIR")
     if private_dir:
         environment.pop("TMUX", None)
+        environment["TMUX_TMPDIR"] = private_dir
     def exists() -> bool:
         return subprocess.run(["tmux", "has-session", "-t", "=" + session],
                               capture_output=True, timeout=5, env=environment).returncode == 0

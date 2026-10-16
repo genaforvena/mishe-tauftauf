@@ -143,15 +143,6 @@ def test_cli_never_reports_success_for_failed_launch(tmp_path, monkeypatch):
                         "-n", "health", "-c", str(tmp_path), "sh"]) == 1
 
 
-def test_seed_custom_adapter_success_waits_for_actual_session(monkeypatch):
-    from mishe_tauftauf import seed
-    from mishe_tauftauf.tmux import TmuxError
-    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
-    monkeypatch.setenv("MISHE_SESSION_RUNNER", "/custom/session-runner")
-    monkeypatch.setattr(seed.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0))
-    monkeypatch.setattr(seed, "_await_session", lambda *a: False)
-    with pytest.raises(TmuxError, match="UNKNOWN.*deadline"):
-        seed._new_session("owned", "health", "/workspace")
 
 
 def test_native_runner_honors_explicit_executable(tmp_path,monkeypatch):
@@ -159,3 +150,34 @@ def test_native_runner_honors_explicit_executable(tmp_path,monkeypatch):
     runner.raise_session("owned","health",str(tmp_path),tmp_path,
                          systemd_runner="/custom/systemd-run")
     assert state["raises"][0][0]=="/custom/systemd-run"
+
+def test_explicit_tmux_tmpdir_overrides_inherited_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("TMUX_TMPDIR", "/tmp/decoy-inherited-socket")
+    state = backend(monkeypatch)
+    runner.raise_session("owned", "health", str(tmp_path), tmp_path,
+                         tmux_tmpdir="/tmp/explicit-site-socket")
+    raises = [argv for argv in state["raises"] if "systemd-run" in argv[0]]
+    assert len(raises) == 1
+    assert any("TMUX_TMPDIR=/tmp/explicit-site-socket" in arg for arg in raises[0])
+    assert not any("TMUX_TMPDIR=/tmp/decoy-inherited-socket" in arg for arg in raises[0])
+
+
+def test_explicit_tmux_tmpdir_used_without_inherited_env(tmp_path, monkeypatch):
+    monkeypatch.delenv("TMUX_TMPDIR", raising=False)
+    state = backend(monkeypatch)
+    runner.raise_session("owned", "health", str(tmp_path), tmp_path,
+                         tmux_tmpdir="/tmp/explicit-site-socket")
+    raises = [argv for argv in state["raises"] if "systemd-run" in argv[0]]
+    assert len(raises) == 1
+    assert any("TMUX_TMPDIR=/tmp/explicit-site-socket" in arg for arg in raises[0])
+
+
+def test_seed_custom_adapter_success_waits_for_actual_session(monkeypatch, tmp_path):
+    from mishe_tauftauf import seed
+    from mishe_tauftauf.tmux import TmuxError
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    monkeypatch.setenv("MISHE_SESSION_RUNNER", "/custom/session-runner")
+    monkeypatch.setattr(seed.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0))
+    monkeypatch.setattr(seed, "_await_session", lambda *a, **k: False)
+    with pytest.raises(TmuxError, match="UNKNOWN.*deadline"):
+        seed._new_session(tmp_path, "owned", "health", "/workspace")

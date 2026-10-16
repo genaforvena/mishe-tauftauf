@@ -415,7 +415,12 @@ def cmd_run(args) -> int:
 
 
 def cmd_tmux_start(args) -> int:
+    from .plant import _site_tmux_tmpdir
     from .tmux import start
+
+    # Pin the whole command to the per-site socket; without the unit env a
+    # manual `tmux start` would read and raise on the default socket.
+    os.environ.setdefault("TMUX_TMPDIR", str(_site_tmux_tmpdir(args.home)))
     start(args.home, args.session, args.interval)
     print(f"tmux session {args.session} ready")
     return 0
@@ -429,8 +434,14 @@ def cmd_tmux_stop(args) -> int:
 
 
 def cmd_seed(args) -> int:
+    from .plant import _site_tmux_tmpdir
     from . import seed
 
+    # Pin the whole supervisor process (start/tick/clear/status/follow) to the
+    # per-site socket. Mind units set TMUX_TMPDIR themselves; any other launcher
+    # (recovery shell, manual run) would otherwise read and raise on the default
+    # socket, forking a duplicate session on a foreign server.
+    os.environ.setdefault("TMUX_TMPDIR", str(_site_tmux_tmpdir(args.home)))
     action = args.seed_command
     if action == "init":
         result = seed.init(args.home, args.slug, args.engine_command)
