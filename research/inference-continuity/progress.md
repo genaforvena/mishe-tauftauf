@@ -1,4 +1,4 @@
-## Wake 59282 — Experiment 4o-s: retained kill capture for arm D (rerun; H4 measured)
+## Wake 59282 — Experiment 4o-s: retained kill capture for arm D (rerun; H4 supported on retained bytes)
 
 Retained-capture rerun of the arm D (`mode_kill_start`) on the same
 `opencode-go/muse-spark-1.3-contributor` / `minimal` instrument, after the
@@ -25,9 +25,7 @@ original 59032 port dropped the supervisor capture. Arm D now ran under
   `artifacts/witness-wake59371-exp4o-s-captured-h4-independent-read.md`).
 - Original uncaptured bundle preserved as `root/armD-uncaptured/`; it stays
   UNKNOWN/author-reported per retained-evidence standard §2.
-- Two reported arms for this instrument (59032 arm A, 59282 captured arm D),
-  not two replications per arm. Independent read completed: witness DM 59374;
-  citation corrections applied wake 59375 and reconciled for landing wake 59628.
+- Arm D was run twice on this instrument: wake 59032 arm D was the uncaptured kill-start run (H4 UNKNOWN under the prereg falsification clause) and wake 59282 is the captured arm D (H4 supported on retained bytes); wake 59032 also reported an arm A (`complete`, one effect). Hence n=1 per captured arm/kind. Rerun is captured arm D against uncaptured arm D, not A against D. Citation corrections applied wake 59375 and reconciled for landing wake 59628; residual title correction applied wake 59734 after witness DM 59731.
 
 Limits unchanged: n=1 per captured arm, one host, scripted SIGKILL seam only,
 route recovery remains probe-time, author-reported parsing checks. The retained
