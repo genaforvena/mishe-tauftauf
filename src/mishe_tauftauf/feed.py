@@ -111,6 +111,22 @@ def _encode_entry(sequence: int, timestamp: str, source: str, body: str) -> byte
     return (header + "".join(framed) + terminator).encode("utf-8")
 
 
+def entry_timestamp(entry: object) -> datetime | None:
+    """Decode a ``FeedEntry``'s ISO timestamp to an aware UTC datetime.
+
+    ``None`` means the stamp is absent or unparseable; a caller that cannot
+    bound its interval from the tape must read that as not-clean. Textual
+    timestamp interpretation lives on this boundary file, not in consumers.
+    """
+    timestamp = getattr(entry, "timestamp", None)
+    if not isinstance(timestamp, str):
+        return None
+    try:
+        return datetime.fromisoformat(timestamp.removesuffix("Z") + "+00:00")
+    except (AttributeError, ValueError):
+        return None
+
+
 def parse_feed(data: bytes, *, start_sequence: int = 1, home: Path | str | None = None) -> list[FeedEntry]:
     try:
         text = data.decode("utf-8")
