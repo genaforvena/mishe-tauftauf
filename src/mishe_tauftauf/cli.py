@@ -135,6 +135,29 @@ def _require_site_role(home: Path, role: str) -> None:
             or (role not in ROLES and not os.access(home / "minds" / role, os.X_OK))):
         raise ValueError(f"role '{role}' is not registered for site home {home}")
 
+def _require_linked_site(home: Path, site_name: str) -> None:
+    """Validate that a cross-plant source site is a known linked site.
+
+    Cross-plant DM sources use ``<site>/<role>`` format. The site prefix
+    must name a site in the target site's ``health/linked-sites.json``
+    registry. The role part is attribution only — it belongs to the source
+    site, not the target site, so it is not validated against the target
+    site's registered roles.
+    """
+    import json
+    registry_path = home / "health" / "linked-sites.json"
+    try:
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        sites = registry["sites"] if isinstance(registry, dict) and registry.get("version") == 1 else None
+        if not isinstance(sites, list):
+            raise ValueError("invalid linked-site registry")
+        for site in sites:
+            if isinstance(site, dict) and site.get("session") == site_name:
+                return
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    raise ValueError(f"site '{site_name}' is not a known linked site for {home}")
+
 
 def cmd_wall(args) -> int:
     from . import wall
@@ -149,7 +172,10 @@ def cmd_wall(args) -> int:
             _staging_anchor(args.home, args.owner, args.file) is not None)
         wall.write(args.home, args.owner, text, source_path=str(source))
     elif args.wall_command == "dm":
-        _require_site_role(args.home, args.source)
+        if "/" in args.source:
+            _require_linked_site(args.home, args.source.split("/", 1)[0])
+        else:
+            _require_site_role(args.home, args.source)
         if args.file:
             anchor = _staging_anchor(args.home, args.source, args.file)
             args.file = _staging_notes(args.home, args.source, args.file)

@@ -8,6 +8,7 @@ straight through to lock writers that created the tree first and validated never
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -260,4 +261,39 @@ def test_wall_mutations_require_a_role_registered_with_the_site(tmp_path: Path) 
                    "--text", "registered attribution")
     assert accepted.returncode == 0, accepted.stderr
     assert b"registered attribution" in (site / "chat.log").read_bytes()
+
+
+def test_wall_dm_accepts_known_linked_site_source(tmp_path: Path) -> None:
+    """Cross-plant DM sources (<site>/<role>) are accepted when the site is linked.
+
+    The _require_site_role guard must not block cross-plant sources — the role
+    belongs to the source site, not the target site. Instead, the site prefix
+    is validated against health/linked-sites.json.
+    """
+    repository = planted_repository(tmp_path)
+    site = repository / ".mishe-tauftauf"
+    assert cli(site, "seed", "init", "--slug", "genome").returncode == 0
+
+    # Without a linked-sites registry, cross-plant sources are refused.
+    refused = cli(site, "wall", "dm", "--source", "android-body/health",
+                  "--to", "genome", "--text", "cross-plant message")
+    assert refused.returncode == 2
+    assert "not a known linked site" in refused.stderr
+
+    # With the site in linked-sites.json, the same source is accepted.
+    health_dir = site / "health"
+    health_dir.mkdir(exist_ok=True)
+    (health_dir / "linked-sites.json").write_text(
+        json.dumps({"version": 1, "sites": [{"session": "android-body", "home": "/home/user/android-body/.mishe-tauftauf"}]}),
+        encoding="utf-8")
+    accepted = cli(site, "wall", "dm", "--source", "android-body/health",
+                  "--to", "genome", "--text", "cross-plant message")
+    assert accepted.returncode == 0, accepted.stderr
+    assert b"cross-plant message" in (site / "chat.log").read_bytes()
+
+    # An unknown site prefix is still refused.
+    refused_unknown = cli(site, "wall", "dm", "--source", "unknown-site/health",
+                         "--to", "genome", "--text", "forged cross-plant")
+    assert refused_unknown.returncode == 2
+    assert "not a known linked site" in refused_unknown.stderr
 
