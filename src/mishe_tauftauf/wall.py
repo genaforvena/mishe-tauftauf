@@ -52,6 +52,44 @@ def _audit_log(home: Path, role: str, source_path: str | None, wall_path: Path, 
     except Exception:
         pass
 
+def _audit_refusal(home: Path, role: str, source_path: str | None, wall_path: Path, reason: str) -> None:
+    """Append a wall-write refusal audit entry so refusals are diagnosable after the fact.
+
+    Logs: timestamp, role, source notes path (if known), destination wall path,
+    both mtimes, and the refusal reason. Writes to ``logs/wall-write-audit.jsonl``
+    under the ignored site. Never raises — audit logging must not break wall
+    delivery.
+    """
+    try:
+        logs_dir = home / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        source_mtime = None
+        if source_path and Path(source_path).is_file():
+            source_mtime = datetime.fromtimestamp(
+                Path(source_path).stat().st_mtime, tz=timezone.utc
+            ).isoformat()
+        wall_mtime = None
+        if wall_path.is_file():
+            wall_mtime = datetime.fromtimestamp(
+                wall_path.stat().st_mtime, tz=timezone.utc
+            ).isoformat()
+        entry = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "role": role,
+            "source": str(source_path) if source_path else None,
+            "source_mtime": source_mtime,
+            "wall": str(wall_path),
+            "wall_mtime": wall_mtime,
+            "reason": reason,
+            "pid": os.getpid(),
+            "ppid": os.getppid(),
+            "uid": os.geteuid(),
+        }
+        with open(logs_dir / "wall-write-audit.jsonl", "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
+
 
 def _bound_evidence_paths(home: Path) -> set[str]:
     """Derive post-clause event bindings, failing closed on incomplete coverage."""
@@ -485,6 +523,7 @@ def reject_stale_staging_anchor(home: Path, role: str, text: str, source_path: P
         return
     if source.stat().st_mtime > wall_path.stat().st_mtime:
         return
+    _audit_refusal(home, role, source_path, wall_path, "stale-staging-anchor")
     raise ValueError(
         f"staged notes {source} are older than the wall {wall_path} and differ from it; "
         f"writing them would regress the wall. Re-stage your current plate into {source.name} "
