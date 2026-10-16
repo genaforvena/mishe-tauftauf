@@ -467,6 +467,8 @@ def read_redmi10_delivery_gaps(home: Path, now: float | None = None) -> dict[str
             "host_stopped": stopped, "max_receipt_lag_s": delay,
             "window_seconds": GAP_WINDOW_SECONDS, "details": details}
 
+#: The consumer's dense observation queue file (append-only, ~5 s cadence).
+DENSE_QUEUE_NAME = "redmi10.observations.log"
 #: Tail bytes read from the dense queue; at ~101 bytes/line this yields ~2500
 #: lines (~3.5 h at the observed 5 s cadence), bounding the analysis window.
 DENSE_TAIL_BYTES = 262144
