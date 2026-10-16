@@ -64,6 +64,33 @@ The first two are the initial Docs integration experiment. The remaining rows ar
 proposals, not enabled services. In particular there is no automatic per-turn
 critic, model router, background evaluator or new permission gate.
 
+The initial Docs task has a concrete completion criterion: locate two relevant
+maintained-book passages through search, read their context, and produce a cited
+editorial decision naming the next useful experiment and one material risk.
+Manufacturing a page edit is not required. Check the policy journal against the
+actual offered schemas and canonical settlement, not the actor's success claim.
+For the stranded-work control, an essential but unoffered tool must dispatch
+nothing; a separate bounded run may re-offer that original tool and must complete
+the reader task. That control is not permission to replay a stopped selection.
+
+The initial owned Docs trial completed that reader task in seven model turns
+and twelve tool calls, including two book searches; its final offer contained no
+tools and canonical settlement was independently observed. A separate read-only
+native trial injected an actual unreadable-corpus UNKNOWN, then a fresh successful
+search after a controlled fixture repair. In three turns and two reads, the
+model revised the absence claim while retaining the original UNKNOWN and limiting
+its conclusion to the fixture's recorded hash and time. These are single-task
+observations, not evidence of general quality improvement, lower cost or parity.
+
+A later Docs task exposed a useful failure boundary: a guessed file path stopped
+the wake as an unknown effect. The Docs caller now records known local read
+I/O/decode failures as explicit UNKNOWN observations with the original error,
+not successful content retrieval or absence. Scope/authority failures and
+uncertain mutations still stop; there is no automatic retry. A separate,
+reconciled attempt exercised a new missing-file control, then continued to a
+grounded reader decision and settlement. The original failed attempt remains
+UNKNOWN. This is a Docs-caller integration, not a changed `search_docs` contract.
+
 ## System 0 first; System 1 where it earns its place
 
 Use deterministic code for file lookup, schema validation, budgets, command exit
