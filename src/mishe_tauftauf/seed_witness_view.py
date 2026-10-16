@@ -16,6 +16,7 @@ from .seed_board import open_tasks, repeated_no_change, work_receipts
 from . import task_state
 from .coordination_checks import anomalies
 from .seed import _wedge_evidence, _treadmill_evidence, recorded_session
+from .clear_journal import read as read_record
 
 # Stages whose refusals cannot be superseded by a live caller, so they must not
 # latch as the witness pane's standing publication result (docs/publication-checks.md):
@@ -301,11 +302,10 @@ def _delivery_note(home: Path, session: str, role: str, wake: int) -> str | None
     if not session or not _mind_pane_live(session, role):
         return None
     path = home / "checks" / f"wall-send-{role}-{wake}.json"
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    if not isinstance(data, dict) or data.get("phase") != "delivered":
+    # The record is decoded in `clear_journal`, a named boundary file, so this
+    # view adds no parsing site of its own.
+    data = read_record(path)
+    if data is None or data.get("phase") != "delivered":
         return None
     return f"delivery recorded at {data.get('at')} attempts={data.get('attempts')}"
 
