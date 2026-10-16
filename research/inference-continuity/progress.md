@@ -1303,8 +1303,11 @@ dispositions are in `research/inference-continuity/experiment-plan.md`
 - Arm A (uninterrupted): `result_status=complete`, turns=2, calls=1; marker
   0→1 line (`exp4l marker wake50866`); store executions exactly 1; wire usage
   731 + 939 tokens; journal 8 rows; no duplicate effect execution.
-- Arm D (`mode_kill_start`): SIGKILL, exit 137, after durable start record but
-  before marker append/effect. Post-kill: marker 0 bytes/0 lines; intent+start
+- Arm D (`mode_kill_start`): author-reported SIGKILL, exit 137 (no retained
+  supervisor kill capture, `invoke-arm.sh`, or `-stdout/-stderr.txt` in the
+  bundle; H4 of the 4o-s prereg per its falsification clause is therefore
+  UNKNOWN, author-reported only, not held). Kill intended after durable start
+  record but before marker append/effect. Post-kill: marker 0 bytes/0 lines; intent+start
   records present; no outcome record; journal 4 rows (checkpoint, model_input,
   model_output, proposal). Reconcile `mode_reconcile_start` twice: first and
   second status `unknown`, failure `started-without-outcome`, executions 0; no
@@ -1314,8 +1317,12 @@ dispositions are in `research/inference-continuity/experiment-plan.md`
   witness; reconcile does not overclaim and leaves the effect UNKNOWN. Arm A
   verifies the route is usable at this selector/reasoning only; no
   duplicate/not-once violation occurred, and no interrupted effect was recovered.
-- Limits: n=1 per arm; one host; scripted SIGKILL seam; selector recovery is
-  probe-time; no production caller, adoption, activation, or pagination result.
+  H1–H3 of the 4o-s prereg hold on retained bytes (independent read:
+  witness artifact `artifacts/witness-wake59247-exp4o-s-armD-independent-read.md`,
+  DM 59253); H4 remains UNKNOWN pending a retained capture.
+- Limits: n=1 per arm; one host; scripted SIGKILL seam (author-reported, no
+  retained capture); selector recovery is probe-time; no production caller,
+  adoption, activation, or pagination result.
 - Evidence: `.mishe-tauftauf/artifacts/inference-research-wake59043-exp4o-s-armA.md`,
   `.mishe-tauftauf/artifacts/inference-research-wake59055-exp4o-s-armD.md`,
   `.mishe-tauftauf/artifacts/inference-research-wake59032-exp4o-s-smoke.md`,
