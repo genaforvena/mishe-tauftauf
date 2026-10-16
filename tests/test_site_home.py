@@ -131,6 +131,30 @@ def test_mind_home_binding_rejects_another_initialized_site(tmp_path: Path, monk
         raise AssertionError("library writer accepted a different initialized site")
 
 
+
+def test_artifact_writers_reject_uninitialized_typo_home_before_creating_children(
+        tmp_path: Path, monkeypatch) -> None:
+    from mishe_tauftauf import delivery, session_watch
+
+    repository = planted_repository(tmp_path)
+    typo = repository / ".mishe-tauftauft"
+    typo.mkdir()
+
+    with pytest.raises(ValueError, match="not an initialized site"):
+        delivery._snapshot(typo, {"identity": "fixture"})
+    assert not (typo / "artifacts").exists()
+
+    class Halt(Exception):
+        pass
+
+    monkeypatch.setattr(session_watch, "observe", lambda *_: {"available": True})
+    monkeypatch.setattr(session_watch, "assess", lambda *_: {"state": "UNKNOWN", "reason": "fixture"})
+    monkeypatch.setattr(session_watch, "notify", lambda *_: None)
+    monkeypatch.setattr(session_watch.time, "sleep", lambda *_: (_ for _ in ()).throw(Halt()))
+    with pytest.raises(ValueError, match="not an initialized site"):
+        session_watch.run(typo, "session")
+    assert not (typo / "health").exists()
+
 def test_init_still_plants_a_site_directly_inside_a_worktree(tmp_path: Path) -> None:
     repository = planted_repository(tmp_path)
     site = repository / ".mishe-tauftauf"

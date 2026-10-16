@@ -13,7 +13,7 @@ from pathlib import Path
 from . import task_state
 from .records import payload as record_payload
 from .feed import Feed
-from .observations import validate_slug
+from .observations import validate_home, validate_slug
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -152,6 +152,7 @@ def _push(record: dict) -> None:
 
 
 def _snapshot(home: Path, record: dict) -> Path:
+    validate_home(home)
     text = json.dumps(record, sort_keys=True, indent=2) + "\n"
     digest = hashlib.sha256(text.encode()).hexdigest()
     path = home / "artifacts" / f"delivery-{record['identity']}-{digest}.json"

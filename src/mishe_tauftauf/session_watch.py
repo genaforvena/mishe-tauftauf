@@ -8,6 +8,7 @@ import socket
 import subprocess
 import time
 from pathlib import Path
+from .observations import validate_home
 
 
 def assess(current: dict, previous: dict | None, now: float) -> dict:
@@ -82,6 +83,7 @@ def route(home: Path, row: dict) -> None:
 
 
 def run(home: Path, session: str) -> None:
+    home = validate_home(home)
     path = home / "health/session-watch.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     last_route = 0.0
