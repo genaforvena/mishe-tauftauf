@@ -44,6 +44,8 @@ Over-growth in a presentation lane is normally a stale-data signal: the owning
 mind prunes superseded lines first and records the prune on its own wall. Wall
 over-growth is the wall author's own prune, bounded by `wall write` (16384 bytes /
 200 lines) with every accepted write audited to `logs/wall-write-audit.jsonl`;
+Refused writes (stale staging anchor, peer copy) also append a durable entry
+with role, source, wall, both mtimes, and the refusal reason.
 top-pane over-growth belongs to the renderer's role (health for the health
 dashboard, the operator-view supervisor for the operator dashboard). A new window
 requires a `health/windows.json` manifest entry — WINDOWS audits
