@@ -27,7 +27,7 @@ from .host_radio import (BLUETOOTH_ROOT, COMMAND_TIMEOUT_SECONDS, NET_ROOT,
                          controller_state, decode_git_log_lines,
                          decode_tailnet_status, ethernet_interfaces, link_speed, operstate,
                          rfkill_switches, rfkill_unreadable, rfkill_verdict, wireless_interfaces)
-from .outcome_events import classify_outcomes
+from .outcome_events import classify_outcomes, eligible_evidence_path
 from .observations import reserved_home_name
 from .runtime_source import source_for
 from .scan_freshness import age_bounds, classify_age, endpoint
@@ -4158,8 +4158,8 @@ def _seed_settle_result_mix(home: Path) -> dict[str, object]:
 EVIDENCE_BINDING_CLAUSE_TIME = datetime(2026, 10, 6, 16, 22, 11, tzinfo=timezone.utc)
 """The write-once outcome clause (docs/wall-coordination.md) landed in 3c22087;
 outcomes recorded earlier are not bound by it."""
-
-
+EVIDENCE_PATH_POLICY = "eligible-paths-v2"
+"""Current prospective allowlist; re-evaluates standing rows without rewriting them."""
 def _display_path(path: str, home: Path) -> str:
     """Site-relative display form of a stored evidence path.
 
@@ -4180,35 +4180,28 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     A ``wall-outcome`` record binds its per-outcome evidence file with
     ``payload.evidence.{path,sha256}`` at record time. The clause
     (``docs/wall-coordination.md``) prescribes four independent
-    requirements: the path is under ``artifacts/`` (A), the file is unedited
-    — the bound digest still matches the current bytes (B) — the bound file
-    exists (C), and the path is cited by no other outcome (D). The sense
-    re-hashes every tape-referenced
-    post-clause outcome's evidence and reports two windows: the latest
-    outcome per role (live compliance) and the whole post-clause set
-    (standing audit — the store is append-only, so a repaired violation stays
-    flagged). ``latest_bad_roles`` names the roles that are non-compliant in
-    the live window, so the live set is readable beside the count rather than
+    requirements: an explicitly allowlisted single file under the owned site
+    (A), unchanged bytes (B), retained file (C), and a path cited by no other
+    outcome (D). ``EVIDENCE_PATH_POLICY`` is a prospective policy version;
+    historic rows are re-evaluated and the old scan evidence is not rewritten.
+    The sense re-hashes every tape-referenced post-clause outcome's evidence
+    and the whole post-clause set (standing audit — the store is append-only,
+    so a repaired violation stays flagged). ``latest_bad_roles`` names roles
+    in the live window, so the live set is readable beside the count rather than
     re-derived from ``violating``, which lists the standing audit's newest
     rows. ``latest_bad_last`` stamps each live-bad role's last outcome time:
     the live window is the latest outcome per role over the whole post-clause
     set, so it is unbounded in time and an inactive role's row stands until
-    current. ``count_excluded`` names the retained-bytes rows (B) — the class
-    the trial's evidenced-outcome count drops among the rows this sense
-    checks — beside ``all_bad``'s audit of all four classes. The trial also
-    drops out-of-home paths (A-only here) and unparseable publications
-    (coverage-incomplete here) as ``evidence_unavailable``, so the two counts
-    agree only while no such row exists. The sample's field order is the pane's
-    visible-prefix order — the standing-audit cause, the live window, the read
-    watermark, then the coverage tier — because the pane clips a sample to 120
-    cells and a verdict must carry its cause inside that prefix. State is
-    ``drift`` when any checked outcome violates, including when other
-    publications have incomplete coverage; otherwise incomplete coverage,
-    unavailable input or no eligible event is ``unknown``.
+    current. ``count_excluded`` names retained-byte violations (B). The
+    allowlist contains direct single files under ``artifacts/``, matching
+    ``discovery/scan-*.json``, and ``dms/*.md``; all other paths, symlinks and
+    traversal are class A. The sample preserves the standing-audit cause,
+    live window, read watermark and coverage tier within the pane's clipped
+    prefix. State is ``drift`` when any checked outcome violates; incomplete
+    or unavailable coverage, or no eligible event, stays ``unknown``.
 
-    The under-artifacts test resolves the stored path first, so a ``..``
-    segment cannot pass it lexically. D counts distinct stored path strings:
-    two names for one inode (hardlink aliasing) both read clean.
+    D counts identical stored path strings. Symlink aliases and traversal are
+    not eligible, even when their resolved target is in an allowed directory.
     """
     coverage = classify_outcomes(home, EVIDENCE_BINDING_CLAUSE_TIME)
     read_at = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -4224,7 +4217,7 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
         return {"id": "sense.ledger.evidence-binding", "state": "unknown",
                 "sample": "no post-clause outcomes", "kind": "read",
                 "coverage_incomplete": 0, "incomplete": []}
-    artifacts_root = home.resolve() / "artifacts"
+    home = home.resolve()
     path_counts: dict[str, int] = {}
     for _ts, _sequence, _role, evidence in loaded:
         path = evidence.get("path")
@@ -4234,12 +4227,15 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     for ts, sequence, role, evidence in loaded:
         path = evidence.get("path")
         digest = evidence.get("sha256")
-        classes: list[str] = []
         file_path = Path(path) if isinstance(path, str) else None
-        # Resolve before the test: a stored ``artifacts/../walls/x.md`` passes
-        # is_relative_to lexically while its canonical path is outside artifacts.
-        resolved = file_path.resolve() if file_path is not None else None
-        if resolved is None or not resolved.is_relative_to(artifacts_root):
+        candidate = (file_path if file_path is not None and file_path.is_absolute()
+                     else home / file_path if file_path is not None else None)
+        try:
+            resolved = candidate.resolve() if candidate is not None else None
+        except (OSError, RuntimeError):
+            resolved = None
+        classes: list[str] = []
+        if not isinstance(path, str) or not eligible_evidence_path(home, path):
             classes.append("A")
         try:
             if resolved is not None and not resolved.exists():
@@ -4288,6 +4284,7 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     return {"id": "sense.ledger.evidence-binding",
             "state": "drift" if violations else "unknown" if incomplete else "verified",
             "sample": " ".join(parts), "kind": "read", "read_at": read_at,
+            "policy": EVIDENCE_PATH_POLICY,
             "bound": len(checked), "latest_roles": len(latest),
             "latest_bad": len(latest_bad_roles),
             "latest_bad_roles": [f"{role}({classes})" for role, classes in latest_bad_roles],

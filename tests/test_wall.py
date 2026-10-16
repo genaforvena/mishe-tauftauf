@@ -495,7 +495,8 @@ def test_wall_outcome_resolves_bare_notes_to_role_staging_anchor(tmp_path):
     (tmp_path / "walls").mkdir()
     (tmp_path / "walls" / "NOTES").write_text("another role's staged notes", encoding="utf-8")
     (tmp_path / "walls" / "genome-NOTES").write_text("genome's own outcome notes", encoding="utf-8")
-    evidence = tmp_path / "evidence.txt"
+    evidence = tmp_path / "artifacts" / "evidence.txt"
+    evidence.parent.mkdir()
     evidence.write_text("evidence bytes", encoding="utf-8")
     code = cli.main(["--home", str(tmp_path), "wall", "outcome", "--owner", "genome",
                      "--kind", "accepted", "--file", "NOTES", "--evidence", str(evidence)])
@@ -1051,7 +1052,8 @@ def test_wall_outcome_requires_evidence_and_cli_records_prose(tmp_path):
     setup_wall(tmp_path)
     note = tmp_path / "note.md"
     note.write_text("Removed the failed camera hypothesis after a controlled comparison.")
-    evidence = tmp_path / "comparison.txt"
+    evidence = tmp_path / "artifacts" / "comparison.txt"
+    evidence.parent.mkdir()
     evidence.write_text("control=4 candidate=4")
     with pytest.raises(ValueError, match="evidence"):
         wall.outcome(tmp_path, "discover", "hypothesis-changed", note.read_text(), tmp_path / "absent")
@@ -1370,3 +1372,99 @@ def test_seed_yield_race_restage_mid_settle_preserves_newer_anchor(tmp_path, mon
     assert anchor.read_text(encoding="utf-8") == "restaged during settle"
     captured = capsys.readouterr()
     assert "not consumed" in captured.out
+def test_wall_outcome_enforces_eligible_immutable_path_allowlist(tmp_path):
+    from mishe_tauftauf import wall
+
+    setup_wall(tmp_path)
+    allowed = [
+        (tmp_path / "artifacts" / "result.md", "artifacts"),
+        (tmp_path / "discovery" / "scan-test.json", "discovery"),
+        (tmp_path / "dms" / "DM-test.md", "dms"),
+    ]
+    for evidence, directory in allowed:
+        evidence.parent.mkdir(parents=True, exist_ok=True)
+        evidence.write_text(f"immutable {directory} evidence\n")
+        wall.outcome(tmp_path, "genome", "accepted", f"Allowed {directory}.", evidence)
+
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.md"
+    outside.write_text("outside\n")
+    rejected = [
+        tmp_path / "walls" / "genome.md",
+        tmp_path / "notes" / "progress.md",
+        tmp_path / "tmp" / "scratch.md",
+        tmp_path / "health" / "latest.json",
+        tmp_path / "research" / "report.md",
+        tmp_path / "ci" / "latest.json",
+        tmp_path / "chat.log",
+        outside,
+    ]
+    for evidence in rejected:
+        evidence.parent.mkdir(parents=True, exist_ok=True)
+        if not evidence.exists():
+            evidence.write_text("mutable or out-of-scope\n")
+        with pytest.raises(ValueError, match="eligible single file"):
+            wall.outcome(tmp_path, "genome", "accepted", "Must refuse.", evidence)
+
+    artifacts = tmp_path / "artifacts"
+    escape = artifacts / ".." / "walls" / "genome.md"
+    with pytest.raises(ValueError, match="eligible single file"):
+        wall.outcome(tmp_path, "genome", "accepted", "Traversal must refuse.", escape)
+
+    target = tmp_path / "artifacts" / "target.md"
+    target.write_text("target\n")
+    alias = tmp_path / "artifacts" / "alias.md"
+    alias.symlink_to(target)
+    with pytest.raises(ValueError, match="eligible single file"):
+        wall.outcome(tmp_path, "genome", "accepted", "Symlink must refuse.", alias)
+
+    assert len([entry for entry in Feed(tmp_path).entries()
+                if entry.body.startswith("Wall outcome ")]) == len(allowed)
+
+
+def test_wall_outcome_refuses_already_bound_allowed_scan_path(tmp_path):
+    from mishe_tauftauf import wall
+
+    setup_wall(tmp_path)
+    evidence = tmp_path / "discovery" / "scan-once.json"
+    evidence.parent.mkdir()
+    evidence.write_text('{"scan": 1}\n')
+    wall.outcome(tmp_path, "genome", "accepted", "First scan outcome.", evidence)
+    with pytest.raises(ValueError, match="already bound"):
+        wall.outcome(tmp_path, "genome", "accepted", "Duplicate scan outcome.", evidence)
+    assert len([entry for entry in Feed(tmp_path).entries()
+                if entry.body.startswith("Wall outcome ")]) == 1
+def test_wall_outcome_fails_closed_on_corrupt_history(tmp_path):
+    from mishe_tauftauf import discovery, wall
+
+    setup_wall(tmp_path)
+    evidence = tmp_path / "artifacts" / "fresh.md"
+    evidence.parent.mkdir()
+    evidence.write_text("new immutable evidence\n")
+    tape = tmp_path / "chat.log"
+    tape.write_bytes(b"corrupt historical tape\n")
+    before = tape.read_bytes()
+
+    with pytest.raises(ValueError, match="cannot derive bound evidence paths"):
+        wall.outcome(tmp_path, "genome", "accepted", "Must fail closed.", evidence)
+
+    assert tape.read_bytes() == before
+    assert discovery._ledger_evidence_binding(tmp_path)["state"] == "unknown"
+def test_wall_outcome_hashes_evidence_after_waiting_for_publication_lock(tmp_path, monkeypatch):
+    from mishe_tauftauf import wall
+    from mishe_tauftauf.records import payload
+
+    setup_wall(tmp_path)
+    evidence = tmp_path / "artifacts" / "changing.md"
+    evidence.parent.mkdir()
+    evidence.write_text("bytes before lock\n")
+    observed = b"bytes after lock wait\n"
+
+    def change_while_locked(home):
+        evidence.write_bytes(observed)
+        return set()
+
+    monkeypatch.setattr(wall, "_bound_evidence_paths", change_while_locked)
+    wall.outcome(tmp_path, "genome", "accepted", "Bound after lock wait.", evidence)
+    entry = next(entry for entry in Feed(tmp_path).entries()
+                 if entry.body.startswith("Wall outcome "))
+    assert payload(entry)["evidence"]["sha256"] == hashlib.sha256(observed).hexdigest()
