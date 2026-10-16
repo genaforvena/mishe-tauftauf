@@ -152,6 +152,79 @@ def test_health_flags_a_frozen_renderer_lease_as_red(tmp_path: Path, monkeypatch
     assert "pane-lease" in report
 
 
+def _green_site_fixture(tmp_path: Path, monkeypatch) -> Path:
+    """The clean-GREEN health fixture: active core service, live linked site,
+    healthy pane snapshot with a fresh renderer lease."""
+    home = tmp_path / "core"
+    linked = tmp_path / "linked"
+    (home / "health").mkdir(parents=True)
+    (linked / "health").mkdir(parents=True)
+    (home / "health" / "windows.json").write_text('["health"]', encoding="utf-8")
+    (home / "health" / "services.json").write_text('["core.service"]', encoding="utf-8")
+    (home / "health" / "linked-sites.json").write_text(
+        json.dumps({"version": 1, "sites": [{"home": str(linked), "session": "example"}]}),
+        encoding="utf-8")
+    (linked / "health" / "services.json").write_text('["example-health.service"]', encoding="utf-8")
+    monkeypatch.setenv("MISHE_SEED_SESSION", "test-session")
+
+    def run(argv, **_kwargs):
+        if argv[0] == "tmux":
+            if "capture-pane" in argv:
+                stamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                return subprocess.CompletedProcess(
+                    argv, 0, f"-- pane live {stamp} · refresh 5s · ticks every frame --\n", "")
+            return subprocess.CompletedProcess(argv, 0, "health 0 0 9001\n", "")
+        if argv[0] == "systemctl":
+            if "show" in argv:
+                return subprocess.CompletedProcess(
+                    argv, 0, "Id=core.service\nActiveState=active\nSubState=running\nNRestarts=0\n", "")
+            return subprocess.CompletedProcess(argv, 0, "active\n", "")
+        return subprocess.CompletedProcess(argv, 0, "PASS doctor\n", "")
+
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.subprocess.run", run)
+    monkeypatch.setattr("mishe_tauftauf.wall_view.subprocess.run", run)
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.ci_line", lambda _home: "CI: PASS")
+    return home
+
+
+def test_health_folds_renderer_byte_unknown_into_the_verdict(tmp_path: Path, monkeypatch) -> None:
+    """A renderer whose process is unreadable must not leave the verdict GREEN.
+
+    research-methods DM 61672: the clause reads UNKNOWN while the headline a
+    resolver reads first stayed GREEN; disposition (a) folds it into the verdict.
+    """
+    home = _green_site_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr("mishe_tauftauf.wall_view.renderer_bytes_lines", lambda h: (
+        ["RENDERER BYTES: UNKNOWN pin=x unreadable=ledger"], "UNKNOWN"))
+    rendered = health(home)
+    assert "STATE: UNKNOWN — a top-pane renderer is unreadable" in rendered
+    report = (home / "observations" / "health").read_text(encoding="utf-8")
+    assert report.startswith("UNKNOWN health renderer bytes ")
+    assert "unreadable=ledger" in report
+
+
+def test_health_folds_renderer_byte_drift_into_the_fail_cause(tmp_path: Path, monkeypatch) -> None:
+    """A superseded renderer release is a named cause, not just a clause line."""
+    home = _green_site_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr("mishe_tauftauf.wall_view.renderer_bytes_lines", lambda h: (
+        ["RENDERER BYTES: RED pin=x stale=ledger(live=y)"], "DRIFT"))
+    rendered = health(home)
+    assert "STATE: RED — internal check needs repair" in rendered
+    report = (home / "observations" / "health").read_text(encoding="utf-8")
+    assert report.startswith("FAIL health internal check at ")
+    assert "renderer-bytes=RENDERER BYTES: RED pin=x stale=ledger(live=y)" in report
+
+
+def test_health_stays_green_when_no_renderer_window_exists(tmp_path: Path, monkeypatch) -> None:
+    """Empty lines mean there is no renderer to observe, not an unobserved one."""
+    home = _green_site_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr("mishe_tauftauf.wall_view.renderer_bytes_lines",
+                        lambda h: ([], "UNKNOWN"))
+    rendered = health(home)
+    assert "STATE: GREEN — internal checks pass" in rendered
+    assert (home / "observations" / "health").read_text(encoding="utf-8").startswith("PASS ")
+
+
 def test_health_reports_linked_site_inactive_service_as_red(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "core"
     linked = tmp_path / "linked"
