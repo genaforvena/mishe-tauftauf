@@ -5890,6 +5890,23 @@ def _notify_scan(home: Path, snapshot: dict[str, object],
                 while len(_detail) > 0 and _detail[-1] == " ":
                     _detail = _detail[:-1]
                 detail = f"unbound_n={item.get('unbound')} " + _detail
+            elif (identifier == "sense.ledger.delivery-invariant"
+                  and "records" in item and state != "verified"):
+                # `records=N bool_dv=M` are coverage tiers over the whole
+                # ledger; in the UNKNOWN branch they are partial reads of an
+                # unreadable store and advance on every ledger write while the
+                # flagged condition — the violation set — is unchanged.
+                # Identity slices the tier out of the sample (same shape as
+                # dv-binding, wake 60035). The violations and unreadable-store
+                # reason identify the reading; the counts, the state and the
+                # reader-facing sample keep their form.
+                _tier = f"records={item.get('records')} bool_dv={item.get('bool_dv')}"
+                _detail = str(item["sample"]).replace(_tier, "")
+                while len(_detail) > 0 and _detail[0] == " ":
+                    _detail = _detail[1:]
+                while len(_detail) > 0 and _detail[-1] == " ":
+                    _detail = _detail[:-1]
+                detail = _detail
             elif item["kind"] == "declaration" or state != "verified":
                 detail = sample_text
                 if identifier == "sense.ledger.evidence-binding":

@@ -7648,3 +7648,63 @@ def test_notify_scan_notifies_on_dv_binding_fourth_unbound_phase(tmp_path):
     discovery._notify_scan(home, snapshot_two, snapshot_one, path)
     after = len(Feed(home).entries())
     assert after > before
+
+def _delivery_invariant_reading(sample, records, bool_dv, violations=None,
+                                state="unknown"):
+    """A `sense.ledger.delivery-invariant` reading in the producer's shape."""
+    return {"id": "sense.ledger.delivery-invariant", "kind": "read",
+            "state": state, "sample": sample, "records": records,
+            "bool_dv": bool_dv, "violations": violations or {}, "kind": "read"}
+
+
+def test_notify_scan_ignores_delivery_invariant_unknown_tier_changes(tmp_path):
+    """A coverage-tier advance in the UNKNOWN branch is not material.
+
+    The UNKNOWN sample carries `records=N bool_dv=M` as partial reads of an
+    unreadable store; they advance on every ledger write while the flagged
+    condition — the violation set — is unchanged (wake 60035: witness DM
+    59875). Identity slices the tier out.
+    """
+    home = tmp_path / "site"
+    (home / "discovery").mkdir(parents=True, exist_ok=True)
+    path = home / "discovery" / "sample.json"
+    one = _delivery_invariant_reading(
+        "records=102 bool_dv=57 unreadable=ledger.json.bak", 102, 57)
+    two = _delivery_invariant_reading(
+        "records=103 bool_dv=58 unreadable=ledger.json.bak", 103, 58)
+    snapshot_one = {"created": "2026-10-16T13:25:00Z", "node": "test",
+                    "observations": [one]}
+    snapshot_two = {"created": "2026-10-16T13:35:00Z", "node": "test",
+                    "observations": [two]}
+    discovery._notify_scan(home, snapshot_one, None, path)
+    before = len(Feed(home).entries())
+    discovery._notify_scan(home, snapshot_two, snapshot_one, path)
+    after = len(Feed(home).entries())
+    assert after == before
+
+
+def test_notify_scan_notifies_on_delivery_invariant_unknown_violation_change(
+        tmp_path):
+    """A violation-set change in the UNKNOWN branch is material.
+
+    The violation set is the flagged condition; a new violation notifies
+    even while the coverage tier is sliced out of identity.
+    """
+    home = tmp_path / "site"
+    (home / "discovery").mkdir(parents=True, exist_ok=True)
+    path = home / "discovery" / "sample.json"
+    one = _delivery_invariant_reading(
+        "records=102 bool_dv=57 unreadable=ledger.json.bak", 102, 57)
+    two = _delivery_invariant_reading(
+        "records=102 bool_dv=57 violations=health-stale-pend-detection:1 "
+        "unreadable=ledger.json.bak", 102, 57,
+        violations={"health-stale-pend-detection": 1})
+    snapshot_one = {"created": "2026-10-16T13:25:00Z", "node": "test",
+                    "observations": [one]}
+    snapshot_two = {"created": "2026-10-16T13:35:00Z", "node": "test",
+                    "observations": [two]}
+    discovery._notify_scan(home, snapshot_one, None, path)
+    before = len(Feed(home).entries())
+    discovery._notify_scan(home, snapshot_two, snapshot_one, path)
+    after = len(Feed(home).entries())
+    assert after > before
