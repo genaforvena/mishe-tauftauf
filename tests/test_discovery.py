@@ -2692,9 +2692,9 @@ def test_evidence_binding_latest_window_clean_while_all_has_history(tmp_path):
          f"[record] records/{fresh_digest}.json sha256={fresh_digest}\n"),
     ])
     result = discovery._ledger_evidence_binding(home)
-    # The standing audit keeps the repaired violation flagged (drift), while
-    # the latest outcome per role is clean.
-    assert result["state"] == "drift"
+    # State follows the live window: bob's latest outcome is clean, so the
+    # sense reads verified while the standing audit keeps the repaired row.
+    assert result["state"] == "verified"
     assert result["all_bad"] == 1
     assert result["latest_bad"] == 0
     assert result["latest_roles"] == 1

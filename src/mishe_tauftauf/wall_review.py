@@ -12,6 +12,7 @@ from pathlib import Path
 import time
 import sys
 import subprocess
+import shutil
 import tempfile
 
 DEFAULT_MODEL = "opencode-go/longcat-2.5-preview-free"
@@ -105,6 +106,25 @@ def main():
     print(json.dumps(answer))
 
 
+def reviewer_executable() -> str:
+    """Absolute reviewer CLI path.
+
+    The gate must not depend on the caller's PATH: a patch check launched from a
+    shell that lacks the installed agent CLI directory used to die with
+    ``FileNotFoundError: 'omp'`` and record the whole patch as
+    ``review-unavailable`` (9 of 101 records). Prefer the PATH-resolved binary;
+    fall back to the standard user install location, else let the OS report the
+    missing executable.
+    """
+    found = shutil.which("omp")
+    if found:
+        return found
+    fallback = Path.home() / ".local" / "bin" / "omp"
+    if fallback.is_file():
+        return str(fallback)
+    return "omp"
+
+
 def review_answer(model: str, directory: Path, path: Path, runner=subprocess.run, validate=None) -> dict:
     """Call the reviewer until it answers; neither an rc=0 empty stdout nor an
     answer that fails the request's own protocol validation is an answer.
@@ -132,7 +152,7 @@ def review_answer(model: str, directory: Path, path: Path, runner=subprocess.run
         # no longer consume the whole budget before a retry can run.
         share = max(1.0, min(remaining_budget(budget, started), budget / MAX_EMPTY_RETRIES))
         try:
-            result = runner(["omp", "--print", "--no-session", "--no-extensions", "--no-tools",
+            result = runner([reviewer_executable(), "--print", "--no-session", "--no-extensions", "--no-tools",
                              "--no-lsp", "--no-pty", "--model", model, "--thinking", "high",
                              "--cwd", str(directory), "@" + str(path)],
                             capture_output=True, text=True, timeout=share)
