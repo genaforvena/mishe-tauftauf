@@ -20,3 +20,6 @@ files. Use deterministic search and checks to locate the evidence; use editorial
 judgment for what the evidence does not settle. A useful turn changes a page,
 tests a reader journey, or records a supported keep/revise decision. Repeated
 acknowledgements and unchanged audits do not make the book clearer.
+After a supported KEEP, reopen the same reader question only for changed evidence
+or a named bounded experiment. Do not request continuation for another unchanged
+audit; without a concrete new action, settle without continuation.
