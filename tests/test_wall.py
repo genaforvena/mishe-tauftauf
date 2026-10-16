@@ -260,6 +260,47 @@ def test_wall_write_refuses_stale_peer_document_from_audit_history(tmp_path):
     assert (tmp_path / "walls" / "witness.md").read_text() == "Wake 8219 findings; current."
 
 
+def test_peer_copy_refusal_audits_to_wall_write_audit_jsonl(tmp_path):
+    """A refused peer-wall paste leaves a durable record, not only pane stderr.
+
+    The paste class clobbered three walls on 2026-10-10 and one on 2026-10-11,
+    so the guard's refusals are the recurrence record for that class: a refusal
+    visible only in the caller's pane cannot be counted or routed. The record
+    carries the same shape as the stale-anchor refusal (role, source, wall,
+    both mtimes, reason).
+    """
+    setup_wall(tmp_path)
+    from mishe_tauftauf import cli
+    (tmp_path / "walls").mkdir()
+    (tmp_path / "walls" / "genome.md").write_text("Same evidence, new framing.\n", encoding="utf-8")
+    notes = tmp_path / "notes.md"
+    notes.write_text("Same evidence, new framing.\n", encoding="utf-8")
+    code = cli.main(["--home", str(tmp_path), "wall", "write", "--owner", "witness", "--file", str(notes)])
+    assert code == 2
+    entry = json.loads((tmp_path / "logs" / "wall-write-audit.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert entry["reason"] == "peer-copy"
+    assert entry["role"] == "witness"
+    assert entry["source"] == str(notes)
+    assert entry["wall"] == str(tmp_path / "walls" / "witness.md")
+    assert "ts" in entry
+    assert "pid" in entry
+    assert not (tmp_path / "walls" / "witness.md").exists()
+
+
+def test_peer_history_copy_refusal_audits_its_own_reason(tmp_path):
+    """A refused superseded-peer paste is recorded as its own refusal class."""
+    setup_wall(tmp_path)
+    from mishe_tauftauf import wall
+    wall.write(tmp_path, "witness", "Wake 7899 findings; later superseded.")
+    wall.write(tmp_path, "witness", "Wake 8219 findings; current.")
+    with pytest.raises(ValueError, match="identical to a document witness wrote"):
+        wall.write(tmp_path, "discover", "Wake 7899 findings; later superseded.")
+    entry = json.loads((tmp_path / "logs" / "wall-write-audit.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert entry["reason"] == "peer-copy-history"
+    assert entry["role"] == "discover"
+    assert entry["wall"] == str(tmp_path / "walls" / "discover.md")
+
+
 def test_wall_write_allows_own_unchanged_rewrite_against_history(tmp_path):
     """Own earlier digests must not block rewriting a wall with unchanged content."""
     setup_wall(tmp_path)
