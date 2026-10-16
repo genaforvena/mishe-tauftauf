@@ -183,9 +183,10 @@ working files that a later turn may edit are ineligible even under
 allowlist, containment and write-once rules before publishing: it refuses
 a path outside the allowlist, any symlink component or lexical
 `.`/`..` traversal regardless of target, or a path another post-clause
-rather than skipping the check when the bound set cannot be derived —
-missing/corrupt records, malformed publications, a missing `records/`
-directory or an unparseable tape. Writer, observer and this clause apply the
+outcome already bound, and refuses publication rather than skipping the
+check when the bound set cannot be derived — missing/corrupt records,
+malformed publications, a missing `records/` directory or an unparseable
+tape. Writer, observer and this clause apply the
 same allowlist. The unchanged-bytes, existence and citation requirements are
 measured after the fact by `sense.ledger.evidence-binding`: immutability is
 checked by retained/nonempty and digest equality after binding, whose live window
