@@ -4449,11 +4449,13 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     set, so it is unbounded in time and an inactive role's row stands until
     current. ``count_excluded`` names retained-byte violations (B). The
     allowlist contains direct single files under ``artifacts/``, matching
-    ``discovery/scan-*.json``, and ``dms/*.md``; all other paths, symlinks and
     traversal are class A. The sample preserves the standing-audit cause,
     live window, read watermark and coverage tier within the pane's clipped
-    prefix. State is ``drift`` when any checked outcome violates; incomplete
-    or unavailable coverage, or no eligible event, stays ``unknown``.
+    prefix. State follows the live window: ``drift`` when a role's latest
+    outcome violates, ``verified`` when every role's latest outcome is clean;
+    the standing audit (``all_bad``, ``violations``) retains the append-only
+    history beside the verdict. Incomplete or unavailable coverage, or no
+    eligible event, stays ``unknown``.
 
     D counts identical stored path strings. Symlink aliases and traversal are
     not eligible, even when their resolved target is in an allowed directory.
@@ -4519,10 +4521,10 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
                         for role, ts in bad_last_rows) or "none"
     count_excluded = sum(1 for row in checked if "B" in row[4])
     # Field order is the pane's visible-prefix order, not a listing order: the
-    # pane clips a sample to 120 cells, so a drift verdict whose cause sits past
-    # that prefix reaches the reader as DRIFT with every visible field clean.
-    # Verdict cause, then the live window, then the read watermark that bounds
-    # it, then the coverage tier.
+    # pane clips a sample to 120 cells, so a verdict whose cause sits past that
+    # prefix reaches the reader with every visible field clean. The
+    # standing-audit summary and the live window lead the sample, then the read
+    # watermark that bounds them, then the coverage tier.
     parts = [f"all_bad={len(violations)} count_excluded={count_excluded} "
              f"latest_bad={len(latest_bad_roles)} latest_bad_roles={named_bad} "
              f"latest_bad_last={bad_last} read_at={read_at} "
@@ -4537,7 +4539,7 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
         if len(violations) > 3:
             parts.append(f"+{len(violations) - 3}more")
     return {"id": "sense.ledger.evidence-binding",
-            "state": "drift" if violations else "unknown" if incomplete else "verified",
+            "state": "drift" if latest_bad_roles else "unknown" if incomplete else "verified",
             "sample": " ".join(parts), "kind": "read", "read_at": read_at,
             "policy": EVIDENCE_PATH_POLICY,
             "bound": len(checked), "latest_roles": len(latest),

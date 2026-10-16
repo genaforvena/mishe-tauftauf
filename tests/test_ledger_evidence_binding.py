@@ -265,9 +265,49 @@ def test_evidence_binding_pane_keeps_the_read_watermark_when_the_live_window_is_
          f"[record] records/{fresh_digest}.json sha256={fresh_digest}\n"),
     ])
     result = discovery._ledger_evidence_binding(home)
-    assert result["state"] == "drift"
+    assert result["state"] == "verified"
     assert result["latest_bad"] == 0
+    # The append-only standing audit keeps the repaired row beside the verdict.
+    assert result["all_bad"] == 1
     cause = f"all_bad={result['all_bad']} count_excluded={result['count_excluded']}"
     _state, line = _observation_reading(result, "recent", home)
     assert cause in line
     assert "read_at=" in line
+
+def test_evidence_binding_state_follows_the_live_window(tmp_path):
+    """State follows the live window, not the standing audit.
+
+    Observed live 2026-10-16 (senses wake 57698, DM 57700): ``state`` read
+    ``drift`` whenever any standing violation existed, so a store whose every
+    role had repaired its latest outcome still read DRIFT with
+    ``latest_bad=0`` — a verdict no visible field supported. The standing
+    audit is append-only and keeps the row; the verdict follows the latest
+    outcome per role.
+    """
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    # bob's only violation is historical: a later clean outcome repaired it.
+    stale = home / "artifacts" / "stale.md"
+    stale.write_text("original\n")
+    stale_digest = _write_evidenced_outcome(home, "bob", stale)
+    stale.write_text("edited after record\n")
+    fresh = home / "artifacts" / "fresh.md"
+    fresh.write_text("write-once\n")
+    fresh_digest = _write_evidenced_outcome(home, "bob", fresh)
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "bob",
+         f"[record] records/{stale_digest}.json sha256={stale_digest}\n"),
+        (2, "2026-10-06T17:30:00Z", "bob",
+         f"[record] records/{fresh_digest}.json sha256={fresh_digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    assert result["state"] == "verified"
+    assert result["latest_bad"] == 0
+    assert result["latest_bad_roles"] == []
+    assert "latest_bad_roles=none" in result["sample"]
+    # The standing audit retains the repaired violation beside the verdict.
+    assert result["all_bad"] == 1
+    assert result["count_excluded"] == 1
+    assert result["violations"] == [
+        "bob@2026-10-06T17:00:00Z:artifacts/stale.md(B)"]
