@@ -10,7 +10,7 @@ journal is the only trace. This checker is the deterministic reader for that
 failure class — it compares the detector's own durable artifacts against the
 tape, read-only, and never writes.
 
-Two independent signals:
+Three independent signals:
 
 * **Channel** — the alert file is rewritten on every route attempt, including a
   failed one (retried every 120s). An alert file newer than the newest routed
@@ -19,15 +19,22 @@ Two independent signals:
 * **Coverage** — a fresh non-GREEN `health/session-watch.json` must have a
   routed `session-watch` DM at or after its RED onset (`changes`, else
   `observed_at`).
+* **Episodes** — the detector appends every produced alert to
+  `health/session-watch-events.jsonl`, so that tape is the durable record of an
+  episode. The newest non-GREEN episode on it must have a routed
+  `session-watch` DM at or after its onset (`--tolerance` slack). This is the
+  sampling-independent signal: the state file and the alert file are both
+  overwritten, so neither shows an episode that recurred and was dropped
+  between two checks (the `routed_key` lifetime defect, 2026-10-16).
 
 Decoding stays on the named boundaries: the tape is read with
 `feed.parse_feed`/`feed.entry_timestamp` and DM addressing with
 `wall.addressed`; this file decodes only the detector's own JSON state record.
 
-Exit status: 0 the newest alert is routed; 2 an alert is unrouted (either
-signal); 3 the check cannot decide — tape, state or alert file missing, stale
-or malformed. A stale or GREEN detector never reports success, because a
-detector with nothing to route cannot show whether the channel works.
+Exit status: 0 the newest alert is routed; 2 an alert is unrouted (any
+signal); 3 the check cannot decide — tape, state, event tape or alert file
+missing, stale or malformed. A stale or GREEN detector never reports success,
+because a detector with nothing to route cannot show whether the channel works.
 """
 from __future__ import annotations
 
@@ -48,6 +55,7 @@ SOURCE = "session-watch"
 RECIPIENT = "health"
 STATE_FILE = "health/session-watch.json"
 ALERT_FILE = "health/session-watch-alert.md"
+EVENTS_FILE = "health/session-watch-events.jsonl"
 
 
 def _iso(stamp: float) -> str:
@@ -87,6 +95,48 @@ def _state(home: Path) -> tuple[dict | None, str | None]:
     if not isinstance(data, dict):
         return None, f"detector state is not an object: {path}"
     return data, None
+
+
+def _episodes(home: Path) -> tuple[list[tuple[str, str, float]], str | None]:
+    """Non-GREEN episodes from the detector's own event tape, oldest first.
+
+    Each entry is ``(state, reason, onset)``; ``onset`` is the first row's
+    ``observed_at`` in a contiguous run of one ``(state, reason)``, and a GREEN
+    row ends the run. The tape is the only durable record of an alert the
+    detector *produced*: the state file and the alert file are both overwritten,
+    so neither can show an episode that was produced and then dropped.
+    """
+    path = home / EVENTS_FILE
+    if not path.is_file():
+        return [], f"detector event tape missing: {path}"
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return [], f"detector event tape unreadable: {exc}"
+    episodes: list[tuple[str, str, float]] = []
+    previous: tuple[str, str] | None = None
+    for number, line in enumerate(raw.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError as exc:
+            return [], f"detector event tape line {number} undecodable: {exc}"
+        if not isinstance(row, dict):
+            return [], f"detector event tape line {number} is not an object"
+        state, reason = row.get("state"), row.get("reason")
+        if not isinstance(state, str) or not isinstance(reason, str):
+            return [], f"detector event tape line {number} has no state/reason strings"
+        observed = _number(row.get("observed_at"))
+        if observed is None:
+            return [], f"detector event tape line {number} carries no usable observed_at"
+        if state == "GREEN":
+            previous = None
+            continue
+        if previous != (state, reason):
+            episodes.append((state, reason, observed))
+        previous = (state, reason)
+    return episodes, None
 
 
 def check(home: Path, now: float, tolerance: float, max_age: float) -> dict:
@@ -185,6 +235,36 @@ def check(home: Path, now: float, tolerance: float, max_age: float) -> dict:
                     f"state {kind} since {_iso(onset)}: routed entries carry no decodable "
                     "timestamp: coverage undecided")
 
+    # Signal 3 — episodes: the event tape is the durable record of an alert the
+    # detector produced. Signals 1 and 2 both read files the detector overwrites,
+    # so neither sees an episode that recurred and was dropped between checks.
+    episodes, episode_error = _episodes(home)
+    if episode_error:
+        report["limits"].append(episode_error)
+    elif not episodes:
+        report["limits"].append("no non-GREEN episode on the detector event tape: "
+                                "episode coverage not exercised")
+    else:
+        episode_state, episode_reason, onset = episodes[-1]
+        report["newest_episode"] = {"state": episode_state, "reason": episode_reason,
+                                    "onset": _iso(onset)}
+        if routed and routed[-1][0] >= onset - tolerance:
+            report["exercised"].append(
+                f"newest episode {episode_state} since {_iso(onset)} routed "
+                f"(sequence {routed[-1][1]}, {_iso(routed[-1][0])})")
+        elif routed or absent:
+            report["failures"].append(
+                f"newest episode {episode_state} ({episode_reason}) since {_iso(onset)} has "
+                "no routed session-watch DM at or after it: alert produced and never delivered")
+        else:
+            report["limits"].append(
+                f"newest episode {episode_state} since {_iso(onset)}: routed entries carry "
+                "no decodable timestamp: episode coverage undecided")
+        if len(episodes) > 1:
+            report["limits"].append(
+                f"{len(episodes) - 1} earlier non-GREEN episode(s) on the event tape are "
+                "not re-checked; they are historical evidence, not this verdict")
+
     if report["failures"]:
         report["verdict"] = "RED"
         report["exit"] = 2
@@ -203,7 +283,8 @@ def check(home: Path, now: float, tolerance: float, max_age: float) -> dict:
 def render(report: dict) -> str:
     lines = [f"session-watch routing: {report['verdict']} (exit {report['exit']})",
              f"home: {report['home']}  now: {report['now']}"]
-    for key in ("state", "observed_at", "red_onset", "alert_mtime", "newest_routed"):
+    for key in ("state", "observed_at", "red_onset", "newest_episode", "alert_mtime",
+                "newest_routed"):
         if key in report:
             lines.append(f"{key}: {report[key]}")
     for label, key in (("FAIL", "failures"), ("PASS", "exercised"), ("LIMIT", "limits")):
