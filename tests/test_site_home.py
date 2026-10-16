@@ -132,6 +132,45 @@ def test_mind_home_binding_rejects_another_initialized_site(tmp_path: Path, monk
         raise AssertionError("library writer accepted a different initialized site")
 
 
+def test_binding_refusal_writes_audit_record_to_bound_site(tmp_path: Path, monkeypatch) -> None:
+    """A binding refusal produces a durable record in the caller's bound site.
+
+    The record lands where the write happens (the caller's bound site), not the
+    attempted foreign home, so a non-CLI writer stays visible.
+    """
+    import json
+    repository = planted_repository(tmp_path)
+    canonical = repository / ".mishe-tauftauf"
+    wrong = repository / ".mishe-other"
+    assert cli(canonical, "seed", "init", "--slug", "genome").returncode == 0
+    assert cli(wrong, "seed", "init", "--slug", "witness").returncode == 0
+    monkeypatch.setenv("MISHE_SEED_HOME", str(canonical))
+
+    refused = subprocess.run(
+        [sys.executable, "-m", "mishe_tauftauf", "--home", str(wrong),
+         "append", "--source", "test", "misrouted"],
+        text=True, capture_output=True, timeout=30, env=os.environ.copy())
+    assert refused.returncode == 2
+    assert "does not match this mind's MISHE_SEED_HOME" in refused.stderr
+
+    # Record exists in the caller's bound site.
+    audit_path = canonical / "logs" / "binding-refusal-audit.jsonl"
+    assert audit_path.is_file()
+    entries = [json.loads(line) for line in audit_path.read_text().splitlines() if line.strip()]
+    assert entries, "binding-refusal record is empty"
+    entry = entries[-1]
+    assert entry["attempted_home"] == str(wrong.resolve())
+    assert entry["bound_home"] == str(canonical.resolve())
+    assert "append" in entry["command"]
+    assert "pid" in entry
+    assert "ppid" in entry
+    assert "uid" in entry
+
+    # No record in the attempted foreign home.
+    foreign_audit = wrong / "logs" / "binding-refusal-audit.jsonl"
+    assert not foreign_audit.exists()
+
+
 
 def test_artifact_writers_reject_uninitialized_typo_home_before_creating_children(
         tmp_path: Path, monkeypatch) -> None:

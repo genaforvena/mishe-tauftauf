@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import subprocess
 import time
 import tempfile
@@ -36,11 +37,40 @@ def validate_slug(slug: str) -> str:
     return slug
 
 
+def _audit_binding_refusal(bound_home: Path, attempted_home: Path, command: str) -> None:
+    """Append a binding-refusal audit entry so refusals are diagnosable after the fact.
+
+    Writes to ``logs/binding-refusal-audit.jsonl`` under the caller's bound site
+    (never the attempted foreign home). Never raises — audit logging must not
+    break the refusal path.
+    """
+    try:
+        logs_dir = bound_home / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "attempted_home": str(attempted_home),
+            "bound_home": str(bound_home),
+            "command": command,
+            "pid": os.getpid(),
+            "ppid": os.getppid(),
+            "uid": os.geteuid(),
+        }
+        with open(logs_dir / "binding-refusal-audit.jsonl", "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
+
+
 def validate_home_binding(home: Path) -> Path:
     """Keep a mind process bound to the site named by its supervisor."""
     home = Path(home).resolve()
     bound_home = os.environ.get("MISHE_SEED_HOME")
     if bound_home is not None and home != Path(bound_home).resolve():
+        attempted = home
+        bound = Path(bound_home).resolve()
+        command = " ".join(sys.argv) if sys.argv else "unknown"
+        _audit_binding_refusal(bound, attempted, command)
         raise ValueError(
             f"site home does not match this mind's MISHE_SEED_HOME: {home}"
         )
