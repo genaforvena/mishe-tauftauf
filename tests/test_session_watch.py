@@ -56,7 +56,7 @@ def test_identity_includes_server_pid_to_detect_reused_tmux_session_id(tmp_path,
         elif "display-message" in argv:
             output="456:$2:100\n"
         elif "list-panes" in argv:
-            output="0\n"*22
+            output="docs.0:0\n"*22
         else:
             output="dashboard\n"
         return subprocess.CompletedProcess(argv,0,output,"")
@@ -71,6 +71,7 @@ class _Halt(Exception):
 
 
 def test_routing_failure_keeps_bounded_retry_interval(tmp_path,monkeypatch):
+    monkeypatch.delenv("MISHE_SEED_HOME", raising=False)
     clock={"now":200,"loops":0}
     calls=[]
     monkeypatch.setattr(watch.time,"monotonic",lambda:clock["now"])
@@ -92,6 +93,7 @@ def test_routing_failure_keeps_bounded_retry_interval(tmp_path,monkeypatch):
 
 
 def test_persistent_red_routes_once_until_state_or_reason_changes(tmp_path,monkeypatch):
+    monkeypatch.delenv("MISHE_SEED_HOME", raising=False)
     routes=[]
     monkeypatch.setattr(watch,"notify",lambda _:None)
     monkeypatch.setattr(watch,"route",lambda *a:routes.append(a[1]["reason"]))
@@ -123,6 +125,7 @@ def test_boolean_restart_history_is_malformed():
 
 
 def test_watchdog_heartbeat_precedes_slow_route(tmp_path,monkeypatch):
+    monkeypatch.delenv("MISHE_SEED_HOME", raising=False)
     events=[]
     monkeypatch.setattr(watch,"notify",lambda message:events.append(message))
     monkeypatch.setattr(watch,"observe",lambda *a:{"available":False,"identity":None,"panes_live":False,"dashboard_live":False})
@@ -137,3 +140,68 @@ def test_watchdog_heartbeat_precedes_slow_route(tmp_path,monkeypatch):
         watch.run(tmp_path,"fixture")
     assert events[0]=="READY=1"
     assert events[-1].startswith("WATCHDOG=1")
+
+
+def test_dead_pane_evidence_names_the_window(tmp_path, monkeypatch):
+    import subprocess
+    def run(argv, **kw):
+        if "show-option" in argv:
+            output=str(tmp_path)+"\n"
+        elif "display-message" in argv:
+            output="456:$2:100\n"
+        elif "list-panes" in argv:
+            output="".join(f"w{i}.0:0\n" for i in range(24))+"docs.1:1\n"
+        else:
+            output="dashboard\n"
+        return subprocess.CompletedProcess(argv,0,output,"")
+    monkeypatch.setattr(watch.subprocess,"run",run)
+    row=watch.observe(tmp_path,"owned")
+    assert row["panes_live"] is False
+    assert row["pane_evidence"]=="rc=0 panes=25 dead=docs.1"
+
+
+def test_failed_pane_command_keeps_the_returncode_in_evidence(tmp_path, monkeypatch):
+    import subprocess
+    def run(argv, **kw):
+        if "show-option" in argv:
+            output=str(tmp_path)+"\n"
+        elif "display-message" in argv:
+            output="456:$2:100\n"
+        elif "list-panes" in argv:
+            return subprocess.CompletedProcess(argv,1,"","no server running")
+        else:
+            output="dashboard\n"
+        return subprocess.CompletedProcess(argv,0,output,"")
+    monkeypatch.setattr(watch.subprocess,"run",run)
+    row=watch.observe(tmp_path,"owned")
+    assert row["panes_live"] is None
+    assert row["pane_evidence"]=="rc=1 panes=0 dead=none"
+
+
+def test_pane_evidence_change_logs_new_event_without_a_second_route(tmp_path,monkeypatch):
+    monkeypatch.delenv("MISHE_SEED_HOME", raising=False)
+    routes=[]
+    monkeypatch.setattr(watch,"notify",lambda _:None)
+    monkeypatch.setattr(watch,"route",lambda *a:routes.append(a[1]))
+    clock={"now":200,"loops":0}
+    monkeypatch.setattr(watch.time,"monotonic",lambda:clock["now"])
+    states=[{"available":True,"identity":"x","panes_live":False,"dashboard_live":True,
+             "pane_evidence":"rc=0 panes=25 dead=docs.1"},
+            {"available":True,"identity":"x","panes_live":False,"dashboard_live":True,
+             "pane_evidence":"rc=0 panes=25 dead=docs.1"},
+            {"available":True,"identity":"x","panes_live":False,"dashboard_live":True,
+             "pane_evidence":"rc=0 panes=25 dead=genome.1"}]
+    def observe(*a):
+        return dict(states[clock["loops"]])
+    def sleep(_):
+        clock["now"]+=5
+        clock["loops"]+=1
+        if clock["loops"]>=len(states):
+            raise _Halt
+    monkeypatch.setattr(watch,"observe",observe)
+    monkeypatch.setattr(watch.time,"sleep",sleep)
+    with pytest.raises(_Halt):
+        watch.run(tmp_path,"fixture")
+    events=(tmp_path/"health/session-watch-events.jsonl").read_text().splitlines()
+    assert [row["reason"] for row in routes]==["resident pane missing or dead"]
+    assert len(events)==2 and "genome.1" in events[-1]

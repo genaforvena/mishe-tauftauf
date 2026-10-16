@@ -50,15 +50,24 @@ def observe(home: Path, session: str) -> dict:
         return subprocess.run(argv, capture_output=True, text=True, timeout=5)
     owner = run(["tmux", "show-option", "-qv", "-t", session, "@mishe-tauftauf-home"])
     identity = run(["tmux", "display-message", "-p", "-t", session, "#{pid}:#{session_id}:#{session_created}"])
-    panes = run(["tmux", "list-panes", "-s", "-t", session, "-F", "#{pane_dead}"])
+    panes = run(["tmux", "list-panes", "-s", "-t", session, "-F",
+                 "#{window_name}.#{pane_index}:#{pane_dead}"])
     dashboard = run([str(home / "bin/mishe-tauftauf"), "--home", str(home),
                      "pain", "read", "operator", "--launcher", "dashboard"])
-    pane_states = panes.stdout.splitlines()
+    rows = [row for row in panes.stdout.splitlines() if row]
+    dead = [row.rsplit(":", 1)[0] for row in rows if row.endswith(":1")]
+    # A RED must name what it saw. The 2026-10-16T03:37Z and 03:59Z episodes
+    # read as a detector defect (a failed tmux call) until a probe showed
+    # returncode 0 with one genuinely dead pane, so every row carries the
+    # returncode, the pane count and the dead panes' window.pane names.
+    evidence = (f"rc={panes.returncode} panes={len(rows)} "
+                f"dead={','.join(dead) if dead else 'none'}")
     return {"identity": identity.stdout.strip() if identity.returncode == 0 else None,
             "available": owner.returncode == 0 and owner.stdout.strip() == str(home.resolve())
                          and identity.returncode == 0 and bool(identity.stdout.strip()),
             "panes_live": (None if panes.returncode != 0 else
-                           len(pane_states) >= 20 and all(x == "0" for x in pane_states)),
+                           len(rows) >= 20 and not dead),
+            "pane_evidence": evidence,
             "dashboard_live": dashboard.returncode == 0}
 
 
@@ -75,6 +84,7 @@ def notify(message: str) -> None:
 def route(home: Path, row: dict) -> None:
     path = home / "health/session-watch-alert.md"
     path.write_text("Session watcher " + row["state"] + ": " + row["reason"] +
+                    "\nPane evidence: " + str(row.get("pane_evidence") or "unavailable") +
                     "\nEvidence: health/session-watch.json and session-watch-events.jsonl. "
                     "Resolver health: inspect actual session and launcher; bounded action "
                     "read journal + current session ownership; disposition within 120 seconds. "
@@ -115,7 +125,12 @@ def run(home: Path, session: str) -> None:
         # A slow observation (up to 20s) and alert (up to 15s) each get a
         # heartbeat; their budgets must never combine past WatchdogSec=30.
         notify("WATCHDOG=1\nSTATUS=" + row["state"] + " " + row["reason"])
-        key = (row["state"], row["reason"])
+        # The event record keys on the pane evidence too: an episode whose
+        # returncode, pane count or dead-pane names change is new evidence and
+        # belongs on the tape. Routing keeps the coarser (state, reason) key so
+        # a rotating dead-pane name cannot multiply resolver DMs.
+        key = (row["state"], row["reason"], row.get("pane_evidence"))
+        route_key = (row["state"], row["reason"])
         if key != last_key:
             with (home / "health/session-watch-events.jsonl").open("a") as log:
                 log.write(json.dumps(row) + "\n")
@@ -127,7 +142,7 @@ def run(home: Path, session: str) -> None:
         # episode produced 12 indistinguishable DMs by 14:00Z). A failed route
         # still retries at the bounded 120s interval so a broken transport
         # fails visibly instead of silently dropping the condition.
-        if row["state"] != "GREEN" and (key != routed_key or
+        if row["state"] != "GREEN" and (route_key != routed_key or
                                         (route_failed and time.monotonic() - last_route >= 120)):
             last_route = time.monotonic()
             try:
@@ -136,7 +151,7 @@ def run(home: Path, session: str) -> None:
             except (OSError, subprocess.SubprocessError) as exc:
                 route_failed = True
                 print("UNKNOWN session watcher routing failed: " + str(exc), flush=True)
-            routed_key = key
+            routed_key = route_key
         last_key = key
         notify("WATCHDOG=1\nSTATUS=" + row["state"] + " " + row["reason"])
         time.sleep(5)
