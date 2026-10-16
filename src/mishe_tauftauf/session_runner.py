@@ -24,26 +24,23 @@ from . import proc_table
 
 
 def _server_owner_unit(session: str, environment: dict[str, str] | None) -> str:
-    """The unit whose cgroup currently holds this session's tmux server, or "".
-
-    ``systemd-run`` raises a keeper beside the session, while the tmux server is
-    forked by whichever ``tmux new-session`` first created the shared socket. When
-    that first raise is superseded, its keeper unit is a husk — but the cgroup still
-    holds the server, so stopping it would cgroup-kill every session on the socket,
-    including other plants'. Cleanup has to know which unit owns the server.
-    """
-    try:
-        result = subprocess.run(["tmux", "display-message", "-p", "-t", "=" + session, "#{pid}"],
-                                capture_output=True, text=True, timeout=5, env=environment)
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
-    if result.returncode:
-        return ""
-    pids = proc_table.pane_pids(result.stdout or "")
-    if len(pids) != 1:
-        return ""
-    return proc_table.read_cgroup_unit(str(pids[0]))
-
+    envs = [environment or os.environ.copy()]
+    default = envs[0].copy()
+    default.pop("TMUX_TMPDIR", None)
+    default.pop("TMUX", None)
+    envs.append(default)
+    for env in envs:
+        try:
+            result = subprocess.run(["tmux", "display-message", "-p", "-t", "=" + session, "#{pid}"],
+                                    capture_output=True, text=True, timeout=5, env=env)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if result.returncode:
+            continue
+        pids = proc_table.pane_pids(result.stdout or "")
+        if len(pids) == 1:
+            return proc_table.read_cgroup_unit(str(pids[0]))
+    return ""
 
 def _stop_superseded_units(session: str, keep_unit: str, server_owner: str = "") -> None:
     """Stop prior transient units for this session after a replacement is confirmed.
@@ -110,8 +107,27 @@ def raise_session(session: str, window: str, workspace: str, lock_dir: Path,
         environment.pop("TMUX", None)
         environment["TMUX_TMPDIR"] = private_dir
     def exists() -> bool:
-        return subprocess.run(["tmux", "has-session", "-t", "=" + session],
-                              capture_output=True, timeout=5, env=environment).returncode == 0
+        # Probe both the site socket and the legacy default: an inherited
+        # TMUX_TMPDIR must not mask a live session raised on the other socket.
+        candidate_dirs = [private_dir] if private_dir else []
+        if tmux_tmpdir is not None:
+            candidate_dirs.append(tmux_tmpdir)
+        candidate_dirs.append(None)  # legacy default via os environment
+        envs = []
+        for d in dict.fromkeys(candidate_dirs):
+            e = environment.copy()
+            if d is None:
+                e.pop("TMUX_TMPDIR", None)
+            else:
+                e.pop("TMUX", None)
+                e["TMUX_TMPDIR"] = d
+            envs.append(e)
+        # Also the truly default socket (no TMUX_TMPDIR).
+        return any(
+            subprocess.run(["tmux", "has-session", "-t", "=" + session],
+                           capture_output=True, timeout=5, env=e).returncode == 0
+            for e in envs
+        )
     with (lock_dir / (session + ".lock")).open("a") as handle:
         deadline = time.monotonic() + timeout
         while True:

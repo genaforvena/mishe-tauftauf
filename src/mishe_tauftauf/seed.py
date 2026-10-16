@@ -22,7 +22,7 @@ from .records import payload as record_payload
 from . import discovery
 from .observations import (executable, redact_display_age, redact_redmi_cursor,
                            strip_owned_chrome, validate_home, validate_slug)
-from .tmux import OWNED_OPTION, _pane_stopped_or_dead, _python_command, _tmux, await_owned, capture_raw, lease_value, owns_session
+from .tmux import OWNED_OPTION, _pane_stopped_or_dead, _python_command, _session_socket, _socket_for_home, _tmux, await_owned, capture_raw, lease_value, owns_session
 
 
 def _newest_scan_observations(home: Path) -> tuple[list | None, str | None]:
@@ -167,8 +167,8 @@ def _fresh_wedge_suspect(home: Path, role: str, pid: str) -> bool:
 
 def _mind_pane_wedged(home: Path, session: str, role: str) -> bool:
     target = f"{session}:{role}.1"
-    probe = _tmux("display-message", "-p", "-t", target, "#{pane_dead} #{pane_pid}",
-                  check=False)
+    socket = _socket_for_home(home)
+    probe = _tmux("display-message", "-p", "-t", target, "#{pane_dead} #{pane_pid}", check=False, socket=socket)
     if probe.returncode:
         return False
     fields = probe.stdout.decode(errors="replace").strip().split()
@@ -611,6 +611,12 @@ def init(home: Path, slug: str, engine_command: str = "codex") -> str:
     return str(home)
 
 
+def loop(home: Path, slug: str, **selection) -> str:
+    """Inspect/select a single desired launcher without touching its live pane."""
+    from .mind_loop import select
+    return select(home, slug, **selection)
+
+
 def _mind_launch_argv(home: Path, slug: str) -> tuple[str, ...]:
     from .runtime_source import pane_python_path
     # The mind pane follows the home's pin like every other pane of this home, so
@@ -621,7 +627,8 @@ def _mind_launch_argv(home: Path, slug: str) -> tuple[str, ...]:
     inherited_path = os.environ.get("PATH", "/usr/bin:/bin")
     path_tail = [entry for entry in inherited_path.split(os.pathsep) if entry != site_bin]
     mind_path = os.pathsep.join((site_bin, *path_tail))
-    return ("-c", str(home.parent.resolve()), "env", f"PATH={mind_path}",
+    # A restored legacy launcher must not inherit a calling resident's identity.
+    return ("-c", str(home.parent.resolve()), "env", "-u", "MISHE_LOOP_RECEIPT", f"PATH={mind_path}",
             f"PYTHONPATH={python_path}",
             f"XDG_RUNTIME_DIR={os.environ.get('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}')}",
             f"MISHE_SEED_HOME={home.resolve()}",
@@ -681,15 +688,21 @@ def _await_session(session: str, timeout: float = 15.0, socket: str | None = Non
 def _new_session(home: Path, session: str, first_window: str, workspace: str) -> None:
     """Raise outside seed cgroups and wait for the actual session, not a unit.
 
-    The socket is the inherited TMUX_TMPDIR when a unit set it, else the
-    per-site socket derived from the home: a supervisor launched without the
-    unit environment must still raise on its own site's socket, never the
-    default one (duplicate-session fork on a foreign server).
+    The socket is always the per-site socket derived from the home: an
+    inherited TMUX_TMPDIR (a drop-in, a foreign shell) must not redirect the
+    raise to another site's socket, where it would fork a duplicate session
+    on a foreign server. The socket directory is created explicitly because
+    tmux 3.4 falls back to the default socket SILENTLY when $TMUX_TMPDIR
+    cannot be created — fail loudly instead of forking elsewhere.
     """
     from .plant import _site_tmux_tmpdir
     from .tmux import TmuxError
-    tmux_tmpdir = os.environ.get("TMUX_TMPDIR") or str(_site_tmux_tmpdir(home))
+    tmux_tmpdir = str(_site_tmux_tmpdir(home))
     socket = str(Path(tmux_tmpdir) / f"tmux-{os.getuid()}" / "default")
+    try:
+        Path(tmux_tmpdir).mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise TmuxError(f"UNKNOWN tmux socket dir {tmux_tmpdir} cannot be created: {exc}") from exc
     argv = ["new-session", "-d", "-s", session, "-n", first_window, "-c", workspace, "sh"]
     runner = os.environ.get("MISHE_SESSION_RUNNER")
     if runner is None:
@@ -821,7 +834,8 @@ def start(home: Path, session: str, slug: str, interval: float) -> str:
             raise ValueError(f"mind pane {target}.1 did not respawn; reconcile before attributing a model")
         _record_mind_model(home, slug, home / "minds" / slug, "start")
         time.sleep(2.0)
-        if _state(home, slug)[1] is not None:
+        _, pending, _, _, observation, *_ = _state(home, slug)
+        if pending is not None:
             # Restored pending work is a convenience, not the supervisor's
             # reason to exist. Once the session is raised, a send that cannot
             # verify the mind's idle mode (a busy or dialog pane) must HOLD,
@@ -831,7 +845,10 @@ def start(home: Path, session: str, slug: str, interval: float) -> str:
             # live session and burning a restart for a recoverable transport
             # condition.
             try:
-                _send(f"{target}.1", _restore_text(home, slug, session))
+                from .wall import deliver
+                print(deliver(home, session, slug, pending, observation,
+                              "Mind process restored; reconcile the actual pending wake before acting."),
+                      flush=True)
             except (OSError, ValueError, TmuxError) as exc:
                 print(f"HOLD seed {slug} restore: {exc}", flush=True)
     # The utility windows are a repair, not the supervisor's reason to exist:
