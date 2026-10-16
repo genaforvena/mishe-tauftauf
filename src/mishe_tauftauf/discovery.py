@@ -4419,13 +4419,9 @@ EVIDENCE_BINDING_CLAUSE_TIME = datetime(2026, 10, 6, 16, 22, 11, tzinfo=timezone
 outcomes recorded earlier are not bound by it."""
 EVIDENCE_PATH_POLICY = "eligible-paths-v2"
 """Current prospective allowlist; re-evaluates standing rows without rewriting them."""
-def _display_path(path: str, home: Path) -> str:
-    """Site-relative display form of a stored evidence path.
 
-    The pane must show where a violating file lives, so a stored path is
-    rendered relative to the site home when its canonical form stays inside
-    it; a path canonicalizing outside the home is shown as stored.
-    """
+def _display_path(path: str, home: Path) -> str:
+    """Site-relative display form of a stored evidence path."""
     candidate = Path(path) if os.path.isabs(path) else home / path
     try:
         return candidate.resolve().relative_to(home.resolve()).as_posix()

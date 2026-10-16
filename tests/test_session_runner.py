@@ -49,10 +49,14 @@ def test_missing_session_gets_fresh_unit_even_if_previous_keeper_remains(tmp_pat
     assert len(units) == 2 and units[0] != units[1]
     assert all(unit.startswith("owned-session-") and unit.endswith(".service") for unit in units)
 
-def test_superseded_unit_stopped_after_replacement_confirmed(tmp_path, monkeypatch):
-    state = {"available": False, "checks": 0, "raises": [], "pending": False, "list_output": ""}
+def _cleanup_backend(monkeypatch, *, owner=""):
+    state = {"available": False, "checks": 0, "raises": [], "pending": False,
+             "list_output": "", "owner": owner}
     def run(argv, **kwargs):
         if argv[0] == "tmux":
+            if "display-message" in argv:
+                return subprocess.CompletedProcess(argv, 0 if state["owner"] else 1,
+                                                   stdout="4242\n")
             state["checks"] += 1
             if state["pending"] and state["checks"] > 0:
                 state["available"] = True
@@ -65,9 +69,16 @@ def test_superseded_unit_stopped_after_replacement_confirmed(tmp_path, monkeypat
         state["pending"] = True
         return subprocess.CompletedProcess(argv, 0)
     monkeypatch.setattr(runner.subprocess, "run", run)
+    monkeypatch.setattr(runner.proc_table, "read_cgroup_unit", lambda pid: state["owner"])
     monkeypatch.setattr(runner.time, "sleep", lambda _: None)
+    return state
+
+
+def test_superseded_unit_stopped_after_replacement_confirmed(tmp_path, monkeypatch):
+    state = _cleanup_backend(monkeypatch)
     runner.raise_session("owned", "health", str(tmp_path), tmp_path)
     first_unit = state["raises"][0][state["raises"][0].index("--unit") + 1]
+    state["owner"] = "owned-session-owner-session-" + "ef" * 16 + ".service"
     state["list_output"] = f"  {first_unit}  loaded active running  test\n"
     state["available"] = False
     state["pending"] = False
@@ -78,24 +89,10 @@ def test_superseded_unit_stopped_after_replacement_confirmed(tmp_path, monkeypat
     assert first_unit in stops[0]
 
 def test_superseded_cleanup_never_stops_overlapping_other_session_unit(tmp_path, monkeypatch):
-    state = {"available": False, "checks": 0, "raises": [], "pending": False, "list_output": ""}
-    def run(argv, **kwargs):
-        if argv[0] == "tmux":
-            state["checks"] += 1
-            if state["pending"] and state["checks"] > 0:
-                state["available"] = True
-                state["pending"] = False
-            return subprocess.CompletedProcess(argv, 0 if state["available"] else 1)
-        if argv[0] == "systemctl" and "list-units" in argv:
-            state["raises"].append(argv)
-            return subprocess.CompletedProcess(argv, 0, stdout=state["list_output"])
-        state["raises"].append(argv)
-        state["pending"] = True
-        return subprocess.CompletedProcess(argv, 0)
-    monkeypatch.setattr(runner.subprocess, "run", run)
-    monkeypatch.setattr(runner.time, "sleep", lambda _: None)
+    state = _cleanup_backend(monkeypatch)
     runner.raise_session("owned", "health", str(tmp_path), tmp_path)
     first_unit = state["raises"][0][state["raises"][0].index("--unit") + 1]
+    state["owner"] = "owned-session-owner-session-" + "ef" * 16 + ".service"
     other_unit = "owned-session-other-session-" + "ab" * 16 + ".service"
     state["list_output"] = (
         f"  {first_unit}  loaded active running  test\n"
@@ -110,6 +107,36 @@ def test_superseded_cleanup_never_stops_overlapping_other_session_unit(tmp_path,
     assert first_unit in stops[0]
     assert other_unit not in stops[0]
 
+def test_superseded_cleanup_skips_unit_holding_shared_server(tmp_path, monkeypatch):
+    state = _cleanup_backend(monkeypatch)
+    runner.raise_session("owned", "health", str(tmp_path), tmp_path)
+    owner = state["raises"][0][state["raises"][0].index("--unit") + 1]
+    husk = "owned-session-" + "cd" * 16 + ".service"
+    state["owner"] = owner
+    state["list_output"] = (
+        f"  {owner}  loaded active running  test\n"
+        f"  {husk}  loaded active running  test\n"
+    )
+    state["available"] = False
+    state["pending"] = False
+    state["checks"] = 0
+    runner.raise_session("owned", "health", str(tmp_path), tmp_path)
+    stops = [argv for argv in state["raises"] if argv[0] == "systemctl" and "stop" in argv]
+    assert len(stops) == 1
+    assert husk in stops[0]
+    assert owner not in stops[0]
+
+def test_superseded_cleanup_stops_nothing_without_a_readable_owner(tmp_path, monkeypatch):
+    state = _cleanup_backend(monkeypatch)
+    runner.raise_session("owned", "health", str(tmp_path), tmp_path)
+    first_unit = state["raises"][0][state["raises"][0].index("--unit") + 1]
+    state["list_output"] = f"  {first_unit}  loaded active running  test\n"
+    state["available"] = False
+    state["pending"] = False
+    state["checks"] = 0
+    runner.raise_session("owned", "health", str(tmp_path), tmp_path)
+    stops = [argv for argv in state["raises"] if argv[0] == "systemctl" and "stop" in argv]
+    assert stops == []
 
 
 def test_start_failure_stays_visible(tmp_path, monkeypatch):

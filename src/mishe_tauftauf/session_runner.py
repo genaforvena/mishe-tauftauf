@@ -3,6 +3,8 @@
 Keepers intentionally outlive their session: a tmux server may also host other
 sessions. Never stop a keeper merely because this session disappeared. Serialize
 raises and use a fresh service name so a stale keeper cannot prevent recovery.
+Superseded keepers are stopped only when their cgroup does not hold the shared
+server, because that stop would cgroup-kill every session on the socket.
 This adapter accepts the pinned release's literal tmux argv, not shell prose.
 """
 from __future__ import annotations
@@ -18,8 +20,32 @@ import time
 import uuid
 from pathlib import Path
 
+from . import proc_table
 
-def _stop_superseded_units(session: str, keep_unit: str) -> None:
+
+def _server_owner_unit(session: str, environment: dict[str, str] | None) -> str:
+    """The unit whose cgroup currently holds this session's tmux server, or "".
+
+    ``systemd-run`` raises a keeper beside the session, while the tmux server is
+    forked by whichever ``tmux new-session`` first created the shared socket. When
+    that first raise is superseded, its keeper unit is a husk — but the cgroup still
+    holds the server, so stopping it would cgroup-kill every session on the socket,
+    including other plants'. Cleanup has to know which unit owns the server.
+    """
+    try:
+        result = subprocess.run(["tmux", "display-message", "-p", "-t", "=" + session, "#{pid}"],
+                                capture_output=True, text=True, timeout=5, env=environment)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if result.returncode:
+        return ""
+    pids = proc_table.pane_pids(result.stdout or "")
+    if len(pids) != 1:
+        return ""
+    return proc_table.read_cgroup_unit(str(pids[0]))
+
+
+def _stop_superseded_units(session: str, keep_unit: str, server_owner: str = "") -> None:
     """Stop prior transient units for this session after a replacement is confirmed.
 
     The raise path intentionally never stops a keeper merely because its session
@@ -30,7 +56,16 @@ def _stop_superseded_units(session: str, keep_unit: str) -> None:
     exactly 32 lowercase hex characters and ``.service``. A broad prefix match would
     also stop keepers of longer session names sharing the prefix (session ``owned``
     would stop ``owned-session-other``'s keeper).
+
+    ``server_owner`` is the unit whose cgroup holds the shared tmux server. Stopping
+    that unit cgroup-kills the server and every session on its socket, so it is never
+    stopped here even though it matches the identity.
     """
+    if not server_owner:
+        # An unreadable owner proves nothing: stopping a unit whose cgroup holds
+        # the shared server would kill every session on its socket, so no unit is
+        # touched until the owner is known again.
+        return
     identity = re.compile(re.escape(session) + r"-session-[0-9a-f]{32}\.service")
     try:
         result = subprocess.run(
@@ -49,6 +84,8 @@ def _stop_superseded_units(session: str, keep_unit: str) -> None:
         if unit != keep_unit and identity.fullmatch(unit):
             stale.append(unit)
     for unit in stale:
+        if unit == server_owner:
+            continue
         try:
             subprocess.run(["systemctl", "--user", "stop", unit],
                            capture_output=True, timeout=10)
@@ -103,7 +140,7 @@ def raise_session(session: str, window: str, workspace: str, lock_dir: Path,
             if time.monotonic() >= deadline:
                 raise RuntimeError("UNKNOWN session unavailable after startup deadline; inspect " + unit)
             time.sleep(.1)
-        _stop_superseded_units(session, unit)
+        _stop_superseded_units(session, unit, _server_owner_unit(session, environment))
         print("session ready " + session + " keeper=" + unit, flush=True)
 
 
