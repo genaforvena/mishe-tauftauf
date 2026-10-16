@@ -119,6 +119,9 @@ class NativeStory:
             if response.get('terminal') != 'done':
                 self._line('UNKNOWN — model did not return a normal terminal')
                 self._body(response.get('terminal'))
+                if assistant.get('errorMessage') is not None:
+                    self._line('Provider error:')
+                    self._body(assistant['errorMessage'])
         elif kind == 'proposal':
             self._line('Proposed action — not executed')
             self._body(self._action(event['call']))

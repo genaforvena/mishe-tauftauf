@@ -118,6 +118,7 @@ that journals first and passes it decoded dispatch outcomes. It shows visible
 assistant text, actions, file paths and requested line ranges, read contents,
 command stdout/stderr and exit failures. Long text blocks are bounded to 8,000
 rendered characters with full-evidence references; terminal controls are escaped.
+An abnormal provider terminal retains its error reason while remaining UNKNOWN.
 Provider payloads, hidden reasoning and input context are not rendered.
 `quiet_input` suppresses TTY wake-packet echo without changing delivery and
 restores terminal settings on exit. A completed command or stopped loop is not
