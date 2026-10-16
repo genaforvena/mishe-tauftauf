@@ -61,6 +61,7 @@ def setup_sites(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
     target.mkdir(parents=True)
     (core_home / ".seed-raised").write_text("core $1\n", encoding="utf-8")
     (target / ".seed-raised").write_text("example $2\n", encoding="utf-8")
+    monkeypatch.setattr(site_sync, "_docs_only_delta", lambda _baseline, _sha: False)
     monkeypatch.setattr(site_sync, "KERNEL", kernel)
     monkeypatch.setattr(site_sync, "owns_session", lambda _home, _session: True)
     monkeypatch.setattr(site_sync, "Feed", FakeFeed)
@@ -96,6 +97,110 @@ def test_registered_site_syncs_once_after_green_ci(tmp_path: Path, monkeypatch) 
     assert [item[0] for item in calls] == ["plant", "verify"]
     assert any(body.startswith(f"[sync] core sha={sha}") for _, body in FakeFeed.events)
 
+
+
+def test_docs_only_disposition_has_no_target_or_runtime_writes(tmp_path, monkeypatch):
+    core_home, target = setup_sites(tmp_path, monkeypatch)
+    sha = "1" * 40
+    site_sync._save(core_home, [{"home": str(target), "session": "example", "sha": "old"}])
+    monkeypatch.setattr(site_sync, "_docs_only_delta", lambda _base, _sha: True)
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("docs-only disposition must not inspect or write the target")
+
+    monkeypatch.setattr(site_sync, "_target_state", forbidden)
+    monkeypatch.setattr(site_sync, "_release_source", forbidden)
+    monkeypatch.setattr(site_sync.subprocess, "run", forbidden)
+    monkeypatch.setattr(site_sync, "_verify", forbidden)
+    assert site_sync.sync_registered_sites(core_home, {"state": "pass", "sha": sha}) == [
+        f"docs-only {target.parent} {sha[:12]}"]
+    row = site_sync._load(core_home)[0]
+    assert row["sha"] == "old"
+    assert row["observed_sha"] == sha
+    assert FakeFeed.events == []
+
+
+def test_docs_only_disposition_is_not_repeated(tmp_path, monkeypatch):
+    core_home, target = setup_sites(tmp_path, monkeypatch)
+    sha = "2" * 40
+    site_sync._save(core_home, [{"home": str(target), "session": "example", "sha": "old"}])
+    classifications = []
+    monkeypatch.setattr(site_sync, "_docs_only_delta", lambda base, current: (
+        classifications.append((base, current)), True)[1])
+
+    assert site_sync.sync_registered_sites(core_home, {"state": "pass", "sha": sha})
+    assert site_sync.sync_registered_sites(core_home, {"state": "pass", "sha": sha}) == []
+    assert classifications == [("old", sha)]
+
+
+def test_docs_only_classifier_requires_markdown_only_changes(tmp_path, monkeypatch):
+    kernel = tmp_path / "kernel"
+    (kernel / "docs/nested").mkdir(parents=True)
+    (kernel / "src").mkdir()
+    subprocess.run(["git", "-C", str(kernel), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(kernel), "config", "user.name", "test"], check=True)
+    subprocess.run(["git", "-C", str(kernel), "config", "user.email", "test@example.com"], check=True)
+    (kernel / "docs/nested/book.md").write_text("initial\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(kernel), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(kernel), "commit", "-qm", "base"], check=True)
+    baseline = subprocess.check_output(
+        ["git", "-C", str(kernel), "rev-parse", "HEAD"], text=True).strip()
+    (kernel / "docs/nested/book.md").write_text("updated\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(kernel), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(kernel), "commit", "-qm", "book"], check=True)
+    docs_sha = subprocess.check_output(
+        ["git", "-C", str(kernel), "rev-parse", "HEAD"], text=True).strip()
+    monkeypatch.setattr(site_sync, "KERNEL", kernel)
+    assert site_sync._docs_only_delta(baseline, docs_sha)
+
+    (kernel / "src/runtime.py").write_text("runtime = True\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(kernel), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(kernel), "commit", "-qm", "runtime"], check=True)
+    runtime_sha = subprocess.check_output(
+        ["git", "-C", str(kernel), "rev-parse", "HEAD"], text=True).strip()
+    assert not site_sync._docs_only_delta(baseline, runtime_sha)
+    assert not site_sync._docs_only_delta(runtime_sha, runtime_sha)
+
+    (kernel / "src/runtime.py").rename(kernel / "docs/nested/runtime.md")
+    subprocess.run(["git", "-C", str(kernel), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(kernel), "commit", "-qm", "rename runtime into docs"], check=True)
+    rename_sha = subprocess.check_output(
+        ["git", "-C", str(kernel), "rev-parse", "HEAD"], text=True).strip()
+    assert not site_sync._docs_only_delta(runtime_sha, rename_sha)
+
+def test_runtime_paths_still_plant_and_verify(tmp_path, monkeypatch):
+    core_home, target = setup_sites(tmp_path, monkeypatch)
+    sha = "3" * 40
+    site_sync._save(core_home, [{"home": str(target), "session": "example", "sha": ""}])
+    monkeypatch.setattr(site_sync, "_docs_only_delta", lambda *_args: (
+        (_ for _ in ()).throw(AssertionError("empty registration SHA has no diff baseline"))))
+    monkeypatch.setattr(site_sync, "_target_state", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(site_sync, "_git", lambda _workspace, *args: (
+        sha if args == ("rev-parse", "HEAD") else ""))
+    calls = []
+    monkeypatch.setattr(site_sync.subprocess, "run", lambda argv, **_kwargs: (
+        calls.append("plant"), subprocess.CompletedProcess(argv, 0, "ready", ""))[1])
+    monkeypatch.setattr(site_sync, "_verify", lambda *_args: calls.append("verify"))
+    assert site_sync.sync_registered_sites(core_home, {"state": "pass", "sha": sha}) == [
+        f"synced {target.parent} {sha[:12]}"]
+    assert calls == ["plant", "verify"]
+    assert site_sync._load(core_home)[0]["observed_sha"] == sha
+
+
+def test_docs_only_after_runtime_hold_preserves_hold(tmp_path, monkeypatch):
+    core_home, target = setup_sites(tmp_path, monkeypatch)
+    sha = "4" * 40
+    site_sync._save(core_home, [{"home": str(target), "session": "example", "sha": "old",
+                                "error": "linked site remains dirty"}])
+    monkeypatch.setattr(site_sync, "_docs_only_delta", lambda _base, _sha: True)
+    monkeypatch.setattr(site_sync, "_target_state", lambda *_args, **_kwargs: (
+        (_ for _ in ()).throw(AssertionError("must not touch target"))))
+    assert site_sync.sync_registered_sites(core_home, {"state": "pass", "sha": sha}) == [
+        f"docs-only {target.parent} {sha[:12]}"]
+    row = site_sync._load(core_home)[0]
+    assert row["sha"] == "old"
+    assert row["observed_sha"] == sha
+    assert row["error"] == "linked site remains dirty"
 
 def test_sync_holds_dirty_target_without_planting(tmp_path: Path, monkeypatch) -> None:
     core_home, target = setup_sites(tmp_path, monkeypatch)
@@ -273,8 +378,7 @@ def test_explicit_runtime_refresh_preserves_dirty_target_and_core(tmp_path, monk
     result = site_sync.sync_registered_sites(core_home, {"state": "pass", "sha": sha}, runtime_only=True)
     assert result == [f"synced {target.parent} {sha[:12]}"]
     assert "--runtime-only" in calls[0]
-    core_dirty = True
-    site_sync._update_site(core_home, target, sha="old")
+    site_sync._update_site(core_home, target, sha="old", observed_sha="old")
     assert site_sync.sync_registered_sites(
         core_home, {"state": "pass", "sha": sha}, runtime_only=True) == [f"synced {target.parent} {sha[:12]}"]
     assert len(calls) == 2

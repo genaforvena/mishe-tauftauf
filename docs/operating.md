@@ -474,6 +474,8 @@ A persistent external plant registers its site and session in the core site's ig
 
 An already applied SHA without a recorded error is skipped. A hold is explained in the core `chat.log`; later eligible passes retry it. After refreshing, the coordinator checks the target's feed, expected top panes, live mind panes, advancing leases, and named services before recording the applied SHA. A successful later refresh closes that site's superseded `kernel-sync` hold in both the core and target feeds and writes a target-scoped completion marker. Coordination anomalies report RED if a matching hold remains open after that marker.
 
+When the only changes since the last dispositioned or applied SHA are Markdown files under `docs/`, the coordinator records a separate dispositioned SHA without planting, verifying, or writing the linked target. Runtime changes, unknown paths, and cross-boundary renames still take the checked refresh path; a missing registration baseline also forces that path. A docs-only disposition never clears a prior hold or claims that the runtime applied that SHA.
+
 A changed generated target contract becomes a target genome task to review, commit, push, and verify in that repository. Thus the refresh itself may create the tracked change that genome must subsequently land. Application files are never copied from the core.
 
 To retry now after resolving a hold, run this from the core checkout, with `CORE_SITE` set to the **core's** actual resident site, not the target's:
