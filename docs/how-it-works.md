@@ -113,6 +113,18 @@ Session cleanup, callback time limits and provider transport remain caller
 responsibilities. This checkout API is not a resident activation, a durable
 replay mechanism or evidence of a completed live useful-task canary.
 
+`native_story.NativeStory` provides a rendering-only terminal view for a caller
+that journals first and passes it decoded dispatch outcomes. It shows visible
+assistant text, actions, file paths and requested line ranges, read contents,
+command stdout/stderr and exit failures. Long text blocks are bounded to 8,000
+rendered characters with full-evidence references; terminal controls are escaped.
+Provider payloads, hidden reasoning and input context are not rendered.
+`quiet_input` suppresses TTY wake-packet echo without changing delivery and
+restores terminal settings on exit. A completed command or stopped loop is not
+wake settlement: the view labels unknown effects and reports settlement only
+after a completed `seed_yield` dispatch. This presentation neither authorizes
+effects nor establishes replay, model parity or activation.
+
 `inference_effects.EffectBoundary` is the optional caller-owned binding for that
 `dispatch` callback. Constructed with one store directory, a `writer_id`, the
 obligation identity, the bound authority and the caller's capability executor,
