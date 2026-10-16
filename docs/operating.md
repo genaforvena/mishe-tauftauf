@@ -513,7 +513,7 @@ checkout when unpinned, or a separate runtime snapshot a wall-mode site names in
 `coordination-mode.json` — so a respawn does not repoint a pane whose script
 selects another root ([wall coordination](wall-coordination.md)). Point the core at a
 clean detached worktree of the exact commit — the release coordinator creates
-these under `SITE/releases/<sha>` — with the launcher:
+these under `SITE/releases/<sha>` and reclaims any release that no live pin, unit or process still names — with the launcher:
 
 ```bash
 python3 -m coordination.launcher \
