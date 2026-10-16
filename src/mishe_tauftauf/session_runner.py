@@ -19,6 +19,39 @@ import uuid
 from pathlib import Path
 
 
+def _stop_superseded_units(session: str, keep_unit: str) -> None:
+    """Stop prior transient units for this session after a replacement is confirmed.
+
+    The raise path intentionally never stops a keeper merely because its session
+    disappeared (a server may host other sessions). But a superseded keeper whose
+    replacement is confirmed running is a husk; stopping it prevents unbounded
+    unit accumulation across raises.
+    """
+    prefix = session + "-session-"
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "list-units", "--all", "--no-legend", "--plain"],
+            capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return
+    if result.returncode:
+        return
+    stale = []
+    for line in (result.stdout or "").splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        unit = parts[0]
+        if unit.startswith(prefix) and unit.endswith(".service") and unit != keep_unit:
+            stale.append(unit)
+    for unit in stale:
+        try:
+            subprocess.run(["systemctl", "--user", "stop", unit],
+                           capture_output=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+
 def raise_session(session: str, window: str, workspace: str, lock_dir: Path,
                   timeout: float = 15.0, systemd_runner: str = "/usr/bin/systemd-run") -> None:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,120}", session):
@@ -61,6 +94,7 @@ def raise_session(session: str, window: str, workspace: str, lock_dir: Path,
             if time.monotonic() >= deadline:
                 raise RuntimeError("UNKNOWN session unavailable after startup deadline; inspect " + unit)
             time.sleep(.1)
+        _stop_superseded_units(session, unit)
         print("session ready " + session + " keeper=" + unit, flush=True)
 
 
