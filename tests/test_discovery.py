@@ -1834,6 +1834,98 @@ def _mock_staleness(monkeypatch, ids: list[str] | None = None,
         lambda checkout, pin, head: (ids or [], err))
 
 
+class _FakeEmitterGit:
+    """Fake git for ``_served_staleness``: serves committed bytes and log -L."""
+
+    def __init__(self, committed: dict[str, str], changed: set[str]):
+        self.committed = committed      # rel path -> committed bytes
+        self.changed = changed          # rel paths whose producing unit changed
+        self.specs: list[str] = []
+
+    def run(self, cmd, **kwargs):
+        if cmd[:2] == ["git", "show"]:
+            rel = cmd[2].split(":", 1)[1]
+            if rel not in self.committed:
+                return subprocess.CompletedProcess(cmd, 128, "", "fatal: missing")
+            return subprocess.CompletedProcess(cmd, 0, self.committed[rel], "")
+        if cmd[:4] == ["git", "log", "--oneline", "-L"]:
+            self.specs.append(cmd[4])
+            rel = cmd[4].split(":", 1)[1]
+            body = "abc1234 touch producer\n" if rel in self.changed else ""
+            return subprocess.CompletedProcess(cmd, 0, body, "")
+        raise AssertionError(f"unexpected git command: {cmd}")
+
+
+def test_served_staleness_names_module_level_sense_in_peer_emitter(tmp_path, monkeypatch):
+    """A ``sense.*`` id defined as a module-level constant in a peer emitter is
+    named when a function that references it changed after the pin.
+
+    ``body_perception`` defines ``sense.body.redmi10``/``.light`` as module-level
+    constants; the scan must attribute those to their referencing producers
+    instead of skipping them for having no enclosing function.
+    """
+    body_src = (
+        'SENSE_ID = "sense.body.redmi10"\n'
+        '\n'
+        '\n'
+        'def read_redmi10():\n'
+        '    return {"id": SENSE_ID}\n')
+    git = _FakeEmitterGit(
+        {"src/mishe_tauftauf/discovery.py": 'def sample():\n    return "sense.inline.only"\n',
+         "src/mishe_tauftauf/body_perception.py": body_src},
+        changed={"src/mishe_tauftauf/body_perception.py"})
+    monkeypatch.setattr(discovery, "subprocess", git)
+
+    ids, err = discovery._served_staleness(tmp_path, "a" * 40, "b" * 40)
+    assert err is None
+    assert ids == ["sense.body.redmi10"]
+    assert any(s.endswith(":src/mishe_tauftauf/body_perception.py") for s in git.specs)
+
+
+def test_served_staleness_uses_committed_bytes_not_dirty_worktree(tmp_path, monkeypatch):
+    """Line numbers come from the committed emitter, so a dirty worktree cannot
+    shift them and misattribute staleness to unrelated senses."""
+    src = tmp_path / "src" / "mishe_tauftauf"
+    src.mkdir(parents=True)
+    # The worktree copy has 40 extra lines that would shift every later line.
+    (src / "discovery.py").write_text(
+        "# dirty local edit\n" * 40 + 'def sample():\n    return "sense.inline.only"\n',
+        encoding="utf-8")
+    git = _FakeEmitterGit(
+        {"src/mishe_tauftauf/discovery.py": 'def sample():\n    return "sense.inline.only"\n',
+         "src/mishe_tauftauf/body_perception.py": 'SENSE_ID = "sense.body.redmi10"\n'},
+        changed={"src/mishe_tauftauf/discovery.py"})
+    monkeypatch.setattr(discovery, "subprocess", git)
+
+    ids, err = discovery._served_staleness(tmp_path, "a" * 40, "b" * 40)
+    assert err is None
+    assert ids == ["sense.inline.only"]
+    # Traced range is the committed file's line 2, not the worktree's line 42.
+    assert "2,2:src/mishe_tauftauf/discovery.py" in git.specs
+
+
+def test_served_staleness_unreadable_emitter_is_unknown(tmp_path, monkeypatch):
+    """An emitter that cannot be read at HEAD fails closed."""
+    git = _FakeEmitterGit({}, changed=set())
+    monkeypatch.setattr(discovery, "subprocess", git)
+    ids, err = discovery._served_staleness(tmp_path, "a" * 40, "b" * 40)
+    assert ids == []
+    assert err == "emitter unreadable"
+
+
+def test_served_staleness_undecodable_emitter_is_unknown(tmp_path, monkeypatch):
+    """Non-UTF-8 emitter bytes fail closed instead of crashing the whole scan."""
+    class _FakeGit:
+        def run(self, cmd, **kwargs):
+            if cmd[:2] == ["git", "show"]:
+                raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+            raise AssertionError(f"unexpected git command: {cmd}")
+    monkeypatch.setattr(discovery, "subprocess", _FakeGit())
+    ids, err = discovery._served_staleness(tmp_path, "a" * 40, "b" * 40)
+    assert ids == []
+    assert err == "emitter unreadable"
+
+
 def test_pin_lag_equal_to_head(tmp_path, monkeypatch):
     home = tmp_path / "site"
     sha = "a" * 40
@@ -1986,6 +2078,17 @@ def test_pin_lag_served_staleness_error_reads_unknown(tmp_path, monkeypatch):
     assert result["stale_sense_ids"] is None
 
 
+def _fake_git_show(checkout: Path):
+    """A ``git show <sha>:<rel>`` handler serving the worktree file under ``checkout``."""
+    def _run(cmd):
+        rel = cmd[2].split(":", 1)[1]
+        path = checkout / rel
+        if not path.exists():
+            return subprocess.CompletedProcess(cmd, 128, "", "fatal: missing")
+        return subprocess.CompletedProcess(cmd, 0, path.read_text(encoding="utf-8"), "")
+    return _run
+
+
 def test_served_staleness_happy_path(tmp_path, monkeypatch):
     """_served_staleness parses the emitter and checks git log -L per unit."""
     checkout = tmp_path / "checkout"
@@ -1997,11 +2100,14 @@ def test_served_staleness_happy_path(tmp_path, monkeypatch):
         'def sample():\n'
         '    pass\n'
     )
+    (emitter.parent / "body_perception.py").write_text('SENSE_ID = "sense.test.body"\n')
     pin = "a" * 40
     head = "b" * 40
 
     class _FakeGit:
         def run(self, cmd, **kwargs):
+            if cmd[:2] == ["git", "show"]:
+                return _fake_git_show(checkout)(cmd)
             if cmd[:4] == ["git", "log", "--oneline", "-L"]:
                 return subprocess.CompletedProcess(cmd, 0, "abc1234 fix\n", "")
             raise AssertionError(f"unexpected git command: {cmd}")
@@ -2026,6 +2132,13 @@ def test_served_staleness_emitter_unparseable(tmp_path, monkeypatch):
     emitter = checkout / "src" / "mishe_tauftauf" / "discovery.py"
     emitter.parent.mkdir(parents=True)
     emitter.write_text("def broken(:\n")
+
+    class _FakeGit:
+        def run(self, cmd, **kwargs):
+            if cmd[:2] == ["git", "show"]:
+                return _fake_git_show(checkout)(cmd)
+            raise AssertionError(f"unexpected git command: {cmd}")
+    monkeypatch.setattr(discovery, "subprocess", _FakeGit())
     stale, err = discovery._served_staleness(checkout, "a" * 40, "b" * 40)
     assert stale == []
     assert err is not None
@@ -2041,9 +2154,12 @@ def test_served_staleness_git_error_returns_none_commits(tmp_path, monkeypatch):
         'def _foo():\n'
         '    return {"id": "sense.test.foo", "state": "verified"}\n'
     )
+    (emitter.parent / "body_perception.py").write_text('SENSE_ID = "sense.test.body"\n')
 
     class _FakeGit:
         def run(self, cmd, **kwargs):
+            if cmd[:2] == ["git", "show"]:
+                return _fake_git_show(checkout)(cmd)
             if cmd[:4] == ["git", "log", "--oneline", "-L"]:
                 return subprocess.CompletedProcess(cmd, 128, "", "fatal: bad revision")
             raise AssertionError(f"unexpected git command: {cmd}")
@@ -2062,9 +2178,12 @@ def test_served_staleness_no_stale_senses(tmp_path, monkeypatch):
         'def _foo():\n'
         '    return {"id": "sense.test.foo", "state": "verified"}\n'
     )
+    (emitter.parent / "body_perception.py").write_text('SENSE_ID = "sense.test.body"\n')
 
     class _FakeGit:
         def run(self, cmd, **kwargs):
+            if cmd[:2] == ["git", "show"]:
+                return _fake_git_show(checkout)(cmd)
             if cmd[:4] == ["git", "log", "--oneline", "-L"]:
                 return subprocess.CompletedProcess(cmd, 0, "", "")
             raise AssertionError(f"unexpected git command: {cmd}")
