@@ -5838,6 +5838,33 @@ def _notify_scan(home: Path, snapshot: dict[str, object],
                 _sep = _oldest.find(":")
                 _role = _oldest if _sep < 0 else _oldest[:_sep]
                 detail = json.dumps((item.get("stall"), _role), sort_keys=True)
+            elif identifier == "sense.site.ghost-homes" and "ghosts" in item:
+                # The humanized `newest=<name> age=<age>` in the sample and the
+                # structured `age_s` advance every scan, so an unchanged ghost
+                # re-announced itself as a material change for hours (wake
+                # 59621: two consecutive real scans 84 s apart differed only in
+                # `age=10h54m` -> `age=10h56m`). Identity uses the ghost set,
+                # holders, counts and the newest ghost's mtime stamp, so the
+                # drift stays visible in every scan's drift line while a ghost
+                # appearing or leaving, or a holder or file count moving, still
+                # surfaces. Stored and reader-facing data keep the age.
+                _newest = item.get("newest")
+                detail = json.dumps({
+                    "ghosts": item.get("ghosts"),
+                    "files": item.get("files"),
+                    "total": item.get("total"),
+                    "holding": item.get("holding"),
+                    "empty": item.get("empty"),
+                    "no_process": item.get("no_process"),
+                    "nested": item.get("nested"),
+                    "symlinked": item.get("symlinked"),
+                    "roots_at_least": item.get("roots_at_least"),
+                    "files_at_least": item.get("files_at_least"),
+                    "newest": {str(name): (value.get("stamp")
+                                           if isinstance(value, dict) else value)
+                               for name, value in (_newest.items()
+                                                   if isinstance(_newest, dict) else [])},
+                }, sort_keys=True)
             elif item["kind"] == "declaration" or state != "verified":
                 detail = sample_text
                 if identifier == "sense.ledger.evidence-binding":

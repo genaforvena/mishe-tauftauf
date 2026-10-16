@@ -7439,3 +7439,88 @@ def test_notify_scan_notifies_on_gate_latency_oldest_role_change(tmp_path):
     discovery._notify_scan(home, snapshot_two, snapshot_one, path)
     after = len(Feed(home).entries())
     assert after > before
+
+def _ghost_reading(age_s, ghosts=(".mishe-tauftauft",), files=None, total=2):
+    """A `sense.site.ghost-homes` reading in the producer's structured shape."""
+    files = {".mishe-tauftauft": 2} if files is None else files
+    named = ",".join(ghosts)
+    return {"id": "sense.site.ghost-homes", "kind": "read", "state": "drift",
+            "sample": f"ghost-homes={len(ghosts)} files={total} holding={named} "
+                      f"no-process={named} nested=0 newest={ghosts[0]} age={age_s}s",
+            "ghosts": sorted(ghosts), "files": files, "total": total,
+            "holding": sorted(ghosts), "no_process": sorted(ghosts),
+            "empty": [], "nested": [], "symlinked": [],
+            "roots_at_least": False, "files_at_least": False,
+            "newest": {ghosts[0]: {"stamp": "2026-10-16T02:39:57+00:00",
+                                   "age_s": age_s}}}
+
+
+def test_notify_scan_ignores_ghost_home_age_only_changes(tmp_path):
+    """A humanized-age advance alone is not a material ghost-home change.
+
+    Two consecutive real scans 84 s apart (wake 59621, 13:35:01Z and
+    13:36:25Z) differed only in `age=10h54m` -> `age=10h56m` and still
+    re-announced `Material changes: sense.site.ghost-homes.`; identity drops
+    the age view so the drift stays visible in every scan's drift line
+    without re-notifying an unchanged condition.
+    """
+    home = tmp_path / "site"
+    (home / "discovery").mkdir(parents=True, exist_ok=True)
+    path = home / "discovery" / "sample.json"
+    snapshot_one = {"created": "2026-10-16T13:35:01Z", "node": "test",
+                    "observations": [_ghost_reading(39240)]}
+    snapshot_two = {"created": "2026-10-16T13:36:25Z", "node": "test",
+                    "observations": [_ghost_reading(39360)]}
+    discovery._notify_scan(home, snapshot_one, None, path)
+    before = len(Feed(home).entries())
+    discovery._notify_scan(home, snapshot_two, snapshot_one, path)
+    after = len(Feed(home).entries())
+    assert after == before
+
+
+def test_notify_scan_notifies_on_ghost_home_set_change(tmp_path):
+    home = tmp_path / "site"
+    (home / "discovery").mkdir(parents=True, exist_ok=True)
+    path = home / "discovery" / "sample.json"
+    one = _ghost_reading(39240)
+    two = _ghost_reading(39240, ghosts=(".mishe-tauffauf", ".mishe-tauftauft"),
+                         files={".mishe-tauffauf": 1, ".mishe-tauftauft": 2},
+                         total=3)
+    snapshot_one = {"created": "2026-10-16T13:35:01Z", "node": "test",
+                    "observations": [one]}
+    snapshot_two = {"created": "2026-10-16T13:36:25Z", "node": "test",
+                    "observations": [two]}
+    discovery._notify_scan(home, snapshot_one, None, path)
+    before = len(Feed(home).entries())
+    discovery._notify_scan(home, snapshot_two, snapshot_one, path)
+    after = len(Feed(home).entries())
+    assert after > before
+
+
+def test_notify_scan_notifies_on_ghost_home_unavailable_reason_change(tmp_path):
+    """An unavailable ghost reading keeps sample-text identity.
+
+    A reading without the structured fields (checkout enumeration truncated,
+    or a ghost tree unreadable) must still re-notify when its reason changes,
+    so the age-only identity cannot swallow a real availability change.
+    """
+    home = tmp_path / "site"
+    (home / "discovery").mkdir(parents=True, exist_ok=True)
+    path = home / "discovery" / "sample.json"
+
+    def unavailable(sample):
+        return {"id": "sense.site.ghost-homes", "kind": "read",
+                "state": "unknown", "sample": sample}
+
+    snapshot_one = {"created": "2026-10-16T13:35:01Z", "node": "test",
+                    "observations": [unavailable(
+                        "ghost home unreadable: .mishe-tauftauft: permission denied")]}
+    snapshot_two = {"created": "2026-10-16T13:36:25Z", "node": "test",
+                    "observations": [unavailable(
+                        "checkout enumeration truncated at 4000 names: /home/x; "
+                        "ghost absence not established")]}
+    discovery._notify_scan(home, snapshot_one, None, path)
+    before = len(Feed(home).entries())
+    discovery._notify_scan(home, snapshot_two, snapshot_one, path)
+    after = len(Feed(home).entries())
+    assert after > before
