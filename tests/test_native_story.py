@@ -121,6 +121,22 @@ def test_controls_are_inert_in_headers_arguments_results_and_errors(tmp_path):
     assert 'UNKNOWN' in rendered and 'FAILED' in rendered
 
 
+def test_provider_terminal_error_retains_reason_without_private_payload(tmp_path):
+    view, stream = story(tmp_path)
+    view.event({'kind': 'model_output', 'turn': 2, 'response': {
+        'terminal': 'error', 'assistant': {
+            'role': 'assistant', 'content': [], 'stopReason': 'error',
+            'errorMessage': 'ECONNRESET: socket closed\x1b[2J',
+            'providerPayload': {'private': 'SECRET_PROVIDER'}},
+        'checkpoint': 'SECRET_CHECKPOINT'}})
+    view.event({'kind': 'stop', 'status': 'unknown', 'turns': 3, 'calls': 6})
+    rendered = stream.getvalue()
+    assert 'ECONNRESET: socket closed' in rendered
+    assert '\\x1b[2J' in rendered and '\x1b' not in rendered
+    assert 'UNKNOWN' in rendered and 'not observed' in rendered
+    assert 'SECRET_' not in rendered
+
+
 def test_only_completed_seed_effect_records_settlement_not_selection_or_loop_stop(tmp_path):
     view, stream = story(tmp_path)
     settle = call('seed_yield', result='verified', continue_work=True)
