@@ -151,18 +151,34 @@ def _treadmill_evidence(home: Path) -> tuple[dict[str, dict], str | None]:
 def _fresh_wedge_suspect(home: Path, role: str, pid: str) -> bool:
     """Return true only for valid fresh wedge evidence bound to this live pane.
 
-    A ``provider-error`` suspect is not wedge evidence for recovery. The witness
-    already holds it rather than flagging a wedge, because the same reading can
-    name a pane that is still working: an omp session log carries its title
-    generator's and subagents' provider errors too, so a failure on another
-    agent's model (e.g. the title generator's) appears beside a healthy mind's
-    turn. Respawn is destructive, so it requires an open retry chain, which
-    cannot end by itself.
+    Respawn is destructive, so it requires an open retry chain, which cannot
+    end by itself. A ``provider-error`` suspect *without* one is not wedge
+    evidence for recovery: the same reading can name a pane that is still
+    working — an omp session log carries its title generator's and subagents'
+    provider errors too — and a transient upstream failure (a 429 quota) ends
+    by itself. Once the chain is open the reading is recovery evidence however
+    the detector named it, so the rule name is not the test.
     """
     suspects, unavailable = _wedge_evidence(home)
     return unavailable is None and any(
         suspect["window"] == role and str(suspect["pid"]) == pid
-        and suspect.get("rule") != "provider-error" for suspect in suspects)
+        and _recoverable_suspect(suspect) for suspect in suspects)
+
+
+def _recoverable_suspect(suspect: dict) -> bool:
+    """Whether one flagged suspect justifies a destructive respawn.
+
+    An open chain (``chain >= 1``) cannot end by itself, so it is recovery
+    evidence whatever rule flagged it. A chainless ``provider-error`` suspect
+    is ambiguous — it can name another agent's transient failure — so it is
+    not. A suspect flagged by the chain rule carries no ``rule`` and stays
+    accepted whatever its chain reads, which keeps the reading the detector
+    already bound to this pane.
+    """
+    chain = suspect.get("chain")
+    if isinstance(chain, int) and not isinstance(chain, bool) and chain >= 1:
+        return True
+    return suspect.get("rule") != "provider-error"
 
 
 def _mind_pane_wedged(home: Path, session: str, role: str) -> bool:

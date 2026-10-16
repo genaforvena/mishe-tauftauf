@@ -48,6 +48,30 @@ def test_seed_does_not_recover_a_provider_error_suspect(tmp_path, monkeypatch):
     assert not seed._mind_pane_wedged(home, "owned-session", "genome")
 
 
+@pytest.mark.parametrize("chain, recover", [(0, False), (1, True), (2, True)])
+def test_seed_recovers_a_provider_error_suspect_only_with_an_open_chain(
+        tmp_path, monkeypatch, chain, recover):
+    # The gate's invariant is an open retry chain, which cannot end by itself;
+    # the rule name is not the test. A provider-error suspect with an open
+    # chain is therefore recovery evidence, while the chainless one is not: it
+    # can name another agent's transient failure, and a 429 quota ends by itself.
+    from subprocess import CompletedProcess
+    home = tmp_path / "site"
+    discovery_dir = home / "discovery"
+    discovery_dir.mkdir(parents=True)
+    created = datetime.now(timezone.utc).isoformat()
+    (discovery_dir / "scan-1.json").write_text(json.dumps({
+        "created": created,
+        "observations": [{"id": "sense.mind.wedge-suspect", "state": "verified",
+                          "suspects": [{"window": "genome", "pid": 42,
+                                        "chain": chain,
+                                        "rule": "provider-error",
+                                        "cause": "provider-error:429"}]}],
+    }))
+    monkeypatch.setattr(seed, "_tmux", lambda *a, **k:
+                        CompletedProcess(a, 0, b"0 42\n", b""))
+    assert seed._mind_pane_wedged(home, "owned-session", "genome") is recover
+
 
 def test_seed_uses_newest_scan_timestamp_not_filename_order(tmp_path, monkeypatch):
     from datetime import timedelta
