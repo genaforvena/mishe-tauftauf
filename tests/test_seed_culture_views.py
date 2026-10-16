@@ -325,6 +325,65 @@ def test_senses_still_counts_an_unreadable_counter_as_unknown(tmp_path: Path, cu
     assert (home / "observations" / "senses").read_text(encoding="utf-8").startswith("UNKNOWN ")
 
 
+def test_a_drift_row_does_not_raise_the_unchecked_count(
+        tmp_path: Path, current_endpoint) -> None:
+    """A checked read reporting drift is not a read that never happened.
+
+    The live rows on this fixture home read UNKNOWN, so the drift row has to
+    change only the drift clause and leave the unchecked count alone.
+    """
+    without = tmp_path / "without"
+    drifted = tmp_path / "drifted"
+    _write_scan(without, [])
+    _write_scan(drifted, [
+        {"id": "sense.ledger.dv-binding", "state": "drift", "kind": "read",
+         "sample": "unbound=applied records=102 bool_dv=57"},
+    ])
+    baseline = next(line for line in senses(without).splitlines()
+                    if line.startswith("STATE: UNKNOWN"))
+    rendered = senses(drifted)
+    with_drift = next(line for line in rendered.splitlines()
+                      if line.startswith("STATE: UNKNOWN"))
+    assert "DRIFT sense.ledger.dv-binding: unbound=applied" in rendered
+    assert with_drift == baseline + "; 1 checked readings report drift"
+    assert "no reading is unchecked" not in with_drift
+
+
+def test_senses_drift_only_pane_names_no_unchecked_read(
+        tmp_path: Path, current_endpoint, monkeypatch) -> None:
+    """Drift alone must not read as an unchecked row, and must stay notifying."""
+    home = tmp_path / "site"
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.read_redmi10",
+                        lambda _home, *_a, **_k: {"id": "sense.body.redmi10",
+                                                 "kind": "read", "state": "verified",
+                                                 "sample": "c=1"})
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.read_redmi10_light",
+                        lambda _home, *_a, **_k: {"id": "sense.body.redmi10.light",
+                                                  "kind": "read", "state": "verified",
+                                                  "sample": "L=1lux"})
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.read_redmi10_delivery_gaps",
+                        lambda _home: {"id": "sense.body.redmi10.delivery-gaps",
+                                       "kind": "read", "state": "verified",
+                                       "sample": "gaps-24h=2"})
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views._space_light_read",
+                        lambda _home: {"id": "sense.space.light", "kind": "read",
+                                       "state": "verified", "sample": "Note3 light L=5lux",
+                                       "reason": "current"})
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views._space_clock_domains_read",
+                        lambda _home: [])
+    _write_scan(home, [
+        {"id": "sense.ledger.dv-binding", "state": "drift", "kind": "read",
+         "sample": "unbound=applied records=102 bool_dv=57"},
+    ])
+    rendered = senses(home)
+    assert "STATE: UNKNOWN — 1 checked readings report drift; no reading is unchecked" in rendered
+    assert (home / "observations" / "senses").read_text(
+        encoding="utf-8").startswith("UNKNOWN senses 1 report drift")
+    # The notification path keys on an UNKNOWN/RED/FAIL token on the STATE
+    # line, so a drift-only pane has to keep carrying one.
+    assert "STATE: UNKNOWN" in _observation_text("senses", rendered)
+
+
 def test_senses_shows_the_host_radio_verdict_from_the_scan(tmp_path: Path, current_endpoint) -> None:
     home = tmp_path / "site"
     _write_scan(home, [
