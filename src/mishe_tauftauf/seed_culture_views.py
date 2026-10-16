@@ -907,6 +907,22 @@ def health(home: Path) -> str:
     runtime_state, _ = _runtime_state(home, Path(__file__).resolve().parents[2], service_roots)
     if runtime_state == "DRIFT":
         causes.append("runtime-drift")
+    # The renderer-bytes clause reads each renderer's own import root. An
+    # unreadable renderer is UNKNOWN there while this verdict would still read
+    # GREEN, so a resolver scanning only the line below sees a silently green
+    # pane. Fold the same state in (research-methods DM 61672, disposition (a)).
+    # Empty lines mean there is no renderer window to observe, not an unobserved
+    # one; they must not turn a healthy site UNKNOWN.
+    bytes_lines: list[str] = []
+    bytes_state = ""
+    bytes_error = ""
+    try:
+        from .wall_view import renderer_bytes_lines
+        bytes_lines, bytes_state = renderer_bytes_lines(home)
+    except (OSError, ValueError, AttributeError) as exc:
+        bytes_error = str(exc) or exc.__class__.__name__
+    if bytes_state == "DRIFT" and bytes_lines:
+        causes.append("renderer-bytes=" + _clip_sample(bytes_lines[0], 160))
     # A dead tmux server or an unshielded one is a host failure Health owns:
     # the guard loop re-shields within a minute, but a missing session needs
     # a mind to raise it and verify the panes. Read the latest scan's
@@ -973,6 +989,13 @@ def health(home: Path) -> str:
     if causes:
         verdict = f"FAIL health internal check at {at} — " + "; ".join(causes)
         lines.append("STATE: RED — internal check needs repair")
+    elif bytes_state == "UNKNOWN" and (bytes_lines or bytes_error):
+        # An unreadable renderer is broken monitoring, not a healthy pane; the
+        # clause names it, so the headline a resolver reads first must not stay
+        # silently GREEN while a renderer is unobserved.
+        detail = _clip_sample(bytes_lines[0], 160) if bytes_lines else bytes_error
+        verdict = f"UNKNOWN health renderer bytes {detail} at {at}"
+        lines.append("STATE: UNKNOWN — a top-pane renderer is unreadable")
     elif redmi_unknown:
         verdict = f"UNKNOWN health Redmi10 monitor {redmi_unknown} at {at}"
         lines.append(f"STATE: UNKNOWN — Redmi10 monitor {redmi_unknown}")
