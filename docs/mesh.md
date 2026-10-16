@@ -91,7 +91,9 @@ activation and live observation, with a tested recovery path. Genome pushes
 `main` and checks its CI and live consumers but does not gate another mind's
 commit.
 
-One standing initiative names its own limits: the internal native loop replaces
-the external harness one bounded work class at a time, with parity evidenced
-per class. No parity verdict exists for this plant's work class yet, so the
-harness route remains the default ([how it works](how-it-works.md)).
+One standing initiative names its own limits: the Docs mind is currently
+exercising the internal native loop for its bounded canary, while the external
+harness remains the fallback for work classes without an evidenced native
+route. This route selection is not a parity or live-delivery verdict: resident
+activation, replay, model parity and useful-task acceptance remain separately
+open ([how it works](how-it-works.md)).
