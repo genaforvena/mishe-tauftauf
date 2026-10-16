@@ -780,6 +780,66 @@ class SocketDerivationTests(unittest.TestCase):
         self.assertIn("socket", calls[0][1])
         self.assertNotIn("socket", calls[1][1])
 
+    def test_owned_socket_finds_the_site_socket_under_a_foreign_tmux_tmpdir(self):
+        # The coordinator unit's reboot-recovery drop-in hands it the *core*
+        # root's TMUX_TMPDIR, so the ambient socket is the core's for every
+        # linked home. Without the home's own socket in the probe list,
+        # android-body's live session read as unowned every 60s
+        # (kernel-sync-6868441d20a6 "tmux session is not owned by linked site").
+        from mishe_tauftauf import tmux as tmux_module
+
+        home = Path("/home/mesh-home/android-body/.mishe-tauftauf")
+        core_root = f"/tmp/tmux-{os.getuid()}/mishe-tauftauf"
+        site_socket = f"/tmp/tmux-{os.getuid()}/android-body/tmux-{os.getuid()}/default"
+
+        def result(returncode, stdout):
+            return subprocess.CompletedProcess([], returncode, stdout.encode(), b"")
+
+        calls = []
+        def fake_tmux(*args, **kwargs):
+            calls.append((args, kwargs))
+            if "android-body" in args and kwargs.get("socket") == site_socket:
+                return result(0, str(home))
+            return result(1, "")
+
+        with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux), \
+                mock.patch.dict(tmux_module.os.environ, {"TMUX_TMPDIR": core_root}):
+            socket = tmux_module.owned_socket(home, "android-body")
+            stranger = tmux_module.owned_socket(home, "another-site")
+
+        self.assertEqual(socket, site_socket)
+        self.assertIsNone(stranger)
+        self.assertIn(site_socket, [kwargs.get("socket") for _, kwargs in calls])
+
+    def test_session_owner_stays_ambient_under_a_foreign_tmux_tmpdir(self):
+        # The shared ownership helper stays ambient on purpose: the kill,
+        # respawn and raise paths verify with it and then act on the ambient
+        # socket, so a site-aware session_owner would let a writer touch a
+        # server it never verified (review of wake 60748).
+        from mishe_tauftauf import tmux as tmux_module
+
+        home = Path("/home/mesh-home/android-body/.mishe-tauftauf")
+        core_root = f"/tmp/tmux-{os.getuid()}/mishe-tauftauf"
+        site_socket = f"/tmp/tmux-{os.getuid()}/android-body/tmux-{os.getuid()}/default"
+
+        def result(returncode, stdout):
+            return subprocess.CompletedProcess([], returncode, stdout.encode(), b"")
+
+        def fake_tmux(*args, **kwargs):
+            if kwargs.get("socket") == site_socket:
+                return result(0, str(home))
+            return result(1, "")
+
+        with mock.patch.object(tmux_module.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(tmux_module, "_tmux", side_effect=fake_tmux), \
+                mock.patch.dict(tmux_module.os.environ, {"TMUX_TMPDIR": core_root}):
+            owner = tmux_module.session_owner("android-body", home=home)
+            owned = tmux_module.owns_session(home, "android-body")
+
+        self.assertIsNone(owner)
+        self.assertFalse(owned)
+
     def test_await_owned_reads_the_home_socket(self):
         # The coordinator's plant subprocess runs without TMUX_TMPDIR; an
         # unscoped await_owned waits out its full timeout against the wrong

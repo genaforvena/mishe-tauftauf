@@ -473,7 +473,7 @@ A persistent external plant registers its site and session in the core site's ig
 
 1. CI is passing for the exact core checkout `HEAD`.
 2. The core checkout has no unlanded changes.
-3. The target is a separate direct Git worktree with a matching site marker and an existing tmux session owned by that site.
+3. The target is a separate direct Git worktree with a matching site marker and an existing tmux session owned by that site (read on the site's own socket, so a foreign `TMUX_TMPDIR` on the coordinator's unit cannot hold a live site).
 4. For a normal refresh, the target worktree also has no unlanded changes.
 
 An already applied SHA without a recorded error is skipped. A hold is explained in the core `chat.log`; later eligible passes retry it. After refreshing, the coordinator checks the target's feed, expected top panes, live mind panes, advancing leases, and named services before recording the applied SHA. A successful later refresh closes that site's superseded `kernel-sync` hold in both the core and target feeds and writes a target-scoped completion marker. Coordination anomalies report RED if a matching hold remains open after that marker.

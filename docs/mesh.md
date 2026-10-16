@@ -26,8 +26,11 @@ human's shell. A persistent supervisor restores its presentation after a restart
 and reports recoveries to health while preserving the human's running pane.
 Session startup waits for tmux itself to become available. Resident units create
 their per-site tmux socket directory before launch and set `TMUX_TMPDIR`, keeping
-each site's sessions isolated. Integration tests use a separate disposable tmux
-socket so their cleanup cannot close live panes.
+each site's sessions isolated. A probe of another site's home resolves that site's
+own socket as well, so a process handed the wrong `TMUX_TMPDIR` — the release
+coordinator's unit is one — still reads the session its target actually owns.
+Integration tests use a separate disposable tmux socket so their cleanup cannot
+close live panes.
 
 The minds are `genome` (shared source and its CI), `health` (services, panes
 and observations), `witness` (contradictions and missed work), `discover`
