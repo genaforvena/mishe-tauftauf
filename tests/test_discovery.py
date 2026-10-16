@@ -20,19 +20,6 @@ from mishe_tauftauf import seed_culture_views
 from mishe_tauftauf.seed_culture_views import discover
 
 
-@pytest.fixture(autouse=True)
-def _unbound_site_home(monkeypatch):
-    """Run this file's cases unbound from a mind's ambient site binding.
-
-    Every mind shell exports ``MISHE_SEED_HOME``, and these cases pass
-    ``tmp_path`` homes into discovery functions that validate the home, so
-    inheriting the binding failed 38 of them with "site home does not match
-    this mind's MISHE_SEED_HOME" whenever the suite ran inside a mind. The
-    binding itself is covered where it lives, in ``tests/test_site_home.py``.
-    """
-    monkeypatch.delenv("MISHE_SEED_HOME", raising=False)
-
-
 def test_scan_writes_real_bounded_local_evidence(tmp_path: Path) -> None:
     home = tmp_path / "site"
     artifact = scan(home)
@@ -7524,3 +7511,112 @@ def test_notify_scan_notifies_on_ghost_home_unavailable_reason_change(tmp_path):
     discovery._notify_scan(home, snapshot_two, snapshot_one, path)
     after = len(Feed(home).entries())
     assert after > before
+
+def _dv_binding_reading(sample, records, bool_dv, unbound, state="drift"):
+    """A `sense.ledger.dv-binding` reading in the producer's structured shape."""
+    return {"id": "sense.ledger.dv-binding", "kind": "read", "state": state,
+            "sample": sample, "records": records, "bool_dv": bool_dv,
+            "unbound": unbound}
+
+
+def test_notify_scan_ignores_dv_binding_coverage_tier_changes(tmp_path):
+    """A coverage-tier advance alone is not a material dv-binding change.
+
+    `records=N bool_dv=M` count the whole ledger and advance on every write
+    while the flagged condition — the unbound phase set — is unchanged
+    (DM 59781: real scans re-notified on records 101->102 and bool_dv 56->57,
+    both with `unbound=applied` unchanged); identity slices the tier out.
+    """
+    home = tmp_path / "site"
+    (home / "discovery").mkdir(parents=True, exist_ok=True)
+    path = home / "discovery" / "sample.json"
+    snapshot_one = {"created": "2026-10-16T13:25:00Z", "node": "test",
+                    "observations": [_dv_binding_reading(
+                        "unbound=applied records=101 bool_dv=56", 101, 56, 1)]}
+    snapshot_two = {"created": "2026-10-16T13:35:00Z", "node": "test",
+                    "observations": [_dv_binding_reading(
+                        "unbound=applied records=102 bool_dv=57", 102, 57, 1)]}
+    discovery._notify_scan(home, snapshot_one, None, path)
+    before = len(Feed(home).entries())
+    discovery._notify_scan(home, snapshot_two, snapshot_one, path)
+    after = len(Feed(home).entries())
+    assert after == before
+
+
+def test_notify_scan_notifies_on_dv_binding_phase_set_change(tmp_path):
+    """A new unbound phase — and the drift->verified flip — is material.
+
+    The flip back to a clean bill must notify once and stay quiet while only
+    the coverage tiers advance.
+    """
+    home = tmp_path / "site"
+    (home / "discovery").mkdir(parents=True, exist_ok=True)
+    path = home / "discovery" / "sample.json"
+    one = _dv_binding_reading("unbound=applied records=102 bool_dv=57",
+                              102, 57, 1)
+    two = _dv_binding_reading("unbound=applied,health-stale-pend-detection "
+                              "records=103 bool_dv=58", 103, 58, 2)
+    snapshot_one = {"created": "2026-10-16T13:25:00Z", "node": "test",
+                    "observations": [one]}
+    snapshot_two = {"created": "2026-10-16T13:35:00Z", "node": "test",
+                    "observations": [two]}
+    discovery._notify_scan(home, snapshot_one, None, path)
+    before = len(Feed(home).entries())
+    discovery._notify_scan(home, snapshot_two, snapshot_one, path)
+    after = len(Feed(home).entries())
+    assert after > before
+    three = _dv_binding_reading("unbound=0 records=104 bool_dv=59", 104, 59, 0,
+                                state="verified")
+    snapshot_three = {"created": "2026-10-16T13:45:00Z", "node": "test",
+                      "observations": [three]}
+    discovery._notify_scan(home, snapshot_three, snapshot_two, path)
+    flipped = len(Feed(home).entries())
+    assert flipped > after
+    four = _dv_binding_reading("unbound=0 records=105 bool_dv=60", 105, 60, 0,
+                               state="verified")
+    snapshot_four = {"created": "2026-10-16T13:55:00Z", "node": "test",
+                     "observations": [four]}
+    discovery._notify_scan(home, snapshot_four, snapshot_three, path)
+    assert len(Feed(home).entries()) == flipped
+
+
+def test_notify_scan_notifies_on_dv_binding_unavailable_reason_change(tmp_path):
+    """Unavailable dv-binding readings keep their reason in identity.
+
+    The unknown sample carries the coverage tier ahead of `unreadable=<file>`;
+    slicing must not collapse an unreadable store, an empty store and a
+    missing patch store into one identity, and a tier advance with the same
+    unreadable file must stay quiet.
+    """
+    home = tmp_path / "site"
+    (home / "discovery").mkdir(parents=True, exist_ok=True)
+    path = home / "discovery" / "sample.json"
+
+    def unavailable(sample, records=0, bool_dv=0):
+        return _dv_binding_reading(sample, records, bool_dv, 0, state="unknown")
+
+    snapshot_one = {"created": "2026-10-16T13:25:00Z", "node": "test",
+                    "observations": [unavailable("records=0 bool_dv=0")]}
+    snapshot_two = {"created": "2026-10-16T13:35:00Z", "node": "test",
+                    "observations": [unavailable(
+                        "records=102 bool_dv=57 unreadable=ledger.json.bak",
+                        102, 57)]}
+    snapshot_three = {"created": "2026-10-16T13:45:00Z", "node": "test",
+                      "observations": [unavailable(
+                          "records=103 bool_dv=58 "
+                          "unreadable=ledger.json.bak,other.json",
+                          103, 58)]}
+    snapshot_four = {"created": "2026-10-16T13:55:00Z", "node": "test",
+                     "observations": [unavailable("patch store unavailable")]}
+    snapshot_five = {"created": "2026-10-16T14:05:00Z", "node": "test",
+                     "observations": [unavailable("patch store unavailable")]}
+    discovery._notify_scan(home, snapshot_one, None, path)
+    before = len(Feed(home).entries())
+    previous = snapshot_one
+    for snapshot in (snapshot_two, snapshot_three, snapshot_four):
+        discovery._notify_scan(home, snapshot, previous, path)
+        previous = snapshot
+    after = len(Feed(home).entries())
+    assert after == before + 3
+    discovery._notify_scan(home, snapshot_five, previous, path)
+    assert len(Feed(home).entries()) == after

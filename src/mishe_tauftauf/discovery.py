@@ -5866,6 +5866,28 @@ def _notify_scan(home: Path, snapshot: dict[str, object],
                                for name, value in (_newest.items()
                                                    if isinstance(_newest, dict) else [])},
                 }, sort_keys=True)
+            elif identifier == "sense.ledger.dv-binding" and "records" in item:
+                # `records=N bool_dv=M` are coverage tiers over the whole
+                # ledger: they advance on every ledger write while the flagged
+                # condition — the set of phases whose `delivery_verified=true`
+                # records carry no `verification` dict — is unchanged, so a
+                # count-only move re-announced the drift on every write (wake
+                # 59805: records 101->102 and bool_dv 56->57 each emitted
+                # "Material changes" with `unbound=applied` unchanged). Identity
+                # slices the tier out of the sample: the displayed unbound phase
+                # set (first three phases, matching the sample's own display
+                # granularity) and the unreadable-store reason identify the
+                # reading; the counts, the state and the reader-facing sample
+                # keep their form. Slicing only, so discovery stays outside the
+                # parsing boundary. A reading without the structured tier keeps
+                # sample-text identity.
+                _tier = f"records={item.get('records')} bool_dv={item.get('bool_dv')}"
+                _detail = str(item["sample"]).replace(_tier, "")
+                while len(_detail) > 0 and _detail[0] == " ":
+                    _detail = _detail[1:]
+                while len(_detail) > 0 and _detail[-1] == " ":
+                    _detail = _detail[:-1]
+                detail = _detail
             elif item["kind"] == "declaration" or state != "verified":
                 detail = sample_text
                 if identifier == "sense.ledger.evidence-binding":
