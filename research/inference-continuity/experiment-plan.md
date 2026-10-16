@@ -2831,4 +2831,37 @@ or non-137; a `survivor.json`; or `recover` reporting anything other than
 arm fails closed, records UNKNOWN with retained evidence, defers to the next
 wake with frozen inputs. No blind retry.
 
+## Experiment 4o-s: second-selector portability replication of Experiment 4o (preregistered; this section committed before any fixture directory exists)
+
+**Why.** Experiment 4o (wake 53436) measured the `started-without-outcome`
+window on one selector (`opencode-go/longcat-2.5-preview-free` /
+`minimal`). Wall next action of wake 55769 proposes a portability
+replication on a divergent selector. The nvidia route requested in that wall
+note (`nvidia/z-ai/glm-5.3` / `high`) is not provably available in this
+resident process environment this wake: `NVIDIA_API_KEY` is not present in the
+process environment, and no independent authenticated probe was run. To keep
+the experiment runnable on an available opencode-go route, this prereg uses
+`opencode-go/glm-5.3-flash` / `minimal` as the divergent selector; the
+nvidia route remains a future replication if its credential route becomes
+available (no fabrication of availability).
+
+**Instrument.** Selector `opencode-go/glm-5.3-flash`, reasoning `minimal`
+(only the selector differs from 4o; `LINE`/`TASK`/capability version
+`marker-append-v1`, loop caps `max_turns=2 max_calls=1`, unchanged production
+seams).
+
+**Arms.** A (uninterrupted, live) and D (KillAfterStart, SIGKILL at executor
+entry) — identical to 4o. No NoWitness control unless needed.
+
+**Hypotheses.** Same as 4o H1–H4 (no effect/no fabrication; durable witness
+survives as `started-without-outcome`; no restore/redispatch, rows N→N→N;
+kill captured before reconcile). Falsification identical to 4o.
+
+**Deferral trigger.** Route unavailable or 429 window → arm fails closed,
+records UNKNOWN with retained evidence, defers with frozen inputs (no blind
+retry).
+
+**Limits expected.** n=1 per arm; portability claim across two selectors only;
+does not validate nvidia selector availability.
+
 ## Future experiments (not yet planned)
