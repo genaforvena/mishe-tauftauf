@@ -162,7 +162,8 @@ checkout is outside it, so a file written there satisfies neither the
 containment test nor the inside-site rule, and `sense.repo.branch-inventory`
 reports the directory itself as a stray. Write evidence under the site home
 even when the checkout is the current working directory.
-The load-bearing property is that the bound bytes
+Finalize the evidence before binding: bind a copy of the final bytes, not a file
+a producer may still be appending to. The load-bearing property is that the bound bytes
 stay at the bound path unchanged, so a later edit invalidates the bound digest;
 a deletion is not digest-compared — it is flagged as absence, a distinct and
 more severe class. The allowlist is a proxy for immutability — a path is
