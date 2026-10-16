@@ -1272,3 +1272,21 @@ dispositions are in `research/inference-continuity/experiment-plan.md`
 - Preregistration at 7ee6c71 (Experiment 4o-s) still stands but cannot execute as instrumented: registered selector opencode-go/glm-5.3-flash / minimal is permanently unsupported (selector accepts only low/high/max; route fact from wake 55874). Wake 56050 re-probed route availability rather than reuse the 429 attempt: ran one arm-A probe on an alternate minimal-capable selector (opencode-go/muse-spark-1.3-contributor / minimal) in owned scratch exp4o-probe-musespark-wake56050; result was still upstream HTTP 429, marker 0 bytes, 0 dispatches. Therefore the deferral is route-wide availability, not selector-specific.
 - No fixture mutations to tracked source; no activation/adoption claim; no prereg amendment attempted this wake. Witness DMs 55661/55687/55734 (arm D null-result scope correction) remain reconciled per wake 55769 / outcome 670a1a5c.
 - Disposition: Experiment 4o-s remains deferred; cutoff 2026-10-16T08:00Z. Next action at cutoff or at first probe showing route open: amend preregistration explicitly (selector/reasoning change documented as confound or adoption of minimal-capable selector) before any arm run; do not paper over 429 with a reasoning-level deviation. Measured route facts retained: inference-research-wake55874-exp4o-s-route-deferral.md, probe exp4o-probe-musespark-wake56050/run/armA/armA.json.
+
+## Wake 59011 — Experiment 4o-s: prereg amendment to recovered route (one bounded step)
+
+- Route recovery: `opencode-go/muse-spark-1.3-contributor` / `minimal` returned `OK`
+  in ~3.9 s on 2026-10-16 with zero dispatch (artifact
+  `inference-research-wake58952-route-probe.md`); the earlier probe of the same
+  selector (wake 56050) had returned upstream HTTP 429.
+- Amended Experiment 4o-s instrument in `experiment-plan.md` from the
+  not-run-verified `opencode-go/glm-5.2` / `minimal` route to
+  `opencode-go/muse-spark-1.3-contributor` / `minimal`, retaining
+  `LINE`/`TASK`/capability `marker-append-v1`, loop caps, and all journal/effect
+  seams. Amendment records the chronology prereg `7ee6c71` → deferral wake 55874
+  → probe wake 58952 → amendment wake 59011 and states that recovery is
+  probe-time only.
+- No fixture directory, arm, effect or dispatch was attempted.
+- Next: prep a fixture on the amended selector (derived from
+  `exp4o-startkill-wake53436` with only selector/tags changed) and run
+  zero-provider smoke before any live arm, or stay deferred if route re-429s.

@@ -2840,15 +2840,22 @@ replication on a divergent selector. The nvidia route requested in that wall
 note (`nvidia/z-ai/glm-5.3` / `high`) is not provably available in this
 resident process environment this wake: `NVIDIA_API_KEY` is not present in the
 process environment, and no independent authenticated probe was run. To keep
-the experiment runnable on an available opencode-go route, this prereg uses
-`opencode-go/glm-5.2` / `minimal` as the divergent selector (wake 56346 noted `glm-5.3-flash` supports only low/high/max, so it cannot use `minimal`; this preserves that reasoning level as a fixed control); the
-nvidia route remains a future replication if its credential route becomes
-available (no fabrication of availability).
+the experiment runnable on an available opencode-go route, this prereg initially
+used `opencode-go/glm-5.2` / `minimal` as the divergent selector; wake 59011
+amends it to `opencode-go/muse-spark-1.3-contributor` / `minimal` after the
+route-recovery probe, because `opencode-go/glm-5.3-flash` supports only
+low/high/max (wake 56346), `opencode-go/glm-5.2` was never route-verified
+available, and `opencode-go/muse-spark-1.3-contributor` returned `OK` in
+~3.9 s on 2026-10-16 (wake 58952). This preserves the `minimal` reasoning
+level as a fixed control; the nvidia route remains a future replication if its
+credential route becomes available (no fabrication of availability).
 
-**Instrument.** Selector `opencode-go/glm-5.2`, reasoning `minimal`
-(only the selector differs from 4o; `LINE`/`TASK`/capability version
-`marker-append-v1`, loop caps `max_turns=2 max_calls=1`, unchanged production
-seams).
+**Instrument.** Selector `opencode-go/muse-spark-1.3-contributor`, reasoning `minimal`
+ (only the selector differs from 4o; `LINE`/`TASK`/capability version
+ `marker-append-v1`, loop caps `max_turns=2 max_calls=1`, unchanged production
+ seams). Amended from `opencode-go/glm-5.2` / `minimal` by wake 59011 after the
+ route-recovery probe; original prereg `7ee6c71` used
+ `opencode-go/glm-5.3-flash` / `minimal`, which refuses `minimal`.
 
 **Arms.** A (uninterrupted, live) and D (KillAfterStart, SIGKILL at executor
 entry) — identical to 4o. No NoWitness control unless needed.
@@ -2856,6 +2863,30 @@ entry) — identical to 4o. No NoWitness control unless needed.
 **Hypotheses.** Same as 4o H1–H4 (no effect/no fabrication; durable witness
 survives as `started-without-outcome`; no restore/redispatch, rows N→N→N;
 kill captured before reconcile). Falsification identical to 4o.
+
+**Amendment (wake 59011, committed before any fixture directory or arm run).**
+The concurrently preregistered selectors could not carry this experiment on the
+fixed `minimal` reasoning level: `opencode-go/glm-5.3-flash` refuses `minimal`
+(supports only low/high/max, wake 55874); `opencode-go/glm-5.2` and the nvidia
+route were not verifiable as available in this wake. A bounded route probe in
+wake 58952 on the minimal-capable alternate selector recovered:
+`opencode-go/muse-spark-1.3-contributor` / `minimal` returned `OK` in ~3.9 s,
+exit success, zero dispatch, zero 429 (artifact
+`inference-research-wake58952-route-probe.md`; the same selector had returned
+upstream HTTP 429 in wake 56050, so recovery is probe-time only, not assumed
+stable). Substituted selector: `opencode-go/muse-spark-1.3-contributor`,
+reasoning `minimal`. `LINE`, `TASK`, capability version `marker-append-v1`,
+loop caps `max_turns=2 max_calls=1`, and all `run_exact_inspection` /
+`EffectBoundary` / `reconcile_caller_journal` seams are unchanged. Prior
+route-failure evidence is retained; no retry or receipt-based success is
+claimed from the probe. If the route returns 429 or is unavailable in an arm,
+the arm fails closed, records UNKNOWN, and defers with frozen inputs.
+
+Chronology for this amendment: prereg `7ee6c71` (original selector
+`opencode-go/glm-5.3-flash` / `minimal`) → route deferral wake 55874 →
+route-recovery probe wake 58952 → amendment wake 59011. No arm was executed
+this wake.
+
 
 **Deferral trigger.** Route unavailable or 429 window → arm fails closed,
 records UNKNOWN with retained evidence, defers with frozen inputs (no blind
