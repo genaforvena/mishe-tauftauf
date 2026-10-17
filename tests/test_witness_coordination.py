@@ -191,6 +191,64 @@ def test_stale_pend_fails_when_the_mind_is_idle(tmp_path, monkeypatch):
     assert 'FAIL witness overdue pending wake audit needs checked supervisor repair' in verdict
 
 
+def _delivered_record(tmp_path, role, wake, *, phase='delivered'):
+    checks = tmp_path / 'checks'
+    checks.mkdir(exist_ok=True)
+    (checks / f'wall-send-{role}-{wake}.json').write_text(
+        json.dumps({'at': '2026-10-16T19:32:57Z', 'attempts': 2, 'phase': phase}))
+
+
+def test_stale_pend_names_the_mind_when_delivery_is_recorded(tmp_path, monkeypatch):
+    import mishe_tauftauf.seed as seed
+    import mishe_tauftauf.seed_witness_view as view
+    entries = [entry(1, 'seed', 'seed wake audit observation=1')]
+    wire(tmp_path, monkeypatch, entries)
+    monkeypatch.setattr(view, '_mind_pane_live', lambda session, role: True)
+    monkeypatch.setattr(seed, '_mind_idle', lambda session, slug: True)
+    _delivered_record(tmp_path, 'audit', 1)
+    output = render(tmp_path)
+    assert ('STALE PEND: RED audit wake=1 pending=1 owner=health '
+            '· delivery recorded at 2026-10-16T19:32:57Z attempts=2') in output
+    assert "inspect the mind's turn, not the supervisor" in output
+    verdict = (tmp_path / 'observations' / 'witness').read_text()
+    assert ('FAIL witness overdue pending wake audit delivered but mind idle; '
+            "inspect the mind's turn, not the supervisor") in verdict
+    assert 'needs checked supervisor repair' not in verdict
+
+
+def test_stale_pend_blames_the_supervisor_without_a_recorded_delivery(tmp_path, monkeypatch):
+    import mishe_tauftauf.seed as seed
+    import mishe_tauftauf.seed_witness_view as view
+    entries = [entry(1, 'seed', 'seed wake audit observation=1')]
+    wire(tmp_path, monkeypatch, entries)
+    monkeypatch.setattr(view, '_mind_pane_live', lambda session, role: True)
+    monkeypatch.setattr(seed, '_mind_idle', lambda session, slug: True)
+    _delivered_record(tmp_path, 'audit', 1, phase='sending')
+    output = render(tmp_path)
+    assert 'STALE PEND: RED audit wake=1 pending=1 owner=health' in output
+    assert 'delivery recorded' not in output
+    verdict = (tmp_path / 'observations' / 'witness').read_text()
+    assert 'FAIL witness overdue pending wake audit needs checked supervisor repair' in verdict
+
+
+def test_clear_stall_names_the_mind_when_delivery_is_recorded(tmp_path, monkeypatch):
+    import mishe_tauftauf.seed as seed
+    import mishe_tauftauf.seed_witness_view as view
+    entries = [entry(1, 'seed', 'seed wake audit observation=1'),
+               entry(2, 'seed', 'seed yield audit wake=1')]
+    wire(tmp_path, monkeypatch, entries)
+    monkeypatch.setattr(view, '_mind_pane_live', lambda session, role: True)
+    monkeypatch.setattr(seed, '_mind_idle', lambda session, slug: True)
+    _delivered_record(tmp_path, 'audit', 1)
+    output = render(tmp_path)
+    assert ('CLEAR STALL: RED audit wake=1 yield=2 owner=health '
+            '· delivery recorded at 2026-10-16T19:32:57Z attempts=2') in output
+    assert "inspect the mind's turn, not the supervisor" in output
+    verdict = (tmp_path / 'observations' / 'witness').read_text()
+    assert ('FAIL witness overdue clear audit delivered but mind idle; '
+            "inspect the mind's turn, not the supervisor") in verdict
+
+
 def test_stale_pend_stays_a_fault_without_a_live_mind_pane(tmp_path, monkeypatch):
     import mishe_tauftauf.seed as seed
     import mishe_tauftauf.seed_witness_view as view
