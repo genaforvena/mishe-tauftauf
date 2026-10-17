@@ -333,6 +333,37 @@ def _coverage_line(roles: dict[str, dict]) -> str:
         segments.append(segment)
     return "; ".join(segments)
 
+# Identical non-seed bodies repeated on the tape are invisible to a rate line: the
+# settlement-integrity router re-sent one DM every 15 s for 26 min (3.4/min) while
+# `CHAT RATE` (8 entries / 2 min) stayed GREEN. A repetition is only a *live* finding
+# while it is still happening, so the newest occurrence must be recent; the same
+# bodies hours old are history and must not latch the pane.
+REPEAT_WINDOW_SECONDS = 1800
+REPEAT_RECENT_SECONDS = 300
+REPEAT_MINIMUM = 3
+
+
+def repeated_bodies(aged, *, recent=REPEAT_RECENT_SECONDS, minimum=REPEAT_MINIMUM):
+    """Non-seed bodies repeated on the tape, newest first.
+
+    `aged` is `(age_seconds, entry)` for entries already inside the repeat window.
+    Groups by `(source, body)`: the sender's own bytes re-sent, not an
+    interpretation of their prose. Returns `(count, source, body, newest_age_s,
+    oldest_age_s)` for groups that repeat at least `minimum` times with their
+    newest occurrence within `recent` seconds.
+    """
+    groups: dict[tuple[str, str], list[float]] = {}
+    for age, entry in aged:
+        if entry.source == "seed" or not entry.body:
+            continue
+        groups.setdefault((entry.source, entry.body), []).append(age)
+    repeats = [(len(ages), source, body, min(ages), max(ages))
+               for (source, body), ages in groups.items()
+               if len(ages) >= minimum and min(ages) <= recent]
+    repeats.sort(key=lambda item: (-item[0], item[1], item[2]))
+    return repeats
+
+
 
 def render(home: Path) -> str:
     lines = ["DESIRED STATE: planted channels stay live and coordination gaps stay visible"]
@@ -629,8 +660,14 @@ def render(home: Path) -> str:
                          (f" task={identity}" if identity else ""))
             verdict = "FAIL witness repeated genome no-change turns"
     now = datetime.now(timezone.utc)
-    recent_entries = [entry for entry in entries if
-                      0 <= (now - datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))).total_seconds() <= 120]
+    recent_entries = []
+    aged = []
+    for entry in entries:
+        age = (now - datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))).total_seconds()
+        if 0 <= age <= 120:
+            recent_entries.append(entry)
+        if 0 <= age <= REPEAT_WINDOW_SECONDS:
+            aged.append((age, entry))
     by_source = Counter(entry.source for entry in recent_entries if entry.source != "seed")
     by_observation = Counter(entry.body.splitlines()[0].split(" sha256=")[0] for entry in recent_entries
                              if entry.source == "seed" and entry.body.startswith("seed observation "))
@@ -644,6 +681,19 @@ def render(home: Path) -> str:
         verdict = "FAIL witness chat event flood"
     else:
         lines.append("CHAT RATE: GREEN — no repeated high-rate source in the last two minutes")
+    if feed_error:
+        lines.append("REPEAT: UNKNOWN — canonical chat input unavailable")
+    else:
+        repeats = repeated_bodies(aged)
+        if repeats:
+            lines.append("REPEAT: RED — " + "; ".join(
+                f"{source} sent one body {count} times, newest {newest:.0f}s ago: {body[:90]!r}"
+                for count, source, body, newest, _oldest in repeats[:3]) +
+                ". Stop the repeated sender and fix its cause.")
+            verdict = "FAIL witness repeated event loop"
+        else:
+            lines.append(f"REPEAT: GREEN — no identical non-seed body {REPEAT_MINIMUM} or more times "
+                         f"in the last {REPEAT_WINDOW_SECONDS // 60} minutes")
     for entry in entries:
         if entry.source == 'seed' and entry.body.startswith('seed observation '):
             continue
