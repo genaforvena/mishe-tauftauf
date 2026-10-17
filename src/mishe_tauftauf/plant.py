@@ -520,6 +520,16 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
     (home / "health").mkdir(exist_ok=True)
     write_service_manifest(home, session, persist)
     reconcile_services(home, session, persist, sys.executable, operator_window=operator_window)
+    if workspace != ROOT:
+        # A linked site records the core that raised it in its own registry so
+        # core-to-site DMs pass the destination-side guard. The core's own plant
+        # (workspace == ROOT) has no parent to record. Best-effort: a failure
+        # here must not fail an otherwise good replant, but it is loud.
+        try:
+            from coordination.site_sync import record_parent_site
+            record_parent_site(home)
+        except Exception as exc:
+            print(f"warning: linked parent site not recorded: {exc}", flush=True)
     previous_session = os.environ.get("MISHE_SEED_SESSION")
     os.environ["MISHE_SEED_SESSION"] = session
     try:

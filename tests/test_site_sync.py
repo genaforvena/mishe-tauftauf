@@ -812,3 +812,31 @@ def test_sync_reports_the_pruned_release_worktrees(tmp_path: Path, monkeypatch) 
     monkeypatch.setattr(site_sync, "_prune_releases", lambda _home, protect: ["deadbeef"])
     assert site_sync.sync_registered_sites(core_home, {"state": "pass", "sha": sha}) == [
         f"synced {target.parent} {sha[:12]}", "pruned 1 release worktrees"]
+
+def test_record_parent_site_writes_the_core_in_the_target_registry(tmp_path, monkeypatch):
+    core_home = tmp_path / "core" / ".mishe-seed"
+    core_home.mkdir(parents=True)
+    (core_home / ".seed-raised").write_text("core-session $1\n", encoding="utf-8")
+    sha = "a" * 40
+    release = core_home / "releases" / sha
+    release.mkdir(parents=True)
+    target = tmp_path / "example" / ".mishe-tauftauf"
+    target.mkdir(parents=True)
+    (target / "health").mkdir()
+    monkeypatch.setattr("mishe_tauftauf.runtime_source.source_for", lambda home, default: release)
+    site_sync.record_parent_site(target)
+    assert site_sync._load(target) == [
+        {"home": str(core_home), "session": "core-session", "sha": sha}]
+    # Re-recording is idempotent: one row, not one per plant.
+    site_sync.record_parent_site(target)
+    assert len(site_sync._load(target)) == 1
+
+
+def test_record_parent_site_skips_a_target_without_an_identifiable_parent(tmp_path):
+    target = tmp_path / "example" / ".mishe-tauftauf"
+    target.mkdir(parents=True)
+    (target / "health").mkdir()
+    # No runtime-release.json: source_for returns the default, whose grandparent
+    # is not a site, so nothing is written rather than a guessed record.
+    site_sync.record_parent_site(target)
+    assert not (target / "health" / "linked-sites.json").exists()

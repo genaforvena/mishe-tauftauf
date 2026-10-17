@@ -129,6 +129,46 @@ def register_site(target_home: Path, session: str) -> bool:
         _save(core_home, sites)
     return True
 
+def record_parent_site(home: Path) -> None:
+    """Record the core that raised this linked site in the site's own registry.
+
+    ``cli._require_linked_site`` validates a cross-plant DM source against the
+    *destination* site's ``health/linked-sites.json``. The core's coordinator
+    writes only the core's registry (:func:`register_site` records the target in
+    ``resident_home()``'s), so a linked site never records the core that raised
+    it and core-to-site DMs are refused — the channel stays one-way. This is the
+    destination-side writer: it runs in the target's own plant, so the target
+    writes its own registry and no other node's state is mutated.
+
+    The parent is identified from the site's runtime pin: the release is
+    ``<core home>/releases/<sha>`` (:func:`_release_source`), so the core home is
+    the release's grandparent and its session is its ``.seed-raised`` receipt.
+    A parent that cannot be identified from that pin is skipped, never guessed,
+    so a site raised by other means is left without a record rather than given a
+    wrong one.
+    """
+    from mishe_tauftauf.runtime_source import source_for
+    from mishe_tauftauf.seed import recorded_session
+    try:
+        source = source_for(home, home.parent)
+        core_home = source.parent.parent
+        if source.parent != core_home / "releases":
+            return
+        session = recorded_session(core_home)
+        sha = source.name
+    except (OSError, ValueError):
+        return
+    if not session or core_home == home.resolve():
+        return
+    path = _registry(home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with (path.parent / ".linked-sites.lock").open("a+b") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        sites = _load(home)
+        record = {"home": str(core_home), "session": session, "sha": sha}
+        sites = [row for row in sites if row["session"] != session] + [record]
+        _save(home, sites)
+
 
 def _target_state(home: Path, session: str, *, runtime_only: bool = False) -> None:
     workspace = home.parent
