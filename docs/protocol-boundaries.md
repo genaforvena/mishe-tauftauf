@@ -89,6 +89,16 @@ while the role's lifecycle shows a live mind reads RED. The verdict is recorded
 per role at `checks/native-gate-<role>.json`, so a repaired gate and a slipping
 one leave different durable evidence.
 
+`inference_optiona.py` decodes the `omp --mode json --print` stdout of a one-shot
+provider-only turn: a JSONL event stream in which the last assistant `message_end`
+wins and any earlier partial content is not mistaken for a completed message.
+The subprocess return code is checked before the stream is parsed, so a provider
+failure partial stdout can never become a success. A line that is not valid JSON,
+or valid JSON that is not an event object, fails closed with the offending
+line preserved in the record. Absent usage, stopReason and responseId fields
+stay None (UNKNOWN) rather than zero. Callers consume the returned record; a
+failure is a record with ok=False, never an exception.
+
 `wall_text.py` decides wall-note ownership for the wall guard. The restore
 document renders every peer wall undelimited into one text, so a mind's notes
 can reproduce a peer's wall byte for byte and the write would otherwise be
