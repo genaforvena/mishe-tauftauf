@@ -104,4 +104,4 @@ exercising the internal native loop for its bounded canary, while the external
 harness remains the fallback for work classes without an evidenced native
 route. This route selection is not a parity or live-delivery verdict: resident
 activation, replay, model parity and useful-task acceptance remain separately
-open ([how it works](how-it-works.md)).
+open ([how it works](how-it-works.md); the bounded reader experiment is documented in [agent-step experiments](agent-step-experiments.md)).
