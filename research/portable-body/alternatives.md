@@ -98,10 +98,14 @@ network or process access.
    capabilities as a JSON value.
 2. **Transformation:** `READ_FILE` returns bytes; local filter step transforms;
    result is named and available to subsequent steps.
-3. **Absent capability:** host returns `unsupported` error; evaluator branches
+3. **Absent capability:** host returns `unsupported`; evaluator branches
    to error handling step.
-4. **Connection loss:** evaluator state is lost; reconnect and issue
-   `RECOVER <operation_id>`; journal shows intent-without-outcome → UNKNOWN.
+4. **Connection loss:** evaluator state is lost; recovery requires the
+   same caller-known operation ID and a profile-declared retained history
+   boundary. A retained outcome may return only recorded status/result and
+   a host ID that was actually stored. A started intent without outcome,
+   unavailable/expired history, or an ID lost across restart is UNKNOWN;
+   never invent an ID, infer nonexecution from `not_seen`, or resend.
 
 ## A3: Existing machine (H3) — shell
 
