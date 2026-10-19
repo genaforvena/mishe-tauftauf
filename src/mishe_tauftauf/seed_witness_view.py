@@ -6,7 +6,7 @@ import argparse
 import json
 import os
 import subprocess
-from collections import Counter
+from collections import Counter, deque
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -596,7 +596,7 @@ def render(home: Path) -> str:
             verdict = "UNKNOWN witness stale-pend receipt evidence"
         if wedged:
             verdict = f"FAIL witness wedge-suspect mind {','.join(sorted(set(wedged)))} needs checked recovery"
-    visible: list[str] = []
+    visible: deque[str] = deque(maxlen=20)
     try:
         tasks = open_tasks(entries)
     except ValueError as exc:
@@ -702,7 +702,7 @@ def render(home: Path) -> str:
             visible.append(f"{entry.sequence} {entry.source}: {paragraphs[0]}")
             visible.extend("  " + line for line in paragraphs[1:])
     lines.append("LATEST CHAT.LOG TEXT (all roles, including witness and seed work):")
-    lines.extend(visible[-20:] or ["(none)"])
+    lines.extend(visible or ["(none)"])
     lines.append("GOAL: keep the plant's shared work coherent until each need has an owner, checked result, and next step")
     lines.append("PURSUIT: notice stale panes, forgotten tasks, duplicate claims, and unverified fixes; follow them through the shared text tape")
     lines.append("NEXT: verify the strongest unresolved task finding; claim useful work and repair within owned scope")
