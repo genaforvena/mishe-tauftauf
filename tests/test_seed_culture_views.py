@@ -35,6 +35,40 @@ def test_views_show_real_scan_and_scoped_request_without_clock_churn(tmp_path: P
     assert "keyboard-count GRANTED" in permissions(home)
 
 
+
+@pytest.mark.parametrize(("states", "expected"), [
+    (["unknown"], "STATE: UNKNOWN — 1 source reads unverified"),
+    (["drift"], "STATE: UNKNOWN — 1 checked reading reports drift"),
+    (["unknown", "unknown", "drift", "drift", "drift"],
+     "STATE: UNKNOWN — 2 source reads unverified; 3 checked readings report drift"),
+    (["unavailable"], "STATE: GREEN — recent bounded read-only scan"),
+])
+def test_discover_aggregate_separates_unverified_from_checked_drift(
+        tmp_path: Path, current_endpoint, monkeypatch, states: list[str], expected: str) -> None:
+    home = tmp_path / "site"
+    monkeypatch.setattr(
+        "mishe_tauftauf.seed_culture_views._space_light_read",
+        lambda _home: {"id": "sense.space.light", "state": "verified",
+                       "sample": "fresh light"})
+    _write_scan(home, [
+        {"id": f"sense.fixture.{index}", "kind": "read", "state": state,
+         "sample": "fixture"}
+        for index, state in enumerate(states)
+    ])
+
+    rendered = discover(home)
+
+    assert expected in rendered
+    if "UNKNOWN" in expected:
+        assert "STATE: UNKNOWN" in rendered
+    else:
+        assert "STATE: UNKNOWN" not in rendered
+    verdict = (home / "observations" / "discover").read_text(encoding="utf-8")
+    if "UNKNOWN" in expected:
+        assert verdict.startswith("UNKNOWN discover ")
+    else:
+        assert verdict.startswith("PASS discover ")
+
 def test_discover_view_does_not_count_a_retired_request_as_pending(tmp_path: Path) -> None:
     """A retired permission request must not read pending on the discover pane."""
     home = tmp_path / "site"
