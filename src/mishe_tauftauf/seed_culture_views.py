@@ -225,9 +225,13 @@ def discover(home: Path) -> str:
         observations = [item for item in observations if item.get("id") != "sense.space.light"]
         observations.append(_space_light_read(home))
         unknown = 0
+        drift = 0
         for item in observations:
             state, line = _observation_reading(item, freshness, home)
-            unknown += state not in {"verified", "unavailable", "available"}
+            if state == "drift":
+                drift += 1
+            elif state not in {"verified", "unavailable", "available"}:
+                unknown += 1
             lines.append(line)
         if freshness != "recent":
             lines.append(f"STATE: UNKNOWN — scan freshness {freshness}; renew the read")
@@ -238,9 +242,17 @@ def discover(home: Path) -> str:
         elif attempt_failure is not None:
             lines.append("STATE: UNKNOWN — scan attempt record unavailable")
             verdict = "UNKNOWN discover scan attempt record unavailable"
-        elif unknown:
-            lines.append(f"STATE: UNKNOWN — {unknown} source reads unverified")
-            verdict = f"UNKNOWN discover {unknown} source reads unverified"
+        elif unknown or drift:
+            clauses = []
+            if unknown:
+                clauses.append(f"{unknown} source reads unverified")
+            if drift:
+                clauses.append(
+                    f"{drift} checked reading{'s' if drift != 1 else ''} "
+                    f"report{'s' if drift == 1 else ''} drift")
+            summary = "; ".join(clauses)
+            lines.append(f"STATE: UNKNOWN — {summary}")
+            verdict = f"UNKNOWN discover {summary}"
         else:
             lines.append("STATE: GREEN — recent bounded read-only scan")
             verdict = "PASS discover recent scan"
