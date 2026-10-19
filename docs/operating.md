@@ -146,9 +146,12 @@ published sample, or acquire a new bounded one:
 reading as `sense.space.light` and this host's Bluetooth and Wi-Fi adapter
 state as `sense.space.host-radio`. The checkout also reads the linked Android
 Body consumer's Redmi10 state as `sense.body.redmi10`, and its Senses renderer
-refreshes that retained file on each render. The reader and the core Health
-alert are loaded at the served pin, so the published scan carries the consumer
-row. `discover scan` takes one new sample instead of reading a published one,
+refreshes that retained file on each render. The reader and the core Health alert
+are intended to load the same served pin, but a runtime-drift observation means
+that alignment is not established; treat the consumer row and alert as UNKNOWN
+until the loaded release is checked. A published scan therefore carries the
+consumer row only when that pin alignment is observed. `discover scan` takes one
+new sample instead of reading a published one,
 so acquiring is an action rather than an inspection.
 When an Android Body site is registered, the Health check directly pairs the
 current Redmi consumer reading with `sense.net.tailnet-peer`: stale poll or all
