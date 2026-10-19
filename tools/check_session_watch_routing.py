@@ -16,9 +16,10 @@ Three independent signals:
   failed one (retried every 120s). An alert file newer than the newest routed
   `session-watch` DM by more than `--tolerance` seconds means an alert was
   produced and never delivered.
-* **Coverage** — a fresh non-GREEN `health/session-watch.json` must have a
-  routed `session-watch` DM at or after its RED onset (`changes`, else
-  `observed_at`).
+* **Coverage** — a fresh non-GREEN `health/session-watch.json` with an identity
+  change timestamp in `changes` must have a routed `session-watch` DM at or
+  after its newest change. Empty `changes` cannot establish episode onset and
+  remains undecided here; the event-tape signal below checks the durable onset.
 * **Episodes** — the detector appends every produced alert to
   `health/session-watch-events.jsonl`, so that tape is the durable record of an
   episode. The newest non-GREEN episode on it must have a routed
@@ -220,20 +221,25 @@ def check(home: Path, now: float, tolerance: float, max_age: float) -> dict:
         else:
             changes = [_number(value) for value in data.get("changes") or []]
             stamps = [value for value in changes if value is not None]
-            onset = max(stamps) if stamps else observed
-            report["red_onset"] = _iso(onset)
-            if routed and routed[-1][0] >= onset:
-                report["exercised"].append(
-                    f"state {kind} since {_iso(onset)} routed (sequence {routed[-1][1]}, "
-                    f"{_iso(routed[-1][0])})")
-            elif routed or absent:
-                report["failures"].append(
-                    f"state {kind} since {_iso(onset)} has no routed session-watch DM at or "
-                    "after it")
+            if stamps:
+                onset = max(stamps)
+                report["red_onset"] = _iso(onset)
+                if routed and routed[-1][0] >= onset:
+                    report["exercised"].append(
+                        f"state {kind} since {_iso(onset)} routed (sequence {routed[-1][1]}, "
+                        f"{_iso(routed[-1][0])})")
+                elif routed or absent:
+                    report["failures"].append(
+                        f"state {kind} since {_iso(onset)} has no routed session-watch DM at or "
+                        "after it")
+                else:
+                    report["limits"].append(
+                        f"state {kind} since {_iso(onset)}: routed entries carry no decodable "
+                        "timestamp: coverage undecided")
             else:
                 report["limits"].append(
-                    f"state {kind} since {_iso(onset)}: routed entries carry no decodable "
-                    "timestamp: coverage undecided")
+                    f"detector state {kind} has no identity-change timestamp; state onset "
+                    "coverage undecided")
 
     # Signal 3 — episodes: the event tape is the durable record of an alert the
     # detector produced. Signals 1 and 2 both read files the detector overwrites,

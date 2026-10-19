@@ -114,6 +114,31 @@ def test_red_state_without_any_routed_dm_is_red(tmp_path):
     assert report["exit"] == 2
     assert any("state RED since" in text for text in report["failures"]), report["failures"]
 
+def test_persistent_red_without_identity_changes_uses_episode_onset(tmp_path):
+    home = _home(tmp_path, rows=[(_stamp(-590), "session-watch", _DM_BODY)],
+                 state={"identity": "1:$0:1", "available": False, "panes_live": False,
+                        "observed_at": NOW - 20, "state": "RED", "changes": []},
+                 alert_offset=-585)
+    _events(home, [_episode("RED", "resident pane missing or dead", -600)])
+    report = _MODULE.check(home, NOW, 60.0, 600.0)
+    assert report["verdict"] == "GREEN"
+    assert report["failures"] == []
+    assert "red_onset" not in report
+    assert any("state RED has no identity-change timestamp" in text
+               for text in report["limits"]), report["limits"]
+
+
+def test_persistent_red_without_identity_changes_and_route_stays_red(tmp_path):
+    home = _home(tmp_path, state={"identity": "1:$0:1", "available": False,
+                                  "panes_live": False, "observed_at": NOW - 20,
+                                  "state": "RED", "changes": []},
+                 alert_offset=-30)
+    _events(home, [_episode("RED", "resident pane missing or dead", -60)])
+    report = _MODULE.check(home, NOW, 60.0, 600.0)
+    assert report["verdict"] == "RED"
+    assert report["exit"] == 2
+    assert any("never delivered" in text for text in report["failures"]), report["failures"]
+
 
 def test_non_dm_entry_does_not_count_as_routed(tmp_path):
     home = _home(tmp_path, rows=[(_stamp(-3600), "session-watch", _ALERT_BODY)],
