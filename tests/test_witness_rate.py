@@ -11,6 +11,24 @@ def test_witness_reports_discovery_chat_flood(tmp_path, monkeypatch):
     assert "CHAT RATE: RED — discover: 8 entries" in view
     assert "Trace the wake or sampling feedback loop" in view
 
+def test_witness_chat_projection_retains_only_the_last_twenty_lines(tmp_path, monkeypatch):
+    monkeypatch.delenv("MISHE_SEED_SESSION", raising=False)
+    feed = Feed(tmp_path)
+    for index in range(2):
+        feed.append("operator", f"message-{index}\ndetail-{index}")
+    feed.append("seed", "seed observation omitted-from-latest-chat")
+    for index in range(2, 12):
+        feed.append("operator", f"message-{index}\ndetail-{index}")
+
+    view = render(tmp_path)
+    section = view.split("LATEST CHAT.LOG TEXT (all roles, including witness and seed work):\n", 1)[1]
+    section = section.split("\nGOAL:", 1)[0]
+
+    expected = []
+    for index in range(2, 12):
+        expected.extend((f"{index + 2} operator: message-{index}", f"  detail-{index}"))
+    assert section.splitlines() == expected[-20:]
+    assert "omitted-from-latest-chat" not in section
 
 def test_witness_marks_chat_rate_unknown_when_canonical_feed_is_unreadable(tmp_path, monkeypatch):
     monkeypatch.delenv("MISHE_SEED_SESSION", raising=False)
