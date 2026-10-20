@@ -678,7 +678,14 @@ def read_redmi10_peer_delivery(home: Path, now: float | None = None,
 
     ``peer`` is the decoded ``tailscale status --json`` mapping; when it is
     None the peer state is unknown, and a reading that cannot name the peer
-    stays UNKNOWN rather than inferring presence from the cursor alone.
+    stays UNKNOWN rather than inferring presence from the cursor alone. The
+    report's own health is read first: only a report whose ``BackendState``
+    is ``Running`` and which carries this node's own ``Self`` entry supports
+    a verdict at all. A backend that is stopped, or a report without ``Self``,
+    leaves the peer map stale or partial, so a cached ``Online=true`` in it
+    cannot assert that the phone is present now, and the reading stays
+    UNKNOWN rather than claiming "present, not sending" from an unhealthy
+    report.
     """
     current = time.time() if now is None else _finite_number(now)
     if current is None:
@@ -702,6 +709,19 @@ def read_redmi10_peer_delivery(home: Path, now: float | None = None,
         return _peer_unknown("cursor-advance-time-future")
     if peer is None:
         return _peer_unknown("peer-state-unavailable")
+    # The report's health is read before its content. A backend that is not
+    # ``Running``, or a report without this node's own ``Self`` entry, is a
+    # host-side UNKNOWN: the peer map of such a report is stale, partial or
+    # not current, so a cached ``Online=true`` in it is not evidence that the
+    # phone is present now. ``sense.net.tailnet-peer`` reads the same two
+    # conditions the same way, and the composite that shares that report must
+    # not be laxer than the reading it shares: without a healthy report the
+    # verdict stays UNKNOWN instead of asserting "present, not sending".
+    backend_state = peer.get("BackendState")
+    if backend_state != "Running":
+        return _peer_unknown(f"backend-state-{backend_state}")
+    if peer.get("Self") is None:
+        return _peer_unknown("self-missing")
 
     peers = peer.get("Peer")
     if not isinstance(peers, dict):

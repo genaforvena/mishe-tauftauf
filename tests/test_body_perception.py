@@ -682,3 +682,58 @@ def test_peer_delivery_is_unknown_without_a_cursor_advance_time(
 
     assert row["state"] == "unknown"
     assert row["reason"] == "cursor-advance-time-absent"
+
+
+def test_peer_delivery_is_unknown_when_the_backend_is_not_running(
+        tmp_path: Path) -> None:
+    """A stopped backend leaves the report's peer map stale or partial, so a
+    cached ``Online=true`` in it cannot say the phone is present now: the
+    reading stays UNKNOWN instead of asserting "present, not sending"."""
+    now = 1_800_000_000.0
+    core, state_path, state = _linked_state(tmp_path, now)
+    _with_cursor_advance(state, now - 3600)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    report = _peer_report(online=True, active=True)
+    report["BackendState"] = "Stopped"
+    row = body_perception.read_redmi10_peer_delivery(core, now, peer=report)
+
+    assert row["state"] == "unknown"
+    assert row["reason"] == "backend-state-Stopped"
+    assert "verdict" not in row
+
+
+def test_peer_delivery_is_unknown_without_self_in_the_report(
+        tmp_path: Path) -> None:
+    """A report without this node's own ``Self`` entry is not a current
+    control-plane report, so the composite must not read presence from it."""
+    now = 1_800_000_000.0
+    core, state_path, state = _linked_state(tmp_path, now)
+    _with_cursor_advance(state, now - 3600)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    report = _peer_report(online=True, active=True)
+    del report["Self"]
+    row = body_perception.read_redmi10_peer_delivery(core, now, peer=report)
+
+    assert row["state"] == "unknown"
+    assert row["reason"] == "self-missing"
+    assert "verdict" not in row
+
+
+def test_peer_delivery_is_unknown_for_an_offline_peer_in_an_unhealthy_report(
+        tmp_path: Path) -> None:
+    """The health gate is read before the peer content: an unhealthy report
+    cannot even name the phone as absent, so the verdict stays UNKNOWN."""
+    now = 1_800_000_000.0
+    core, state_path, state = _linked_state(tmp_path, now)
+    _with_cursor_advance(state, now - 5)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    report = _peer_report(online=False, active=False)
+    report["BackendState"] = "NeedsLogin"
+    row = body_perception.read_redmi10_peer_delivery(core, now, peer=report)
+
+    assert row["state"] == "unknown"
+    assert row["reason"] == "backend-state-NeedsLogin"
+    assert "verdict" not in row
