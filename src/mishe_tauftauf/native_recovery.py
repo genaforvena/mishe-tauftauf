@@ -455,6 +455,9 @@ def attempt_summary(attempt) -> tuple[dict, str | None]:
             summary, error = _summary(files['result.json'])
             if error:
                 return {}, error
+            rows, error = _decode_rows(files['journal.jsonl'], 'journal.jsonl')
+            if error:
+                return {}, error
             decoded = {}
             for name, decoder in LEDGER_JOURNALS:
                 rows, error = _decode_rows(files[f'effects/{name}'], name, decoder)
@@ -652,10 +655,22 @@ def read_blocked_state(home, role: str) -> tuple[dict | None, str | None]:
     return record, None
 
 
-def clear_blocked_state(home, role: str) -> bool:
-    """Remove one role's blocked-state record; True when one was removed."""
+def clear_blocked_state(home, role: str, wake=None) -> bool:
+    """Remove one role's blocked-state record; True when one was removed.
+
+    When ``wake`` is given, only a record that names that wake is removed: a
+    hold belongs to the wake it names, and another wake's hold must survive.
+    A record that cannot be decoded names no wake and holds nothing, so it is
+    removed rather than left to refuse every delivery.
+    """
+    path = blocked_state_path(home, role)
+    record, reason = read_blocked_state(home, role)
+    if record is None and reason is None:
+        return False
+    if record is not None and wake is not None and record.get('wake') != wake:
+        return False
     try:
-        blocked_state_path(home, role).unlink()
+        path.unlink()
     except (FileNotFoundError, OSError):
         return False
     return True
