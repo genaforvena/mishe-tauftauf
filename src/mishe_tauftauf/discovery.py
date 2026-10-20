@@ -33,10 +33,14 @@ from .host_radio import (BLUETOOTH_ROOT, COMMAND_TIMEOUT_SECONDS, NET_ROOT,
                          controller_state, decode_git_log_lines,
                          decode_tailnet_status, ethernet_interfaces, link_speed, operstate,
                          rfkill_switches, rfkill_unreadable, rfkill_verdict, wireless_interfaces)
+from .coord_tape import claim_source as tape_claim_source
 from .outcome_events import classify_outcomes, eligible_evidence_path
 from .observations import literal_site_home_name, reserved_home_name
 from .runtime_source import source_for
 from .scan_freshness import age_bounds, classify_age, endpoint
+from .spawn_dialect import (script_spawns_site_package,
+                            spawns_site_package)
+from .timestamp_text import decode_iso_datetime
 from .unit_properties import SITE_UNIT_PREFIX, is_site_unit
 
 COMMANDS = ("rg", "git", "tmux", "python3", "systemctl", "journalctl", "ps", "df",
@@ -966,12 +970,27 @@ def _mind_wedge_suspects() -> dict:
         elif (chain["chain"] == 0
                 and chain["cause"] != "none"
                 and chain["last_error_ts"] is not None):
-            last_error = datetime.fromisoformat(chain["last_error_ts"])
+            last_error = decode_iso_datetime(chain["last_error_ts"])
+            if last_error is None:
+                continue
             error_age_min = (now - last_error).total_seconds() / 60.0
             if error_age_min >= WEDGE_ERROR_STALE_MINUTES:
                 suspects.append({"window": window_name, "pid": pid,
                                  "session": session, **chain,
                                  "rule": "provider-error",
+                                 "error_age_minutes": round(error_age_min, 1)})
+        elif (1 <= chain["chain"] < WEDGE_CHAIN_THRESHOLD
+                and chain["cause"] != "none"
+                and chain["span_minutes"] >= WEDGE_SPAN_THRESHOLD_MINUTES
+                and chain["last_error_ts"] is not None):
+            last_error = decode_iso_datetime(chain["last_error_ts"])
+            if last_error is None:
+                continue
+            error_age_min = (now - last_error).total_seconds() / 60.0
+            if error_age_min >= WEDGE_ERROR_STALE_MINUTES:
+                suspects.append({"window": window_name, "pid": pid,
+                                 "session": session, **chain,
+                                 "rule": "chain-stall",
                                  "error_age_minutes": round(error_age_min, 1)})
     if suspects:
         parts = []
@@ -981,6 +1000,13 @@ def _mind_wedge_suspects() -> dict:
                     f"{s['window']}(pid={s['pid']},session={s['session']},"
                     f"rule=provider-error,"
                     f"chain={s['chain']},error_age={s['error_age_minutes']}min,"
+                    f"cause={s['cause']})")
+            elif s.get("rule") == "chain-stall":
+                parts.append(
+                    f"{s['window']}(pid={s['pid']},session={s['session']},"
+                    f"rule=chain-stall,"
+                    f"chain={s['chain']},span={s['span_minutes']}min,"
+                    f"error_age={s['error_age_minutes']}min,"
                     f"cause={s['cause']})")
             else:
                 parts.append(
@@ -2355,6 +2381,15 @@ def _declares_site_path(path: str, site_roots: list[Path]) -> bool:
     return any(root == candidate or root in candidate.parents
                for root in site_roots)
 
+SITE_PACKAGE = "mishe_tauftauf"
+"""The Python package this plant's checkout installs.
+
+The drift sense asks whether a unit couples to *this* plant's package, so the
+name is a property of the plant, not of the directory its checkout happens to
+live in: deriving it from the checkout's directory name would silently stop
+detecting the coupling for a checkout named anything else.
+"""
+
 def _script_imports_site_package(unit: str) -> bool | None:
     """Whether the script a unit's ExecStart executes imports the site package.
 
@@ -2405,21 +2440,54 @@ def _script_imports_site_package(unit: str) -> bool | None:
             else:
                 continue
             for name in names:
-                if name == "mishe_tauftauf" or name[:14] == "mishe_tauftauf.":
+                if name == SITE_PACKAGE or name[:len(SITE_PACKAGE) + 1] == SITE_PACKAGE + ".":
                     return True
     return False if checked else None
+def _spawns_site_package(tree: ast.AST, package: str) -> bool:
+    """Whether a parsed script runs ``-m <package>`` as a command argument.
+
+    A wrapper couples to the site the same way an import does when it spawns
+    ``python -m <package>`` as a child: the child carries the wrapper's
+    PYTHONPATH, so the spawn is the coupling itself rather than a textual
+    mention of the checkout.
+
+    The command dialect is decoded in the spawn dialect boundary
+    (:mod:`mishe_tauftauf.spawn_dialect`); this is the name the rest of
+    discovery uses.
+    """
+    return spawns_site_package(tree, package)
+
+
+def _script_spawns_site_package(unit: str, package: str) -> bool | None:
+    """Whether the script a unit's ExecStart executes spawns the site package.
+
+    ``None`` when no executed script can be read or parsed, so the sensor
+    cannot say whether the unit couples through a spawned child. A readable
+    script with no such spawn is ``False``: the unit runs whatever it runs
+    without consuming the site package as a module.
+
+    The wrapper's text and Python's command syntax are decoded in the spawn
+    dialect boundary (:mod:`mishe_tauftauf.spawn_dialect`).
+    """
+    return script_spawns_site_package(unit, package)
+
 def _foreign_checkout_consumers(units: list[str], root: Path) -> dict[str, str]:
     """Unattributed units whose ExecStart names this plant's checkout, by unit.
+
     A unit whose description names the checkout root is a plant-level service
     of this site, not a foreign consumer: the description is systemd's own
-    attribution, so it outranks the script-text heuristic.
+    attribution, so it outranks the script-text heuristic. A wrapper that
+    spawns ``-m <package>`` is the other way around: the spawn is the coupling
+    itself, so the unit is reported whatever its description says.
     """
+    package = SITE_PACKAGE
     consumers: dict[str, str] = {}
     for unit in units:
+        spawns = _script_spawns_site_package(unit, package)
         description = _unit_description(unit)
-        if description and root.name in description:
+        if description and root.name in description and spawns is not True:
             continue
-        if _unit_names_checkout(unit, root):
+        if spawns is True or _unit_names_checkout(unit, root):
             consumers[unit] = str(root)
     return consumers
 
@@ -2492,6 +2560,7 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
                 "sample": f"running units unreadable: {failure}", "kind": "read"}
     from .runtime_source import declared_checkout_root
     checkout_root = Path(home).resolve().parent
+    package = SITE_PACKAGE
     session_of = {unit: next((prefix for prefix in site_by_prefix
                               if unit.startswith(prefix + "-")), None)
                   for unit in active}
@@ -2581,7 +2650,8 @@ def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
             host_scope.append(unit)
             uninspectable.remove(unit)
             continue
-        if _script_imports_site_package(unit) is False:
+        if _script_imports_site_package(unit) is False and (
+                _script_spawns_site_package(unit, package) is not True):
             host_scope.append(unit)
             uninspectable.remove(unit)
             continue
@@ -3935,11 +4005,17 @@ def _coord_authorship_fog(home: Path, now: datetime | None = None) -> dict[str, 
         tape = (Path(home) / "chat.log").read_text(encoding="utf-8", errors="replace")[-200000:]
     except OSError:
         tape = ""
+    # Exclude the sense's own publications from the claim source: the sense
+    # publishes its fog paths in its sample, and on the next evaluation those
+    # paths would read as "claimed" while the bytes are still unclaimed. The
+    # tape's own line format is decoded in the coordination tape boundary
+    # (:mod:`mishe_tauftauf.coord_tape`).
+    claim_tape = tape_claim_source(tape)
     fog: list[str] = []
     claimed: list[str] = []
     for line in dirty:
         name = Path(line).name
-        if name in wall_text or name in tape:
+        if name in wall_text or name in claim_tape:
             claimed.append(line)
         else:
             fog.append(line)
