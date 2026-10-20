@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from . import omp_pane, proc_table, space_text
+from . import host_boot, omp_pane, proc_table, space_text
 from .body_perception import (read_redmi10, read_redmi10_dense_baseline,
                              read_redmi10_delivery_gaps, read_redmi10_light,
                              read_redmi10_peer_delivery)
@@ -5686,6 +5686,97 @@ def _tailnet_peer_read(data: dict | None = None,
             "self_present": self_present,
             "peers": peers}
 
+def _host_boot_read(home: Path, now: float | None = None) -> dict:
+    """Report this host's boot identity and whether it rebooted since the last scan.
+
+    A reboot invalidates every since-boot sample — the kernel's boot id, the
+    journal windows, the unit lifetimes — and leaves the previous scan
+    describing a host that no longer exists. The reading names the current
+    boot id and the boot instant, and compares the boot id with the previous
+    scan's: a difference means the host rebooted between the two scans.
+
+    The outage length is bounded, not measured. The host was up when the
+    previous scan was taken and booted again at the boot instant, so the
+    downtime is at most the distance between them; the exact length is not
+    observable from a host that was off, and the reading says so instead of
+    reporting a number it cannot support.
+
+    The boot instant is ``now - uptime``. It is exact only while the wall
+    clock has not stepped since the boot: a backward step makes the published
+    bound an understatement rather than a true upper bound, so the reading
+    names its derivation instead of presenting the stamp as measured.
+
+    Consumer: operator and health mesh liveness. The absence of a previous
+    scan leaves the reboot question UNKNOWN: "no earlier scan" is not "no
+    reboot". A previous scan that exists but cannot be read is named apart
+    from an absent one, because a wiped discovery directory and a damaged
+    receipt are different faults.
+    """
+    state = host_boot.read_boot_state()
+    problems = list(state["problems"])
+    boot_id = state["boot_id"]
+    uptime_s = state["uptime_s"]
+    moment = now if now is not None else time.time()
+    previous = host_boot.previous_scan(latest(home))
+
+    boot_epoch = moment - uptime_s if uptime_s is not None else None
+    booted_at = (datetime.fromtimestamp(boot_epoch, timezone.utc)
+                 .isoformat(timespec="seconds").replace("+00:00", "Z")
+                 if boot_epoch is not None else None)
+
+    parts: list[str] = []
+    if boot_id:
+        parts.append(f"boot={boot_id[:8]}")
+    if booted_at is not None:
+        parts.append(f"booted={booted_at}")
+        parts.append(f"uptime={int(uptime_s)}s")
+
+    reboot: str
+    previous_boot_id = previous.get("boot_id") if previous else None
+    if previous is None:
+        reboot = "unknown(no-prior-scan)"
+        if (home / "discovery" / "latest.json").exists():
+            problems.append("prior-scan-unreadable")
+            reboot = "unknown(prior-scan-unreadable)"
+        else:
+            problems.append("no-prior-scan")
+    elif not previous_boot_id or not boot_id:
+        reboot = "unknown(no-comparable-boot-id)"
+        problems.append("no-comparable-boot-id")
+    elif previous_boot_id != boot_id:
+        reboot = "yes"
+        if previous.get("created"):
+            parts.append(f"last-scan={previous['created']}")
+        if (boot_epoch is not None
+                and previous.get("acquisition_start_epoch") is not None):
+            bound = boot_epoch - float(previous["acquisition_start_epoch"])
+            if bound > 0:
+                parts.append(f"outage<={int(bound)}s")
+    else:
+        reboot = "no"
+    parts.append(f"reboot={reboot}")
+
+    if problems:
+        verdict = "unknown"
+        reason = ",".join(problems)
+        sample = f"host boot UNKNOWN {reason}; " + " ".join(parts)
+    elif reboot == "yes":
+        verdict = "drift"
+        reason = "host-rebooted"
+        sample = " ".join(parts)
+    else:
+        verdict = "verified"
+        reason = "host-boot-state"
+        sample = " ".join(parts)
+
+    return {"id": "sense.host.boot", "kind": "read", "state": verdict,
+            "reason": reason, "sample": sample,
+            "consumer": "operator/host-liveness",
+            "boot_id": boot_id, "uptime_s": uptime_s, "booted_at": booted_at,
+            "booted_at_derivation": "now-uptime",
+            "previous_boot_id": previous_boot_id, "reboot": reboot}
+
+
 def _host_radio_read() -> dict:
     """Sample this host's BLE/Wi-Fi adapter state for the space programme.
 
@@ -5812,6 +5903,7 @@ def sample(home: Path) -> dict[str, object]:
     peer_state, peer_problems = _tailnet_peer_state()
     observed.append(read_redmi10_peer_delivery(home, peer=peer_state))
     observed.append(_host_radio_read())
+    observed.append(_host_boot_read(home))
     observed.append(_ethernet_read())
     observed.append(_tailnet_peer_read(peer_state, peer_problems))
 
