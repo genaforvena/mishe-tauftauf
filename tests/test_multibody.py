@@ -138,6 +138,34 @@ def test_two_current_bodies_with_verified_clocks_support_a_joint_claim(tmp_path:
     # The joint window is the overlap of the two bodies' own windows, so it
     # must be exactly that interval and not merely a well-formed pair.
     assert row["joint_window"] == {"start_epoch_s": now - 3, "end_epoch_s": now - 1}
+    assert row["joint_windows"] == [{"start_epoch_s": now - 3, "end_epoch_s": now - 1}]
+    assert row["joint_overlaps"] == [{"nodes": ["note3", "redmi10"],
+                                      "windows": [{"start_epoch_s": now - 3,
+                                                   "end_epoch_s": now - 1}]}]
+
+
+def test_several_shared_stretches_stay_separate_intervals(tmp_path: Path) -> None:
+    now = 1_800_000_000.0
+    nodes = [_node("note3", now), _node("redmi10", now)]
+    # Body A carries two channels sampled at different times; body B carries
+    # one channel spanning both. The shared times are two stretches, and the
+    # gap between them is a time neither body was observed in.
+    first = _consumer_state("note3", now, age=9.0, sample_age=10.0)
+    first["latest"]["light"] = _row("light", 9, now, age=1.0, sample_age=2.0)
+    second = _consumer_state("redmi10", now, age=1.0, sample_age=12.0)
+    core = _site(tmp_path, nodes, now, delivery={"note3": first, "redmi10": second})
+
+    row = read_multibody_coverage(core, now)
+
+    assert row["joint_state"] == "supported"
+    assert row["joint_window"] is None
+    assert row["joint_windows"] == [{"start_epoch_s": now - 10, "end_epoch_s": now - 9},
+                                    {"start_epoch_s": now - 2, "end_epoch_s": now - 1}]
+    assert row["joint_overlaps"] == [{"nodes": ["note3", "redmi10"],
+                                      "windows": [{"start_epoch_s": now - 10,
+                                                   "end_epoch_s": now - 9},
+                                                  {"start_epoch_s": now - 2,
+                                                   "end_epoch_s": now - 1}]}]
 
 
 def test_bodies_whose_windows_do_not_overlap_do_not_support_a_joint_claim(tmp_path: Path) -> None:
