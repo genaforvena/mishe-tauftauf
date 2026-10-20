@@ -536,6 +536,7 @@ def read_redmi10_dense_baseline(home: Path, now: float | None = None) -> dict[st
     last_charging: bool | None = None
     last_battery_epoch: int | None = None
     accel_count = 0
+    motion_count = 0
     total_count = 0
     first_epoch: int | None = None
     last_epoch: int | None = None
@@ -571,23 +572,34 @@ def read_redmi10_dense_baseline(home: Path, now: float | None = None) -> dict[st
                     break
         elif kind == "acceleration":
             accel_count += 1
+            # An acceleration row that carries no axis values is a delivery
+            # gap, not a motion observation: counting it as coverage made the
+            # reported rate describe the poll cadence, not the motion
+            # channel. Only a row carrying all three axes is an observation.
+            if all(any(part.startswith(f"{axis}=") for part in parts[3:])
+                   for axis in ("x", "y", "z")):
+                motion_count += 1
     if total_count == 0 or last_epoch is None:
         return _dense_unknown("dense-queue-empty")
     break_seconds = current - last_epoch
     state = "verified" if break_seconds < DENSE_FRESH_SECONDS else "stale"
     window_seconds = (last_epoch - first_epoch) if first_epoch is not None else 0
     accel_ratio = accel_count / total_count if total_count > 0 else 0.0
+    motion_ratio = motion_count / total_count if total_count > 0 else 0.0
     light_class = _dense_light_class(last_light_lux) if last_light_lux is not None else "unknown"
     light_text = f"{last_light_lux:g}lux {light_class}" if last_light_lux is not None else "unknown"
     charging_text = ("yes" if last_charging else "no") if last_charging is not None else "unknown"
     sample = (f"L={light_text} charging={charging_text} "
-              f"accel={accel_ratio:.0%} break={break_seconds:.0f}s "
+              f"motion={motion_ratio:.0%} break={break_seconds:.0f}s "
               f"window={window_seconds}s rows={total_count}")
     details = (f"source=linked android-body body/queues/{DENSE_QUEUE_NAME}; "
                f"tail-bytes={DENSE_TAIL_BYTES} window-rows={total_count}; "
                f"last-light={light_text} at epoch {last_light_epoch}; "
                f"last-charging={charging_text} at epoch {last_battery_epoch}; "
-               f"delivery-coverage={accel_ratio:.1%}; "
+               f"motion-coverage={motion_ratio:.1%} "
+               f"(rows carrying x/y/z values); "
+               f"delivery-coverage={accel_ratio:.1%} "
+               f"(acceleration rows present, values or not); "
                f"break={break_seconds:.1f}s; "
                "phone/host clock split unknown; acceleration includes gravity "
                "and is not person-movement evidence.")
@@ -597,6 +609,8 @@ def read_redmi10_dense_baseline(home: Path, now: float | None = None) -> dict[st
             "last_light_lux": last_light_lux, "last_light_class": light_class,
             "last_light_epoch_s": last_light_epoch,
             "charging": last_charging, "charging_epoch_s": last_battery_epoch,
-            "accel_ratio": accel_ratio, "break_seconds": break_seconds,
+            "accel_ratio": accel_ratio, "motion_ratio": motion_ratio,
+            "motion_count": motion_count, "accel_count": accel_count,
+            "break_seconds": break_seconds,
             "window_seconds": window_seconds, "row_count": total_count,
             "details": details}
