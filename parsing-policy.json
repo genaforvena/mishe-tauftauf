@@ -12,6 +12,7 @@
     "src/mishe_tauftauf/initiative.py",
     "src/mishe_tauftauf/inference_optiona.py",
     "src/mishe_tauftauf/native_gate.py",
+    "src/mishe_tauftauf/native_recovery.py",
     "src/mishe_tauftauf/observations.py",
     "src/mishe_tauftauf/omp_pane.py",
     "src/mishe_tauftauf/operator_view.py",
