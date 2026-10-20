@@ -614,3 +614,157 @@ def read_redmi10_dense_baseline(home: Path, now: float | None = None) -> dict[st
             "break_seconds": break_seconds,
             "window_seconds": window_seconds, "row_count": total_count,
             "details": details}
+
+
+PEER_SENSE_ID = "sense.body.redmi10.peer-delivery"
+#: The tailnet peer's hostname as tailscale reports it. The phone reaches this
+#: host over the tailnet (``tailscale serve`` proxies the tailnet :443 to the
+#: local rendezvous), so the LAN address it also holds says nothing about
+#: whether delivery works.
+PEER_HOSTNAME = "Redmi 10"
+#: How long a peer that is present but not advancing delivery keeps the
+#: reading RED before it is called a stall. The tailnet's own ``Active`` flag
+#: turned false at 09:43Z and the cursor did not move again until 13:26Z, so a
+#: peer that is present but idle for longer than this is a transport stall, not
+#: a momentary gap between two polls.
+STALL_SECONDS = 300.0
+#: The consumer's own record of when the delivery cursor last advanced. This
+#: is the only field that says when observations last ARRIVED: the consumer
+#: refreshes ``poll_at`` on every poll and on every error, so a poll age stays
+#: near zero while the phone is silent.
+CURSOR_ADVANCE_FIELD = "_class_b_last_cursor_advance_at"
+
+
+def _peer_unknown(reason: str) -> dict[str, object]:
+    return {"id": PEER_SENSE_ID, "kind": "read", "state": "unknown",
+            "reason": reason,
+            "sample": f"Redmi10 peer-delivery UNKNOWN: {reason}; "
+                      f"source=tailnet peer state + linked Android Body consumer"}
+
+
+def read_redmi10_peer_delivery(home: Path, now: float | None = None,
+                                peer: dict | None = None) -> dict[str, object]:
+    """Cross the tailnet peer's control-plane presence with the delivery cursor.
+
+    Consumer: the personal multi-body programme, which must know whether a
+    silent carried body is a phone that is not on the tailnet or one that is
+    present but not sending. The two need different responses, and neither the
+    consumer's own ``transport=reachable`` nor the peer's ``Online`` flag
+    answers it: that verdict describes the host's path to its own rendezvous
+    endpoint, and ``Online`` stayed true through a 4 h stall.
+
+    The joint relation is the reading:
+
+    - peer absent -> the phone is not on the tailnet.
+    - peer present and the cursor advancing -> delivering.
+    - peer present and the cursor frozen -> the phone has a control session
+      but is not sending.
+
+    What the peer flags do and do not mean. Tailscale defines ``Online`` as
+    the node being connected to the control plane, and ``Active`` as a packet
+    having been sent to that peer recently -- neither is proof that this host
+    can reach the phone's data path. This sense therefore reports
+    control-plane presence, not reachability, and names the two apart: a
+    present-but-silent phone is "present, not sending", which leaves both a
+    broken data path and a silent producer as possible causes. Reachability
+    would need a probe of the peer's own address, which this reading does not
+    do, so it does not claim it.
+
+    The delivery age comes from the consumer's recorded cursor-advance time,
+    not from its poll time: the consumer refreshes ``poll_at`` on every poll
+    and on every error, so a poll age stays near zero while the phone is
+    silent. Gating on that would name a healthy poll as a stall, and would
+    hide the inactive case behind a stale-read verdict.
+
+    ``peer`` is the decoded ``tailscale status --json`` mapping; when it is
+    None the peer state is unknown, and a reading that cannot name the peer
+    stays UNKNOWN rather than inferring presence from the cursor alone.
+    """
+    current = time.time() if now is None else _finite_number(now)
+    if current is None:
+        return _peer_unknown("reader-clock-invalid")
+    android_home, error = _linked_android_home(home)
+    if error is not None or android_home is None:
+        return _peer_unknown(error or "linked-android-body-home-unknown")
+    path = android_home / "body" / "perception" / "redmi10.json"
+    state, error = _read_json(path, MAX_STATE_BYTES)
+    if error is not None or state is None:
+        return _peer_unknown(f"consumer-state-{error or 'unavailable'}")
+    cursor = state.get("cursor")
+    advance_at = _finite_number(state.get(CURSOR_ADVANCE_FIELD))
+    if type(cursor) is not int:
+        return _peer_unknown("consumer-state-invalid")
+    if advance_at is None:
+        # The consumer records the advance time only once it has seen one; a
+        # state without it cannot say how long delivery has been silent.
+        return _peer_unknown("cursor-advance-time-absent")
+    if advance_at > current + 5:
+        return _peer_unknown("cursor-advance-time-future")
+    if peer is None:
+        return _peer_unknown("peer-state-unavailable")
+
+    peers = peer.get("Peer")
+    if not isinstance(peers, dict):
+        return _peer_unknown("peer-state-unreadable")
+    # The report keys peers by node key, so the name to match is the peer's
+    # own HostName field, not the mapping key.
+    entry = None
+    for candidate in peers.values():
+        if not isinstance(candidate, dict):
+            continue
+        name = candidate.get("HostName")
+        if isinstance(name, str) and name.strip().lower() == PEER_HOSTNAME.lower():
+            entry = candidate
+            break
+    if not isinstance(entry, dict):
+        return _peer_unknown("peer-absent-from-tailnet")
+    online = entry.get("Online")
+    active = entry.get("Active")
+    if type(online) is not bool:
+        return _peer_unknown("peer-online-unreadable")
+
+    delivery_age = current - advance_at
+    consumer_error = state.get("error")
+    if not online:
+        verdict = "peer-absent"
+        reason = "peer-offline"
+    elif delivery_age <= STALL_SECONDS:
+        # The cursor advanced recently, so the phone is sending whatever the
+        # peer flags say. This branch is driven by delivery evidence, not by
+        # tailnet activity: activity only means packets were sent toward the
+        # peer, not that observations arrived.
+        verdict = "delivering"
+        reason = "cursor-advancing"
+    else:
+        # Present on the control plane but the cursor has not moved: the phone
+        # is there and is not delivering. Whether its data path is usable is
+        # not established from here, and the peer flags do not separate a
+        # broken path from a silent producer, so both stay possible.
+        verdict = "present-not-sending"
+        reason = "cursor-frozen"
+
+    sample = (f"Redmi10 peer={'online' if online else 'offline'}"
+              f"/{'active' if active else 'idle'} cursor={cursor} "
+              f"delivery_age={delivery_age:.0f}s verdict={verdict}")
+    details = (f"source=tailnet peer '{PEER_HOSTNAME}' control-plane state + "
+               f"linked android-body body/perception/redmi10.json "
+               f"({CURSOR_ADVANCE_FIELD}); "
+               f"delivery-path=tailnet->tailscale-serve:443->127.0.0.1:8765 "
+               f"(the LAN address is not the delivery path); "
+               f"peer_online={online} peer_active={active} cursor={cursor} "
+               f"delivery_age={delivery_age:.1f}s consumer_error={consumer_error!r}; "
+               "the consumer's own transport=reachable describes the host's own "
+               "path to its rendezvous endpoint, not the phone's presence; "
+               "peer Online/Active are control-plane presence and recent traffic, "
+               "not proof that this host can reach the phone's data path, so "
+               "'present-not-sending' leaves a broken path and a silent producer "
+               "as separate possible causes; "
+               "delivery_age is measured from the cursor advance, because the "
+               "consumer's poll time refreshes on every poll and on every error.")
+    return {"id": PEER_SENSE_ID, "kind": "read", "state": "verified",
+            "reason": reason, "sample": sample, "source": REDMI_SOURCE,
+            "verdict": verdict, "peer_online": online, "peer_active": active,
+            "cursor": cursor, "delivery_age_seconds": delivery_age,
+            "cursor_advance_epoch_s": advance_at,
+            "consumer_error": consumer_error,
+            "details": details}
