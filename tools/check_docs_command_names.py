@@ -28,6 +28,13 @@ DISPOSITIONS = {
         "the raw tmux binary's pane listing, decoded by proc_table.py; not a site-CLI invocation"
     ),
 }
+CLI_NAME_MARKS = ("mishe", "mishe-tauftauf", "mishe_tauftauf")
+"""Command name endings that mark a site-CLI invocation in a docs span.
+
+The short ``mishe`` entry point is the standard name for ordinary commands;
+the historical long name still reaches the same CLI for legacy call sites,
+and ``mishe_tauftauf`` is the Python module name used by ``python -m`` forms.
+"""
 WRAPPERS = {"python", "python3", "rtk", ".venv/bin/python"}
 RAW_BINARY_TOPS = {"tmux"}
 PLACEHOLDER = re.compile(r"^([A-Z][A-Z0-9_./-]*|<[^>]*>|\[[^\]]*\])$")
@@ -70,10 +77,10 @@ def invocation_start(tokens: list[str], tops: set[str]) -> int | None:
         if i == 0:
             return None if token in RAW_BINARY_TOPS else i
         previous = tokens[i - 1]
-        if previous in WRAPPERS or previous.endswith(("mishe-tauftauf", "mishe_tauftauf")):
+        if previous in WRAPPERS or previous.endswith(CLI_NAME_MARKS):
             return i
     for i, token in enumerate(tokens):
-        if token not in WRAPPERS and not token.endswith(("mishe-tauftauf", "mishe_tauftauf")):
+        if token not in WRAPPERS and not token.endswith(CLI_NAME_MARKS):
             continue
         j = i + 1
         while j < len(tokens):

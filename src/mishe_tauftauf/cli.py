@@ -810,9 +810,14 @@ def _jev_call(request: str) -> tuple[float | None, str]:
         return None, f"adapter probability outside [0,1]: {value}"
     return value, ""
 
+def _prog_name() -> str:
+    """Report the name the launcher was actually invoked as in help output."""
+    name = Path(sys.argv[0]).name
+    return name if name in ("mishe", "mishe-tauftauf") else "mishe-tauftauf"
+
 
 def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(prog="mishe-tauftauf")
+    root = argparse.ArgumentParser(prog=_prog_name())
     root.add_argument("--home", type=Path, default=default_home())
     sub = root.add_subparsers(dest="command", required=True)
     p = sub.add_parser("init"); p.set_defaults(func=cmd_init)

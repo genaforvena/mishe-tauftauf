@@ -87,8 +87,9 @@ Substitute the checked agent command, for example `--engine-command 'omp'`.
 Append `--no-services` only for the requested fresh manual trial. A fresh core
 uses `.mishe-seed/` and session `mishe-seed`; record the actual output rather
 than assuming those names. Pass explicit `--home` and `--session` when the
-existing site or chosen names require them. The site's wrapper is
-`SITE/bin/mishe-tauftauf`; operator commands need explicit `--home SITE`.
+existing site or chosen names require them. The site's short wrapper is
+`SITE/bin/mishe`; the historical long-named `mishe-tauftauf` entry point also
+works. Operator shells need explicit `--home SITE` in either form.
 
 The launcher creates `genome`, `witness`, `discover`, `senses`, `health`, `docs`,
 `research-methods`, `permissions`, and an operator window, takes discovery and
