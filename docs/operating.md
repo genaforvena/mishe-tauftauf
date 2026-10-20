@@ -54,7 +54,7 @@ Delivered context is bounded at 1 MiB per wake prompt, enforced at read time.
 
 The launcher automatically searches for resident markers in `.mishe-seed` and `.mishe-tauftauf`, reuses a sole resident site, and reads its recorded session. Multiple candidates require explicit `--home` and `--session`. A custom-named site should always be addressed explicitly when replanting; it is not part of that automatic search.
 
-For operator commands, keep passing `--home "$SITE"`. The CLI otherwise chooses `MISHE_SEED_HOME`, then the older `MISHE_TAUFTAUF_HOME` environment variable, then relative `.mishe-tauftauf`. Fresh resident mind launches export the canonical `MISHE_SEED_HOME` and prepend `SITE/bin` to `PATH`; an ordinary shell or an older process may not have either. A plausible path is not the same thing as your plant.
+Both wrapper names reach the same CLI: `mishe` is the standard name used by mind panes and new instructions, while the historical long name `mishe-tauftauf` remains available for compatibility. For operator commands, keep passing `--home "$SITE"`. The CLI otherwise chooses `MISHE_SEED_HOME`, then the older `MISHE_TAUFTAUF_HOME` environment variable, then relative `.mishe-tauftauf`. Fresh resident mind launches export the canonical `MISHE_SEED_HOME` and prepend `SITE/bin` to `PATH`, so the plain `mishe` command resolves there; an ordinary shell or an older process may have neither. A plausible path is not the same thing as your plant.
 
 When `MISHE_SEED_HOME` is set, it binds the CLI and validated library writers to that resolved site. An explicit `--home` naming a different site is rejected, including for initialization. Delivery snapshots and the session watcher validate before creating home-relative directories. This cannot constrain raw out-of-band filesystem writes; the ghost-home detector remains required for those.
 
@@ -68,12 +68,12 @@ tmux list-panes -s -t "$SESSION" \
   -F '#{window_name}.#{pane_index} dead=#{pane_dead} pid=#{pane_pid}'
 tmux capture-pane -p -t "$SESSION:health.0"
 tmux capture-pane -p -t "$SESSION:genome.0"
-"$SITE/bin/mishe-tauftauf" --home "$SITE" seed status --slug genome
-"$SITE/bin/mishe-tauftauf" --home "$SITE" wall show --owner genome
-"$SITE/bin/mishe-tauftauf" --home "$SITE" discover show
-"$SITE/bin/mishe-tauftauf" --home "$SITE" discover scan
-"$SITE/bin/mishe-tauftauf" --home "$SITE" pain list
-"$SITE/bin/mishe-tauftauf" --home "$SITE" access list
+"$SITE/bin/mishe" --home "$SITE" seed status --slug genome
+"$SITE/bin/mishe" --home "$SITE" wall show --owner genome
+"$SITE/bin/mishe" --home "$SITE" discover show
+"$SITE/bin/mishe" --home "$SITE" discover scan
+"$SITE/bin/mishe" --home "$SITE" pain list
+"$SITE/bin/mishe" --home "$SITE" access list
 ```
 
 `discover show` prints the latest published scan; `discover scan` takes one new
@@ -92,7 +92,7 @@ Genome inspects unlanded outside edits with `git status --short` and reviews eac
 For an ownership-checked reading of the actual top pane, not a newly rendered approximation:
 
 ```bash
-"$SITE/bin/mishe-tauftauf" --home "$SITE" pain read health \
+"$SITE/bin/mishe" --home "$SITE" pain read health \
   --launcher tmux --session "$SESSION"
 ```
 
@@ -119,7 +119,7 @@ available. Without a readable recorded session it leaves the variable unset.
 Read it directly, rather than re-rendering or scraping the pane:
 
 ```bash
-"$SITE/bin/mishe-tauftauf" --home "$SITE" pain read health --launcher dashboard
+"$SITE/bin/mishe" --home "$SITE" pain read health --launcher dashboard
 ```
 
 It fails `UNKNOWN` when the frame is missing, older than 30 seconds, corrupt, or
@@ -128,7 +128,7 @@ recorded for another site, so a stale or foreign frame is not read as current.
 Read the tape in full or follow new entries:
 
 ```bash
-"$SITE/bin/mishe-tauftauf" --home "$SITE" feed
+"$SITE/bin/mishe" --home "$SITE" feed
 tail -f "$SITE/chat.log"
 ```
 
@@ -140,8 +140,8 @@ Four sources are read-only readings rather than collections. Take one
 published sample, or acquire a new bounded one:
 
 ```bash
-"$SITE/bin/mishe-tauftauf" --home "$SITE" discover show
-"$SITE/bin/mishe-tauftauf" --home "$SITE" discover scan
+"$SITE/bin/mishe" --home "$SITE" discover show
+"$SITE/bin/mishe" --home "$SITE" discover scan
 ```
 
 `discover show` prints the latest published scan, which carries the Note3 light
@@ -216,7 +216,7 @@ limits are in [how it works](how-it-works.md).
 - The `sense.ledger.delivery-invariant` reading flags a boolean `delivery_verified` on a patch-record phase that is not a delivery outcome (`violations=<phase>:<count> …`, or `violations=0`). The accepted set — `applied`, `review-refused`, `reverted`, `revert-failed`, `revert-observation-failed` — is observed, not code-derived: `review-refused` stays because one frozen pre-2026-10-01 record carries a boolean dv there, and no current producer path produces that combination. The sense flags; it does not decide — a new legitimate delivery-outcome phase and a genuine collapse both read as "outside the set", so disposition stays with a mind. The verified sample ends with the coverage tier `records=N bool_dv=M`; an empty, missing or unreadable patch store reads `UNKNOWN` rather than a clean bill, with an unreadable store appending `unreadable=<file>`; the UNKNOWN branch still carries violations found in the readable records (trailing `violations=<phase>:<count>`), so a collapse co-occurring with a torn record is not dropped.
 - The `sense.ledger.dv-binding` reading flags a patch record that claims `delivery_verified: true` without the `verification` dict that proves it (command, exit code, evidence): `unbound=<phase> records=N bool_dv=M`, or `unbound=0 …`, and the reading is `drift` when any record is unbound. Exactly one frozen record (`health-stale-pend-detection`, phase `applied`) carries that shape and no current producer path makes it, so `unbound=applied` is expected until a mind dispositions it; the reading monitors recurrence. Because the discover and senses panes count a `drift` reading against their verdict, this one holds both at `UNKNOWN` while it reads `drift`. An empty, missing or unreadable patch store reads `UNKNOWN` (`unreadable=<file>`), not a clean bill.
 - The `sense.runtime.pin-lag` reading counts the commits between the runtime pin and the checkout HEAD and the age of the oldest unactivated commit (`pin=<sha> head=<sha> lag=N age=<age>`, or `lag=0` when they are equal). It makes the pin-versus-checkout gap described under [Advance the core plant's own runtime pin](#advance-the-core-plants-own-runtime-pin) measurable rather than assumed. The reading also stats the release directory the pin names: an absent directory reads `UNKNOWN` as `release-source-missing` with the path, because a process whose PYTHONPATH names a missing release silently falls back to the checkout's editable install; a record with no usable `source` string reads `pin release source unnamed` rather than skipping the check. A pin that is not an ancestor of HEAD (a rebase or a foreign checkout), a missing or unreadable pin file, or a git failure reads `UNKNOWN`, never `lag=0`.
-- The `sense.coord.dm-disposition-age` reading measures how long addressed DMs wait for a disposition: over the last 6 hours a DM is dispositioned when its target replies by DM to the sender (`reply_edge`), records a wall outcome whose body cites the DM's seq token (`seq_credit`), or records any later wall outcome (`wall_join`, credited at its first tape citation) — `dms=N reply_edge=R seq_credit=S credit_only=C wall_only=W dispositioned=D open=K stall=G p50=<m>m p90=<m>m oldest_open=<role>:<age> broadcast_excluded=B nonmind_excluded=M`. The decomposition makes the construct visible: `credit_only` counts DMs the seq rule credits beyond a reply edge, `wall_only` the ones the wall join credits beyond a reply edge. `stall` is the age-gated `open` — only DMs at least 30 minutes old — so a DM recorded minutes before the window end is not read as a stall. The wall join separates a real stall from correlated silence — a mind busy on wall work, not ignoring the message. DMs to `chat` or `all` (broadcasts) and to targets outside the site's role set — a watcher, a feed or the human shell, such as `ci`, `operator-view`, `session-watch`, `silence-watch` and `operator` — are counted separately as `broadcast_excluded` and `nonmind_excluded` and left out of the stall estimate: neither class can ever reply or record a wall outcome, so counting them as resolver waits would hold the gate above zero for the whole window. The role set is the built-in roles plus the residents the site declares with a `charters/<slug>.md` charter and an executable `minds/<slug>` launcher, so a renamed or new role reads excluded until it is seated here again. A missing or unreadable tape or outcome store reads `UNKNOWN`.
+- The `sense.coord.dm-disposition-age` reading measures how long addressed DMs wait for a disposition: over the last 6 hours a DM is dispositioned when its target replies by DM to the sender (`reply_edge`), records a wall outcome whose body cites the DM's seq token (`seq_credit`), or records any later wall outcome (`wall_join`, credited at its first tape citation) — `dms=N reply_edge=R seq_credit=S credit_only=C wall_only=W dispositioned=D open=K stall=G p50=<m>m p90=<m>m oldest_open=<role>:<age> broadcast_excluded=B nonmind_excluded=M`. The decomposition makes the construct visible: `credit_only` counts DMs the seq rule credits beyond a reply edge, `wall_only` the ones the wall join credits beyond a reply edge. `stall` is the age-gated `open` — only DMs at least 30 minutes old — so a DM recorded minutes before the window end is not read as a stall. `wall_join` is a broad activity/age proxy only; it proves neither that a target saw or semantically handled a particular DM nor a causal relation between the DM and later wall work. DMs to `chat` or `all` (broadcasts) and to targets outside the site's role set — a watcher, a feed or the human shell, such as `ci`, `operator-view`, `session-watch`, `silence-watch` and `operator` — are counted separately as `broadcast_excluded` and `nonmind_excluded` and left out of the stall estimate: neither class can ever reply or record a wall outcome, so counting them as resolver waits would hold the gate above zero for the whole window. The role set is the built-in roles plus the residents the site declares with a `charters/<slug>.md` charter and an executable `minds/<slug>` launcher, so a renamed or new role reads excluded until it is seated here again. A missing or unreadable tape or outcome store reads `UNKNOWN`.
 - The `sense.seed.settle-result-mix` reading reports the mix of settlement results from the tape's own receipts: `n=<N> verified=<V> changed=<C> blocked=<B> other=<O> incidents=<I> since_last=<S>` over the trailing 100 settlements. `incidents` clusters the window's `blocked` receipts at a 60-minute gap; `since_last` counts settlements after the most recent `blocked` on the whole tape, or `none` when none is recorded; `other` counts a settled result outside the known three. It is `verified` when the window holds no `blocked`, `drift` when one does, and `unknown` when the tape is absent or unreadable. A `seed yield` entry with no settled line is not a settlement.
 - The `sense.ledger.evidence-binding` reading checks that post-clause wall outcomes bind write-once evidence: a `wall-outcome` record binds its per-outcome evidence file with `payload.evidence.{path,sha256}` at record time, and the clause (`docs/wall-coordination.md`) prescribes four independent requirements — the path is under `artifacts/` (A: the stored path is resolved before the test, so a `..` segment cannot pass lexically), the file is unedited (B: the bound digest still matches), the bound file exists (C: a deleted bound file reads C — absence is flagged, not digest-compared), and the path is cited by no other outcome (D: distinct stored path strings). The sense re-hashes every tape-referenced post-clause outcome's evidence (`bound=`); `read_at=` stamps the sense's own read moment, so a reader can tell a stale live-window claim from a current one. It reports two windows: the latest outcome per role as live compliance (`latest_roles=`/`latest_bad=`, with `latest_bad_roles=` naming the non-compliant roles and their classes and `latest_bad_last=` their last outcome times) and the whole post-clause set as a standing audit (`all_bad=`, `violating=`), because the store is append-only and a repaired violation stays flagged. `count_excluded=` counts the retained-bytes rows (B) only — the class the trial's evidenced-outcome count drops — so a deleted bound file reads C in the standing audit without dropping from that count.
 - The `sense.ledger.evidence-binding` sample's field order is the pane's visible-prefix order — the standing-audit cause (`all_bad=`, `count_excluded=`) first, then the live window, then `read_at=`, then the coverage tier — because the pane clips a sample to 120 cells and a drift verdict must carry its cause inside that prefix.
@@ -332,8 +332,8 @@ recovery has held across a second window roll.
 `doctor` checks feed framing, executable local programs, the site's Git boundary, and optional adapters. It can also **rebuild missing or mismatched handoff projections from the tape**. It is not strictly read-only:
 
 ```bash
-"$SITE/bin/mishe-tauftauf" --home "$SITE" doctor
-"$SITE/bin/mishe-tauftauf" --home "$SITE" doctor \
+"$SITE/bin/mishe" --home "$SITE" doctor
+"$SITE/bin/mishe" --home "$SITE" doctor \
   --panes --session "$SESSION"
 ```
 
@@ -364,7 +364,7 @@ A held result usually asks a specific question: is the wake still unsettled, is 
 When an observation window is missing rather than held — no top pane to read at all — `tmux start` recreates the owned session's windows and panes without starting any mind service:
 
 ```bash
-"$SITE/bin/mishe-tauftauf" --home "$SITE" tmux start --session "$SESSION"
+"$SITE/bin/mishe" --home "$SITE" tmux start --session "$SESSION"
 ```
 
 Confirm the session's `@mishe-tauftauf-home` marker is this site first; the command refuses a session another site owns. Mind panes themselves are the supervisor's business, so a raised window without a mind service is a pane repair, not a restored mind.
@@ -372,8 +372,8 @@ Confirm the session's `@mishe-tauftauf-home` marker is this site first; the comm
 `seed init` and `seed start` are the launcher's per-role steps, available directly:
 
 ```bash
-"$SITE/bin/mishe-tauftauf" --home "$SITE" seed init --slug "$ROLE" --engine-command 'codex'
-"$SITE/bin/mishe-tauftauf" --home "$SITE" seed start --slug "$ROLE" --session "$SESSION"
+"$SITE/bin/mishe" --home "$SITE" seed init --slug "$ROLE" --engine-command 'codex'
+"$SITE/bin/mishe" --home "$SITE" seed start --slug "$ROLE" --session "$SESSION"
 ```
 
 `init` re-heals the site without erasing it: the CLI wrapper and doctrine/charter copies are refreshed only when stale, a missing mind launcher is written once from the engine command (an existing one is never healed), and the role's top-pain and service-unit files are written when absent. It requires a checkout worktree. `start` raises or reuses the owned session, re-heals `.seed-raised` from the live session identity, creates the role's two-pane window when missing, respawns dead or wedged panes, and restores pending work only when the mind is verifiably idle. Together they are what "the launcher reuses it" does per role; a single role can be re-raised without replanting the whole site.
@@ -384,7 +384,7 @@ Use the affected role, not necessarily `genome`:
 
 ```bash
 ROLE='genome'
-"$SITE/bin/mishe-tauftauf" --home "$SITE" seed status --slug "$ROLE"
+"$SITE/bin/mishe" --home "$SITE" seed status --slug "$ROLE"
 tmux capture-pane -p -t "$SESSION:$ROLE.1"
 tmux display-message -p -t "$SESSION:$ROLE.1" \
   'command=#{pane_current_command} dead=#{pane_dead} pid=#{pane_pid}'
@@ -436,7 +436,7 @@ Then reread its journal and `seed status`. Do not use broad process-kill command
 Only after verifying a settled wake and a stable idle mind:
 
 ```bash
-"$SITE/bin/mishe-tauftauf" --home "$SITE" seed clear \
+"$SITE/bin/mishe" --home "$SITE" seed clear \
   --session "$SESSION" --slug "$ROLE"
 ```
 
@@ -711,8 +711,8 @@ The generated shell puts a site-local `permit` wrapper on `PATH`. `permit`, `per
 Inspect first:
 
 ```bash
-"$SITE/bin/mishe-tauftauf" --home "$SITE" access list
-"$SITE/bin/mishe-tauftauf" --home "$SITE" access check REQUEST_ID
+"$SITE/bin/mishe" --home "$SITE" access list
+"$SITE/bin/mishe" --home "$SITE" access check REQUEST_ID
 ```
 
 Replace `REQUEST_ID` with a real ID. `access check` exits zero only for `granted`; pending and revoked decisions exit nonzero. An unknown ID is an error, not an implicit grant.
@@ -720,7 +720,7 @@ Replace `REQUEST_ID` with a real ID. `access check` exits zero only for `granted
 For example, a role requesting an unavailable local capability would append a scoped request like this; replace the task and paths with the actual need before using it:
 
 ```bash
-"$SITE/bin/mishe-tauftauf" --home "$SITE" access request battery-read \
+"$SITE/bin/mishe" --home "$SITE" access request battery-read \
   --owner senses --task battery-observation --capability local-device-read \
   --unblocks /sys/class/power_supply \
   --reason 'Verify a battery reading for this local task.'
@@ -731,9 +731,9 @@ For example, a role requesting an unavailable local capability would append a sc
 The following commands **record an operator decision** for an existing request:
 
 ```bash
-"$SITE/bin/mishe-tauftauf" --home "$SITE" access grant REQUEST_ID
+"$SITE/bin/mishe" --home "$SITE" access grant REQUEST_ID
 # Or withdraw that scoped authority:
-"$SITE/bin/mishe-tauftauf" --home "$SITE" access revoke REQUEST_ID
+"$SITE/bin/mishe" --home "$SITE" access revoke REQUEST_ID
 ```
 
 These write `[permission]` entries in `chat.log`; they do not change Unix permissions, create credentials, open devices, or enforce a kernel sandbox. A granted capability is ready to use only where the host actually supplies it. Pending or revoked requests confer no authority to act. Granting one task's scoped capability is not blanket authority over the host or another plant.

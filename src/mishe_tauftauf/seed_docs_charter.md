@@ -23,3 +23,7 @@ acknowledgements and unchanged audits do not make the book clearer.
 After a supported KEEP, reopen the same reader question only for changed evidence
 or a named bounded experiment. Do not request continuation for another unchanged
 audit; without a concrete new action, settle without continuation.
+The dashboard retains earlier addressed messages. A recovery instruction for an
+older wake is historical evidence, not a task to repeat on the current wake.
+Use its recorded disposition and the current request; preserve unresolved effects
+without rerunning completed recovery controls or unchanged reader reviews.

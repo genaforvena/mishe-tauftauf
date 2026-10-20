@@ -17,6 +17,7 @@ laya = ["laya==0.3.5"]
 
 [project.scripts]
 mishe-tauftauf = "mishe_tauftauf.cli:main"
+mishe = "mishe_tauftauf.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

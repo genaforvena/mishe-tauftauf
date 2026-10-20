@@ -289,7 +289,7 @@ source as the `permit` CLI it drives), and a site-declared resident
 prints a `DEPLOYED` line. The site CLI, the minds and the seed services load the
 pin source (the checkout or an installed release) instead, so patched snapshot
 bytes stay invisible to them until a replant, and an observe script that shells
-out to `bin/mishe-tauftauf` reads that pin source, not the patched bytes. The
+out to `bin/mishe` reads that pin source, not the patched bytes. The
 `health`, `genome` and `research-methods` panes print three deployment lines;
 `docs` shows this book, `discover` and `senses` their culture views, and
 `witness` its coordination checks; those four print none. `SOURCE` names the
@@ -431,7 +431,7 @@ Local baselines and experiment reports belong under the ignored site.
 
 High-risk, high-reward initiatives are welcome within granted owned scope.
 Name a falsifiable prediction, affected consumers, observation interval and
-keep/revise/revert decision; `mishe-tauftauf --home SITE predict SLUG [FILE]` records a prediction on the tape, where `SLUG` names the prediction and `FILE` holds its text (stdin when omitted). To cancel or remove a prediction, record a superseding one with `--replaces SEQUENCE`.
+keep/revise/revert decision; `mishe --home SITE predict SLUG [FILE]` records a prediction on the tape, where `SLUG` names the prediction and `FILE` holds its text (stdin when omitted). To cancel or remove a prediction, record a superseding one with `--replaces SEQUENCE`.
 A prediction needs exactly one whole `Check at: YYYY-MM-DDTHH:MM:SSZ` line naming when it will be judged.
 Apply the checked activation and recovery procedure above to running code,
 including independent reading and visible failures.

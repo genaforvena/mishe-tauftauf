@@ -520,7 +520,9 @@ class Coordinator:
         return 1 + sum(1 for entry in entries if entry.source == "mishe-tauftauf" for s, seq, _ in START_RE.findall(entry.body) if s == slug and int(seq) == sequence)
 
     def _context(self, slug: str, stimulus: FeedEntry, invocation: str) -> str:
-        pane_command = f"mishe-tauftauf --home {self.home} pain read {slug}"
+        # Launched minds export MISHE_SEED_HOME or MISHE_TAUFTAUF_HOME, so the
+        # short CLI name resolves the site; no site path spelling is required.
+        pane_command = f"mishe pain read {slug}"
         handoff = self.home / "handoffs" / f"{slug}.md"
         handoff_text = handoff.read_text(encoding="utf-8") if handoff.exists() else "(none)"
         handoff_text = self._bounded_text(handoff_text, 8 * 1024)

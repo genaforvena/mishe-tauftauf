@@ -1095,7 +1095,7 @@ An ordinary `wall write` replaces the wall whole and keeps no history, so it clo
 Write ordinary entries through the feed CLI, not by hand:
 
 ```bash
-mishe-tauftauf --home SITE append --source ROLE 'Readable event, evidence, and next action.'
+mishe --home SITE append --source ROLE 'Readable event, evidence, and next action.'
 ```
 
 The CLI owns sequence numbers, timestamps, and framing. A malformed feed frame can block every pane; preserve its original bytes and repair the exact error under the feed lock, rather than overwriting the conversation.

@@ -175,9 +175,9 @@ def _ensure(home: Path, session: str, window: str, *, package_root: Path | None,
         "brief.md": "Edit this page with the current human discussion and decisions.\n",
         "commands.md": (
             f"Site: {home}\n"
-            f"mishe-tauftauf --home {shlex.quote(str(home))} pain read {window} --launcher dashboard\n"
-            f"mishe-tauftauf --home {shlex.quote(str(home))} wall show --owner operator\n"
-            f"mishe-tauftauf --home {shlex.quote(str(home))} wall dm --source operator --to ROLE --file MESSAGE\n"
+            f"mishe --home {shlex.quote(str(home))} pain read {window} --launcher dashboard\n"
+            f"mishe --home {shlex.quote(str(home))} wall show --owner operator\n"
+            f"mishe --home {shlex.quote(str(home))} wall dm --source operator --to ROLE --file MESSAGE\n"
             "Edit this page with installed local capabilities and their exact commands.\n"
         ),
     }

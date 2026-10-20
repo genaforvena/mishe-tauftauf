@@ -205,6 +205,9 @@ def test_normal_replant_keeps_installed_immutable_source(tmp_path):
     refresh_cli(home, release)
     assert str(release / "src") in cli.read_text()
     assert cli.stat().st_mode & 0o111
+    # Refresh re-pins only wrappers the home already has; seed init is the
+    # step that writes ``bin/mishe`` for a home that predates it.
+    assert not (home / "bin/mishe").exists()
     # A corrupt or changed pin must fail instead of silently returning to mutable code.
     (package / "__init__.py").write_text("changed")
     with pytest.raises(ValueError, match="runtime.*clean|runtime.*changed"):
@@ -421,6 +424,8 @@ def test_runtime_only_cli_preserves_dirty_application_and_contract(tmp_path: Pat
                                   capture_output=True, text=True, timeout=45)
         assert selected.returncode == 0, selected.stderr
         assert str(release / "src") in (home / "bin/mishe-tauftauf").read_text()
+        assert (home / "bin/mishe").is_file()
+        assert str(release / "src") in (home / "bin/mishe").read_text()
         assert agents.read_text() == "Unlanded application contract.\n"
         assert application.read_text() == "unlanded application work\n"
         assert mind.read_bytes() == original_mind

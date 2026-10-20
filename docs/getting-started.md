@@ -86,10 +86,10 @@ SITE="$PWD/.mishe-seed"
 SESSION='mishe-seed'
 ```
 
-The site's CLI wrapper loads the runtime; ordinary operator shells still need the explicit `--home` argument:
+The site's CLI wrapper loads the runtime. Mind panes reach it as the short `mishe` command via the prepended site `bin/` on `PATH`; an ordinary shell lacks that path, so it uses the explicit wrapper and an explicit `--home`:
 
 ```bash
-"$SITE/bin/mishe-tauftauf" --home "$SITE" discover show
+"$SITE/bin/mishe" --home "$SITE" discover show
 tmux list-windows -t "$SESSION"
 env -u TMUX tmux attach -t "$SESSION"
 ```
@@ -112,7 +112,7 @@ The upper pane is the current evidence display. The lower pane belongs to the ag
 Send one bounded request to discover through the shared tape:
 
 ```bash
-"$SITE/bin/mishe-tauftauf" --home "$SITE" append --source operator \
+"$SITE/bin/mishe" --home "$SITE" append --source operator \
   '[dm] to=discover
 Read one real /proc/loadavg value, cite the scan artifact, verify your live pane, and report the checked finding on your wall.'
 ```
@@ -124,14 +124,14 @@ Watch the `discover` window. In a second terminal, use the same `SITE`, `SESSION
 and exported `TMUX_TMPDIR` values:
 
 ```bash
-"$SITE/bin/mishe-tauftauf" --home "$SITE" seed status --slug discover
-"$SITE/bin/mishe-tauftauf" --home "$SITE" wall show --owner discover
-"$SITE/bin/mishe-tauftauf" --home "$SITE" discover show
+"$SITE/bin/mishe" --home "$SITE" seed status --slug discover
+"$SITE/bin/mishe" --home "$SITE" wall show --owner discover
+"$SITE/bin/mishe" --home "$SITE" discover show
 tmux capture-pane -p -t "$SESSION:discover.0"
 tail -f "$SITE/chat.log"
 ```
 
-`tail -f` watches the tape; Ctrl-c stops only that watcher. To read the complete framed conversation through the CLI, use `"$SITE/bin/mishe-tauftauf" --home "$SITE" feed`.
+`tail -f` watches the tape; Ctrl-c stops only that watcher. To read the complete framed conversation through the CLI, use `"$SITE/bin/mishe" --home "$SITE" feed`.
 
 ### What counts as success
 
@@ -176,7 +176,7 @@ This still creates the site, starts panes and agents, takes initial discovery an
 To exercise the first request manually, set `SITE` and `SESSION` to the site's actual names, send the request above, then run this supervisor in a separate operator terminal:
 
 ```bash
-"$SITE/bin/mishe-tauftauf" --home "$SITE" seed run \
+"$SITE/bin/mishe" --home "$SITE" seed run \
   --session "$SESSION" --slug discover --interval 5 \
   --self-pick-seconds 600 --clear-grace-seconds 30
 ```

@@ -583,16 +583,20 @@ def init(home: Path, slug: str, engine_command: str = "codex") -> str:
     initialize(home)
     bin_dir = home / "bin"
     bin_dir.mkdir(exist_ok=True)
-    cli = bin_dir / "mishe-tauftauf"
-    if not cli.exists():
-        package_root = str(Path(__file__).resolve().parents[1])
-        cli.write_text(
-            "#!/bin/sh\n"
-            f"export PYTHONPATH={shlex.quote(package_root)}${{PYTHONPATH:+:$PYTHONPATH}}\n"
-            f"exec {shlex.quote(sys.executable)} -m mishe_tauftauf \"$@\"\n",
-            encoding="utf-8",
-        )
-        cli.chmod(0o755)
+    package_root = str(Path(__file__).resolve().parents[1])
+    body = (
+        "#!/bin/sh\n"
+        f"export PYTHONPATH={shlex.quote(package_root)}${{PYTHONPATH:+:$PYTHONPATH}}\n"
+        f"exec {shlex.quote(sys.executable)} -m mishe_tauftauf \"$@\"\n"
+    )
+    # The short `mishe` entry point and the historical long name run the same
+    # module. New instructions and contexts only name the short command, so
+    # every site gets both; an existing site keeps working on the long one.
+    for name in ("mishe-tauftauf", "mishe"):
+        wrapper = bin_dir / name
+        if not wrapper.exists():
+            wrapper.write_text(body, encoding="utf-8")
+            wrapper.chmod(0o755)
     if (home / "health/runtime-release.json").exists():
         from .runtime_source import refresh_cli, source_for
         refresh_cli(home, source_for(home, Path(__file__).resolve().parents[2]))

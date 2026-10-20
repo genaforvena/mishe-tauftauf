@@ -20,17 +20,22 @@ def test_audit_flags_unknown_subcommand_but_accepts_a_valid_wrapped_invocation(
         monkeypatch, tmp_path: Path) -> None:
     tool = _load_tool()
     src = tmp_path / "served" / "src"
-    trie = {"wall": {"show": {}}}
+    # ``wall clear`` stays out of the trie on purpose so the dispositioned
+    # legacy-name span below is still an unknown-leaf finding.
+    trie = {"wall": {"show": {}}, "pain": {"read": {}, "watch": {}}}
     corpus = {
         "docs/example.md": (
-            "Use `bin/mishe-tauftauf --home SITE wall show --owner ROLE`.\n"
-            "Do not use `bin/mishe-tauftauf --home SITE wall resume`.\n"
-            "This raw command is separately dispositioned: "
-            "`bin/mishe-tauftauf --home SITE wall clear`.\n"
+            "Use `bin/mishe --home SITE wall show --owner ROLE`.\n"
+            "Do not use `bin/mishe --home SITE wall resume`.\n"
+            "This span names the historical entry point and is separately "
+            "dispositioned: `bin/mishe-tauftauf --home SITE wall clear`.\n"
+            "Do not use the bare short name with an unknown leaf: "
+            "`mishe pain stare ROLE`.\n"
         )
     }
     tool.DISPOSITIONS = {
-        ("docs/example.md", "bin/mishe-tauftauf --home SITE wall clear"): "external tool, not this CLI"
+        ("docs/example.md", "bin/mishe-tauftauf --home SITE wall clear"):
+            "external tool, not this CLI"
     }
     checker = SimpleNamespace(
         served_release_src=lambda home: (src.parent, "a" * 40, src),
@@ -41,11 +46,19 @@ def test_audit_flags_unknown_subcommand_but_accepts_a_valid_wrapped_invocation(
     result = tool.audit(tmp_path / "site")
     assert result["served_src"] == str(src)
 
-    assert len(result["findings"]) == 2
-    assert result["findings"][0]["span"].endswith("wall resume")
-    assert result["findings"][0]["token"] == "resume"
-    assert result["undispositioned"] == [result["findings"][0]]
-    assert result["dispositioned"][0]["disposition"] == "external tool, not this CLI"
+    by_span = {finding["span"]: finding for finding in result["findings"]}
+    assert len(result["findings"]) == 3
+    # Unknown leaves are flagged from the short-name wrapper form and from the
+    # bare short command, never because of the recognized command prefix.
+    assert by_span["bin/mishe --home SITE wall resume"]["token"] == "resume"
+    assert by_span["mishe pain stare ROLE"]["token"] == "stare"
+    assert by_span["bin/mishe-tauftauf --home SITE wall clear"]["disposition"] == (
+        "external tool, not this CLI")
+    assert result["undispositioned"] == [
+        by_span["bin/mishe --home SITE wall resume"],
+        by_span["mishe pain stare ROLE"],
+    ]
+    assert result["dispositioned"] == [by_span["bin/mishe-tauftauf --home SITE wall clear"]]
 
 
 def test_raw_tmux_command_is_not_misclassified_as_site_cli() -> None:
@@ -54,3 +67,17 @@ def test_raw_tmux_command_is_not_misclassified_as_site_cli() -> None:
     start = tool.invocation_start(["tmux", "list-panes", "-a"], {"tmux"})
 
     assert start is None
+
+
+def test_prefix_forms_begin_a_site_cli_invocation() -> None:
+    tool = _load_tool()
+    tops = {"wall", "feed", "pain", "append", "predict"}
+
+    assert tool.invocation_start(["mishe", "pain", "read"], tops) == 1
+    assert tool.invocation_start(["bin/mishe", "feed"], tops) == 1
+    assert tool.invocation_start(["bin/mishe-tauftauf", "--home", "SITE",
+                                  "append"], tops) == 3
+    # The ``-m module`` pair is skipped as one option argument: ``predict`` is
+    # at index 5, not 4.
+    assert tool.invocation_start(["python3", "-m", "mishe_tauftauf", "--home",
+                                  "SITE", "predict"], tops) == 5
