@@ -551,3 +551,134 @@ def test_dense_baseline_without_any_motion_values_reports_zero_motion_coverage(
     assert "motion=0%" in row["sample"]
     # The delivery rate stays visible: rows arrived, but none carried motion.
     assert row["accel_ratio"] == pytest.approx(20 / 80)
+
+
+def _peer_report(hostname: str = "Redmi 10", *, online: bool = True,
+                 active: bool = True) -> dict:
+    """A ``tailscale status --json`` report, keyed by node key as it really is."""
+    return {
+        "BackendState": "Running",
+        "Self": {"HostName": "mesh-home"},
+        "Peer": {
+            "nodekey:0ee4c8c63b75f0978a7aa1c3adf53f83bf00ad113bd98fe6798f9f3a1367630f": {
+                "HostName": hostname,
+                "DNSName": "redmi-10.tail3e4555.ts.net.",
+                "Online": online,
+                "Active": active,
+            },
+        },
+    }
+
+
+def _with_cursor_advance(state: dict, when: float) -> dict:
+    """A consumer state that last saw the delivery cursor advance at ``when``."""
+    state[body_perception.CURSOR_ADVANCE_FIELD] = when
+    return state
+
+
+def test_peer_delivery_reads_delivering_when_the_cursor_advanced(
+        tmp_path: Path) -> None:
+    now = 1_800_000_000.0
+    core, state_path, state = _linked_state(tmp_path, now)
+    _with_cursor_advance(state, now - 5)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    row = body_perception.read_redmi10_peer_delivery(core, now, peer=_peer_report())
+
+    assert row["state"] == "verified"
+    assert row["verdict"] == "delivering"
+    assert row["reason"] == "cursor-advancing"
+    assert row["peer_online"] is True
+    assert row["cursor"] == 3
+    assert row["delivery_age_seconds"] == pytest.approx(5)
+    assert "verdict=delivering" in row["sample"]
+
+
+def test_peer_delivery_uses_the_cursor_advance_not_the_poll_time(
+        tmp_path: Path) -> None:
+    """A consumer that keeps polling a silent phone has a fresh poll time and
+    a frozen cursor. Gating on the poll time would report that as a healthy
+    read; the delivery age has to come from the cursor's own advance time."""
+    now = 1_800_000_000.0
+    core, state_path, state = _linked_state(tmp_path, now)
+    # The poll is current, the cursor has not moved for an hour.
+    state["poll_at"] = now - 1
+    _with_cursor_advance(state, now - 3600)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    row = body_perception.read_redmi10_peer_delivery(core, now, peer=_peer_report())
+
+    assert row["verdict"] == "present-not-sending"
+    assert row["reason"] == "cursor-frozen"
+    assert row["delivery_age_seconds"] == pytest.approx(3600)
+
+
+def test_peer_delivery_separates_absent_from_present_but_silent(
+        tmp_path: Path) -> None:
+    """A phone that is not on the tailnet and a phone that is on it but not
+    sending are different faults, and the consumer's own transport=reachable
+    cannot tell them apart because it describes the host's own path."""
+    now = 1_800_000_000.0
+    core, state_path, state = _linked_state(tmp_path, now)
+    _with_cursor_advance(state, now - 3600)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    silent = body_perception.read_redmi10_peer_delivery(
+        core, now, peer=_peer_report(online=True, active=False))
+    absent = body_perception.read_redmi10_peer_delivery(
+        core, now, peer=_peer_report(online=False, active=False))
+
+    assert silent["verdict"] == "present-not-sending"
+    assert silent["peer_online"] is True
+    assert absent["verdict"] == "peer-absent"
+    assert absent["peer_online"] is False
+    assert silent["state"] == absent["state"] == "verified"
+
+
+def test_peer_delivery_does_not_claim_reachability_from_peer_flags(
+        tmp_path: Path) -> None:
+    """``Online`` and ``Active`` are control-plane presence and recent
+    traffic, not proof that this host can reach the phone's data path, so the
+    reading must not say the phone is reachable."""
+    now = 1_800_000_000.0
+    core, state_path, state = _linked_state(tmp_path, now)
+    _with_cursor_advance(state, now - 3600)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    row = body_perception.read_redmi10_peer_delivery(core, now, peer=_peer_report())
+
+    assert row["verdict"] == "present-not-sending"
+    assert "not proof that this host can reach the phone" in row["details"]
+    assert "reachable and not sending" not in row["details"]
+
+
+def test_peer_delivery_is_unknown_without_a_readable_peer_state(
+        tmp_path: Path) -> None:
+    """Without the peer report the reading cannot name the phone, so it stays
+    UNKNOWN rather than inferring presence from the cursor alone."""
+    now = 1_800_000_000.0
+    core, state_path, state = _linked_state(tmp_path, now)
+    _with_cursor_advance(state, now - 5)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    missing = body_perception.read_redmi10_peer_delivery(core, now, peer=None)
+    absent = body_perception.read_redmi10_peer_delivery(
+        core, now, peer={"BackendState": "Running", "Self": {}, "Peer": {}})
+
+    assert missing["state"] == "unknown"
+    assert missing["reason"] == "peer-state-unavailable"
+    assert absent["state"] == "unknown"
+    assert absent["reason"] == "peer-absent-from-tailnet"
+
+
+def test_peer_delivery_is_unknown_without_a_cursor_advance_time(
+        tmp_path: Path) -> None:
+    """A consumer state that has never seen a cursor advance cannot say how
+    long delivery has been silent, so the reading stays UNKNOWN."""
+    now = 1_800_000_000.0
+    core, _path, _state = _linked_state(tmp_path, now)
+
+    row = body_perception.read_redmi10_peer_delivery(core, now, peer=_peer_report())
+
+    assert row["state"] == "unknown"
+    assert row["reason"] == "cursor-advance-time-absent"
