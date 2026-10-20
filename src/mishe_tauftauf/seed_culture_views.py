@@ -21,7 +21,8 @@ from .discovery import (latest, producer_label, scan_attempt, _tailnet_peer_read
                         _space_light_read)
 from .body_perception import (BODY_SENSE_IDS, SENSE_ID, read_redmi10,
                               read_redmi10_delivery_gaps, read_redmi10_light)
-from .host_radio import decode_cam_events, decode_cam_manifest, decode_cam_state, decode_urb_failures
+from .host_radio import (decode_cam_events, decode_cam_manifest, decode_cam_state,
+                        decode_probe_failures, decode_urb_failures)
 from . import proc_table
 from .space_text import nonblank
 from .seed import recorded_session
@@ -430,6 +431,7 @@ CAMERA_ARTIFACT_BOUND_S = 120.0
 CAMERA_WINDOW_S = 900.0
 CAMERA_CAPTURE_FAULTS = 3
 CAMERA_KERNEL_FAULTS = 10
+CAMERA_KERNEL_PROBE_FAULTS = 10
 CAMERA_MANIFEST = "camera.json"
 _CAMERA_EVENTS_TAIL_B = 1 << 18
 CLEAR_JOURNAL_STALL_S = 60.0
@@ -452,7 +454,12 @@ def _camera_faults(home: Path, env: dict[str, str]) -> tuple[str, str, list[str]
     neighbor's fault surface. A declared manifest that cannot be read reads
     UNKNOWN, so deleted monitoring stays visible instead of silent. The class
     word from .cam-watch.state is informational: a covered lens is not a fault,
-    and the line must not imply one.
+    and the line must not imply one. The kernel journal is counted in two
+    distinct camera classes — URB resubmit failures and UVC probe-control
+    failures — because a wedged device logs the probe class alone (health
+    2026-10-20: 1195 ``Failed to set UVC probe control : -110`` lines with zero
+    resubmit lines, while this surface reported ``kernel-urbs=0`` and named no
+    kernel cause). Each class is counted and named separately.
     """
     try:
         declared = decode_cam_manifest(
@@ -514,6 +521,9 @@ def _camera_faults(home: Path, env: dict[str, str]) -> tuple[str, str, list[str]
         unknown = unknown or "camera kernel log unreadable"
     if kernel >= CAMERA_KERNEL_FAULTS:
         causes.append(f"camera-kernel-urb={kernel}")
+    probe = decode_probe_failures(result.stdout)
+    if probe >= CAMERA_KERNEL_PROBE_FAULTS:
+        causes.append(f"camera-kernel-probe={probe}")
     if causes:
         state = "RED"
     elif unknown:
@@ -524,7 +534,8 @@ def _camera_faults(home: Path, env: dict[str, str]) -> tuple[str, str, list[str]
     line = (f"CAMERA: {state} " +
             (f"class={klass} " if klass else "") +
             f"artifact-age={age_text} capture-fails={onsets}/{CAMERA_WINDOW_S:.0f}s "
-            f"kernel-urbs={kernel}/{CAMERA_WINDOW_S:.0f}s")
+            f"kernel-urbs={kernel}/{CAMERA_WINDOW_S:.0f}s "
+            f"kernel-probes={probe}/{CAMERA_WINDOW_S:.0f}s")
     if state == "UNKNOWN":
         line += f" — {unknown}"
     return line, unknown, causes
