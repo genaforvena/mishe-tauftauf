@@ -646,3 +646,30 @@ def test_attempt_summary_reports_why_an_attempt_cannot_be_read(tmp_path):
     directory = attempt(tmp_path, ledger=False)
     summary, error = recovery.attempt_summary(directory)
     assert summary == {} and error
+
+
+def test_attempt_summary_rejects_a_torn_dispatch_journal(tmp_path):
+    """Corrupt dispatch evidence must not read as a clean attempt."""
+    directory = attempt(tmp_path, intents=[intent()], starts=[start()], outcomes=[outcome()])
+    outcomes = directory / 'effects' / 'outcomes.jsonl'
+    outcomes.write_text(outcomes.read_text()[:-12])  # a torn record
+    summary, error = recovery.attempt_summary(directory)
+    assert summary == {} and error and 'outcomes.jsonl' in error
+    # The classifier keeps the same verdict for the same bytes.
+    assert recovery.classify_attempt(directory).verdict == recovery.UNKNOWN
+
+
+def test_settling_a_wake_clears_its_hold(tmp_path):
+    """A settled wake is not held: its record must not refuse the next wake."""
+    import json as _json
+    from datetime import datetime, timedelta, timezone
+    from mishe_tauftauf import wall
+    from mishe_tauftauf.feed import Feed
+    (tmp_path / 'coordination-mode.json').write_text(_json.dumps(
+        {'mode': 'wall', 'until': (datetime.now(timezone.utc) + timedelta(hours=10)).isoformat()}))
+    recovery.write_blocked_state(tmp_path, 'genome', 1, verdict=recovery.RECONCILE,
+                                reason='an earlier attempt dispatched an effect')
+    wake = Feed(tmp_path).append('seed', 'seed wake genome observation=1\nRead your wall.')
+    wall.settle(tmp_path, 'genome', wake.sequence, 'The wake is done.', False, 'changed')
+    record, reason = recovery.read_blocked_state(tmp_path, 'genome')
+    assert record is None and reason is None

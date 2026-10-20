@@ -455,13 +455,16 @@ def attempt_summary(attempt) -> tuple[dict, str | None]:
             summary, error = _summary(files['result.json'])
             if error:
                 return {}, error
-            rows, error = _decode_rows(files['effects/intents.jsonl'], 'intents.jsonl', EffectIntent)
-            if error:
-                return {}, error
+            decoded = {}
+            for name, decoder in LEDGER_JOURNALS:
+                rows, error = _decode_rows(files[f'effects/{name}'], name, decoder)
+                if error:
+                    return {}, error
+                decoded[name] = rows
     except LiveWriter as exc:
         return {}, str(exc)
     capabilities: list[str] = []
-    for row in rows:
+    for row in decoded['intents.jsonl']:
         name = row.get('capability')
         if name and name not in capabilities:
             capabilities.append(name)

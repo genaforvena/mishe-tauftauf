@@ -642,6 +642,11 @@ def settle(home: Path, role: str, wake: int, text: str, continuation: bool, resu
         Feed(home).append("seed", f"seed yield {role} wake={wake}{suffix}\n"
                           f"Turn settled ({result}); wall and handoff at walls/{role}.md and handoffs/{role}.md. "
                           "This is a transport receipt, not proof of patch acceptance.")
+        # A wake that is now settled is not held any more. Its hold record would
+        # otherwise refuse the next wake's delivery, stranding the role behind a
+        # wake that is already done.
+        from .native_recovery import clear_blocked_state
+        clear_blocked_state(home, role)
         if _consume_anchor and source_path is not None:
             anchor = Path(source_path)
             if _source_anchor_stat is not None:
