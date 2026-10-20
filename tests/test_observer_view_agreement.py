@@ -98,6 +98,27 @@ def run_check(home: Path, reference: Path, extra=()):
         capture_output=True, text=True)
 
 
+def test_volatile_record_lines_do_not_read_as_missing_projections(plant, reference):
+    """A record that appeared between two samples is not a lost observation."""
+    reviewed = [*REVIEWED,
+                "body-research: OBSERVED; wakes=71 settled[changed=37,verified=33]",
+                "  open wake chat.log#75354 age=39s",
+                "Patches current/all ages: attempted=60 checked-delivery=45",
+                "  patches/canonical-workflow-v6.json phase=UNKNOWN age=UNKNOWN",
+                "PATCH board-author-row-projection-64344: applied delivery=verified"]
+    reference = write_package(plant.parent / "reviewed-volatile", reviewed)
+    write_frame(plant, [*STALE,
+                        "body-research: OBSERVED; wakes=71 settled[changed=37,verified=33]",
+                        "  open wake chat.log#75354 age=573s",
+                        "Patches current/all ages: attempted=60 checked-delivery=45",
+                        "  patches/canonical-workflow-v7.json phase=UNKNOWN age=UNKNOWN",
+                        "PATCH culture-audit-repair: applied delivery=verified"])
+    result = run_check(plant, reference)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert result.stdout.count("missing :") == 1, result.stdout
+    assert "OUTCOME WRITER REFUSALS" in result.stdout
+
+
 def test_missing_projection_is_reported_with_its_content(plant, reference):
     write_frame(plant, STALE)
     result = run_check(plant, reference)
