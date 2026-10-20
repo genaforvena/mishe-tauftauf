@@ -618,17 +618,18 @@ def write_blocked_state(home, role: str, wake, *, verdict: str, reason: str,
     record = {'version': 1, 'role': role, 'wake': wake, 'verdict': verdict, 'reason': reason,
               'evidence': list(evidence), 'attempt': str(attempt) if attempt is not None else None,
               'at': datetime.now(timezone.utc).isoformat()}
-    temporary = path.with_name(f'.{path.name}.{os.getpid()}.tmp')
-    try:
-        with open(temporary, 'w', encoding='utf-8') as stream:
-            json.dump(record, stream, indent=2, sort_keys=True)
-            stream.write('\n')
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
+    with _blocked_lock(path):
+        temporary = path.with_name(f'.{path.name}.{os.getpid()}.tmp')
+        try:
+            with open(temporary, 'w', encoding='utf-8') as stream:
+                json.dump(record, stream, indent=2, sort_keys=True)
+                stream.write('\n')
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
     return path
 
 
@@ -655,20 +656,26 @@ def read_blocked_state(home, role: str) -> tuple[dict | None, str | None]:
     return record, None
 
 
-def _restore_claimed(claimed: Path, path: Path) -> None:
-    """Put a claimed record back where it was, when the path is free.
+@contextmanager
+def _blocked_lock(path: Path):
+    """Hold the blocked state's own lock while it is read, written or removed.
 
-    A hard link refuses an existing destination, so a record published in the
-    meantime keeps the path and the claimed copy stays as the evidence.
+    The writer and the clearer share this lock, so a record is never removed
+    between a publisher's write and a clearer's read: the record a clearer
+    reads is the record it removes, and the record is never briefly absent
+    from the path the plant reads.
     """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(path.with_name(path.name + '.lock'), 'a+')
     try:
-        os.link(claimed, path)
-    except OSError:
-        return
-    try:
-        claimed.unlink()
-    except OSError:
-        pass
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+        handle.close()
 
 
 def clear_blocked_state(home, role: str, wake=None) -> bool:
@@ -676,37 +683,44 @@ def clear_blocked_state(home, role: str, wake=None) -> bool:
 
     When ``wake`` is given, only a record that names that wake is removed: a
     hold belongs to the wake it names, and another wake's hold must survive.
-    The record is claimed by an atomic rename and read at its claimed name, so
-    a record published in the meantime is never the one removed. A record that
-    cannot be decoded names no wake: it is kept, because it is the only
-    evidence that a hold exists, and repairing it is an authoritative act.
+    The record is read and removed under the blocked state's own lock, so the
+    record removed is the record read. A record that cannot be decoded names
+    no wake: it is kept, because it is the only evidence that a hold exists,
+    and repairing it is an authoritative act.
     """
     path = blocked_state_path(home, role)
-    claimed = path.with_name(f'.{path.name}.claimed-{os.getpid()}')
-    try:
-        os.rename(path, claimed)
-    except OSError:
-        return False
-    try:
-        data = claimed.read_bytes()
-    except OSError:
-        data = b''
-    try:
-        value = json.loads(data.decode('utf-8'))
-    except (UnicodeDecodeError, ValueError):
-        value = None
-    if not isinstance(value, dict):
-        _restore_claimed(claimed, path)
-        return False
-    if wake is not None and value.get('wake') != wake:
-        _restore_claimed(claimed, path)
-        return False
-    try:
-        claimed.unlink()
-    except OSError:
-        _restore_claimed(claimed, path)
-        return False
-    return True
+    with _blocked_lock(path):
+        record, reason = read_blocked_state(home, role)
+        if record is None:
+            return False
+        if wake is not None and record.get('wake') != wake:
+            return False
+        try:
+            path.unlink()
+        except (FileNotFoundError, OSError):
+            return False
+        return True
+
+
+def repair_blocked_state(home, role: str) -> dict:
+    """Remove a role's blocked-state record whatever it says; the owner's repair.
+
+    This is the supported repair for a record that cannot be decoded: it is
+    removed deliberately, by the owner, with the fact recorded, rather than
+    being ignored or removed by an unrelated event.
+    """
+    path = blocked_state_path(home, role)
+    with _blocked_lock(path):
+        record, reason = read_blocked_state(home, role)
+        if record is None and reason is None:
+            return {'repaired': False, 'reason': 'no blocked state to repair'}
+        try:
+            path.unlink()
+        except (FileNotFoundError, OSError) as exc:
+            return {'repaired': False, 'reason': f'the blocked state could not be removed: {exc}'}
+        return {'repaired': True, 'reason': reason or 'the blocked state was removed',
+                'wake': record.get('wake') if record else None,
+                'verdict': record.get('verdict') if record else None}
 
 
 def _wake_directories(attempts: Path, wake: int) -> list[Path]:
@@ -760,8 +774,13 @@ def _report(attempts: Path, wake: int | None) -> list[Attempt]:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description='Classify failed native wake attempts.')
-    parser.add_argument('--attempts', type=Path, required=True,
+    parser.add_argument('--attempts', type=Path,
                         help='directory holding attempt directories')
+    parser.add_argument('--home', type=Path,
+                        help='site home holding the blocked state to repair')
+    parser.add_argument('--role', help='role whose blocked state to repair')
+    parser.add_argument('--repair-blocked', action='store_true',
+                        help='remove the role\'s blocked state, whatever it says')
     parser.add_argument('--wake', type=int, help='wake number to act on')
     parser.add_argument('--busy', type=Path, help='busy marker to release with --apply')
     parser.add_argument('--limit', type=int, default=DEFAULT_RETRY_LIMIT,
@@ -769,6 +788,14 @@ def main(argv=None) -> int:
     parser.add_argument('--apply', action='store_true',
                         help='release the busy wedge for an effect-free transient attempt')
     args = parser.parse_args(argv)
+    if args.repair_blocked:
+        if args.home is None or args.role is None:
+            parser.error('--repair-blocked needs --home and --role')
+        report = repair_blocked_state(args.home, args.role)
+        print(json.dumps(report, indent=2))
+        return 0 if report.get('repaired') else 1
+    if args.attempts is None:
+        parser.error('--attempts is required')
     if args.apply and (args.busy is None or args.wake is None):
         parser.error('--apply needs --busy and --wake')
     attempts = _report(args.attempts, args.wake)
