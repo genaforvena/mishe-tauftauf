@@ -58,8 +58,12 @@ Evidence rules:
     earlier attempt whose own evidence is unknown blocks the recovery.
 
 This module reads and classifies. It never dispatches a provider call, never
-edits an earlier attempt, and never settles a wake. Its only write is the
-removal of a busy marker that names exactly the wake being released.
+edits an earlier attempt, and never settles a wake. Its writes are the removal
+of a busy marker that names exactly the wake being released, and the
+blocked-state record that names a wake which cannot proceed. The blocked state
+is the plant's view of a wedge: the resident writes it when it holds a wake for
+reconciliation, and the readiness gate reads it, so a native resident that
+cannot start is observable without reading an attempt directory.
 """
 from __future__ import annotations
 
@@ -70,6 +74,7 @@ import os
 import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .inference_effects import DispatchClaim, EffectIntent, EffectOutcome
@@ -351,6 +356,11 @@ def _evidence(attempt: Path) -> tuple[str, ...]:
     return tuple(names)
 
 
+def writer_active(attempt) -> bool:
+    """Whether a writer holds the attempt's store lock right now."""
+    return _writer_active(Path(attempt) / 'effects')
+
+
 def classify_attempt(attempt) -> Attempt:
     """Classify one failed attempt from its own recorded bytes."""
     attempt = Path(attempt)
@@ -428,6 +438,38 @@ def classify_attempt(attempt) -> Attempt:
                    dispatched=dispatched, reserved=reserved)
 
 
+def attempt_summary(attempt) -> tuple[dict, str | None]:
+    """A compact decoded summary of one attempt, and why it is unusable.
+
+    The summary names the attempt's own outcome and the capabilities it
+    dispatched, so a later attempt of the same wake can reconcile them instead
+    of repeating them. It is decoded here, at the boundary, so no consumer
+    reads the effect ledger itself.
+    """
+    attempt = Path(attempt)
+    try:
+        with _store_guard(attempt / 'effects'):
+            files, error = _read_evidence(attempt)
+            if error:
+                return {}, error
+            summary, error = _summary(files['result.json'])
+            if error:
+                return {}, error
+            rows, error = _decode_rows(files['effects/intents.jsonl'], 'intents.jsonl', EffectIntent)
+            if error:
+                return {}, error
+    except LiveWriter as exc:
+        return {}, str(exc)
+    capabilities: list[str] = []
+    for row in rows:
+        name = row.get('capability')
+        if name and name not in capabilities:
+            capabilities.append(name)
+    return {'wake': summary.get('wake'), 'settled': summary.get('settled'),
+            'status': summary.get('status'), 'turns': summary.get('turns'),
+            'calls': summary.get('calls'), 'capabilities': capabilities}, None
+
+
 def fresh_attempt(directory, wake: int, *, limit: int = DEFAULT_RETRY_LIMIT) -> Path | None:
     """The next unused fresh-attempt directory for this wake, or None.
 
@@ -483,26 +525,174 @@ def release_busy(busy: Path, wake: int) -> bool:
     return True
 
 
+@dataclass(frozen=True)
+class Disposition:
+    """What the plant may do with a wake that already has an attempt."""
+
+    action: str
+    attempt: Path | None
+    verdict: str
+    reason: str
+    evidence: tuple[str, ...] = ()
+    settled: bool = False
+    transient: bool = False
+
+    @property
+    def recoverable(self) -> bool:
+        """A fresh attempt is authorized only by a provably effect-free failure."""
+        return self.action == 'fresh-attempt'
+
+    def to_record(self) -> dict:
+        return {'action': self.action, 'attempt': str(self.attempt) if self.attempt else None,
+                'verdict': self.verdict, 'reason': self.reason, 'evidence': list(self.evidence),
+                'settled': self.settled, 'transient': self.transient,
+                'recoverable': self.recoverable}
+
+
+def attempt_disposition(attempts, wake: int, *, limit: int = DEFAULT_RETRY_LIMIT) -> Disposition:
+    """Choose the bounded next action for one wake from its own attempt bytes.
+
+    A wake with no attempt may start one. A wake whose earlier attempt is a
+    provably effect-free transient failure may take the next unused fresh
+    attempt, which is a new directory with a new journal, so no effect and no
+    earlier outcome is replayed. Every other wake is held for reconciliation:
+    an attempt that dispatched an effect, proposed a capability call, settled,
+    or whose own evidence is unknown never authorizes another attempt. A wake
+    whose attempt is still being written is left alone, and a wake whose
+    settlement is already confirmed needs no attempt at all.
+    """
+    directory = Path(attempts)
+    paths = _wake_directories(directory, wake)
+    for path in paths:
+        if writer_active(path):
+            return Disposition(action='live', attempt=None, verdict=UNKNOWN,
+                               reason=f'an attempt of this wake is still being written: {path.name}')
+    reports = [classify_attempt(path) for path in paths]
+    if not reports:
+        return Disposition(action='start', attempt=directory / str(wake), verdict=UNKNOWN,
+                           reason=f'wake {wake} has no attempt yet')
+    settled = [report for report in reports if report.settled]
+    if settled:
+        return Disposition(action='settled', attempt=None, verdict=SETTLED,
+                           reason=f'wake {wake} is already settled; no attempt is needed',
+                           evidence=settled[0].evidence, settled=True)
+    blocking = [report for report in reports if not report.recoverable]
+    if blocking:
+        held = blocking[0]
+        return Disposition(action='reconcile', attempt=None, verdict=held.verdict,
+                           reason=held.reason, evidence=held.evidence, settled=held.settled,
+                           transient=held.transient)
+    fresh = fresh_attempt(directory, wake, limit=limit)
+    if fresh is None:
+        return Disposition(action='reconcile', attempt=None, verdict=RECONCILE,
+                           reason=(f'wake {wake} used every bounded fresh attempt '
+                                   f'({limit}); reconcile before any further attempt'))
+    return Disposition(action='fresh-attempt', attempt=fresh, verdict=RETRYABLE,
+                       reason=(f'every attempt of wake {wake} is effect-free and transient; '
+                               f'a fresh attempt may start'),
+                       evidence=reports[-1].evidence, settled=False, transient=True)
+
+
+# The plant-visible record of a wake that cannot proceed. The resident writes
+# it when it holds a wake for reconciliation; the readiness gate reads it, so a
+# wedged native resident is observable without reading an attempt directory.
+BLOCKED_STATE = '{role}-native.blocked.json'
+
+
+def blocked_state_path(home, role: str) -> Path:
+    """The path of one role's blocked-state record."""
+    return Path(home) / 'journals' / BLOCKED_STATE.format(role=role)
+
+
+def write_blocked_state(home, role: str, wake, *, verdict: str, reason: str,
+                        evidence=(), attempt=None) -> Path:
+    """Record that this role's wake cannot proceed, with the classified reason."""
+    path = blocked_state_path(home, role)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record = {'version': 1, 'role': role, 'wake': wake, 'verdict': verdict, 'reason': reason,
+              'evidence': list(evidence), 'attempt': str(attempt) if attempt is not None else None,
+              'at': datetime.now(timezone.utc).isoformat()}
+    temporary = path.with_name(f'.{path.name}.{os.getpid()}.tmp')
+    try:
+        with open(temporary, 'w', encoding='utf-8') as stream:
+            json.dump(record, stream, indent=2, sort_keys=True)
+            stream.write('\n')
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+    return path
+
+
+def read_blocked_state(home, role: str) -> tuple[dict | None, str | None]:
+    """The decoded blocked record for this role, and why it is unusable.
+
+    An absent record is ``(None, None)``: the role is not blocked. A record
+    that exists but cannot be decoded is ``(None, reason)``, so broken
+    monitoring stays visible instead of reading as an absent failure.
+    """
+    path = blocked_state_path(home, role)
+    try:
+        data = path.read_bytes()
+    except FileNotFoundError:
+        return None, None
+    except OSError as exc:
+        return None, f'blocked state unreadable: {exc}'
+    try:
+        record = json.loads(data.decode('utf-8'))
+    except (UnicodeDecodeError, ValueError) as exc:
+        return None, f'blocked state malformed: {exc}'
+    if not isinstance(record, dict):
+        return None, 'blocked state is not a record'
+    return record, None
+
+
+def clear_blocked_state(home, role: str) -> bool:
+    """Remove one role's blocked-state record; True when one was removed."""
+    try:
+        blocked_state_path(home, role).unlink()
+    except (FileNotFoundError, OSError):
+        return False
+    return True
+
+
 def _wake_directories(attempts: Path, wake: int) -> list[Path]:
     """The attempt directories of one wake, oldest first.
 
     The first attempt and its bounded fresh attempts are ordered by the
-    numeric retry suffix, so `retry-10` follows `retry-9`.
+    numeric retry suffix, so `retry-10` follows `retry-9`. The operator's own
+    `recovery-<n>` attempts are the same wake's attempts and are counted here,
+    so an effect an operator's recovery attempt dispatched blocks a later
+    attempt of that wake instead of going unseen.
     """
     if not attempts.is_dir():
         return []
-    prefix = f'{wake}-retry-'
+    retry = f'{wake}-retry-'
+    recovery = f'{wake}-recovery-'
     entries = []
     for path in attempts.iterdir():
         if not path.is_dir():
             continue
         name = path.name
         if name == str(wake):
-            entries.append((0, name, path))
-        elif name.startswith(prefix) and name[len(prefix):].isdigit():
-            entries.append((int(name[len(prefix):]), name, path))
+            entries.append((0, 0, name, path))
+        elif name.startswith(retry) and name[len(retry):].isdigit():
+            entries.append((1, int(name[len(retry):]), name, path))
+        elif name.startswith(recovery) and name[len(recovery):].isdigit():
+            entries.append((2, int(name[len(recovery):]), name, path))
     entries.sort()
-    return [path for _, _, path in entries]
+    return [path for _, _, _, path in entries]
+
+
+def wake_attempts(attempts, wake: int) -> list[Path]:
+    """The attempt directories of one wake, oldest first.
+
+    The enumeration is the boundary's own: a consumer never re-derives which
+    directories belong to a wake.
+    """
+    return _wake_directories(Path(attempts), wake)
 
 
 def _report(attempts: Path, wake: int | None) -> list[Attempt]:

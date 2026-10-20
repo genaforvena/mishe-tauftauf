@@ -66,6 +66,30 @@ the served-staleness reading can ask whether a sense's producing unit changed
 since its pin, skipping git's diff bodies and blank lines. The consumer is the
 discover scan (discovery.py `_served_staleness`), which marks senses stale.
 
+`spawn_dialect.py` decodes how a unit's wrapper script spawns a child: the
+unit's `ExecStart` script is read as bytes, its shebang line and its command
+string are recognised, and both the argv-list form
+(`subprocess.run([sys.executable, "-m", ...])`) and the shell-command form
+declare the module that is run. The consumer is the runtime-drift sense
+(discovery.py `_script_spawns_site_package`), which asks whether a unit
+couples to this plant's package. A wrapper that cannot be read or parsed
+yields an explicit "not inspectable" value, so the consumer keeps the unit
+uninspectable rather than reading an unreadable wrapper as a unit that does
+not couple.
+
+`timestamp_text.py` decodes the ISO-8601 instants this plant's logs and
+records carry, with an explicit offset or without one: a timestamp without an
+offset is read as UTC, the plant's clock domain, and text that is not a
+timestamp yields no instant rather than a guess. The consumer is the
+wedge-suspect sense (discovery.py `_mind_wedge_suspects`), which ages a
+provider error against the clock.
+
+`coord_tape.py` decodes the chat tape's own sample lines for the coordination
+fog sense: the sense's own published lines are excluded from the claim
+source, so its next evaluation does not read its own publications as claims
+about their own paths. Every other line is kept verbatim, so a claim made by
+anyone else still reads as a claim.
+
 `host_boot.py` decodes this host's boot identity for the host-boot sense: the
 kernel's boot id (`/proc/sys/kernel/random/boot_id`, one newline-terminated
 uuid) and the uptime since boot (`/proc/uptime`, two whitespace-separated
@@ -100,6 +124,23 @@ original path is free, or kept at its claimed path when that restoration fails.
 The caller classifies an attempt whose writer has already exited; no snapshot
 excludes a writer that appears after the last read.
 
+It also decides what a wake may do next, from those same bytes. A wake with no
+attempt may start one; a wake whose every attempt is a provably effect-free
+transient failure may take the next unused fresh attempt, which is a new
+directory with a new journal; an attempt that dispatched an effect, proposed a
+capability call, settled, or whose evidence is unknown never authorizes another
+attempt, and a wake whose attempt is still being written is left alone. The
+operator's own `recovery-<n>` attempts count as that wake's attempts, so an
+effect one of them dispatched blocks a later attempt instead of going unseen.
+The decision returns ordinary Python values, and the attempt's capabilities are
+decoded here so a later attempt can reconcile them rather than repeat them.
+
+One further record is written and read here: the blocked state at
+`journals/<role>-native.blocked.json`, which names the wake a resident cannot
+start and the classified reason. A record that cannot be decoded is an explicit
+problem value, so broken monitoring stays visible instead of reading as an
+absent failure.
+
 `observations.py` also decodes one volatile token in the rendered discover and
 senses panes: the displayed age of an unverified reading (`age=19m17s`) grows
 on every refresh while the reading's meaning is unchanged, so
@@ -121,7 +162,8 @@ is recorded without an observed churn.
 
 `native_gate.py` decodes the readiness probe's external inputs for a
 native-loop mind: the tmux pane report (`pane_dead pane_current_command`), the
-probe script's exit status, and this site's own verdict JSON. It returns
+probe script's exit status, the native busy marker's own age, the resident's
+blocked state, and this site's own verdict JSON. It returns
 ordinary Python values and never pastes into a pane. The decoded engine name is
 matched against every python name this site runs (`python`, `python3`,
 `python3.12`) and the three TUI engines, so the gate literal cannot silently
@@ -132,6 +174,17 @@ classifies a correct not-ready, and only an alive non-TUI pane the probe rejects
 while the role's lifecycle shows a live mind reads RED. The verdict is recorded
 per role at `checks/native-gate-<role>.json`, so a repaired gate and a slipping
 one leave different durable evidence.
+
+A busy marker is a mid-turn only while it is fresh: the marker names no time of
+its own, so its age separates a working mind from a marker a failed wake left
+behind, and a marker older than the live window reads RED as a wedged resident.
+A marker's age that cannot be read, or that lies in the future, stays UNKNOWN. A
+marker left by a pane that does not run the native loop is not a native wedge.
+A resident that recorded a blocked state reads RED with that state's own reason,
+and the blocked state is read before the pane's readiness, because a pane that
+would accept a prompt does not make a held wake progress. The readiness probe
+itself refuses a pane whose role recorded a blocked state, so the hold stops the
+delivery rather than only naming it.
 
 `inference_optiona.py` decodes the `omp --mode json --print` stdout of a one-shot
 provider-only turn: a JSONL event stream in which the last assistant `message_end`
