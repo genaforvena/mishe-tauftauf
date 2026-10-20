@@ -655,23 +655,56 @@ def read_blocked_state(home, role: str) -> tuple[dict | None, str | None]:
     return record, None
 
 
+def _restore_claimed(claimed: Path, path: Path) -> None:
+    """Put a claimed record back where it was, when the path is free.
+
+    A hard link refuses an existing destination, so a record published in the
+    meantime keeps the path and the claimed copy stays as the evidence.
+    """
+    try:
+        os.link(claimed, path)
+    except OSError:
+        return
+    try:
+        claimed.unlink()
+    except OSError:
+        pass
+
+
 def clear_blocked_state(home, role: str, wake=None) -> bool:
     """Remove one role's blocked-state record; True when one was removed.
 
     When ``wake`` is given, only a record that names that wake is removed: a
     hold belongs to the wake it names, and another wake's hold must survive.
-    A record that cannot be decoded names no wake and holds nothing, so it is
-    removed rather than left to refuse every delivery.
+    The record is claimed by an atomic rename and read at its claimed name, so
+    a record published in the meantime is never the one removed. A record that
+    cannot be decoded names no wake: it is kept, because it is the only
+    evidence that a hold exists, and repairing it is an authoritative act.
     """
     path = blocked_state_path(home, role)
-    record, reason = read_blocked_state(home, role)
-    if record is None and reason is None:
-        return False
-    if record is not None and wake is not None and record.get('wake') != wake:
+    claimed = path.with_name(f'.{path.name}.claimed-{os.getpid()}')
+    try:
+        os.rename(path, claimed)
+    except OSError:
         return False
     try:
-        path.unlink()
-    except (FileNotFoundError, OSError):
+        data = claimed.read_bytes()
+    except OSError:
+        data = b''
+    try:
+        value = json.loads(data.decode('utf-8'))
+    except (UnicodeDecodeError, ValueError):
+        value = None
+    if not isinstance(value, dict):
+        _restore_claimed(claimed, path)
+        return False
+    if wake is not None and value.get('wake') != wake:
+        _restore_claimed(claimed, path)
+        return False
+    try:
+        claimed.unlink()
+    except OSError:
+        _restore_claimed(claimed, path)
         return False
     return True
 
