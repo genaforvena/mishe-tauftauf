@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from mishe_tauftauf import native_recovery as recovery
+from mishe_tauftauf.feed import Feed
 
 NETWORK = {'kind': 'network', 'message': 'ECONNRESET: The socket connection was closed unexpectedly.'}
 REJECTED = {'kind': 'status', 'status': 400}
@@ -793,3 +794,134 @@ def test_the_owner_can_release_the_hold_on_one_wake(tmp_path):
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)['released'] is True
     assert recovery.read_blocked_state(tmp_path, 'docs')[0] is None
+
+
+def _pending(home, role='docs'):
+    """Make one wake pending for the role; return the plant's number for it."""
+    (home / 'journals').mkdir(parents=True, exist_ok=True)
+    entry = Feed(home).append('seed', f'seed wake {role} observation=1\nOwed work.\n')
+    return entry.sequence
+
+
+def test_the_busy_marker_path_is_the_one_the_readiness_probe_reads():
+    """The literal path, not the helper's own: the probe reads this file."""
+    assert recovery.busy_path('/site', 'docs') == Path('/site/journals/docs-native.busy')
+
+
+def test_an_attempt_no_plant_record_names_is_reported(tmp_path):
+    """Neither marker nor hold: the attempt is there and nothing names it."""
+    wake = _pending(tmp_path)
+    directory = attempt(tmp_path, name=str(wake))
+    unseen = recovery.unseen_attempts(tmp_path, 'docs', tmp_path / 'wakes', wake)
+    assert [item.attempt for item in unseen] == [directory]
+    assert unseen[0].verdict == recovery.RETRYABLE
+    assert unseen[0].to_record()['attempt'] == str(directory)
+
+
+def test_the_busy_marker_and_the_hold_each_name_the_attempt(tmp_path):
+    """The guard refuses on either record, so neither attempt is unnamed."""
+    wake = _pending(tmp_path)
+    attempt(tmp_path, name=str(wake))
+    marker = recovery.busy_path(tmp_path, 'docs')
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(str(wake))
+    assert recovery.unseen_attempts(tmp_path, 'docs', tmp_path / 'wakes', wake) == []
+    marker.unlink()
+    recovery.write_blocked_state(tmp_path, 'docs', wake, verdict=recovery.RECONCILE,
+                                 reason='an earlier attempt dispatched an effect')
+    assert recovery.unseen_attempts(tmp_path, 'docs', tmp_path / 'wakes', wake) == []
+
+
+def test_a_hold_that_cannot_be_decoded_leaves_the_plant_unknown_not_ready(tmp_path):
+    """Broken monitoring is UNKNOWN; it is not an attempt nothing names."""
+    wake = _pending(tmp_path)
+    attempt(tmp_path, name=str(wake))
+    path = recovery.blocked_state_path(tmp_path, 'docs')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{not json', encoding='utf-8')
+    assert recovery.unseen_attempts(tmp_path, 'docs', tmp_path / 'wakes', wake) == []
+
+
+def test_a_settled_attempt_is_not_unnamed(tmp_path):
+    wake = _pending(tmp_path)
+    attempt(tmp_path, name=str(wake), settled=True, status='complete')
+    assert recovery.unseen_attempts(tmp_path, 'docs', tmp_path / 'wakes', wake) == []
+
+
+def test_an_attempt_of_another_wake_is_not_unnamed(tmp_path):
+    wake = _pending(tmp_path)
+    attempt(tmp_path, name=str(wake))
+    assert recovery.unseen_attempts(tmp_path, 'docs', tmp_path / 'wakes', wake + 1) == []
+
+
+def test_a_wake_that_is_not_pending_is_not_reported(tmp_path):
+    """A settled wake is not owed any more, so no delivery can land in it."""
+    wake = _pending(tmp_path)
+    attempt(tmp_path, name=str(wake))
+    Feed(tmp_path).append('seed', f'seed yield docs wake={wake}\n'
+                                  'Turn settled (changed); wall and handoff at walls/docs.md. '
+                                  'This is a transport receipt, not proof of patch acceptance.\n')
+    assert recovery.pending_wake(tmp_path, 'docs') is None
+    assert recovery.unseen_attempts(tmp_path, 'docs', tmp_path / 'wakes', wake) == []
+
+
+def test_an_attempt_directory_without_written_bytes_is_unnamed(tmp_path):
+    """The state the recovery path leaves when it dies before its first record."""
+    wake = _pending(tmp_path)
+    directory = tmp_path / 'wakes' / f'{wake}-recovery-1'
+    directory.mkdir(parents=True)
+    unseen = recovery.unseen_attempts(tmp_path, 'docs', tmp_path / 'wakes', wake)
+    assert [item.attempt for item in unseen] == [directory]
+    assert unseen[0].verdict == recovery.UNKNOWN
+
+
+def test_an_attempt_under_a_name_this_module_does_not_know_is_unnamed(tmp_path):
+    """The resident's boundary is the wake number, so its attempt is this wake's."""
+    wake = _pending(tmp_path)
+    directory = tmp_path / 'wakes' / f'{wake}-crash'
+    directory.mkdir(parents=True)
+    unseen = recovery.unseen_attempts(tmp_path, 'docs', tmp_path / 'wakes', wake)
+    assert [item.attempt for item in unseen] == [directory]
+
+
+def test_the_cli_reports_an_unnamed_attempt_and_exits_nonzero(tmp_path):
+    wake = _pending(tmp_path)
+    attempt(tmp_path, name=str(wake))
+    result = _cli('--home', str(tmp_path), '--role', 'docs', '--wake', str(wake),
+                  '--attempts', str(tmp_path / 'wakes'), '--unseen-attempt')
+    assert result.returncode == 1, result.stdout
+    report = json.loads(result.stdout)
+    assert report['unseen'][0]['wake'] == wake
+
+
+def test_the_cli_reports_no_unnamed_attempt_when_the_plant_can_see_the_wake(tmp_path):
+    wake = _pending(tmp_path)
+    attempt(tmp_path, name=str(wake))
+    recovery.write_blocked_state(tmp_path, 'docs', wake, verdict=recovery.RECONCILE,
+                                 reason='an earlier attempt dispatched an effect')
+    result = _cli('--home', str(tmp_path), '--role', 'docs', '--wake', str(wake),
+                  '--attempts', str(tmp_path / 'wakes'), '--unseen-attempt')
+    assert result.returncode == 0, result.stdout
+    assert json.loads(result.stdout)['unseen'] == []
+
+
+def test_the_cli_refuses_two_actions_at_once(tmp_path):
+    """A report and a repair are different acts; the command must not choose."""
+    wake = _pending(tmp_path)
+    attempt(tmp_path, name=str(wake))
+    result = _cli('--home', str(tmp_path), '--role', 'docs', '--wake', str(wake),
+                  '--attempts', str(tmp_path / 'wakes'), '--unseen-attempt', '--apply',
+                  '--busy', str(tmp_path / 'docs-native.busy'))
+    assert result.returncode == 2, result.stdout
+    assert not (tmp_path / 'docs-native.busy').exists()
+
+
+def test_the_cli_reports_an_unreadable_plant_state_rather_than_a_clean_reading(tmp_path):
+    """A tape it cannot read is UNKNOWN, not an empty report."""
+    wake = _pending(tmp_path)
+    attempt(tmp_path, name=str(wake))
+    Feed(tmp_path).append('seed', 'seed yield docs wake=\nmalformed receipt\n')
+    result = _cli('--home', str(tmp_path), '--role', 'docs', '--wake', str(wake),
+                  '--attempts', str(tmp_path / 'wakes'), '--unseen-attempt')
+    assert result.returncode == 2, result.stdout
+    assert 'unreadable' in json.loads(result.stdout)
