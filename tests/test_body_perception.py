@@ -478,3 +478,76 @@ def test_dense_baseline_stays_out_of_the_render_time_body_rows() -> None:
     freshness gate; adding it would filter the row out of the scan rows and
     append nothing, dropping the reading from the pane silently."""
     assert body_perception.DENSE_SENSE_ID not in body_perception.BODY_SENSE_IDS
+
+
+def _dense_queue(tmp_path: Path, rows: list[str]) -> tuple[Path, float]:
+    """A core site linked to an Android site carrying one dense queue."""
+    core = tmp_path / "core"
+    android = tmp_path / "android-body"
+    (core / "health").mkdir(parents=True)
+    (core / "health" / "linked-sites.json").write_text(json.dumps({
+        "version": 1,
+        "sites": [{"home": str(android), "session": "android-body", "sha": "a" * 40}],
+    }), encoding="utf-8")
+    queue = android / "body" / "queues" / body_perception.DENSE_QUEUE_NAME
+    queue.parent.mkdir(parents=True)
+    queue.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    return core, 1_800_000_000.0
+
+
+def test_dense_baseline_motion_coverage_counts_rows_carrying_values(
+        tmp_path: Path) -> None:
+    """An acceleration row without axis values is a delivery gap, not motion.
+
+    Counting those rows as coverage made the reported rate describe the poll
+    cadence, so a stream delivering only ``unavailable`` rows still read as a
+    healthy fraction and hid the absent motion channel.
+    """
+    now = 1_800_000_000.0
+    rows: list[str] = []
+    for index in range(20):
+        epoch = int(now) - 300 + index * 5
+        rows.append(f"{index} {epoch} light lux=5.0 accuracy=3 age_ms=10")
+        rows.append(f"{index} {epoch} acceleration unavailable reason=stale")
+        rows.append(f"{index} {epoch} battery level=0.5 charging=true")
+        rows.append(f"{index} {epoch} wifi_link_rssi_dbm unavailable reason=disconnected")
+    epoch = int(now) - 100
+    rows.append(f"live {epoch} light lux=6.0 accuracy=3 age_ms=10")
+    rows.append(f"live {epoch} acceleration x=0.1 y=0.2 z=9.9 accuracy=3 age_ms=10")
+    rows.append(f"live {epoch} battery level=0.5 charging=true")
+    rows.append(f"live {epoch} wifi_link_rssi_dbm unavailable reason=disconnected")
+    core, now = _dense_queue(tmp_path, rows)
+
+    row = body_perception.read_redmi10_dense_baseline(core, now=now + 1)
+
+    assert row["accel_count"] == 21
+    assert row["motion_count"] == 1
+    # 21 of 84 rows are acceleration rows: the delivery rate.
+    assert row["accel_ratio"] == pytest.approx(21 / 84)
+    # One of 84 rows carries motion values: the observation rate.
+    assert row["motion_ratio"] == pytest.approx(1 / 84)
+    assert "motion=1%" in row["sample"]
+    assert "motion-coverage=1.2%" in row["details"]
+    assert "delivery-coverage=25.0%" in row["details"]
+
+
+def test_dense_baseline_without_any_motion_values_reports_zero_motion_coverage(
+        tmp_path: Path) -> None:
+    """A stream that delivers no motion rows at all must not read as motion."""
+    now = 1_800_000_000.0
+    rows: list[str] = []
+    for index in range(20):
+        epoch = int(now) - 100 + index * 5
+        rows.append(f"{index} {epoch} light lux=5.0 accuracy=3 age_ms=10")
+        rows.append(f"{index} {epoch} acceleration unavailable reason=stale")
+        rows.append(f"{index} {epoch} battery level=0.5 charging=true")
+        rows.append(f"{index} {epoch} wifi_link_rssi_dbm unavailable reason=disconnected")
+    core, now = _dense_queue(tmp_path, rows)
+
+    row = body_perception.read_redmi10_dense_baseline(core, now=now + 1)
+
+    assert row["motion_count"] == 0
+    assert row["motion_ratio"] == 0.0
+    assert "motion=0%" in row["sample"]
+    # The delivery rate stays visible: rows arrived, but none carried motion.
+    assert row["accel_ratio"] == pytest.approx(20 / 80)
