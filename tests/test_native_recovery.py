@@ -673,3 +673,49 @@ def test_settling_a_wake_clears_its_hold(tmp_path):
     wall.settle(tmp_path, 'genome', wake.sequence, 'The wake is done.', False, 'changed')
     record, reason = recovery.read_blocked_state(tmp_path, 'genome')
     assert record is None and reason is None
+
+
+def test_attempt_summary_rejects_a_malformed_loop_journal(tmp_path):
+    """A corrupt loop journal must not read as a clean attempt."""
+    directory = attempt(tmp_path)
+    (directory / 'journal.jsonl').write_text('{')
+    summary, error = recovery.attempt_summary(directory)
+    assert summary == {} and error and 'journal.jsonl' in error
+    assert recovery.classify_attempt(directory).verdict == recovery.UNKNOWN
+
+
+def test_clearing_a_hold_keeps_another_wakes_hold(tmp_path):
+    recovery.write_blocked_state(tmp_path, 'genome', 7, verdict=recovery.RECONCILE, reason='held')
+    assert recovery.clear_blocked_state(tmp_path, 'genome', 6) is False
+    record, reason = recovery.read_blocked_state(tmp_path, 'genome')
+    assert record is not None and record['wake'] == 7
+    assert recovery.clear_blocked_state(tmp_path, 'genome', 7) is True
+
+
+def test_settling_a_wake_again_clears_a_hold_it_could_not_clear_before(tmp_path, monkeypatch):
+    """The idempotent settlement path must clean up too."""
+    import json as _json
+    from datetime import datetime, timedelta, timezone
+    from mishe_tauftauf import wall
+    from mishe_tauftauf.feed import Feed
+    (tmp_path / 'coordination-mode.json').write_text(_json.dumps(
+        {'mode': 'wall', 'until': (datetime.now(timezone.utc) + timedelta(hours=10)).isoformat()}))
+    wake = Feed(tmp_path).append('seed', 'seed wake genome observation=1\nRead your wall.')
+    recovery.write_blocked_state(tmp_path, 'genome', wake.sequence, verdict=recovery.RECONCILE,
+                                reason='an earlier attempt dispatched an effect')
+    real_unlink = Path.unlink
+    refused = []
+
+    def refuse_once(self, *args, **kwargs):
+        if self.name == 'genome-native.blocked.json' and not refused:
+            refused.append(True)
+            raise OSError('cannot remove')
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'unlink', refuse_once)
+    wall.settle(tmp_path, 'genome', wake.sequence, 'The wake is done.', False, 'changed')
+    assert recovery.read_blocked_state(tmp_path, 'genome')[0] is not None
+    # The retry takes the idempotent path and must still clean up.
+    result = wall.settle(tmp_path, 'genome', wake.sequence, 'The wake is done.', False, 'changed')
+    assert 'already settled' in result
+    assert recovery.read_blocked_state(tmp_path, 'genome')[0] is None

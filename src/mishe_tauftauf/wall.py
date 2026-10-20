@@ -621,6 +621,12 @@ def settle(home: Path, role: str, wake: int, text: str, continuation: bool, resu
                 control = decode_lifecycle(receipt)
                 if control.continue_work != continuation or control.result != result:
                     raise ValueError("settled turn result or continuation differs")
+                # The wake is settled, so a hold that names it is not held any
+                # more. The idempotent path clears it too: a settlement whose
+                # first attempt could not remove the record must not leave it
+                # to refuse every later delivery.
+                from .native_recovery import clear_blocked_state
+                clear_blocked_state(home, role, wake)
                 return f"yield seed {role} wake {wake} already settled"
             raise ValueError(f"wake {wake} is not pending for {role}")
         # Capture the anchor stat before any write so a restage mid-settle is
@@ -644,9 +650,10 @@ def settle(home: Path, role: str, wake: int, text: str, continuation: bool, resu
                           "This is a transport receipt, not proof of patch acceptance.")
         # A wake that is now settled is not held any more. Its hold record would
         # otherwise refuse the next wake's delivery, stranding the role behind a
-        # wake that is already done.
+        # wake that is already done. Only a record that names this wake is
+        # removed: another wake's hold belongs to that wake.
         from .native_recovery import clear_blocked_state
-        clear_blocked_state(home, role)
+        clear_blocked_state(home, role, wake)
         if _consume_anchor and source_path is not None:
             anchor = Path(source_path)
             if _source_anchor_stat is not None:

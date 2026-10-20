@@ -139,7 +139,9 @@ One further record is written and read here: the blocked state at
 `journals/<role>-native.blocked.json`, which names the wake a resident cannot
 start and the classified reason. A record that cannot be decoded is an explicit
 problem value, so broken monitoring stays visible instead of reading as an
-absent failure.
+absent failure. A hold is removed by the event that ends it — the settlement
+of the wake it names, or that resident's own recovery of it — and only a record
+naming that wake is removed, so another wake's hold survives.
 
 `observations.py` also decodes one volatile token in the rendered discover and
 senses panes: the displayed age of an unverified reading (`age=19m17s`) grows
