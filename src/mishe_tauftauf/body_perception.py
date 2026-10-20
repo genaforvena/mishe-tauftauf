@@ -839,3 +839,147 @@ def read_redmi10_peer_delivery(home: Path, now: float | None = None,
             "cursor_advance_epoch_s": advance_at,
             "consumer_error": consumer_error,
             "details": details}
+
+
+#: The consumer's per-body channels that carry a body's own state. A body is
+#: observable through these channels; the multi-body coverage reading asks
+#: which of them are current for each body.
+NODE_STATE_CHANNELS = ("battery", "light", "acceleration")
+#: The linked site's local spool summary, one file per body, published by the
+#: site's own reader. A body whose HTTP delivery is frozen by design can still
+#: be read here, so the two lanes are reported apart.
+SPOOL_SUMMARY_PREFIX = "spool-summary-"
+SPOOL_SUMMARY_SUFFIX = ".json"
+
+
+def read_node_consumer_state(home: Path, node: str,
+                             now: float | None = None) -> dict[str, object]:
+    """Decode one body's retained consumer state into plain values.
+
+    The linked Android Body consumer keeps one state file per body. This
+    reader names what that file can support: whether the consumer is still
+    polling, and for each channel whether the last delivered row is fresh,
+    with the phone-sample time and the consumer-receipt time kept apart. It
+    never repairs a malformed state and never infers human movement: an
+    absent, unreadable or invalid state is named, so a reader can tell
+    "this body is not observable" from "the reader could not look".
+    """
+    current = time.time() if now is None else _finite_number(now)
+    result: dict[str, object] = {"node": node, "lane": "delivery",
+                                  "available": False, "channels": {}}
+    if current is None:
+        result["reason"] = "reader-clock-invalid"
+        return result
+    android_home, error = _linked_android_home(home)
+    if error is not None or android_home is None:
+        result["reason"] = error or "linked-android-body-home-unknown"
+        return result
+    path = android_home / "body" / "perception" / f"{node}.json"
+    state, error = _read_json(path, MAX_STATE_BYTES)
+    if error is not None or state is None:
+        result["reason"] = f"consumer-state-{error or 'unavailable'}"
+        return result
+    cursor = state.get("cursor")
+    session = state.get("session")
+    latest = state.get("latest")
+    source = state.get("source")
+    if (type(state.get("version")) is not int or state.get("version") != 1
+            or state.get("node") != node or not isinstance(source, str)
+            or type(cursor) is not int or not 0 <= cursor <= MAX_SEQUENCE
+            or not isinstance(session, str) or not session.strip()
+            or not isinstance(latest, dict)):
+        result["reason"] = "consumer-state-invalid"
+        return result
+    if type(state.get("has_more")) is not bool or state.get("has_more"):
+        result["reason"] = "consumer-backlog-or-state-invalid"
+        return result
+    poll_at = _finite_number(state.get("poll_at"))
+    if poll_at is None or current - poll_at < -5:
+        result["reason"] = "consumer-poll-clock-unknown"
+        return result
+    if current - poll_at > FRESH_SECONDS:
+        result["reason"] = "consumer-poll-stale"
+        return result
+    if state.get("error") is not None:
+        result["reason"] = "consumer-poll-error"
+        return result
+    channels: dict[str, dict[str, object]] = {}
+    for kind in NODE_STATE_CHANNELS:
+        status, _fields, row = _row_status(latest.get(kind), kind, current)
+        channels[kind] = {
+            "status": status,
+            "sequence": row.get("sequence") if row is not None else None,
+            "phone_sample_epoch_s": row.get("collected") if row is not None else None,
+            "consumer_receipt_epoch_s": row.get("received") if row is not None else None,
+        }
+    fresh = [entry["status"] for entry in channels.values()]
+    result.update({
+        "available": True,
+        "reason": ("consumer-current" if all(status == "fresh-clock-conditional"
+                                             for status in fresh)
+                   else "channel-not-current"),
+        "source": source,
+        "session": session,
+        "cursor": cursor,
+        "poll_age_seconds": current - poll_at,
+        "consumer_error": state.get("error"),
+        "channels": channels,
+    })
+    return result
+
+
+def read_node_spool_summary(home: Path, node: str,
+                            now: float | None = None) -> dict[str, object]:
+    """Decode the linked site's local spool summary for one body, if published.
+
+    The site's own reader publishes a per-body spool summary for the bodies it
+    reads over the local spool. That lane is independent of the HTTP delivery
+    channel: a body whose HTTP delivery is frozen by design can still be
+    observed here. A body with no published summary is reported as an absent
+    lane, not as a failed read, because the summary is not published for every
+    body.
+    """
+    current = time.time() if now is None else _finite_number(now)
+    result: dict[str, object] = {"node": node, "lane": "spool", "available": False}
+    if current is None:
+        result["reason"] = "reader-clock-invalid"
+        return result
+    android_home, error = _linked_android_home(home)
+    if error is not None or android_home is None:
+        result["reason"] = error or "linked-android-body-home-unknown"
+        return result
+    path = (android_home / "body"
+            / f"{SPOOL_SUMMARY_PREFIX}{node}{SPOOL_SUMMARY_SUFFIX}")
+    state, error = _read_json(path, MAX_STATE_BYTES)
+    if error is not None or state is None:
+        result["reason"] = ("spool-summary-absent" if error == "missing"
+                            else f"spool-summary-{error or 'unavailable'}")
+        return result
+    if state.get("node") != node or not isinstance(state.get("counts"), dict):
+        result["reason"] = "spool-summary-invalid"
+        return result
+    newest = _finite_number(state.get("newest_row_epoch_s"))
+    observed = _finite_number(state.get("observed_at_epoch_s"))
+    oldest = _finite_number(state.get("oldest_row_epoch_s"))
+    if newest is None:
+        result["reason"] = "spool-summary-no-rows"
+        return result
+    if newest > current + 5:
+        # A row from the future is not evidence about now, and an unbounded
+        # future age would sit inside any freshness gate forever.
+        result["reason"] = "spool-summary-clock-future"
+        return result
+    scan_state = state.get("scan_state")
+    result.update({
+        "available": True,
+        "reason": "spool-summary-current",
+        "newest_row_epoch_s": newest,
+        "oldest_row_epoch_s": oldest,
+        "observed_at_epoch_s": observed,
+        "age_seconds": current - newest,
+        "summary_age_seconds": (current - observed) if observed is not None else None,
+        "method": state.get("method"),
+        "scan_state": scan_state if isinstance(scan_state, dict) else None,
+        "counts": state.get("counts"),
+    })
+    return result

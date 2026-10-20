@@ -478,6 +478,10 @@ def test_senses_drift_only_pane_names_no_unchecked_read(
                                        "reason": "current"})
     monkeypatch.setattr("mishe_tauftauf.seed_culture_views._space_clock_domains_read",
                         lambda _home: [])
+    monkeypatch.setattr("mishe_tauftauf.seed_culture_views.read_multibody_coverage",
+                        lambda _home, *_a, **_k: {"id": "sense.body.multibody.coverage",
+                                                  "kind": "read", "state": "verified",
+                                                  "sample": "joint=UNKNOWN(bodies=2)"})
     _write_scan(home, [
         {"id": "sense.ledger.dv-binding", "state": "drift", "kind": "read",
          "sample": "unbound=applied records=102 bool_dv=57"},
