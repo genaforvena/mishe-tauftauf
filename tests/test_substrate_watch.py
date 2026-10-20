@@ -330,22 +330,29 @@ def test_valid_json_snapshot_damage_is_not_treated_as_observed_change(site):
 
 def test_known_checkout_notices_survive_dead_and_uninspectable_runtime_consumers(site, monkeypatch):
     root, home = site
-    units = ["live.service", "dead-docs.service", "no-environment.service"]
+    units = ["live.service", "dead-docs.service", "no-import-roots.service"]
     (home / "health/services.json").write_text(json.dumps(units))
     monkeypatch.setattr(watch.wall_view, "_service_block",
                         lambda home: ([], {unit: ["/selected"] for unit in units}, "RED"))
     monkeypatch.setattr(watch, "_service_pids",
-                        lambda units: {"live.service": 101, "dead-docs.service": None, "no-environment.service": 102})
-    monkeypatch.setattr(watch.wall_view, "_live_import_roots", lambda pid: ["/actual-live"] if pid == 101 else [])
+                        lambda units: {"live.service": 101, "dead-docs.service": None,
+                                       "no-import-roots.service": 102})
+    # 101 names a root; 102 is readable and names no PYTHONPATH; a pid whose
+    # /proc entry cannot be read answers None and stays UNKNOWN.
+    monkeypatch.setattr(watch.wall_view, "_live_import_roots",
+                        lambda pid: ["/actual-live"] if pid == 101 else ([] if pid == 102 else None))
     baseline = watch.check(home, now=NOW)
     assert baseline["status"] == "UNKNOWN"
     assert baseline["surface_states"] == {"checkout": "KNOWN", "runtime": "UNKNOWN"}
     runtime = baseline["runtime"]
-    assert runtime["service_roots"] == {"live.service": ["/actual-live"]}
+    # A unit that declares no import root is a known empty observation: it
+    # neither fakes drift nor holds the whole runtime surface UNKNOWN.
+    assert runtime["service_roots"] == {"live.service": ["/actual-live"], "no-import-roots.service": []}
     assert runtime["service_states"] == {"live.service": "KNOWN", "dead-docs.service": "UNKNOWN",
-                                         "no-environment.service": "UNKNOWN"}
+                                         "no-import-roots.service": "KNOWN"}
+    assert runtime["services_state"] == "UNKNOWN"
     assert any("dead-docs.service" in problem for problem in runtime["problems"])
-    assert any("no-environment.service" in problem for problem in runtime["problems"])
+    assert not any("no-import-roots.service" in problem for problem in runtime["problems"])
     assert messages(home, "genome") == []
     (root / "docs/guide.md").write_text("Integration must see this edit\n")
     changed = watch.check(home, now=NOW)
@@ -367,6 +374,77 @@ def test_known_checkout_notices_survive_dead_and_uninspectable_runtime_consumers
     assert second["event_id"] != changed["event_id"]
     assert len(messages(home, "genome")) == 2
     assert len(messages(home, "witness")) == 2
+
+
+def test_unreadable_service_environment_is_unknown_not_an_empty_root(site, monkeypatch):
+    root, home = site
+    units = ["live.service", "unreadable.service"]
+    (home / "health/services.json").write_text(json.dumps(units))
+    monkeypatch.setattr(watch.wall_view, "_service_block",
+                        lambda home: ([], {unit: ["/selected"] for unit in units}, "RED"))
+    monkeypatch.setattr(watch, "_service_pids", lambda units: {"live.service": 101, "unreadable.service": 102})
+    monkeypatch.setattr(watch.wall_view, "_live_import_roots",
+                        lambda pid: ["/actual-live"] if pid == 101 else None)
+    runtime = watch._runtime(home)
+    assert runtime["service_roots"] == {"live.service": ["/actual-live"]}
+    assert runtime["service_states"] == {"live.service": "KNOWN", "unreadable.service": "UNKNOWN"}
+    assert runtime["services_state"] == "UNKNOWN"
+    assert "live service import roots unavailable: unreadable.service" in runtime["problems"]
+
+
+def test_renderer_set_is_the_declared_windows_not_stale_top_pains_entries(site, monkeypatch):
+    root, home = site
+    (home / "health/windows.json").write_text(json.dumps(["live", "absent"]))
+    (home / "top-pains" / "live").write_text("#!/bin/sh\n")
+    (home / "top-pains" / "absent").write_text("#!/bin/sh\n")
+    (home / "top-pains" / "undeclared").write_text("#!/bin/sh\n")
+    monkeypatch.setattr("mishe_tauftauf.seed.recorded_session", lambda home: "session")
+    monkeypatch.setattr(watch.wall_view, "_renderer_pids", lambda session: {"live": 101})
+    monkeypatch.setattr(watch.wall_view, "_live_import_roots",
+                        lambda pid: ["/selected"] if pid == 101 else None)
+    runtime = watch._runtime(home)
+    # A top-pains entry with no declared window is a stale surface, not a
+    # renderer the observer cannot read; a declared window with no live pane
+    # cannot be verified and stays UNKNOWN under its own name.
+    assert runtime["renderer_states"] == {"live": "KNOWN", "absent": "UNKNOWN"}
+    assert runtime["renderer_roots"] == {"live": ["/selected"]}
+    assert runtime["renderers_state"] == "UNKNOWN"
+    assert "renderer not running: absent" in runtime["problems"]
+    assert not any("undeclared" in problem for problem in runtime["problems"])
+
+
+def test_declared_renderer_windows_that_all_run_are_known(site, monkeypatch):
+    root, home = site
+    (home / "health/windows.json").write_text(json.dumps(["live"]))
+    (home / "top-pains" / "live").write_text("#!/bin/sh\n")
+    (home / "top-pains" / "undeclared").write_text("#!/bin/sh\n")
+    monkeypatch.setattr("mishe_tauftauf.seed.recorded_session", lambda home: "session")
+    monkeypatch.setattr(watch.wall_view, "_renderer_pids", lambda session: {"live": 101})
+    monkeypatch.setattr(watch.wall_view, "_live_import_roots",
+                        lambda pid: ["/selected"] if pid == 101 else None)
+    runtime = watch._runtime(home)
+    assert runtime["renderer_states"] == {"live": "KNOWN"}
+    assert runtime["renderer_roots"] == {"live": ["/selected"]}
+    assert runtime["renderers_state"] == "KNOWN"
+    assert runtime["problems"] == []
+
+
+def test_empty_declared_window_manifest_is_unknown_not_vacuous_known(site):
+    root, home = site
+    (home / "health/windows.json").write_text(json.dumps([]))
+    (home / "top-pains" / "live").write_text("#!/bin/sh\n")
+    runtime = watch._runtime(home)
+    assert runtime["renderer_states"] == {}
+    assert runtime["renderers_state"] == "UNKNOWN"
+    assert "no declared renderer window has a top-pane script" in runtime["problems"]
+
+
+def test_malformed_window_manifest_is_unknown(site):
+    root, home = site
+    (home / "health/windows.json").write_text("{not json")
+    runtime = watch._runtime(home)
+    assert runtime["renderers_state"] == "UNKNOWN"
+    assert "renderer window manifest unreadable" in runtime["problems"]
 
 
 def test_unsupported_nested_repository_is_named_without_discarding_known_files(site):
