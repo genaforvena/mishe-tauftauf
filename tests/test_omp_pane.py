@@ -80,6 +80,27 @@ def test_wait_pattern_matches_allowlisted_polls_only() -> None:
     assert omp_pane.wait_pattern("$ sleep 150") == "sleep"
     assert omp_pane.wait_pattern("π > INSERT >") is None
 
+def test_wait_pattern_rejects_prose_mentions() -> None:
+    assert omp_pane.wait_pattern("git commit -m 'reduce sleep in the CI follower'") is None
+    assert omp_pane.wait_pattern("I am waiting on the reviewer follow-up") is None
+
+
+def test_wait_pattern_rejects_prose_that_starts_with_a_command_word() -> None:
+    # Line-start prose has no prompt and no command argument boundary, so it
+    # must not excuse a still pane as a known wait.
+    assert omp_pane.wait_pattern("sleep 150 is too long for CI") is None
+    assert omp_pane.wait_pattern("tail -foo is not a wait") is None
+    assert omp_pane.wait_pattern("gh run watch 38968299950 is yesterday's run") is None
+
+
+def test_wait_pattern_matches_command_shape() -> None:
+    assert omp_pane.wait_pattern("$ sleep 150") == "sleep"
+    assert omp_pane.wait_pattern("$ tail -f /var/log/syslog") == "tail -f"
+    assert omp_pane.wait_pattern("$ tail -f") == "tail -f"
+    assert omp_pane.wait_pattern("$ gh run watch 38968299950") == "gh run watch"
+    assert omp_pane.wait_pattern("$ gh run view 38242368632") == "gh run view"
+    assert omp_pane.wait_pattern("Waiting for CI poll result") == "Waiting for CI poll result"
+
 
 def test_ci_run_id_extracts_the_polled_run() -> None:
     assert omp_pane.ci_run_id("$ gh run view 38242368632 ⠋") == "38242368632"

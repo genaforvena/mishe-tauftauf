@@ -97,15 +97,25 @@ def normalize_frame(text: str) -> str:
     return "\n".join(line.rstrip() for line in normalized.splitlines())
 
 
-_WAIT_COMMANDS = (
-    "gh run watch",
-    "gh run view",
-    "sleep",
-    "tail -f",
-    "Waiting for CI poll result",
-    "waiting on",
+_WAIT_COMMAND_RE = re.compile(
+    r"^[\$>] (?:sleep\s+\d+|tail\s+-f(?:\s+\S+)?|"
+    r"gh run (?:watch|view)\s+\d{6,}(?:\s+--[\w-]+)*)[ \t]*$",
+    re.MULTILINE,
 )
-"""Pane-text spellings of a tool-blocked wait the sense may excuse."""
+"""A shell command shape the sense may excuse, with its own prompt.
+
+Bare spellings like ``sleep`` or ``waiting on`` match prose (e.g. a commit
+subject ``reduce sleep in the CI follower``), so a still frame reads
+``watch-wait`` on prose alone. The shell commands therefore need the shape a
+typed command has: a prompt, the command, its own argument boundary and the
+end of the line — ``$ sleep 150``, ``$ tail -f /var/log/syslog``,
+``$ gh run watch 38968299950``. Line-start prose cannot supply the prompt,
+and a command's argument boundary keeps ``tail -foo`` from reading as
+``tail -f``.
+"""
+
+_WAIT_STATUS_RE = re.compile(r"^Waiting for CI poll result[ \t]*$", re.MULTILINE)
+"""The omp status line that names its own wait, without a shell prompt."""
 
 _CI_RUN_RE = re.compile("gh run (?:watch|view)\\s+(\\d{6,})")
 """A GitHub Actions run id named beside a poll command in pane text."""
@@ -116,11 +126,23 @@ def wait_pattern(text: str) -> str | None:
 
     A miss reads ``None`` — the consumer holds UNKNOWN/SUSPECT, never clean —
     so a TUI rewording or a new long-poll shape cannot silently pass as idle.
+    The match is anchored to command shape: a bare ``sleep`` or ``waiting on``
+    in prose does not excuse a wait, and neither does prose that merely
+    starts with a command word.
     """
     normalized = normalize_frame(text)
-    for spelling in _WAIT_COMMANDS:
-        if spelling in normalized:
-            return spelling
+    match = _WAIT_COMMAND_RE.search(normalized)
+    if match is not None:
+        matched = match.group(0)
+        if matched.lstrip("$> ").startswith("sleep"):
+            return "sleep"
+        if "tail -f" in matched:
+            return "tail -f"
+        if "gh run watch" in matched:
+            return "gh run watch"
+        return "gh run view"
+    if _WAIT_STATUS_RE.search(normalized):
+        return "Waiting for CI poll result"
     return None
 
 

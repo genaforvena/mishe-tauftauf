@@ -64,6 +64,21 @@ class ProcessTableTests(unittest.TestCase):
             proc_table.pane_records("mishe-tauftauf|senses\nmishe-tauftauf|senses|x\n\n"),
             [])
 
+    def test_mind_pane_records_returns_only_pane_1(self):
+        self.assertEqual(
+            proc_table.mind_pane_records(
+                "mishe-tauftauf|senses|4242|1\n"
+                "mishe-tauftauf|senses|4243|2\n"
+                "android-body|senses|4244|1\n"),
+            [("mishe-tauftauf", "senses", 4242), ("android-body", "senses", 4244)])
+
+    def test_mind_pane_records_skip_junk(self):
+        self.assertEqual(
+            proc_table.mind_pane_records("mishe-tauftauf|senses|4242\n"
+                                         "mishe-tauftauf|senses|x|1\n"
+                                         "mishe-tauftauf|senses|4243|2\n\n"),
+            [])
+
     def test_pane_commands_decode_session_pid_command_and_cwd(self):
         self.assertEqual(
             proc_table.pane_commands(
@@ -228,6 +243,21 @@ class ProcessTableTests(unittest.TestCase):
         self.assertFalse(proc_table.belongs_to_session(
             session + "-session-9F3A2B1C4D5E6F708192A3B4C5D6E7F80.service", session))  # uppercase
 
+
+    def test_git_reflog_entries_pair_each_sha_with_its_message(self):
+        raw = ("a" * 40 + " reset: moving to HEAD~1\n"
+               + "b" * 40 + " commit: senses: stop reporting checked drift rows\n")
+        self.assertEqual(proc_table.git_reflog_entries(raw),
+                         [("a" * 40, "reset: moving to HEAD~1"),
+                          ("b" * 40, "commit: senses: stop reporting checked drift rows")])
+
+    def test_git_reflog_entries_skip_junk_and_messageless_lines(self):
+        self.assertEqual(proc_table.git_reflog_entries("junk line\n" + "c" * 40 + "   \n"), [])
+
+    def test_git_path_names_keeps_only_nonblank_paths(self):
+        self.assertEqual(proc_table.git_path_names("src/a.py\n\ntests/test_a.py\n"),
+                         ["src/a.py", "tests/test_a.py"])
+        self.assertEqual(proc_table.git_path_names(""), [])
 if __name__ == "__main__":
     unittest.main()
 

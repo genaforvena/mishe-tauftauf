@@ -251,3 +251,51 @@ def test_route_appends_an_in_process_dm_to_health(tmp_path, monkeypatch):
     alert = (tmp_path / "health/session-watch-alert.md").read_text()
     assert "session identity changed within the last hour" in alert
     assert "rc=0 panes=25 dead=none" in alert
+
+
+def test_observation_reads_share_one_bounded_budget(monkeypatch, tmp_path):
+    """Four sequential reads must never add up past the watchdog's heartbeat.
+
+    The loop's heartbeat is 30s apart, so the whole observation is bounded by
+    one budget: the dashboard read may take the larger share, but no read may
+    claim more than what is left of that budget, and a spent budget fails the
+    observation instead of overrunning the watchdog.
+    """
+    clock = {"now": 0.0}
+    calls = []
+
+    class Result:
+        returncode = 0
+        stdout = ""
+
+    def fake_run(argv, capture_output=None, text=None, timeout=None):
+        calls.append((argv[0], timeout))
+        clock["now"] += 4.0
+        return Result()
+
+    monkeypatch.setattr(watch.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(watch.subprocess, "run", fake_run)
+    watch.observe(tmp_path, "session")
+    assert [command for command, _ in calls] == [
+        "tmux", "tmux", "tmux", str(tmp_path / "bin/mishe-tauftauf")]
+    assert [timeout for _, timeout in calls] == [5.0, 5.0, 5.0, 8.0]
+
+
+def test_a_spent_observation_budget_fails_instead_of_reading_on(monkeypatch, tmp_path):
+    clock = {"now": 0.0}
+    calls = []
+
+    class Result:
+        returncode = 0
+        stdout = ""
+
+    def fake_run(argv, capture_output=None, text=None, timeout=None):
+        calls.append(argv[0])
+        clock["now"] += 20.0
+        return Result()
+
+    monkeypatch.setattr(watch.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(watch.subprocess, "run", fake_run)
+    with pytest.raises(watch.subprocess.TimeoutExpired):
+        watch.observe(tmp_path, "session")
+    assert len(calls) == 1
