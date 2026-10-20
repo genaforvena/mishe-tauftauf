@@ -23,12 +23,33 @@ from .outcome_publication import (
 
 
 
+def binding_relevance(lines: list[str]) -> str:
+    """Whether a damaged candidate can still carry an unknown evidence binding.
+
+    A reserved header or an immutable reference marks a publication attempt, so
+    a damaged one may hide a bound evidence path and must fail closed. A
+    message that only starts with the reserved prefix, carrying neither a
+    header nor a reference, binds no evidence path at all: it stays a
+    reported coverage gap, attributed to its author, but it cannot block
+    another role's publication.
+    """
+    if reference_lines(lines):
+        return 'unknown'
+    if parse_header(first_significant_line(lines)) is not None:
+        return 'unknown'
+    return 'none'
+
+
 def classify_outcomes(home: Path, clause_time: datetime, *, entries=None) -> dict:
     """Return eligible events and explicit gaps; a digest is not event identity.
 
     Reserved first significant headers are candidates even when damaged. A
     standalone unresolved reference is a coverage gap until proven non-outcome.
     Known reference-only citations and ordinary inline citations are not events.
+
+    Every gap carries its ``binding`` relevance: ``unknown`` when the damaged
+    entry may still hide a bound evidence path, ``none`` when it binds nothing
+    and therefore cannot block another role's publication.
 
     The publication dialect is decoded by ``outcome_publication``; what stays
     here is the eligibility policy — which publications count as outcomes, and
@@ -60,8 +81,10 @@ def classify_outcomes(home: Path, clause_time: datetime, *, entries=None) -> dic
             if timestamp < clause_time:
                 continue
         except (ValueError, TypeError) as exc:
-            incomplete.append({'sequence': entry.sequence, 'reason': f'invalid event time: {exc}'})
+            incomplete.append({'sequence': entry.sequence, 'reason': f'invalid event time: {exc}',
+                               'binding': 'unknown'})
             continue
+        binding = binding_relevance(lines)
         try:
             if len(refs) != 1 or sole_final_reference(lines) is None:
                 raise ValueError('publication requires one standalone final record reference')
@@ -87,7 +110,7 @@ def classify_outcomes(home: Path, clause_time: datetime, *, entries=None) -> dic
             if evidence is None:
                 raise ValueError('invalid outcome evidence binding')
         except (OSError, ValueError, TypeError) as exc:
-            incomplete.append({'sequence': entry.sequence, 'reason': str(exc)})
+            incomplete.append({'sequence': entry.sequence, 'reason': str(exc), 'binding': binding})
             continue
         digest = reference_digest(refs[0])
         events.append({'site': str(home), 'sequence': entry.sequence,
