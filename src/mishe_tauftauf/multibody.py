@@ -251,15 +251,61 @@ def _joint(coverage: list[dict[str, object]]) -> dict[str, object]:
     if unverified:
         blockers.append("clock-domain-unverified:" + ",".join(sorted(unverified)))
     window = None
+    windows: list[dict[str, float]] = []
+    per_pair: list[dict[str, object]] = []
     if overlaps:
-        window = {"start_epoch_s": min(item["start_epoch_s"] for item in overlaps),
-                  "end_epoch_s": max(item["end_epoch_s"] for item in overlaps)}
+        windows = _merge_intervals(overlaps)
+        if len(windows) == 1:
+            window = windows[0]
+        per_pair = _overlaps_by_pair(overlaps)
     if blockers:
         return {"state": "unknown", "reason": blockers[0], "blockers": blockers,
-                "covered_nodes": names, "window": None, "overlaps": []}
+                "covered_nodes": names, "window": None, "windows": [],
+                "overlaps": []}
     return {"state": "supported", "reason": "compatible-window-and-clock-verified",
             "blockers": [], "covered_nodes": names, "window": window,
-            "overlaps": overlaps}
+            "windows": windows, "overlaps": per_pair}
+
+
+def _merge_intervals(overlaps: list[dict[str, object]]) -> list[dict[str, float]]:
+    """The shared times as disjoint intervals, in order.
+
+    Two bodies can share several stretches of time, and a single span from the
+    first to the last of them would cover the gaps between them - times at
+    which neither body was observed. The intervals stay separate, and a
+    single span is reported only when there is exactly one.
+    """
+    ordered = sorted(overlaps, key=lambda item: float(item["start_epoch_s"]))
+    merged: list[dict[str, float]] = []
+    for item in ordered:
+        start = float(item["start_epoch_s"])
+        end = float(item["end_epoch_s"])
+        if merged and start <= merged[-1]["end_epoch_s"]:
+            merged[-1]["end_epoch_s"] = max(merged[-1]["end_epoch_s"], end)
+        else:
+            merged.append({"start_epoch_s": start, "end_epoch_s": end})
+    return merged
+
+
+def _overlaps_by_pair(overlaps: list[dict[str, object]]) -> list[dict[str, object]]:
+    """The shared intervals of each body pair, merged per pair.
+
+    Every pair of channels of two bodies produces an overlap, so the raw list
+    repeats the same stretches many times. The consumer needs the stretches
+    each pair of bodies actually shared, so the intervals are merged per
+    pair and the body pair is kept with them.
+    """
+    grouped: dict[tuple[str, str], list[dict[str, object]]] = {}
+    for item in overlaps:
+        nodes = item.get("nodes")
+        if not isinstance(nodes, list) or len(nodes) != 2:
+            continue
+        pair = tuple(sorted(str(node) for node in nodes))
+        grouped.setdefault(pair, []).append(item)
+    rows = []
+    for pair, items in sorted(grouped.items()):
+        rows.append({"nodes": list(pair), "windows": _merge_intervals(items)})
+    return rows
 
 
 def _age_text(value: object) -> str:
@@ -373,5 +419,7 @@ def read_multibody_coverage(home: Path, now: float | None = None) -> dict[str, o
             "joint_state": joint["state"], "joint_reason": joint["reason"],
             "joint_blockers": joint["blockers"],
             "joint_window": joint["window"],
+            "joint_windows": joint["windows"],
+            "joint_overlaps": joint["overlaps"],
             "covered_nodes": covered_names, "stale_nodes": stale_names,
             "unknown_nodes": unknown_names, "nodes": coverage}
