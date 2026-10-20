@@ -124,6 +124,23 @@ def git_path_names(raw: str) -> list[str]:
     """
     return [line.strip() for line in raw.splitlines() if line.strip()]
 
+def git_reachable_shas(raw: str) -> set[str]:
+    """Commit ids reachable from a ref, from ``git rev-list <ref>`` output.
+
+    One commit id per line. The set answers "is this commit still reachable
+    from the ref", which a caller needs over a whole reflog window; a
+    per-commit ``git merge-base --is-ancestor`` answers the same question at
+    the cost of one git process per commit. A line that is not a commit id
+    yields no entry rather than a guess, so a caller never treats a stray
+    line as a reachable commit.
+    """
+    shas: set[str] = set()
+    for line in raw.splitlines():
+        sha = line.strip()
+        if re.fullmatch(r"[0-9a-f]{40}", sha):
+            shas.add(sha)
+    return shas
+
 def pane_commands(raw: str) -> list[tuple[str, str, str, str]]:
     """(session, pid, start_command, current_path) from a four-field pane table.
 

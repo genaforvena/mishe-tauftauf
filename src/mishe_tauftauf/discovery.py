@@ -3293,7 +3293,7 @@ def _head_rewinds(home: Path) -> dict[str, object]:
     ancestry = run("rev-list", "HEAD")
     if ancestry is None or ancestry.returncode != 0:
         return {**unknown, "sample": "HEAD ancestry unreadable"}
-    reachable = {line.strip() for line in ancestry.stdout.splitlines() if line.strip()}
+    reachable = proc_table.git_reachable_shas(ancestry.stdout)
     dropped: list[str] = []
     seen: set[str] = set()
     for sha, _message in proc_table.git_reflog_entries(reflog.stdout):
