@@ -66,6 +66,21 @@ the served-staleness reading can ask whether a sense's producing unit changed
 since its pin, skipping git's diff bodies and blank lines. The consumer is the
 discover scan (discovery.py `_served_staleness`), which marks senses stale.
 
+`native_recovery.py` decodes a failed native wake's own recorded bytes: the
+durable effect ledger's three journals, the loop journal, the result summary and
+the writer's own failure record. Ledger records are decoded by the ledger's own
+record classes, so a misfiled, malformed or torn record is corrupt evidence
+rather than a harmless row, and the ledger's own `.ledger.lock` is taken while
+the ledger is read, so evidence a writer is still changing stays UNKNOWN.
+Transience follows the wake's terminal failure, not an earlier one. It returns
+ordinary Python values and does not create a fresh-attempt directory or modify
+an attempt's recorded evidence. Releasing a busy marker renames the marker to
+a claimed path before its decoded wake is read: a matching claim is removed,
+while a claim naming another wake is put back with a hard link when the
+original path is free, or kept at its claimed path when that restoration fails.
+The caller classifies an attempt whose writer has already exited; no snapshot
+excludes a writer that appears after the last read.
+
 `observations.py` also decodes one volatile token in the rendered discover and
 senses panes: the displayed age of an unverified reading (`age=19m17s`) grows
 on every refresh while the reading's meaning is unchanged, so
