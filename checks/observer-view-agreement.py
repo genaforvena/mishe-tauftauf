@@ -101,17 +101,28 @@ def label(line: str) -> str:
     Two samples of a plant that has not changed differ in timestamps, digests
     and counters. What must not differ is *which* observations are present, so
     the comparison is over the labels.
+
+    Two kinds of line are not projections of their own. An indented line
+    continues the projection above it — the follow-through view lists a role's
+    rows and its patch records that way — and a per-record line names one
+    record of a class, so a record that appeared or changed between two
+    samples is not a projection that appeared or disappeared. Both are folded
+    into the class they belong to.
     """
-    text = line.strip()
-    if not text:
+    if not line or line[0].isspace():
         return ""
+    text = line.strip()
     colon = text.find(":")
     equals = text.find("=")
     if colon != -1 and (equals == -1 or colon < equals):
-        return text[:colon].strip()
-    if equals != -1:
-        return text[:equals].strip()
-    return text.split(None, 1)[0].strip()
+        key = text[:colon].strip()
+    elif equals != -1:
+        key = text[:equals].strip()
+    else:
+        key = text.split(None, 1)[0].strip()
+    if key.startswith("PATCH "):
+        key = "PATCH"
+    return key
 
 
 def projections(lines) -> dict:
