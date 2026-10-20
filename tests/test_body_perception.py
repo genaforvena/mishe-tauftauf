@@ -531,6 +531,64 @@ def test_dense_baseline_motion_coverage_counts_rows_carrying_values(
     assert "delivery-coverage=25.0%" in row["details"]
 
 
+def test_dense_baseline_publishes_the_acceleration_run_structure(
+        tmp_path: Path) -> None:
+    """A coverage percentage describes one window; the run structure says
+    whether the channel was present in pieces at all.
+
+    A reader who saw ``motion=0%`` could not tell a momentary zero from a
+    channel that never delivered in that window. The run counts and the
+    longest runs answer that, and they carry the window's placement with
+    them because they are measured inside it.
+    """
+    now = 1_800_000_000.0
+    rows: list[str] = []
+    # Three value rows, then two stale rows, then two value rows again.
+    pattern = ["value", "value", "value", "stale", "stale", "value", "value"]
+    for index, kind in enumerate(pattern):
+        epoch = int(now) - 300 + index * 5
+        rows.append(f"{index} {epoch} light lux=5.0 accuracy=3 age_ms=10")
+        if kind == "value":
+            rows.append(f"{index} {epoch} acceleration x=0.1 y=0.2 z=9.9 "
+                        "accuracy=3 age_ms=10")
+        else:
+            rows.append(f"{index} {epoch} acceleration unavailable reason=stale")
+        rows.append(f"{index} {epoch} battery level=0.5 charging=true")
+    core, now = _dense_queue(tmp_path, rows)
+
+    row = body_perception.read_redmi10_dense_baseline(core, now=now + 1)
+
+    # Two value runs (three rows and two rows) and one stale run (two rows).
+    assert row["value_runs"] == 2
+    assert row["stale_runs"] == 1
+    # A run is timed from its first row to its last: three rows at a 5 s
+    # cadence span 10 s, two rows span 5 s.
+    assert row["longest_value_run_s"] == 10
+    assert row["longest_stale_run_s"] == 5
+    assert "runs=value:2/stale:1" in row["sample"]
+    assert "longest=value:10s/stale:5s" in row["sample"]
+
+
+def test_dense_baseline_run_structure_reports_a_channel_that_never_delivered(
+        tmp_path: Path) -> None:
+    """A window with no values at all is one long stale run, not a number
+    without context."""
+    now = 1_800_000_000.0
+    rows: list[str] = []
+    for index in range(6):
+        epoch = int(now) - 300 + index * 5
+        rows.append(f"{index} {epoch} light lux=5.0 accuracy=3 age_ms=10")
+        rows.append(f"{index} {epoch} acceleration unavailable reason=stale")
+    core, now = _dense_queue(tmp_path, rows)
+
+    row = body_perception.read_redmi10_dense_baseline(core, now=now + 1)
+
+    assert row["value_runs"] == 0
+    assert row["stale_runs"] == 1
+    assert row["longest_stale_run_s"] == 25
+    assert "runs=value:0/stale:1" in row["sample"]
+
+
 def test_dense_baseline_without_any_motion_values_reports_zero_motion_coverage(
         tmp_path: Path) -> None:
     """A stream that delivers no motion rows at all must not read as motion."""

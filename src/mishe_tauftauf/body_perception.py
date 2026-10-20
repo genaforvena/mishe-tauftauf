@@ -517,6 +517,15 @@ def read_redmi10_dense_baseline(home: Path, now: float | None = None) -> dict[st
     row is fresh (< ``DENSE_FRESH_SECONDS``), ``stale`` when it is older, and
     ``unknown`` when the queue is unreadable. Deltas come from a fixed-cadence
     re-read (the discovery scan renewal), not from the scan corpus.
+
+    The acceleration channel is published with its run structure as well as
+    its coverage: the coverage percentage describes one window, and a reader
+    who saw ``motion=0%`` could not tell a momentary zero from a channel
+    that never delivered in that window. The run counts say whether values
+    arrived in pieces at all, and the longest runs say how long the silence
+    lasted when they did not. A run is a stretch of consecutive acceleration
+    rows of one kind, timed from its first row to its last, so the numbers
+    describe this window and inherit its placement.
     """
     current = time.time() if now is None else _finite_number(now)
     if current is None:
@@ -540,6 +549,30 @@ def read_redmi10_dense_baseline(home: Path, now: float | None = None) -> dict[st
     total_count = 0
     first_epoch: int | None = None
     last_epoch: int | None = None
+    # The run structure of the acceleration channel inside the window: a
+    # coverage percentage says how much of one window carried values, and a
+    # run says whether the channel was present in pieces or absent outright.
+    value_runs = 0
+    stale_runs = 0
+    longest_value_run = 0
+    longest_stale_run = 0
+    run_class: str | None = None
+    run_first_epoch: int | None = None
+    run_last_epoch: int | None = None
+
+    def _close_run() -> None:
+        """Fold the run in progress into the run counts and the longest runs."""
+        nonlocal value_runs, stale_runs, longest_value_run, longest_stale_run
+        if run_class is None or run_first_epoch is None or run_last_epoch is None:
+            return
+        span = max(run_last_epoch - run_first_epoch, 0)
+        if run_class == "value":
+            value_runs += 1
+            longest_value_run = max(longest_value_run, span)
+        else:
+            stale_runs += 1
+            longest_stale_run = max(longest_stale_run, span)
+
     for line in lines[-DENSE_WINDOW_ROWS:]:
         parts = line.split()
         if len(parts) < 3:
@@ -576,9 +609,17 @@ def read_redmi10_dense_baseline(home: Path, now: float | None = None) -> dict[st
             # gap, not a motion observation: counting it as coverage made the
             # reported rate describe the poll cadence, not the motion
             # channel. Only a row carrying all three axes is an observation.
-            if all(any(part.startswith(f"{axis}=") for part in parts[3:])
-                   for axis in ("x", "y", "z")):
+            carries_values = all(any(part.startswith(f"{axis}=") for part in parts[3:])
+                                  for axis in ("x", "y", "z"))
+            if carries_values:
                 motion_count += 1
+            row_class = "value" if carries_values else "stale"
+            if row_class != run_class:
+                _close_run()
+                run_class = row_class
+                run_first_epoch = epoch
+            run_last_epoch = epoch
+    _close_run()
     if total_count == 0 or last_epoch is None:
         return _dense_unknown("dense-queue-empty")
     break_seconds = current - last_epoch
@@ -591,7 +632,9 @@ def read_redmi10_dense_baseline(home: Path, now: float | None = None) -> dict[st
     charging_text = ("yes" if last_charging else "no") if last_charging is not None else "unknown"
     sample = (f"L={light_text} charging={charging_text} "
               f"motion={motion_ratio:.0%} break={break_seconds:.0f}s "
-              f"window={window_seconds}s rows={total_count}")
+              f"window={window_seconds}s rows={total_count} "
+              f"runs=value:{value_runs}/stale:{stale_runs} "
+              f"longest=value:{longest_value_run}s/stale:{longest_stale_run}s")
     details = (f"source=linked android-body body/queues/{DENSE_QUEUE_NAME}; "
                f"tail-bytes={DENSE_TAIL_BYTES} window-rows={total_count}; "
                f"last-light={light_text} at epoch {last_light_epoch}; "
@@ -601,6 +644,11 @@ def read_redmi10_dense_baseline(home: Path, now: float | None = None) -> dict[st
                f"delivery-coverage={accel_ratio:.1%} "
                f"(acceleration rows present, values or not); "
                f"break={break_seconds:.1f}s; "
+               f"value-runs={value_runs} stale-runs={stale_runs} "
+               f"longest-value-run={longest_value_run}s "
+               f"longest-stale-run={longest_stale_run}s "
+               "(a run is a stretch of consecutive acceleration rows of one "
+               "kind inside the window, timed from its first row to its last); "
                "phone/host clock split unknown; acceleration includes gravity "
                "and is not person-movement evidence.")
     return {"id": DENSE_SENSE_ID, "kind": "read", "state": state,
@@ -613,6 +661,9 @@ def read_redmi10_dense_baseline(home: Path, now: float | None = None) -> dict[st
             "motion_count": motion_count, "accel_count": accel_count,
             "break_seconds": break_seconds,
             "window_seconds": window_seconds, "row_count": total_count,
+            "value_runs": value_runs, "stale_runs": stale_runs,
+            "longest_value_run_s": longest_value_run,
+            "longest_stale_run_s": longest_stale_run,
             "details": details}
 
 
