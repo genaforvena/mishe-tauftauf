@@ -1470,6 +1470,121 @@ def test_wedge_r2_sense_flags_stuck_pane(monkeypatch, tmp_path):
             "error_age=30.0min,cause=provider-error:403)") in result["sample"]
     assert "panes=2 with_log=1" in result["sample"]
 
+def test_wedge_r3_chain2_stale_error_is_suspect(monkeypatch, tmp_path):
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _provider_error("2026-10-06T13:25:00+00:00", 429),
+        _retry("2026-10-06T13:30:00+00:00", 1),
+        _provider_error("2026-10-06T13:35:00+00:00", 429),
+        _retry("2026-10-06T13:40:00+00:00", 2),
+        _provider_error("2026-10-06T13:45:00+00:00", 429),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path",
+                        lambda pid: log if pid == 12345 else None)
+    _wedge_clock(monkeypatch)
+
+    class FakeResult:
+        returncode = 0
+        stdout = "mishe-tauftauf|genome|12345\nandroid-body|body-research|67890"
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
+    result = discovery._mind_wedge_suspects()
+    assert result["state"] == "verified"
+    assert len(result["suspects"]) == 1
+    assert result["suspects"][0]["window"] == "genome"
+    assert result["suspects"][0]["rule"] == "chain-stall"
+    assert result["suspects"][0]["chain"] == 2
+    assert result["suspects"][0]["span_minutes"] == 30.0
+    assert result["suspects"][0]["cause"] == "provider-error:429"
+    assert result["suspects"][0]["error_age_minutes"] == 15.0
+    assert ("genome(pid=12345,session=mishe-tauftauf,rule=chain-stall,chain=2,"
+            "span=30.0min,error_age=15.0min,cause=provider-error:429)") in result["sample"]
+
+
+def test_wedge_r3_chain1_stale_error_is_suspect(monkeypatch, tmp_path):
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _provider_error("2026-10-06T13:25:00+00:00", 429),
+        _retry("2026-10-06T13:30:00+00:00", 1),
+        _provider_error("2026-10-06T13:45:00+00:00", 429),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path",
+                        lambda pid: log if pid == 12345 else None)
+    _wedge_clock(monkeypatch)
+
+    class FakeResult:
+        returncode = 0
+        stdout = "mishe-tauftauf|genome|12345\nandroid-body|body-research|67890"
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
+    result = discovery._mind_wedge_suspects()
+    assert result["state"] == "verified"
+    assert len(result["suspects"]) == 1
+    assert result["suspects"][0]["rule"] == "chain-stall"
+    assert result["suspects"][0]["chain"] == 1
+
+
+def test_wedge_r3_chain2_fresh_error_is_not_suspect(monkeypatch, tmp_path):
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _provider_error("2026-10-06T13:50:00+00:00", 429),
+        _retry("2026-10-06T13:55:00+00:00", 1),
+        _provider_error("2026-10-06T13:58:00+00:00", 429),
+        _retry("2026-10-06T13:59:00+00:00", 2),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path",
+                        lambda pid: log if pid == 12345 else None)
+    _wedge_clock(monkeypatch)
+
+    class FakeResult:
+        returncode = 0
+        stdout = "mishe-tauftauf|genome|12345\nandroid-body|body-research|67890"
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
+    result = discovery._mind_wedge_suspects()
+    assert result["state"] == "verified"
+    assert result["suspects"] == []
+
+
+def test_wedge_r3_chain2_no_error_is_not_suspect(monkeypatch, tmp_path):
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _retry("2026-10-06T13:30:00+00:00", 1),
+        _retry("2026-10-06T13:40:00+00:00", 2),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path",
+                        lambda pid: log if pid == 12345 else None)
+    _wedge_clock(monkeypatch)
+
+    class FakeResult:
+        returncode = 0
+        stdout = "mishe-tauftauf|genome|12345\nandroid-body|body-research|67890"
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
+    result = discovery._mind_wedge_suspects()
+    assert result["state"] == "verified"
+    assert result["suspects"] == []
+
+
+def test_wedge_r3_foreign_error_is_not_suspect(monkeypatch, tmp_path):
+    log = tmp_path / "omp.2026-10-06.12345.log"
+    _write_omp_log(log, [
+        _provider_error("2026-10-06T13:25:00+00:00", 429, model="other-model"),
+        _retry("2026-10-06T13:30:00+00:00", 1),
+        _provider_error("2026-10-06T13:35:00+00:00", 429, model="other-model"),
+        _retry("2026-10-06T13:40:00+00:00", 2),
+        _provider_error("2026-10-06T13:45:00+00:00", 429, model="other-model"),
+    ])
+    monkeypatch.setattr(discovery, "_omp_log_path",
+                        lambda pid: log if pid == 12345 else None)
+    monkeypatch.setattr(discovery, "_pane_mind_model", lambda pid: "longcat-2.5-preview-free")
+    _wedge_clock(monkeypatch)
+
+    class FakeResult:
+        returncode = 0
+        stdout = "mishe-tauftauf|genome|12345\nandroid-body|body-research|67890"
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
+    result = discovery._mind_wedge_suspects()
+    assert result["state"] == "verified"
+    assert result["suspects"] == []
+    assert result["foreign"] == 3
+
 
 def test_wedge_sense_reports_pane_session(monkeypatch, tmp_path):
     # Live false positive 2026-10-10: two sites render on this host and share
@@ -6030,11 +6145,147 @@ def test_foreign_checkout_consumers_skips_unit_with_description_naming_root(
     with patch.object(discovery, "_unit_description",
                       side_effect=lambda u: f"{checkout.name} report-only cleaner coordinator"
                       if u == local_unit else ""), \
-            patch.object(discovery, "_unit_names_checkout", return_value=True):
+            patch.object(discovery, "_unit_names_checkout", return_value=True), \
+            patch.object(discovery, "_script_spawns_site_package", return_value=False):
         consumers = discovery._foreign_checkout_consumers(
             [local_unit, foreign_unit], checkout)
     assert local_unit not in consumers
     assert consumers[foreign_unit] == str(checkout)
+
+def test_foreign_checkout_consumers_reports_a_wrapper_that_spawns_the_package(
+        tmp_path: Path) -> None:
+    # A wrapper that spawns `-m <package>` carries the coupling itself, so the
+    # unit is a foreign consumer even when systemd's description names the
+    # checkout root: observed live 2026-10-16T20:5xZ on mesh-host, where the
+    # cleaner unit's description names the checkout and its wrapper spawns
+    # `python3 -m mishe_tauftauf` children every 15 s, so the reading no
+    # longer flaps between foreign and a false host-scope/verified.
+    checkout = tmp_path.resolve()
+    unit = "mishe-cleaner-recovered.service"
+    with patch.object(discovery, "_unit_description",
+                      return_value=f"{checkout.name} report-only cleaner coordinator"), \
+            patch.object(discovery, "_unit_names_checkout", return_value=False), \
+            patch.object(discovery, "_script_spawns_site_package", return_value=True):
+        consumers = discovery._foreign_checkout_consumers([unit], checkout)
+    assert consumers == {unit: str(checkout)}
+
+
+def test_script_spawns_site_package_reads_a_wrapper_argv_list(tmp_path: Path) -> None:
+    # The wrapper's own form: subprocess.run([sys.executable, "-m",
+    # "mishe_tauftauf", ...]) declares the spawn in an argv list.
+    script = tmp_path / "wrapper.py"
+    script.write_text(
+        "import subprocess, sys\n"
+        "subprocess.run([sys.executable, '-m', 'mishe_tauftauf', '--home', 'x'], env={})\n",
+        encoding="utf-8")
+    unit = "mishe-wrapper.service"
+    execstart = f"{{ path={script} ; argv[]={script} follow }}\n"
+    completed = subprocess.CompletedProcess(["systemctl"], 0, execstart, "")
+    with patch.object(discovery.subprocess, "run", return_value=completed):
+        assert discovery._script_spawns_site_package(unit, "mishe_tauftauf") is True
+
+
+def test_script_spawns_site_package_reads_a_shell_wrapper_command(tmp_path: Path) -> None:
+    # A non-Python wrapper declares the same spawn as command text.
+    script = tmp_path / "wrapper.sh"
+    script.write_text("#!/bin/sh\nexec python3 -m mishe_tauftauf --home /x\n",
+                      encoding="utf-8")
+    unit = "mishe-wrapper.service"
+    execstart = f"{{ path={script} ; argv[]={script} follow }}\n"
+    completed = subprocess.CompletedProcess(["systemctl"], 0, execstart, "")
+    with patch.object(discovery.subprocess, "run", return_value=completed):
+        assert discovery._script_spawns_site_package(unit, "mishe_tauftauf") is True
+
+
+def test_script_spawns_site_package_false_for_a_stdlib_only_script(
+        tmp_path: Path) -> None:
+    script = tmp_path / "standalone.py"
+    script.write_text("import json\nprint(json.dumps({}))\n", encoding="utf-8")
+    unit = "mishe-wrapper.service"
+    execstart = f"{{ path={script} ; argv[]={script} follow }}\n"
+    completed = subprocess.CompletedProcess(["systemctl"], 0, execstart, "")
+    with patch.object(discovery.subprocess, "run", return_value=completed):
+        assert discovery._script_spawns_site_package(unit, "mishe_tauftauf") is False
+
+
+def test_script_spawns_site_package_none_when_no_script_is_readable(
+        tmp_path: Path) -> None:
+    unit = "mishe-missing.service"
+    execstart = "{ path=/nonexistent/wrapper.py ; argv[]=/nonexistent/wrapper.py }\n"
+    completed = subprocess.CompletedProcess(["systemctl"], 0, execstart, "")
+    with patch.object(discovery.subprocess, "run", return_value=completed):
+        assert discovery._script_spawns_site_package(unit, "mishe_tauftauf") is None
+
+
+def test_drift_across_sites_names_a_wrapper_spawning_the_package(
+        tmp_path: Path) -> None:
+    # A wrapper unit whose script spawns `-m <package>` is a foreign consumer
+    # even with no live child at scan time: the static classifier and the live
+    # import-root path then agree, so the sample cannot flip to a false
+    # host-scope/verified on the 15 s child cycle (measured live 63 s, 12/12
+    # samples unknown+foreign across live-root and no-root instants).
+    pinned_sha: list[str] = []
+    other_pin = tmp_path / "releases" / "other"
+    _release_tree(other_pin, pinned_sha)
+    other = tmp_path / "site-other"
+    _pin(other, other_pin, pinned_sha[0], "mishe-other")
+    home = tmp_path / "plant"
+    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
+                             "sha": pinned_sha[0]}])
+    unit = "mishe-cleaner-recovered.service"
+    checkout = tmp_path.resolve()
+    script = tmp_path.parent / "wrapper.py"
+    script.write_text(
+        "import subprocess, sys\n"
+        "subprocess.run([sys.executable, '-m', 'mishe_tauftauf', '--home', 'x'], env={})\n",
+        encoding="utf-8")
+    execstart = f"{{ path={script} ; argv[]={script} follow }}\n"
+    completed = subprocess.CompletedProcess(["systemctl"], 0, execstart, "")
+    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
+            patch.object(discovery, "_unit_import_roots", return_value={}), \
+            patch.object(discovery.subprocess, "run", return_value=completed), \
+            patch.dict(os.environ, {"MESHE_SEED_SESSION": "mishe-self"}):
+        row = discovery._runtime_drift_across_sites(home)
+    assert row["state"] == "unknown"
+    assert f"foreign={unit}@{checkout.name}" in row["sample"]
+    assert row["identity"]["foreign"] == {unit: str(checkout)}
+    assert row["identity"]["host_scope"] == []
+    assert row["identity"]["unattributed"] == []
+
+
+def test_drift_across_sites_keeps_a_mapped_wrapper_spawning_uninspectable(
+        tmp_path: Path) -> None:
+    # A site-mapped unit with no live root whose wrapper spawns the package is
+    # structurally coupled, so it must not be cleared as a host tool: the
+    # root it spawns with cannot be read statically, and verified would be a
+    # false verdict.
+    own_sha: list[str] = []
+    own_pin = tmp_path / "releases" / "own"
+    _release_tree(own_pin, own_sha)
+    home = tmp_path / "plant"
+    _pin(home, own_pin, own_sha[0], "mishe-self")
+    _linked_registry(home, [{"home": str(tmp_path / "other"),
+                             "session": "mishe-other", "sha": own_sha[0]}])
+    script = home / "bin" / "wrapper.py"
+    script.parent.mkdir(parents=True)
+    script.write_text(
+        "import subprocess, sys\n"
+        "subprocess.run([sys.executable, '-m', 'mishe_tauftauf', '--home', 'x'], env={})\n",
+        encoding="utf-8")
+    unit = "mishe-ifm-shim.service"
+    execstart = f"{{ path={script} ; argv[]={script} 127.0.0.1:8377 }}\n"
+    completed = subprocess.CompletedProcess(["systemctl"], 0, execstart, "")
+    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
+            patch.object(discovery, "_unit_import_roots", return_value={}), \
+            patch.object(discovery, "_is_tmux_session_holder", return_value=False), \
+            patch.object(discovery, "_script_imports_site_package", return_value=False), \
+            patch.object(discovery, "_script_spawns_site_package", return_value=True), \
+            patch.object(discovery.subprocess, "run", return_value=completed), \
+            patch.object(discovery, "_plant_session", return_value="mishe-self"):
+        row = discovery._runtime_drift_across_sites(home)
+    assert row["state"] == "unknown"
+    assert row["identity"]["uninspectable"] == [unit]
+    assert row["identity"]["host_scope"] == []
 
 
 def test_drift_across_sites_keeps_a_foreign_unit_off_the_checkout_unattributed(
@@ -7021,8 +7272,6 @@ def test_treadmill_handoff_unknown_without_previous_receipt(monkeypatch, tmp_pat
     result = discovery._mind_treadmill(home)
     assert result["roles"]["senses"]["handoff_moved"] is None
 
-
-
 def test_treadmill_git_log_entries_groups_subjects_and_files():
     from mishe_tauftauf import proc_table
     raw = ("SUBJECT:inference-research wake 1: record abc CI success\n"
@@ -7326,6 +7575,24 @@ def test_authorship_fog_claimed_path_is_verified(monkeypatch, tmp_path):
     result = discovery._coord_authorship_fog(home)
     assert result["state"] == "verified"
     assert result["fog"] == []
+
+def test_authorship_fog_own_publication_does_not_claim(monkeypatch, tmp_path):
+    from mishe_tauftauf import discovery
+
+    class Status:
+        returncode = 0
+        stdout = b" M src/mishe_tauftauf/novel.py\n"
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: Status())
+    home = tmp_path / "site"
+    (home / "walls").mkdir(parents=True)
+    (home / "walls" / "health.md").write_text("nothing relevant here\n", encoding="utf-8")
+    # The sense's own publication carries the fog paths; it must not count as a claim.
+    (home / "chat.log").write_text(
+        "sense.coord.authorship-fog: dirty=1 fog=1 ?? src/mishe_tauftauf/novel.py\n",
+        encoding="utf-8")
+    result = discovery._coord_authorship_fog(home)
+    assert result["state"] == "drift"
+    assert any("novel.py" in p for p in result["fog"])
 
 
 def test_gate_latency_no_tape_is_unknown(tmp_path):
