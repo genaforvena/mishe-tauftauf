@@ -206,18 +206,23 @@ evidence path: a reserved header or an immutable reference marks a publication
 attempt, so a damaged one fails closed. A message that only starts with the
 reserved prefix, carrying neither a header nor a reference, binds no evidence
 path; it stays a reported coverage gap, attributed to its author, and does not
-block other roles' publications. Writer, observer and this clause apply the
-same allowlist. The unchanged-bytes, existence and citation requirements are
-measured after the fact by `sense.ledger.evidence-binding`: immutability is
-checked by retained/nonempty and digest equality after binding, whose live window
-(`latest_bad_roles`) reports current compliance while its standing audit
-retains every historical violation. The clause was amended on 2026-10-16
-(operator ruling, DM 56798) to add the allowlist and bind-time path refusal;
-the observer reports this as `policy=eligible-paths-v2`. Rows bound under the
-earlier text remain in the standing audit under the rule then in force, and
-any reassessment under the new rule is a policy-versioned reassessment,
-labeled as such rather than presented as repaired historical compliance; no
-historical records are reclassified.
+block other roles' publications. A refused publication is recorded in
+`logs/outcome-refusal-audit.jsonl` with the role, the kind, the reason and the
+gaps that blocked it, and the follow-through projection reports the refusals
+of the last 24 h with the count of coverage denials separate from ordinary
+refusals: without that record a plant-wide denial of the outcome instrument is
+indistinguishable from a plant that produced nothing. Writer, observer and this
+clause apply the same allowlist. The unchanged-bytes, existence and citation
+requirements are measured after the fact by `sense.ledger.evidence-binding`:
+immutability is checked by retained/nonempty and digest equality after binding,
+whose live window (`latest_bad_roles`) reports current compliance while its
+standing audit retains every historical violation. The clause was amended on
+2026-10-16 (operator ruling, DM 56798) to add the allowlist and bind-time path
+refusal; the observer reports this as `policy=eligible-paths-v2`. Rows bound
+under the earlier text remain in the standing audit under the rule then in
+force, and any reassessment under the new rule is a policy-versioned
+reassessment, labeled as such rather than presented as repaired historical
+compliance; no historical records are reclassified.
 The current deployed pin (`e8405b875122`) predates the atomic source fix
 (commit `1f15e97`, lock held across check and append); on the deployed CLI,
 concurrent `wall outcome` publications of the same path can both succeed until

@@ -40,6 +40,17 @@ def binding_relevance(lines: list[str]) -> str:
     return 'none'
 
 
+def blocking_gaps(coverage: dict) -> list:
+    """The gaps that still hide a bound evidence path, so the writer fails closed.
+
+    A gap with ``binding`` ``none`` binds nothing and cannot block a
+    publication; every other gap may hide a bound path, so the bound set
+    cannot be derived and the writer must refuse. One definition, so the
+    writer and the reader of the plant's state cannot disagree.
+    """
+    return [row for row in coverage["incomplete"] if row.get("binding", "unknown") != "none"]
+
+
 def classify_outcomes(home: Path, clause_time: datetime, *, entries=None) -> dict:
     """Return eligible events and explicit gaps; a digest is not event identity.
 
