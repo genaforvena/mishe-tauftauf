@@ -71,7 +71,7 @@ boundary path explicitly. See [protocol boundaries](docs/protocol-boundaries.md)
 for the check's scope and limits. Preserve malformed/unknown input evidence.
 
 Append chat through the canonical CLI. Keep local notes, chat, experiments and
-runtime snapshots in gitignored `.mishe-tauftauf/`; never commit them. Resolve
+runtime snapshots under `SITE_HOME/` (gitignored); never commit them. Resolve
 site-home file paths from `$MISHE_SEED_HOME` (or the live `SITE_HOME`), including
 paths passed to the agent's write tool; never hand-type a `.mishe-…` site-home
 literal, because that tool can create a typo-named tree outside CLI validation.
