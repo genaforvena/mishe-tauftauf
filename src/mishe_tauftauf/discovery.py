@@ -34,7 +34,7 @@ from .host_radio import (BLUETOOTH_ROOT, COMMAND_TIMEOUT_SECONDS, NET_ROOT,
                          decode_tailnet_status, ethernet_interfaces, link_speed, operstate,
                          rfkill_switches, rfkill_unreadable, rfkill_verdict, wireless_interfaces)
 from .outcome_events import classify_outcomes, eligible_evidence_path
-from .observations import reserved_home_name
+from .observations import literal_site_home_name, reserved_home_name
 from .runtime_source import source_for
 from .scan_freshness import age_bounds, classify_age, endpoint
 from .unit_properties import SITE_UNIT_PREFIX, is_site_unit
@@ -4265,11 +4265,33 @@ def _home_referenced_by_process(path: Path) -> bool:
     return False
 
 
-def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]:
-    """Enumerate ``.mishe-*`` site directories under the checkout that are not
-    this site's home, with their files and the age of their newest content.
+def _ghost_home_name(name: str) -> bool:
+    """Whether one checkout-root name is a site-home literal at all.
 
-    Only this site's home is a sanctioned ``.mishe-*`` directory in a plant's
+    Two shapes reach a checkout root when a site-home literal is corrupted.
+    The reserved prefix (``.mishe-``) is the first: the checkout's ignore
+    rule matches it, so such a name is invisible to Git and to every peer.
+    An unexpanded shell variable (``$MISHE_SEED_HOME``,
+    ``$MISHE_TAUFTAUF_HOME``) is the second: the ignore rule does not cover
+    it, so Git stages it, and the name carries no prefix a prefix rule can
+    see. A detector that knows only the first shape reads green over a live
+    violation of the same class, so both shapes are decided here once.
+
+    Only names are decided here; whether a name is a *site home* is a
+    different question, answered by the caller against the site it serves.
+    """
+    return reserved_home_name(name) or literal_site_home_name(name)
+
+
+def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]:
+    """Enumerate site-home literal directories under the checkout that are not
+    this site's home, with their files and the age of their newest content,
+    and name the reserved root names that are not directories.
+
+    Two name shapes are site-home literals (:func:`_ghost_home_name`): the
+    reserved ``.mishe-`` prefix, and an unexpanded site-home shell variable
+    such as ``$MISHE_SEED_HOME``. Only this site's home is a sanctioned
+    ``.mishe-*`` directory in a plant's
     checkout, and ``validate_home`` rejects any other one that lacks the
     initialized runtime layout, so a second such directory cannot come from
     the CLI: it is a mind's own file write against a corrupted site literal.
@@ -4282,7 +4304,18 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
     content so a lane can prioritize counsel. An empty root has no file to
     age, so its own last-change time dates the stray instead: a fresh typo
     reads as recent rather than undated. Presence of a ghost directory is
-    itself the violation; the file count quantifies it. Identity lists are
+    itself the violation; the file count quantifies it.
+
+    A reserved root name that is not a directory is a stray name: a file, or
+    another non-directory, carrying a site-home literal. A stray name cannot
+    become a site home, so it does not change the verdict -- this sense
+    answers "is there another site home here", and a file is not one. It is
+    named in the sample and in ``stray`` all the same, because a stray name
+    is the other half of the same corrupted write: content that landed
+    outside any site home, under a name the ignore rule hides from Git and
+    from every peer, so a note can live only there. A sample that carried no
+    stray field could be read as covering those names, so it names them
+    instead. Identity lists are
     capped and counts are exact only while every cap holds: a truncated tree
     count, nested count or name budget leaves its lower-bound marker on the
     sample line, so an uncapped scale never reads as a clean complete count.
@@ -4327,7 +4360,7 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
                 if inspected > GHOST_SCAN_LIMIT:
                     checkout_truncated = True
                     break
-                if reserved_home_name(item.name):
+                if _ghost_home_name(item.name):
                     found.append(item)
                     if len(found) > GHOST_ROOT_LIMIT:
                         break
@@ -4342,16 +4375,18 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
     empty: list[str] = []
     nested: list[str] = []
     symlinked: list[str] = []
+    stray: list[str] = []
     files_per_ghost: dict[str, int] = {}
     newest: dict[str, tuple[float, str]] = {}
     total = 0
     capped = False
     nested_truncated = False
     symlinked_truncated = False
+    stray_truncated = False
     work_truncated = False
     names_left = GHOST_WORK_LIMIT
     for entry in entries:
-        if not reserved_home_name(entry.name):
+        if not _ghost_home_name(entry.name):
             continue
         if len(ghosts) >= GHOST_ROOT_LIMIT:
             over_cap += 1  # counted by name only, never walked
@@ -4377,6 +4412,18 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
                 symlinked_truncated = True
             continue
         if not tree.is_dir():
+            # A reserved name that is not a directory cannot become a site
+            # home, so it does not change the homes verdict -- a file is not
+            # a home and the verdict is not a false negative about one. It is
+            # still the other shape of the same corrupted literal: content
+            # written to a name that is not a site home, and (with the
+            # reserved prefix) invisible to Git and to every peer, so a note
+            # can live only there. It is named here, so a sample that says
+            # nothing about stray names cannot be read as covering them.
+            if len(stray) < GHOST_IDENTITY_LIMIT:
+                stray.append(entry.name)
+            else:
+                stray_truncated = True
             continue
         ghosts.append(entry.name)
         failures: list[OSError] = []
@@ -4398,7 +4445,7 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
                             work_truncated = True
                             break
                         if item.is_dir(follow_symlinks=False):
-                            if reserved_home_name(item.name):
+                            if _ghost_home_name(item.name):
                                 if len(nested) < GHOST_IDENTITY_LIMIT:
                                     nested.append(f"{entry.name}/{str(Path(item.path).relative_to(tree))}")
                                 else:
@@ -4478,6 +4525,9 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
     parts.append("holding=" + named(holding))
     if empty:
         parts.append("empty=" + named(empty))
+    if stray:
+        parts.append("stray=" + named(stray)
+                     + ("+" if stray_truncated else ""))
     if no_process:
         parts.append("no-process=" + named(no_process))
 
@@ -4497,6 +4547,8 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
             "ghosts": sorted(ghosts), "files": files_per_ghost, "total": total,
             "holding": sorted(holding), "empty": sorted(empty),
             "nested": sorted(nested),
+            "stray": sorted(stray),
+            "stray_truncated": stray_truncated,
             "no_process": sorted(no_process),
 
             "files_at_least": capped or work_truncated or bool(symlinked),
@@ -6280,6 +6332,8 @@ def _notify_scan(home: Path, snapshot: dict[str, object],
                     "empty": item.get("empty"),
                     "no_process": item.get("no_process"),
                     "nested": item.get("nested"),
+                    "stray": item.get("stray"),
+                    "stray_truncated": item.get("stray_truncated"),
                     "symlinked": item.get("symlinked"),
                     "roots_at_least": item.get("roots_at_least"),
                     "files_at_least": item.get("files_at_least"),

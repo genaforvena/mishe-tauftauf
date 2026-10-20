@@ -111,6 +111,30 @@ def reserved_home_name(name: str) -> bool:
     return name.startswith(".mishe-")
 
 
+SITE_HOME_VARIABLE_RE = re.compile(r"^\$mishe_[a-z0-9_]*home$", re.IGNORECASE)
+"""An unexpanded site-home shell variable used as a literal directory name.
+
+``$MISHE_SEED_HOME`` and ``$MISHE_TAUFTAUF_HOME`` name a site home when a
+shell expands them. A write that used the variable's literal text instead
+leaves a name that carries no reserved prefix, so the prefix rule above does
+not see it -- and the checkout's ignore rule matches ``.mishe-*`` only, so
+Git stages that name where a reviewer would see it.
+"""
+
+
+def literal_site_home_name(name: str) -> bool:
+    """Whether one name is an unexpanded site-home shell variable.
+
+    This is the second shape a corrupted site literal takes. It is not a site
+    home -- nothing expanded it -- but it names the site home that the writer
+    meant, and it is the shape that reaches a checkout root with no reserved
+    prefix in front of it. Readers that must tell a site home from a
+    corrupted site literal decide it here rather than each repeating the
+    pattern where a parsing boundary does not exist.
+    """
+    return bool(SITE_HOME_VARIABLE_RE.match(name))
+
+
 def executable(path: Path) -> bool:
     return path.is_file() and os.access(path, os.X_OK)
 
