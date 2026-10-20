@@ -8,7 +8,7 @@ import hashlib
 import json
 import sys
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 METHODS = frozenset({
@@ -36,6 +36,7 @@ class ParsingSite:
 class CheckResult:
     violations: list[str]
     legacy_count: int
+    exempt_sites: dict[str, int] = field(default_factory=dict)
 
 
 def inspect_source(path: str, source: str) -> list[ParsingSite]:
@@ -106,8 +107,10 @@ def check(root: Path, policy_path: Path) -> CheckResult:
             sites.extend(inspect_source(path.relative_to(root).as_posix(), path.read_text(encoding="utf-8")))
     budgets = {name: Counter(counts) for name, counts in policy["legacy"].items()}
     violations, legacy_count = [], 0
+    exempt = Counter()
     for site in sites:
         if site.path in policy["boundaries"]:
+            exempt[site.path] += 1
             continue
         budget = budgets.get(site.path, Counter())
         if budget[site.fingerprint] > 0:
@@ -115,22 +118,33 @@ def check(root: Path, policy_path: Path) -> CheckResult:
             legacy_count += 1
         else:
             violations.append(f"{site.path}:{site.line}: parsing outside boundary: {site.operation}")
-    return CheckResult(violations, legacy_count)
+    return CheckResult(violations, legacy_count, dict(exempt))
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument("--boundary-surface", action="store_true",
+                        help="list the parsing sites each approved adapter exempts")
     args = parser.parse_args(argv)
     try:
         result = check(args.root, args.root / "parsing-policy.json")
     except (OSError, ValueError, SyntaxError, UnicodeError) as exc:
         print(f"UNKNOWN — parsing guard unavailable: {exc}", file=sys.stderr)
         return 2
+    exempt_total = sum(result.exempt_sites.values())
+    if args.boundary_surface:
+        for path, count in sorted(result.exempt_sites.items(), key=lambda item: (-item[1], item[0])):
+            print(f"{count:5d}  {path}")
+        print(f"exempt sites inside approved adapters: {exempt_total} "
+              f"across {len(result.exempt_sites)} adapters")
     if result.violations:
         print("\n".join(result.violations), file=sys.stderr)
+        print(f"exempt sites inside approved adapters: {exempt_total} "
+              f"across {len(result.exempt_sites)} adapters (not counted as debt)", file=sys.stderr)
         return 1
-    print(f"PASS — no new parsing outside boundaries; {result.legacy_count} existing legacy sites remain")
+    print(f"PASS — no new parsing outside boundaries; {result.legacy_count} existing legacy sites remain; "
+          f"{exempt_total} exempt sites inside {len(result.exempt_sites)} approved adapters")
     return 0
 
 

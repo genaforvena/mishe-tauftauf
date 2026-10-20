@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.check_parsing import inspect_source, check
+from tools.check_parsing import inspect_source, check, main
 
 
 def policy(root, *, boundaries=("src/adapter.py",), legacy=None):
@@ -70,3 +70,59 @@ def test_repository_obeys_recorded_boundary_and_legacy_budget():
     root = Path(__file__).resolve().parents[1]
     result = check(root, root / "parsing-policy.json")
     assert result.violations == []
+
+
+def test_exempt_sites_inside_an_adapter_are_counted_and_stay_out_of_the_legacy_budget(tmp_path):
+    path = policy(tmp_path, boundaries=("src/adapter.py",))
+    (tmp_path / "src/adapter.py").write_text("a = raw.split(':')\nb = other.splitlines()\n")
+    old = "value = raw.split(':')\n"
+    sites = inspect_source("src/core.py", old)
+    (tmp_path / "src/core.py").write_text(old)
+    path.write_text(json.dumps({
+        "version": 1,
+        "boundaries": ["src/adapter.py"],
+        "legacy": {"src/core.py": {sites[0].fingerprint: 1}},
+    }))
+    result = check(tmp_path, path)
+    assert result.violations == []
+    assert result.legacy_count == 1
+    assert result.exempt_sites == {"src/adapter.py": 2}
+
+
+def test_a_registered_adapter_may_parse_arbitrary_prose_while_the_same_code_outside_is_rejected(tmp_path):
+    """The exemption is granted per path, not per decoded dialect.
+
+    The boundary's contract ("human prose is content; adapters decode external
+    dialects") is carried by review and by the doc paragraph, not by the
+    checker: registering a path exempts every parsing call in that file. This
+    pins that granularity so a narrower rule is a visible policy change rather
+    than an unnoticed drift.
+    """
+    path = policy(tmp_path, boundaries=("src/adapter.py",))
+    prose = (
+        "import re\n"
+        "PROSE = re.compile(r'\\b[A-Z][a-z]+ [a-z]+ of [a-z]+\\b')\n"
+        "def interpret(sentence):\n"
+        "    return [m.group(0) for m in PROSE.finditer(sentence)]\n"
+    )
+    (tmp_path / "src/adapter.py").write_text(prose)
+    result = check(tmp_path, path)
+    assert result.violations == []
+    assert result.exempt_sites == {"src/adapter.py": 2}
+    (tmp_path / "src/core.py").write_text(prose)
+    unregistered = check(tmp_path, path).violations
+    assert unregistered and all(item.startswith("src/core.py:") for item in unregistered)
+
+
+def test_published_output_names_the_exempt_surface(tmp_path, capsys):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/adapter.py").write_text("a = raw.split(':')\n")
+    (tmp_path / "parsing-policy.json").write_text(json.dumps({
+        "version": 1, "boundaries": ["src/adapter.py"], "legacy": {}}))
+    assert main(["--root", str(tmp_path)]) == 0
+    printed = capsys.readouterr().out
+    assert "1 exempt sites inside 1 approved adapters" in printed
+    assert main(["--root", str(tmp_path), "--boundary-surface"]) == 0
+    surface = capsys.readouterr().out
+    assert "src/adapter.py" in surface
+    assert "exempt sites inside approved adapters: 1 across 1 adapters" in surface
