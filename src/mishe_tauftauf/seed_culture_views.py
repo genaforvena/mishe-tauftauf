@@ -460,6 +460,10 @@ def _camera_faults(home: Path, env: dict[str, str]) -> tuple[str, str, list[str]
     2026-10-20: 1195 ``Failed to set UVC probe control : -110`` lines with zero
     resubmit lines, while this surface reported ``kernel-urbs=0`` and named no
     kernel cause). Each class is counted and named separately.
+    A kernel journal that cannot be read — absent, or past its five-second
+    budget — stays UNKNOWN and names no kernel cause: both counters read the
+    same result, so a failed read must leave the pane UNKNOWN instead of
+    raising out of the view.
     """
     try:
         declared = decode_cam_manifest(
@@ -508,20 +512,23 @@ def _camera_faults(home: Path, env: dict[str, str]) -> tuple[str, str, list[str]
     if onsets >= CAMERA_CAPTURE_FAULTS:
         causes.append(f"camera-capture-fail={onsets}")
     kernel = 0
+    probe = 0
     since = datetime.fromtimestamp(now - CAMERA_WINDOW_S, timezone.utc).strftime(
         "%Y-%m-%d %H:%M:%S")
     try:
         result = subprocess.run(["journalctl", "-k", "--since", since, "--no-pager"],
                                 capture_output=True, text=True, timeout=5, env=env)
+    except (OSError, subprocess.TimeoutExpired):
+        result = None
+        unknown = unknown or "camera kernel log unreadable"
+    if result is not None:
         if result.returncode == 0:
             kernel = decode_urb_failures(result.stdout)
+            probe = decode_probe_failures(result.stdout)
         else:
             unknown = unknown or "camera kernel log unreadable"
-    except (OSError, subprocess.TimeoutExpired):
-        unknown = unknown or "camera kernel log unreadable"
     if kernel >= CAMERA_KERNEL_FAULTS:
         causes.append(f"camera-kernel-urb={kernel}")
-    probe = decode_probe_failures(result.stdout)
     if probe >= CAMERA_KERNEL_PROBE_FAULTS:
         causes.append(f"camera-kernel-probe={probe}")
     if causes:

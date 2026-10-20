@@ -1329,7 +1329,8 @@ def test_health_excludes_a_plain_shell_that_carries_a_pythonpath(tmp_path: Path,
     assert "STATE: GREEN" in rendered
 
 
-def _camera_site(tmp_path: Path, monkeypatch, *, state, artifact_age_s, events, journal=(), journal_rc=0):
+def _camera_site(tmp_path: Path, monkeypatch, *, state, artifact_age_s, events, journal=(), journal_rc=0,
+                 journal_raise=False):
     """A camera node: mesh artifacts under HOME/.mesh, camera service active."""
     home = _service_home(tmp_path, ["mesh-cam-watch.service"])
     (home / "health" / "camera.json").write_text('{"version": 1}', encoding="utf-8")
@@ -1353,6 +1354,8 @@ def _camera_site(tmp_path: Path, monkeypatch, *, state, artifact_age_s, events, 
                                              "ActiveState=active\nSubState=running\n"
                                              "NRestarts=0\nEnvironment=\n\n", "")
         if argv[0] == "journalctl":
+            if journal_raise:
+                raise subprocess.TimeoutExpired(argv, 5)
             body = "".join(row + "\n" for row in journal)
             return subprocess.CompletedProcess(argv, journal_rc, body, "")
         return subprocess.CompletedProcess(argv, 0, "PASS doctor\n", "")
@@ -1478,6 +1481,22 @@ def test_health_reports_an_unreadable_camera_source_as_unknown(tmp_path: Path, m
     assert "STATE: UNKNOWN — camera state unavailable" in rendered
     report = (home / "observations" / "health").read_text(encoding="utf-8")
     assert report.startswith("UNKNOWN health camera state unavailable at ")
+
+
+def test_health_reads_an_unreachable_kernel_log_as_unknown(tmp_path: Path, monkeypatch) -> None:
+    """A kernel-log read that fails is UNKNOWN, not a crash out of the view.
+
+    ``journalctl`` can be absent or exceed its five-second budget. The probe
+    counter reads the same result, so the read had to raise before the view
+    could report: an unbound result raised ``UnboundLocalError`` and took the
+    whole health pane down instead of leaving broken monitoring visible.
+    """
+    home = _camera_site(tmp_path, monkeypatch, state="SEEING|diff=1.2|mean=56|",
+                        artifact_age_s=5, events=(), journal_raise=True)
+    rendered = health(home)
+    assert "CAMERA: UNKNOWN" in rendered
+    assert "camera kernel log unreadable" in rendered
+    assert "STATE: UNKNOWN — camera state unavailable" in rendered
 
 
 def test_health_passes_a_camera_node_below_the_fault_thresholds(tmp_path: Path, monkeypatch) -> None:
