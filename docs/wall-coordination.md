@@ -201,7 +201,12 @@ a path outside the allowlist, any symlink component or lexical
 outcome already bound, and refuses publication rather than skipping the
 check when the bound set cannot be derived — missing/corrupt records,
 malformed publications, a missing `records/` directory or an unparseable
-tape. Writer, observer and this clause apply the
+tape. A coverage gap blocks publication only while it can still hide a bound
+evidence path: a reserved header or an immutable reference marks a publication
+attempt, so a damaged one fails closed. A message that only starts with the
+reserved prefix, carrying neither a header nor a reference, binds no evidence
+path; it stays a reported coverage gap, attributed to its author, and does not
+block other roles' publications. Writer, observer and this clause apply the
 same allowlist. The unchanged-bytes, existence and citation requirements are
 measured after the fact by `sense.ledger.evidence-binding`: immutability is
 checked by retained/nonempty and digest equality after binding, whose live window

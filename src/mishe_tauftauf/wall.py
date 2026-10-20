@@ -92,14 +92,22 @@ def _audit_refusal(home: Path, role: str, source_path: str | None, wall_path: Pa
 
 
 def _bound_evidence_paths(home: Path) -> set[str]:
-    """Derive post-clause event bindings, failing closed on incomplete coverage."""
+    """Derive post-clause event bindings, failing closed on incomplete coverage.
+
+    A gap fails closed only while it can still hide a bound evidence path: a
+    reserved header or an immutable reference marks a publication attempt. A
+    damaged entry that carries neither binds nothing, so it is reported as a
+    coverage gap but cannot block another role's publication.
+    """
     from .discovery import EVIDENCE_BINDING_CLAUSE_TIME
     coverage = classify_outcomes(home, EVIDENCE_BINDING_CLAUSE_TIME)
     if coverage["unavailable"] == "chat tape unavailable" and not (home / "chat.log").exists():
         return set()
-    if coverage["unavailable"] or coverage["incomplete"]:
-        raise ValueError("cannot derive bound evidence paths: " +
-                         str(coverage["unavailable"] or coverage["incomplete"]))
+    if coverage["unavailable"]:
+        raise ValueError("cannot derive bound evidence paths: " + str(coverage["unavailable"]))
+    blocking = [row for row in coverage["incomplete"] if row.get("binding", "unknown") != "none"]
+    if blocking:
+        raise ValueError("cannot derive bound evidence paths: " + str(blocking))
     return {row["evidence"]["path"] for row in coverage["events"]}
 
 
