@@ -7272,6 +7272,27 @@ def test_treadmill_handoff_unknown_without_previous_receipt(monkeypatch, tmp_pat
     result = discovery._mind_treadmill(home)
     assert result["roles"]["senses"]["handoff_moved"] is None
 
+def test_treadmill_sample_renders_pending_and_idle(monkeypatch, tmp_path):
+    home = tmp_path / "site"
+    home.mkdir()
+
+    class Head:
+        returncode = 0
+        stdout = "abc123\n"
+
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: Head())
+    monkeypatch.setattr(discovery, "_treadmill_commits",
+                        lambda checkout, role, limit=60: [])
+    monkeypatch.setattr(discovery, "_mind_role_coverage",
+                        lambda home, role, now, entries: {
+                            "wall_updated": None, "last_yield": None,
+                            "idle_s": 7892, "pending": 61469})
+    result = discovery._mind_treadmill(home)
+    assert "pending=61469" in result["sample"]
+    assert "idle=7892" in result["sample"]
+
+
+
 def test_treadmill_git_log_entries_groups_subjects_and_files():
     from mishe_tauftauf import proc_table
     raw = ("SUBJECT:inference-research wake 1: record abc CI success\n"

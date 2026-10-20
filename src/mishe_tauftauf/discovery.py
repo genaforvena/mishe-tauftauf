@@ -1090,11 +1090,11 @@ def _watch_wait_verdict(first: str, second: str, now: str) -> dict:
       normalized content is still while the raw frame advances.
     * ``active`` — normalized content grew: the mind is producing, not
       waiting, whatever the pattern says.
-    * ``suspect`` — frame alive, no pattern, no growth: cross with
-      ``sense.mind.wedge-suspect`` session-log evidence before calling it a
-      wedge.
-    * ``pane-dead`` — both captures empty: route to the supervisor/health,
-      not wedge logic.
+    * ``suspect`` — frame alive, no pattern, no growth: visible in the scan;
+      cross-evidence comes from ``sense.mind.wedge-suspect`` which reads the
+      session log directly.
+    * ``pane-dead`` — both captures empty: visible in the scan; no dedicated
+      consumer.
     * ``unknown`` — pattern present but external state unreadable, or the
       pattern names CI with no run id: stays visible, never clean.
     """
@@ -1115,7 +1115,7 @@ def _watch_wait_verdict(first: str, second: str, now: str) -> dict:
                 "detail": "frame alive, no wait pattern, no growth",
                 "pattern": None, "stable": True, "frame_live": frame_live}
     run_id = omp_pane.ci_run_id(second) or omp_pane.ci_run_id(first)
-    needs_external = pattern in ("gh run watch", "gh run view", "waiting on",
+    needs_external = pattern in ("gh run watch", "gh run view",
                                   "Waiting for CI poll result")
     if needs_external:
         if run_id is None:
@@ -1172,7 +1172,7 @@ def _mind_watch_wait(home: Path) -> dict:
     try:
         result = subprocess.run(
             ["tmux", "list-panes", "-a", "-F",
-             "#{session_name}|#{window_name}|#{pane_pid}"],
+             "#{session_name}|#{window_name}|#{pane_pid}|#{pane_index}"],
             capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.TimeoutExpired):
         return {"id": "sense.mind.watch-wait", "state": "unknown",
@@ -1182,7 +1182,7 @@ def _mind_watch_wait(home: Path) -> dict:
         return {"id": "sense.mind.watch-wait", "state": "unknown",
                 "sample": "tmux pane enumeration failed", "panes": [],
                 "kind": "read"}
-    records = proc_table.pane_records(result.stdout)
+    records = proc_table.mind_pane_records(result.stdout)
     if not records:
         return {"id": "sense.mind.watch-wait", "state": "unknown",
                 "sample": "no panes enumerated", "panes": [], "kind": "read"}
@@ -1496,7 +1496,8 @@ def _mind_treadmill(home: Path, now: datetime | None = None) -> dict:
                        "handoff": digest, "handoff_moved": handoff_moved,
                        **_mind_role_coverage(home, role, now, entries)}
     sample = "treadmill=" + worst + " " + " ".join(
-        f"{role}(stag={pairs[role]['stagnation']},change={pairs[role]['change']})"
+        f"{role}(stag={pairs[role]['stagnation']},change={pairs[role]['change']},"
+        f"pending={pairs[role].get('pending')},idle={pairs[role].get('idle_s')})"
         for role in sorted(pairs))
     stagnant = sorted(role for role, pair in pairs.items()
                       if pair.get("handoff_moved") == "stagnant")
