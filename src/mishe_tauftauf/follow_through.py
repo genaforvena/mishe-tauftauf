@@ -7,7 +7,7 @@ The guard checks producer freshness, not whether the reported work is healthy.
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import math
@@ -21,8 +21,71 @@ def lines(home: Path, *, now=None) -> list[str]:
     from .initiative import snapshot_lines as initiative_lines
     from .substrate_watch import snapshot_lines as substrate_lines
 
-    return [*substrate_lines(home, now=now, max_age=120),
+    return [*_outcome_refusal_lines(home, now=now),
+            *substrate_lines(home, now=now, max_age=120),
             *initiative_lines(home, now=now, max_age=180)]
+
+
+REFUSAL_AUDIT_MAX_BYTES = 262144
+"""Bound on the refusal audit tail the projection reads."""
+
+
+def _outcome_refusal_lines(home: Path, *, now=None) -> list[str]:
+    """Report refused outcome publications, so a denial is visible to the plant.
+
+    The writer records every refusal it makes. Without that record a
+    plant-wide denial of the outcome instrument is indistinguishable from a
+    plant that produced nothing.
+    """
+    from .wall import OUTCOME_REFUSAL_AUDIT
+
+    home = Path(home).resolve()
+    now = now or datetime.now(timezone.utc)
+    path = home / OUTCOME_REFUSAL_AUDIT
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return [f"OUTCOME WRITER REFUSALS: none recorded (no audit file yet at {OUTCOME_REFUSAL_AUDIT})"]
+    except OSError as exc:
+        return [f"OUTCOME WRITER REFUSALS: UNKNOWN — audit unreadable: {exc}"]
+    if len(raw) > REFUSAL_AUDIT_MAX_BYTES:
+        raw = raw[-REFUSAL_AUDIT_MAX_BYTES:]
+    entries = []
+    for line in raw.decode("utf-8", "replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict) or not isinstance(entry.get("ts"), str):
+            continue
+        entries.append(entry)
+    if not entries:
+        return [f"OUTCOME WRITER REFUSALS: none recorded (audit {OUTCOME_REFUSAL_AUDIT} holds no readable entry)"]
+    horizon = now - timedelta(hours=24)
+    recent = []
+    for entry in entries:
+        try:
+            stamp = datetime.fromisoformat(entry["ts"].replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        if stamp >= horizon:
+            recent.append(entry)
+    if not recent:
+        return [f"OUTCOME WRITER REFUSALS: 0 in the last 24h "
+                f"(audit {OUTCOME_REFUSAL_AUDIT}, {len(entries)} older entries retained)"]
+    denials = [entry for entry in recent if entry.get("gaps")]
+    last = recent[-1]
+    gaps = last.get("gaps") or []
+    refs = ",".join(f"chat.log#{row.get('sequence')}" for row in gaps
+                    if isinstance(row, dict) and row.get("sequence") is not None)
+    detail = f" blocked-by={refs}" if refs else ""
+    reason = str(last.get("reason", "unspecified"))[:160]
+    return [f"OUTCOME WRITER REFUSALS: {len(recent)} in the last 24h "
+            f"({len(denials)} coverage denials); last={last.get('role')}/{last.get('kind')}: {reason}{detail}"]
+
+
 
 
 def _load(path: Path, maximum: int) -> dict:

@@ -12,13 +12,49 @@ import shlex
 
 from .feed import Feed, publication_lock
 from .chat_protocol import decode_lifecycle
-from .outcome_events import classify_outcomes, eligible_evidence_path
+from .outcome_events import blocking_gaps, classify_outcomes, eligible_evidence_path
 from .outcome_publication import OUTCOME_KINDS
 
 WALL_MAX_BYTES = 16384
 """Hard byte bound for one edited wall; walls are bounded prose, unlike chat.log."""
 WALL_MAX_LINES = 200
 """Hard line bound for one edited wall; keeps the pane readable."""
+
+OUTCOME_REFUSAL_AUDIT = "logs/outcome-refusal-audit.jsonl"
+"""Where a refused outcome publication is recorded.
+
+The writer's refusals are the plant's only direct evidence that the outcome
+instrument denied a role; without them a plant-wide denial is indistinguishable
+from a plant that produced nothing.
+"""
+
+
+class BoundSetUnavailable(ValueError):
+    """The bound evidence set cannot be derived, so a publication fails closed.
+
+    The gaps that block the derivation are carried, so a refusal can name the
+    tape entry responsible instead of leaving the reader to guess.
+    """
+
+    def __init__(self, reason: str, gaps=None):
+        super().__init__(reason)
+        self.gaps = list(gaps or [])
+
+
+def _audit_outcome_refusal(home: Path, role: str, kind: str, reason: str, gaps) -> None:
+    """Append a refused outcome publication so the denial is observable.
+
+    Never raises: an audit write must not break the refusal it records.
+    """
+    try:
+        logs_dir = home / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        entry = {"ts": datetime.now(timezone.utc).isoformat(), "role": role, "kind": kind,
+                 "reason": reason, "gaps": list(gaps), "pid": os.getpid(), "uid": os.geteuid()}
+        with open(logs_dir / "outcome-refusal-audit.jsonl", "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
 
 
 
@@ -104,10 +140,11 @@ def _bound_evidence_paths(home: Path) -> set[str]:
     if coverage["unavailable"] == "chat tape unavailable" and not (home / "chat.log").exists():
         return set()
     if coverage["unavailable"]:
-        raise ValueError("cannot derive bound evidence paths: " + str(coverage["unavailable"]))
-    blocking = [row for row in coverage["incomplete"] if row.get("binding", "unknown") != "none"]
+        raise BoundSetUnavailable("cannot derive bound evidence paths: " + str(coverage["unavailable"]))
+    blocking = blocking_gaps(coverage)
     if blocking:
-        raise ValueError("cannot derive bound evidence paths: " + str(blocking))
+        raise BoundSetUnavailable("cannot derive bound evidence paths: " + str(blocking),
+                                  gaps=blocking)
     return {row["evidence"]["path"] for row in coverage["events"]}
 
 
@@ -117,6 +154,14 @@ def outcome(home: Path, role: str, kind: str, text: str, evidence: Path):
     validate_slug(role)
     if kind not in OUTCOME_KINDS or not text.strip():
         raise ValueError("outcome requires a supported kind and nonempty prose")
+    try:
+        return _publish_outcome(home, role, kind, text, evidence)
+    except ValueError as exc:
+        _audit_outcome_refusal(home, role, kind, str(exc), getattr(exc, "gaps", []))
+        raise
+
+
+def _publish_outcome(home: Path, role: str, kind: str, text: str, evidence: Path):
     original_evidence = evidence if evidence.is_absolute() else Path.cwd() / evidence
     if not eligible_evidence_path(home, original_evidence):
         raise ValueError(
