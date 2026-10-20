@@ -3204,8 +3204,25 @@ _SENSE_EMITTERS = ("discovery.py", "body_perception.py")
 
 
 
-_HEAD_REWIND_REFLOG_LIMIT = 40
+_HEAD_REWIND_REFLOG_LIMIT = 200
+"""Reflog entries read per scan: the window the dropped-commit count covers.
+
+The count is a count *inside this window*, so the sample names the window: a
+40-entry window covered about a week of this checkout's history and reported
+one dropped commit where a 70-entry read showed four rewind events, which
+read as "one rewind ever happened". The window bounds the work; it is not the
+whole history, and the sample says which bound it used.
+"""
+
 _HEAD_REWIND_COMMIT_LIMIT = 4
+"""Dropped commits adjudicated per scan.
+
+Every dropped commit costs a patch check per changed path, so the number of
+adjudicated commits is bounded while the number of dropped commits in the
+window is not. The sample names both, because the path verdicts cover only
+the adjudicated commits.
+"""
+
 _HEAD_REWIND_PATH_LIMIT = 12
 
 _DISK_TREND_FLOOR_BYTES = 10 * 2**30
@@ -3213,6 +3230,17 @@ _DISK_TREND_NEAR_BYTES = 20 * 2**30
 _DISK_TREND_FAST_DRAIN_PER_DAY = 10 * 2**30
 _DISK_TREND_HORIZON_DAYS = 7
 _DISK_TREND_MIN_SPAN_HOURS = 6
+
+_DISK_TREND_SLOPE_WINDOWS_DAYS = (2, 5, 7, 14)
+"""Windows whose drain rate is compared before a projection is published.
+
+A projection built from one window is a statement about that window. These
+windows disagree often -- a disk drained hard last week and filling since is
+ordinary -- and a countdown taken from the disagreeing one sends a reader to
+prune the wrong thing. The window a figure belongs to is named in the sample,
+and the signs of all of them are published, so a reader can see the
+disagreement instead of inheriting one window's number.
+"""
 
 
 def _head_rewinds(home: Path) -> dict[str, object]:
@@ -3233,6 +3261,15 @@ def _head_rewinds(home: Path) -> dict[str, object]:
     peer's uncommitted edit in the shared checkout cannot make a lost change
     read as present. A git failure reads UNKNOWN rather than "nothing
     dropped": an unreadable reflog is not evidence that nothing was lost.
+
+    The dropped-commit count covers a bounded reflog window and the sample
+    names that window, because the count is a count *inside* it: a reader who
+    saw "dropped=1" could not tell one rewind from a narrow window that
+    stopped early. Only a bounded number of dropped commits are adjudicated
+    per scan -- each costs a patch check per changed path -- so the sample
+    names that count too, because the path verdicts cover only the
+    adjudicated commits. The two units are named apart in the sample: the
+    first counts commits, the rest count changed paths.
     """
     checkout_root = Path(home).resolve().parent
     unknown = {"id": "sense.repo.head-rewinds", "state": "unknown", "kind": "read"}
@@ -3247,22 +3284,32 @@ def _head_rewinds(home: Path) -> dict[str, object]:
     reflog = run("reflog", "--format=%H %gs", "-n", str(_HEAD_REWIND_REFLOG_LIMIT))
     if reflog is None or reflog.returncode != 0:
         return {**unknown, "sample": "reflog unreadable"}
+    # Reachability is read once for the whole window instead of one
+    # `merge-base --is-ancestor` per reflog entry: the per-entry call costs
+    # a git process each, which at a 200-entry window is the dominant cost of
+    # this reading. It also made a git failure read as "not an ancestor",
+    # which counted a live commit as dropped; an unreadable ancestry now
+    # leaves the whole reading UNKNOWN instead.
+    ancestry = run("rev-list", "HEAD")
+    if ancestry is None or ancestry.returncode != 0:
+        return {**unknown, "sample": "HEAD ancestry unreadable"}
+    reachable = {line.strip() for line in ancestry.stdout.splitlines() if line.strip()}
     dropped: list[str] = []
     seen: set[str] = set()
     for sha, _message in proc_table.git_reflog_entries(reflog.stdout):
         if sha in seen:
             continue
         seen.add(sha)
-        ancestor = run("merge-base", "--is-ancestor", sha, "HEAD")
-        if ancestor is not None and ancestor.returncode == 0:
+        if sha in reachable:
             continue
         dropped.append(sha)
-        if len(dropped) >= _HEAD_REWIND_COMMIT_LIMIT:
-            break
     if not dropped:
         return {"id": "sense.repo.head-rewinds", "state": "verified",
-                "sample": "dropped=0", "dropped": 0, "lossless": 0,
-                "needs_review": 0, "absent": 0, "kind": "read"}
+                "sample": (f"dropped-commits=0 of last-{_HEAD_REWIND_REFLOG_LIMIT}"
+                           "-reflog-entries classified-commits=0"),
+                "dropped": 0, "classified_commits": 0, "lossless": 0,
+                "needs_review": 0, "absent": 0,
+                "reflog_window": _HEAD_REWIND_REFLOG_LIMIT, "kind": "read"}
     archive = run("archive", "HEAD", timeout=30, text=False)
     if archive is None or archive.returncode != 0:
         return {**unknown, "sample": "HEAD tree unreadable"}
@@ -3272,7 +3319,7 @@ def _head_rewinds(home: Path) -> dict[str, object]:
             with tarfile.open(fileobj=io.BytesIO(archive.stdout), mode="r:*") as tar:
                 tar.extractall(Path(td), filter="data")
             tree = Path(td)
-            for sha in dropped:
+            for sha in dropped[:_HEAD_REWIND_COMMIT_LIMIT]:
                 names = run("diff-tree", "--no-commit-id", "--name-only", "-r", sha)
                 if names is None or names.returncode != 0:
                     return {**unknown, "sample": f"changed paths unreadable: {sha[:7]}"}
@@ -3289,10 +3336,16 @@ def _head_rewinds(home: Path) -> dict[str, object]:
     except (OSError, subprocess.TimeoutExpired):
         return {**unknown, "sample": "HEAD tree unreadable"}
     state = "drift" if (review or absent) else "verified"
+    classified = min(len(dropped), _HEAD_REWIND_COMMIT_LIMIT)
     return {"id": "sense.repo.head-rewinds", "state": state,
-            "sample": (f"dropped={len(dropped)} lossless={lossless} "
-                       f"needs_review={review} absent={absent}"),
-            "dropped": len(dropped), "lossless": lossless,
+            "sample": (f"dropped-commits={len(dropped)} of "
+                       f"last-{_HEAD_REWIND_REFLOG_LIMIT}-reflog-entries "
+                       f"classified-commits={classified} "
+                       f"lossless-paths={lossless} "
+                       f"needs-review-paths={review} absent-paths={absent}"),
+            "dropped": len(dropped), "classified_commits": classified,
+            "reflog_window": _HEAD_REWIND_REFLOG_LIMIT,
+            "lossless": lossless,
             "needs_review": review, "absent": absent, "kind": "read"}
 
 
@@ -3313,6 +3366,17 @@ def _disk_trend(home: Path, now: datetime | None = None) -> dict[str, object]:
     floor in 36 h". The retained discovery scan corpus already holds the series,
     so the rate is derivable with no new collector. UNKNOWN when the corpus has
     fewer than 2 samples or a span under 6 h.
+
+    The rate is measured over several windows and the projection is published
+    only when they agree on the direction of the trend. A countdown is a
+    statement about the future built from one window's slope, and the windows
+    disagree often enough that such a countdown sends a reader to prune the
+    wrong thing; when they disagree the sample says ``floor=not-robust`` and
+    publishes the signs instead, and the robust reason (a trailing-24h
+    minimum below the near threshold) still carries the verdict on its own.
+    The drain figure itself is a measurement over a named window and stays
+    published, because a measured rate does not become untrue when another
+    window disagrees with it.
     """
     current = datetime.now(timezone.utc) if now is None else now
     if now is not None and now.tzinfo is None:
@@ -3336,11 +3400,49 @@ def _disk_trend(home: Path, now: datetime | None = None) -> dict[str, object]:
     recent = [b for t, b in rows if t >= cutoff]
     min24 = min(recent) if recent else rows[-1][1]
 
-    week = current - timedelta(days=7)
-    older = [r for r in rows if r[0] <= week]
-    anchor = older[-1] if older else rows[0]
-    days = (rows[-1][0] - anchor[0]).total_seconds() / 86400.0
-    drain = (anchor[1] - rows[-1][1]) / days if days > 0 else 0.0
+    # The drain rate is measured over several windows, because one window's
+    # number is a statement about that window. Each window takes the newest
+    # sample at or before its own cut-off as its anchor, so the windows share
+    # the corpus and differ only in how far back they look.
+    slopes: list[tuple[str, float]] = []
+    for window in _DISK_TREND_SLOPE_WINDOWS_DAYS:
+        older = [r for r in rows if r[0] <= current - timedelta(days=window)]
+        if not older:
+            continue
+        anchor_at, anchor_bytes = older[-1]
+        days = (rows[-1][0] - anchor_at).total_seconds() / 86400.0
+        if days <= 0:
+            continue
+        slopes.append((f"{window}d", (anchor_bytes - rows[-1][1]) / days))
+    if not slopes:
+        # The corpus is shorter than the shortest window: the whole retained
+        # span is the only window there is, and it is named by its own span
+        # rather than by a window label it does not have.
+        oldest_at, oldest_bytes = rows[0]
+        days = (rows[-1][0] - oldest_at).total_seconds() / 86400.0
+        if days > 0:
+            slopes.append((f"span{days:.1f}d", (oldest_bytes - rows[-1][1]) / days))
+    drain_window, drain = slopes[-1] if slopes else ("unknown", 0.0)
+    for label, value in slopes:
+        if label == "7d":
+            drain_window, drain = label, value
+            break
+
+    def _sign(value: float) -> str:
+        if value > 0:
+            return "+"
+        if value < 0:
+            return "-"
+        return "0"
+
+    signs = [(label, _sign(value)) for label, value in slopes]
+    # A projection is published only when the windows agree on the direction
+    # of the trend. Disagreeing windows are the normal case for a disk that
+    # was drained hard and has been filling since, and a countdown taken from
+    # one of them is not a fact about the disk.
+    projection_robust = (len(signs) >= 2
+                         and len({sign for _label, sign in signs}) == 1
+                         and signs[0][1] != "0")
 
     days_to_floor = ((min24 - _DISK_TREND_FLOOR_BYTES) / drain) if drain > 0 else None
 
@@ -3348,20 +3450,33 @@ def _disk_trend(home: Path, now: datetime | None = None) -> dict[str, object]:
     if min24 < _DISK_TREND_NEAR_BYTES:
         reasons.append(f"trailing-24h minimum {min24 / 2**30:.1f} GiB below {_DISK_TREND_NEAR_BYTES / 2**30:.0f} GiB")
     if drain > _DISK_TREND_FAST_DRAIN_PER_DAY:
-        reasons.append(f"net drain {drain / 2**30:.1f} GiB/day above {_DISK_TREND_FAST_DRAIN_PER_DAY / 2**30:.0f} GiB/day")
-    if days_to_floor is not None and days_to_floor < _DISK_TREND_HORIZON_DAYS:
+        reasons.append(f"net drain {drain / 2**30:.1f} GiB/day over the {drain_window} window above {_DISK_TREND_FAST_DRAIN_PER_DAY / 2**30:.0f} GiB/day")
+    if days_to_floor is not None and days_to_floor < _DISK_TREND_HORIZON_DAYS and projection_robust:
         reasons.append(f"projected floor in {days_to_floor:.1f} days (< {_DISK_TREND_HORIZON_DAYS})")
 
     state = "drift" if reasons else "verified"
-    sample = (f"min24={min24 / 2**30:.1f}GiB drain={drain / 2**30:.1f}GiB/day "
-              f"floor={days_to_floor:.1f}d" if days_to_floor is not None else
-              f"min24={min24 / 2**30:.1f}GiB drain={drain / 2**30:.1f}GiB/day")
+    parts = [f"min24={min24 / 2**30:.1f}GiB"]
+    if slopes:
+        parts.append(f"drain={drain / 2**30:.1f}GiB/day({drain_window})")
+        parts.append("slopes=" + " ".join(f"{label}:{sign}" for label, sign in signs))
+    else:
+        parts.append("drain=unknown")
+    if days_to_floor is not None:
+        parts.append(f"floor={days_to_floor:.1f}d" if projection_robust
+                     else "floor=not-robust")
     if reasons:
-        sample += f" reasons={'|'.join(reasons)}"
+        parts.append("reasons=" + "|".join(reasons))
+    sample = " ".join(parts)
 
     return {"id": "sense.disk.trend", "state": state, "sample": sample,
             "min24_bytes": min24, "drain_per_day": round(drain, 1),
-            "days_to_floor": None if days_to_floor is None else round(days_to_floor, 2),
+            "drain_window": drain_window,
+            "slope_windows": {label: round(value / 2**30, 2) for label, value in slopes},
+            "projection_robust": projection_robust,
+            "days_to_floor": (None if days_to_floor is None or not projection_robust
+                              else round(days_to_floor, 2)),
+            "unrobust_days_to_floor": (None if days_to_floor is None or projection_robust
+                                       else round(days_to_floor, 2)),
             "samples": len(rows), "span_hours": round(span_h, 2), "kind": "read"}
 
 def _runtime_pin_lag(home: Path, now: datetime | None = None) -> dict[str, object]:

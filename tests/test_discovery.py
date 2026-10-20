@@ -2072,8 +2072,11 @@ def _rewind_git(monkeypatch, *, reflog: str, dropped: set[str], applies: dict) -
     def mock_run(cmd, **kwargs):
         if cmd[:2] == ["git", "reflog"]:
             return subprocess.CompletedProcess(cmd, 0, reflog, "")
-        if cmd[:3] == ["git", "merge-base", "--is-ancestor"]:
-            return subprocess.CompletedProcess(cmd, 0 if cmd[3] not in dropped else 1, "", "")
+        if cmd[:2] == ["git", "rev-list"]:
+            shas = [line.split()[0] for line in reflog.splitlines() if line.strip()]
+            ancestors = [sha for sha in shas if sha not in dropped]
+            return subprocess.CompletedProcess(
+                cmd, 0, "".join(f"{sha}\n" for sha in ancestors), "")
         if cmd[:2] == ["git", "archive"]:
             return subprocess.CompletedProcess(cmd, 0, b"", "")
         if cmd[:2] == ["git", "diff-tree"]:
@@ -2106,7 +2109,8 @@ def test_head_rewinds_with_no_dropped_commit_reads_verified(tmp_path, monkeypatc
                 dropped=set(), applies={"paths": "", "verdicts": {}})
     result = discovery._head_rewinds(home)
     assert result["state"] == "verified"
-    assert result["sample"] == "dropped=0"
+    assert result["sample"] == ("dropped-commits=0 of last-200-reflog-entries "
+                                 "classified-commits=0")
     assert result["dropped"] == 0
 
 
@@ -2120,7 +2124,9 @@ def test_head_rewinds_present_change_reads_lossless(tmp_path, monkeypatch):
                                       ("PATCH src/a.py", False): False}})
     result = discovery._head_rewinds(home)
     assert result["state"] == "verified"
-    assert result["sample"] == "dropped=1 lossless=1 needs_review=0 absent=0"
+    assert result["sample"] == ("dropped-commits=1 of last-200-reflog-entries "
+                                 "classified-commits=1 lossless-paths=1 "
+                                 "needs-review-paths=0 absent-paths=0")
 
 
 def test_head_rewinds_absent_change_reads_drift(tmp_path, monkeypatch):
@@ -2133,7 +2139,9 @@ def test_head_rewinds_absent_change_reads_drift(tmp_path, monkeypatch):
                                       ("PATCH src/a.py", False): True}})
     result = discovery._head_rewinds(home)
     assert result["state"] == "drift"
-    assert result["sample"] == "dropped=1 lossless=0 needs_review=0 absent=1"
+    assert result["sample"] == ("dropped-commits=1 of last-200-reflog-entries "
+                                 "classified-commits=1 lossless-paths=0 "
+                                 "needs-review-paths=0 absent-paths=1")
 
 
 def test_head_rewinds_recommitted_change_is_its_own_verdict(tmp_path, monkeypatch):
@@ -2149,7 +2157,9 @@ def test_head_rewinds_recommitted_change_is_its_own_verdict(tmp_path, monkeypatc
                                       ("PATCH src/b.py", False): False}})
     result = discovery._head_rewinds(home)
     assert result["state"] == "drift"
-    assert result["sample"] == "dropped=1 lossless=1 needs_review=1 absent=0"
+    assert result["sample"] == ("dropped-commits=1 of last-200-reflog-entries "
+                                 "classified-commits=1 lossless-paths=1 "
+                                 "needs-review-paths=1 absent-paths=0")
 
 
 def test_head_rewinds_unreadable_reflog_reads_unknown(tmp_path, monkeypatch):
@@ -2177,8 +2187,13 @@ def test_head_rewinds_bounds_dropped_commits_and_paths(tmp_path, monkeypatch):
                                       for i in range(99)} | {
                              (f"PATCH src/f{i}.py", False): False for i in range(99)}})
     result = discovery._head_rewinds(home)
-    assert result["dropped"] == discovery._HEAD_REWIND_COMMIT_LIMIT
+    # Every dropped commit in the window is counted; only a bounded number of
+    # them are adjudicated, and the sample names both counts.
+    assert result["dropped"] == len(shas)
+    assert result["classified_commits"] == discovery._HEAD_REWIND_COMMIT_LIMIT
     assert result["needs_review"] == discovery._HEAD_REWIND_COMMIT_LIMIT * discovery._HEAD_REWIND_PATH_LIMIT
+    assert "classified-commits=4" in result["sample"]
+    assert "dropped-commits=5" in result["sample"]
 
 def _scan(home: Path, created: str, free_bytes: int) -> None:
     """Write a minimal scan file with one verified disk.free observation."""
