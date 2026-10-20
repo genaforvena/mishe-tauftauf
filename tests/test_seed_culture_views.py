@@ -1441,6 +1441,35 @@ def test_health_flags_camera_kernel_resubmit_failures_as_red(tmp_path: Path, mon
     assert "camera-kernel-urb=11" in report
 
 
+def test_health_flags_camera_kernel_probe_failures_as_red(tmp_path: Path, monkeypatch) -> None:
+    """The probe-control class is a distinct fault the surface must name on its own.
+
+    A wedged device logs ``Failed to set UVC probe control`` with no resubmit
+    line at all, so counting only the URB class reported a healthy kernel while
+    the lens was dead (health 2026-10-20: 1195 probe lines, 0 resubmit lines).
+    """
+    kernel = ["kernel: uvcvideo 1-6:1.1: Failed to set UVC probe control : -110 (exp. 26)."] * 11
+    home = _camera_site(tmp_path, monkeypatch, state="CAPTURE-FAIL|diff=1.0|mean=18|",
+                        artifact_age_s=400, events=(), journal=kernel)
+    rendered = health(home)
+    assert ("CAMERA: RED class=CAPTURE-FAIL artifact-age=400s capture-fails=0/900s "
+            "kernel-urbs=0/900s kernel-probes=11/900s") in rendered
+    report = (home / "observations" / "health").read_text(encoding="utf-8")
+    assert "camera-kernel-probe=11" in report
+    assert "camera-kernel-urb" not in report
+
+
+def test_health_passes_a_camera_node_below_the_probe_fault_threshold(tmp_path: Path, monkeypatch) -> None:
+    """Nine probe-control failures in 15 minutes stay below the recorded bound."""
+    kernel = ["kernel: uvcvideo 1-6:1.1: Failed to set UVC probe control : -110 (exp. 26)."] * 9
+    home = _camera_site(tmp_path, monkeypatch, state="SEEING|diff=1.2|mean=56|",
+                        artifact_age_s=30, events=(), journal=kernel)
+    rendered = health(home)
+    assert ("CAMERA: PASS class=SEEING artifact-age=30s capture-fails=0/900s "
+            "kernel-urbs=0/900s kernel-probes=9/900s") in rendered
+    assert "STATE: GREEN" in rendered
+
+
 def test_health_reports_an_unreadable_camera_source_as_unknown(tmp_path: Path, monkeypatch) -> None:
     """Broken monitoring stays UNKNOWN, and a non-zero journalctl read names it."""
     home = _camera_site(tmp_path, monkeypatch, state=None, artifact_age_s=5, events=(), journal_rc=1)

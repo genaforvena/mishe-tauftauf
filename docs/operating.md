@@ -256,9 +256,12 @@ class line and the latest artifact, and the UVC function can stall
 intermittently — v4l2 read timeouts, kernel URB resubmit failures — with
 nothing reading them. The health view reads that surface directly and prints a
 `CAMERA:` line: artifact age against the bound `mesh-cam-watch` itself declares
-(120 s), `CAPTURE-FAIL` onsets and kernel URB resubmit failures inside a
-15-minute window, with the class turning RED at three capture fails or ten URB
-resubmits in that window. A node declares its camera with `health/camera.json`,
+(120 s), `CAPTURE-FAIL` onsets, kernel URB resubmit failures and kernel UVC
+probe-control failures inside a 15-minute window, with the class turning RED at
+three capture fails or ten failures of either kernel class in that window. The
+two kernel classes are counted and named separately because a wedged device logs
+the probe-control class alone. A node declares its camera with
+`health/camera.json`,
 so a
 plant without a webcam skips the check instead of inheriting its neighbour's
 surface; a declaration that cannot be read, or a source that cannot be read on
@@ -271,7 +274,8 @@ is written to a discarded stream rather than to a pane: measured at
 2026-10-13T13:53Z on the live health frame, no `CAMERA:` row is rendered. The
 reader-visible camera surface is the named cause the check publishes into its
 durable report and the pane's `SYSTEM ZERO` line —
-`camera-artifact-stale`, `camera-capture-fail=<n>`, `camera-kernel-urb=<n>` —
+`camera-artifact-stale`, `camera-capture-fail=<n>`, `camera-kernel-urb=<n>`,
+`camera-kernel-probe=<n>` —
 so a camera fault still reaches a reader as a RED cause with its own name,
 while the artifact age and counts stay one step deeper than the pane.
 Measured on this host at 06:40Z: `CAMERA: RED class=SEEING
@@ -328,6 +332,17 @@ produced. Read again at 09:52:42Z the line read `CAMERA: PASS class=SEEING
 artifact-age=1s capture-fails=0/900s kernel-urbs=0/900s`, so the capture
 failure that had tripped the 09:03Z reading aged out without recurring and the
 recovery has held across a second window roll.
+Measured again at 2026-10-20T20:21Z, the probe class is what the surface had
+been blind to: the camera wedged at 18:13:17Z and the kernel then logged
+`uvcvideo 1-6:1.1: Failed to set UVC probe control : -110` continuously — 1195
+lines from onset to 19:56Z, 173 inside the 900-second window — with **zero** URB
+resubmit lines, so the line read `CAMERA: RED class=CAPTURE-FAIL
+artifact-age=7710s capture-fails=0/900s kernel-urbs=0/900s` and named only
+`camera-artifact-stale`: a kernel fault with no kernel cause. The surface now
+counts and names the probe class, so the same live node reads
+`kernel-probes=173/900s` with the cause `camera-kernel-probe=173`. The device
+fault itself is unresolved and belongs to the sensor owner; this line stays the
+continuing observation.
 
 ### Doctor is a check with a repair side effect
 
