@@ -703,19 +703,50 @@ def test_settling_a_wake_again_clears_a_hold_it_could_not_clear_before(tmp_path,
     wake = Feed(tmp_path).append('seed', 'seed wake genome observation=1\nRead your wall.')
     recovery.write_blocked_state(tmp_path, 'genome', wake.sequence, verdict=recovery.RECONCILE,
                                 reason='an earlier attempt dispatched an effect')
-    real_unlink = Path.unlink
+    import os as _os
+    real_rename = _os.rename
     refused = []
 
-    def refuse_once(self, *args, **kwargs):
-        if self.name == 'genome-native.blocked.json' and not refused:
+    def refuse_once(source, target):
+        if '.claimed-' in str(target) and not refused:
             refused.append(True)
-            raise OSError('cannot remove')
-        return real_unlink(self, *args, **kwargs)
+            raise OSError('cannot claim the hold')
+        return real_rename(source, target)
 
-    monkeypatch.setattr(Path, 'unlink', refuse_once)
+    monkeypatch.setattr(_os, 'rename', refuse_once)
     wall.settle(tmp_path, 'genome', wake.sequence, 'The wake is done.', False, 'changed')
     assert recovery.read_blocked_state(tmp_path, 'genome')[0] is not None
     # The retry takes the idempotent path and must still clean up.
     result = wall.settle(tmp_path, 'genome', wake.sequence, 'The wake is done.', False, 'changed')
     assert 'already settled' in result
     assert recovery.read_blocked_state(tmp_path, 'genome')[0] is None
+
+
+def test_clearing_a_hold_keeps_a_record_that_cannot_be_decoded(tmp_path):
+    """A corrupt record is the only evidence a hold exists; it is kept."""
+    path = recovery.blocked_state_path(tmp_path, 'genome')
+    path.parent.mkdir(parents=True)
+    path.write_text('{not json', encoding='utf-8')
+    assert recovery.clear_blocked_state(tmp_path, 'genome', 1) is False
+    assert path.exists()
+    assert path.read_text(encoding='utf-8') == '{not json'
+
+
+def test_clearing_a_hold_never_removes_a_record_published_in_the_meantime(tmp_path, monkeypatch):
+    """The removed record is the one that was read, not a newer one."""
+    import os as _os
+    path = recovery.blocked_state_path(tmp_path, 'genome')
+    path.parent.mkdir(parents=True)
+    recovery.write_blocked_state(tmp_path, 'genome', 1, verdict=recovery.RECONCILE, reason='held')
+    real_rename = _os.rename
+
+    def publish_after_claim(source, target):
+        real_rename(source, target)
+        if '.claimed-' in str(target):
+            recovery.write_blocked_state(tmp_path, 'genome', 2, verdict=recovery.RECONCILE,
+                                        reason='a later hold')
+
+    monkeypatch.setattr(_os, 'rename', publish_after_claim)
+    assert recovery.clear_blocked_state(tmp_path, 'genome', 1) is True
+    record, reason = recovery.read_blocked_state(tmp_path, 'genome')
+    assert record is not None and record['wake'] == 2
