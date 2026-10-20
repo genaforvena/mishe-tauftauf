@@ -25,6 +25,16 @@ silently treating them as commands. New adapters require an explicit, reviewed
 addition of their exact path; a directory-wide exemption would make the
 constraint ineffective.
 
+The follow-through observers add three literal boundaries:
+`substrate_watch.py` decodes Git NUL records, runtime selection, systemd
+process properties and its checksummed snapshot/event/outbox JSON;
+`initiative.py` decodes saved patch/report JSON and timestamps while reusing
+canonical lifecycle, prediction and outcome decoders; `follow_through.py`
+decodes its CLI and producer/guard caches through their canonical readers.
+They do not derive work state, authorship or authority from human prose.
+Unknown encodings/records and inaccessible evidence remain UNKNOWN, with
+original corrupt source-observer bytes retained before replacing the cache.
+
 `docs_tools.py` is the reader-text search boundary: it validates a literal query,
 enumerates `README.md` and immediate `docs/*.md`, and returns exact path/line/text
 matches. Casefold matching and line-ending removal do not interpret Markdown

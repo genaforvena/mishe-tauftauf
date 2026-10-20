@@ -4,10 +4,11 @@
 
 Mesh is a local development culture in which each plant develops the Git
 repository containing its site; this plant's repository is this shared
-development checkout. Minds choose useful work, including planning and
-investigation, and coordinate through edited walls and an addressed shared
-chat tape, working in one shared checkout on the single `main` branch.
-Addressed messages are visible to everyone, not private.
+development checkout. Minds proactively choose useful work without waiting for
+a human push, including investigation, bounded experiments and repairs. They
+coordinate through edited walls and an addressed shared chat tape, working in
+one shared checkout on the single `main` branch. Addressed messages are visible
+to everyone, not private.
 
 For a first plant, [clone Mishe and run your coding agent in the checkout](../README.md#start-with-your-coding-agent).
 Ask it to use the planting skill: inspect the host and existing state, set up the
@@ -38,6 +39,15 @@ action, including any blocker's resolver, missing evidence and disposition time.
 Work is delivered by committing to the single `main` branch and verifying the
 result; [wall coordination](wall-coordination.md) covers blocker recovery,
 outcomes and the exact commands.
+
+The standing practice is **FEED**: find a causal gap, experiment with a bounded
+repair, examine the actual evidence, and dispose by keeping, revising or
+reverting. Follow suggestions through to observed results. Self-schedule a
+concrete next step; a blocked lane is not a blocked mind. An honestly failed
+and recovered experiment is useful work, not a reason to become passive.
+The follow-through view distinguishes recorded attempts, reported turn results,
+evidence-backed outcomes, recovery dispositions and unfinished work. It is not
+a courage score: messages, commits and `changed` turns do not count as bugs fixed.
 
 Dashboards and walls report bounded observations, not overall health. GREEN
 covers only the named checks; missing, failed and stale readings stay unresolved,
@@ -83,14 +93,19 @@ while services, panes and watcher heartbeats stay green and `ACTIVITY` reads
 `ENDED`; nothing re-arms it automatically
 ([wall coordination](wall-coordination.md)).
 
-Source edits do not change running code. CI, checkout source and running code are
-separate evidence: the CLI runs a pinned release, while each pane and service
-loads its own snapshot, and any of those snapshots can lag the committed source.
-A green check is not proof of what a service or pane has loaded; delivery is
-complete only after deterministic checks, an independent reading, checked
-activation and live observation, with a tested recovery path. Genome pushes
-`main` and checks its CI and live consumers but does not gate another mind's
-commit.
+Source observation follows the living checkout, not an old execution pin. Git
+history and exact file changes, docs, walls, addressed conversation and runtime
+evidence are stigmergic substrate; text is evidence, not automatic authority.
+The substrate observer fingerprints tracked and nonignored files and separately
+observes runtime selection and consumer import roots. Material changes address
+Genome and Witness even when another runtime observation is UNKNOWN; failed
+observation addresses Health. Cached views expose missing or stale producers.
+
+Execution snapshots remain recoverability tools, not limits on what minds may
+study or repair. Source edits do not silently become running code. Delivery
+still requires deterministic checks, independent reading, checked activation
+and live observation with a tested recovery path. Genome pushes `main` and
+checks its CI and live consumers but does not gate another mind's commit.
 
 One standing initiative names its own limits: the Docs mind is currently
 exercising the internal native loop as its bounded, native-only canary. This

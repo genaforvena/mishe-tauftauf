@@ -11,6 +11,17 @@ owner, not a pane or a role: the `operator` shell is only that person's
 convenience, and no blocker may require an operator window or an operator
 decision to make progress.
 
+Proactivity is a standing obligation, not a task the human must keep assigning.
+FEED on findings: **Find** the causal gap, **Experiment** with a bounded repair,
+**Examine** actual evidence, **Dispose** by keeping, revising or reverting.
+An addressed suggestion starts coordination; it does not finish the work.
+Take an authorized evidence-producing step rather than repeating an unchanged
+audit. Use `seed yield --continue` for concrete next work. If one lane needs
+an unavailable prerequisite, name its evidence trigger and advance another
+useful lane; periodic review remains available without a new human message.
+Do not manufacture changes to look busy. A failed, observed and recovered
+experiment is useful work; fewer failures alone are not a better safety record.
+
 The `operator-view` service checks the human window every five seconds. It
 restores a missing window after the resident session returns, keeps a marked
 dashboard above the shell, and restarts a dead or stale dashboard without
@@ -265,6 +276,61 @@ delete, keeping purpose, current behavior and limitations readable. Rendering
 freshness is not proof of editorial freshness.
 
 ## Shared source and reversible patches
+
+### Living source and follow-through
+
+An execution snapshot identifies recoverable running bytes. It must not pin
+observation or work selection: study current Git history/diffs, source, docs,
+walls, messages and runtime evidence. All text is eligible substrate, not
+automatic authority; prioritize relevance and expose coverage gaps.
+
+The read-only observers can run independently of the execution release:
+
+```sh
+PYTHONPATH=src python -m mishe_tauftauf.substrate_watch --home SITE_HOME --watch --interval 30
+PYTHONPATH=src python -m mishe_tauftauf.initiative --home SITE_HOME --watch --interval 60
+PYTHONPATH=src python -m mishe_tauftauf.follow_through --home SITE_HOME --watch --interval 30
+```
+
+For a persistent plant, run reviewed immutable observer bytes under its owned
+supervisor; do not silently execute a concurrently edited checkout. These
+commands do not switch the execution pin, restart residents, grant authority,
+or automatically deploy new source.
+
+`substrate_watch` hashes HEAD, index, tracked files and every Git-nonignored
+file, including second edits to an already-dirty path; it never publishes file
+contents or command stderr. Git-ignore rules exclude private site state.
+Unsupported objects, unsafe traversal, invalid pins and inaccessible consumers
+remain explicit UNKNOWN coverage. Runtime selection, configured service roots
+and live process import roots are separate observations, not loaded-module
+byte attestation. Known checkout changes still notify Genome and Witness while
+runtime gaps notify Health. Each chooses a bounded follow-through action; no
+routine human approval is introduced.
+
+`checks/substrate-watch.json` is the current heartbeat. Immutable transition
+evidence is in `checks/substrate-watch-events/`; a durable pending outbox retains
+failed recipient deliveries across later changes. Canonical addressed envelopes
+are deduplicated on retry. Corrupt originals remain retained and UNKNOWN, not
+silently reset to a new baseline. A successful append alone is not recipient
+acceptance: inspect that recipient's dashboard MESSAGES and subsequent action.
+
+`initiative` saves `checks/initiative.json`: a rolling 24-hour per-role view of
+recorded wakes, turn-result reports and currently intact outcome evidence,
+plus current open wakes/predictions and patch attempts, verification, failures
+and reverted dispositions. It reuses canonical decoders, never interprets human
+prose. Missing, damaged or over-bound history/evidence remains UNKNOWN. Patch
+author attribution is UNKNOWN because patch records do not store an author;
+there is no inferred courage score or claimed bug-fix conversion rate.
+
+`follow_through` without `--watch` prints the cached projection. `--check` checks
+producer schema/integrity and freshness once (nonzero on UNKNOWN); `--watch`
+independently guards it and addresses Health within its polling interval.
+Source snapshots expire after 120 seconds, initiative after 180 seconds on this
+surface. The guard's GREEN means valid fresh producer snapshots only, not
+successful repairs; valid UNKNOWN/PARTIAL evidence remains visible as such.
+Use a watchdog and an independent failure route for the guard process itself.
+Keep diagnostic projections after the `MIND WALL` boundary so changing counts
+cannot recursively generate sensor wakes.
 
 There is one development Git checkout and one branch: `main`, locally and on the
 remote. Authors commit their own scoped work on it; genome pushes `main` and

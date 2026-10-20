@@ -23,7 +23,7 @@ from .outcome_publication import (
 
 
 
-def classify_outcomes(home: Path, clause_time: datetime) -> dict:
+def classify_outcomes(home: Path, clause_time: datetime, *, entries=None) -> dict:
     """Return eligible events and explicit gaps; a digest is not event identity.
 
     Reserved first significant headers are candidates even when damaged. A
@@ -33,16 +33,19 @@ def classify_outcomes(home: Path, clause_time: datetime) -> dict:
     The publication dialect is decoded by ``outcome_publication``; what stays
     here is the eligibility policy — which publications count as outcomes, and
     why a damaged one is a gap rather than an event.
+
+    Supplied entries reuse a caller's tape snapshot without rereading it.
     """
     home = home.resolve()
     events, incomplete = [], []
-    tape = home / 'chat.log'
-    if not tape.exists():
-        return {'events': events, 'incomplete': incomplete, 'unavailable': 'chat tape unavailable'}
-    try:
-        entries = parse_feed(tape.read_bytes(), home=home)
-    except (OSError, ValueError) as exc:
-        return {'events': events, 'incomplete': incomplete, 'unavailable': f'chat tape unreadable: {exc}'}
+    if entries is None:
+        tape = home / 'chat.log'
+        if not tape.exists():
+            return {'events': events, 'incomplete': incomplete, 'unavailable': 'chat tape unavailable'}
+        try:
+            entries = parse_feed(tape.read_bytes(), home=home)
+        except (OSError, ValueError) as exc:
+            return {'events': events, 'incomplete': incomplete, 'unavailable': f'chat tape unreadable: {exc}'}
     if not (home / 'records').is_dir():
         return {'events': events, 'incomplete': incomplete, 'unavailable': 'outcome store unavailable'}
     for entry in entries:
@@ -89,5 +92,5 @@ def classify_outcomes(home: Path, clause_time: datetime) -> dict:
         digest = reference_digest(refs[0])
         events.append({'site': str(home), 'sequence': entry.sequence,
                        'timestamp': entry.timestamp, 'record_sha256': digest,
-                       'role': payload['role'], 'evidence': evidence})
+                       'role': payload['role'], 'kind': payload['kind'], 'evidence': evidence})
     return {'events': events, 'incomplete': incomplete, 'unavailable': None}
