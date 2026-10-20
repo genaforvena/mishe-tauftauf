@@ -781,6 +781,8 @@ def main(argv=None) -> int:
     parser.add_argument('--role', help='role whose blocked state to repair')
     parser.add_argument('--repair-blocked', action='store_true',
                         help='remove the role\'s blocked state, whatever it says')
+    parser.add_argument('--release-hold', action='store_true',
+                        help='release the role\'s hold on the named wake')
     parser.add_argument('--wake', type=int, help='wake number to act on')
     parser.add_argument('--busy', type=Path, help='busy marker to release with --apply')
     parser.add_argument('--limit', type=int, default=DEFAULT_RETRY_LIMIT,
@@ -794,6 +796,12 @@ def main(argv=None) -> int:
         report = repair_blocked_state(args.home, args.role)
         print(json.dumps(report, indent=2))
         return 0 if report.get('repaired') else 1
+    if args.release_hold:
+        if args.home is None or args.role is None or args.wake is None:
+            parser.error('--release-hold needs --home, --role and --wake')
+        released = clear_blocked_state(args.home, args.role, args.wake)
+        print(json.dumps({'released': released, 'role': args.role, 'wake': args.wake}, indent=2))
+        return 0 if released else 1
     if args.attempts is None:
         parser.error('--attempts is required')
     if args.apply and (args.busy is None or args.wake is None):

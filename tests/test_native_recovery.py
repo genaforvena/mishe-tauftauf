@@ -734,30 +734,40 @@ def test_clearing_a_hold_keeps_a_record_that_cannot_be_decoded(tmp_path):
 def test_a_publisher_cannot_replace_a_hold_while_it_is_being_cleared(tmp_path, monkeypatch):
     """The writer and the clearer share one lock: the record read is the record removed."""
     import threading
-    import time as _time
     recovery.write_blocked_state(tmp_path, 'genome', 1, verdict=recovery.RECONCILE, reason='held')
     original_read = recovery.read_blocked_state
+    read_started = threading.Event()
+    allow_read_to_finish = threading.Event()
+    publisher_started = threading.Event()
     order = []
 
-    def slow_read(home, role):
+    def paused_read(home, role):
         record = original_read(home, role)
-        _time.sleep(0.3)  # a publisher tries to replace the record during this
+        read_started.set()  # clear holds the lock after this read
+        assert allow_read_to_finish.wait(10)
         return record
 
-    def publish():
-        recovery.write_blocked_state(tmp_path, 'genome', 2, verdict=recovery.RECONCILE,
-                                    reason='a later hold')
-        order.append('published')
+    def clear():
+        order.append(('cleared', recovery.clear_blocked_state(tmp_path, 'genome', 1)))
 
-    monkeypatch.setattr(recovery, 'read_blocked_state', slow_read)
-    thread = threading.Thread(target=publish)
-    thread.start()
-    assert recovery.clear_blocked_state(tmp_path, 'genome', 1) is True
-    order.append('cleared')
-    thread.join(10)
+    def publish():
+        publisher_started.set()
+        recovery.write_blocked_state(tmp_path, 'genome', 2, verdict=recovery.RECONCILE,
+                                     reason='a later hold')
+        order.append(('published', True))
+
+    monkeypatch.setattr(recovery, 'read_blocked_state', paused_read)
+    clearer = threading.Thread(target=clear)
+    clearer.start()
+    assert read_started.wait(10)
+    publisher_thread = threading.Thread(target=publish)
+    publisher_thread.start()
+    assert publisher_started.wait(10)
+    allow_read_to_finish.set()
+    clearer.join(10)
+    publisher_thread.join(10)
     monkeypatch.undo()
-    # The publisher waited for the clear, so the record removed was the one read.
-    assert order == ['cleared', 'published']
+    assert sorted(order) == [('cleared', True), ('published', True)]
     record, reason = recovery.read_blocked_state(tmp_path, 'genome')
     assert record is not None and record['wake'] == 2
 
@@ -771,3 +781,15 @@ def test_the_owner_can_repair_a_blocked_state_that_cannot_be_decoded(tmp_path):
     assert report['repaired'] is True and 'malformed' in report['reason']
     assert not path.exists()
     assert recovery.repair_blocked_state(tmp_path, 'genome')['repaired'] is False
+
+
+def test_the_owner_can_release_the_hold_on_one_wake(tmp_path):
+    """The owner's recovery route needs the hold on that wake released."""
+    recovery.write_blocked_state(tmp_path, 'docs', 70477, verdict=recovery.RECONCILE,
+                                reason='an earlier attempt dispatched an effect')
+    result = subprocess.run([sys.executable, '-m', 'mishe_tauftauf.native_recovery',
+                             '--home', str(tmp_path), '--role', 'docs', '--wake', '70477',
+                             '--release-hold'], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)['released'] is True
+    assert recovery.read_blocked_state(tmp_path, 'docs')[0] is None
