@@ -450,8 +450,9 @@ auth discovery and exact model lookup. It closes returned auth after provider
 session disposal. Failure before auth discovery returns remains a dependency
 cleanup gap; fatal process containment is not proof of resource cleanup.
 Installed-wheel synthetic continuation is not real account/model parity or
-resident adoption. Docs is exercising a bounded native canary; preserve the
-harness route for work classes without an evidenced native route.
+resident adoption. Docs has exercised a bounded native canary; preserve the
+harness route for work classes without an evidenced native route, and do not
+read the canary as proof of current resident delivery.
 
 ### Development is not just repository maintenance
 

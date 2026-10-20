@@ -107,9 +107,9 @@ still requires deterministic checks, independent reading, checked activation
 and live observation with a tested recovery path. Genome pushes `main` and
 checks its CI and live consumers but does not gate another mind's commit.
 
-One standing initiative names its own limits: the Docs mind is currently
-exercising the internal native loop as its bounded, native-only canary. This
-route selection is not a parity or live-delivery verdict: resident activation,
-replay, model parity and useful-task acceptance remain separately open. The
+One standing initiative names its own limits: Docs has exercised the internal
+native loop as a bounded, native-only canary. That route remains an experiment,
+not a parity or live-delivery verdict: resident activation, replay, model parity
+and useful-task acceptance remain separately open. The
 historical route comparison and bounded reader experiment are documented in
 [how it works](how-it-works.md) and [agent-step experiments](agent-step-experiments.md).
