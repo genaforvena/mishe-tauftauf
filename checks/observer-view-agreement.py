@@ -25,6 +25,13 @@ It compares the published frame — the bytes every role's pane shows — with a
 clean export of the reviewed HEAD tree, and reports the projections the plant
 does not print, verbatim, so the content that is being hidden is visible.
 
+The comparison is over the *evidence block* — the delimited section the plant
+publishes as shared follow-through evidence — and not over the whole frame:
+the frame also carries wall text, and a wall that quotes a projection's line
+does not make the block carry it. When such a quote is the only place the text
+appears, the check says so, so a reader cannot mistake a quotation for a
+reading.
+
 ``checks/observer-source-identity.py`` answers why the running bytes have no
 commit identity; this check answers what the difference costs.
 
@@ -121,7 +128,7 @@ def projections(lines) -> dict:
 
 
 def published_section(home: Path, slug: str) -> tuple:
-    """The evidence block the plant published for one role, and its time."""
+    """The evidence block the plant published for one role, and its frame."""
     path = home / "dashboards" / f"{slug}.json"
     try:
         raw = path.read_text(encoding="utf-8")
@@ -150,14 +157,18 @@ def published_section(home: Path, slug: str) -> tuple:
     if start is None:
         raise Undecidable("the published dashboard frame carries no evidence block")
     body = []
-    for line in lines[start:]:
+    end = len(lines)
+    for index in range(start, len(lines)):
+        line = lines[index]
         if line.startswith("MIND WALL —"):
+            end = index
             break
         if line.strip():
             body.append(line)
     if not body:
         raise Undecidable("the published evidence block is empty")
-    return body, record.get("created")
+    outside = lines[:start - 1] + lines[end:]
+    return body, outside, record.get("created")
 
 
 def export_head(repo: Path, workdir: Path) -> Path:
@@ -234,7 +245,7 @@ def main() -> int:
     try:
         reference = (args.reference_src.resolve() if args.reference_src
                      else export_head(repo, workdir))
-        published, created = published_section(home, args.slug)
+        published, outside, created = published_section(home, args.slug)
         expected = read_lines(reference, home, workdir)
     except Undecidable as exc:
         print("UNKNOWN — " + str(exc))
@@ -246,6 +257,7 @@ def main() -> int:
     wanted = projections(expected)
     missing = [key for key in wanted if key not in shown]
     extra = [key for key in shown if key not in wanted]
+    elsewhere = projections(outside)
 
     print("published  :", home / "dashboards" / (args.slug + ".json"), "at", created)
     print("reference  :", reference)
@@ -257,6 +269,10 @@ def main() -> int:
         for key in missing:
             print("    missing :", key)
             print("        reviewed line:", wanted[key][:400])
+            if key in elsewhere:
+                print("        note: the evidence block does not carry it, but the text "
+                      "appears elsewhere in the frame (a wall or another section quotes "
+                      "it):", elsewhere[key][:200])
     if extra:
         print("published  : EXTRA — the plant prints %d projection(s) the reviewed "
               "tree does not publish" % len(extra))

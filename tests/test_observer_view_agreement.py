@@ -115,6 +115,23 @@ def test_complete_evidence_reads_agree(plant, reference):
     assert "AGREE" in result.stdout
 
 
+def test_projection_quoted_elsewhere_in_the_frame_is_still_missing(plant, reference):
+    """A wall that quotes the line does not make the evidence block carry it."""
+    write_frame(plant, STALE)
+    path = plant / "dashboards" / f"{SLUG}.json"
+    record = json.loads(path.read_text())
+    record["frame"] = record["frame"].replace(
+        "MIND WALL — edited notes; sensor truth is above",
+        "MIND WALL — edited notes; sensor truth is above\n"
+        "OUTCOME WRITER REFUSALS: 13 in the last 24h (0 coverage denials); quoted by a wall")
+    record["sha256"] = hashlib.sha256(record["frame"].encode()).hexdigest()
+    path.write_text(json.dumps(record))
+    result = run_check(plant, reference)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "MISSING" in result.stdout
+    assert "appears elsewhere in the frame" in result.stdout
+
+
 def test_projection_only_the_plant_prints_reads_extra(plant, reference):
     write_frame(plant, [*REVIEWED, "GHOST: a projection the reviewed tree does not publish"])
     result = run_check(plant, reference)
