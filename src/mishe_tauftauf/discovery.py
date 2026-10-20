@@ -22,7 +22,9 @@ from pathlib import Path
 from uuid import uuid4
 
 from . import omp_pane, proc_table, space_text
-from .body_perception import read_redmi10, read_redmi10_dense_baseline, read_redmi10_delivery_gaps, read_redmi10_light
+from .body_perception import (read_redmi10, read_redmi10_dense_baseline,
+                             read_redmi10_delivery_gaps, read_redmi10_light,
+                             read_redmi10_peer_delivery)
 from .activity import roles as seated_roles
 from .feed import Feed, FeedEntry, entry_timestamp as _feed_entry_timestamp, parse_feed, publication_lock, read_scan_series
 from .chat_protocol import decode_lifecycle, ProtocolError
@@ -5574,7 +5576,36 @@ def _ethernet_read() -> dict:
                            "timeout_seconds": COMMAND_TIMEOUT_SECONDS},
             "interfaces": interfaces}
 
-def _tailnet_peer_read() -> dict:
+def _tailnet_peer_state() -> tuple[dict | None, list[str]]:
+    """Read the tailnet's own status report, or ``None`` with named problems.
+
+    Shared by the peer-reachability sense and the carried-body peer/delivery
+    composite, so one command answers both and they cannot disagree about the
+    same instant.
+    """
+    problems: list[str] = []
+    if shutil.which("tailscale") is None:
+        problems.append("tailscale-absent")
+        return None, problems
+    try:
+        result = subprocess.run(["tailscale", "status", "--json"],
+                                capture_output=True, text=True,
+                                timeout=COMMAND_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        problems.append(f"tailscale-unreadable:{type(exc).__name__}")
+        return None, problems
+    if result.returncode != 0:
+        problems.append(f"tailscale-exit-{result.returncode}")
+        return None, problems
+    data = decode_tailnet_status(result.stdout)
+    if data is None:
+        problems.append("tailscale-unreadable:decode")
+        return None, problems
+    return data, problems
+
+
+def _tailnet_peer_read(data: dict | None = None,
+                        problems: list[str] | None = None) -> dict:
     """Sample this host's tailnet peer status.
 
     Consumer: the operator and health, who must know whether tailnet-transported
@@ -5583,33 +5614,17 @@ def _tailnet_peer_read() -> dict:
     missing binary, a non-zero exit, or text that does not decode is a named
     problem, never a state.
 
-    Per-peer: online/active/LastSeen. The rendezvous cursor is NOT readable
-    from this host (the rendezvous server only serves /node/note3), so the
-    joint relation (peer offline + cursor frozen = device unreachable; peer
-    online + cursor frozen = producer silent; peer online + cursor moving =
-    normal) is not implementable here. This sense reports tailnet reachability
+    Per-peer: online/active/LastSeen. This sense reports tailnet reachability
     only; it does not distinguish device-unreachable from producer-silent.
+    That joint relation is ``sense.body.redmi10.peer-delivery``, which crosses
+    the peer state with the consumer's delivery cursor.
+
+    ``data``/``problems`` carry a report the caller already read, so one
+    command answers both senses and they cannot disagree about the instant.
     """
-    problems: list[str] = []
-    if shutil.which("tailscale") is None:
-        problems.append("tailscale-absent")
-        data = None
-    else:
-        try:
-            result = subprocess.run(["tailscale", "status", "--json"],
-                                    capture_output=True, text=True,
-                                    timeout=COMMAND_TIMEOUT_SECONDS)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            problems.append(f"tailscale-unreadable:{type(exc).__name__}")
-            data = None
-        else:
-            if result.returncode != 0:
-                problems.append(f"tailscale-exit-{result.returncode}")
-                data = None
-            else:
-                data = decode_tailnet_status(result.stdout)
-                if data is None:
-                    problems.append("tailscale-unreadable:decode")
+    if data is None and problems is None:
+        data, problems = _tailnet_peer_state()
+    problems = list(problems or [])
 
     if data is None:
         sample = "tailnet UNKNOWN " + ",".join(problems)
@@ -5792,9 +5807,13 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(read_redmi10_light(home))
     observed.append(read_redmi10_delivery_gaps(home))
     observed.append(read_redmi10_dense_baseline(home))
+    # The peer/delivery composite needs the tailnet report the peer sense also
+    # reads, so both are taken once and share the same instant.
+    peer_state, peer_problems = _tailnet_peer_state()
+    observed.append(read_redmi10_peer_delivery(home, peer=peer_state))
     observed.append(_host_radio_read())
     observed.append(_ethernet_read())
-    observed.append(_tailnet_peer_read())
+    observed.append(_tailnet_peer_read(peer_state, peer_problems))
 
     loadavg = _read(Path("/proc/loadavg"), 256)
     observed.append({"id": "sense.proc.loadavg", "state": "verified" if loadavg else "unknown",
