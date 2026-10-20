@@ -290,9 +290,21 @@ def _runtime(home):
                                              for unit in units):
             raise ObservationError("invalid service manifest")
         result["service_states"] = dict.fromkeys(units, "UNKNOWN")
+        # ``_live_import_roots`` answers ``None`` when ``/proc/<pid>/environ``
+        # cannot be read and ``[]`` when it is readable and names no PYTHONPATH.
+        # Those are different observations: an unreadable environment is
+        # UNKNOWN, while a unit that declares no import root is a known state
+        # recorded as an empty root list. Conflating them held the whole runtime
+        # surface UNKNOWN forever for standalone units that import nothing from
+        # the package, and named a readable environment "unavailable". A unit
+        # with no MainPID is not running and is named as such.
         for unit, pid in _service_pids(units).items():
-            roots = wall_view._live_import_roots(pid) if pid is not None else None
-            if not roots:
+            if pid is None:
+                problems.append("live service process not running: " + unit)
+                continue
+            roots = wall_view._live_import_roots(pid)
+            if roots is None:
+                problems.append("live service import roots unavailable: " + unit)
                 continue
             result["service_roots"][unit] = sorted(set(roots))
             result["service_states"][unit] = "KNOWN"
@@ -300,11 +312,26 @@ def _runtime(home):
             result["services_state"] = "KNOWN"
     except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as exc:
         problems.append("service observation unavailable (" + type(exc).__name__ + ")")
-    for unit, state in result["service_states"].items():
-        if state == "UNKNOWN":
-            problems.append("live service import roots unavailable: " + unit)
     try:
-        renderers = sorted(path.name for path in (home / "top-pains").iterdir() if path.is_file()) if (home / "top-pains").exists() else []
+        # Renderers are the declared windows that have a top-pane script, the
+        # same set the RENDERER BYTES line checks. A top-pains entry with no
+        # declared window is a stale surface nothing runs, not a renderer whose
+        # bytes the observer cannot read. A declared window that is not running
+        # cannot be verified and stays UNKNOWN, as does a manifest that cannot
+        # be read; a manifest that declares windows but yields no renderer is
+        # UNKNOWN rather than a vacuous KNOWN over an empty set.
+        from .window_manifest import read as read_window_manifest
+        manifest = home / "health" / "windows.json"
+        declared = None
+        if manifest.exists():
+            try:
+                declared = read_window_manifest(home)
+            except (OSError, ValueError):
+                problems.append("renderer window manifest unreadable")
+        renderers = sorted(name for name in declared
+                           if (home / "top-pains" / name).is_file()) if declared is not None else []
+        if declared is not None and not renderers:
+            problems.append("no declared renderer window has a top-pane script")
         result["renderer_states"] = dict.fromkeys(renderers, "UNKNOWN")
         if renderers:
             from .seed import recorded_session
@@ -313,13 +340,17 @@ def _runtime(home):
             if pids is None:
                 problems.append("renderer session observation unavailable")
             for role in renderers:
-                roots = wall_view._live_import_roots(pids[role]) if pids is not None and role in pids else None
-                if not roots:
+                pid = pids.get(role) if pids is not None else None
+                if pid is None:
+                    problems.append("renderer not running: " + role)
+                    continue
+                roots = wall_view._live_import_roots(pid)
+                if roots is None:
                     problems.append("live renderer import roots unavailable: " + role)
                     continue
                 result["renderer_roots"][role] = sorted(set(roots))
                 result["renderer_states"][role] = "KNOWN"
-        if all(state == "KNOWN" for state in result["renderer_states"].values()):
+        if declared is not None and renderers and all(state == "KNOWN" for state in result["renderer_states"].values()):
             result["renderers_state"] = "KNOWN"
     except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as exc:
         problems.append("renderer observation unavailable (" + type(exc).__name__ + ")")
