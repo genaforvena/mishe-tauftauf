@@ -66,6 +66,25 @@ the served-staleness reading can ask whether a sense's producing unit changed
 since its pin, skipping git's diff bodies and blank lines. The consumer is the
 discover scan (discovery.py `_served_staleness`), which marks senses stale.
 
+`host_boot.py` decodes this host's boot identity for the host-boot sense: the
+kernel's boot id (`/proc/sys/kernel/random/boot_id`, one newline-terminated
+uuid) and the uptime since boot (`/proc/uptime`, two whitespace-separated
+decimal seconds; only the first field is the uptime). It also decodes the plant's
+own previous scan receipt — the acquisition-start boot id and UTC timestamp,
+which precede the scan's observations, plus the publication `created` stamp. It
+returns ordinary Python values and never writes to the host. A missing, unreadable
+or malformed input is an explicit problem value, so the consumer keeps the reading
+UNKNOWN rather than reading an absent file as "no reboot"; the absence of a
+previous scan is likewise a problem value, because "no earlier scan" is not "no
+reboot". The consumer is the discover scan (discovery.py `_host_boot_read`),
+which compares the two boot ids and uses the acquisition-start time for a
+conservative upper bound on downtime, omitting the bound when that anchor is
+unavailable. The host was up at that earlier anchor and booted again at the boot
+instant, so the interval is an upper bound, not an exact downtime measurement.
+The boot instant is `now - uptime`, so it is exact only while the wall clock has
+not stepped since the boot; the reading publishes that derivation rather than the
+stamp alone.
+
 `native_recovery.py` decodes a failed native wake's own recorded bytes: the
 durable effect ledger's three journals, the loop journal, the result summary and
 the writer's own failure record. Ledger records are decoded by the ledger's own
