@@ -93,6 +93,12 @@ def decode_node_state(node_state: object) -> str | None:
         return None
     return NOT_SENDING_MODES.get(mode)
 
+#: The producer contract of the shared space publication. A file that does
+#: not carry this producer is not the space boundary, whatever shape it has.
+SPACE_PRODUCER = {"name": "android-body-perception", "entry_point": "watch.py",
+                  "mode": "space", "contract": 1}
+
+
 def decode_space_boundary(text: str | None) -> dict | None:
     """Decode the shared space publication, or return None when it is unreadable."""
     try:

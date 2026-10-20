@@ -21,6 +21,7 @@ from .discovery import (latest, producer_label, scan_attempt, _tailnet_peer_read
                         _space_light_read)
 from .body_perception import (BODY_SENSE_IDS, SENSE_ID, read_redmi10,
                               read_redmi10_delivery_gaps, read_redmi10_light)
+from .multibody import MULTIBODY_SENSE_ID, read_multibody_coverage
 from .host_radio import (decode_cam_events, decode_cam_manifest, decode_cam_state,
                         decode_probe_failures, decode_urb_failures)
 from . import proc_table
@@ -279,6 +280,7 @@ def senses(home: Path) -> str:
     redmi = read_redmi10(home)
     redmi_light = read_redmi10_light(home)
     delivery_gaps = read_redmi10_delivery_gaps(home)
+    multibody = read_multibody_coverage(home)
     lines.append(attempt_line)
     if snapshot is None:
         verdict = "UNKNOWN senses no discovery sample"
@@ -293,6 +295,10 @@ def senses(home: Path) -> str:
         for body_row in (redmi_light, delivery_gaps):
             _, body_line = _observation_reading(body_row, "recent", home)
             lines.append(body_line)
+        _, multibody_line = _observation_reading(multibody, "recent", home)
+        lines.append(multibody_line)
+        if isinstance(multibody.get("details"), str):
+            lines.append("MULTIBODY SOURCE/LIMITS: " + multibody["details"])
     else:
         freshness, consistency = _scan_reading(snapshot)
         # The carried-body rows are re-read here rather than taken from the
@@ -301,11 +307,13 @@ def senses(home: Path) -> str:
         # pane already reads live.
         senses_rows = [item for item in snapshot.get("observations", [])
                        if str(item.get("id", "")).startswith("sense.")
-                       and item.get("id") not in {"sense.space.light", *BODY_SENSE_IDS}]
+                       and item.get("id") not in {"sense.space.light", *BODY_SENSE_IDS,
+                                                  MULTIBODY_SENSE_ID}]
         space = _space_light_read(home)
         senses_rows.append(redmi)
         senses_rows.append(redmi_light)
         senses_rows.append(delivery_gaps)
+        senses_rows.append(multibody)
         senses_rows.append(space)
         senses_rows.extend(_space_clock_domains_read(home))
         unknown = 0
@@ -315,7 +323,9 @@ def senses(home: Path) -> str:
             # The carried-body rows are re-read at render time, so the scan's
             # own freshness does not age them: a stale scan must not turn a
             # just-taken live read into a second UNKNOWN.
-            item_freshness = "recent" if item.get("id") in BODY_SENSE_IDS else freshness
+            item_freshness = ("recent"
+                              if item.get("id") in {*BODY_SENSE_IDS, MULTIBODY_SENSE_ID}
+                              else freshness)
             state, line = _observation_reading(item, item_freshness, home)
             # A drift row is a checked read whose own value is a drift state,
             # not a read that never happened. Counting it as unchecked made the
@@ -328,7 +338,10 @@ def senses(home: Path) -> str:
             unavailable += state == "unavailable"
             lines.append(line)
             if isinstance(item.get("details"), str):
-                lines.append("REDMI10 SOURCE/LIMITS: " + item["details"])
+                label = ("MULTIBODY SOURCE/LIMITS: "
+                         if item.get("id") == MULTIBODY_SENSE_ID
+                         else "REDMI10 SOURCE/LIMITS: ")
+                lines.append(label + item["details"])
         provenance = space.get("provenance", {})
         clock_bound = nonblank(space.get("clock_bound"))
         clock_text = (clock_bound

@@ -25,6 +25,7 @@ from . import host_boot, omp_pane, proc_table, space_text
 from .body_perception import (read_redmi10, read_redmi10_dense_baseline,
                              read_redmi10_delivery_gaps, read_redmi10_light,
                              read_redmi10_peer_delivery)
+from .multibody import read_multibody_coverage
 from .activity import roles as seated_roles
 from .feed import Feed, FeedEntry, entry_timestamp as _feed_entry_timestamp, parse_feed, publication_lock, read_scan_series
 from .chat_protocol import decode_lifecycle, ProtocolError
@@ -5167,8 +5168,9 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
                            for ts, _sequence, role, name, classes in violations]}
 
 SPACE_SOURCE = "http://127.0.0.1:8765/node/note3"
-SPACE_PRODUCER = {"name": "android-body-perception", "entry_point": "watch.py",
-                  "mode": "space", "contract": 1}
+#: The space boundary's producer contract, owned by the named adapter so every
+#: reader of that boundary checks the same one.
+SPACE_PRODUCER = space_text.SPACE_PRODUCER
 SPACE_VALIDITY_SECONDS = 30.0
 # A null gap that persists across reads for at least this long, with the light
 # channel's own sequence unmoving, is a sustained source freeze rather than a
@@ -6141,6 +6143,11 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(read_redmi10_light(home))
     observed.append(read_redmi10_delivery_gaps(home))
     observed.append(read_redmi10_dense_baseline(home))
+    # The multi-body coverage reading crosses the bodies the space boundary
+    # names, so the Note3-only selector cannot hide a live body from the
+    # summary; it is taken after the per-body rows so the scan keeps the
+    # per-body detail and adds the joint verdict beside it.
+    observed.append(read_multibody_coverage(home))
     # The peer/delivery composite needs the tailnet report the peer sense also
     # reads, so both are taken once and share the same instant.
     peer_state, peer_problems = _tailnet_peer_state()
