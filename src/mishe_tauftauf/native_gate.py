@@ -20,6 +20,14 @@ lifecycle) from the false negative: a gate that rejects the pane while the
 role's lifecycle still shows a live mind. ``record`` persists a changed verdict
 at ``SITE/checks/native-gate-<role>.json`` so the observation survives the loop
 that produced it.
+
+Two native wedges are separated here, because one not-ready reading covered
+both. A busy file is a mid-turn only while it is fresh: the marker names no
+time of its own, so its age tells a working mind from a marker a failed wake
+left behind, and a marker older than the live window is a wedged resident. And
+a resident that holds a wake it cannot start records that hold at
+``SITE/journals/<role>-native.blocked.json``; the gate reads that record, so a
+held wake is visible even when no busy file exists at all.
 """
 from __future__ import annotations
 
@@ -34,6 +42,7 @@ from pathlib import Path
 
 from .chat_protocol import decode_lifecycle
 from .feed import Feed, FeedError
+from .native_recovery import BLOCKED_STATE, read_blocked_state
 from .observations import executable, validate_home, validate_slug
 from .post_check import _save
 
@@ -64,7 +73,8 @@ this source canonical; install it with ``python -m mishe_tauftauf.native_gate
 --home SITE --session SESSION --role ROLE --install``.
 
 This probe interprets nothing from the pane text. It reads the foreground
-command, the pane's dead flag and the launcher's own busy file, and exits.
+command, the pane's dead flag, the launcher's own busy file and the launcher's
+own record of a wake it cannot start, and exits.
 """
 import os
 import subprocess
@@ -103,16 +113,32 @@ def main() -> int:
         return 1
     if (home / "journals" / f"{role}-native.busy").exists():
         return 1
+    # A wake the resident cannot start is not a wake this pane can accept.
+    if (home / "journals" / f"__BLOCKED_STATE__").exists():
+        return 1
     return 0
 
 
 if __name__ == "__main__":
     sys.exit(main())
-'''
+'''.replace('__BLOCKED_STATE__', BLOCKED_STATE.format(role='{role}'))
 
 # A changed verdict is a changed observation; an unchanged one is a repeated
 # read of the same state and must not rewrite the check file.
-_IDENTICAL_KEYS = ("branch", "engine", "gate_exit", "busy", "lifecycle", "verdict", "reason")
+_IDENTICAL_KEYS = ("branch", "engine", "gate_exit", "busy", "blocked", "lifecycle", "verdict", "reason")
+
+# The interpreters the native loop runs. The probe accepts exactly these names;
+# the detector's own engine test must agree with it, or a role's readiness
+# would be classified against a different reading of its pane.
+NATIVE_ENGINE_NAMES = ("python", "python3")
+NATIVE_ENGINE_PREFIXES = ("python3.",)
+
+
+def is_native_engine(command) -> bool:
+    """Whether the pane's foreground command is one the native loop runs."""
+    if not isinstance(command, str):
+        return False
+    return command in NATIVE_ENGINE_NAMES or command.startswith(NATIVE_ENGINE_PREFIXES)
 
 
 def install(home: Path, role: str) -> Path:
@@ -136,6 +162,19 @@ def install(home: Path, role: str) -> Path:
         Path(name).unlink(missing_ok=True)
         raise
     return path
+
+
+def _marker_age(marker: Path, now: datetime) -> float | None:
+    """The busy marker's age in seconds, or None when it cannot be read.
+
+    The marker names no time of its own, so the filesystem's own modification
+    time is the only age available. A marker whose age cannot be read is not
+    evidence of anything, and stays None rather than a guess.
+    """
+    try:
+        return (now - datetime.fromtimestamp(marker.stat().st_mtime, timezone.utc)).total_seconds()
+    except (OSError, ValueError):
+        return None
 
 
 def _pane_probe(session: str, role: str):
@@ -179,6 +218,7 @@ def detect(home: Path, session: str, role: str, *, now: datetime | None = None) 
     now = now or datetime.now(timezone.utc)
     verdict = {"version": 1, "role": role, "at": now.isoformat(), "branch": None,
                "engine": None, "gate": None, "gate_exit": None, "busy": None,
+               "busy_age": None, "blocked": None,
                "lifecycle": None, "lifecycle_age": None, "verdict": None, "reason": ""}
     pane = _pane_probe(session, role)
     if pane is None:
@@ -194,7 +234,17 @@ def detect(home: Path, session: str, role: str, *, now: datetime | None = None) 
                        reason=f"TUI engine {command}; the readiness gate is not consulted")
         return verdict
     verdict["branch"] = "delegation"
-    verdict["busy"] = (home / "journals" / f"{role}-native.busy").exists()
+    marker = home / "journals" / f"{role}-native.busy"
+    verdict["busy"] = marker.exists()
+    if verdict["busy"]:
+        # The marker's age separates a mind that is mid-turn from a marker a
+        # failed wake left behind.
+        verdict["busy_age"] = _marker_age(marker, now)
+    blocked, blocked_reason = read_blocked_state(home, role)
+    if blocked_reason is not None:
+        verdict.update(verdict="UNKNOWN", reason=blocked_reason)
+        return verdict
+    verdict["blocked"] = blocked
     try:
         lifecycle = _last_lifecycle(home, role)
     except FeedError as exc:
@@ -224,10 +274,36 @@ def detect(home: Path, session: str, role: str, *, now: datetime | None = None) 
         return verdict
     verdict["gate_exit"] = result.returncode
     age = verdict["lifecycle_age"]
-    if result.returncode == 0:
+    blocked = verdict["blocked"]
+    if blocked is not None:
+        # The resident recorded that this wake cannot proceed. A pane that
+        # would accept a prompt does not make a held wake progress, so the
+        # held wake is the failure and not the pane.
+        verdict.update(verdict="RED", reason=(
+            f"native wake {blocked.get('wake')} is held: "
+            f"{blocked.get('verdict', 'unknown')}: {blocked.get('reason', 'no reason recorded')}"))
+    elif verdict["busy"] and verdict["busy_age"] is None:
+        verdict.update(verdict="UNKNOWN",
+                       reason="native busy marker present but its age is unreadable")
+    elif verdict["busy"] and verdict["busy_age"] < 0:
+        verdict.update(verdict="UNKNOWN",
+                       reason="native busy marker timestamp is in the future; its age is not trustworthy")
+    elif result.returncode == 0:
         verdict.update(verdict="GREEN", reason="probe reports the pane can accept a prompt")
+    elif verdict["busy"] and not is_native_engine(verdict["engine"]):
+        # The pane does not run the native loop, so a marker it left is not
+        # evidence of a native wedge.
+        verdict.update(verdict="OK", reason=(
+            f"the pane runs {verdict['engine']}, not the native resident; "
+            f"the busy marker does not describe this role's readiness"))
     elif verdict["busy"]:
-        verdict.update(verdict="OK", reason="native mind mid-turn; the busy file correctly reads not-ready")
+        busy_age = verdict["busy_age"]
+        if busy_age <= LIVE_WINDOW_SECONDS:
+            verdict.update(verdict="OK", reason="native mind mid-turn; the busy file correctly reads not-ready")
+        else:
+            verdict.update(verdict="RED", reason=(
+                f"native busy marker held {busy_age:.0f}s while the pane reads not-ready: "
+                f"the resident is wedged, not mid-turn"))
     elif lifecycle is None:
         verdict.update(verdict="OK", reason="no lifecycle evidence; the role owes no work")
     elif age is None:
@@ -259,6 +335,7 @@ def lines(verdict: dict) -> list[str]:
     """Render a verdict for a pane or a journal line."""
     detail = (f"  Evidence: engine={verdict.get('engine')} branch={verdict.get('branch')} "
               f"gate_exit={verdict.get('gate_exit')} busy={verdict.get('busy')} "
+              f"busy_age={verdict.get('busy_age')} blocked={verdict.get('blocked')} "
               f"lifecycle={verdict.get('lifecycle')} age={verdict.get('lifecycle_age')}")
     return [f"NATIVE GATE: {verdict.get('verdict')} — {verdict.get('reason')}", detail]
 

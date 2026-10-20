@@ -10,6 +10,7 @@ import os
 import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -106,10 +107,10 @@ def run_stub(tmp_path, monkeypatch, case):
     monkeypatch.setenv("STUB_HOME", str(tmp_path))
 
 
-def run_gate(gate: Path, tmp_path, monkeypatch, case):
+def run_gate(gate: Path, tmp_path, monkeypatch, case, role="health"):
     run_stub(tmp_path, monkeypatch, case)
-    env = {**os.environ, "MISHE_SEED_SESSION": "s", "MISHE_SEED_ROLE": "health",
-           "MISHE_SEED_PANE": "s:health.1"}
+    env = {**os.environ, "MISHE_SEED_SESSION": "s", "MISHE_SEED_ROLE": role,
+           "MISHE_SEED_PANE": f"s:{role}.1"}
     return subprocess.run([sys.executable, str(gate)], env=env, capture_output=True, text=True, timeout=10)
 
 
@@ -273,3 +274,105 @@ def test_lines_render_the_evidence(tmp_path):
     rendered = native_gate.lines(verdict)
     assert rendered[0].startswith("NATIVE GATE: RED")
     assert "engine=python" in rendered[1] and "busy=False" in rendered[1]
+
+
+def test_detect_red_when_the_busy_marker_is_stale(tmp_path, monkeypatch):
+    """A marker a failed wake left behind is not a mid-turn."""
+    home = make_home(tmp_path)
+    native_gate.install(home, "genome")
+    marker = home / "journals" / "genome-native.busy"
+    marker.write_text("70040")
+    stale = time.time() - (native_gate.LIVE_WINDOW_SECONDS + 3600)
+    os.utime(marker, (stale, stale))
+    run_stub(home, monkeypatch, "python-idle")
+    append_wake(home)
+    verdict = native_gate.detect(home, "s", "genome")
+    assert verdict["verdict"] == "RED" and "wedged" in verdict["reason"]
+    assert verdict["busy_age"] > native_gate.LIVE_WINDOW_SECONDS
+
+
+def test_detect_red_when_the_resident_holds_a_wake_it_cannot_start(tmp_path, monkeypatch):
+    """A held wake is visible even when no busy file exists at all."""
+    from mishe_tauftauf import native_recovery
+    home = make_home(tmp_path)
+    native_gate.install(home, "docs")
+    run_stub(home, monkeypatch, "python-idle")
+    append_wake(home, role="docs")
+    native_recovery.write_blocked_state(home, "docs", 70477, verdict=native_recovery.RECONCILE,
+                                        reason="an earlier attempt dispatched an effect")
+    verdict = native_gate.detect(home, "s", "docs")
+    assert verdict["verdict"] == "RED" and "is held" in verdict["reason"]
+    assert verdict["blocked"]["wake"] == 70477
+
+
+def test_detect_unknown_when_the_blocked_state_cannot_be_decoded(tmp_path, monkeypatch):
+    home = make_home(tmp_path)
+    native_gate.install(home, "docs")
+    run_stub(home, monkeypatch, "python-idle")
+    path = home / "journals" / "docs-native.blocked.json"
+    path.write_text("{not json", encoding="utf-8")
+    verdict = native_gate.detect(home, "s", "docs")
+    assert verdict["verdict"] == "UNKNOWN" and "malformed" in verdict["reason"]
+
+
+def test_probe_refuses_when_the_resident_holds_a_wake_it_cannot_start(tmp_path, monkeypatch):
+    """A held wake must stop the delivery, not only the dashboard."""
+    from mishe_tauftauf import native_recovery
+    home = make_home(tmp_path)
+    gate = native_gate.install(home, "docs")
+    run_stub(home, monkeypatch, "python-idle")
+    assert run_gate(gate, home, monkeypatch, "python-idle").returncode == 0
+    native_recovery.write_blocked_state(home, "docs", 70477, verdict=native_recovery.RECONCILE,
+                                        reason="an earlier attempt dispatched an effect")
+    assert run_gate(gate, home, monkeypatch, "python-idle", role="docs").returncode == 1
+
+
+def test_detect_unknown_when_the_busy_marker_age_is_unreadable(tmp_path, monkeypatch):
+    """Broken marker metadata is UNKNOWN, not a pane that reads ready."""
+    home = make_home(tmp_path)
+    gate = home / "checks" / "mind-ready" / "genome"
+    gate.parent.mkdir(parents=True)
+    gate.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    os.chmod(gate, 0o755)
+    marker = home / "journals" / "genome-native.busy"
+    marker.write_text("70040")
+    monkeypatch.setattr(native_gate, "_marker_age", lambda *args: None)
+    run_stub(home, monkeypatch, "python-idle")
+    append_wake(home)
+    verdict = native_gate.detect(home, "s", "genome")
+    assert verdict["verdict"] == "UNKNOWN" and "unreadable" in verdict["reason"]
+
+
+def test_detect_unknown_when_the_busy_marker_timestamp_is_in_the_future(tmp_path, monkeypatch):
+    home = make_home(tmp_path)
+    native_gate.install(home, "genome")
+    marker = home / "journals" / "genome-native.busy"
+    marker.write_text("70040")
+    ahead = time.time() + 86400
+    os.utime(marker, (ahead, ahead))
+    run_stub(home, monkeypatch, "python-idle")
+    append_wake(home)
+    verdict = native_gate.detect(home, "s", "genome")
+    assert verdict["verdict"] == "UNKNOWN" and "future" in verdict["reason"]
+
+
+def test_detect_ok_when_a_foreign_engine_leaves_a_stale_marker(tmp_path, monkeypatch):
+    """A marker a foreign engine left is not a native wedge."""
+    home = make_home(tmp_path)
+    native_gate.install(home, "genome")
+    marker = home / "journals" / "genome-native.busy"
+    marker.write_text("70040")
+    stale = time.time() - (native_gate.LIVE_WINDOW_SECONDS + 3600)
+    os.utime(marker, (stale, stale))
+    run_stub(home, monkeypatch, "node")
+    verdict = native_gate.detect(home, "s", "genome")
+    assert verdict["verdict"] == "OK" and "not the native resident" in verdict["reason"]
+
+
+def test_the_detector_and_the_probe_read_the_same_engines(tmp_path, monkeypatch):
+    home = make_home(tmp_path)
+    gate = native_gate.install(home, "genome")
+    for case, command in (("python-idle", "python"), ("python3-idle", "python3"),
+                           ("python-versioned", "python3.12"), ("node", "node")):
+        accepted = run_gate(gate, home, monkeypatch, case).returncode == 0
+        assert accepted is native_gate.is_native_engine(command), case

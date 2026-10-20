@@ -531,3 +531,118 @@ def test_cli_reports_every_attempt_without_applying(tmp_path):
     report = json.loads(result.stdout)
     assert [row['verdict'] for row in report['results']] == [
         recovery.RETRYABLE, recovery.RECONCILE]
+
+
+def test_disposition_starts_a_wake_that_has_no_attempt(tmp_path):
+    disposition = recovery.attempt_disposition(tmp_path / 'wakes', 70040)
+    assert disposition.action == 'start'
+    assert disposition.attempt == tmp_path / 'wakes' / '70040'
+    assert disposition.recoverable is False
+
+
+def test_disposition_authorizes_a_fresh_attempt_after_an_effect_free_failure(tmp_path):
+    attempt(tmp_path)
+    disposition = recovery.attempt_disposition(tmp_path / 'wakes', 70040)
+    assert disposition.action == 'fresh-attempt'
+    assert disposition.attempt == tmp_path / 'wakes' / '70040-retry-1'
+    assert disposition.recoverable is True
+
+
+def test_disposition_holds_a_wake_whose_attempt_dispatched_an_effect(tmp_path):
+    attempt(tmp_path, intents=[intent()], starts=[start()], outcomes=[outcome()])
+    disposition = recovery.attempt_disposition(tmp_path / 'wakes', 70040)
+    assert disposition.action == 'reconcile'
+    assert disposition.attempt is None
+    assert disposition.verdict == recovery.RECONCILE
+    assert disposition.recoverable is False
+
+
+def test_disposition_holds_a_wake_when_one_of_its_attempts_is_unknown(tmp_path):
+    attempt(tmp_path)
+    attempt(tmp_path, name='70040-retry-1', failure_record=False)
+    disposition = recovery.attempt_disposition(tmp_path / 'wakes', 70040)
+    assert disposition.action == 'reconcile'
+    assert disposition.verdict == recovery.UNKNOWN
+
+
+def test_disposition_stops_at_the_bounded_number_of_fresh_attempts(tmp_path):
+    for number in range(1, 4):
+        attempt(tmp_path, name=f'70040-retry-{number}')
+    disposition = recovery.attempt_disposition(tmp_path / 'wakes', 70040)
+    assert disposition.action == 'reconcile'
+    assert 'bounded fresh attempt' in disposition.reason
+
+
+def test_disposition_leaves_a_wake_whose_writer_is_active(tmp_path):
+    directory = attempt(tmp_path)
+    lock = directory / 'effects' / recovery.STORE_LOCK
+    lock.touch()
+    with lock.open('r+') as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        disposition = recovery.attempt_disposition(tmp_path / 'wakes', 70040)
+    assert disposition.action == 'live'
+    assert disposition.recoverable is False
+
+
+def test_blocked_state_records_the_held_wake(tmp_path):
+    path = recovery.write_blocked_state(tmp_path, 'docs', 70477, verdict=recovery.RECONCILE,
+                                        reason='an earlier attempt dispatched an effect')
+    assert path == tmp_path / 'journals' / 'docs-native.blocked.json'
+    record, reason = recovery.read_blocked_state(tmp_path, 'docs')
+    assert reason is None
+    assert record['wake'] == 70477
+    assert record['verdict'] == recovery.RECONCILE
+    assert record['reason'] == 'an earlier attempt dispatched an effect'
+
+
+def test_blocked_state_is_cleared_when_the_wake_moves(tmp_path):
+    recovery.write_blocked_state(tmp_path, 'docs', 70477, verdict=recovery.RECONCILE, reason='held')
+    assert recovery.clear_blocked_state(tmp_path, 'docs') is True
+    assert recovery.clear_blocked_state(tmp_path, 'docs') is False
+    assert recovery.read_blocked_state(tmp_path, 'docs') == (None, None)
+
+
+def test_blocked_state_is_read_per_role(tmp_path):
+    recovery.write_blocked_state(tmp_path, 'docs', 70477, verdict=recovery.RECONCILE, reason='held')
+    assert recovery.read_blocked_state(tmp_path, 'genome') == (None, None)
+
+
+def test_blocked_state_that_cannot_be_decoded_stays_visible(tmp_path):
+    path = recovery.blocked_state_path(tmp_path, 'docs')
+    path.parent.mkdir(parents=True)
+    path.write_text('{not json', encoding='utf-8')
+    record, reason = recovery.read_blocked_state(tmp_path, 'docs')
+    assert record is None
+    assert reason and 'malformed' in reason
+
+
+def test_disposition_counts_the_operators_recovery_attempt_of_the_wake(tmp_path):
+    # An effect an operator's recovery attempt dispatched must block a later
+    # attempt of the same wake.
+    attempt(tmp_path, name='70040-recovery-1', intents=[intent()], starts=[start()],
+            outcomes=[outcome()])
+    disposition = recovery.attempt_disposition(tmp_path / 'wakes', 70040)
+    assert disposition.action == 'reconcile'
+    assert disposition.verdict == recovery.RECONCILE
+
+
+def test_disposition_needs_no_attempt_for_a_settled_wake(tmp_path):
+    attempt(tmp_path, settled=True, status='complete')
+    disposition = recovery.attempt_disposition(tmp_path / 'wakes', 70040)
+    assert disposition.action == 'settled'
+    assert disposition.attempt is None
+    assert disposition.settled is True
+
+
+def test_attempt_summary_names_the_capabilities_an_attempt_dispatched(tmp_path):
+    directory = attempt(tmp_path, intents=[intent()], starts=[start()], outcomes=[outcome()])
+    summary, error = recovery.attempt_summary(directory)
+    assert error is None
+    assert summary['capabilities'] == ['wall_dm']
+    assert summary['settled'] is False and summary['status'] == 'unknown'
+
+
+def test_attempt_summary_reports_why_an_attempt_cannot_be_read(tmp_path):
+    directory = attempt(tmp_path, ledger=False)
+    summary, error = recovery.attempt_summary(directory)
+    assert summary == {} and error
