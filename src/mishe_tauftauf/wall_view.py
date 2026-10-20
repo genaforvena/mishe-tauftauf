@@ -181,7 +181,8 @@ def renderer_bytes_lines(home: Path) -> tuple[list[str], str]:
         live = [str(Path(root).resolve()) for root in roots]
         if live and all(root == pinned for root in live):
             continue
-        stale.append(f"{window}(live={','.join(live) if live else 'none'})")
+        labeled = [f"nonexistent:{r}" if not Path(r).is_dir() else r for r in live]
+        stale.append(f"{window}(live={','.join(labeled) if labeled else 'none'})")
     if stale:
         return [f"RENDERER BYTES: RED pin={pinned} stale={';'.join(stale)}"], "DRIFT"
     if unreadable:
@@ -346,6 +347,7 @@ def render(home: Path, role: str) -> str:
     lines.extend(service_lines)
     lease_state = None
     bytes_state = None
+    bytes_lines = None
     if role == "health":
         lease_lines, lease_state = pane_lease_lines(home)
         lines.extend(lease_lines)
@@ -358,6 +360,12 @@ def render(home: Path, role: str) -> str:
             service_note = "RED — a top-pane renderer lease stopped advancing"
         elif bytes_state == "DRIFT":
             service_note = "RED — a top-pane renderer imports a superseded release"
+        elif bytes_state == "UNKNOWN" and bytes_lines:
+            # Only an evidence line makes a renderer unreadable. An empty
+            # result means there was no renderer to inspect at all, which is
+            # not an unreadable renderer; seed_culture_views guards the same
+            # state with (bytes_lines or bytes_error) for that reason.
+            service_note = "UNKNOWN — a top-pane renderer is unreadable"
     lines.append("STATE: " + service_note)
     return "\n".join(lines) + "\n"
 

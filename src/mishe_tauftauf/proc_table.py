@@ -68,6 +68,28 @@ def pane_records(raw: str) -> list[tuple[str, str, int]]:
         records.append((session, window, int(pid_text)))
     return records
 
+def mind_pane_records(raw: str) -> list[tuple[str, str, int]]:
+    """(session, window, pid) for pane .1 of each window from four-field output.
+
+    The fourth dialect names session, window, pid and pane index, separated by
+    ``|``. Only pane .1 is returned: ``_capture_mind_frame`` always captures
+    ``.1``, so iterating all panes would yield two identical verdicts per window
+    and overstate the window count. Junk lines yield no record rather than a
+    guess.
+    """
+    records: list[tuple[str, str, int]] = []
+    for line in raw.splitlines():
+        fields = line.split("|")
+        if len(fields) != 4:
+            continue
+        session, window, pid_text, pane_index = fields
+        if pane_index != "1":
+            continue
+        if not pid_text.isdigit():
+            continue
+        records.append((session, window, int(pid_text)))
+    return records
+
 
 def git_log_entries(raw: str) -> list[dict]:
     """Newest-first ``{subject, files}`` entries from ``--name-only`` log output.

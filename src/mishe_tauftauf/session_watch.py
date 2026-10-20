@@ -46,14 +46,26 @@ def assess(current: dict, previous: dict | None, now: float) -> dict:
 
 
 def observe(home: Path, session: str) -> dict:
-    def run(argv):
-        return subprocess.run(argv, capture_output=True, text=True, timeout=5)
+    # One aggregate budget, not a per-call one: the loop's heartbeat may only
+    # be 30s apart, so four sequential reads must never add up past that. The
+    # dashboard read gets the larger share because it runs the site CLI; each
+    # read is bounded by what is left of the budget, and a budget spent by an
+    # earlier read fails the observation instead of overrunning the watchdog.
+    deadline = time.monotonic() + 20.0
+
+    def run(argv, timeout=5.0):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(argv, timeout)
+        return subprocess.run(argv, capture_output=True, text=True,
+                              timeout=min(timeout, remaining))
     owner = run(["tmux", "show-option", "-qv", "-t", session, "@mishe-tauftauf-home"])
     identity = run(["tmux", "display-message", "-p", "-t", session, "#{pid}:#{session_id}:#{session_created}"])
     panes = run(["tmux", "list-panes", "-s", "-t", session, "-F",
                  "#{window_name}.#{pane_index}:#{pane_dead}"])
     dashboard = run([str(home / "bin/mishe-tauftauf"), "--home", str(home),
-                     "pain", "read", "operator", "--launcher", "dashboard"])
+                     "pain", "read", "operator", "--launcher", "dashboard"],
+                    timeout=15.0)
     rows = [row for row in panes.stdout.splitlines() if row]
     dead = [row.rsplit(":", 1)[0] for row in rows if row.endswith(":1")]
     # A RED must name what it saw. The 2026-10-16T03:37Z and 03:59Z episodes

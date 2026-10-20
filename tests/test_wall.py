@@ -871,6 +871,8 @@ def test_health_dashboard_uses_user_runtime_and_preserves_bus_unknown(tmp_path, 
 
     monkeypatch.setattr(wall_view.subprocess, "run", systemctl_with_runtime)
     monkeypatch.setattr(wall_view, "ci_line", lambda _home: "CI: PASS")
+    monkeypatch.setattr(wall_view, "renderer_bytes_lines", lambda h: (
+        ["RENDERER BYTES: GREEN pin=x renderers=12"], "GREEN"))
     healthy = wall_view.render(home, "health")
     assert "SERVICES: GREEN — 1 listed units active/running, 0 restarts" in healthy
     assert "STATE: GREEN — listed services running" in healthy
@@ -927,6 +929,8 @@ def test_health_dashboard_flags_a_frozen_renderer_lease(tmp_path, monkeypatch):
 
     monkeypatch.setattr(wall_view.subprocess, "run", run)
     monkeypatch.setattr(wall_view, "ci_line", lambda _home: "CI: PASS")
+    monkeypatch.setattr(wall_view, "renderer_bytes_lines", lambda h: (
+        ["RENDERER BYTES: GREEN pin=x renderers=12"], "GREEN"))
 
     capture["stdout"] = footer(4.0)
     fresh = wall_view.render(home, "health")
@@ -1675,3 +1679,38 @@ def test_wall_outcome_hashes_evidence_after_waiting_for_publication_lock(tmp_pat
     entry = next(entry for entry in Feed(tmp_path).entries()
                  if entry.body.startswith("Wall outcome "))
     assert payload(entry)["evidence"]["sha256"] == hashlib.sha256(observed).hexdigest()
+
+
+def test_health_dashboard_states_an_unreadable_renderer_only_on_evidence(tmp_path, monkeypatch):
+    """An empty renderer-bytes result means there was nothing to inspect.
+
+    It is not an unreadable renderer, so the health state must not claim one;
+    a renderer-bytes line that names an unreadable renderer must.
+    """
+    from mishe_tauftauf import wall_view
+
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health" / "services.json").write_text(json.dumps(["health.service"]))
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.delenv("DBUS_SESSION_BUS_ADDRESS", raising=False)
+
+    def systemctl_ok(command, **_kwargs):
+        return subprocess.CompletedProcess(
+            command, 0,
+            "Id=health.service\nActiveState=active\nSubState=running\nNRestarts=0\n",
+            "")
+
+    monkeypatch.setattr(wall_view.subprocess, "run", systemctl_ok)
+    monkeypatch.setattr(wall_view, "ci_line", lambda _home: "CI: PASS")
+    monkeypatch.setattr(wall_view, "pane_lease_lines", lambda _home: ([], "GREEN"))
+
+    monkeypatch.setattr(wall_view, "renderer_bytes_lines", lambda _home: ([], "UNKNOWN"))
+    without_evidence = wall_view.render(home, "health")
+    assert "a top-pane renderer is unreadable" not in without_evidence
+    assert "STATE: GREEN — listed services running" in without_evidence
+
+    monkeypatch.setattr(wall_view, "renderer_bytes_lines", lambda _home: (
+        ["RENDERER BYTES: UNKNOWN pin=x unreadable=docs"], "UNKNOWN"))
+    with_evidence = wall_view.render(home, "health")
+    assert "STATE: UNKNOWN — a top-pane renderer is unreadable" in with_evidence
