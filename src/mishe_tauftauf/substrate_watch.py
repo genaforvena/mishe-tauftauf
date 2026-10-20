@@ -348,6 +348,14 @@ def _runtime(home):
                 if roots is None:
                     problems.append("live renderer import roots unavailable: " + role)
                     continue
+                if not roots:
+                    # A renderer that runs and imports nothing is not running the
+                    # pinned package: the plant's own renderer contract
+                    # (``wall_view.renderer_bytes_lines``) calls that drift, so
+                    # it stays a problem here instead of reading as a clean
+                    # observation of a rootless renderer.
+                    problems.append("live renderer import roots absent: " + role)
+                    continue
                 result["renderer_roots"][role] = sorted(set(roots))
                 result["renderer_states"][role] = "KNOWN"
         if declared is not None and renderers and all(state == "KNOWN" for state in result["renderer_states"].values()):

@@ -429,6 +429,24 @@ def test_declared_renderer_windows_that_all_run_are_known(site, monkeypatch):
     assert runtime["problems"] == []
 
 
+def test_running_renderer_that_imports_nothing_is_not_known(site, monkeypatch):
+    root, home = site
+    (home / "health/windows.json").write_text(json.dumps(["live"]))
+    (home / "top-pains" / "live").write_text("#!/bin/sh\n")
+    monkeypatch.setattr("mishe_tauftauf.seed.recorded_session", lambda home: "session")
+    monkeypatch.setattr(watch.wall_view, "_renderer_pids", lambda session: {"live": 101})
+    # A readable environment that names no PYTHONPATH is a successful read of
+    # an empty root list. For a renderer that is drift, not health: the plant's
+    # renderer contract calls a rootless renderer stale, so the observer must
+    # not report the runtime as clean.
+    monkeypatch.setattr(watch.wall_view, "_live_import_roots", lambda pid: [])
+    runtime = watch._runtime(home)
+    assert runtime["renderer_states"] == {"live": "UNKNOWN"}
+    assert runtime["renderers_state"] == "UNKNOWN"
+    assert runtime["state"] == "UNKNOWN"
+    assert "live renderer import roots absent: live" in runtime["problems"]
+
+
 def test_empty_declared_window_manifest_is_unknown_not_vacuous_known(site):
     root, home = site
     (home / "health/windows.json").write_text(json.dumps([]))
