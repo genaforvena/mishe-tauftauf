@@ -233,11 +233,23 @@ def _watch_wait_note(pane: dict) -> str:
 def _held_pane_verdict(panes: dict[str, dict], role: str) -> tuple[str, str]:
     """Classify ``role``'s held pane as ``(marker, note)`` for the HELD line.
 
-    ``marker`` is ``"WEDGE-SUSPECT"`` for a frozen/no-growth pane — an
-    overdue turn whose pane no longer produces, which a plain idle-gate hold
-    cannot see — ``"UNKNOWN"`` for an unreadable capture, ``"RED"`` for a
-    dead pane, or ``""`` when the pane is tool-blocked/active or unobserved
-    and the hold stands. ``note`` is one line of the sense's own evidence.
+    ``marker`` is ``"WEDGE-SUSPECT"`` for a frozen pane — an overdue turn
+    whose pane no longer produces at all, which a plain idle-gate hold cannot
+    see — ``"UNKNOWN"`` for an unreadable capture, ``"RED"`` for a dead pane,
+    or ``""`` when the pane is tool-blocked/active or unobserved and the hold
+    stands. ``note`` is one line of the sense's own evidence.
+
+    A pane whose raw frame advanced while its normalized content did not grow
+    is not a frozen pane: the TUI is live (spinner, elapsed timer, throughput)
+    and the mind is mid-turn, so the stripped chrome is the only difference
+    between the two captures. The producer's own contract puts the wedge
+    verdict on the session-log cross-evidence (``sense.mind.wedge-suspect``),
+    which the caller applies separately; a live frame alone must not assert a
+    wedge or prescribe a pane recovery. The demotion is limited to that
+    patternless case: a live frame that still shows an allowlisted wait
+    pattern, a frozen frame, and a reading that carries no liveness field all
+    keep the previous escalation, because the difference between a frozen pane
+    and a live one cannot be established from them.
     """
     pane = panes.get(role)
     if not pane:
@@ -248,7 +260,10 @@ def _held_pane_verdict(panes: dict[str, dict], role: str) -> tuple[str, str]:
     if verdict == "active":
         return "", "pane active; content growing"
     if verdict == "suspect":
-        return "WEDGE-SUSPECT", str(pane.get("detail") or "suspect")
+        detail = str(pane.get("detail") or "suspect")
+        if pane.get("frame_live") is True and pane.get("pattern") is None:
+            return "", f"pane live, no content growth ({detail})"
+        return "WEDGE-SUSPECT", detail
     if verdict == "unknown":
         return "UNKNOWN", str(pane.get("detail") or "unknown")
     if verdict == "pane-dead":

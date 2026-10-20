@@ -578,7 +578,8 @@ def test_suspect_pane_escalates_the_held_clear_stall(tmp_path, monkeypatch):
     watch_wait_scan(tmp_path, [{'window': 'audit', 'pid': 1, 'session': 'test',
                                 'verdict': 'suspect',
                                 'detail': 'frame frozen, no wait pattern',
-                                'pattern': None, 'run_id': None, 'sampled': 'now'}])
+                                'pattern': None, 'stable': True, 'frame_live': False,
+                                'run_id': None, 'sampled': 'now'}])
     output = render(tmp_path)
     assert ('CLEAR STALL: WEDGE-SUSPECT audit wake=1 yield=2 '
             'frame frozen, no wait pattern · held=') in output
@@ -588,7 +589,67 @@ def test_suspect_pane_escalates_the_held_clear_stall(tmp_path, monkeypatch):
         'FAIL witness wedge-suspect mind audit needs checked recovery\n'
 
 
-def test_suspect_pane_escalates_the_held_stale_pend(tmp_path, monkeypatch):
+def test_frozen_pane_escalates_the_held_stale_pend(tmp_path, monkeypatch):
+    entries = [entry(1, 'seed', 'seed wake audit observation=1')]
+    busy_mind(tmp_path, monkeypatch, entries)
+    monkeypatch.setenv('MISHE_SEED_SESSION', 'test')
+    watch_wait_scan(tmp_path, [{'window': 'audit', 'pid': 1, 'session': 'test',
+                                'verdict': 'suspect',
+                                'detail': 'frame frozen, no wait pattern',
+                                'pattern': None, 'stable': True, 'frame_live': False,
+                                'run_id': None, 'sampled': 'now'}])
+    output = render(tmp_path)
+    assert ('STALE PEND: WEDGE-SUSPECT audit wake=1 pending=1 '
+            'frame frozen, no wait pattern · held=') in output
+    assert 'STALE PEND: HELD' not in output
+    assert (tmp_path / 'observations' / 'witness').read_text() == \
+        'FAIL witness wedge-suspect mind audit needs checked recovery\n'
+
+
+def test_live_pane_without_growth_is_held_not_a_wedge_suspect(tmp_path, monkeypatch):
+    # android-body witness DM 72390: a mid-turn pane whose raw frame advances
+    # (spinner, elapsed timer, throughput) while its normalized content does
+    # not grow is not a frozen pane. Escalating it prescribed a pane-engine
+    # recovery for a live pane, so the cross-evidence for a wedge stays with
+    # the session-log reading and the pane verdict alone no longer asserts one.
+    entries = [entry(1, 'seed', 'seed wake audit observation=1')]
+    busy_mind(tmp_path, monkeypatch, entries)
+    monkeypatch.setenv('MISHE_SEED_SESSION', 'test')
+    watch_wait_scan(tmp_path, [{'window': 'audit', 'pid': 1, 'session': 'test',
+                                'verdict': 'suspect',
+                                'detail': 'frame alive, no wait pattern, no growth',
+                                'pattern': None, 'stable': True, 'frame_live': True,
+                                'run_id': None, 'sampled': 'now'}])
+    output = render(tmp_path)
+    assert ('STALE PEND: HELD audit wake=1 pending=1 mind not idle; '
+            'supervisor holding delivery · pane live, no content growth '
+            '(frame alive, no wait pattern, no growth) · held=') in output
+    assert 'WEDGE-SUSPECT' not in output
+    assert (tmp_path / 'observations' / 'witness').read_text() != \
+        'FAIL witness wedge-suspect mind audit needs checked recovery\n'
+
+
+def test_live_pane_with_a_wait_pattern_still_escalates(tmp_path, monkeypatch):
+    # The demotion is scoped to the patternless live pane: a live frame that
+    # still shows an allowlisted wait pattern keeps the previous escalation,
+    # because a live frame cannot be separated from a frozen one there.
+    entries = [entry(1, 'seed', 'seed wake audit observation=1')]
+    busy_mind(tmp_path, monkeypatch, entries)
+    monkeypatch.setenv('MISHE_SEED_SESSION', 'test')
+    watch_wait_scan(tmp_path, [{'window': 'audit', 'pid': 1, 'session': 'test',
+                                'verdict': 'suspect',
+                                'detail': "wait pattern 'gh run watch' no longer in_progress",
+                                'pattern': 'gh run watch', 'stable': True, 'frame_live': True,
+                                'run_id': '38244689224', 'sampled': 'now'}])
+    output = render(tmp_path)
+    assert 'STALE PEND: WEDGE-SUSPECT audit wake=1 pending=1' in output
+    assert (tmp_path / 'observations' / 'witness').read_text() == \
+        'FAIL witness wedge-suspect mind audit needs checked recovery\n'
+
+
+def test_suspect_row_without_a_liveness_field_still_escalates(tmp_path, monkeypatch):
+    # A reading that cannot separate a live pane from a frozen one keeps the
+    # previous escalation: the difference cannot be established from it.
     entries = [entry(1, 'seed', 'seed wake audit observation=1')]
     busy_mind(tmp_path, monkeypatch, entries)
     monkeypatch.setenv('MISHE_SEED_SESSION', 'test')
@@ -599,9 +660,23 @@ def test_suspect_pane_escalates_the_held_stale_pend(tmp_path, monkeypatch):
     output = render(tmp_path)
     assert ('STALE PEND: WEDGE-SUSPECT audit wake=1 pending=1 '
             'frame alive, no wait pattern, no growth · held=') in output
-    assert 'STALE PEND: HELD' not in output
     assert (tmp_path / 'observations' / 'witness').read_text() == \
         'FAIL witness wedge-suspect mind audit needs checked recovery\n'
+
+
+def test_producer_rows_separate_a_live_pane_from_a_frozen_one():
+    # The consumer's discrimination is only meaningful if the producer
+    # publishes the liveness field, so bind the two halves together.
+    from mishe_tauftauf import discovery
+    live = discovery._watch_wait_verdict('$ tool\n⠋ · 1s', '$ tool\n⠙ · 4s', 'now')
+    assert live['verdict'] == 'suspect'
+    assert live['frame_live'] is True
+    assert live['stable'] is True
+    assert live['pattern'] is None
+    frozen = discovery._watch_wait_verdict('$ tool\n⠋ · 1s', '$ tool\n⠋ · 1s', 'now')
+    assert frozen['verdict'] == 'suspect'
+    assert frozen['frame_live'] is False
+    assert frozen['stable'] is True
 
 
 def test_unreadable_pane_capture_keeps_the_held_line_unknown(tmp_path, monkeypatch):
