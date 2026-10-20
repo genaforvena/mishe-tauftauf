@@ -549,11 +549,20 @@ a clean Git worktree root or that lacks the runtime package. It writes the pin,
 repoints the site CLI, respawns the upper evidence panes, and reconciles the
 generated and covered services onto the release, leaving lower minds' work and
 the checkout's `AGENTS.md` untouched. Then confirm the dashboards' `RUNTIME` line
-reads `MATCH` when every covered service imports the pin, `DECLARED` when the
-only divergence is the release coordinator's intended checkout root (the core
-plant's own reading, which keeps the state line GREEN), and `DRIFT` for any other
-service still importing another root. A missing or invalid `health/services.json`
-leaves the service roots unread, so the line reports `services=UNKNOWN`, not
+reads `MATCH` when every covered service imports the pin, `DECLARED` when every
+divergence is a root the site has declared, and `DRIFT` for any other service
+still importing another root. Two declarations exist. The release coordinator
+imports its site's checkout so its follower observes the development tree. A
+service whose module the pin does not carry imports a reviewed copy instead, and
+the site records that decision in `health/declared-roots.json`: unit name, root,
+owning role, the activation record for the reviewed bytes, and the condition that
+retires it. The record is read from the site home rather than from this checkout,
+because the runtime sensors run the pin, so a declaration takes effect without a
+release advance; an unlisted unit, or a malformed record, leaves that unit on the
+`DRIFT` verdict instead of reading as agreement. Retire an entry by repointing
+its unit onto a pin that carries the module and deleting the entry.
+A missing or invalid `health/services.json` leaves the service roots unread, so
+the line reports `services=UNKNOWN`, not
 `MATCH`, `DECLARED` or `DRIFT`. Check the actual consumer and its live
 pane. Moving the pin is not a push or a CI result; keep source, CI and running
 code as separate evidence.

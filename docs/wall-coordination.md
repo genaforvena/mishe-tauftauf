@@ -374,8 +374,13 @@ own root and module fingerprint; `RUNTIME` the pin beside
 the roots the seed services actually import, flagging `DRIFT` when they differ —
 the pin and the seed roots are separate and can diverge. The release coordinator
 is a declared exception: it imports its site's checkout so its follower observes
-it, so that one intended root reads `DECLARED` and does not raise the state line;
-any other divergence still reads `DRIFT`. When the pin fails that
+it. A service whose module the pin does not carry is the other, recorded as
+`health/declared-roots.json` — unit, root, owning role, the activation record for
+the reviewed bytes and the retiring condition — because the sensors run the pin,
+so the record must be readable from the site home to take effect without a
+release advance. Each intended root reads `DECLARED` and does not raise the state
+line; an unlisted root, or a malformed record, still reads `DRIFT`.
+When the pin fails that
 check — a dirty tree, a SHA that no longer matches HEAD, or a path that is not
 a Git worktree —
 `RUNTIME` instead reads `pin=UNKNOWN` with the reason. The line reports the

@@ -4,6 +4,7 @@
     "src/mishe_tauftauf/chat_protocol.py",
     "src/mishe_tauftauf/docs_tools.py",
     "src/mishe_tauftauf/clear_journal.py",
+    "src/mishe_tauftauf/declared_roots.py",
     "src/mishe_tauftauf/cli.py",
     "src/mishe_tauftauf/feed.py",
     "src/mishe_tauftauf/follow_through.py",

@@ -4,6 +4,7 @@ import multiprocessing
 import json
 import os
 import subprocess
+import pathlib
 import pytest
 from mishe_tauftauf import seed, post_check, observations
 from mishe_tauftauf.feed import Feed
@@ -1509,6 +1510,81 @@ def test_dashboard_declares_the_coordination_checkout_exception(tmp_path, monkey
     assert f"services={tmp_path} DECLARED" in text
     assert "STATE: GREEN — listed services running" in text
     assert "STATE: RED" not in text
+
+
+def test_dashboard_declares_a_recorded_off_pin_root(tmp_path, monkeypatch):
+    """A site record names an off-pin snapshot; the pin need not carry the module."""
+    from mishe_tauftauf import runtime_source, wall_view
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health/services.json").write_text(json.dumps(["observer.service", "pinned.service"]))
+    (home / "health/runtime-release.json").write_text("{}")
+    bundle = tmp_path / "bundle"
+    (home / "health/declared-roots.json").write_text(json.dumps({
+        "version": 1,
+        "units": {"observer.service": {
+            "root": str(bundle / "src"), "owner": "genome",
+            "provenance": "bundle/activation.json",
+            "reason": "the pin does not carry the module the unit runs",
+            "retire_when": "a pin release carrying the module"}}}))
+    monkeypatch.setattr(wall_view, "ci_line", lambda *a: "CI: PASS")
+    pinned = tmp_path / "pinned"
+
+    def commands(command, **kwargs):
+        blocks = [
+            "Id=observer.service\nActiveState=active\nSubState=running\nNRestarts=0\n"
+            f"Environment=PYTHONPATH={bundle}/src",
+            "Id=pinned.service\nActiveState=active\nSubState=running\nNRestarts=0\n"
+            f"Environment=PYTHONPATH={pinned}/src",
+        ]
+        output = ("pinned\n" if "rev-parse" in command else "" if "status" in command
+                  else "\n\n".join(blocks))
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    monkeypatch.setattr(wall_view.subprocess, "run", commands)
+    monkeypatch.setattr(runtime_source, "source_for", lambda h, default: pinned)
+    text = wall_view.render(home, "genome")
+    assert f"observer.service={bundle} observes the checkout" in text
+    assert "STATE: GREEN — listed services running" in text
+    assert "DRIFT" not in text
+
+
+def test_dashboard_treats_a_broken_declaration_record_as_no_declaration(tmp_path, monkeypatch):
+    """A malformed allowlist declares nothing: the unit stays drift, not green."""
+    from mishe_tauftauf import runtime_source, wall_view
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health/services.json").write_text(json.dumps(["observer.service"]))
+    (home / "health/runtime-release.json").write_text("{}")
+    (home / "health/declared-roots.json").write_text("{not json")
+    monkeypatch.setattr(wall_view, "ci_line", lambda *a: "CI: PASS")
+    pinned = tmp_path / "pinned"
+    bundle = tmp_path / "bundle"
+
+    def commands(command, **kwargs):
+        output = ("pinned\n" if "rev-parse" in command else "" if "status" in command else
+                  "Id=observer.service\nActiveState=active\nSubState=running\nNRestarts=0\n"
+                  f"Environment=PYTHONPATH={bundle}/src\n")
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    monkeypatch.setattr(wall_view.subprocess, "run", commands)
+    monkeypatch.setattr(runtime_source, "source_for", lambda h, default: pinned)
+    assert "DRIFT — undeclared: observer.service" in wall_view.render(home, "genome")
+
+
+def test_declared_root_entries_collapse_a_src_suffix(tmp_path):
+    from mishe_tauftauf import runtime_source
+    (tmp_path / "health").mkdir()
+    (tmp_path / "health/declared-roots.json").write_text(json.dumps(
+        {"units": {"a.service": {"root": "/srv/bundle/src"},
+                   "b.service": {"root": "/srv/other"}}}))
+    assert runtime_source.declared_root_entries(tmp_path) == {"a.service": "/srv/bundle",
+                                                             "b.service": "/srv/other"}
+    assert runtime_source.declared_checkout_root(tmp_path, "a.service") == pathlib.Path("/srv/bundle")
+    assert runtime_source.declared_checkout_root(tmp_path, "b.service") == pathlib.Path("/srv/other")
+    assert runtime_source.declared_checkout_root(tmp_path, "unknown.service") is None
+    (tmp_path / "health/declared-roots.json").write_text(json.dumps({"units": []}))
+    assert runtime_source.declared_root_entries(tmp_path) == {}
 
 
 def test_runtime_drift_state_forces_notification_past_a_hold_filter(tmp_path, monkeypatch):

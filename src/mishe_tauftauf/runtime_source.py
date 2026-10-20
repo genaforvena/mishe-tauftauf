@@ -90,16 +90,31 @@ services are pinned. The name and its intended root are therefore a declared
 exception, not a drift.
 """
 
+def declared_root_entries(home: Path) -> dict[str, str]:
+    """The off-pin roots ``home`` declares, keyed by unit name.
+
+    Decoding belongs to :mod:`declared_roots`, the boundary adapter for the site's
+    record. An unreadable or malformed record declares nothing, so a broken
+    allowlist cannot read as agreement.
+    """
+    from . import declared_roots
+    return declared_roots.entries(home)
+
 
 def declared_checkout_root(home: Path, unit: str) -> Path | None:
-    """The development checkout a unit is declared to import, or None.
+    """The root a unit is declared to import, or ``None`` when none is declared.
 
-    The runtime sensors compare each service's import root with the site pin. The
-    release coordinator is the one service the design keeps on the checkout, so
-    its intended root is named here once instead of reading as drift in every
-    sensor. Any other divergence, including a coordinator on a different root, is
-    not declared.
+    The runtime sensors compare each service's import root with the site pin. A
+    unit whose module the pin does not carry is declared through
+    ``health/declared-roots.json``, which names its root and the provenance of
+    the copy it runs, so an intended root reads ``DECLARED`` instead of ``DRIFT``.
+    The release coordinator is the other declaration: it imports its site's
+    checkout so its follower observes the development tree. Any other divergence,
+    including a coordinator on a different root, is not declared.
     """
+    entries = declared_root_entries(home)
+    if unit in entries:
+        return Path(entries[unit])
     if unit.endswith(COORDINATION_UNIT_SUFFIX):
         return Path(home).resolve().parent
     return None
