@@ -64,6 +64,16 @@ blocked-state record that names a wake which cannot proceed. The blocked state
 is the plant's view of a wedge: the resident writes it when it holds a wake for
 reconciliation, and the readiness gate reads it, so a native resident that
 cannot start is observable without reading an attempt directory.
+
+It also names the one fact the plant cannot see. The native branch's readiness
+guard refuses a role on two independent records: the busy marker (an attempt is
+in progress) and the hold record (a wake cannot proceed). With neither of them
+the guard has no attempt or hold record to refuse on, so a retained attempt of
+the pending wake is named by no plant record: a reader of the plant sees a role
+that is ready, and cannot tell that the wake it is about to deliver already
+has an attempt. The resident derives its own decision from the attempt's bytes
+when it runs, so the delivery is not misrouted by this; what the plant lacks is
+the evidence that the wake has prior work.
 """
 from __future__ import annotations
 
@@ -610,6 +620,16 @@ def blocked_state_path(home, role: str) -> Path:
     return Path(home) / 'journals' / BLOCKED_STATE.format(role=role)
 
 
+def busy_path(home, role: str) -> Path:
+    """The path of one role's busy marker.
+
+    The marker says an attempt is in progress; the hold record says a wake
+    cannot proceed. They are different facts and the readiness guard refuses a
+    role on either one.
+    """
+    return Path(home) / 'journals' / f'{role}-native.busy'
+
+
 def write_blocked_state(home, role: str, wake, *, verdict: str, reason: str,
                         evidence=(), attempt=None) -> Path:
     """Record that this role's wake cannot proceed, with the classified reason."""
@@ -726,11 +746,16 @@ def repair_blocked_state(home, role: str) -> dict:
 def _wake_directories(attempts: Path, wake: int) -> list[Path]:
     """The attempt directories of one wake, oldest first.
 
-    The first attempt and its bounded fresh attempts are ordered by the
-    numeric retry suffix, so `retry-10` follows `retry-9`. The operator's own
-    `recovery-<n>` attempts are the same wake's attempts and are counted here,
-    so an effect an operator's recovery attempt dispatched blocks a later
-    attempt of that wake instead of going unseen.
+    Every directory whose name begins with this wake's number belongs to the
+    wake, including one this module does not recognise by name: the resident's
+    own boundary is the wake number, so an attempt it retains is an attempt of
+    that wake, and an attempt this module cannot name must not escape the
+    classification. The first attempt and its bounded fresh attempts are
+    ordered by the numeric retry suffix, so `retry-10` follows `retry-9`. The
+    operator's own `recovery-<n>` attempts are the same wake's attempts and are
+    counted here, so an effect an operator's recovery attempt dispatched blocks
+    a later attempt of that wake instead of going unseen. A directory this
+    module cannot name comes last, in name order.
     """
     if not attempts.is_dir():
         return []
@@ -741,12 +766,16 @@ def _wake_directories(attempts: Path, wake: int) -> list[Path]:
         if not path.is_dir():
             continue
         name = path.name
+        if name.split('-', 1)[0] != str(wake):
+            continue
         if name == str(wake):
             entries.append((0, 0, name, path))
         elif name.startswith(retry) and name[len(retry):].isdigit():
             entries.append((1, int(name[len(retry):]), name, path))
         elif name.startswith(recovery) and name[len(recovery):].isdigit():
             entries.append((2, int(name[len(recovery):]), name, path))
+        else:
+            entries.append((3, 0, name, path))
     entries.sort()
     return [path for _, _, _, path in entries]
 
@@ -758,6 +787,81 @@ def wake_attempts(attempts, wake: int) -> list[Path]:
     directories belong to a wake.
     """
     return _wake_directories(Path(attempts), wake)
+
+
+@dataclass(frozen=True)
+class UnseenAttempt:
+    """An attempt of the pending wake that no plant record names."""
+
+    attempt: Path
+    wake: int
+    verdict: str
+    reason: str
+    evidence: tuple[str, ...] = ()
+
+    def to_record(self) -> dict:
+        """The record of this fact, as the other reports of this module read."""
+        return {'attempt': str(self.attempt), 'wake': self.wake, 'verdict': self.verdict,
+                'reason': self.reason, 'evidence': list(self.evidence)}
+
+
+def pending_wake(home, role: str) -> int | None:
+    """The wake the plant still owes this role, or None.
+
+    A wake that is settled or cleared is not owed any more, so no delivery can
+    land in its attempt directory. The plant's own state reader owns this
+    answer; this module only asks. A tape this module cannot read raises
+    rather than reading as no pending wake: broken monitoring is not a clean
+    reading.
+    """
+    from . import seed
+    return seed._state(Path(home), role)[1]
+
+
+def unseen_attempts(home, role: str, attempts, wake: int) -> list[UnseenAttempt]:
+    """The attempts of the role's pending wake that no plant record names.
+
+    The plant's dispatch guard consults two records about a role: the busy
+    marker (an attempt is in progress) and the hold record (a wake cannot
+    proceed). When neither exists the guard has no attempt or hold record to
+    refuse on, so a retained attempt of the pending wake is invisible to the
+    plant: a reader of the plant sees a role that is ready and cannot tell that
+    the wake it is about to deliver already has an attempt. The resident
+    derives its own decision from the attempt's bytes when it runs, so the
+    delivery is not misrouted by this; what the plant lacks is the evidence.
+
+    Only the pending wake can be delivered, so an attempt of any other wake is
+    not reported here. A busy marker means the plant sees the role as busy, and
+    a hold record means it sees the role as held, so neither is unnamed. A hold
+    record that cannot be decoded leaves the plant's reading UNKNOWN rather
+    than ready, so it is not an unnamed attempt either. A settled attempt is
+    finished work.
+
+    The limits of the claim, because a reader of the plant will act on it:
+
+    - The guard's other conditions are not modelled here: the pane's liveness
+      and engine, the probe's own failures, and the transport's delivery
+      backoff. A reported attempt is a fact about the plant's records, not a
+      prediction that a delivery will happen.
+    - The busy marker and the hold record are the *delegation* branch's
+      conditions. A role whose pane runs a TUI engine never consults them, and
+      no attempt directory is ever written for such a role.
+    """
+    if pending_wake(home, role) != wake:
+        return []
+    if busy_path(home, role).exists():
+        return []
+    blocked, reason = read_blocked_state(home, role)
+    if blocked is not None or reason is not None:
+        return []
+    unseen = []
+    for attempt in wake_attempts(attempts, wake):
+        report = classify_attempt(attempt)
+        if report.settled:
+            continue
+        unseen.append(UnseenAttempt(Path(attempt), wake, report.verdict, report.reason,
+                                    report.evidence))
+    return unseen
 
 
 def _report(attempts: Path, wake: int | None) -> list[Attempt]:
@@ -779,16 +883,19 @@ def main(argv=None) -> int:
     parser.add_argument('--home', type=Path,
                         help='site home holding the blocked state to repair')
     parser.add_argument('--role', help='role whose blocked state to repair')
-    parser.add_argument('--repair-blocked', action='store_true',
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument('--repair-blocked', action='store_true',
                         help='remove the role\'s blocked state, whatever it says')
-    parser.add_argument('--release-hold', action='store_true',
+    action.add_argument('--release-hold', action='store_true',
                         help='release the role\'s hold on the named wake')
+    action.add_argument('--unseen-attempt', action='store_true',
+                        help='report the attempts of the named wake no plant record names')
+    action.add_argument('--apply', action='store_true',
+                        help='release the busy wedge for an effect-free transient attempt')
     parser.add_argument('--wake', type=int, help='wake number to act on')
     parser.add_argument('--busy', type=Path, help='busy marker to release with --apply')
     parser.add_argument('--limit', type=int, default=DEFAULT_RETRY_LIMIT,
                         help='bound on fresh attempts per wake')
-    parser.add_argument('--apply', action='store_true',
-                        help='release the busy wedge for an effect-free transient attempt')
     args = parser.parse_args(argv)
     if args.repair_blocked:
         if args.home is None or args.role is None:
@@ -802,6 +909,23 @@ def main(argv=None) -> int:
         released = clear_blocked_state(args.home, args.role, args.wake)
         print(json.dumps({'released': released, 'role': args.role, 'wake': args.wake}, indent=2))
         return 0 if released else 1
+    if args.unseen_attempt:
+        if (args.home is None or args.role is None or args.wake is None
+                or args.attempts is None):
+            parser.error('--unseen-attempt needs --home, --role, --wake and --attempts')
+        try:
+            unseen = unseen_attempts(args.home, args.role, args.attempts, args.wake)
+        except Exception as exc:
+            # A state this module cannot read is not a clean reading: the plant
+            # owes an answer it did not get.
+            print(json.dumps({'role': args.role, 'wake': args.wake,
+                              'attempts': str(args.attempts), 'unreadable': str(exc)},
+                             indent=2))
+            return 2
+        report = {'role': args.role, 'wake': args.wake, 'attempts': str(args.attempts),
+                  'unseen': [item.to_record() for item in unseen]}
+        print(json.dumps(report, indent=2))
+        return 1 if unseen else 0
     if args.attempts is None:
         parser.error('--attempts is required')
     if args.apply and (args.busy is None or args.wake is None):
