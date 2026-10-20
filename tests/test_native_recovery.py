@@ -703,17 +703,16 @@ def test_settling_a_wake_again_clears_a_hold_it_could_not_clear_before(tmp_path,
     wake = Feed(tmp_path).append('seed', 'seed wake genome observation=1\nRead your wall.')
     recovery.write_blocked_state(tmp_path, 'genome', wake.sequence, verdict=recovery.RECONCILE,
                                 reason='an earlier attempt dispatched an effect')
-    import os as _os
-    real_rename = _os.rename
+    real_unlink = Path.unlink
     refused = []
 
-    def refuse_once(source, target):
-        if '.claimed-' in str(target) and not refused:
+    def refuse_once(self, *args, **kwargs):
+        if self.name == 'genome-native.blocked.json' and not refused:
             refused.append(True)
-            raise OSError('cannot claim the hold')
-        return real_rename(source, target)
+            raise OSError('cannot remove')
+        return real_unlink(self, *args, **kwargs)
 
-    monkeypatch.setattr(_os, 'rename', refuse_once)
+    monkeypatch.setattr(Path, 'unlink', refuse_once)
     wall.settle(tmp_path, 'genome', wake.sequence, 'The wake is done.', False, 'changed')
     assert recovery.read_blocked_state(tmp_path, 'genome')[0] is not None
     # The retry takes the idempotent path and must still clean up.
@@ -732,21 +731,43 @@ def test_clearing_a_hold_keeps_a_record_that_cannot_be_decoded(tmp_path):
     assert path.read_text(encoding='utf-8') == '{not json'
 
 
-def test_clearing_a_hold_never_removes_a_record_published_in_the_meantime(tmp_path, monkeypatch):
-    """The removed record is the one that was read, not a newer one."""
-    import os as _os
-    path = recovery.blocked_state_path(tmp_path, 'genome')
-    path.parent.mkdir(parents=True)
+def test_a_publisher_cannot_replace_a_hold_while_it_is_being_cleared(tmp_path, monkeypatch):
+    """The writer and the clearer share one lock: the record read is the record removed."""
+    import threading
+    import time as _time
     recovery.write_blocked_state(tmp_path, 'genome', 1, verdict=recovery.RECONCILE, reason='held')
-    real_rename = _os.rename
+    original_read = recovery.read_blocked_state
+    order = []
 
-    def publish_after_claim(source, target):
-        real_rename(source, target)
-        if '.claimed-' in str(target):
-            recovery.write_blocked_state(tmp_path, 'genome', 2, verdict=recovery.RECONCILE,
-                                        reason='a later hold')
+    def slow_read(home, role):
+        record = original_read(home, role)
+        _time.sleep(0.3)  # a publisher tries to replace the record during this
+        return record
 
-    monkeypatch.setattr(_os, 'rename', publish_after_claim)
+    def publish():
+        recovery.write_blocked_state(tmp_path, 'genome', 2, verdict=recovery.RECONCILE,
+                                    reason='a later hold')
+        order.append('published')
+
+    monkeypatch.setattr(recovery, 'read_blocked_state', slow_read)
+    thread = threading.Thread(target=publish)
+    thread.start()
     assert recovery.clear_blocked_state(tmp_path, 'genome', 1) is True
+    order.append('cleared')
+    thread.join(10)
+    monkeypatch.undo()
+    # The publisher waited for the clear, so the record removed was the one read.
+    assert order == ['cleared', 'published']
     record, reason = recovery.read_blocked_state(tmp_path, 'genome')
     assert record is not None and record['wake'] == 2
+
+
+def test_the_owner_can_repair_a_blocked_state_that_cannot_be_decoded(tmp_path):
+    """A corrupt hold has a supported repair, and it is deliberate."""
+    path = recovery.blocked_state_path(tmp_path, 'genome')
+    path.parent.mkdir(parents=True)
+    path.write_text('{not json', encoding='utf-8')
+    report = recovery.repair_blocked_state(tmp_path, 'genome')
+    assert report['repaired'] is True and 'malformed' in report['reason']
+    assert not path.exists()
+    assert recovery.repair_blocked_state(tmp_path, 'genome')['repaired'] is False
