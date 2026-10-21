@@ -1,4 +1,11 @@
-"""Deterministic review signals and durable addressed notices, never a work score."""
+"""Deterministic review signals and durable addressed notices, never a work score.
+
+Routing contract: a condition is routed once to its resolver and its owner, a
+changed condition is routed again as a new version, an unrouted condition
+escalates once to the escalation peers, and later reminders address the owner
+alone on a backing-off schedule measured from the last route. Detection, the
+immutable notice archive and the pending outbox are not narrowed by this.
+"""
 from __future__ import annotations
 
 import argparse
@@ -31,6 +38,8 @@ AGED_SECONDS = 3600
 CONTINUATION_SECONDS = 1800
 ESCALATE_SECONDS = 600
 REMINDER_SECONDS = 1800
+MAX_REMINDER_SECONDS = 14400
+STAGES = ("initial", "changed", "escalation", "reminder")
 
 
 def _time(value=None):
@@ -129,7 +138,7 @@ def _incident(value):
     _shape(value, "finding first_seen last_notice stage")
     _finding(value["finding"])
     first, last = _time(value["first_seen"]), _time(value["last_notice"])
-    if first > last or value["stage"] not in {"initial", "escalation", "reminder"}:
+    if first > last or value["stage"] not in set(STAGES):
         raise ValueError("invalid incident timer")
 
 
@@ -143,8 +152,8 @@ def _event(value):
             or value["event_id"] != _digest({k: value[k] for k in ("created_at", "incident", "recipients")})):
         raise ValueError("invalid monitor event identity")
     finding = value["incident"]["finding"]
-    expected = finding["primary"] if value["incident"]["stage"] == "initial" else list(dict.fromkeys(finding["primary"] + finding["escalation"]))
-    if value["recipients"] != expected:
+    expected = _accepted_routes(finding, value["incident"]["stage"])
+    if tuple(value["recipients"]) not in expected:
         raise ValueError("invalid event routing")
     return value
 
@@ -221,6 +230,70 @@ def _make(kind, role, ref, summary):
     identity = f"{kind}:{role}:{ref}" if kind == "aged-wake" else f"{kind}:{role}" if kind == "continuation-review" else f"{kind}:{ref}"
     return {"id": identity, "kind": kind, "role": role, "ref": ref, "summary": summary,
             "primary": list(dict.fromkeys(primary)), "escalation": list(dict.fromkeys(escalation)), "action": action}
+
+
+def _owner(finding):
+    """The role that can act on the finding; escalation peers are not owners."""
+    role = finding.get("role")
+    if _role(role):
+        return role
+    ref = finding.get("ref") or ""
+    if ref.startswith("outcomes:") and _role(ref.split(":", 1)[1]):
+        return ref.split(":", 1)[1]
+    return finding["primary"][0]
+
+
+def _route(finding, stage):
+    """Recipients for one stage: route once, escalate once, remind the owner."""
+    owner = _owner(finding)
+    primary = list(finding["primary"])
+    escalation = list(finding["escalation"])
+    if stage in ("initial", "changed"):
+        return list(dict.fromkeys(primary + [owner]))
+    if stage == "escalation":
+        return list(dict.fromkeys(primary + [owner] + escalation))
+    return [owner]
+
+
+def _accepted_routes(finding, stage):
+    """Current routing plus the legacy routing kept valid for archived notices."""
+    legacy = list(finding["primary"]) if stage == "initial" else list(dict.fromkeys(finding["primary"] + finding["escalation"]))
+    return {tuple(_route(finding, stage)), tuple(legacy)}
+
+
+def _reminder_interval(reminders):
+    """Seconds to wait after the given number of reminders were already routed."""
+    return min(REMINDER_SECONDS * (2 ** max(0, reminders)), MAX_REMINDER_SECONDS)
+
+
+def _finding_events(events, key, first_seen=None):
+    """The routed notices of one condition; optionally only its current version."""
+    history = [event for event in events.values() if event["incident"]["finding"]["id"] == key]
+    if first_seen is not None:
+        moment = _time(first_seen)
+        history = [event for event in history if _time(event["incident"]["first_seen"]) == moment]
+    return history
+
+
+def _latest_event(history):
+    if not history:
+        return None
+    return max(history, key=lambda event: (_time(event["created_at"]), event["event_id"]))
+
+
+def _routed(deliveries, event, owner=None):
+    """Whether the owner of the condition already received this notice."""
+    receipts = deliveries.get(event["event_id"], {})
+    if owner and owner in event["recipients"]:
+        return bool(receipts.get(owner))
+    return any(receipts.get(recipient) for recipient in event["recipients"])
+
+
+def _event_interval(events, event):
+    """The interval the next reminder of this condition will wait for."""
+    incident = event["incident"]
+    notices = len(_finding_events(events, incident["finding"]["id"], incident["first_seen"]))
+    return _reminder_interval(max(0, notices - 1))
 
 
 def evaluate(report, entries, *, now=None):
@@ -338,15 +411,25 @@ def _retain(home, path):
     return "Corrupt prior state retained sha256=" + fingerprint
 
 
-def _notice(event):
+def _notice(event, *, interval=None):
     incident = event["incident"]
     finding = incident["finding"]
+    stage = incident["stage"]
     deadline = _time(incident["first_seen"]) + timedelta(seconds=ESCALATE_SECONDS)
+    if stage == "reminder":
+        owner = _owner(finding)
+        routing = ("Owner=" + owner + "; Resolver=" + owner
+                   + "; last route=" + incident["last_notice"]
+                   + "; next reminder after " + str(interval) + "s")
+        timing = "First seen=" + incident["first_seen"] + "; reminder of the unchanged condition"
+    else:
+        routing = "Resolver=" + ",".join(finding["primary"]) + "; escalation=" + ",".join(finding["escalation"])
+        timing = "First seen=" + incident["first_seen"] + "; evidence/escalation deadline=" + deadline.isoformat()
     return "\n".join([
-        "INITIATIVE REVIEW " + incident["stage"] + " event=" + event["event_id"],
+        "INITIATIVE REVIEW " + stage + " event=" + event["event_id"],
         finding["id"] + " ref=" + finding["ref"], finding["summary"],
-        "Resolver=" + ",".join(finding["primary"]) + "; escalation=" + ",".join(finding["escalation"]),
-        "First seen=" + incident["first_seen"] + "; evidence/escalation deadline=" + deadline.isoformat(),
+        routing,
+        timing,
         "Action: " + finding["action"],
         "Clearing this observation does not certify that a semantic issue is fixed.",
     ])
@@ -421,15 +504,26 @@ def check(home, *, now=None):
                 if _time(prior["last_notice"]) <= _time(previous["generated_at"]):
                     prior = None
             stage = None
-            if prior is None:
-                incident = {"finding": finding, "first_seen": now.isoformat(), "last_notice": now.isoformat(), "stage": "initial"}
-                stage = "initial"
+            changed = prior is not None and _digest(prior["finding"]) != _digest(finding)
+            if prior is None or changed:
+                # A new or changed condition is routed once; its escalation clock restarts.
+                incident = {"finding": finding, "first_seen": now.isoformat(), "last_notice": now.isoformat(),
+                            "stage": "initial" if prior is None else "changed"}
+                stage = incident["stage"]
+                history = []
             else:
                 incident = dict(prior, finding=finding)
-                if prior["stage"] == "initial" and (now - _time(prior["first_seen"])).total_seconds() >= ESCALATE_SECONDS:
+                # Only the notices of the current condition version pace its reminders.
+                history = _finding_events(events, key, prior["first_seen"])
+                age = (now - _time(prior["first_seen"])).total_seconds()
+                since = (now - _time(prior["last_notice"])).total_seconds()
+                if prior["stage"] in ("initial", "changed") and age >= ESCALATE_SECONDS:
                     stage = "escalation"
-                elif prior["stage"] != "initial" and (now - _time(prior["last_notice"])).total_seconds() >= REMINDER_SECONDS:
-                    stage = "reminder"
+                elif prior["stage"] in ("escalation", "reminder"):
+                    interval = _reminder_interval(max(0, len(history) - 1))
+                    latest = _latest_event(history)
+                    if since >= interval and (latest is None or _routed(deliveries, latest, _owner(finding))):
+                        stage = "reminder"
                 if stage:
                     incident.update(stage=stage, last_notice=now.isoformat())
             incidents[key] = incident
@@ -437,7 +531,7 @@ def check(home, *, now=None):
                 if len(events) >= MAX_EVENTS:
                     problems.append("Monitor event archive is full; notice cannot be durably queued.")
                     continue
-                recipients = finding["primary"] if stage == "initial" else list(dict.fromkeys(finding["primary"] + finding["escalation"]))
+                recipients = _route(finding, stage)
                 content = {"created_at": now.isoformat(), "incident": incident, "recipients": recipients}
                 event_id = _digest(content)
                 event = {"version": VERSION, "event_id": event_id, **content}
@@ -456,7 +550,7 @@ def check(home, *, now=None):
                 if recipient in receipts:
                     continue
                 try:
-                    receipt = _send(home, recipient, _notice(event))
+                    receipt = _send(home, recipient, _notice(event, interval=_event_interval(events, event)))
                     receipts[recipient] = receipt.sequence
                     row["pending"] = _pending(events, deliveries)
                     _status(row)

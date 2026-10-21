@@ -226,7 +226,7 @@ def test_patch_only_partial_does_not_become_whole_plant_health(home):
     assert row["producer_state"] == "PARTIAL"
 
 
-def test_initial_dedup_escalation_and_bounded_reminder(home):
+def test_initial_dedup_one_escalation_and_owner_directed_reminders(home):
     append(home, "seed", "seed wake discover observation=1", age=3600)
     publish(home)
     initial = watch.check(home, now=NOW)
@@ -236,18 +236,85 @@ def test_initial_dedup_escalation_and_bounded_reminder(home):
         publish(home, now=at)
         watch.check(home, now=at)
     assert len(messages(home, recipient="health")) == 1
+    assert len(messages(home, recipient="discover")) == 1
+    assert not messages(home, recipient="genome")
     at = NOW + timedelta(seconds=600)
     publish(home, now=at)
     escalation = watch.check(home, now=at)
     assert escalation["incidents"][key]["stage"] == "escalation"
     assert escalation["incidents"][key]["first_seen"] == initial["incidents"][key]["first_seen"]
     assert len(messages(home, recipient="witness")) == 1
-    for seconds in (2399, 2400, 2401):
-        at = NOW + timedelta(seconds=seconds)
-        publish(home, now=at)
-        watch.check(home, now=at)
-    assert len(messages(home, recipient="health")) == 3
-    assert len(messages(home, recipient="witness")) == 2
+    assert len(messages(home, recipient="genome")) == 1
+    at = NOW + timedelta(seconds=4200)
+    publish(home, now=at)
+    reminder = watch.check(home, now=at)
+    assert reminder["incidents"][key]["stage"] == "reminder"
+    assert len(messages(home, recipient="discover", text="INITIATIVE REVIEW reminder")) == 1
+    # The reminder addresses the owner only: the escalation peers are not re-notified.
+    assert len(messages(home, recipient="health")) == 2
+    assert len(messages(home, recipient="witness")) == 1
+    assert len(messages(home, recipient="genome")) == 1
+    at = NOW + timedelta(seconds=6000)
+    publish(home, now=at)
+    watch.check(home, now=at)
+    assert len(messages(home, recipient="discover", text="INITIATIVE REVIEW reminder")) == 1
+    at = NOW + timedelta(seconds=11400)
+    publish(home, now=at)
+    watch.check(home, now=at)
+    assert len(messages(home, recipient="discover", text="INITIATIVE REVIEW reminder")) == 2
+
+
+def test_changed_condition_is_routed_once_to_its_owner(home, monkeypatch):
+    append(home, "seed", "seed wake discover observation=1", age=3600)
+    publish(home)
+    watch.check(home, now=NOW)
+    original = watch.evaluate
+
+    def changed(report, entries, *, now=None):
+        findings = original(report, entries, now=now)
+        return [dict(item, summary=item["summary"] + " The condition changed.")
+                if item["kind"] == "aged-wake" else item for item in findings]
+
+    monkeypatch.setattr(watch, "evaluate", changed)
+    at = NOW + timedelta(seconds=60)
+    publish(home, now=at)
+    row = watch.check(home, now=at)
+    key = kinds(row, "aged-wake")[0]["id"]
+    assert row["incidents"][key]["stage"] == "changed"
+    assert len(messages(home, recipient="discover", text="INITIATIVE REVIEW changed")) == 1
+    assert len(messages(home, recipient="health", text="INITIATIVE REVIEW changed")) == 1
+    at = NOW + timedelta(seconds=120)
+    publish(home, now=at)
+    watch.check(home, now=at)
+    assert len(messages(home, recipient="discover", text="INITIATIVE REVIEW changed")) == 1
+
+
+def test_a_pending_notice_is_not_stacked_with_a_new_reminder(home, monkeypatch):
+    append(home, "seed", "seed wake discover observation=1", age=3600)
+    publish(home)
+    real_send = watch._send
+
+    def fail(home, recipient, text):
+        if recipient == "discover":
+            raise OSError("recipient unavailable")
+        return real_send(home, recipient, text)
+
+    monkeypatch.setattr(watch, "_send", fail)
+    failed = watch.check(home, now=NOW)
+    assert failed["pending"]
+    assert failed["state"] == "UNKNOWN"
+    at = NOW + timedelta(seconds=600)
+    publish(home, now=at)
+    watch.check(home, now=at)
+    at = NOW + timedelta(seconds=4200)
+    publish(home, now=at)
+    stacked = watch.check(home, now=at)
+    assert not messages(home, recipient="discover")
+    assert stacked["pending"]
+    monkeypatch.setattr(watch, "_send", real_send)
+    recovered = watch.check(home, now=at)
+    assert not recovered["pending"]
+    assert len(messages(home, recipient="discover")) == 2
 
 
 def test_failed_delivery_survives_newer_cleared_findings(home, monkeypatch):
