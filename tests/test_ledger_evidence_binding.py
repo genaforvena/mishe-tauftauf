@@ -1275,3 +1275,96 @@ def test_evidence_binding_publishes_the_band_of_every_cleared_row(tmp_path):
     assert linked[0]["kind"] == "remedy-name"
     assert linked[0]["sequence"] == 1
     assert linked[0]["successor"] == 2
+
+
+def test_evidence_binding_publishes_the_byte_relation_of_a_rebound_row(tmp_path):
+    """A rebound row's band is a link relation; the bytes are published beside it.
+
+    The remedy-named successor may hold the bytes as they were published, or a
+    copy of the file as it now stands after the edit that lost the row. The
+    band cannot tell these apart, so the byte relation is decided by the gate
+    and published per row: a reader of a ``rebound`` row sees whether the
+    content came back without re-deriving it.
+    """
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    lost = home / "artifacts" / "lost.md"
+    lost.write_text("the work\n")
+    lost_digest = _write_evidenced_outcome(home, "bob", lost)
+    # The file is edited after the record: the published bytes are gone and
+    # the file as it now stands is a different artifact.
+    lost.write_text("the work, re-authored\n")
+    repaired = home / "artifacts" / "lost-v2.md"
+    # The remedy-named successor is a copy of the file as it now stands.
+    repaired.write_text("the work, re-authored\n")
+    repair_digest = _write_evidenced_outcome(home, "bob", repaired)
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "bob",
+         f"[record] records/{lost_digest}.json sha256={lost_digest}\n"),
+        (2, "2026-10-06T17:30:00Z", "bob",
+         f"[record] records/{repair_digest}.json sha256={repair_digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    assert result["remediation_bands"]["rebound"] == 1
+    linked = result["linked_detail"]
+    assert len(linked) == 1
+    assert linked[0]["kind"] == "remedy-name"
+    # The work was carried forward; the published bytes did not come back.
+    assert linked[0]["byte_relation"] == "copy-of-current"
+    assert result["remediation_byte_relations"]["copy-of-current"] == 1
+    assert result["remediation_byte_relations"]["restored"] == 0
+
+
+def test_evidence_binding_names_a_restored_rebound_row(tmp_path):
+    """The byte relation distinguishes a restoration from a carried-forward copy.
+
+    When the remedy-named successor holds the bytes as they were published, the
+    content came back. The gate says so, so a reader does not have to treat a
+    carried-forward copy and a restoration as the same thing.
+    """
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    lost = home / "artifacts" / "lost.md"
+    published = "the work\n"
+    lost.write_text(published)
+    lost_digest = _write_evidenced_outcome(home, "bob", lost)
+    lost.write_text("the work, re-authored\n")
+    repaired = home / "artifacts" / "lost-v2.md"
+    # The successor holds the bytes as published: the content came back.
+    repaired.write_text(published)
+    repair_digest = _write_evidenced_outcome(home, "bob", repaired)
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "bob",
+         f"[record] records/{lost_digest}.json sha256={lost_digest}\n"),
+        (2, "2026-10-06T17:30:00Z", "bob",
+         f"[record] records/{repair_digest}.json sha256={repair_digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    assert result["remediation_bands"]["rebound"] == 1
+    assert result["linked_detail"][0]["byte_relation"] == "restored"
+    assert result["remediation_byte_relations"]["restored"] == 1
+
+
+def test_evidence_binding_states_the_relation_of_every_band(tmp_path):
+    """Every band states the relation it decides, so no reader infers it.
+
+    The band table publishes its bands' relations beside the counts. A band
+    without a stated relation is a name a reader has to guess, which is how a
+    renderer drifts from the gate's own vocabulary.
+    """
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    evidence = home / "artifacts" / "wake.md"
+    evidence.write_text("write-once\n")
+    digest = _write_evidenced_outcome(home, "alice", evidence)
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "alice",
+         f"[record] records/{digest}.json sha256={digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    relations = result["remediation_band_relations"]
+    assert set(relations) == set(result["remediation_bands"])
+    assert all(isinstance(text, str) and text.strip() for text in relations.values())
