@@ -22,7 +22,7 @@ import time
 
 from . import initiative
 from .chat_protocol import ProtocolError, decode_lifecycle
-from .feed import Feed, entry_timestamp, parse_feed
+from .feed import Feed, FeedError, entry_timestamp, parse_feed
 from .session_watch import notify
 from .substrate_watch import _atomic_bytes
 
@@ -38,6 +38,7 @@ AGED_SECONDS = 3600
 CONTINUATION_SECONDS = 1800
 ESCALATE_SECONDS = 600
 REMINDER_SECONDS = 1800
+PRODUCER_MAX_AGE = 180
 MAX_REMINDER_SECONDS = 14400
 MAX_DETAIL_ROWS = 12
 STAGES = ("initial", "changed", "escalation", "reminder")
@@ -505,7 +506,78 @@ def _pending(events, deliveries):
             if any(r not in deliveries.get(key, {}) for r in event["recipients"])]
 
 
-def check(home, *, now=None):
+def _report_state(home, now):
+    """Classify the producer report on disk: missing, unreadable, stale, future-dated or present.
+
+    The class is re-derived from the report itself rather than read out of an
+    exception message, so the published reading names what is wrong with the
+    evidence and not merely which exception type was raised.
+    """
+    try:
+        data = _json(_read(Path(home) / "checks/initiative.json", MAX_STATE_BYTES))
+    except FileNotFoundError:
+        return "missing"
+    except (OSError, ValueError, TypeError, KeyError, UnicodeError):
+        return "unreadable"
+    try:
+        age = (now - _time(data.get("generated_at"))).total_seconds()
+    except (AttributeError, TypeError, ValueError):
+        return "unreadable"
+    if age < 0:
+        return "future-dated"
+    if age > PRODUCER_MAX_AGE:
+        return "stale"
+    return "present but rejected by the reader"
+
+
+def _continuity(previous, now, interval):
+    """Say what the watch itself can vouch for about the plant since its last cycle.
+
+    A watch that missed its own cycles was not observing, so an old producer
+    report is as old as the watch's own gap and the producer's liveness is not
+    yet observed. A watch that was running cannot say that, and a report that
+    is nevertheless outside the freshness bound is a producer that stopped
+    publishing while the monitor ran.
+    """
+    if not previous:
+        return "this monitor has no previous cycle, so the producer's liveness is not observed"
+    try:
+        gap = (now - _time(previous["generated_at"])).total_seconds()
+    except (TypeError, ValueError, KeyError):
+        return "this monitor's own continuity is unreadable, so the producer's liveness is not observed"
+    if not isinstance(interval, (int, float)) or isinstance(interval, bool) or interval <= 0:
+        return "this monitor's own cycle interval is unknown, so the producer's liveness is not observed"
+    if gap > interval + PRODUCER_MAX_AGE:
+        return ("this monitor missed its own cycles, so the producer's liveness is not yet observed")
+    return "this monitor was running, so the producer's liveness is not observed"
+
+
+def _producer_fault(home, domain, exc, previous, now, interval=None):
+    """Name the failing evidence and attribute it to the evidence, not to a guess.
+
+    The reader used to publish only the exception's type, so a producer report
+    that was stale because the plant was down between monitor cycles and a
+    producer that had stopped writing while the monitor ran were the same
+    reading: a peer could not tell which one it was looking at, and a healthy
+    producer was reported as broken.
+
+    The wording is categorical on purpose. A finding's digest decides whether
+    a condition is routed again, so a reading that carried a live age would
+    re-route an unchanged condition on every cycle.
+    """
+    if domain == "producer report":
+        evidence = "producer report " + _report_state(home, now)
+    elif domain == "tape":
+        evidence = "tape unreadable (" + type(exc).__name__ + ")"
+    elif domain == "tape coverage":
+        evidence = "tape does not cover the producer's history"
+    else:
+        evidence = "review evaluation failed (" + type(exc).__name__ + ")"
+    return ("Fresh canonical report/tape evidence unavailable (" + evidence + "); "
+            + _continuity(previous, now, interval) + "; no healthy conclusion.")
+
+
+def check(home, *, now=None, interval=None):
     """Observe and route once. Persist evidence/outbox before any addressed append."""
     home, now = Path(home).resolve(), _time(now)
     path = home / "checks/initiative-watch.json"
@@ -528,17 +600,22 @@ def check(home, *, now=None):
                for key, receipts in deliveries.items()):
             raise ValueError("delivery evidence archive missing or inconsistent")
         problems, report = [], None
+        domain = "producer report"
         try:
-            report = initiative.read_snapshot(home, now=now, max_age=180)
+            report = initiative.read_snapshot(home, now=now, max_age=PRODUCER_MAX_AGE)
+            domain = "tape"
             entries = parse_feed(_read(home / "chat.log", MAX_TAPE_BYTES), home=home)
             if len(entries) > MAX_ENTRIES:
                 raise ValueError("tape entry bound exceeded")
+            domain = "tape coverage"
             last = report["history"].get("last_sequence")
             if last is not None and (type(last) is not int or last > len(entries)):
                 raise ValueError("producer history is not covered by available tape")
+            domain = "evaluation"
             findings = evaluate(report, entries, now=now)
         except (OSError, ValueError, TypeError, KeyError, UnicodeError) as exc:
-            findings = [_make("unknown", None, "producer", "Fresh canonical report/tape evidence unavailable (" + type(exc).__name__ + "); no healthy conclusion.")]
+            findings = [_make("unknown", None, "producer",
+                              _producer_fault(home, domain, exc, previous, now, interval))]
         if damage:
             findings.append(_make("unknown", None, "monitor-state", damage))
         incidents = {}
@@ -629,7 +706,7 @@ def read_snapshot(home, *, now=None, max_age=180):
         age = (now - _time(row["generated_at"])).total_seconds()
         if age < 0 or age > max_age:
             raise ValueError("initiative monitor snapshot stale or future-dated")
-        if row["state"] != "UNKNOWN" and (row["producer_at"] is None or not 0 <= (now - _time(row["producer_at"])).total_seconds() <= 180):
+        if row["state"] != "UNKNOWN" and (row["producer_at"] is None or not 0 <= (now - _time(row["producer_at"])).total_seconds() <= PRODUCER_MAX_AGE):
             raise ValueError("initiative producer snapshot stale or future-dated")
         return row
     except (TypeError, KeyError, AttributeError, OverflowError) as exc:
@@ -667,7 +744,7 @@ def main(argv=None):
         notify("READY=1")
     while True:
         try:
-            row = check(args.home)
+            row = check(args.home, interval=args.interval)
         except (OSError, ValueError, TypeError, KeyError, UnicodeError) as exc:
             row = {"state": "UNKNOWN", "reason": "monitor persistence/evidence unavailable (" + type(exc).__name__ + ")"}
         print(json.dumps(row, sort_keys=True, allow_nan=False), flush=True)

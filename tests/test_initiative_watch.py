@@ -513,3 +513,68 @@ def test_projection_never_reads_tape_or_observes(home, monkeypatch):
     monkeypatch.setattr(watch, "parse_feed", lambda *args, **kwargs: pytest.fail("projection scanned tape"))
     assert watch.snapshot_lines(home, now=NOW)[0].startswith("INITIATIVE: OBSERVED")
     assert not (home / "chat.log").exists()
+
+
+@pytest.mark.parametrize("damage, named", [
+    ("missing", "producer report missing"),
+    ("corrupt", "producer report unreadable"),
+    ("stale", "producer report stale"),
+    ("future", "producer report future-dated"),
+])
+def test_the_producer_fault_names_the_failing_evidence(home, damage, named):
+    publish(home)
+    path = home / "checks/initiative.json"
+    if damage == "missing":
+        path.unlink()
+    elif damage == "corrupt":
+        path.write_text("{")
+    else:
+        report = json.loads(path.read_text())
+        report["generated_at"] = (NOW + timedelta(seconds=1) if damage == "future"
+                                  else NOW - timedelta(seconds=181)).isoformat()
+        path.write_text(json.dumps(report))
+    row = watch.check(home, now=NOW, interval=120)
+    summary = kinds(row, "unknown")[0]["summary"]
+    assert named in summary
+    assert "liveness is not observed" in summary
+    assert "ValueError" not in summary
+
+
+def test_a_stale_report_after_the_monitor_missed_cycles_is_not_a_running_producer(home):
+    """The plant was down between cycles: the report is as old as the monitor's own gap."""
+    publish(home, now=NOW - timedelta(seconds=3000))
+    watch.check(home, now=NOW - timedelta(seconds=3000), interval=120)
+    row = watch.check(home, now=NOW, interval=120)
+    summary = kinds(row, "unknown")[0]["summary"]
+    assert "producer report stale" in summary
+    assert "missed its own cycles" in summary
+    assert "liveness is not yet observed" in summary
+
+
+def test_a_stale_report_while_the_monitor_was_running_names_a_stopped_producer(home):
+    publish(home)
+    watch.check(home, now=NOW, interval=120)
+    row = watch.check(home, now=NOW + timedelta(seconds=200), interval=120)
+    summary = kinds(row, "unknown")[0]["summary"]
+    assert "producer report stale" in summary
+    assert "this monitor was running" in summary
+
+
+def test_an_unchanged_producer_fault_is_not_routed_again(home):
+    """A live age in the reading would re-route an unchanged condition every cycle."""
+    publish(home)
+    watch.check(home, now=NOW, interval=120)
+    first = watch.check(home, now=NOW + timedelta(seconds=200), interval=120)
+    assert len(messages(home, recipient="health", text="unknown:producer")) == 1
+    second = watch.check(home, now=NOW + timedelta(seconds=320), interval=120)
+    assert kinds(second, "unknown")[0] == kinds(first, "unknown")[0]
+    assert len(messages(home, recipient="health", text="unknown:producer")) == 1
+
+
+def test_a_fault_without_a_known_cycle_interval_does_not_claim_the_monitor_was_running(home):
+    publish(home)
+    watch.check(home, now=NOW)
+    row = watch.check(home, now=NOW + timedelta(seconds=200))
+    summary = kinds(row, "unknown")[0]["summary"]
+    assert "cycle interval is unknown" in summary
+    assert "this monitor was running" not in summary
