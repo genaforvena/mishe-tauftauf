@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "purpose": "The (field x angle) grid the field-review resident reads. Every cell is one literature-led question about THIS plant.",
+  "angles": [
+    {
+      "id": "recent",
+      "question": "a RECENT result (2023-2026) in this area — what is new right now, from a source that still exists",
+      "read": "the primary source itself, not a summary of it"
+    },
+    {
+      "id": "misread",
+      "question": "a foundational idea we may have MISread or applied too loosely here",
+      "read": "the primary text, and this plant's own text, side by side"
+    },
+    {
+      "id": "critique",
+      "question": "a known CRITIQUE or failure mode of this area that our practice would reproduce if we adopted it blindly",
+      "read": "the critique's own argument, including what it concedes"
+    },
+    {
+      "id": "transfer",
+      "question": "a CROSS-DOMAIN transfer of this area onto one of this plant's parts",
+      "read": "the source mechanism, then the named file in this repository it would change"
+    },
+    {
+      "id": "mechanism",
+      "question": "an OPERATIONAL mechanism this area proposes — something implementable, not just a philosophy",
+      "read": "the mechanism's definition and its stated limits"
+    },
+    {
+      "id": "metric",
+      "question": "a concrete METRIC or experiment this area uses to measure itself",
+      "read": "the metric's definition, and what it would measure in this plant"
+    }
+  ],
+  "fields": [
+    {
+      "id": "evidence-and-verdicts",
+      "title": "evidence binding, verdicts and honest UNKNOWN",
+      "plant_part": "checks/, outcome publication, wall-outcome binding",
+      "keywords": ["evidence", "verdict", "binding"]
+    },
+    {
+      "id": "freshness-and-staleness",
+      "title": "freshness, staleness, leases and what counts as present",
+      "plant_part": "senses, scanners, pane leases, scan_freshness",
+      "keywords": ["fresh", "stale", "lease"]
+    },
+    {
+      "id": "failure-and-recovery",
+      "title": "failure detection, bounded recovery and the tested revert path",
+      "plant_part": "native recovery, health, supervisors, watchdogs",
+      "keywords": ["recovery", "rollback", "failure"]
+    },
+    {
+      "id": "coordination-and-tasks",
+      "title": "coordination: tasks, addressed messages, walls and settlement",
+      "plant_part": "task ledger, chat protocol, wall coordination",
+      "keywords": ["task", "addressed", "wall"]
+    },
+    {
+      "id": "sensing-and-privacy",
+      "title": "sensing, consent and the boundary between a reading and a person",
+      "plant_part": "host radio, body perception, personal analysis",
+      "keywords": ["sense", "radio", "privacy"]
+    },
+    {
+      "id": "publication-and-attribution",
+      "title": "publication, attribution and honest public voice",
+      "plant_part": "the reader book, the DEV blog, commits, CI and pushes",
+      "keywords": ["publish", "article", "attribution"]
+    },
+    {
+      "id": "self-development-loop",
+      "title": "the plant observing and changing itself",
+      "plant_part": "substrate observer, follow-through, initiative watch",
+      "keywords": ["follow-through", "initiative", "substrate"]
+    },
+    {
+      "id": "model-judgment",
+      "title": "model judgment, calibration and cheap comparators",
+      "plant_part": "decision models, completion judge, local model adapters",
+      "keywords": ["model", "judge", "calibration"]
+    },
+    {
+      "id": "deleuze-guattari",
+      "title": "Deleuze & Guattari — assemblage, rhizome, the machinic (cross-domain lens)",
+      "plant_part": "the plant's own couplings, and what it declares about them",
+      "keywords": ["assemblage", "rhizome", "maching"]
+    },
+    {
+      "id": "biosemiotics",
+      "title": "biosemiotics — sign, interpretant and what a reading claims (cross-domain lens)",
+      "plant_part": "senses, published readings, the book",
+      "keywords": ["sign", "interpretant", "semiosis"]
+    },
+    {
+      "id": "enactivism",
+      "title": "enactivism and 4E cognition — sense-making, autonomy, the body (cross-domain lens)",
+      "plant_part": "the sensing side of the plant and the body research track",
+      "keywords": ["enactiv", "sense-making", "autonomy"]
+    },
+    {
+      "id": "second-order-cybernetics",
+      "title": "second-order cybernetics — circularity, the observer, self-reference (cross-domain lens)",
+      "plant_part": "the observers that watch the observers",
+      "keywords": ["circular", "observer", "second-order"]
+    }
+  ]
+}
