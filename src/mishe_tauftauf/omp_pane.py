@@ -84,14 +84,18 @@ _MODEL_NAME_CHARS = frozenset(
 """The characters a model name is written with; shell and source punctuation is not one."""
 
 
-def _logical_lines(text: str) -> list[str]:
-    """The script's logical lines: a backslash at the end continues a line."""
+def _logical_lines(text: str) -> list[str] | None:
+    """The script's logical lines, or ``None`` when a line is not one.
+
+    A backslash at the very end of a physical line continues it. A backslash
+    followed by a space escapes the space instead, and the line ends there, so
+    only an immediate backslash-newline pair continues.
+    """
     lines = []
     buffer = ""
     for line in text.splitlines():
-        stripped = line.rstrip()
-        if stripped.endswith("\\"):
-            buffer += stripped[:-1] + " "
+        if line.endswith("\\"):
+            buffer += line[:-1] + " "
             continue
         lines.append(buffer + line)
         buffer = ""
@@ -100,17 +104,28 @@ def _logical_lines(text: str) -> list[str]:
     return lines
 
 
-_COMMAND_SEPARATORS = frozenset({";", "&", "|", "then", "do", "else", "elif", "fi", "done", "esac"})
-"""The words and characters the shell puts between two commands."""
+_SHELL_PUNCTUATION = ";&|<>(){}`"
+"""The shell's own operators and grouping characters this reader does not model.
+
+A pipeline, an AND-list, a redirection, a here-document, a subshell or a
+group all change *what the shell runs*, so a reader that does not model them
+cannot say which command the pane is running. It refuses them: the reading is
+unknown, never a guess. A token that carries one of these characters is
+refused whatever else it carries, so a quoted operator is refused too.
+"""
+
+_UNSUPPORTED_WORDS = frozenset({
+    "if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done",
+    "case", "esac", "select", "function", "time", "coproc",
+})
+"""The shell keywords that make a script's control flow rather than a command."""
 
 
 def _words(line: str) -> list[str]:
     """The words of a line, the way the shell words it.
 
-    The punctuation the shell reads as a boundary is a word of its own, so a
-    command separator is visible in the stream; ``#`` is left in the stream
-    because the shell reads a ``#`` that *begins a word* as a comment and one
-    inside a word as an ordinary character.
+    ``#`` is left in the stream because the shell reads a ``#`` that begins a
+    word as a comment and one inside a word as an ordinary character.
     """
     lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
@@ -118,31 +133,32 @@ def _words(line: str) -> list[str]:
     return list(lexer)
 
 
-def _launcher_commands(text: str) -> list[list[str]]:
-    """The commands of a launcher script, each read the way the shell words it.
+def _launcher_commands(text: str) -> list[list[str]] | None:
+    """The commands of a launcher script, or ``None`` when the script is more.
 
-    A comment runs to the end of its line, so the words after it are dropped;
-    a command the shell cannot word (an unterminated quote) is skipped rather
-    than guessed at.
+    A whole-line comment is skipped. A command the shell cannot word (an
+    unterminated quote) is skipped. Any operator, grouping word or keyword
+    that this reader does not model refuses the whole script, because the
+    reader would not know which command the pane is running.
     """
     commands = []
-    for logical in _logical_lines(text):
+    for logical in _logical_lines(text) or []:
+        if not logical.strip() or logical.lstrip().startswith("#"):
+            continue
         try:
             tokens = _words(logical)
         except ValueError:
             continue
-        current: list[str] = []
+        if not tokens:
+            continue
         for token in tokens:
+            if any(character in _SHELL_PUNCTUATION for character in token):
+                return None
+            if token in _UNSUPPORTED_WORDS:
+                return None
             if token.startswith("#"):
-                break
-            if token in _COMMAND_SEPARATORS:
-                if current:
-                    commands.append(current)
-                current = []
-                continue
-            current.append(token)
-        if current:
-            commands.append(current)
+                return None
+        commands.append(tokens)
     return commands
 
 
@@ -165,13 +181,11 @@ def _skip_env_options(tokens: list[str], index: int) -> int:
         token = tokens[index]
         if token == "--":
             return index + 1
-        if token.startswith("--"):
-            index += 1
+        if token in _ENV_OPTIONS_WITH_OPERAND:
+            index += 2
             continue
-        if token.startswith("-") and token != "-":
+        if token.startswith("--") or (token.startswith("-") and token != "-"):
             index += 1
-            if token in _ENV_OPTIONS_WITH_OPERAND:
-                index += 1
             continue
         break
     return index
@@ -203,8 +217,8 @@ def _program_and_exec(tokens: list[str]) -> tuple[str | None, bool]:
     return None, uses_exec
 
 
-def _runs_a_program(program: str | None) -> bool:
-    """Whether a command runs a program the plant can see running.
+def _runs_the_pane(program: str | None) -> bool:
+    """Whether a command runs the program the pane is.
 
     omp is the pane's own program; a launcher that reaches it through a
     wrapper -- ``exec /usr/bin/python3 .../longcat-launch.py --model=...`` --
@@ -223,15 +237,19 @@ def launcher_model(text: str) -> str | None:
     spellings -- ``--model value`` and ``--model=value`` -- and a reader that
     knows only one of them reports a model the bytes plainly name as absent.
 
-    The model belongs to the command that runs the program, so that is where it
-    is read. The commands are the shell's own: a backslash continues a line, a
-    separator ends a command, and a comment runs to the end of its line. The
-    program is the word the shell runs, so a flag that only appears as an
-    argument names no model the pane runs on. A command that ``exec``s replaces
-    the shell, so it decides and the commands after it never run. A script that
-    launches more than one program and does not ``exec`` settles nothing: the
-    shell runs them in turn, and which one the pane is running is not in the
-    bytes, so the reading is ``None`` rather than a guess.
+    This reader recognizes the launcher's shape and refuses the rest. It reads
+    a script of plain commands -- comments, environment assignments, the shell
+    wrappers, one program and its flags -- and it reads the model from the
+    command that runs the pane's program. A command that ``exec``s replaces
+    the shell, so it decides and the commands after it never run. A script
+    that launches the pane's program twice without an ``exec`` settles
+    nothing, so it reads no model.
+
+    Any construct this reader does not model -- a pipeline, an AND-list, a
+    redirection, a here-document, a subshell, a group, a conditional, a
+    keyword, a quoted ``#`` -- makes the whole reading unknown. The contract
+    is deliberately narrow: a wrong model name is worse than an unknown one,
+    because the plant records it as the fact about what the mind runs on.
 
     The value rules of :func:`model` apply unchanged -- an empty value, or
     another option in the value's place, is no model -- and a value that is
@@ -240,10 +258,13 @@ def launcher_model(text: str) -> str | None:
     value carrying the source's own punctuation, and a record that names
     ``vendor/model,`` as the model is a wrong fact wearing a model's name.
     """
+    commands = _launcher_commands(text)
+    if commands is None:
+        return None
     candidates = []
-    for command in _launcher_commands(text):
+    for command in commands:
         program, uses_exec = _program_and_exec(command)
-        if not _runs_a_program(program):
+        if not _runs_the_pane(program):
             continue
         value = model(command)
         usable = value if value is not None and set(value) <= _MODEL_NAME_CHARS else None
