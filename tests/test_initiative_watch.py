@@ -264,6 +264,44 @@ def test_initial_dedup_one_escalation_and_owner_directed_reminders(home):
     assert len(messages(home, recipient="discover", text="INITIATIVE REVIEW reminder")) == 2
 
 
+def test_the_reminder_schedule_backs_off_from_thirty_minutes(home):
+    # The first reminder waits one interval (30 minutes) after the escalation,
+    # then one hour, then two; the initial notice and the escalation are not
+    # reminders and must not delay the first one.
+    append(home, "seed", "seed wake discover observation=1", age=3600)
+    publish(home)
+    watch.check(home, now=NOW)
+    at = NOW + timedelta(seconds=600)
+    publish(home, now=at)
+    watch.check(home, now=at)
+    at = NOW + timedelta(seconds=2399)
+    publish(home, now=at)
+    watch.check(home, now=at)
+    assert not messages(home, recipient="discover", text="INITIATIVE REVIEW reminder")
+    at = NOW + timedelta(seconds=2400)
+    publish(home, now=at)
+    watch.check(home, now=at)
+    assert len(messages(home, recipient="discover", text="INITIATIVE REVIEW reminder")) == 1
+    # The second reminder waits an hour, not the two hours the old count gave.
+    at = NOW + timedelta(seconds=5999)
+    publish(home, now=at)
+    watch.check(home, now=at)
+    assert len(messages(home, recipient="discover", text="INITIATIVE REVIEW reminder")) == 1
+    at = NOW + timedelta(seconds=6000)
+    publish(home, now=at)
+    watch.check(home, now=at)
+    assert len(messages(home, recipient="discover", text="INITIATIVE REVIEW reminder")) == 2
+    # The third waits two hours.
+    at = NOW + timedelta(seconds=13199)
+    publish(home, now=at)
+    watch.check(home, now=at)
+    assert len(messages(home, recipient="discover", text="INITIATIVE REVIEW reminder")) == 2
+    at = NOW + timedelta(seconds=13200)
+    publish(home, now=at)
+    watch.check(home, now=at)
+    assert len(messages(home, recipient="discover", text="INITIATIVE REVIEW reminder")) == 3
+
+
 def test_changed_condition_is_routed_once_to_its_owner(home, monkeypatch):
     append(home, "seed", "seed wake discover observation=1", age=3600)
     publish(home)
