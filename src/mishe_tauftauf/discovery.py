@@ -5526,6 +5526,14 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     name for the row's state and the kind is how it was decided, so the two
     readers cannot drift apart by each holding its own vocabulary.
 
+    The band of **every** violating row is published, in ``row_bands`` and
+    indexed by band in ``remediation_band_sequences``. A row that is neither
+    cleared nor owed — recoverable, versioned, permanent — appears in no
+    detail list, so its band was published only as a count, and a second
+    reader could not consume it per row. The rows partition the standing
+    audit, so their per-band counts are the band table's counts and a reader
+    can check that it consumed the same partition.
+
     The standing audit stays published as history beside the gate: it is
     append-only, so a repaid row stays in it, and a reader who wants the
     ledger's whole history has it. The live window (``latest_bad_roles``)
@@ -5717,6 +5725,13 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     # relation was decided. Both are published per row, so a second reader
     # does not have to re-derive one from the other.
     row_bands: dict[int, str] = {}
+    # The band of every violating row, published per row. A row that is
+    # neither cleared nor owed — recoverable, versioned, permanent — appears
+    # in no detail list, so its band was published only as a count; a second
+    # reader could not see it per row and had to re-derive it. The rows are
+    # collected here, from the same partition, and published whole.
+    band_rows: list[dict] = []
+    band_sequences: dict[str, list[int]] = {name: [] for name in band_counts}
     gate_rows: list[dict] = []
     policy_version_rows = 0
     for ts, sequence, role, name, classes in violations:
@@ -5772,6 +5787,9 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
             band = "owed"
         band_counts[band] += 1
         row_bands[sequence] = band
+        band_sequences[band].append(sequence)
+        band_rows.append({"sequence": sequence, "role": role, "band": band,
+                          "classes": classes, "evidence": name})
         roles = band_roles[band]
         roles[role] = roles.get(role, 0) + 1
         if band == "owed":
@@ -5946,6 +5964,18 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
             # The relation each band decides, so the band table states what it
             # claims instead of leaving the reader to infer it from the name.
             "remediation_band_relations": dict(EVIDENCE_BAND_RELATIONS),
+            # The band of every violating row, published per row and keyed by
+            # the tape sequence, so a second reader reads the relation instead
+            # of re-deriving it and can see the rows that no detail list
+            # carries — recoverable, versioned, permanent. The rows partition
+            # the standing audit: their per-band counts are the band table's,
+            # so a reader can check that it consumed the same partition.
+            "row_bands": sorted(band_rows, key=lambda row: row["sequence"]),
+            # The same partition, indexed by band, so the rows of one band
+            # are one lookup instead of a scan of every row.
+            "remediation_band_sequences": {
+                name: sorted(sequences) for name, sequences in band_sequences.items()
+                if sequences},
             # How the rebound rows' bytes relate to the bytes they published:
             # restored (the content came back), copy-of-current (the work was
             # carried forward and the published bytes did not come back),
