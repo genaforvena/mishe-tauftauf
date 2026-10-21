@@ -33,6 +33,7 @@
     "tools/check_parsing.py",
     "tools/check_leaf_invocation_coverage.py",
     "tools/check_session_watch_routing.py",
+    "tools/refresh-observer-bundle.py",
     "src/mishe_tauftauf/coord_tape.py",
     "src/mishe_tauftauf/spawn_dialect.py",
     "src/mishe_tauftauf/initiative_watch.py",
