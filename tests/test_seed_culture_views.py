@@ -551,10 +551,10 @@ def test_pane_clips_a_long_sample_at_a_field_boundary_with_a_marker(
     _write_scan(home, [
         {"id": "sense.ledger.evidence-binding", "state": "drift", "kind": "read",
          "sample": "bound=1213 latest_roles=10 latest_bad=0 latest_bad_roles=none "
-                   "latest_bad_last=none all_bad=81 count_excluded=45 violating=x"},
+                   "latest_bad_last=none all_bad=81 permanent_loss=45 violating=x"},
     ])
     rendered = pane(home)
-    assert "all_bad=81 count_excluded=45… source_state=drift" in rendered
+    assert "all_bad=81 permanent_loss=45… source_state=drift" in rendered
     assert "all_bad=8 " not in rendered
 
 

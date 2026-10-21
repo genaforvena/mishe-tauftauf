@@ -7926,8 +7926,8 @@ def test_notify_scan_ignores_read_at_only_drift_changes(tmp_path):
     (home / "discovery").mkdir(parents=True, exist_ok=True)
     path = home / "discovery" / "sample.json"
     rid = "sense.ledger.evidence-binding"
-    sample_one = "all_bad=1 count_excluded=0 latest_bad=0 latest_bad_roles=none latest_bad_last=none read_at=2026-10-15T08:00:00Z bound=1 latest_roles=1"
-    sample_two = "all_bad=1 count_excluded=0 latest_bad=0 latest_bad_roles=none latest_bad_last=none read_at=2026-10-15T08:01:00Z bound=1 latest_roles=1"
+    sample_one = "all_bad=1 permanent_loss=0 latest_bad=0 latest_bad_roles=none latest_bad_last=none read_at=2026-10-15T08:00:00Z bound=1 latest_roles=1"
+    sample_two = "all_bad=1 permanent_loss=0 latest_bad=0 latest_bad_roles=none latest_bad_last=none read_at=2026-10-15T08:01:00Z bound=1 latest_roles=1"
     readings_one = [{"id": rid, "kind": "read", "state": "drift", "sample": sample_one}]
     readings_two = [{"id": rid, "kind": "read", "state": "drift", "sample": sample_two}]
     snapshot_one = {"created": "2026-10-10T12:00:00Z", "node": "test", "observations": readings_one}
@@ -7966,8 +7966,8 @@ def test_notify_scan_notifies_on_evidence_binding_cause_change(tmp_path):
     (home / "discovery").mkdir(parents=True, exist_ok=True)
     path = home / "discovery" / "sample.json"
     rid = "sense.ledger.evidence-binding"
-    sample_one = "all_bad=1 count_excluded=0 latest_bad=0 latest_bad_roles=none latest_bad_last=none read_at=2026-10-15T08:00:00Z bound=1 latest_roles=1"
-    sample_two = "all_bad=2 count_excluded=0 latest_bad=0 latest_bad_roles=none latest_bad_last=none read_at=2026-10-15T08:00:00Z bound=1 latest_roles=1"
+    sample_one = "all_bad=1 permanent_loss=0 latest_bad=0 latest_bad_roles=none latest_bad_last=none read_at=2026-10-15T08:00:00Z bound=1 latest_roles=1"
+    sample_two = "all_bad=2 permanent_loss=0 latest_bad=0 latest_bad_roles=none latest_bad_last=none read_at=2026-10-15T08:00:00Z bound=1 latest_roles=1"
     snapshot_one = {"created": "2026-10-10T12:00:00Z", "node": "test", "observations": [{"id": rid, "kind": "read", "state": "drift", "sample": sample_one}]}
     snapshot_two = {"created": "2026-10-10T12:01:00Z", "node": "test", "observations": [{"id": rid, "kind": "read", "state": "drift", "sample": sample_two}]}
     from mishe_tauftauf.discovery import _notify_scan
