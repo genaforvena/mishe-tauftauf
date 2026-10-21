@@ -154,6 +154,55 @@ def test_corrupt_record_and_forged_role_do_not_become_outcomes(home):
     assert "role mismatch" in report["outcomes"]["gaps"][0]["reason"]
 
 
+def test_remedy_named_successor_re_evidences_a_row_whose_own_evidence_changed(home):
+    first, evidence = outcome(home, 1, age=200, name="proof.txt")
+    evidence.write_text("edited after publication")
+    second, corrected = outcome(home, 2, age=100, name="proof-v2.txt")
+    report = initiative.collect(home, now=NOW, entries=[first, second])
+    row = report["roles"]["discover"]
+    assert row["outcome_gaps"] == []
+    assert row["outcome_coverage"] == "OBSERVED"
+    re_evidenced = row["re_evidenced_outcomes"]
+    assert [item["ref"] for item in re_evidenced] == ["chat.log#1"]
+    assert re_evidenced[0]["re_evidenced_by"] == "chat.log#2"
+    assert re_evidenced[0]["link_kind"] == "remedy-name"
+    assert re_evidenced[0]["own_evidence_state"] == "UNKNOWN"
+    assert re_evidenced[0]["own_evidence_reason"] == "outcome evidence empty or changed"
+    assert report["outcomes"]["state"] == "OBSERVED"
+    assert report["state"] == "OBSERVED"
+
+
+def test_a_re_evidenced_row_is_not_counted_as_digest_checked_evidence(home):
+    first, evidence = outcome(home, 1, age=200, name="proof.txt")
+    evidence.write_text("edited after publication")
+    second, _ = outcome(home, 2, age=100, name="proof-v2.txt")
+    report = initiative.collect(home, now=NOW, entries=[first, second])
+    row = report["roles"]["discover"]
+    assert row["outcomes"] == {"accepted": 1}
+    assert row["newest_checked_evidence"] == 100.0
+
+
+@pytest.mark.parametrize("damage", ["not-remedy-named", "broken-successor", "other-role", "earlier-successor"])
+def test_only_a_later_intact_same_role_remedy_successor_re_evidences(home, damage):
+    first, evidence = outcome(home, 1, age=200, name="proof.txt")
+    evidence.write_text("edited after publication")
+    if damage == "not-remedy-named":
+        second, _ = outcome(home, 2, age=100, name="proof-copy.txt")
+    elif damage == "broken-successor":
+        second, corrected = outcome(home, 2, age=100, name="proof-v2.txt")
+        corrected.write_text("edited after publication")
+    elif damage == "other-role":
+        second, _ = outcome(home, 2, age=100, role="health", name="proof-v2.txt")
+    else:
+        second, _ = outcome(home, 2, age=300, name="proof-v2.txt")
+    report = initiative.collect(home, now=NOW, entries=[first, second])
+    row = report["roles"]["discover"]
+    assert "chat.log#1" in [gap["ref"] for gap in row["outcome_gaps"]]
+    assert row["re_evidenced_outcomes"] == []
+    assert row["outcome_coverage"] == "PARTIAL"
+    assert report["outcomes"]["state"] == "PARTIAL"
+
+
 def test_supplied_snapshot_reuses_canonical_classifier_without_tape_scan(home, monkeypatch):
     publication, _ = outcome(home)
 
