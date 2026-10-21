@@ -23,13 +23,34 @@ discovering it from the import errors themselves rather than by reading the
 source, and reports whether a one-file refresh would break the evidence leg.
 It reads the plant; every copy it makes is disposable.
 
+The closure that the import errors reveal is a *run* closure: the files that
+must be refreshed together for the evidence leg to work at all. It is not the
+whole answer, because a module can import cleanly and still be stale. Such a
+module is invisible to a discovery that reads import failures, and it
+publishes the reviewed tree's older facts while every import succeeds.
+
+So the check also finds the *fact* closure: the modules whose refresh brings
+the published block into agreement with the reviewed tree's. Every module the
+bundle's copy differs from is probed — the refresh is applied, the evidence
+leg is run, and a module that brings the published facts closer to the
+reviewed tree's is carried. A probe that cannot be carried alone is closed
+the same way the run closure is, by running it and reading the failure.
+
+Facts are compared with the counters masked: a counter that moves between two
+samples of the same plant is not a difference of facts, while a field that is
+present in one block and absent in the other is. The fact closure is the
+smallest set this search found, not a proof of minimality.
+
 Exit status:
-  0  the running bundle's evidence leg works, and a one-file refresh of the
-     reviewed projection would not break it
+  0  the running bundle publishes the reviewed tree's facts, and a one-file
+     refresh of the reviewed projection would not break the evidence leg
   2  a one-file refresh of the reviewed projection would break the evidence
      leg: the closure is larger than one file
   3  the question cannot be decided: no bundle, no reviewed tree, an
      unreadable module, or a closure that does not converge
+  4  the published facts differ from the reviewed tree's facts: the running
+     bundle already differs, or a refresh carrying only the run closure would
+     still differ. The report names the modules that carry them.
 """
 from __future__ import annotations
 
@@ -41,6 +62,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections import Counter
 from pathlib import Path
 
 PACKAGE = "mishe_tauftauf"
@@ -80,6 +102,12 @@ print(json.dumps(follow_through.lines(home)))
 # reviewed module expects from a sibling, and a sibling that is missing.
 MISSING_NAME = re.compile(r"from 'mishe_tauftauf\.(\w+)'")
 MISSING_MODULE = re.compile(r"No module named 'mishe_tauftauf\.(\w+)'")
+
+# A published line carries counters that move between two samples of the same
+# plant: "wakes=32" in one run, "wakes=33" in the next. Masking the digits
+# keeps a moving counter from reading as a difference of facts, while a field
+# that is present in one block and absent in the other still reads as one.
+DIGITS = re.compile(r"\d+")
 
 
 class Undecidable(Exception):
@@ -131,20 +159,25 @@ def run_child(root: Path, home: Path, cwd: Path) -> subprocess.CompletedProcess:
                           capture_output=True, text=True, cwd=str(cwd))
 
 
-def evidence_lines(root: Path, home: Path, cwd: Path) -> list:
-    """The block the evidence leg prints, or the failure that stopped it."""
-    result = run_child(root, home, cwd)
-    if result.returncode:
-        raise Undecidable("the evidence leg failed under " + str(root) + ": "
-                          + result.stderr.strip()[-300:])
+def parse_block(stdout: str, root: Path) -> list:
+    """The block the evidence leg printed, or the failure that stopped it."""
     try:
-        lines = json.loads(result.stdout)
+        lines = json.loads(stdout)
     except ValueError:
         raise Undecidable("the evidence leg under " + str(root)
                           + " printed an unreadable block")
     if not isinstance(lines, list) or not all(isinstance(line, str) for line in lines):
         raise Undecidable("the evidence leg under " + str(root) + " printed no block")
     return lines
+
+
+def evidence_lines(root: Path, home: Path, cwd: Path) -> list:
+    """The block the code under one import root prints."""
+    result = run_child(root, home, cwd)
+    if result.returncode:
+        raise Undecidable("the evidence leg failed under " + str(root) + ": "
+                          + result.stderr.strip()[-300:])
+    return parse_block(result.stdout, root)
 
 
 def missing_sibling(stderr: str) -> str:
@@ -154,6 +187,127 @@ def missing_sibling(stderr: str) -> str:
         if match:
             return match.group(1)
     return ""
+
+
+def mask(lines: list) -> list:
+    """The published lines with their counters masked."""
+    return [DIGITS.sub("N", line) for line in lines]
+
+
+def fact_gap(published: list, reference: list) -> tuple:
+    """The facts the reviewed tree publishes and the bundle does not, and back.
+
+    A counter that moved between the two samples is not a difference of facts:
+    the numbers are masked first. A field that is present in one block and
+    absent in the other is a difference, and it is named on both sides.
+    """
+    left = Counter(mask(reference))
+    right = Counter(mask(published))
+    missing = sorted((left - right).elements())
+    extra = sorted((right - left).elements())
+    return missing, extra
+
+
+def fact_distance(published: list, reference: list) -> int:
+    """How many published facts differ between two blocks."""
+    missing, extra = fact_gap(published, reference)
+    return len(missing) + len(extra)
+
+
+def apply_modules(root: Path, reference: Path, workdir: Path, name: str,
+                  modules) -> Path:
+    """A disposable copy of the bundle carrying the given reviewed modules."""
+    copy = workdir / name
+    shutil.rmtree(copy, ignore_errors=True)
+    shutil.copytree(root, copy)
+    for module in modules:
+        source = reference / PACKAGE / module
+        if source.is_file():
+            shutil.copy(source, copy / PACKAGE / module)
+    return copy
+
+
+def probe(root: Path, reference: Path, workdir: Path, home: Path, cwd: Path,
+          base: set, extra: str) -> tuple:
+    """What refreshing one more module does to the published facts.
+
+    The refresh is a closure, as the run closure is: if the module cannot be
+    carried alone, the sibling it needs is added, by running the refresh and
+    reading the failure. A probe never writes the plant's own bundle.
+    """
+    copy = workdir / ("probe-" + extra.replace(".", "-"))
+    shutil.rmtree(copy, ignore_errors=True)
+    shutil.copytree(root, copy)
+    refreshed = set(base) | {extra}
+    for _ in range(12):
+        for module in refreshed:
+            source = reference / PACKAGE / module
+            if source.is_file():
+                shutil.copy(source, copy / PACKAGE / module)
+        result = run_child(copy, home, cwd)
+        if result.returncode == 0:
+            return refreshed, parse_block(result.stdout, copy)
+        sibling = missing_sibling(result.stderr)
+        if not sibling:
+            raise Undecidable("the refresh of " + extra + " failed in a way no "
+                              "sibling names: " + result.stderr.strip()[-300:])
+        candidate = sibling + ".py"
+        if candidate in refreshed or not (reference / PACKAGE / candidate).is_file():
+            raise Undecidable("the refresh of " + extra + " needs " + sibling
+                              + ", which the reviewed tree does not carry")
+        refreshed.add(candidate)
+    raise Undecidable("the refresh of " + extra + " did not converge")
+
+
+def fact_closure(root: Path, reference: Path, workdir: Path, home: Path,
+                 cwd: Path, base: list, reference_lines: list) -> dict:
+    """The files a refresh must carry for the published facts to agree.
+
+    The run closure is found from import failures; a module that imports
+    cleanly and is still stale is invisible to that discovery. So every module
+    the bundle's copy differs from is probed: the refresh is applied, the
+    evidence leg is run, and a module that brings the published facts closer
+    to the reviewed tree's is carried.
+
+    The result is the smallest set this search found, not a proof of
+    minimality: a module that only helps in combination with another may be
+    left out, and the residual difference is reported when that happens.
+    """
+    candidates = []
+    for path in sorted((root / PACKAGE).glob("*.py")):
+        source = reference / PACKAGE / path.name
+        if source.is_file() and source.read_bytes() != path.read_bytes():
+            candidates.append(path.name)
+    carried = set(base)
+    copy = apply_modules(root, reference, workdir, "fact-closure", carried)
+    lines = evidence_lines(copy, home, cwd)
+    base_distance = fact_distance(lines, reference_lines)
+    distance = base_distance
+    for _ in range(2):
+        if distance == 0:
+            break
+        progressed = False
+        for name in candidates:
+            if name in carried:
+                continue
+            try:
+                probed, probed_lines = probe(root, reference, workdir, home,
+                                             cwd, carried, name)
+            except Undecidable:
+                continue
+            probed_distance = fact_distance(probed_lines, reference_lines)
+            if probed_distance >= distance:
+                continue
+            carried = probed
+            lines = probed_lines
+            distance = probed_distance
+            progressed = True
+        if not progressed:
+            break
+    return {"carried": sorted(carried), "lines": lines,
+            "added": sorted(set(carried) - set(base)),
+            "base_distance": base_distance, "distance": distance,
+            "candidates": candidates}
 
 
 def closure(root: Path, reference: Path, workdir: Path, home: Path, cwd: Path) -> list:
@@ -261,10 +415,25 @@ def main() -> int:
         print("reference :", reference)
         try:
             live = evidence_lines(root, home, repo)
+            reference_lines = evidence_lines(reference, home, repo)
         except Undecidable as exc:
             print("UNKNOWN — " + str(exc))
             return 3
         print("evidence leg under the running bundle: %d line(s) published" % len(live))
+        print("evidence leg under the reviewed tree: %d line(s) published" % len(reference_lines))
+        missing, extra = fact_gap(live, reference_lines)
+        facts_differ = bool(missing or extra)
+        if facts_differ:
+            print("facts     : DIFFER — the running bundle publishes %d fact(s) the "
+                  "reviewed tree does not, and misses %d it publishes"
+                  % (len(extra), len(missing)))
+            for line in missing[:3]:
+                print("            reviewed publishes:", line)
+            for line in extra[:3]:
+                print("            bundle publishes  :", line)
+        else:
+            print("facts     : AGREE — the running bundle publishes the reviewed "
+                  "tree's facts")
         try:
             wanted = closure(root, reference, workdir, home, repo)
         except Undecidable as exc:
@@ -272,34 +441,54 @@ def main() -> int:
             return 3
         print("closure   :", ", ".join(wanted))
         print("            (the reviewed projection and the siblings it needs)")
+        try:
+            facts = fact_closure(root, reference, workdir, home, repo, wanted,
+                                 reference_lines)
+        except Undecidable as exc:
+            print("UNKNOWN — " + str(exc))
+            return 3
+        print("fact closure:", ", ".join(facts["carried"]))
+        print("              (the run closure plus the modules that carry the facts)")
+        if facts["added"]:
+            print("              the run closure alone leaves %d fact(s) differing;"
+                  % facts["base_distance"])
+            print("              these modules carry them: " + ", ".join(facts["added"]))
+        elif facts["base_distance"]:
+            print("              the run closure alone leaves %d fact(s) differing, "
+                  "and no single module closes them" % facts["base_distance"])
+        if facts["distance"]:
+            print("              residual: %d fact(s) still differ after the search"
+                  % facts["distance"])
         safe, reason = one_file_refresh(root, reference, workdir, home, repo)
         if safe:
             print("verdict   : SAFE — refreshing only follow_through.py leaves the "
                   "evidence leg working")
-            return 0
-        print("verdict   : UNSAFE — refreshing only follow_through.py breaks the "
-              "evidence leg")
-        print("            ", reason)
-        print("cause     : the bundle's siblings predate the names the reviewed "
-              "projection imports,")
-        print("            so the refresh must carry the closure above, not one file")
-        try:
-            swallowed, published = renderer_swallows_failure(
-                home, args.slug, workdir, root, workdir / "one-file")
-        except Undecidable as exc:
-            print("visibility : UNKNOWN — " + str(exc))
-            return 2
-        if swallowed:
-            print("visibility : SILENT — the renderer still exits 0 with the "
-                  "evidence child failed,")
-            print("             and the block it publishes carries %d byte(s) of "
-                  "evidence" % published)
-            print("             so the plant would publish a truncated frame and "
-                  "report it as ok")
         else:
-            print("visibility : VISIBLE — the renderer exits non-zero, so a failed "
-                  "evidence child is reported")
-        return 2
+            print("verdict   : UNSAFE — refreshing only follow_through.py breaks the "
+                  "evidence leg")
+            print("            ", reason)
+            print("cause     : the bundle's siblings predate the names the reviewed "
+                  "projection imports,")
+            print("            so the refresh must carry the closure above, not one file")
+            try:
+                swallowed, published = renderer_swallows_failure(
+                    home, args.slug, workdir, root, workdir / "one-file")
+            except Undecidable as exc:
+                print("visibility : UNKNOWN — " + str(exc))
+                return 2
+            if swallowed:
+                print("visibility : SILENT — the renderer still exits 0 with the "
+                      "evidence child failed,")
+                print("             and the block it publishes carries %d byte(s) of "
+                      "evidence" % published)
+                print("             so the plant would publish a truncated frame and "
+                      "report it as ok")
+            else:
+                print("visibility : VISIBLE — the renderer exits non-zero, so a failed "
+                      "evidence child is reported")
+        if facts_differ or facts["distance"]:
+            return 4
+        return 0 if safe else 2
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
