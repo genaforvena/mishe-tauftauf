@@ -111,7 +111,14 @@ def test_damaged_evidence_does_not_set_recency_and_none_is_reported(home):
     evidence.unlink()
     report = initiative.collect(home, now=NOW, entries=[publication])
     assert report["roles"]["discover"]["newest_checked_evidence"] is None
-    assert "checked-evidence-age=none" in "\n".join(initiative._lines(report))
+
+def test_renderer_accepts_producer_report_lacking_recency_field(home):
+    publication, _ = outcome(home, age=600)
+    report = initiative.collect(home, now=NOW, entries=[publication])
+    for row in report["roles"].values():
+        row.pop("newest_checked_evidence")
+    lines = initiative._lines(report)
+    assert any("checked-evidence-age=none" in line for line in lines)
 
 @pytest.mark.parametrize("damage", ["changed", "missing", "oversized"])
 def test_missing_changed_or_bounded_outcome_evidence_is_unknown(home, monkeypatch, damage):

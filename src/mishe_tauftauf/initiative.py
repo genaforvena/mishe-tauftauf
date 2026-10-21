@@ -366,8 +366,10 @@ def _lines(report):
     for name, row in visible_roles[:16]:
         settled = ",".join(f"{key}={value}" for key, value in sorted(row["settlements"].items())) or "none recorded"
         outcomes = ",".join(f"{key}={value}" for key, value in sorted(row["outcomes"].items())) or "none recorded"
-        recency = (f"checked-evidence-age={row['newest_checked_evidence']:.0f}s"
-                   if row["newest_checked_evidence"] is not None else "checked-evidence-age=none")
+        checked_age = row.get("newest_checked_evidence")
+        recency = (f"checked-evidence-age={checked_age:.0f}s"
+                   if isinstance(checked_age, (int, float)) and not isinstance(checked_age, bool)
+                   and math.isfinite(checked_age) and checked_age >= 0 else "checked-evidence-age=none")
         result.append(f"{name}: {row['state']}; wakes={row['wakes']} settled[{settled}] outcomes[{outcomes}] {recency} evidence-UNKNOWN={len(row['outcome_gaps'])}")
         for item in row["open_wakes"]:
             result.append(f"  open wake {item['ref']} age={item['age_seconds']:.0f}s")
