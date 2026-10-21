@@ -81,11 +81,13 @@ How it reads, and what it therefore claims:
   not a decision the check can make; a value the check cannot trace back to
   the attempt is not the attempt. One limit is named: a flow the consumer's
   own bytes do not settle — a call that passes the attempt on a path the
-  module does not take, a name the module binds in more than one place — is
-  read UNKNOWN, so a consumer that converts a passed-in attempt reads either
-  the conversion the trace establishes or UNKNOWN, never an agreement. One
-  further limit is named: these are the consumer's own bytes, so a conversion
-  inside a function the consumer imports is outside what this check reads.
+  module does not take, a name the module binds in more than one place, a call
+  through an attribute (``self.worker(...)``), which names the attribute that
+  is called but not the definition the call reaches — is read UNKNOWN, so a
+  consumer that converts a passed-in attempt reads either the conversion the
+  trace establishes or UNKNOWN, never an agreement. One further limit is
+  named: these are the consumer's own bytes, so a conversion inside a function
+  the consumer imports is outside what this check reads.
 
 Exit status:
   0  every role's opt-in names the wake the plant will deliver
@@ -608,6 +610,15 @@ def consumer_role(tree: ast.Module) -> str | None:
 
 #: The exceptions a handler can catch that let a failed conversion survive.
 SURVIVABLE = ("ValueError", "TypeError", "Exception", "BaseException")
+#: The reason a flow the reader cannot follow is reported with.
+UNTRACED_REASON = "the value the conversion reads cannot be traced back to the attempt"
+#: The reason a call through an attribute is reported with: the bytes name the
+#: attribute that is called, not the definition the call reaches.
+UNRESOLVED_REASON = ("the call that reaches the conversion is dispatched through an attribute, "
+                     "so the reader cannot tell which definition the call reaches")
+#: The marker a starred argument leaves behind: the positions of the arguments
+#: are then unknown, so the flow through that call site cannot be followed.
+STARRED = object()
 
 
 def _parents(tree: ast.Module) -> dict:
@@ -785,84 +796,139 @@ def _argument_kind(expression, tree: ast.Module, parents: dict, node, called: se
     return "other"
 
 
+def _is_method(scope, parents: dict) -> bool:
+    """Whether the scope is a method: a function defined in a class body."""
+    return isinstance(parents.get(scope), ast.ClassDef)
+
+
+def _call_positions(index, method: bool) -> list:
+    """The positions at a call site where one parameter may sit.
+
+    A method's first parameter is the instance, and a call through an instance
+    does not pass it, so the positions differ by one.  A call through the
+    class does pass it, so both positions are candidates.
+    """
+    if index is None:
+        return []
+    if method:
+        return [index - 1, index]
+    return [index]
+
+
+def _argument_expressions(call, positions: list, keyword, parameter) -> list:
+    """The expressions a call site may pass for one parameter.
+
+    An empty list means the call site does not name that parameter at all, so
+    the flow through this call site is not about it.  A starred argument is
+    returned as a marker: the positions of the arguments are then unknown, so
+    the flow through that call site cannot be followed.
+    """
+    if keyword is not None:
+        for entry in call.keywords:
+            if entry.arg == keyword:
+                return [entry.value]
+        return []
+    if any(isinstance(entry, ast.Starred) for entry in call.args):
+        return [STARRED]
+    found = []
+    for position in positions:
+        if 0 <= position < len(call.args):
+            found.append(call.args[position])
+    # A parameter may also be passed by name.
+    for entry in call.keywords:
+        if entry.arg is not None and entry.arg == parameter:
+            found.append(entry.value)
+    return found
+
+
 def _attempt_reaches(scope, index, keyword, parameter, tree: ast.Module, parents: dict,
-                     functions: dict, called: set, cache: dict) -> str:
-    """Whether the module passes the attempt into the parameter a conversion reads."""
+                     functions: dict, called: set, cache: dict) -> tuple:
+    """Whether the module passes the attempt into the parameter a conversion reads.
+
+    A call site that names the definition (``worker(...)``) is a flow the
+    reader can follow.  A call through an attribute (``self.worker(...)``) is
+    not: the bytes say which attribute is called, not which definition the
+    call reaches, so a flow through such a call is unknown, never an
+    agreement.
+
+    The answer is a ``(kind, reason)`` pair.  The kind is ``env`` (the attempt
+    reaches the conversion), ``maybe`` (it may reach it, and the reason says
+    why not) or ``other`` (it does not).
+    """
     definitions = functions.get(scope.name) or []
     if len(definitions) > 1:
-        return "maybe"
-    best = "other"
+        return "maybe", UNTRACED_REASON
+    positions = _call_positions(index, _is_method(scope, parents))
+    kind = "other"
+    reason = ""
     for call in ast.walk(tree):
-        if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
-                and call.func.id == scope.name):
+        if not isinstance(call, ast.Call):
             continue
-        expression = None
-        if keyword is not None:
-            for entry in call.keywords:
-                if entry.arg == keyword:
-                    expression = entry.value
+        if isinstance(call.func, ast.Name) and call.func.id == scope.name:
+            resolved = True
+        elif isinstance(call.func, ast.Attribute) and call.func.attr == scope.name:
+            resolved = False
         else:
-            if any(isinstance(entry, ast.Starred) for entry in call.args):
-                return "maybe"
-            if index is not None and index < len(call.args):
-                expression = call.args[index]
-            else:
-                # A parameter may also be passed by name.
-                for entry in call.keywords:
-                    if entry.arg is not None and entry.arg == parameter:
-                        expression = entry.value
-        if expression is None:
             continue
-        kind = _argument_kind(expression, tree, parents, call, called, cache)
-        if kind == "env":
-            return "env"
-        if kind == "maybe":
-            best = "maybe"
-    return best
+        for expression in _argument_expressions(call, positions, keyword, parameter):
+            if expression is STARRED:
+                if kind != "maybe":
+                    kind, reason = "maybe", UNTRACED_REASON
+                continue
+            argument = _argument_kind(expression, tree, parents, call, called, cache)
+            if argument == "env":
+                if resolved:
+                    return "env", ""
+                # The value is the attempt, but the call reaches the definition
+                # through an attribute the reader cannot resolve.
+                kind, reason = "maybe", UNRESOLVED_REASON
+            elif argument == "maybe" and kind != "maybe":
+                kind, reason = "maybe", UNTRACED_REASON
+    return kind, reason
 
 
 def _parameter_source(name: str, node, tree: ast.Module, parents: dict, functions: dict,
-                      called: set, cache: dict, depth: int = 0) -> str:
+                      called: set, cache: dict, depth: int = 0) -> tuple:
     """How the attempt reaches a conversion of a parameter, from the module's calls."""
     if depth > 3:
-        return "other"
+        return "other", ""
     scope = None
     for candidate in _scope_chain(node, parents):
         if isinstance(candidate, (ast.FunctionDef, ast.AsyncFunctionDef)):
             scope = candidate
             break
     if scope is None:
-        return "other"
+        return "other", ""
     index, keyword, parameter = _parameter_position(scope, name)
     if index is None and keyword is None:
         expression, ambiguous = _visible_binding(name, node, tree, parents, cache)
         if ambiguous:
-            return "maybe"
+            return "maybe", UNTRACED_REASON
         if isinstance(expression, ast.Name):
             return _parameter_source(expression.id, node, tree, parents, functions, called,
                                      cache, depth + 1)
-        return "other"
-    reached = _attempt_reaches(scope, index, keyword, parameter, tree, parents, functions,
-                               called, cache)
+        return "other", ""
+    reached, reason = _attempt_reaches(scope, index, keyword, parameter, tree, parents,
+                                       functions, called, cache)
     if reached == "other" and scope.name not in called:
         # The module never calls the function the conversion sits in, so the
         # module's run does not take that path.
-        return "unreached"
-    return reached
+        return "unreached", ""
+    return reached, reason
 
 
 def _conversion_source(argument, node, tree: ast.Module, parents: dict, functions: dict,
-                       called: set, cache: dict) -> str:
+                       called: set, cache: dict) -> tuple:
     """How the value a conversion reads reaches the attempt."""
     if _environment_read(argument, RECOVERY_ATTEMPT):
-        return "env"
+        return "env", ""
     if not isinstance(argument, ast.Name):
-        return "other"
+        return "other", ""
     kind = _binding_kind(argument.id, tree, parents, node, cache)
     if kind == "env":
-        return "env"
+        return "env", ""
     if kind == "env?":
-        return "maybe"
+        return "maybe", UNTRACED_REASON
     return _parameter_source(argument.id, node, tree, parents, functions, called, cache)
 
 
@@ -966,6 +1032,12 @@ def attempt_rule(tree: ast.Module) -> dict:
     definitions share — reads ``untraced``: an unknown reading a reader can
     route, never an agreement.
 
+    A call through an attribute (``self.worker(...)``) does not settle such a
+    flow either: the bytes name the attribute that is called, not the
+    definition the call reaches. A conversion that such a call may reach
+    reads ``untraced`` as well, so a consumer that converts the attempt
+    through a method is reported as an unknown rather than read as silence.
+
     One limit is named: these are the module's own bytes. A conversion inside
     a function the module imports is outside them, so a consumer that passes
     the attempt to such a function reads ``none`` — the module does not
@@ -981,14 +1053,14 @@ def attempt_rule(tree: ast.Module) -> dict:
                 and node.func.id == "int" and node.args):
             continue
         argument = node.args[0]
-        source = _conversion_source(argument, node, tree, parents, functions, called, cache)
+        source, reason = _conversion_source(argument, node, tree, parents, functions, called,
+                                            cache)
         if source == "other":
             continue
         if _is_guarded(node, parents):
             states.append(("guarded", node.lineno, ""))
         elif source == "maybe":
-            states.append(("untraced", node.lineno,
-                           "the value the conversion reads cannot be traced back to the attempt"))
+            states.append(("untraced", node.lineno, reason or UNTRACED_REASON))
         elif source == "unreached" or not _is_reached(node, parents, called):
             states.append(("unreached", node.lineno,
                            "the conversion sits in a function the module never calls"))

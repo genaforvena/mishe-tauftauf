@@ -876,6 +876,125 @@ run_wake(1)
     assert "Traceback" not in result.stdout + result.stderr
 
 
+def test_an_attempt_passed_through_a_method_call_reads_unknown(tmp_path):
+    """A call through an attribute does not name the definition it reaches."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    source = '''"""A consumer that converts the attempt in a method of its own class."""
+import os
+
+
+class Consumer:
+    def run(self):
+        self.convert(os.environ["MISHE_NATIVE_RECOVERY_ATTEMPT"])
+
+    def convert(self, value):
+        return int(value)
+
+
+consumer = Consumer()
+consumer.run()
+'''
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number, attempt="one", runner=runner_line(home, source)),
+        encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 3, result.stdout
+    assert "MISMATCH" not in result.stdout
+    assert "dispatched through an attribute" in result.stdout
+    assert "Traceback" not in result.stdout + result.stderr
+
+
+def test_an_attempt_passed_to_a_method_through_the_class_reads_unknown(tmp_path):
+    """A call that names the class passes the instance, so the value sits later."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    source = '''"""A consumer that calls its own method through the class."""
+import os
+
+
+class Consumer:
+    def convert(self, value):
+        return int(value)
+
+
+consumer = Consumer()
+Consumer.convert(consumer, os.environ["MISHE_NATIVE_RECOVERY_ATTEMPT"])
+'''
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number, attempt="one", runner=runner_line(home, source)),
+        encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 3, result.stdout
+    assert "MISMATCH" not in result.stdout
+    assert "dispatched through an attribute" in result.stdout
+    assert "Traceback" not in result.stdout + result.stderr
+
+
+def test_a_method_call_that_carries_no_attempt_is_not_an_unknown(tmp_path):
+    """A method call that carries something else is not a flow of the attempt."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    source = '''"""A consumer whose method call carries no attempt."""
+import os
+
+
+class Consumer:
+    def run(self):
+        self.convert(2)
+
+    def convert(self, value):
+        return int(value)
+
+
+consumer = Consumer()
+consumer.run()
+'''
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number, runner=runner_line(home, source)),
+        encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 0, result.stdout
+    assert "MISMATCH" not in result.stdout
+    assert "UNKNOWN" not in result.stdout
+    assert "Traceback" not in result.stdout + result.stderr
+
+
+def test_a_resolvable_call_reads_the_defect_next_to_a_method_call(tmp_path):
+    """A flow the reader can follow decides, whatever else the module does."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    source = '''"""A consumer with a resolvable call and a call through an attribute."""
+import os
+
+
+def worker(attempt):
+    return int(attempt)
+
+
+class Consumer:
+    def run(self):
+        self.convert(os.environ["MISHE_NATIVE_RECOVERY_ATTEMPT"])
+
+    def convert(self, value):
+        return int(value)
+
+
+def run_wake(wake):
+    return worker(os.environ.get("MISHE_NATIVE_RECOVERY_ATTEMPT", "1"))
+
+
+run_wake(1)
+'''
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number, attempt="one", runner=runner_line(home, source)),
+        encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 2, result.stdout
+    assert "int()" in result.stdout
+    assert "Traceback" not in result.stdout + result.stderr
+
+
 def test_a_consumer_that_compares_with_a_subscript_read_is_cited(tmp_path):
     """The opt-in read with a subscript is the same comparison, and it is cited."""
     home = make_home(tmp_path)
