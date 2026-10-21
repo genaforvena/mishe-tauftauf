@@ -295,6 +295,19 @@ pending widening is visible before it is committed; `--update-baseline` rewrites
 the freeze to the policy's current budget and refuses to widen it, so the
 allowance to re-add migrated debt closes with the migration.
 
+The budget is a count, and the tree does not always hold that many sites, so
+the freeze also records what the tree actually held: per budgeted path, the
+number of sites of each expression. A site the freeze does not record is new
+debt and fails, even when no policy byte changed. Without that record a free
+slot is a hole — measured on this plant on 2026-10-21, 16 budgeted sites that
+the tree did not hold, 6 of them reachable by copying an expression that exists
+elsewhere in the tree; a new site in such a slot passes `tools/check_parsing.py`
+and changes no policy, so the budget alone cannot see the debt grow. The
+freeze now names those slots as standing allowances and closes them. A tree
+that holds fewer sites than the freeze records is a migration and passes.
+`--update-baseline` refuses to re-base a growing debt, so the allowance to
+accept a new site closes with its migration.
+
 The freeze exists because the rule above was prose. The budget was widened once
 before it was recorded — commit `23f9b1e6` on 2026-10-10 raised one
 fingerprint's count and added another, in exchange for a discovery fix — and
