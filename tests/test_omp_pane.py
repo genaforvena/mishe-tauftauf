@@ -107,6 +107,64 @@ def test_ci_run_id_extracts_the_polled_run() -> None:
     assert omp_pane.ci_run_id("$ sleep 150") is None
 
 
+def _box(command: str, output: str = "") -> str:
+    """A tool-call box as the omp TUI draws it."""
+    width = 60
+    lines = ["╭" + "─" * width + "╮", "│ " + command.ljust(width - 2) + "│"]
+    if output:
+        lines.append("├─── Output " + "─" * (width - 11) + "┤")
+        lines.extend("│ " + row.ljust(width - 2) + "│" for row in output.splitlines())
+    lines.append("╰" + "─" * width + "╯")
+    return "\n".join(lines)
+
+
+def test_wait_pattern_reads_the_command_the_tui_draws() -> None:
+    # The TUI draws a tool call inside a box, so the prompt is never at
+    # column 0.  A matcher that requires a column-0 prompt sees no wait at
+    # all on this plant, and the sense reports every blocked pane as clean.
+    assert omp_pane.wait_pattern(_box("$ sleep 150")) == "sleep"
+    assert omp_pane.wait_pattern(_box("$ tail -f /var/log/syslog")) == "tail -f"
+    assert omp_pane.wait_pattern(_box("$ gh run watch 38968299950")) == "gh run watch"
+    assert omp_pane.wait_pattern(_box("$ gh run view 38242368632")) == "gh run view"
+
+
+def test_wait_pattern_reads_a_compound_command_the_tui_draws() -> None:
+    # The mind's real poll is a chain, and the wait is one segment of it.
+    frame = _box("$ sleep 90 && rtk proxy cat checks.json | head -c 600; echo")
+    assert omp_pane.wait_pattern(frame) == "sleep"
+    frame = _box("$ systemctl --user status svc && sleep 6 && systemctl is-active svc")
+    assert omp_pane.wait_pattern(frame) == "sleep"
+
+
+def test_wait_pattern_reads_a_ci_poll_with_its_own_flags() -> None:
+    # The plant's own CI read is `gh run view <id> --json status,conclusion`,
+    # whose flag carries a value; the flag is part of the command, not a
+    # reason to reject the command.
+    frame = _box("$ gh run view 38242368632 --json status,conclusion,updatedAt")
+    assert omp_pane.wait_pattern(frame) == "gh run view"
+    assert omp_pane.ci_run_id(frame) == "38242368632"
+
+
+def test_wait_pattern_ignores_a_tool_that_prints_a_command() -> None:
+    # The tool's output is not the command the pane is running.
+    frame = _box("$ cat notes.md", output="$ sleep 150\n$ gh run view 38242368632")
+    assert omp_pane.wait_pattern(frame) is None
+    assert omp_pane.ci_run_id(frame) is None
+
+
+def test_wait_pattern_ignores_the_minds_own_prose() -> None:
+    frame = "Now sleep 150 && rtk proxy cat ...\n" \
+            "I am waiting on the reviewer follow-up\n" \
+            "reduce sleep in the CI follower"
+    assert omp_pane.wait_pattern(frame) is None
+
+
+def test_ci_run_id_is_read_from_the_command_not_from_prose() -> None:
+    frame = "the run was gh run view 38242368632 and it passed\n" \
+            + _box("$ gh run watch 38968299950 --exit-status")
+    assert omp_pane.ci_run_id(frame) == "38968299950"
+
+
 def test_ci_run_state_decodes_status_and_rejects_junk() -> None:
     state = omp_pane.ci_run_state('{"status": "in_progress", "conclusion": "", "updatedAt": "2026-10-12T11:31:03Z"}')
     assert state == {"status": "in_progress", "conclusion": "",
