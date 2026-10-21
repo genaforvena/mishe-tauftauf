@@ -266,6 +266,16 @@ def _reminder_interval(reminders):
     return min(REMINDER_SECONDS * (2 ** max(0, reminders)), MAX_REMINDER_SECONDS)
 
 
+def _reminders(history):
+    """How many reminders the current version of a condition has already routed.
+
+    The initial notice and the escalation are not reminders; counting them
+    would delay the first reminder past its interval and shorten the
+    30m, 1h, 2h, 4h schedule the contract names.
+    """
+    return sum(1 for event in history if event["incident"]["stage"] == "reminder")
+
+
 def _finding_events(events, key, first_seen=None):
     """The routed notices of one condition; optionally only its current version."""
     history = [event for event in events.values() if event["incident"]["finding"]["id"] == key]
@@ -292,8 +302,8 @@ def _routed(deliveries, event, owner=None):
 def _event_interval(events, event):
     """The interval the next reminder of this condition will wait for."""
     incident = event["incident"]
-    notices = len(_finding_events(events, incident["finding"]["id"], incident["first_seen"]))
-    return _reminder_interval(max(0, notices - 1))
+    notices = _reminders(_finding_events(events, incident["finding"]["id"], incident["first_seen"]))
+    return _reminder_interval(notices)
 
 
 def evaluate(report, entries, *, now=None):
@@ -520,7 +530,7 @@ def check(home, *, now=None):
                 if prior["stage"] in ("initial", "changed") and age >= ESCALATE_SECONDS:
                     stage = "escalation"
                 elif prior["stage"] in ("escalation", "reminder"):
-                    interval = _reminder_interval(max(0, len(history) - 1))
+                    interval = _reminder_interval(_reminders(history))
                     latest = _latest_event(history)
                     if since >= interval and (latest is None or _routed(deliveries, latest, _owner(finding))):
                         stage = "reminder"
