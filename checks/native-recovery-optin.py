@@ -287,20 +287,66 @@ def _read_word(text: str):
     return "".join(value), text[index:], "literal"
 
 
+def _shell_command_end(text: str):
+    """The text of one shell command, and the text that follows it.
+
+    A metacharacter ends the command: ``export A=1 && export B=2`` runs two
+    commands, and the shell does not read ``&&`` as a name. Only the text
+    before the first metacharacter belongs to the export, so the export's own
+    reading is made of that text alone. A metacharacter inside quotes is part
+    of the value, and does not end the command.
+    """
+    quote = None
+    for index, char in enumerate(text):
+        if quote is not None:
+            if char == quote:
+                quote = None
+            continue
+        if char in "'\"":
+            quote = char
+            continue
+        if char in ";&|<>()":
+            return text[:index], text[index:]
+    return text, ""
+
+
+def _export_words(text: str):
+    """The words the shell reads as ``export`` arguments."""
+    return text.split()
+
+
+def _is_export_argument(word: str) -> bool:
+    """Whether the shell accepts a word as an ``export`` argument.
+
+    The shell accepts a name and a name with a value: ``export A`` and
+    ``export A=1`` are both legal arguments, and a word that is neither is
+    the shell's "bad variable name" error.
+    """
+    if IDENTIFIER_RE.fullmatch(word):
+        return True
+    name, separator, _ = word.partition("=")
+    return bool(separator) and bool(IDENTIFIER_RE.fullmatch(name))
+
+
 def _read_export(entry: dict, rest: str) -> None:
     """Apply one ``export NAME...`` statement to the name's state.
 
     The shell's export takes a list of names. ``export NAME=value`` exports
     that value, ``export NAME`` exports the name's current value, and a word
-    the shell does not accept as an identifier (``=``, a number, a second
-    word) is an error the shell reports.
+    the shell does not accept as an identifier (``=``, a number) is an error
+    the shell reports. A metacharacter ends the command instead, so the text
+    after it is another command and not a name.
     """
     if rest == "":
         # `export NAME`: the name's current value is exported.
         entry["exported"] = True
         return
-    if rest.startswith("="):
-        value, remainder, kind = _read_word(rest[1:])
+    # One place decides where this command ends. The text after the
+    # metacharacter is another command, not part of this export, so the
+    # export's own value and words are read from the text before it.
+    command, _ = _shell_command_end(rest)
+    if command.startswith("="):
+        value, remainder, kind = _read_word(command[1:])
         if kind == "expands":
             entry["value"] = None
             entry["expands"] = True
@@ -312,6 +358,18 @@ def _read_export(entry: dict, rest: str) -> None:
             entry["rejected"] = "the quote is not closed"
             return
         if remainder.strip():
+            words = _export_words(remainder)
+            bad = [word for word in words
+                   if not _is_export_argument(word)]
+            if value and not bad:
+                # `export A=1 B=2`: both names are exported and the shell
+                # reports no error.
+                entry["value"] = value
+                entry["expands"] = False
+                entry["exported"] = True
+                entry["rejected"] = None
+                entry["errored"] = None
+                return
             if value:
                 # The value is written, but the shell also reads the text
                 # after it as another name and reports an error for it.
@@ -330,12 +388,12 @@ def _read_export(entry: dict, rest: str) -> None:
         entry["rejected"] = None
         entry["errored"] = None
         return
-    words = rest.split()
+    words = _export_words(command)
     if all(IDENTIFIER_RE.fullmatch(word) for word in words):
         # `export NAME other`: the name's current value is exported too.
         entry["exported"] = True
         return
-    entry["rejected"] = "the shell reads %r as a name to export" % rest.strip()
+    entry["rejected"] = "the shell reads %r as a name to export" % command.strip()
 
 
 def _read_assignment(entry: dict, text: str) -> None:
@@ -552,7 +610,7 @@ def consumer_comparison(path: Path | None) -> dict:
         return facts
     facts["line"] = comparison_line(tree)
     facts["role"] = consumer_role(tree)
-    facts["attempt_int"] = attempt_is_read_as_int(tree)
+    facts["attempt_int"] = False
     return facts
 
 
