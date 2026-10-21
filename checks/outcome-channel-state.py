@@ -108,6 +108,9 @@ probe = Path(tempfile.mkdtemp(prefix="outcome-channel-probe-"))
 denial = "not-measured"
 denial_reason = ""
 try:
+    # The probe writes only into its own disposable home, so the writer's home
+    # binding is pointed at that home for the probe alone.
+    os.environ["MISHE_SEED_HOME"] = str(probe)
     (probe / "records").mkdir()
     (probe / "artifacts").mkdir()
     digest = "0" * 64
