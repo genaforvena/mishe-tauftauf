@@ -12,6 +12,7 @@ import time
 from .feed import Feed
 from .chat_protocol import decode_lifecycle
 from .post_check import _save
+from .timestamp_text import decode_iso_datetime
 from .wall import settings
 from .records import payload
 from .wall_patch import verified_delivery
@@ -119,6 +120,22 @@ def report(home, directory, sample, initial):
     (directory / "report.md").write_text("\n".join(lines)+"\n")
 
 
+def _window(config):
+    """The measurement window the coordination mode names, read as instants.
+
+    The coordination-mode writer stamps its start with the tape's trailing "Z"
+    (feed.utc_now), which Python 3.10's fromisoformat rejects, so the shared
+    decoder is used instead of a raw parse.
+    """
+    start = decode_iso_datetime(config["started"])
+    until = decode_iso_datetime(config["until"]) if config["until"] else None
+    if start is None:
+        raise ValueError("coordination mode start time is unreadable")
+    if config["until"] and until is None:
+        raise ValueError("coordination mode until time is unreadable")
+    return start, until
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--home", type=Path, required=True)
@@ -129,8 +146,7 @@ def main():
     if args.interval <= 0:
         parser.error("interval must be positive")
     config = settings(args.home)
-    start = datetime.fromisoformat(config["started"])
-    until = datetime.fromisoformat(config["until"]) if config["until"] else None
+    start, until = _window(config)
     args.directory.mkdir(parents=True, exist_ok=True)
     initial_path = args.directory / "baseline.json"
     initial = json.loads(initial_path.read_text()) if initial_path.exists() else collect(args.home, start)
