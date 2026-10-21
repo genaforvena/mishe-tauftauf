@@ -280,6 +280,7 @@ def main() -> int:
     wanted = groups(expected)
 
     missing_lines = [key for key in wanted if key not in shown]
+    extra_lines = [key for key in shown if key not in wanted]
     missing_fields = []
     extra_fields = []
     for key, wanted_group in wanted.items():
@@ -303,6 +304,12 @@ def main() -> int:
         for key in missing_lines:
             print("    missing :", key)
             print("        reviewed line:", wanted[key][0][0][:400])
+    if extra_lines:
+        print("published  : EXTRA LINE — the plant publishes %d line(s) the "
+              "reviewed tree does not publish" % len(extra_lines))
+        for key in extra_lines:
+            print("    extra   :", key)
+            print("        published line:", shown[key][0][0][:400])
     if missing_fields:
         print("published  : MISSING FIELD — %d published line(s) lack a field the "
               "reviewed tree publishes" % len(missing_fields))
@@ -316,7 +323,8 @@ def main() -> int:
         for key, name in extra_fields:
             print("    extra   :", key, "->", name)
             print("        published line:", shown[key][0][0][:400])
-    if not missing_lines and not missing_fields and not extra_fields:
+    if (not missing_lines and not extra_lines
+            and not missing_fields and not extra_fields):
         print("published  : AGREE — every published line carries the fields the "
               "reviewed tree's line carries")
         return 0
