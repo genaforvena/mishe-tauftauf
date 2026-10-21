@@ -70,6 +70,17 @@ How it reads, and what it therefore claims:
   that line only when the operands are exactly the environment value and a
   stringified wake. What an attempt number has to be is the consumer's own
   rule, so the check asks the consumer's bytes before it judges one.
+- The consumer's rule about the attempt is read, not assumed. The conversion is
+  found wherever the consumer writes it — including a read of the environment
+  with a subscript and a read into a name that is converted afterwards — and
+  the check then asks two more questions of the same bytes: whether the
+  consumer survives a failed conversion, and whether the conversion sits on a
+  path the module takes. A conversion the consumer survives is not a defect; a
+  conversion on a path the module never takes is not a decision the check can
+  make; a value the check cannot trace back to the attempt is not the attempt.
+  One limit is named: a value the consumer receives as an argument is not
+  traced, so a consumer that converts a passed-in attempt reads UNKNOWN rather
+  than an agreement.
 
 Exit status:
   0  every role's opt-in names the wake the plant will deliver
@@ -517,17 +528,29 @@ def runner_path(text: str) -> Path | None:
     return None
 
 
-def _environment_get(node, name: str) -> bool:
-    """Whether the node reads a variable out of the environment."""
-    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+def _environment_read(node, name: str) -> bool:
+    """Whether the node reads a variable out of the environment.
+
+    Two forms read the same variable: ``os.environ.get(NAME)`` and
+    ``os.environ[NAME]``.  A reader that knows only the first form reads a
+    consumer that uses the second as one that reads nothing at all, and then
+    agrees with a consumer that breaks on a value the owner wrote.
+    """
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
             and node.func.attr == "get" and isinstance(node.func.value, ast.Attribute)
             and node.func.value.attr == "environ" and len(node.args) >= 1
-            and isinstance(node.args[0], ast.Constant) and node.args[0].value == name)
+            and isinstance(node.args[0], ast.Constant) and node.args[0].value == name):
+        return True
+    if (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute)
+            and node.value.attr == "environ" and isinstance(node.slice, ast.Constant)
+            and node.slice.value == name):
+        return True
+    return False
 
 
 def _environment_value(node) -> bool:
     """Whether the node reads the recovery opt-in out of the environment."""
-    return _environment_get(node, RECOVERY_WAKE)
+    return _environment_read(node, RECOVERY_WAKE)
 
 
 def _stringified_wake(node) -> str | None:
@@ -578,26 +601,226 @@ def consumer_role(tree: ast.Module) -> str | None:
     return None
 
 
-def attempt_is_read_as_int(tree: ast.Module) -> bool:
-    """Whether the consumer reads the attempt number with ``int()``.
+#: The exceptions a handler can catch that let a failed conversion survive.
+SURVIVABLE = ("ValueError", "TypeError", "Exception", "BaseException")
+
+
+def _parents(tree: ast.Module) -> dict:
+    """The parent of every node, so a node's scopes can be read."""
+    parents = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+    return parents
+
+
+def _scope_nodes(scope) -> list:
+    """The statements a scope owns, not counting a nested scope's own."""
+    owned = []
+    stack = list(getattr(scope, "body", []))
+    while stack:
+        node = stack.pop()
+        owned.append(node)
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda,
+                                  ast.ClassDef)):
+                continue
+            stack.append(child)
+    return owned
+
+
+def _scope_chain(node, parents: dict) -> list:
+    """The scopes that enclose a node, innermost first."""
+    chain = []
+    current = node
+    while current in parents:
+        current = parents[current]
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            chain.append(current)
+    return chain
+
+
+def _assignments(node):
+    """The (name, value) pairs a statement binds."""
+    if isinstance(node, ast.Assign):
+        return [(target, node.value) for target in node.targets
+                if isinstance(target, ast.Name)]
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        return [(node.target, node.value)]
+    if isinstance(node, ast.NamedExpr) and isinstance(node.target, ast.Name):
+        return [(node.target, node.value)]
+    return []
+
+
+def _bindings(scope) -> dict:
+    """The names a scope binds, and how each binding reads the attempt.
+
+    ``env`` is an unconditional binding of the attempt out of the environment,
+    ``env?`` a binding that only happens on one path, and ``other`` a binding of
+    anything else.  The three are kept apart because they decide different
+    things: a name bound to the attempt on one path only is a value the check
+    cannot trace, so it cannot say what the consumer converts.
+    """
+    direct = set(id(statement) for statement in getattr(scope, "body", []))
+    bindings = {}
+    for node in _scope_nodes(scope):
+        for target, value in _assignments(node):
+            if value is None:
+                continue
+            if _environment_read(value, RECOVERY_ATTEMPT):
+                kind = "env" if id(node) in direct else "env?"
+            else:
+                kind = "other"
+            bindings[target.id] = kind
+    return bindings
+
+
+def _binding_kind(name: str, tree: ast.Module, parents: dict, node, cache: dict) -> str | None:
+    """How the innermost visible scope that binds a name binds it."""
+    for scope in _scope_chain(node, parents):
+        bindings = cache.get(id(scope))
+        if bindings is None:
+            bindings = _bindings(scope)
+            cache[id(scope)] = bindings
+        if name in bindings:
+            return bindings[name]
+    bindings = cache.get(id(tree))
+    if bindings is None:
+        bindings = _bindings(tree)
+        cache[id(tree)] = bindings
+    return bindings.get(name)
+
+
+def _handler_catches(handler) -> bool:
+    """Whether the handler catches the error a failed conversion raises."""
+    kind = handler.type
+    if kind is None:
+        return True
+    names = kind.elts if isinstance(kind, ast.Tuple) else [kind]
+    for entry in names:
+        if isinstance(entry, ast.Name) and entry.id in SURVIVABLE:
+            return True
+    return False
+
+
+def _reraises(node) -> bool:
+    """Whether the handler hands the error on instead of surviving it."""
+    stack = list(ast.iter_child_nodes(node))
+    while stack:
+        current = stack.pop()
+        if isinstance(current, ast.Raise):
+            return True
+        for child in ast.iter_child_nodes(current):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            stack.append(child)
+    return False
+
+
+def _is_guarded(node, parents: dict) -> bool:
+    """Whether a failed conversion where the call sits is survived."""
+    current = node
+    while current in parents:
+        current = parents[current]
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            # The try is in an enclosing scope, so it cannot catch this call.
+            return False
+        if isinstance(current, ast.Try):
+            for handler in current.handlers:
+                if _handler_catches(handler) and not _reraises(handler):
+                    return True
+    return False
+
+
+def _called_names(tree: ast.Module) -> set:
+    """The names the module calls."""
+    names = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name):
+            names.add(node.func.id)
+        elif isinstance(node.func, ast.Attribute):
+            names.add(node.func.attr)
+    return names
+
+
+def _is_reached(node, parents: dict, called: set) -> bool:
+    """Whether the module ever calls the function the call sits in.
+
+    A function the module never calls may still be called from outside it, so
+    the check does not decide that such a path is dead; it says the path is not
+    one the module takes.
+    """
+    current = node
+    while current in parents:
+        current = parents[current]
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return current.name in called
+    return True
+
+
+def attempt_rule(tree: ast.Module) -> dict:
+    """How the consumer reads the attempt value, from the consumer's bytes.
 
     What an attempt value has to be is the consumer's own rule, so the check
-    asks the consumer's bytes instead of assuming one.
+    asks the consumer's bytes instead of assuming one.  Three things are read,
+    because each of them can turn a finding into no finding:
+
+    * the conversion is found wherever it is written, including the form that
+      reads the environment with a subscript and the form that reads it into a
+      name first and converts the name afterwards;
+    * the guard around the conversion is read, so a conversion the consumer
+      survives is not a defect;
+    * the path the conversion sits on is read, so a conversion on a path the
+      module never takes is not a decision the check can make.
+
+    The states are ``int`` (the consumer converts the attempt on a path it
+    takes and does not survive a failure), ``guarded`` (the consumer survives
+    the failure), ``unreached`` (the conversion sits in a function the module
+    never calls, so the module's run does not take that path), ``untraced``
+    (the value the conversion reads cannot be traced back to the attempt) and
+    ``none`` (the consumer does not convert the attempt).
     """
+    parents = _parents(tree)
+    called = _called_names(tree)
+    cache: dict = {}
+    states = []
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                and node.func.id == "int"):
+                and node.func.id == "int" and node.args):
             continue
-        for argument in node.args:
-            if _environment_get(argument, RECOVERY_ATTEMPT):
-                return True
-    return False
+        argument = node.args[0]
+        if _environment_read(argument, RECOVERY_ATTEMPT):
+            source = "env"
+        elif isinstance(argument, ast.Name):
+            kind = _binding_kind(argument.id, tree, parents, node, cache)
+            source = {"env": "env", "env?": "maybe"}.get(kind, "other")
+        else:
+            source = "other"
+        if source == "other":
+            continue
+        if _is_guarded(node, parents):
+            states.append(("guarded", node.lineno, ""))
+        elif source == "maybe":
+            states.append(("untraced", node.lineno,
+                           "the value the conversion reads cannot be traced back to the attempt"))
+        elif not _is_reached(node, parents, called):
+            states.append(("unreached", node.lineno,
+                           "the conversion sits in a function the module never calls"))
+        else:
+            states.append(("int", node.lineno, ""))
+    for state in ("int", "untraced", "guarded", "unreached"):
+        for name, line, reason in states:
+            if name == state:
+                return {"state": state, "line": line, "reason": reason}
+    return {"state": "none", "line": None, "reason": ""}
 
 
 def consumer_comparison(path: Path | None) -> dict:
     """What the consumer's own bytes say: where it compares, for which role."""
     facts = {"path": str(path) if path else None, "line": None, "role": None,
-             "attempt_int": False}
+             "attempt_state": "none", "attempt_line": None, "attempt_reason": ""}
     if path is None:
         return facts
     try:
@@ -610,7 +833,10 @@ def consumer_comparison(path: Path | None) -> dict:
         return facts
     facts["line"] = comparison_line(tree)
     facts["role"] = consumer_role(tree)
-    facts["attempt_int"] = attempt_is_read_as_int(tree)
+    rule = attempt_rule(tree)
+    facts["attempt_state"] = rule["state"]
+    facts["attempt_line"] = rule["line"]
+    facts["attempt_reason"] = rule["reason"]
     return facts
 
 
@@ -704,7 +930,7 @@ def launcher_findings(role_name: str, path: Path, text: str, opt_in: dict, consu
             "reason": "the opt-in names a wake that is not a wake number (%r)" % wake["value"],
             "evidence": [str(path)],
         })
-    if attempt and attempt["kind"] == "value" and consumer["attempt_int"]:
+    if attempt and attempt["kind"] == "value" and consumer["attempt_state"] == "int":
         try:
             int(attempt["value"])
         except ValueError:
@@ -714,6 +940,11 @@ def launcher_findings(role_name: str, path: Path, text: str, opt_in: dict, consu
                           "can read" % attempt["value"],
                 "evidence": [str(path), consumer["path"] and str(consumer["path"])],
             })
+    if attempt and attempt["kind"] == "value" and consumer["attempt_state"] == "untraced":
+        unknowns.append("%s: the consumer converts the attempt with int() (line %s) but %s, "
+                        "so whether %r is a number it can read is not decidable here"
+                        % (role_name, consumer["attempt_line"], consumer["attempt_reason"],
+                           attempt["value"]))
     return findings, unknowns
 
 
@@ -860,6 +1091,18 @@ def main() -> int:
             else:
                 print("consumer  : %s (no comparison of the opt-in with a wake found)"
                       % consumer["path"])
+            if consumer["attempt_state"] == "int":
+                print("attempt   : the consumer reads the attempt with int() at line %d"
+                      % consumer["attempt_line"])
+            elif consumer["attempt_state"] == "guarded":
+                print("attempt   : the consumer reads the attempt with int() at line %d and "
+                      "survives the failure" % consumer["attempt_line"])
+            elif consumer["attempt_state"] == "unreached":
+                print("attempt   : the consumer reads the attempt with int() at line %d, but %s"
+                      % (consumer["attempt_line"], consumer["attempt_reason"]))
+            elif consumer["attempt_state"] == "untraced":
+                print("attempt   : the consumer reads the attempt with int() at line %d, but %s"
+                      % (consumer["attempt_line"], consumer["attempt_reason"]))
     for finding in findings:
         print("finding   : %s — %s" % (finding["role"], finding["verdict"]))
         print("            %s" % finding["reason"])
