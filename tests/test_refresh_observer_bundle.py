@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -536,3 +537,214 @@ def test_a_missing_reviewed_tree_reads_unknown(plant):
     result = run_tool(home, home.parent / "absent")
     assert result.returncode == 3, result.stdout + result.stderr
     assert "UNKNOWN" in result.stdout
+
+
+def write_moving_package(root: Path, row: str = REVIEWED_ROW) -> Path:
+    """A package whose published block carries a line that changes every run.
+
+    The plant's own published block carries lines that move with the plant's
+    state, so a difference between two samples is not yet a difference between
+    two sets of bytes.
+    """
+    package = root / PACKAGE
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    (package / "wall.py").write_text("REFUSAL_AUDIT = 'logs/outcome-refusal-audit.jsonl'\n")
+    (package / "initiative.py").write_text("ROWS = [%r]\n" % (row,))
+    body = ["from .wall import REFUSAL_AUDIT",
+            "from .initiative import ROWS",
+            "import secrets",
+            "",
+            "LINES = []",
+            "LINES.append('TOKEN: ' + secrets.token_hex(4))",
+            "LINES.extend(ROWS)",
+            "",
+            "def lines(home):",
+            "    return list(LINES)"]
+    (package / "follow_through.py").write_text("\n".join(body) + "\n")
+    return root
+
+
+def test_a_published_line_that_moves_is_not_reported_as_a_difference(plant, tmp_path):
+    """A line that changes between two samples is not a difference in the bytes."""
+    home, bundle = plant
+    shutil.rmtree(bundle / PACKAGE)
+    write_moving_package(bundle)
+    reviewed = write_moving_package(tmp_path / "moving-reviewed")
+    result = run_tool(home, reviewed, "--check")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "facts     : AGREE" in result.stdout, result.stdout
+    assert "moved     :" in result.stdout, result.stdout
+    assert "state     : CURRENT" in result.stdout, result.stdout
+
+
+def test_a_moving_line_does_not_hide_a_real_difference(plant, tmp_path):
+    """A line that moves is excluded; a line that differs is still reported."""
+    home, bundle = plant
+    shutil.rmtree(bundle / PACKAGE)
+    write_moving_package(bundle, row=STALE_ROW)
+    reviewed = write_moving_package(tmp_path / "moving-reviewed", row=REVIEWED_ROW)
+    result = run_tool(home, reviewed, "--check")
+    assert result.returncode == 4, result.stdout + result.stderr
+    assert "facts     : DIFFER" in result.stdout, result.stdout
+    assert "state     : STALE" in result.stdout, result.stdout
+
+
+# --- the observation: what the bundle's bytes are, against the reviewed tree's
+
+
+def copy_package(source: Path, target: Path) -> Path:
+    """A copy of a package directory, byte for byte."""
+    shutil.copytree(source / PACKAGE, target / PACKAGE)
+    return target
+
+
+def state_line(stdout: str) -> str:
+    """The line that names the observation's state."""
+    for line in stdout.splitlines():
+        if line.startswith("state     :"):
+            return line
+    return ""
+
+
+def test_check_says_current_when_the_bundles_bytes_are_the_reviewed_trees(plant, reviewed):
+    """A bundle that is the reviewed tree's package reads CURRENT."""
+    home, bundle = plant
+    shutil.rmtree(bundle / PACKAGE)
+    copy_package(reviewed, bundle)
+    result = run_tool(home, reviewed, "--check")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "state     : CURRENT" in result.stdout, result.stdout
+    assert "bytes     : SAME" in result.stdout, result.stdout
+    digests = [line for line in result.stdout.splitlines() if line.startswith("reference : sha256-")]
+    assert digests, result.stdout
+
+
+def test_check_names_the_bytes_that_differ_and_says_the_facts_agree(plant, reviewed):
+    """Bytes that differ are named; a bundle that still publishes the facts is MIXED."""
+    home, bundle = plant
+    shutil.rmtree(bundle / PACKAGE)
+    copy_package(reviewed, bundle)
+    (bundle / PACKAGE / "__init__.py").write_text("# a comment the reviewed tree does not carry\n")
+    result = run_tool(home, reviewed, "--check")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "state     : MIXED" in result.stdout, result.stdout
+    assert "bytes     : DIFFER" in result.stdout, result.stdout
+    assert "__init__.py" in result.stdout, result.stdout
+    assert "facts     : AGREE" in result.stdout, result.stdout
+
+
+def test_check_reports_stale_when_the_published_facts_differ(plant, reviewed):
+    """A bundle that publishes facts the reviewed tree does not is STALE."""
+    home, bundle = plant
+    result = run_tool(home, reviewed, "--check")
+    assert result.returncode == 4, result.stdout + result.stderr
+    assert "state     : STALE" in result.stdout, result.stdout
+    assert "facts     : DIFFER" in result.stdout, result.stdout
+
+
+def test_check_names_a_file_the_reviewed_tree_does_not_carry(plant, reviewed):
+    """A file only the bundle carries is part of the difference."""
+    home, bundle = plant
+    shutil.rmtree(bundle / PACKAGE)
+    copy_package(reviewed, bundle)
+    (bundle / PACKAGE / "extra.py").write_text("EXTRA = 1\n")
+    result = run_tool(home, reviewed, "--check")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "state     : MIXED" in result.stdout, result.stdout
+    assert "extra.py" in result.stdout, result.stdout
+
+
+def test_check_writes_nothing_to_the_bundle(plant, reviewed):
+    """The observation is read-only."""
+    home, bundle = plant
+    before = digest_tree(bundle)
+    result = run_tool(home, reviewed, "--check")
+    assert result.returncode == 4, result.stdout + result.stderr
+    assert digest_tree(bundle) == before
+    assert not list(home.glob("artifacts/observer-bundle-refresh/*"))
+
+
+# --- the guard: a refresh that would leave the bundle with no reviewed commit
+
+
+def git(repo: Path, *args) -> str:
+    """Run a git command in the repository and return its output."""
+    result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    return result.stdout
+
+
+@pytest.fixture
+def repository(tmp_path):
+    """A reviewed repository, a bundle that reproduces its first commit, and a home.
+
+    The bundle is a copy of the repository's first commit, so the plant's own
+    identity check can name a reviewed commit for it. The repository's second
+    commit changes a module that carries no published fact, so a refresh that
+    carries only the fact closure leaves the bundle a mixture of two commits.
+    """
+    repo = tmp_path / "repo"
+    write_package(repo / "src", carries_name=False, row=STALE_ROW, projection_line=False)
+    package = repo / "src" / PACKAGE
+    (package / "notes.py").write_text("NOTE = 'old'\n")
+    git(repo, "init", "-q")
+    git(repo, "add", "-A")
+    git(repo, "-c", "user.email=plant@example", "-c", "user.name=plant", "commit", "-qm", "one")
+    home = tmp_path / "site"
+    (home / "top-pains").mkdir(parents=True)
+    bundle = tmp_path / "observer" / "src"
+    shutil.copytree(repo / "src", bundle)
+    write_renderer(home, bundle)
+    return repo, home, bundle
+
+
+def advance_repository(repo: Path) -> None:
+    """Commit a reviewed tree whose facts agree and whose extra module differs."""
+    package = repo / "src" / PACKAGE
+    shutil.rmtree(package)
+    write_package(repo / "src", carries_name=True, row=REVIEWED_ROW, projection_line=True)
+    (package / "notes.py").write_text("NOTE = 'new'\n")
+    git(repo, "add", "-A")
+    git(repo, "-c", "user.email=plant@example", "-c", "user.name=plant", "commit", "-qm", "two")
+
+
+def run_tool_in(home: Path, repo: Path, *extra):
+    """Run the tool against a repository, with no reference named."""
+    return subprocess.run(
+        [sys.executable, str(TOOL), "--home", str(home), "--repo", str(repo), *extra],
+        capture_output=True, text=True)
+
+
+def test_a_refresh_that_would_leave_the_bundle_without_a_reviewed_commit_is_refused(repository):
+    """The site's declared-root record names a commit, so a mixture is refused."""
+    repo, home, bundle = repository
+    advance_repository(repo)
+    before = digest_tree(bundle)
+    result = run_tool_in(home, repo, "--apply")
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "identity  : REFUSED" in result.stdout, result.stdout
+    assert "--mode tree" in result.stdout, result.stdout
+    assert digest_tree(bundle) == before
+
+
+def test_tree_mode_keeps_the_bundles_reviewed_commit(repository):
+    """Carrying the whole reviewed package leaves the bundle reproducible."""
+    repo, home, bundle = repository
+    advance_repository(repo)
+    result = run_tool_in(home, repo, "--mode", "tree", "--apply")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "REFRESHED" in result.stdout, result.stdout
+    assert (bundle / PACKAGE / "notes.py").read_text() == "NOTE = 'new'\n"
+    assert published_lines(bundle) == published_lines(repo / "src")
+
+
+def test_allow_mixture_accepts_the_refresh_the_tool_refused(repository):
+    """A caller who means the mixture says so, and the refresh is written."""
+    repo, home, bundle = repository
+    advance_repository(repo)
+    result = run_tool_in(home, repo, "--apply", "--allow-mixture")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "REFRESHED" in result.stdout, result.stdout
+    assert (bundle / PACKAGE / "notes.py").read_text() == "NOTE = 'old'\n"
+    assert published_lines(bundle) == published_lines(repo / "src")
