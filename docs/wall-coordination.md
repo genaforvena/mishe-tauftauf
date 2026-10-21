@@ -479,6 +479,49 @@ outside the patch, reconcile rather than overwrite them.
 The patch lock serializes cooperating writers. It is not isolation against
 another process writing directly to the same files; coordinate such writers.
 
+## Promoting a release tree: the import-closure gate
+
+A release tree is cut from committed bytes (`git worktree add --detach
+releases/<sha> <sha>`). The checkout can therefore import cleanly while the
+tree that is actually promoted cannot: a module that exists only as an
+untracked working-tree file is present in the checkout and absent from every
+promoted runtime.
+
+The hole has a measured shape on this plant. `d4f4592` added
+`seed.py`'s `from .mind_loop import select` with nothing calling
+`seed.loop`; `2e88d94` later added the CLI subcommand that calls it,
+without the module. The committed head then dispatched a CLI subcommand into a
+module the tree did not contain, and every promoted runtime raised
+`ModuleNotFoundError` there. Nothing noticed it: no test invokes that
+subcommand, CI runs `check_parsing.py` and `pytest` and neither invokes it,
+and the checkout imports fine because the module is sitting there untracked.
+
+`checks/promotion-import-closure.py` is the gate for that. It materialises the
+committed bytes through `git archive HEAD`, so untracked working-tree files can
+never satisfy an import, resolves every local import against the modules the
+tree actually contains, and classifies each unresolved one:
+
+- **reachable** — a registered CLI subcommand dispatches into the function
+  holding the import. The promoted runtime raises `ModuleNotFoundError` there.
+  Exit 2.
+- **latent** — no named subcommand reaches it. The hole exists but breaks no
+  command a user can name. Reported, not failed.
+
+Exit 0 means complete, or only unreachable holes; exit 3 means the tree could
+not be read, which is never a pass. Run it against the tree under promotion:
+
+```
+python checks/promotion-import-closure.py --home SITE --repo REPO
+```
+
+The same check has a forward direction, off by default because a peer's
+uncommitted edit is not yet a property of the tree under promotion:
+`--forward` reports a **pending hole**, a tracked file edited to import a
+sibling that exists only as an untracked file. The checkout imports cleanly
+and the suite passes, and the promoted runtime breaks the moment that edit is
+committed. A pending hole requires a *tracked* edit; an untracked file
+importing another untracked file changes nothing tracked and is not one.
+
 ## Wake scheduling
 
 `SITE_HOME/coordination-mode.json` configures the canonical workflow and records the stop time
