@@ -130,6 +130,82 @@ def test_the_standing_audit_is_attributed_per_role(tmp_path):
     assert "genome=2" in result.stdout
 
 
+def gate_reading(**overrides) -> dict:
+    """A reading published by the gate producer, which composes from the gate."""
+    base = {
+        "state": "drift",
+        "all_bad": 211,
+        "permanent_loss": 140,
+        "owed_rows": 103,
+        "latest_bad": 0,
+        "coverage_incomplete": 1,
+        "incomplete": [{"sequence": 66107, "binding": "none",
+                        "reason": "publication requires one standalone final record reference"}],
+        "violations": ["genome@2026-10-21T04:23:44Z:artifacts/x.md(B)"],
+    }
+    base.update(overrides)
+    return base
+
+
+def test_a_gate_reading_that_agrees_with_its_gate_is_consistent(tmp_path):
+    home = tmp_path / "home"
+    write_reading(home, gate_reading())
+    result = run_check(home)
+    assert result.returncode == 0, result.stdout
+    assert "CONSISTENT" in result.stdout
+
+
+def test_closing_an_irrelevant_gap_does_not_certify_a_gate_reading(tmp_path):
+    """The gate producer's exposure is drift, not verified.
+
+    The reading's only coverage gap binds nothing, so closing it does not
+    move the verdict: the gate still holds owed rows. A projection that
+    reported 'verified' here would announce a certificate the plant would
+    never publish.
+    """
+    home = tmp_path / "home"
+    write_reading(home, gate_reading())
+    result = run_check(home)
+    assert "exposure" in result.stdout
+    assert "'drift'" in result.stdout
+    assert "'verified'" not in result.stdout
+
+
+def test_a_verified_verdict_over_an_open_gate_fails(tmp_path):
+    home = tmp_path / "home"
+    write_reading(home, gate_reading(state="verified"))
+    result = run_check(home)
+    assert result.returncode == 2, result.stdout
+    assert "INCONSISTENT" in result.stdout
+    assert "103 row(s) it still owes" in result.stdout
+
+
+def test_a_settled_verdict_over_an_open_gate_fails(tmp_path):
+    """'settled' claims every violation is accounted for, so an open gate contradicts it."""
+    home = tmp_path / "home"
+    write_reading(home, gate_reading(state="settled"))
+    result = run_check(home)
+    assert result.returncode == 2, result.stdout
+    assert "INCONSISTENT" in result.stdout
+    assert "103 row(s) it still owes" in result.stdout
+
+
+def test_a_settled_reading_with_a_closed_gate_is_consistent(tmp_path):
+    """'settled' over an accounted ledger is a measured permanent condition."""
+    home = tmp_path / "home"
+    write_reading(home, gate_reading(state="settled", owed_rows=0))
+    result = run_check(home)
+    assert result.returncode == 0, result.stdout
+    assert "CONSISTENT" in result.stdout
+
+
+def test_a_gate_reading_publishes_its_gate_count(tmp_path):
+    home = tmp_path / "home"
+    write_reading(home, gate_reading())
+    result = run_check(home)
+    assert "owed_rows=103" in result.stdout
+
+
 def test_a_missing_reading_reads_unknown(tmp_path):
     home = tmp_path / "home"
     (home / "discovery").mkdir(parents=True)
