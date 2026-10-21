@@ -41,6 +41,24 @@ samples of the same plant is not a difference of facts, while a field that is
 present in one block and absent in the other is. The fact closure is the
 smallest set this search found, not a proof of minimality.
 
+Two samples, one comparison. The published block carries the plant's own live
+state: the newest outcome refusal names a role and an evidence path, and that
+line changes when a role publishes. Two trees sampled at different instants
+therefore differ on a line that says nothing about either tree's bytes, and a
+check that compared one sample of each would read that difference as a stale
+bundle. So each tree is sampled twice and the two trees are compared on the
+lines that are the same in both samples of *both* trees. A line that moved
+between the two samples of either tree is named as moved and is not compared;
+a line that only one of the trees publishes is still a difference, and a line
+that only one of them publishes in one sample and in neither sample of the
+other is a difference of facts.
+
+The bytes are read too. A bundle can publish the reviewed tree's facts while
+carrying different modules — a module that imports cleanly and publishes the
+same facts is invisible to a fact-level comparison. The byte difference is
+reported with the modules named, so the plant's scheduled detector carries the
+signal that no fact-level check can see.
+
 Exit status:
   0  the running bundle publishes the reviewed tree's facts, and a one-file
      refresh of the reviewed projection would not break the evidence leg
@@ -194,6 +212,78 @@ def mask(lines: list) -> list:
     return [DIGITS.sub("N", line) for line in lines]
 
 
+def sample_pair(root: Path, home: Path, cwd: Path) -> list:
+    """Two samples of the block the code under one import root prints.
+
+    A line that carries the plant's own live state moves between two samples
+    of the same tree, so a difference measured between two trees at different
+    instants is not a difference of facts. Two samples make that movement
+    visible instead of letting it read as a stale bundle.
+    """
+    return [evidence_lines(root, home, cwd), evidence_lines(root, home, cwd)]
+
+
+def stable_lines(first: list, second: list) -> Counter:
+    """The masked lines that are the same in two samples of one tree."""
+    return Counter(mask(first)) & Counter(mask(second))
+
+
+def moving_lines(pairs: list) -> Counter:
+    """The masked lines that changed between the two samples of a tree.
+
+    A line that is in one sample and not in the other carries the plant's own
+    state at that instant, so it describes the plant rather than the tree's
+    bytes. The counter is what one sample has and the other does not.
+    """
+    moving = Counter()
+    for first, second in pairs:
+        stable = stable_lines(first, second)
+        moving += Counter(mask(first)) - stable
+        moving += Counter(mask(second)) - stable
+    return moving
+
+
+def compare_trees(published_pair: list, reference_pair: list) -> dict:
+    """Compare two trees on the lines that are the same in both samples of both.
+
+    A line that moved between the two samples of either tree is not a fact
+    about either tree's bytes: the newest outcome refusal names a role and an
+    evidence path, and it changes when a role publishes. Such a line is named
+    as moved and is not compared, on either side, so a plant state that moved
+    between the two samplings cannot read as a difference in one direction or
+    the other. Every other line is compared: a line only the reviewed tree
+    publishes is missing, and a line only the bundle publishes is extra.
+    """
+    published_stable = stable_lines(*published_pair)
+    reference_stable = stable_lines(*reference_pair)
+    moving = moving_lines([published_pair, reference_pair])
+    compared_published = published_stable - moving
+    compared_reference = reference_stable - moving
+    return {"missing": sorted((compared_reference - compared_published).elements()),
+            "extra": sorted((compared_published - compared_reference).elements()),
+            "moved": sorted(moving.elements())}
+
+
+def differing_modules(root: Path, reference: Path) -> list:
+    """The modules the bundle's copy and the reviewed tree's disagree on.
+
+    A module that imports cleanly and publishes the same facts is invisible
+    to a fact-level comparison, so the byte difference is read directly and
+    the modules are named.
+    """
+    names = sorted({path.name for path in (root / PACKAGE).glob("*.py")} |
+                   {path.name for path in (reference / PACKAGE).glob("*.py")})
+    differing = []
+    for name in names:
+        left = root / PACKAGE / name
+        right = reference / PACKAGE / name
+        left_bytes = left.read_bytes() if left.is_file() else None
+        right_bytes = right.read_bytes() if right.is_file() else None
+        if left_bytes != right_bytes:
+            differing.append(name)
+    return differing
+
+
 def fact_gap(published: list, reference: list) -> tuple:
     """The facts the reviewed tree publishes and the bundle does not, and back.
 
@@ -246,7 +336,9 @@ def probe(root: Path, reference: Path, workdir: Path, home: Path, cwd: Path,
                 shutil.copy(source, copy / PACKAGE / module)
         result = run_child(copy, home, cwd)
         if result.returncode == 0:
-            return refreshed, parse_block(result.stdout, copy)
+            first = parse_block(result.stdout, copy)
+            second = evidence_lines(copy, home, cwd)
+            return refreshed, [first, second]
         sibling = missing_sibling(result.stderr)
         if not sibling:
             raise Undecidable("the refresh of " + extra + " failed in a way no "
@@ -269,6 +361,13 @@ def fact_closure(root: Path, reference: Path, workdir: Path, home: Path,
     evidence leg is run, and a module that brings the published facts closer
     to the reviewed tree's is carried.
 
+    Every comparison samples the two trees twice and compares the lines that
+    are the same in both samples of both, so a plant state that moved between
+    the two samplings is named as moved and never counted as a difference.
+    ``reference_lines`` is the caller's own sample of the reference tree; the
+    comparison samples the reference again, so the two samplings it compares
+    are adjacent in time.
+
     The result is the smallest set this search found, not a proof of
     minimality: a module that only helps in combination with another may be
     left out, and the residual difference is reported when that happens.
@@ -280,8 +379,9 @@ def fact_closure(root: Path, reference: Path, workdir: Path, home: Path,
             candidates.append(path.name)
     carried = set(base)
     copy = apply_modules(root, reference, workdir, "fact-closure", carried)
-    lines = evidence_lines(copy, home, cwd)
-    base_distance = fact_distance(lines, reference_lines)
+    comparison = compare_trees(sample_pair(copy, home, cwd),
+                               sample_pair(reference, home, cwd))
+    base_distance = len(comparison["missing"]) + len(comparison["extra"])
     distance = base_distance
     for _ in range(2):
         if distance == 0:
@@ -291,22 +391,29 @@ def fact_closure(root: Path, reference: Path, workdir: Path, home: Path,
             if name in carried:
                 continue
             try:
-                probed, probed_lines = probe(root, reference, workdir, home,
-                                             cwd, carried, name)
+                probed, probed_pair = probe(root, reference, workdir, home,
+                                            cwd, carried, name)
             except Undecidable:
                 continue
-            probed_distance = fact_distance(probed_lines, reference_lines)
+            probed_comparison = compare_trees(probed_pair,
+                                              sample_pair(reference, home, cwd))
+            probed_distance = (len(probed_comparison["missing"])
+                               + len(probed_comparison["extra"]))
             if probed_distance >= distance:
                 continue
             carried = probed
-            lines = probed_lines
             distance = probed_distance
             progressed = True
         if not progressed:
             break
-    return {"carried": sorted(carried), "lines": lines,
+    final = apply_modules(root, reference, workdir, "fact-closure-final", carried)
+    final_pair = sample_pair(final, home, cwd)
+    final_comparison = compare_trees(final_pair, sample_pair(reference, home, cwd))
+    return {"carried": sorted(carried), "lines": final_pair[0],
             "added": sorted(set(carried) - set(base)),
-            "base_distance": base_distance, "distance": distance,
+            "base_distance": base_distance,
+            "distance": len(final_comparison["missing"]) + len(final_comparison["extra"]),
+            "moved": final_comparison["moved"],
             "candidates": candidates}
 
 
@@ -413,16 +520,33 @@ def main() -> int:
             return 3
         print("bundle    :", root)
         print("reference :", reference)
+        differing = differing_modules(root, reference)
+        if differing:
+            print("bytes     : DIFFER — %d module(s) of the bundle's copy differ "
+                  "from the reviewed tree's: %s" % (len(differing), ", ".join(differing)))
+            print("            (a module that imports cleanly can publish the same "
+                  "facts, so this is what a fact-level comparison cannot see)")
+        else:
+            print("bytes     : SAME — the bundle's package is the reviewed tree's package")
         try:
-            live = evidence_lines(root, home, repo)
-            reference_lines = evidence_lines(reference, home, repo)
+            live_pair = sample_pair(root, home, repo)
+            reference_pair = sample_pair(reference, home, repo)
+            live = live_pair[0]
+            reference_lines = reference_pair[0]
         except Undecidable as exc:
             print("UNKNOWN — " + str(exc))
             return 3
         print("evidence leg under the running bundle: %d line(s) published" % len(live))
         print("evidence leg under the reviewed tree: %d line(s) published" % len(reference_lines))
-        missing, extra = fact_gap(live, reference_lines)
+        comparison = compare_trees(live_pair, reference_pair)
+        missing, extra = comparison["missing"], comparison["extra"]
         facts_differ = bool(missing or extra)
+        if comparison["moved"]:
+            print("moved     : %d published line(s) moved between the two samples "
+                  "of a tree (they carry the plant's own live state), so they are "
+                  "not compared" % len(comparison["moved"]))
+            for line in comparison["moved"][:3]:
+                print("            moved:", line)
         if facts_differ:
             print("facts     : DIFFER — the running bundle publishes %d fact(s) the "
                   "reviewed tree does not, and misses %d it publishes"

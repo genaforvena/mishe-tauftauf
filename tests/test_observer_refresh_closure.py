@@ -38,7 +38,7 @@ STALE_ROW = "role: OBSERVED; wakes=1"
 
 def write_package(root: Path, *, projection: bool, carries_name: bool,
                   row: str = REVIEWED_ROW, projection_line: bool = True,
-                  via_helper: bool = False) -> Path:
+                  via_helper: bool = False, moving_line: bool = False) -> Path:
     """A package whose evidence leg works, or fails on a missing sibling name.
 
     ``projection`` selects whether the package's copy of the projection
@@ -50,6 +50,9 @@ def write_package(root: Path, *, projection: bool, carries_name: bool,
     ``projection_line`` selects whether the projection is in the published
     block. ``via_helper`` makes the row arrive through a second module, so
     that refreshing the first one needs the second one to be carried too.
+    ``moving_line`` publishes a line that carries the plant's own live state
+    and is different in every run, the way the newest outcome refusal names
+    a role and an evidence path.
     """
     package = root / PACKAGE
     package.mkdir(parents=True)
@@ -79,8 +82,19 @@ def write_package(root: Path, *, projection: bool, carries_name: bool,
         body.append("LINES.append(%r)" % (PROJECTION,))
     body.append("LINES.extend(ROWS)")
     body.append("")
-    body.append("def lines(home):")
-    body.append("    return list(LINES)")
+    if moving_line:
+        body.append("import random")
+        body.append("import string")
+        body.append("")
+        body.append("def _moving():")
+        body.append("    return ''.join(random.choice(string.ascii_lowercase) "
+                    "for _ in range(12))")
+        body.append("")
+        body.append("def lines(home):")
+        body.append("    return list(LINES) + ['PLANT STATE: ' + _moving()]")
+    else:
+        body.append("def lines(home):")
+        body.append("    return list(LINES)")
     (package / "follow_through.py").write_text("\n".join(body) + "\n")
     return root
 
@@ -124,9 +138,10 @@ def run_check(home: Path, reference: Path, extra=()):
         capture_output=True, text=True)
 
 
-def reviewed(tmp_path) -> Path:
+def reviewed(tmp_path, *, moving_line: bool = False) -> Path:
     """The reviewed tree: the projection, the name, and the current row."""
-    return write_package(tmp_path / "reviewed", projection=True, carries_name=True)
+    return write_package(tmp_path / "reviewed", projection=True,
+                          carries_name=True, moving_line=moving_line)
 
 
 def test_one_file_refresh_that_breaks_the_leg_reads_unsafe(plant, tmp_path):
@@ -252,3 +267,51 @@ def test_a_counter_that_moved_is_not_a_difference_of_facts(plant, tmp_path):
     result = run_check(plant, reference)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "facts     : AGREE" in result.stdout, result.stdout
+
+
+def test_a_line_that_moved_is_named_and_not_compared(plant, tmp_path):
+    """A line that carries the plant's own live state is not a difference.
+
+    The published block names the newest outcome refusal, which changes when
+    a role publishes. Two trees sampled at different instants therefore differ
+    on that line, and a check that compared one sample of each would read the
+    difference as a stale bundle. The moved line is named, not dropped.
+    """
+    bundle = write_package(plant.parent / "bundle", projection=True,
+                            carries_name=True, moving_line=True)
+    reference = reviewed(tmp_path, moving_line=True)
+    write_renderer(plant, bundle, report_failure=False)
+    result = run_check(plant, reference)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "facts     : AGREE" in result.stdout, result.stdout
+    assert "moved     :" in result.stdout, result.stdout
+    assert "PLANT STATE" in result.stdout, result.stdout
+
+
+def test_a_moving_line_does_not_hide_a_stable_difference(plant, tmp_path):
+    """A line that moved is excluded; a line that never moved is still read."""
+    bundle = write_package(plant.parent / "bundle", projection=True,
+                            carries_name=True, row=STALE_ROW, moving_line=True)
+    reference = reviewed(tmp_path, moving_line=True)
+    write_renderer(plant, bundle, report_failure=False)
+    result = run_check(plant, reference)
+    assert result.returncode == 4, result.stdout + result.stderr
+    assert "DIFFER" in result.stdout, result.stdout
+    assert "role: OBSERVED" in result.stdout, result.stdout
+
+
+def test_a_module_that_differs_in_bytes_is_named(plant, tmp_path):
+    """A module that publishes the same facts can still differ in bytes.
+
+    The fact-level comparison cannot see it, so the check reads the bytes and
+    names the modules.
+    """
+    bundle = write_package(plant.parent / "bundle", projection=True,
+                            carries_name=True)
+    (bundle / PACKAGE / "trial_metrics.py").write_text("VALUE = 1\n")
+    reference = reviewed(tmp_path)
+    write_renderer(plant, bundle, report_failure=False)
+    result = run_check(plant, reference)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "bytes     : DIFFER" in result.stdout, result.stdout
+    assert "trial_metrics.py" in result.stdout, result.stdout
