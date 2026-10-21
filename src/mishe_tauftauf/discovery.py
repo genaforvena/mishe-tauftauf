@@ -35,7 +35,10 @@ from .host_radio import (BLUETOOTH_ROOT, COMMAND_TIMEOUT_SECONDS, NET_ROOT,
                          decode_tailnet_status, ethernet_interfaces, link_speed, operstate,
                          rfkill_switches, rfkill_unreadable, rfkill_verdict, wireless_interfaces)
 from .coord_tape import claim_source as tape_claim_source
-from .outcome_events import classify_outcomes, eligible_evidence_path
+from .outcome_events import (blocking_gaps, classify_outcomes, eligible_evidence_path,
+                             non_blocking_gaps)
+from .outcome_publication import (EVIDENCE_REMEDY_SUFFIX, contained_evidence_path,
+                                   remedy_stem)
 from .observations import literal_site_home_name, reserved_home_name
 from .runtime_source import source_for
 from .scan_freshness import age_bounds, classify_age, endpoint
@@ -5035,6 +5038,18 @@ outcomes recorded earlier are not bound by it."""
 EVIDENCE_PATH_POLICY = "eligible-paths-v2"
 """Current prospective allowlist; re-evaluates standing rows without rewriting them."""
 
+EVIDENCE_POLICY_AMENDMENT_TIME = datetime(2026, 10, 16, tzinfo=timezone.utc)
+"""When the allowlist amendment took effect (operator ruling, DM 56798).
+
+The clause says rows bound under the earlier text stay in the standing audit
+under the rule then in force, and that a reassessment under the new rule is
+labelled as such rather than presented as repaired historical compliance. So a
+class-A row bound before this instant is a **policy-version** row: it was
+compliant when it was bound, and it is reported beside the verdict as a
+versioned row rather than as damage the plant still owes. The bound set and the
+classes are unchanged; only the published reading of the row differs.
+"""
+
 def _display_path(path: str, home: Path) -> str:
     """Site-relative display form of a stored evidence path."""
     candidate = Path(path) if os.path.isabs(path) else home / path
@@ -5095,6 +5110,168 @@ def _classify_amendment(data: bytes, digest: object, budget: int) -> tuple[str, 
     return "rewrite", limit
 
 
+#: The clause's own remedy-naming convention — a corrected artifact is written
+#: under the lost artifact's stem plus a remedy suffix — is decoded by the
+#: approved adapter, ``outcome_publication.remedy_stem``, so the vocabulary
+#: lives with the other outcome-publication decoders instead of adding a
+#: parsing site to this module. The vocabulary names the corrected **artifact**
+#: (``-v2``, ``-final``), not a **status about** it: a ``-ci`` suffix names the
+#: CI disposition of the work — the run URL, the head SHA, the outcome — and
+#: such a note carries none of the lost artifact's content, so it cannot be
+#: evidence that the work was re-evidenced. Measured over the plant's live
+#: ledger, that is the difference between the two: of the ten remedy-name
+#: links, the nine naming a corrected artifact were repairs and the single
+#: ``-ci`` one was a citation that satisfied the naming convention without
+#: carrying the work. A convention that a status note can satisfy is not a
+#: convention about the artifact, so the suffix is not in the vocabulary.
+
+EVIDENCE_CITATION_SEARCH_BYTES = 4 * 1024 * 1024
+"""The byte bound for one successor artifact's citation search.
+
+A successor artifact larger than this is not searched for a citation, so a row
+whose only link is a citation inside it stays owed. That is the safe direction:
+the gate overstates the debt instead of hiding it.
+"""
+
+EVIDENCE_CITATION_SEARCH_TOTAL_BYTES = 64 * 1024 * 1024
+"""The byte bound for one scan's citation searches, so the gate stays bounded."""
+
+
+def _rebind_links(events: list[dict], checked: list[tuple]) -> tuple[dict, dict]:
+    """Which violating rows a later, intact outcome re-evidences.
+
+    A row leaves the gate when a later outcome **of the same role** binds an
+    artifact that
+
+    * declares the row's record digest in its structured ``supersedes`` field
+      — the plant's decidable work-identity link;
+    * is named ``<lost stem>-<remedy suffix>`` — the clause's own naming
+      convention for a corrected artifact; or
+    * carries the row's record digest in its bytes — a content citation.
+
+    The first two relations are decidable without reading prose. The third
+    reads bytes rather than prose, but it cannot tell a re-evidence from an
+    audit that cites the row as the subject it diagnosed: measured over the
+    live ledger, three of the fifteen citation hits are audits that name the
+    row and leave it standing. So a citation clears a row, and every cleared
+    row is published with the citation that cleared it, so the residual stays
+    auditable by any reader.
+
+    The successor must itself be intact. A successor whose own bound file was
+    amended does not re-evidence anything: it moves the loss, so it is not a
+    link. And only a row whose content was lost can be re-evidenced: a row
+    whose only defect is an ineligible or doubly bound path is not lost work.
+
+    A deleted bound file (class C) holds lost content too — the clause calls
+    absence "a distinct and more severe class" — so it is admitted here and can
+    be re-evidenced by a successor exactly like an amended file.
+
+    Returns the mapping ``{sequence: (link_kind, successor_sequence)}`` for
+    the rows that carry a link, and the citation search's own accounting.
+    """
+    by_sequence = {row["sequence"]: row for row in events}
+    # A successor must be later than the row it re-evidences, ordered the way
+    # the rest of the sense orders rows: by the event's own timestamp, with
+    # the tape sequence as the tie-breaker. Comparing the sequence alone would
+    # let a backdated or clock-regressed publication act as a future repair.
+    role_sequences: dict[str, list[int]] = {}
+    for row in events:
+        role_sequences.setdefault(row["role"], []).append(row["sequence"])
+    for sequences in role_sequences.values():
+        sequences.sort(key=lambda seq: (by_sequence[seq]["timestamp"], seq))
+
+    def later(successor: int, lost: int) -> bool:
+        """Whether the successor event is later than the lost row's event."""
+        return ((by_sequence[successor]["timestamp"], successor)
+                > (by_sequence[lost]["timestamp"], lost))
+    # The sequences of the rows that violate nothing: a successor must be one
+    # of these to count as intact.
+    intact = {sequence for _ts, sequence, _role, _name, classes in checked if not classes}
+    links: dict[int, tuple[str, int]] = {}
+    # The rows that hold lost content: only a lost row can be re-evidenced.
+    lost_rows: list[tuple[int, str, str]] = []
+    for _ts, sequence, role, _name, classes in checked:
+        # "B" is an amended bound file, "C" a deleted one. Both lost the
+        # content; only an eligibility or double-binding defect did not.
+        if not classes or not ({"B", "C"} & set(classes)):
+            continue
+        row = by_sequence.get(sequence)
+        if row is None:
+            continue
+        lost_rows.append((sequence, role, row["record_sha256"]))
+    # The structured link and the remedy naming cost no byte reads.
+    for sequence, role, digest in lost_rows:
+        lost_path = Path(by_sequence[sequence]["evidence"]["path"])
+        lost = lost_path.stem
+        for successor in role_sequences.get(role, ()):
+            if not later(successor, sequence) or successor not in intact:
+                continue
+            successor_row = by_sequence[successor]
+            if digest and digest in (successor_row.get("supersedes") or ()):
+                links[sequence] = ("supersedes", successor)
+                break
+            successor_path = Path(successor_row["evidence"]["path"])
+            stem = remedy_stem(successor_path, EVIDENCE_REMEDY_SUFFIX)
+            # The remedy relation is the lost artifact's corrected form, so it
+            # is matched in the lost artifact's own path namespace: two
+            # different losses in different directories can share a stem, and
+            # one successor cannot be the corrected form of both.
+            if (stem is not None and stem == lost
+                    and successor_path.parent == lost_path.parent):
+                links[sequence] = ("remedy-name", successor)
+                break
+    # The citation relation: a later same-role outcome's bound artifact
+    # carries the lost row's record digest. Each artifact is read once, and
+    # the reads are bounded per file and per scan.
+    bodies: dict[str, bytes] = {}
+    too_large: set[str] = set()
+    searched = 0
+    bytes_read = 0
+    for sequence, role, digest in lost_rows:
+        if sequence in links or not digest:
+            continue
+        needle = digest.encode()
+        for successor in role_sequences.get(role, ()):
+            if not later(successor, sequence) or successor not in intact:
+                continue
+            path = by_sequence[successor]["evidence"]["path"]
+            body = bodies.get(path)
+            if body is None:
+                if path in too_large:
+                    continue
+                # The budget is enforced on the bytes actually read, not on a
+                # separate size probe: a file that grows between the two
+                # operations would otherwise be read past both limits, and its
+                # newly appended bytes could supply the searched digest while
+                # the successor was still classified as intact.
+                allowance = min(EVIDENCE_CITATION_SEARCH_BYTES,
+                                EVIDENCE_CITATION_SEARCH_TOTAL_BYTES - bytes_read)
+                if allowance <= 0:
+                    too_large.add(path)
+                    continue
+                try:
+                    with open(path, "rb") as stream:
+                        body = stream.read(allowance + 1)
+                except OSError:
+                    continue
+                if len(body) > allowance:
+                    # The file does not fit the budget, so it is not searched
+                    # to the end and not guessed at. The row whose only link
+                    # is a citation inside it stays owed: the gate overstates
+                    # the debt instead of hiding it.
+                    too_large.add(path)
+                    continue
+                bodies[path] = body
+                bytes_read += len(body)
+                searched += 1
+            if needle in body:
+                links[sequence] = ("digest-cited", successor)
+                break
+    stats = {"citation_files_searched": searched, "citation_bytes_read": bytes_read,
+             "citation_files_skipped": len(too_large)}
+    return links, stats
+
+
 def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     """Check that post-clause wall outcomes bind write-once evidence.
 
@@ -5151,12 +5328,86 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     failure that destroys the evidence rather than extending it.
 
     The sample preserves the standing-audit cause, live window, read
-    watermark and coverage tier within the pane's clipped prefix. State
-    follows the live window: ``drift`` when a role's latest outcome violates,
-    ``verified`` when every role's latest outcome is clean; the standing
-    audit (``all_bad``, ``permanent_loss``, ``violations``) retains the
-    append-only history beside the verdict. Incomplete or unavailable
-    coverage, or no eligible event, stays ``unknown``.
+    watermark and coverage tier within the pane's clipped prefix.
+
+    The verdict is composed from the gate and the coverage gaps, and each
+    state word makes its own claim:
+
+    * ``verified`` — no violating row and no binding-relevant gap. Every
+      post-clause outcome binds an eligible, unedited, retained, singly-cited
+      evidence file.
+    * ``drift`` — the gate holds at least one row: work that was lost and
+      that no later, intact outcome re-evidenced. The condition is measured
+      and known, so it is named as drift and not as unknown: unknown means
+      "could not be determined", and a determined finding does not belong under
+      a soft label. It is also repairable, so the count falls under action.
+    * ``settled`` — the gate is empty and the standing audit still holds rows.
+      Every violation is accounted for — a policy version, an acknowledgement,
+      a repair, a citation, recoverable content, or a defect no rule can
+      repair — and no repairable work is owed. It is not ``verified``: the
+      ledger's history is not clean, and a reader must not be told that it is.
+      This is the word for a measured and permanent condition, kept apart from
+      ``drift``, which is the word for a repairable one.
+    * ``unknown`` — a coverage gap can still hide a bound evidence path, so
+      the bound set cannot be derived and the count is a lower bound. A gap
+      that binds nothing is reported beside the verdict, with its own count,
+      and is not the verdict's reason.
+
+    Every violating row falls into exactly one band, so the bands partition the
+    standing audit and their counts sum to ``all_bad``:
+
+    * ``owed`` — the work was lost and nothing re-evidenced it. This is the
+      gate, and the only band the plant still owes repairable work on.
+    * ``recoverable`` — a class-B row whose bound bytes survive verbatim as a
+      prefix of the current file: the content is intact and only the binding
+      is broken, so no work was lost.
+    * ``disposed`` — a later, intact outcome of the same role declared the
+      row's record digest in its structured ``supersedes`` field: the role
+      acknowledged and re-evidenced the work.
+    * ``rebound`` — a class-B row whose lost artifact a later, intact outcome
+      re-bound under the remedy naming.
+    * ``cited`` — a class-B row whose record digest a later, intact outcome's
+      artifact carries. This is the weakest relation: a citation cannot be
+      told from an audit that cites the row it diagnosed, so these rows keep
+      their own band and every one of them is published with the successor
+      that cleared it, in ``linked_detail``.
+    * ``versioned`` — a class-A row bound before the 2026-10-16 allowlist
+      amendment, naming a path inside the owned site. It was compliant under
+      the rule then in force, and the current allowlist's exclusion of it is
+      labelled as a policy version rather than presented as damage.
+    * ``permanent`` — a defect no later rule can repair: a path bound by two
+      outcomes, or a path bound after the amendment that the current allowlist
+      excludes. It is measured and permanent, so it is not repairable debt and
+      the verdict does not call it drift.
+
+    The relation that clears a row is decidable — the structured supersession
+    link, the clause's remedy naming, or a digest citation — so the count
+    falls when a role re-evidences its own row, and the verdict is reachable.
+    A successor must itself be intact: a successor whose own bound file was
+    amended moves the loss rather than repairing it, and a link declared by
+    another role clears nothing.
+
+    The standing audit stays published as history beside the gate: it is
+    append-only, so a repaid row stays in it, and a reader who wants the
+    ledger's whole history has it. The live window (``latest_bad_roles``)
+    keeps its own meaning — it names who is violating now — but it decides
+    nothing. The live window is self-healing: every role publishes again, so
+    it empties while the standing audit keeps the loss, and a verdict read
+    from it would certify a damaged ledger. The verdict's cause leads the
+    sample, so the pane's clipped prefix carries it.
+
+    The gate is published with the work it names, so the debt is actionable
+    rather than a number: ``owed_detail`` carries each owed row's tape
+    sequence, its role, its class, its record digest and its bound evidence
+    path. A role clears its own row by publishing an outcome that declares
+    that record digest in its structured ``supersedes`` field; nothing else
+    clears it.
+
+    The rows whose defect can never be repaired are counted in
+    ``permanent_defect_rows`` and banded as ``permanent``. They are measured
+    and permanent, so they are published rather than called repairable debt;
+    the verdict's own claim is published beside them in ``verdict_basis``, so
+    a reader never has to guess what the state word says about this ledger.
 
     D counts identical stored path strings. Symlink aliases and traversal are
     not eligible, even when their resolved target is in an allowed directory.
@@ -5249,9 +5500,14 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     # search ran out of budget). The three counts sum to ``permanent_loss``.
     permanent_loss_kind: dict[str, int] = {"append": 0, "rewrite": 0, "unknown": 0}
     permanent_loss_kind_roles: dict[str, int] = {}
+    # The standing audit's own attribution: every violating row, whatever its
+    # class, spread over the roles that hold it. The class-B subset has its
+    # own map above, because a class-B row is a loss the clause cannot undo.
+    standing_loss_roles: dict[str, int] = {}
     for _ts, sequence, role, _name, classes in checked:
         if not classes:
             continue
+        standing_loss_roles[role] = standing_loss_roles.get(role, 0) + 1
         class_rows[classes] = class_rows.get(classes, 0) + 1
         for letter in set(classes):
             class_counts[letter] = class_counts.get(letter, 0) + 1
@@ -5268,18 +5524,209 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     permanent_loss_current = sum(1 for _role, (_ts, _sequence, classes)
                                  in latest.items() if "B" in classes)
     permanent_loss_superseded = permanent_loss - permanent_loss_current
+    # The coverage gaps, split by what they can hide. A gap that binds no
+    # evidence path cannot make the bound set undeterminable: it stays in the
+    # report and is not the verdict's reason.
+    binding = blocking_gaps(coverage)
+    irrelevant = non_blocking_gaps(coverage)
+    # The gate: the rows whose work was lost and that no later, intact
+    # outcome of the same role re-evidenced. The relation that clears a row
+    # is decidable — the structured supersession link, the clause's remedy
+    # naming, or a digest citation — so the gate's count falls when a role
+    # re-evidences its own row, and the verdict is reachable.
+    links, citation_stats = _rebind_links(coverage["events"], checked)
+    by_sequence = {row["sequence"]: row for row in coverage["events"]}
+    # Every violating row is placed in exactly one band, so the bands sum to
+    # the standing audit and no row is quietly dropped from the accounting.
+    # The bands answer different questions:
+    #
+    # * ``owed``       the work was lost and nothing re-evidenced it: the
+    #                   repairable debt, and the gate's own rows.
+    # * ``recoverable`` the bound bytes survive verbatim: the content is
+    #                   intact and only the binding is broken.
+    # * ``disposed``   a later, intact outcome declared the row's record
+    #                   digest in its structured field.
+    # * ``rebound``    a later, intact outcome bound the lost artifact's
+    #                   corrected form under the remedy naming.
+    # * ``cited``      a later, intact outcome's artifact carries the row's
+    #                   record digest. This is the weakest relation and keeps
+    #                   its own band, because a citation cannot be told from
+    #                   an audit that cites the row it diagnosed.
+    # * ``versioned``  a class-A row bound before the allowlist amendment,
+    #                   naming a path inside the owned site: it was compliant
+    #                   under the rule then in force.
+    # * ``permanent``  a defect no later rule can repair: a path bound by two
+    #                   outcomes, or a path bound after the amendment that the
+    #                   current allowlist excludes.
+    band_counts = {"versioned": 0, "permanent": 0, "disposed": 0, "rebound": 0,
+                   "cited": 0, "recoverable": 0, "owed": 0}
+    band_roles: dict[str, dict[str, int]] = {name: {} for name in band_counts}
+    gate_rows: list[dict] = []
+    policy_version_rows = 0
+    for ts, sequence, role, name, classes in violations:
+        event = by_sequence.get(sequence) or {}
+        link = links.get(sequence)
+        link_kind = link[0] if link else None
+        versioned_row = ("A" in classes and ts < EVIDENCE_POLICY_AMENDMENT_TIME
+                         and contained_evidence_path(home, event.get("evidence", {}).get("path")))
+        if versioned_row:
+            # The row was compliant under the rule then in force. The count is
+            # published over rows, not bands: a row that also lost its content
+            # is banded by that loss, and this counter still names the version.
+            policy_version_rows += 1
+        if "B" in classes or "C" in classes:
+            # The content was lost (amended) or is absent (deleted), so the
+            # row's band says what re-evidenced it. Absence takes precedence
+            # over a binding defect: the clause calls a deletion "a distinct
+            # and more severe class", so an ineligible or doubly bound path
+            # does not excuse a file that is gone.
+            if link_kind == "supersedes":
+                # A later, intact outcome of the same role declared this row's
+                # record digest: the role acknowledged and re-evidenced the work.
+                band = "disposed"
+            elif link_kind == "remedy-name":
+                # A later, intact outcome bound the lost artifact's corrected
+                # form under the remedy naming: the work was re-evidenced.
+                band = "rebound"
+            elif link_kind == "digest-cited":
+                # A later, intact outcome's artifact carries this row's record
+                # digest: the work was cited, and the citation is published
+                # with the row so a reader can audit it.
+                band = "cited"
+            elif "B" in classes and amendments.get(sequence) == "append":
+                # The bound bytes survive verbatim at the bound path: the
+                # content is intact and only the binding is broken. Nothing
+                # was lost, so the plant owes no work on it. A deleted file
+                # never reaches here: its bytes do not survive anywhere.
+                band = "recoverable"
+            else:
+                band = "owed"
+        elif "D" in classes:
+            # The path is bound by two outcomes and the store is append-only,
+            # so the second binding can never be undone.
+            band = "permanent"
+        elif "A" in classes:
+            # An ineligible path. Bound before the amendment and inside the
+            # owned site, it was compliant then: a policy version. Bound after
+            # it, or outside the site, no later rule can make it eligible.
+            band = "versioned" if versioned_row else "permanent"
+        else:
+            band = "owed"
+        band_counts[band] += 1
+        roles = band_roles[band]
+        roles[role] = roles.get(role, 0) + 1
+        if band == "owed":
+            gate_rows.append({"sequence": sequence, "role": role, "classes": classes,
+                              "band": band, "record_sha256": event.get("record_sha256"),
+                              "evidence": name,
+                              "amendment": amendments.get(sequence, "unknown")})
+    recoverable_rows = band_counts["recoverable"]
+    gate_roles: dict[str, int] = {}
+    for row in gate_rows:
+        gate_roles[row["role"]] = gate_roles.get(row["role"], 0) + 1
+    link_kinds: dict[str, int] = {}
+    for kind, _successor in links.values():
+        link_kinds[kind] = link_kinds.get(kind, 0) + 1
+    # Every link that cleared a row, with the successor that cleared it. The
+    # citation relation is the weakest of the three, so its rows are published
+    # with the successor's artifact: a reader can see which rows rest on a
+    # citation and judge it.
+    linked_detail = []
+    for sequence, (kind, successor) in sorted(links.items()):
+        successor_event = by_sequence.get(successor) or {}
+        linked_detail.append({
+            "sequence": sequence, "kind": kind, "successor": successor,
+            "role": (by_sequence.get(sequence) or {}).get("role"),
+            "successor_evidence": _display_path(
+                successor_event.get("evidence", {}).get("path", ""), home)})
+    # The rows whose defect can never be repaired: a path bound by two
+    # outcomes (the second binding cannot be unbound from an append-only
+    # store) and a path bound after the amendment that the current allowlist
+    # excludes (the outcome is bound to a path no later rule can make
+    # eligible). A class-A row bound before the amendment is not counted here:
+    # it was compliant when it was bound, unless it names a path outside the
+    # owned site, which was never eligible under any rule. These are defect
+    # classes over rows, not a partition — a row can carry a versioned
+    # class-A defect and a permanent one at the same time.
+    permanent_defect_rows = 0
+    permanent_defect_roles: dict[str, int] = {}
+    for ts, _sequence, role, _name, classes in violations:
+        if "D" in classes:
+            permanent = True
+        elif "A" in classes:
+            # An ineligible path is permanent unless it was compliant when it
+            # was bound: a path inside the owned site, bound before the
+            # amendment, was eligible under the rule then in force. A path
+            # outside the owned site was never eligible under either rule, so
+            # it is permanent whatever date it was bound.
+            event = by_sequence.get(_sequence) or {}
+            versioned = (ts < EVIDENCE_POLICY_AMENDMENT_TIME
+                         and contained_evidence_path(home, event.get("evidence", {}).get("path")))
+            permanent = not versioned
+        else:
+            permanent = False
+        if not permanent:
+            continue
+        permanent_defect_rows += 1
+        permanent_defect_roles[role] = permanent_defect_roles.get(role, 0) + 1
+    # The verdict. The gate decides the drift, and the standing audit decides
+    # the green:
+    #
+    # * ``drift`` — the gate holds at least one row: work that was lost and
+    #   that no later, intact outcome re-evidenced. The condition is measured
+    #   and known, so it is named as drift and not as unknown: unknown means
+    #   "could not be determined", and a determined finding does not belong
+    #   under a soft label. It is also repairable: a role can re-evidence its
+    #   own row, so the gate's count falls under action.
+    # * ``unknown`` — a coverage gap can still hide a bound evidence path, so
+    #   the bound set cannot be derived and the count is a lower bound.
+    # * ``settled`` — the gate is empty and the standing audit still holds
+    #   rows: every violation is accounted for (a policy version, an
+    #   acknowledgement, a repair, a citation, recoverable content, or a
+    #   defect no rule can repair) and no repairable work is owed. It is not
+    #   ``verified``: the ledger's history is not clean, and the word says so
+    #   instead of borrowing a word that means a clean ledger. This is the
+    #   word for a measured and permanent condition, kept apart from
+    #   ``drift``, which is the word for a repairable one.
+    # * ``verified`` — the standing audit holds no violating row at all.
+    if gate_rows:
+        state = "drift"
+    elif binding:
+        state = "unknown"
+    elif violations:
+        state = "settled"
+    else:
+        state = "verified"
+    # The word's own basis, published with it, so a reader never has to guess
+    # what the state word claims about this ledger. The bands beside it say
+    # how much of the standing loss is a policy version, an acknowledgement, a
+    # repair, a citation, recoverable content, a permanent defect, and work
+    # still owed.
+    verdict_basis = (
+        f"owed={len(gate_rows)}: violating rows whose work was lost and that no "
+        f"later intact outcome re-evidenced (all_bad={len(violations)}; "
+        f"cited={band_counts['cited']} rebound={band_counts['rebound']} "
+        f"disposed={band_counts['disposed']} recoverable={recoverable_rows} "
+        f"versioned={band_counts['versioned']} permanent={band_counts['permanent']})")
     # Field order is the pane's visible-prefix order, not a listing order: the
     # pane clips a sample to 120 cells, so a verdict whose cause sits past that
-    # prefix reaches the reader with every visible field clean. The
-    # standing-audit summary and the live window lead the sample, then the read
-    # watermark that bounds them, then the coverage tier.
-    parts = [f"all_bad={len(violations)} permanent_loss={permanent_loss} "
+    # prefix reaches the reader with every visible field clean. The verdict's
+    # own cause leads — the gate's count, then the standing audit it is a
+    # part of — then the live window, then the read watermark that bounds
+    # them, then the coverage tier. The band decomposition is published beside
+    # the verdict in the reading's structured fields, so it does not spend the
+    # pane's scarce prefix.
+    parts = [f"owed={len(gate_rows)} all_bad={len(violations)} "
+             f"permanent_loss={permanent_loss} "
              f"latest_bad={len(latest_bad_roles)} latest_bad_roles={named_bad} "
              f"latest_bad_last={bad_last} read_at={read_at} "
              f"bound={len(checked)} latest_roles={len(latest)}"]
     if incomplete:
-        parts.append(f"coverage_incomplete={len(incomplete)} sequences=" +
+        parts.append(f"coverage_incomplete={len(incomplete)} binding_gaps={len(binding)} sequences=" +
                      ",".join(str(row["sequence"]) for row in incomplete[:3]))
+    if gate_rows:
+        parts.append("owed_roles=" + ",".join(
+            f"{role}:{count}" for role, count in sorted(gate_roles.items())))
     if violations:
         parts.append("violating=" + " ".join(
             f"{role}@{ts.strftime('%Y-%m-%dT%H:%M:%SZ')}:{name}({classes})"
@@ -5287,9 +5734,10 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
         if len(violations) > 3:
             parts.append(f"+{len(violations) - 3}more")
     return {"id": "sense.ledger.evidence-binding",
-            "state": "drift" if latest_bad_roles else "unknown" if incomplete else "verified",
+            "state": state,
             "sample": " ".join(parts), "kind": "read", "read_at": read_at,
             "policy": EVIDENCE_PATH_POLICY,
+            "verdict_basis": verdict_basis,
             "bound": len(checked), "latest_roles": len(latest),
             "latest_bad": len(latest_bad_roles),
             "latest_bad_roles": [f"{role}({classes})" for role, classes in latest_bad_roles],
@@ -5301,8 +5749,58 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
             "permanent_loss_roles": permanent_loss_roles,
             "permanent_loss_kind": permanent_loss_kind,
             "permanent_loss_rewrite_roles": permanent_loss_kind_roles,
+            # Every violating row, attributed to the role that holds it.
+            "standing_loss_roles": standing_loss_roles,
+            # The gate: the violating rows the plant still owes work on. The
+            # relation that clears a row is decidable, so the count falls when
+            # a role re-evidences or acknowledges its own row, and the verdict
+            # is reachable.
+            "owed_rows": len(gate_rows),
+            "owed_roles": dict(sorted(gate_roles.items())),
+            "owed_detail": gate_rows,
+            # The class mix of the gate's own rows, so a reader sees how much
+            # of the debt is lost work and how much is a binding defect.
+            "owed_by_class": {
+                classes: sum(1 for row in gate_rows if row["classes"] == classes)
+                for classes in sorted({row["classes"] for row in gate_rows})},
+            # The bands every violating row falls into. They partition the
+            # standing audit, so their counts sum to ``all_bad``.
+            "remediation_bands": {"versioned": band_counts["versioned"],
+                                  "permanent": band_counts["permanent"],
+                                  "disposed": band_counts["disposed"],
+                                  "rebound": band_counts["rebound"],
+                                  "cited": band_counts["cited"],
+                                  "recoverable": band_counts["recoverable"],
+                                  "owed": band_counts["owed"]},
+            "remediation_band_roles": {name: dict(sorted(roles.items()))
+                                        for name, roles in band_roles.items() if roles},
+            # The rows whose defect can never be repaired, and the class-A rows
+            # split by the policy version they were bound under. A
+            # policy-version row is a labelled reassessment, not damage.
+            "permanent_defect_rows": permanent_defect_rows,
+            "permanent_defect_roles": dict(sorted(permanent_defect_roles.items())),
+            "policy_version_rows": policy_version_rows,
+            "policy_version_current_rows": sum(
+                1 for ts, _sequence, _role, _name, classes in violations
+                if "A" in classes and ts >= EVIDENCE_POLICY_AMENDMENT_TIME),
+            # How the re-evidencing rows were linked, by relation, and every
+            # link with the successor that made it. The citation relation is
+            # the weakest, so its rows are published with their successor's
+            # artifact: a reader can see which rows rest on a citation.
+            "rebind_link_kinds": link_kinds,
+            "linked_detail": linked_detail,
+            # What the citation search cost and what it could not read, so a
+            # reader knows the gate overstates the debt rather than hiding it.
+            "citation_files_searched": citation_stats["citation_files_searched"],
+            "citation_bytes_read": citation_stats["citation_bytes_read"],
+            "citation_files_skipped": citation_stats["citation_files_skipped"],
             "class_counts": class_counts, "class_rows": class_rows,
             "coverage_incomplete": len(incomplete), "incomplete": incomplete,
+            # The gaps that can still hide a bound evidence path, and the ones
+            # that bind nothing and so cannot. The second group is reported
+            # beside the verdict and is not its reason.
+            "binding_gaps": [row["sequence"] for row in binding],
+            "irrelevant_gaps": [row["sequence"] for row in irrelevant],
             "event_sequences": [row["sequence"] for row in coverage["events"]],
             "violations": [f"{role}@{ts.strftime('%Y-%m-%dT%H:%M:%SZ')}:{name}({classes})"
                            for ts, _sequence, role, name, classes in violations]}
