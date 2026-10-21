@@ -173,6 +173,23 @@ def test_changed_outcome_evidence_cannot_suppress_review(home):
     assert any(item["ref"] == "outcomes" for item in kinds(row, "unknown"))
 
 
+def test_outcome_coverage_notice_names_the_failing_evidence_row(home):
+    chain(home)
+    evidence = outcome(home)
+    published = hashlib.sha256(evidence.read_bytes()).hexdigest()
+    evidence.write_text("Changed bytes")
+    publish(home)
+    row = watch.check(home, now=NOW)
+    assert any(item["ref"] == "outcomes:discover" for item in kinds(row, "unknown"))
+    owner_notice = messages(home, recipient="discover", text="Evidence rows for discover")
+    assert owner_notice, "the owner must learn which bound evidence row failed"
+    assert str(evidence) in owner_notice[0].body
+    assert published in owner_notice[0].body
+    plant_notice = messages(home, recipient="health", text="Evidence rows for discover")
+    assert plant_notice, "the plant-level owner must learn the same rows"
+    assert str(evidence) in plant_notice[0].body
+
+
 def test_producer_outcome_coverage_must_cover_new_continuations(home):
     publish(home)
     chain(home)
