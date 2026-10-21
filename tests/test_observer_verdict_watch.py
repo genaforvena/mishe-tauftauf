@@ -82,16 +82,22 @@ def test_run_routes_a_persistent_condition_through_the_detector(tmp_path, exit_c
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     alert = home / "health/observer-verdict-alert.md"
     verdict = home / "health/observer-verdict.json"
+    # The route writes the alert first and appends to the tape second, so the
+    # tape entry is the later of the two: wait for that, not for the alert.
     deadline = time.monotonic() + 10
-    while time.monotonic() < deadline and not alert.exists():
+    entries = []
+    while time.monotonic() < deadline:
         if process.poll() is not None:
             pytest.fail(process.stdout.read() + process.stderr.read())
+        entries = [entry for entry in Feed(home).entries() if entry.source == "observer-verdict"]
+        if entries:
+            break
         time.sleep(0.1)
     process.terminate()
     process.wait(timeout=10)
-    assert alert.exists(), "a disagreement or a persistent UNKNOWN must reach the resolver"
+    assert entries, "a disagreement or a persistent UNKNOWN must reach the resolver"
     row = json.loads(verdict.read_text())
     assert row["verdict"] == ("DISAGREE" if exit_code == 2 else "UNKNOWN")
-    entries = [entry for entry in Feed(home).entries() if entry.source == "observer-verdict"]
-    assert entries and entries[-1].body.startswith("[dm] to=health")
+    assert entries[-1].body.startswith("[dm] to=health")
+    assert alert.exists(), "the route must leave the resolver's alert beside the verdict"
     assert "Resolver health" in alert.read_text()
