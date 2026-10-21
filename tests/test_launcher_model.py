@@ -170,12 +170,21 @@ class LauncherModelTests(unittest.TestCase):
         )
         self.assertEqual(self.seed._launcher_model(path), "vendor/real")
 
+    def test_a_command_that_is_not_the_pane_does_not_compete(self):
+        """Only the pane's own program competes for the reading."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\n/home/user/bin/omp --model=vendor/real\n/bin/echo --model=vendor/decoy\n",
+        )
+        self.assertEqual(self.seed._launcher_model(path), "vendor/real")
+
     def test_two_launches_without_an_exec_settle_nothing(self):
         """The shell runs them in turn; which one the pane runs is not in the bytes."""
         path = write_mind(
             self.directory,
             "probe",
-            "#!/bin/sh\n/home/user/bin/omp --model=vendor/real\n/bin/echo --model=vendor/decoy\n",
+            "#!/bin/sh\n/home/user/bin/omp --model=vendor/real\n/home/user/bin/omp --model=vendor/decoy\n",
         )
         self.assertIsNone(self.seed._launcher_model(path))
 
@@ -259,6 +268,64 @@ class LauncherModelTests(unittest.TestCase):
             "#!/bin/sh\nexec env --unset OLD /home/user/bin/omp --model vendor/real\n",
         )
         self.assertEqual(self.seed._launcher_model(path), "vendor/real")
+
+    def test_an_unwordable_line_refuses_the_script(self):
+        """The shell rejects such a script, so no line of it runs."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            '#!/bin/sh\nexec omp --model="unterminated\nexec omp --model=vendor/decoy\n',
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_a_program_that_is_not_the_pane_is_refused(self):
+        """``/bin/echo --model=...`` prints a model and runs no pane."""
+        path = write_mind(self.directory, "probe", "#!/bin/sh\nexec /bin/echo --model=vendor/decoy\n")
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_a_parameter_expansion_is_refused(self):
+        """An expansion can name another program or inject a flag."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nBIN=echo\nexec /bin/$BIN --model=vendor/decoy\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_an_expanded_flag_is_refused(self):
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nEXTRA=--model=vendor/decoy\nexec omp $EXTRA --model=vendor/real\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_an_unknown_env_option_is_refused(self):
+        """``env`` rejects the option, so no program runs at all."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nexec env --not-an-env-option /home/user/bin/omp --model vendor/real\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_a_wrapper_after_env_is_the_program(self):
+        """``env`` runs an external program, not another shell wrapper."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nexec env command /bin/echo --model=vendor/decoy\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_an_unmodelled_wrapper_is_refused(self):
+        """``command``, ``nohup`` and ``setsid`` have their own option grammars."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\ncommand -p omp --model=vendor/real\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
 
     def test_a_backslash_continues_a_line(self):
         """The flag on the continuation line is the flag of the command."""
