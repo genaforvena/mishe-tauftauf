@@ -203,7 +203,8 @@ def cmd_wall(args) -> int:
     elif args.wall_command == "outcome":
         _require_site_role(args.home, args.owner)
         source = _staging_notes(args.home, args.owner, args.file)
-        print(wall.outcome(args.home, args.owner, args.kind, source.read_text(encoding="utf-8"), args.evidence).sequence)
+        print(wall.outcome(args.home, args.owner, args.kind, source.read_text(encoding="utf-8"),
+                           args.evidence, args.supersedes).sequence)
     elif args.wall_command == "silence":
         from . import activity
         if args.seconds is not None:
@@ -846,7 +847,10 @@ def parser() -> argparse.ArgumentParser:
     p = wall.add_parser("silence"); p.add_argument("--seconds", type=float); p.set_defaults(func=cmd_wall)
     p = wall.add_parser("outcome"); p.add_argument("--owner", required=True)
     p.add_argument("--kind", choices=("accepted", "blocker-resolved", "blocker-retired", "hypothesis-changed"), required=True)
-    p.add_argument("--file", type=Path, required=True); p.add_argument("--evidence", type=Path, required=True); p.set_defaults(func=cmd_wall)
+    p.add_argument("--file", type=Path, required=True); p.add_argument("--evidence", type=Path, required=True)
+    p.add_argument("--supersedes", action="append", default=None,
+                   help="record digest of an earlier outcome this one re-evidences (repeatable)")
+    p.set_defaults(func=cmd_wall)
     p = wall.add_parser("dm"); p.add_argument("--source", required=True); p.add_argument("--to", required=True)
     message = p.add_mutually_exclusive_group(required=True)
     message.add_argument("--file", type=Path); message.add_argument("--text"); p.set_defaults(func=cmd_wall)
