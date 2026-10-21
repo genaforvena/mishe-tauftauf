@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 import re
 
 from .records import REFERENCE_RE
@@ -48,12 +49,40 @@ OUTCOME_PREFIX = 'Wall outcome '
 WORK_CHANNEL_PREFIX = '[work] channel=witness '
 HANDOFF_MARKER = 'HANDOFF:\n'
 
+EVIDENCE_REMEDY_SUFFIX = re.compile(r'^(?P<stem>.+?)-(?P<sfx>v\d+|final|final-v\d+)$')
+"""The clause's own remedy-naming convention, read as an artifact's name.
 
-def eligible_evidence_path(home, value) -> bool:
-    """Decode an owned-site evidence path against the explicit allowlist.
+The vocabulary names the corrected **artifact** (``-v2``, ``-final``), not a
+**status about** it. A ``-ci`` suffix names the CI disposition of the work —
+the run URL, the head SHA, the outcome — and such a note carries none of the
+lost artifact's content, so it cannot be evidence that the work was
+re-evidenced. Measured over the plant's live ledger, that is the difference
+between the two: of the ten remedy-name links, the nine naming a corrected
+artifact were repairs and the single ``-ci`` one was a citation that
+satisfied the naming convention without carrying the work. A convention that
+a status note can satisfy is not a convention about the artifact, so the
+suffix is not in the vocabulary.
+"""
 
-    The caller checks existence and nonempty bytes. This predicate also serves
-    the observer, where a missing formerly eligible path must remain class C.
+
+def remedy_stem(value, vocabulary=None) -> str | None:
+    """The lost artifact's stem when the named path is its corrected form.
+
+    ``None`` when the path is not named under the remedy vocabulary, so the
+    caller sees no relation rather than a wrong one. The vocabulary is an
+    argument so the same population can be read under a different vocabulary
+    without editing this adapter.
+    """
+    pattern = vocabulary if vocabulary is not None else EVIDENCE_REMEDY_SUFFIX
+    match = pattern.match(Path(value).stem)
+    return match.group("stem") if match else None
+
+
+def _contained_parts(home, value):
+    """The site-relative parts of a path inside the owned site, else None.
+
+    Containment is the rule that predates the allowlist: the bound file must
+    be inside the owned site, with no traversal and no symlink component.
     """
     from pathlib import Path
     home = Path(home).resolve()
@@ -62,22 +91,48 @@ def eligible_evidence_path(home, value) -> bool:
         try:
             relative = path.relative_to(home)
         except ValueError:
-            return False
+            return None
     else:
         relative = path
     if any(part in {".", ".."} for part in relative.parts):
-        return False
+        return None
     candidate = path if path.is_absolute() else home / path
     try:
         resolved = candidate.resolve()
         parts = resolved.relative_to(home).parts
     except (OSError, RuntimeError, ValueError):
-        return False
+        return None
     current = home
     for part in relative.parts:
         current = current / part
         if current.is_symlink():
-            return False
+            return None
+    return parts
+
+
+def contained_evidence_path(home, value) -> bool:
+    """Whether the path names a file inside the owned site.
+
+    This is the rule that was in force before the 2026-10-16 allowlist
+    amendment: a single file inside the owned site, with no traversal and no
+    symlink component. A row bound before the amendment that names such a
+    path was compliant then, so the current allowlist's exclusion of it is a
+    policy version rather than a violation under the rule then in force. A
+    path outside the site was never eligible under either rule, so it is
+    never a version.
+    """
+    return _contained_parts(home, value) is not None
+
+
+def eligible_evidence_path(home, value) -> bool:
+    """Decode an owned-site evidence path against the explicit allowlist.
+
+    The caller checks existence and nonempty bytes. This predicate also serves
+    the observer, where a missing formerly eligible path must remain class C.
+    """
+    parts = _contained_parts(home, value)
+    if parts is None:
+        return False
     if len(parts) == 2 and parts[0] == "artifacts":
         return True
     if len(parts) == 2 and parts[0] == "discovery":
@@ -240,6 +295,36 @@ def decode_evidence(value: object) -> dict | None:
     if not isinstance(digest, str) or _DIGEST.fullmatch(digest) is None:
         return None
     return {'path': path, 'sha256': digest}
+
+
+def decode_supersedes(value: object) -> list[str]:
+    """The record digests a publication claims to supersede.
+
+    The supersession link is the plant's decidable work-identity relation: an
+    outcome that re-evidences an earlier one names that outcome's record
+    digest in a structured field, so a consumer can check the link without
+    reading prose. The digests are decoded values, so the link is admissible
+    under the parsing policy where a digest mentioned in prose is not.
+
+    A value that is not a list of record digests decodes to no link rather
+    than to a guess: a malformed field must not be read as a claim, and a
+    publication that carries none is simply a publication that supersedes
+    nothing.
+
+    A list holding **any** malformed element decodes to no link at all, not
+    to the well-formed part of it. A field that claims two supersessions and
+    names one of them badly is a malformed field; keeping the element that
+    happens to parse would let a malformed publication dispose a real row's
+    debt, which is the failure the field's own contract forbids.
+    """
+    if not isinstance(value, list):
+        return []
+    digests = []
+    for item in value:
+        if not isinstance(item, str) or _DIGEST.fullmatch(item) is None:
+            return []
+        digests.append(item)
+    return digests
 
 
 def decode_work_handoff(body: str) -> str | None:

@@ -185,7 +185,15 @@ file. `artifacts/` remains the default location for per-outcome evidence, and
 a bound artifact is retained evidence, not a scaffold to clean up once the
 outcome is recorded. Correct an already-bound artifact by writing a new
 artifact and citing it in a new outcome; the earlier outcome cannot be
-rebound, so an in-place edit drops it from the count permanently.
+rebound, so an in-place edit drops it from the count permanently. The
+corrected artifact is written under the lost artifact's own stem plus a
+remedy suffix, and the suffix vocabulary is `v<N>`, `final` and `final-v<N>`:
+the suffix names the corrected artifact, not a status about it. A status
+suffix such as `-ci` is not a remedy — a CI note carries the run URL, the
+head SHA and the outcome, not the lost artifact's content — so the evidence
+gate does not read it as a repair and the row it would have cleared stays
+owed. Declare the link instead where the relation is known: `wall outcome
+--supersedes <record digest>` names the outcome being re-evidenced.
 The four requirements are independent — eligible path (A), unedited (B), present
 (C), cited once (D): a file can be unedited yet sit outside the allowlist, be
 missing, or be cited by a second outcome, and is ineligible for that reason

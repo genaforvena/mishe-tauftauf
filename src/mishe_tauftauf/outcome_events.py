@@ -9,6 +9,7 @@ from .feed import parse_feed
 from .outcome_publication import (
     body_lines,
     decode_evidence,
+    decode_supersedes,
     decode_text,
     decode_timestamp,
     eligible_evidence_path,
@@ -49,6 +50,20 @@ def blocking_gaps(coverage: dict) -> list:
     writer and the reader of the plant's state cannot disagree.
     """
     return [row for row in coverage["incomplete"] if row.get("binding", "unknown") != "none"]
+
+
+def non_blocking_gaps(coverage: dict) -> list:
+    """The gaps that bind nothing, so they cannot hide a bound evidence path.
+
+    The complement of :func:`blocking_gaps`, so the reader of a coverage gap
+    and the writer that fails closed on one cannot disagree about what a gap
+    does. Such a gap stays in the coverage report — it is a real gap in the
+    tape — but it cannot make the bound set undeterminable, so it is not a
+    reason for a reading to be UNKNOWN.
+    """
+    blocking = {row["sequence"] for row in blocking_gaps(coverage)}
+    return [row for row in coverage.get("incomplete") or []
+            if row["sequence"] not in blocking]
 
 
 def classify_outcomes(home: Path, clause_time: datetime, *, entries=None) -> dict:
@@ -120,11 +135,13 @@ def classify_outcomes(home: Path, clause_time: datetime, *, entries=None) -> dic
             evidence = decode_evidence(payload.get('evidence'))
             if evidence is None:
                 raise ValueError('invalid outcome evidence binding')
+            supersedes = decode_supersedes(payload.get('supersedes'))
         except (OSError, ValueError, TypeError) as exc:
             incomplete.append({'sequence': entry.sequence, 'reason': str(exc), 'binding': binding})
             continue
         digest = reference_digest(refs[0])
         events.append({'site': str(home), 'sequence': entry.sequence,
                        'timestamp': entry.timestamp, 'record_sha256': digest,
-                       'role': payload['role'], 'kind': payload['kind'], 'evidence': evidence})
+                       'role': payload['role'], 'kind': payload['kind'], 'evidence': evidence,
+                       'supersedes': supersedes})
     return {'events': events, 'incomplete': incomplete, 'unavailable': None}

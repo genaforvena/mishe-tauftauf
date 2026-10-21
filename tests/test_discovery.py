@@ -2887,7 +2887,8 @@ def test_settle_result_mix_missing_tape(tmp_path):
 
 
 def _write_evidenced_outcome(home: Path, role: str, evidence: Path,
-                             digest: str | None = None) -> str:
+                             digest: str | None = None,
+                             supersedes: list[str] | None = None) -> str:
     (home / "records").mkdir(parents=True, exist_ok=True)
     if digest is None:
         digest = hashlib.sha256(evidence.read_bytes()).hexdigest()
@@ -2895,6 +2896,8 @@ def _write_evidenced_outcome(home: Path, role: str, evidence: Path,
                "payload": {"role": role, "kind": "accepted", "text": "outcome",
                            "evidence": {"path": str(evidence),
                                         "sha256": digest}}}
+    if supersedes:
+        payload["payload"]["supersedes"] = list(supersedes)
     data = json.dumps(payload, sort_keys=True, separators=(",", ":"),
                       ensure_ascii=False, allow_nan=False).encode("utf-8")
     record_digest = hashlib.sha256(data).hexdigest()
@@ -3054,8 +3057,11 @@ def test_evidence_binding_flags_outside_artifacts(tmp_path):
          f"[record] records/{digest}.json sha256={digest}\n"),
     ])
     result = discovery._ledger_evidence_binding(home)
-    assert result["state"] == "drift"
+    # The row was bound before the allowlist amendment, so it is a policy
+    # version: accounted for, nothing owed, and the verdict is settled.
+    assert result["state"] == "settled"
     assert result["all_bad"] == 1
+    assert result["policy_version_rows"] == 1
     assert "alice.md(A)" in result["sample"]
 
 
@@ -3075,7 +3081,11 @@ def test_evidence_binding_resolves_a_dot_dot_path_before_the_artifacts_test(tmp_
          f"[record] records/{digest}.json sha256={digest}\n"),
     ])
     result = discovery._ledger_evidence_binding(home)
-    assert result["state"] == "drift"
+    # A traversal path is never eligible, so the row is measured and permanent
+    # rather than repairable debt: the verdict reads settled, and the row stays
+    # published in the standing audit and in the sample.
+    assert result["state"] == "settled"
+    assert result["remediation_bands"]["permanent"] == 1
     assert "discover.md(A)" in result["sample"]
 
 
@@ -3094,7 +3104,11 @@ def test_evidence_binding_flags_reused_path(tmp_path):
          f"[record] records/{digest_b}.json sha256={digest_b}\n"),
     ])
     result = discovery._ledger_evidence_binding(home)
-    assert result["state"] == "drift"
+    # A path bound by two outcomes cannot be unbound from an append-only store,
+    # so the rows are measured and permanent rather than repairable debt: the
+    # verdict reads settled, and both rows stay published.
+    assert result["state"] == "settled"
+    assert result["remediation_bands"]["permanent"] == 2
     # Both outcomes cite one path: each violates the never-reused requirement.
     assert result["all_bad"] == 2
     assert result["latest_bad"] == 2
@@ -3119,9 +3133,10 @@ def test_evidence_binding_latest_window_clean_while_all_has_history(tmp_path):
          f"[record] records/{fresh_digest}.json sha256={fresh_digest}\n"),
     ])
     result = discovery._ledger_evidence_binding(home)
-    # State follows the live window: bob's latest outcome is clean, so the
-    # sense reads verified while the standing audit keeps the repaired row.
-    assert result["state"] == "verified"
+    # The verdict follows the standing audit: bob's latest outcome is clean,
+    # so the live window is empty, but the audit keeps the amended row and the
+    # ledger is damaged, so the reading says drift.
+    assert result["state"] == "drift"
     assert result["all_bad"] == 1
     assert result["latest_bad"] == 0
     assert result["latest_roles"] == 1
