@@ -117,6 +117,22 @@ def test_genome_continuation_is_owned_by_health(home):
     assert finding["primary"] == ["health", "genome"]
 
 
+def test_a_role_lifecycle_gap_reaches_the_role_that_owns_it(home):
+    # Two wakes for one role with no settlement between them make the second
+    # wake supersede the first: the role's own lifecycle coverage is
+    # incomplete. The gap branch emits "lifecycle:<role>", so the role that
+    # owns the broken chain must be routed, exactly as for "outcomes:<role>".
+    append(home, "seed", "seed wake discover observation=1", age=120)
+    append(home, "seed", "seed wake discover observation=1", age=60)
+    publish(home)
+    row = watch.check(home, now=NOW)
+    finding = kinds(row, "unknown")[0]
+    assert finding["id"] == "unknown:lifecycle:discover"
+    assert len(messages(home, recipient="discover", text="unknown:lifecycle:discover")) == 1
+    # The resolver still holds the plant-wide view of the condition.
+    assert len(messages(home, recipient="health", text="unknown:lifecycle:discover")) == 1
+
+
 def test_only_matching_continuations_inside_window_count(home):
     chain(home, count=5)
     append(home, "discover", "seed yield discover wake=1 continue=1", age=1)
