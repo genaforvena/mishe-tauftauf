@@ -19,10 +19,20 @@ the guard suite passed throughout.
 These tests exercise the detector against synthetic repositories, so a
 regression in the detector is caught without depending on the plant's own
 policy staying as it is.
+
+The budget is a *count* per expression, and the tree does not always hold
+that many sites.  A free slot is a hole: a new parsing site that reuses an
+expression the budget already allows changes no policy, passes the guard, and
+grows the debt.  Measured on this plant on 2026-10-21 (discover wake 83659):
+16 such slots, 6 of them reachable by copying an expression that exists
+elsewhere in the tree.  The freeze therefore also records what the tree really
+held, and a site the freeze does not know is new debt.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -31,14 +41,34 @@ REPO = Path(__file__).resolve().parents[1]
 CHECK = REPO / "checks" / "parsing-legacy-freeze.py"
 FP_A = "a" * 64
 FP_B = "b" * 64
+CORE_SOURCE = "value = raw.split(':')\n"
 GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
            "PATH": "/usr/bin:/bin"}
 
 
+def fingerprint_of(source: str) -> str:
+    """The guard's own fingerprint for the first parsing site in `source`."""
+    spec = importlib.util.spec_from_file_location("check_parsing_test",
+                                                  REPO / "tools" / "check_parsing.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module.inspect_source("src/core.py", source)[0].fingerprint
+
+
+FP_CORE = fingerprint_of(CORE_SOURCE)
+
+
 def run(repo: Path, *extra: str, check: Path = CHECK) -> subprocess.CompletedProcess:
     return subprocess.run([sys.executable, str(check), "--home", str(REPO),
                            "--repo", str(repo), *extra], capture_output=True, text=True)
+
+
+def run_guard(repo: Path) -> subprocess.CompletedProcess:
+    """The plant's own guard, on the fixture's bytes."""
+    return subprocess.run([sys.executable, "tools/check_parsing.py"], cwd=repo,
+                          capture_output=True, text=True)
 
 
 def git(repo: Path, *args: str) -> None:
@@ -49,10 +79,13 @@ def make_repo(tmp_path: Path, legacy: dict, check: Path = CHECK) -> Path:
     """A repository whose policy carries `legacy` and whose freeze matches it."""
     repo = tmp_path / "repo"
     (repo / "src").mkdir(parents=True)
+    (repo / "tools").mkdir()
+    shutil.copy(REPO / "tools" / "check_parsing.py", repo / "tools" / "check_parsing.py")
     (repo / "src" / "adapter.py").write_text("", encoding="utf-8")
-    (repo / "src" / "core.py").write_text("value = raw.split(':')\n", encoding="utf-8")
+    (repo / "src" / "core.py").write_text(CORE_SOURCE, encoding="utf-8")
     (repo / "parsing-policy.json").write_text(
-        json.dumps({"version": 1, "boundaries": ["src/adapter.py"], "legacy": legacy}, indent=2),
+        json.dumps({"version": 1, "boundaries": ["src/adapter.py", "tools/check_parsing.py"],
+                    "legacy": legacy}, indent=2),
         encoding="utf-8")
     git(repo, "init", "-q")
     git(repo, "add", "-A")
@@ -177,6 +210,59 @@ def test_the_repository_budget_is_not_wider_than_the_freeze():
     assert "PASS" in result.stdout
 
 
+def test_a_new_site_inside_a_free_budget_slot_is_new_debt(tmp_path):
+    """The hole: a free slot takes a new site, the guard passes, the debt grows.
+
+    The policy allows two sites of one expression and the tree holds one.  A
+    second site changes no policy byte; the guard consumes the free slot and
+    passes; the freeze must still see the debt grow.
+    """
+    repo = make_repo(tmp_path, {"src/core.py": {FP_CORE: 2}})
+    assert run(repo).returncode == 0
+    (repo / "src" / "core.py").write_text(CORE_SOURCE + "second = raw.split(':')\n", encoding="utf-8")
+    guard = run_guard(repo)
+    assert guard.returncode == 0, guard.stdout + guard.stderr
+    result = run(repo, "--working-tree")
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "the tree holds 2 site(s)" in result.stdout
+    assert "without a policy edit" in result.stdout
+
+
+def test_a_migration_that_drops_a_site_passes_and_names_the_allowance(tmp_path):
+    """A tree that holds fewer sites than the freeze records is a migration."""
+    repo = make_repo(tmp_path, {"src/core.py": {FP_CORE: 1}})
+    (repo / "src" / "core.py").write_text("value = 1\n", encoding="utf-8")
+    result = run(repo, "--working-tree")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "the tree dropped" in result.stdout
+
+
+def test_a_freeze_without_observed_counts_is_unknown_and_never_ok(tmp_path):
+    """A record that cannot say what the tree held cannot say the debt is frozen."""
+    repo = make_repo(tmp_path, {"src/core.py": {FP_A: 1}})
+    path = repo / "parsing-legacy-freeze.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["version"] = 1
+    for entry in data["paths"].values():
+        entry.pop("observed", None)
+        entry.pop("observed_sites", None)
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    result = run(repo, "--working-tree")
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert "UNKNOWN" in result.stderr
+
+
+def test_a_baseline_update_refuses_to_grow_the_observed_debt(tmp_path):
+    """The freeze may not be re-based to accept a new site that appeared."""
+    repo = make_repo(tmp_path, {"src/core.py": {FP_CORE: 2}})
+    before = (repo / "parsing-legacy-freeze.json").read_text(encoding="utf-8")
+    (repo / "src" / "core.py").write_text(CORE_SOURCE + "second = raw.split(':')\n", encoding="utf-8")
+    result = run(repo, "--update-baseline", "--working-tree")
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "REFUSED" in result.stdout
+    assert (repo / "parsing-legacy-freeze.json").read_text(encoding="utf-8") == before
+
+
 def _mutant(tmp_path: Path, name: str, old: str, new: str) -> Path:
     """A copy of the detector with one decision changed."""
     source = CHECK.read_text(encoding="utf-8")
@@ -190,6 +276,7 @@ MUTANTS = (
     ("new-path", 'if path not in freeze:', 'if False:'),
     ("grow", 'if got["sites"] > allowed["sites"]:', 'if False:'),
     ("rewrite", 'and got["digest"] != allowed["digest"]', 'and False'),
+    ("observed", 'if count > was:', 'if False:'),
     ("verdict", '        return 2\n    total = sum', '        return 0\n    total = sum'),
 )
 
@@ -201,16 +288,21 @@ def test_each_mutant_is_caught(tmp_path):
     read a PASS as an observation.
     """
     scenarios = {
-        "new-path": ({"src/core.py": {FP_A: 1}}, {"src/core.py": {FP_A: 1}, "src/other.py": {FP_B: 1}}),
-        "grow": ({"src/core.py": {FP_A: 1}}, {"src/core.py": {FP_A: 2}}),
-        "rewrite": ({"src/core.py": {FP_A: 1}}, {"src/core.py": {FP_B: 1}}),
-        "verdict": ({"src/core.py": {FP_A: 1}}, {"src/core.py": {FP_A: 1}, "src/other.py": {FP_B: 1}}),
+        "new-path": ({"src/core.py": {FP_A: 1}}, {"src/core.py": {FP_A: 1}, "src/other.py": {FP_B: 1}}, None),
+        "grow": ({"src/core.py": {FP_A: 1}}, {"src/core.py": {FP_A: 2}}, None),
+        "rewrite": ({"src/core.py": {FP_A: 1}}, {"src/core.py": {FP_B: 1}}, None),
+        "observed": ({"src/core.py": {FP_CORE: 2}}, None,
+                     CORE_SOURCE + "second = raw.split(':')\n"),
+        "verdict": ({"src/core.py": {FP_A: 1}}, {"src/core.py": {FP_A: 1}, "src/other.py": {FP_B: 1}}, None),
     }
     for name, old, new in MUTANTS:
         mutant = _mutant(tmp_path, name, old, new)
-        legacy, widened = scenarios[name]
+        legacy, widened, tree = scenarios[name]
         repo = make_repo(tmp_path / name, legacy, check=mutant)
-        write_legacy(repo, widened)
+        if widened is not None:
+            write_legacy(repo, widened)
+        if tree is not None:
+            (repo / "src" / "core.py").write_text(tree, encoding="utf-8")
         result = run(repo, "--working-tree", check=mutant)
         assert result.returncode != 2, (
             f"mutant {name} still reports the widening as a failure: "
