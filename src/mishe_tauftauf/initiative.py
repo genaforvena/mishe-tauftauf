@@ -45,7 +45,7 @@ LIMITS = [
     "Patch records do not record a role: all patch attribution remains UNKNOWN; no filename/prose inference.",
     "Patch state is the latest saved scoped exercise, not permanent runtime health or a complete attempt history.",
     "Open references are existing unfinished records, not a new task ledger. Absence is not success.",
-    "Window counts exclude older events; current gaps may predate the window. Truncated/missing history is UNKNOWN.",
+    "newest_checked_evidence is the age of the newest digest-checked outcome evidence in this window: evidence recency, not usefulness, capability or a work quota.",
 ]
 
 
@@ -198,7 +198,8 @@ def collect(home, *, now=None, entries=None):
         role_names.add(name)
         if name not in role_data:
             role_data[name] = {"state": "UNKNOWN", "wakes": 0, "settlements": {}, "open_wakes": [],
-                               "lifecycle_gaps": [], "outcomes": {}, "outcome_gaps": [], "predictions": []}
+                               "lifecycle_gaps": [], "outcomes": {}, "outcome_gaps": [], "predictions": [],
+                               "newest_checked_evidence": None}
         return role_data[name]
 
     pending, lifecycle_gaps = {}, []
@@ -263,6 +264,9 @@ def collect(home, *, now=None, entries=None):
         row = role(event["role"])
         if item["state"] == "OBSERVED":
             row["outcomes"][event["kind"]] = row["outcomes"].get(event["kind"], 0) + 1
+            age = (now - _time(item["timestamp"])).total_seconds()
+            if row["newest_checked_evidence"] is None or age < row["newest_checked_evidence"]:
+                row["newest_checked_evidence"] = age
         else:
             row["outcome_gaps"].append(item)
     source_by_sequence = {entry.sequence: entry.source for entry in window_entries}
@@ -362,7 +366,9 @@ def _lines(report):
     for name, row in visible_roles[:16]:
         settled = ",".join(f"{key}={value}" for key, value in sorted(row["settlements"].items())) or "none recorded"
         outcomes = ",".join(f"{key}={value}" for key, value in sorted(row["outcomes"].items())) or "none recorded"
-        result.append(f"{name}: {row['state']}; wakes={row['wakes']} settled[{settled}] outcomes[{outcomes}] evidence-UNKNOWN={len(row['outcome_gaps'])}")
+        recency = (f"checked-evidence-age={row['newest_checked_evidence']:.0f}s"
+                   if row["newest_checked_evidence"] is not None else "checked-evidence-age=none")
+        result.append(f"{name}: {row['state']}; wakes={row['wakes']} settled[{settled}] outcomes[{outcomes}] {recency} evidence-UNKNOWN={len(row['outcome_gaps'])}")
         for item in row["open_wakes"]:
             result.append(f"  open wake {item['ref']} age={item['age_seconds']:.0f}s")
     if len(visible_roles) > 16:
