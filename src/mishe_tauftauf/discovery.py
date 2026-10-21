@@ -5062,15 +5062,35 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     rows. ``latest_bad_last`` stamps each live-bad role's last outcome time:
     the live window is the latest outcome per role over the whole post-clause
     set, so it is unbounded in time and an inactive role's row stands until
-    current. ``count_excluded`` names retained-byte violations (B). The
-    allowlist contains direct single files under ``artifacts/``, matching
-    traversal are class A. The sample preserves the standing-audit cause,
-    live window, read watermark and coverage tier within the pane's clipped
-    prefix. State follows the live window: ``drift`` when a role's latest
-    outcome violates, ``verified`` when every role's latest outcome is clean;
-    the standing audit (``all_bad``, ``violations``) retains the append-only
-    history beside the verdict. Incomplete or unavailable coverage, or no
-    eligible event, stays ``unknown``.
+    current. The allowlist contains direct single files under ``artifacts/``,
+    matching traversal are class A.
+
+    The class mix is reported as structured fields, so a consumer reads it
+    without parsing the class letters out of the ``violating`` strings.
+    ``class_counts`` counts the violating rows carrying each class (a row may
+    carry several, so these counts exceed the row count) and ``class_rows``
+    counts the rows by their exact class string, whose counts sum to
+    ``all_bad``.
+
+    ``permanent_loss`` names the class-B rows: the bound file was amended
+    after the binding, so that outcome is dropped from the evidenced-outcome
+    count and cannot be rebound (the clause). It sits beside the live window
+    because it answers a different question from ``all_bad``: ``all_bad``
+    counts every violating row, while ``permanent_loss`` names the outcomes
+    whose evidence cannot be recovered. ``permanent_loss_current`` is the
+    subset that is still a role's latest outcome — that role is non-compliant
+    now and must publish a new outcome with a new artifact — and
+    ``permanent_loss_roles`` spreads the class-B rows over the roles that
+    hold them, so a reader sees that the loss is spread rather than
+    concentrated.
+
+    The sample preserves the standing-audit cause, live window, read
+    watermark and coverage tier within the pane's clipped prefix. State
+    follows the live window: ``drift`` when a role's latest outcome violates,
+    ``verified`` when every role's latest outcome is clean; the standing
+    audit (``all_bad``, ``permanent_loss``, ``violations``) retains the
+    append-only history beside the verdict. Incomplete or unavailable
+    coverage, or no eligible event, stays ``unknown``.
 
     D counts identical stored path strings. Symlink aliases and traversal are
     not eligible, even when their resolved target is in an allowed directory.
@@ -5134,13 +5154,35 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     bad_last_rows = [(role, latest[role][0]) for role, _classes in latest_bad_roles]
     bad_last = ",".join(f"{role}@{ts.strftime('%Y-%m-%dT%H:%M:%SZ')}"
                         for role, ts in bad_last_rows) or "none"
-    count_excluded = sum(1 for row in checked if "B" in row[4])
+    # The class mix, as structured fields. ``class_counts`` counts the
+    # violating rows carrying each class, so a row with two classes is counted
+    # under both and the counts exceed the row count; ``class_rows`` counts
+    # the rows by their exact class string, so its counts sum to ``all_bad``.
+    class_counts: dict[str, int] = {}
+    class_rows: dict[str, int] = {}
+    permanent_loss = 0
+    permanent_loss_roles: dict[str, int] = {}
+    for _ts, _sequence, role, _name, classes in checked:
+        if not classes:
+            continue
+        class_rows[classes] = class_rows.get(classes, 0) + 1
+        for letter in set(classes):
+            class_counts[letter] = class_counts.get(letter, 0) + 1
+        if "B" in classes:
+            permanent_loss += 1
+            permanent_loss_roles[role] = permanent_loss_roles.get(role, 0) + 1
+    # A class-B row stays excluded from the evidenced count forever, but it is
+    # the role's current outcome only until that role publishes another one.
+    # The two counts answer different questions, so the reading reports both.
+    permanent_loss_current = sum(1 for _role, (_ts, _sequence, classes)
+                                 in latest.items() if "B" in classes)
+    permanent_loss_superseded = permanent_loss - permanent_loss_current
     # Field order is the pane's visible-prefix order, not a listing order: the
     # pane clips a sample to 120 cells, so a verdict whose cause sits past that
     # prefix reaches the reader with every visible field clean. The
     # standing-audit summary and the live window lead the sample, then the read
     # watermark that bounds them, then the coverage tier.
-    parts = [f"all_bad={len(violations)} count_excluded={count_excluded} "
+    parts = [f"all_bad={len(violations)} permanent_loss={permanent_loss} "
              f"latest_bad={len(latest_bad_roles)} latest_bad_roles={named_bad} "
              f"latest_bad_last={bad_last} read_at={read_at} "
              f"bound={len(checked)} latest_roles={len(latest)}"]
@@ -5162,7 +5204,11 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
             "latest_bad_roles": [f"{role}({classes})" for role, classes in latest_bad_roles],
             "latest_bad_last": [f"{role}@{ts.strftime('%Y-%m-%dT%H:%M:%SZ')}"
                                 for role, ts in bad_last_rows],
-            "all_bad": len(violations), "count_excluded": count_excluded,
+            "all_bad": len(violations), "permanent_loss": permanent_loss,
+            "permanent_loss_current": permanent_loss_current,
+            "permanent_loss_superseded": permanent_loss_superseded,
+            "permanent_loss_roles": permanent_loss_roles,
+            "class_counts": class_counts, "class_rows": class_rows,
             "coverage_incomplete": len(incomplete), "incomplete": incomplete,
             "event_sequences": [row["sequence"] for row in coverage["events"]],
             "violations": [f"{role}@{ts.strftime('%Y-%m-%dT%H:%M:%SZ')}:{name}({classes})"
