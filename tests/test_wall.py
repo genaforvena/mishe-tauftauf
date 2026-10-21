@@ -1193,6 +1193,73 @@ def test_wall_outcome_refuses_already_bound_evidence_path(tmp_path):
         wall.outcome(tmp_path, "health", "accepted", "Second outcome.", evidence)
 
 
+def test_wall_outcome_publishes_the_supersession_link(tmp_path):
+    """The writer names the record digest an outcome re-evidences.
+
+    The reading side decodes a supersession link from the record payload, but
+    only a publication that actually carries one can produce it. This pins the
+    writing half: the link is in the structured payload, the reader sees it,
+    and it is not prose.
+    """
+    from mishe_tauftauf import wall
+    from mishe_tauftauf.records import payload
+    from mishe_tauftauf.outcome_events import classify_outcomes
+    setup_wall(tmp_path)
+    evidence = tmp_path / "artifacts" / "recovered.md"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text("recovered bytes")
+    earlier = hashlib.sha256(b"earlier record").hexdigest()
+    wall.outcome(tmp_path, "discover", "hypothesis-changed", "Re-evidenced row.",
+                 evidence, supersedes=[earlier])
+    entry = Feed(tmp_path).entries()[-1]
+    assert payload(entry)["supersedes"] == [earlier]
+    events = classify_outcomes(tmp_path, datetime(2026, 1, 1, tzinfo=timezone.utc))["events"]
+    assert [event["supersedes"] for event in events] == [[earlier]]
+
+
+def test_wall_outcome_refuses_a_malformed_supersession_digest(tmp_path):
+    """A link that names nothing is refused, not published as a claim."""
+    from mishe_tauftauf import wall
+    setup_wall(tmp_path)
+    evidence = tmp_path / "artifacts" / "recovered.md"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text("recovered bytes")
+    with pytest.raises(ValueError, match="supersedes"):
+        wall.outcome(tmp_path, "discover", "hypothesis-changed", "Bad link.", evidence,
+                     supersedes=["not-a-digest"])
+    assert not [entry for entry in Feed(tmp_path).entries()
+                if entry.body.startswith("Wall outcome ")]
+
+
+def test_wall_outcome_without_a_supersession_carries_no_link(tmp_path):
+    """A publication that supersedes nothing claims nothing."""
+    from mishe_tauftauf import wall
+    from mishe_tauftauf.records import payload
+    setup_wall(tmp_path)
+    evidence = tmp_path / "artifacts" / "plain.md"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text("plain bytes")
+    wall.outcome(tmp_path, "discover", "accepted", "Plain outcome.", evidence)
+    assert "supersedes" not in payload(Feed(tmp_path).entries()[-1])
+
+
+def test_wall_outcome_cli_writes_the_supersession_link(tmp_path):
+    """The flag reaches the record; the link is not a prose convention."""
+    from mishe_tauftauf.cli import main
+    from mishe_tauftauf.records import payload
+    setup_wall(tmp_path)
+    note = tmp_path / "note.md"
+    note.write_text("Re-evidenced the amended row with a copy of its current bytes.")
+    evidence = tmp_path / "artifacts" / "recovered.md"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text("recovered bytes")
+    earlier = hashlib.sha256(b"earlier record").hexdigest()
+    assert main(["--home", str(tmp_path), "wall", "outcome", "--owner", "discover",
+                 "--kind", "hypothesis-changed", "--file", str(note),
+                 "--evidence", str(evidence), "--supersedes", earlier]) == 0
+    assert payload(Feed(tmp_path).entries()[-1])["supersedes"] == [earlier]
+
+
 def test_wall_outcome_concurrent_duplicate_is_refused(tmp_path):
     """Two processes cannot bind one evidence path in concurrent publications."""
     setup_wall(tmp_path)

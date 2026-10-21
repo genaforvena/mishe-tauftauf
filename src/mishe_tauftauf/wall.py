@@ -13,7 +13,7 @@ import shlex
 from .feed import Feed, publication_lock
 from .chat_protocol import decode_lifecycle
 from .outcome_events import blocking_gaps, classify_outcomes, eligible_evidence_path
-from .outcome_publication import OUTCOME_KINDS
+from .outcome_publication import OUTCOME_KINDS, decode_supersedes
 
 WALL_MAX_BYTES = 16384
 """Hard byte bound for one edited wall; walls are bounded prose, unlike chat.log."""
@@ -148,20 +148,28 @@ def _bound_evidence_paths(home: Path) -> set[str]:
     return {row["evidence"]["path"] for row in coverage["events"]}
 
 
-def outcome(home: Path, role: str, kind: str, text: str, evidence: Path):
-    """Record an evidence-backed contribution, not a task transition or acceptance gate."""
+def outcome(home: Path, role: str, kind: str, text: str, evidence: Path,
+            supersedes: list[str] | None = None):
+    """Record an evidence-backed contribution, not a task transition or acceptance gate.
+
+    ``supersedes`` names the record digests of earlier outcomes this
+    publication re-evidences. The link is carried in the record payload's
+    structured field, so the plant's work-identity relation is decidable
+    without reading prose.
+    """
     from .observations import validate_slug
     validate_slug(role)
     if kind not in OUTCOME_KINDS or not text.strip():
         raise ValueError("outcome requires a supported kind and nonempty prose")
     try:
-        return _publish_outcome(home, role, kind, text, evidence)
+        return _publish_outcome(home, role, kind, text, evidence, supersedes)
     except ValueError as exc:
         _audit_outcome_refusal(home, role, kind, str(exc), getattr(exc, "gaps", []))
         raise
 
 
-def _publish_outcome(home: Path, role: str, kind: str, text: str, evidence: Path):
+def _publish_outcome(home: Path, role: str, kind: str, text: str, evidence: Path,
+                     supersedes: list[str] | None = None):
     original_evidence = evidence if evidence.is_absolute() else Path.cwd() / evidence
     if not eligible_evidence_path(home, original_evidence):
         raise ValueError(
@@ -171,6 +179,12 @@ def _publish_outcome(home: Path, role: str, kind: str, text: str, evidence: Path
     if not evidence.is_file():
         raise ValueError("outcome evidence must be an existing file")
     evidence_str = str(evidence)
+    # The supersession link is a structured field, so it is decoded rather than
+    # read out of prose. A malformed digest is refused here rather than
+    # published as a link that names nothing.
+    linked = decode_supersedes(supersedes)
+    if supersedes and len(linked) != len(supersedes):
+        raise ValueError("outcome supersedes must name record digests")
     # Serialize the duplicate-path check, evidence snapshot and publication.
     # Later external edits remain detectable by the observer.
     with publication_lock(home):
@@ -180,10 +194,12 @@ def _publish_outcome(home: Path, role: str, kind: str, text: str, evidence: Path
         data = evidence.read_bytes()
         if not data:
             raise ValueError("outcome evidence must not be empty")
+        payload = {"role": role, "kind": kind, "text": text.strip(),
+                   "evidence": {"path": str(evidence), "sha256": hashlib.sha256(data).hexdigest()}}
+        if linked:
+            payload["supersedes"] = linked
         return Feed(home).append_record(role, f"Wall outcome {kind} by {role}\n{text.strip()}",
-            {"role": role, "kind": kind, "text": text.strip(),
-             "evidence": {"path": str(evidence), "sha256": hashlib.sha256(data).hexdigest()}},
-            kind="wall-outcome")
+            payload, kind="wall-outcome")
 
 
 def observation_text(role: str, sensor: str) -> str:
