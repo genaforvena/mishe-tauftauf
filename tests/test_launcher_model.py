@@ -179,12 +179,84 @@ class LauncherModelTests(unittest.TestCase):
         )
         self.assertIsNone(self.seed._launcher_model(path))
 
-    def test_a_separator_ends_a_command(self):
-        """Two commands on one line are two commands."""
+    def test_a_separator_on_one_line_is_refused(self):
+        """A construct the reader does not model makes the reading unknown."""
         path = write_mind(
             self.directory,
             "probe",
             "#!/bin/sh\n/bin/echo --model=vendor/decoy ; exec omp --model=vendor/real\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_a_conditional_is_refused(self):
+        """Which branch the shell takes is not in the bytes the reader reads."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nif false; then\n  exec omp --model=vendor/decoy\nelse\n  exec omp --model=vendor/real\nfi\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_a_here_document_is_refused(self):
+        """The body of a here-document is data, not commands."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\n/bin/cat <<EOF\nexec omp --model=vendor/decoy\nEOF\nexec omp --model=vendor/real\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_a_pipeline_is_refused(self):
+        """An exec inside a pipeline replaces that process, not the launcher."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nexec /bin/echo --model=vendor/decoy | /bin/cat\nexec omp --model=vendor/real\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_an_and_list_is_refused(self):
+        """An AND-list's second command runs only if the first succeeds."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\n/bin/echo --model=vendor/decoy && exec omp --model=vendor/real\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_a_backslash_with_spaces_does_not_continue_a_line(self):
+        """A backslash escapes the space after it; the line ends there."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nexec omp \\   \n/bin/echo --model=vendor/decoy\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_a_quoted_hash_is_refused(self):
+        """A quoted ``#`` is data, and this reader does not model it."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\n/bin/echo \"#\" ; exec omp --model=vendor/real\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_a_redirection_before_the_program_is_refused(self):
+        """A redirection changes what the program runs; the reader refuses it."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nexec </dev/null omp --model=vendor/real\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_a_long_env_option_takes_its_operand(self):
+        """``env --unset OLD /path/omp`` runs omp."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nexec env --unset OLD /home/user/bin/omp --model vendor/real\n",
         )
         self.assertEqual(self.seed._launcher_model(path), "vendor/real")
 
