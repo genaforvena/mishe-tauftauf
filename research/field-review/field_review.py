@@ -13,12 +13,20 @@ line. This instrument owns the parts that must not be a judgement call:
   a reading starts from what this plant already does;
 * a landed review is checked against the landing contract, so a review that
   cites nothing, names no existing file, or omits its sections is a failure
-  rather than a review;
-* a landed review must be committed to the shared branch, so a review cannot
-  sit on disk as an unlanded promise.
+  rather than a review.
 
-Coverage is derived from the review files themselves, so there is no second
-ledger that can drift from the artifacts it describes.
+What counts as landed is read from the branch, not from the index and not from
+the working tree. ``git ls-files`` describes the index, so a staged-but-not-
+committed review would read as landed; and a review that was edited after it
+landed would read as the bytes on disk. Both are the retired mesh's failure
+mode in miniature, so coverage is derived from the branch's own bytes:
+
+* coverage = the reviews the branch carries, read from the branch;
+* the scheduled check = the reviewed tree's reviews, the reviewed tree's
+  grid, and the reviewed tree's targets;
+* a review in the working tree that the branch does not carry is in flight
+  until it has waited longer than the grace period, and after that it is a
+  review that never landed.
 
 Usage:
     python3 research/field-review/field_review.py next    [--repo DIR]
@@ -32,6 +40,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -40,6 +49,7 @@ SCAN_SUFFIXES = (".py", ".md", ".json", ".ts")
 MAX_HITS_PER_KEYWORD = 10
 REQUIRED_SECTIONS = ("## What we read", "## What this plant already does",
                      "## What is new here")
+READING_HEADING = "## What we read"
 APPLICATION_HEADING = "## Application"
 DISCARD_HEADING = "## Discard"
 ROLES = ("genome", "health", "witness", "discover", "senses", "docs",
@@ -48,6 +58,13 @@ ROLES = ("genome", "health", "witness", "discover", "senses", "docs",
 URL_RE = re.compile(r"https?://[^\s<>\"')]+")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 FRONT_MATTER_END = "---"
+UNLANDED_GRACE_SECONDS = 1800
+"""How long a review may wait on the working tree before it is a problem.
+
+The mind writes a review and commits it; that gap is seconds. A review that
+has waited this long was never landed, which is the retired mesh's 245-of-376
+failure and the reason this lane counts the branch rather than the disk.
+"""
 
 
 @dataclass(frozen=True)
@@ -74,6 +91,45 @@ class Hit:
     path: str
     line: int
     text: str
+
+
+def _git(repo: Path, args: list[str]) -> bytes:
+    """Run a git command in the repository and return its stdout.
+
+    The caller decides what an empty answer means; a git failure is an empty
+    answer, never an exception, so a broken repository reads as "nothing
+    landed" rather than as a crash.
+    """
+    try:
+        result = subprocess.run(["git", "-C", str(repo), *args],
+                                capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return b""
+    if result.returncode:
+        return b""
+    return result.stdout
+
+
+def head_paths(repo: Path, relative: str) -> set[str]:
+    """The paths the branch carries under a directory, relative to the root.
+
+    ``git ls-tree`` reads the branch. ``git ls-files`` would read the index,
+    where a staged review that was never committed would already look landed.
+    """
+    out = _git(repo, ["ls-tree", "-r", "--name-only", "HEAD", "--", relative])
+    return {line for line in out.decode("utf-8", "replace").splitlines() if line}
+
+
+def head_bytes(repo: Path, relative: str) -> bytes | None:
+    """The branch's bytes for one path, or None when the branch has none."""
+    out = _git(repo, ["show", f"HEAD:{relative}"])
+    return out if out else None
+
+
+def head_has_file(repo: Path, relative: str) -> bool:
+    """Whether the branch carries this path as a file (not a directory)."""
+    out = _git(repo, ["cat-file", "-t", f"HEAD:{relative}"])
+    return out.decode("utf-8", "replace").strip() == "blob"
 
 
 def load_registry(path: Path) -> list[Cell]:
@@ -111,6 +167,10 @@ def load_registry(path: Path) -> list[Cell]:
     return cells
 
 
+def reviews_relative(repo: Path) -> str:
+    return str(reviews_dir(repo).relative_to(repo))
+
+
 def reviews_dir(repo: Path) -> Path:
     return repo / "research" / "field-review" / "reviews"
 
@@ -128,72 +188,44 @@ def front_matter(text: str) -> dict[str, str]:
             continue
         key, _, value = line.partition(":")
         values[key.strip()] = value.strip()
-    return {}
+    return values
 
 
 def review_files(repo: Path) -> list[Path]:
-    """Every review file present in the working tree, committed or not."""
+    """Every review file present in the working tree, landed or not."""
     directory = reviews_dir(repo)
     if not directory.is_dir():
         return []
     return sorted(p for p in directory.iterdir() if p.suffix == ".md")
 
 
-def committed_paths(repo: Path, relative: str) -> set[str]:
-    """The paths the shared branch already carries, relative to the repository.
-
-    One listing, not one call per file: the coverage and the contract check
-    both need it, and a per-file call would make the check quadratic in the
-    number of reviews.
-    """
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(repo), "ls-files", "--", relative],
-            capture_output=True, timeout=30)
-    except (OSError, subprocess.SubprocessError):
-        return set()
-    if result.returncode:
-        return set()
-    return {line for line in result.stdout.decode("utf-8", "replace").splitlines() if line}
+def landed_review_names(repo: Path) -> list[str]:
+    """The review files the branch carries, relative to the repository."""
+    prefix = reviews_relative(repo)
+    return sorted(p for p in head_paths(repo, prefix) if p.endswith(".md"))
 
 
-def landed_review_files(repo: Path) -> list[Path]:
-    """Review files that are on the shared branch.
-
-    A review on disk but not on the branch is an unlanded promise, which is
-    how the retired mesh's review lane lost 245 of 376 artifacts. Coverage is
-    therefore counted from the landed files only.
-    """
-    directory = reviews_dir(repo)
-    if not directory.is_dir():
-        return []
-    prefix = str(directory.relative_to(repo))
-    committed = committed_paths(repo, prefix)
-    landed: list[Path] = []
-    for path in review_files(repo):
-        if str(path.relative_to(repo)) in committed:
-            landed.append(path)
-    return landed
-
-
-def covered_cells(repo: Path) -> dict[str, Path]:
-    """Covered cell key -> the landed review that covers it.
+def covered_cells(repo: Path) -> dict[str, str]:
+    """Covered cell key -> the branch's review that covers it.
 
     A review covers a cell only when its front matter names one; a file
     without usable front matter covers nothing and is reported by the contract
     check rather than silently counting as progress.
     """
-    covered: dict[str, Path] = {}
-    for path in landed_review_files(repo):
-        matter = front_matter(path.read_text(encoding="utf-8"))
+    covered: dict[str, str] = {}
+    for name in landed_review_names(repo):
+        blob = head_bytes(repo, name)
+        if blob is None:
+            continue
+        matter = front_matter(blob.decode("utf-8", "replace"))
         field = matter.get("field")
         angle = matter.get("angle")
         if field and angle:
-            covered[f"{field}--{angle}"] = path
+            covered[f"{field}--{angle}"] = name
     return covered
 
 
-def next_cell(cells: list[Cell], covered: dict[str, Path]) -> Cell | None:
+def next_cell(cells: list[Cell], covered: dict[str, str]) -> Cell | None:
     """First uncovered cell in registry order; None when the grid is exhausted."""
     for cell in cells:
         if cell.key not in covered:
@@ -246,38 +278,33 @@ def hits_by_keyword(hits: list[Hit], keywords: tuple[str, ...]) -> dict[str, lis
     return grouped
 
 
-def is_committed(repo: Path, path: Path, committed: set[str] | None = None) -> bool:
-    """Whether the shared branch already carries this file.
-
-    A review on disk but not on the branch is an unlanded promise, which is
-    how the retired mesh's review lane lost 245 of 376 artifacts.
-    """
-    if committed is not None:
-        return str(path.relative_to(repo)) in committed
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(repo), "ls-files", "--error-unmatch", "--",
-             str(path.relative_to(repo))],
-            capture_output=True, timeout=30)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return result.returncode == 0
+def section_body(text: str, heading: str) -> str:
+    """The text under a heading, up to the next heading of the same level."""
+    if heading not in text:
+        return ""
+    after = text.split(heading, 1)[1]
+    lines: list[str] = []
+    for line in after.splitlines():
+        if line.startswith("## "):
+            break
+        lines.append(line)
+    return "\n".join(lines).strip()
 
 
-def validate_review(path: Path, repo: Path, committed: set[str] | None = None) -> list[str]:
-    """Every way this review breaks the landing contract.
+def validate_review_text(name: str, text: str, repo: Path, *,
+                         target_exists=None) -> list[str]:
+    """Every way this review breaks the content contract.
 
     The contract: front matter names the cell, the date, the status and the
     owner; the body reads the source, states what the plant already does,
-    states what is new, and either names one existing repository file as the
-    application or discards the cell in one line; a source URL is present; the
-    file is committed to the shared branch.
+    states what is new, and either names one existing repository FILE as the
+    application or discards the cell in one line; the source URL is in the
+    reading section, not somewhere else in the file.
+
+    ``target_exists`` decides what "an existing file" means: a callable for
+    the reviewed tree, or None for the working tree.
     """
     problems: list[str] = []
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
-        return [f"unreadable review: {exc}"]
     matter = front_matter(text)
     for key in ("field", "angle", "date", "status", "owner"):
         if not matter.get(key):
@@ -294,48 +321,98 @@ def validate_review(path: Path, repo: Path, committed: set[str] | None = None) -
     for heading in REQUIRED_SECTIONS:
         if heading not in text:
             problems.append(f"missing section {heading}")
-    if not URL_RE.search(text):
-        problems.append("no source URL")
+    reading = section_body(text, READING_HEADING)
+    if not reading:
+        problems.append("the What we read section is empty")
+    elif not URL_RE.search(reading):
+        problems.append("the What we read section cites no source URL")
     has_application = APPLICATION_HEADING in text
     has_discard = DISCARD_HEADING in text
     if has_application == has_discard:
         problems.append("exactly one of the Application or Discard sections is required")
     if has_application:
         target = ""
-        for line in text.split(APPLICATION_HEADING, 1)[1].splitlines():
+        for line in section_body(text, APPLICATION_HEADING).splitlines():
             if line.startswith("target:"):
                 target = line.split(":", 1)[1].strip()
                 break
         if not target:
             problems.append("the Application section must name target: <repository path>")
         else:
-            candidate = (repo / target).resolve()
-            if not candidate.is_relative_to(repo.resolve()) or not candidate.exists():
-                problems.append(f"the application target does not exist in the repository: {target}")
+            if target_exists is None:
+                candidate = (repo / target).resolve()
+                exists = (candidate.is_relative_to(repo.resolve())
+                          and candidate.is_file())
+            else:
+                exists = target_exists(target)
+            if not exists:
+                problems.append(f"the application target is not an existing file: {target}")
     if has_discard:
-        body = [line for line in text.split(DISCARD_HEADING, 1)[1].splitlines()
+        body = [line for line in section_body(text, DISCARD_HEADING).splitlines()
                 if line.strip() and not line.startswith("#")]
         if not body:
             problems.append("the Discard section must say why in one line")
-    if not is_committed(repo, path, committed):
-        problems.append("the review is not committed to the shared branch")
     return problems
 
 
-def validate_tree(repo: Path) -> dict[str, list[str]]:
-    """Contract check over every review file, keyed by file name.
+def validate_review(path: Path, repo: Path) -> list[str]:
+    """The content contract for a review in the working tree."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        return [f"unreadable review: {exc}"]
+    return validate_review_text(path.name, text, repo)
 
-    Both the committed and the uncommitted reviews are checked: an uncommitted
-    review is a review that has not landed, and the contract says so.
-    """
-    directory = reviews_dir(repo)
-    committed = committed_paths(repo, str(directory.relative_to(repo))) if directory.is_dir() else set()
+
+def validate_tree(repo: Path) -> dict[str, list[str]]:
+    """The content contract over every review in the working tree."""
     results: dict[str, list[str]] = {}
     for path in review_files(repo):
-        problems = validate_review(path, repo, committed)
+        problems = validate_review(path, repo)
         if problems:
             results[path.name] = problems
     return results
+
+
+def unlanded_reviews(repo: Path, grace_seconds: int = UNLANDED_GRACE_SECONDS,
+                      now: float | None = None) -> list[tuple[str, float]]:
+    """Reviews the working tree holds that the branch does not, and their age.
+
+    A review that has waited past the grace period was never landed. That is
+    the retired mesh's failure and the reason the branch, not the disk, is
+    the authority on what has landed.
+    """
+    landed = set(landed_review_names(repo))
+    moment = time.time() if now is None else now
+    waiting: list[tuple[str, float]] = []
+    for path in review_files(repo):
+        name = str(path.relative_to(repo))
+        if name in landed:
+            continue
+        try:
+            age = moment - path.stat().st_mtime
+        except OSError:
+            continue
+        if age > grace_seconds:
+            waiting.append((name, age))
+    return sorted(waiting)
+
+
+def edited_landed_reviews(repo: Path) -> list[str]:
+    """Landed reviews whose working-tree bytes differ from the branch's."""
+    edited: list[str] = []
+    for name in landed_review_names(repo):
+        blob = head_bytes(repo, name)
+        path = repo / name
+        if blob is None or not path.is_file():
+            continue
+        try:
+            current = path.read_bytes()
+        except OSError:
+            continue
+        if current != blob:
+            edited.append(name)
+    return edited
 
 
 def render_brief(cell: Cell, hits: list[Hit]) -> str:
@@ -368,7 +445,10 @@ def render_brief(cell: Cell, hits: list[Hit]) -> str:
         " target (for applied)",
         "SECTIONS: " + " | ".join(REQUIRED_SECTIONS) + " | " + APPLICATION_HEADING
         + " or " + DISCARD_HEADING,
-        "Then commit the review on main, and route the proposal to the owner role by addressed message.",
+        "The source URL belongs in the What we read section. The application target"
+        " must be an existing FILE in the repository.",
+        "Then commit the review on main, and route the proposal to the owner role by"
+        " addressed message. A review that is not committed has not landed.",
     ]
     return "\n".join(lines)
 
@@ -379,7 +459,7 @@ def main(argv=None) -> int:
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("next", help="print the next uncovered cell and its sweep")
     sub.add_parser("coverage", help="print covered and pending cells")
-    sub.add_parser("check", help="check every landed review against the landing contract")
+    sub.add_parser("check", help="check every review against the landing contract")
     args = parser.parse_args(argv)
     repo = args.repo.resolve()
     registry = repo / "research" / "field-review" / "fields.json"
@@ -391,21 +471,36 @@ def main(argv=None) -> int:
     covered = covered_cells(repo)
     command = args.command or "next"
     if command == "coverage":
-        print(f"covered {len(covered)} of {len(cells)} cells")
+        print(f"covered {len(covered)} of {len(cells)} cells (the branch's reviews)")
         for cell in cells:
             state = covered.get(cell.key)
             print(f"  {'covered' if state else 'PENDING'} {cell.key}"
-                  + (f" -> {state.relative_to(repo)}" if state else ""))
+                  + (f" -> {state}" if state else ""))
+        waiting = unlanded_reviews(repo)
+        if waiting:
+            print(f"unlanded: {len(waiting)} review(s) in the working tree")
+            for name, age in waiting:
+                print(f"  waiting {age:.0f}s: {name}")
         return 0
     if command == "check":
         problems = validate_tree(repo)
-        for name, found in sorted(problems.items()):
+        for name in sorted(problems):
             print(f"FAIL {name}")
-            for problem in found:
+            for problem in problems[name]:
                 print(f"  {problem}")
         if problems:
             return 2
-        print(f"PASS — {len(review_files(repo))} landed reviews satisfy the landing contract")
+        landed = len(landed_review_names(repo))
+        waiting = unlanded_reviews(repo)
+        edited = edited_landed_reviews(repo)
+        print(f"PASS — {len(review_files(repo))} review(s) satisfy the landing contract;"
+              f" {landed} landed on the branch")
+        if waiting:
+            print(f"  {len(waiting)} review(s) have not landed yet")
+            for name, age in waiting:
+                print(f"  waiting {age:.0f}s: {name}")
+        for name in edited:
+            print(f"  landed review edited after landing: {name}")
         return 0
     cell = next_cell(cells, covered)
     if cell is None:

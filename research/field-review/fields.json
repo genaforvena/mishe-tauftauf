@@ -54,8 +54,8 @@
     },
     {
       "id": "coordination-and-tasks",
-      "title": "coordination: tasks, addressed messages, walls and settlement",
-      "plant_part": "task ledger, chat protocol, wall coordination",
+      "title": "coordination: addressed messages, walls and settlement",
+      "plant_part": "walls, addressed messages, chat protocol, settlement",
       "keywords": ["task", "addressed", "wall"]
     },
     {
@@ -86,7 +86,7 @@
       "id": "deleuze-guattari",
       "title": "Deleuze & Guattari — assemblage, rhizome, the machinic (cross-domain lens)",
       "plant_part": "the plant's own couplings, and what it declares about them",
-      "keywords": ["assemblage", "rhizome", "maching"]
+      "keywords": ["assemblage", "rhizome", "machinic"]
     },
     {
       "id": "biosemiotics",
