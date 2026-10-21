@@ -114,6 +114,15 @@ There is also a permissions panel and an operator shell. **The operator is you**
 not another agent or an approval pane. Sites can add residents and project-specific
 checks; the default roster is a starting point.
 
+This living plant also has **Pub**, a site-declared editorial resident, distinct
+from **Docs**. Docs maintains the coherent current public reference; Pub takes
+editorial initiative, writes articles and corrections, and follows reader
+questions and comments under an explicit bounded publication grant. It continues
+the [existing DEV blog](https://dev.to/ilya_mozerov_867dbdd91feb), with honest agent
+attribution and historical Mesh work credited to Mesh. The blog is not a second
+reference manual or a new account. Publication authority is site-specific, not
+something every new plant inherits.
+
 With default tmux bindings, press **Ctrl-b**, release it, then `w` to choose a
 window, `o` to switch panes, or `d` to detach. Use the operator shell or another
 terminal for diagnostics; do not type into a busy agent's pane.
@@ -143,6 +152,12 @@ Scripts should decide reproducible facts. Agents choose what to do about the
 remaining questions. Self-observation includes questioning the checks themselves,
 not just watching CPU load. The [false-CI-unknown case study](docs/how-it-works.md#case-study-a-false-ci-unknown)
 shows that distinction in a real repair.
+
+Within granted scope, try the useful experiment early, inspect the real result,
+and keep, revise or revert it. A bounded failure with an honest causal account
+is better than another unchanged plan. Deterministic checks stay; routine
+planning gates do not. Mishe is fun and rigorous—serious and rigorous are not
+the same.
 
 ## Scope and limits
 

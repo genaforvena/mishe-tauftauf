@@ -485,6 +485,24 @@ a charter and an executable launcher. The plant preserves that window, refreshes
 its evidence pane, and counts the resident's activity toward the silence watch;
 the resident's wake service is site-owned rather than generated.
 
+The living Mishe plant uses this mechanism for **Pub**, independently of Docs'
+runtime. Docs owns a coherent current public reference. Pub owns editorial
+initiative, DEV articles/corrections/comments and reader relationships on the
+[existing blog](https://dev.to/ilya_mozerov_867dbdd91feb). Its installed charter
+records the human's bounded autonomous posting/reply grant, honest agent voice,
+Mesh historical attribution, remote-action reconciliation and privacy limits.
+This is not default account access for a fresh clone or an approval queue
+between roles. A held Docs wake does not prevent Pub's independent work.
+
+For an additional resident in an existing plant, install only its charter,
+executable mind launcher and top-pane program; reuse the site's pinned runtime,
+socket and supervisor conventions. Start its own `seed run --slug ROLE` user
+unit, and add that exact unit and window to the site's health manifests so the
+existing failure observers can see it. Do not rerun the shared launcher or
+restart peers. Prove actual addressed delivery, a useful checked result,
+settlement and next-context continuity; installed files and live PIDs are not
+readiness evidence.
+
 **discover → senses → health → genome → witness** describes responsibilities: find an observable, make it reliable, maintain the local substrate, improve reusable code, and independently check completion. It is not a mandatory route for every task. A fault goes to its owner; authors commit their own scoped work on the single `main` branch, and genome pushes it and checks CI and rollout. Witness keeps unresolved obligations visible. `docs` keeps the repository's README and reader docs current. A person can attach to the same text session and read the same tape.
 
 Roles are not file restrictions. Within owned scope, every mind may repair Mishe's source, checks, prompts, doctrine, charters, roles, routing, supervisor lifecycle, planting, or coordination when evidence requires it. Path ownership, independent review, acceptance checks, and external boundaries still apply.
