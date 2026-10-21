@@ -151,19 +151,42 @@ class ClockBoundTests(unittest.TestCase):
     def test_the_freshest_sample_is_the_greatest_uptime_not_the_last_row(self):
         # The same batch, written newest first: the last row in the queue is
         # the oldest row of the batch, so the bound at the freshest sample
-        # must come from the row with the greatest uptime.
+        # must come from the row with the greatest uptime.  The counter is
+        # large on both rows, so the fall is a reordering and not a reset.
         rows = clock_bound.parse_rows(_rows([
             _hello(1, 1000, "aaaa-bbbb-cccc"),
-            _light(2, 1010, 10000),
-            _light(3, 1005, 5000),
+            _light(2, 1010, 800_000),
+            _light(3, 1005, 795_000),
         ]))
         receipts = clock_bound.parse_receipts(_receipts([(1010.05, 3)]))
         measurement = clock_bound.measure(rows, receipts)
         current = measurement["sessions"][-1]
-        # The row with uptime 10000 was produced at device epoch 1010 and
+        self.assertEqual(current["ambiguous_resets"], [])
+        # The row with uptime 800000 was produced at device epoch 1010 and
         # received at 1010.05, so its observed value is 0.05 - the last row
         # in the queue would have said 5.05.
         self.assertAlmostEqual(current["behind_upper_at_last_sample_s"], 0.05)
+
+    def test_a_reset_withholds_the_freshest_sample_because_the_order_is_unknown(self):
+        # A fall onto a fresh-boot value is a reset or a reordering of the
+        # device's first minutes, and the two cannot be told apart.  Which
+        # row was produced last is then not established either, so the
+        # freshest-sample bound is withheld rather than guessed: a row from
+        # before the reset carries the larger counter and would otherwise be
+        # named as the freshest one.
+        rows = clock_bound.parse_rows(_rows([
+            _hello(1, 1000),
+            _light(2, 1005, 500_000),
+            _light(3, 1010, 5_000),
+        ]))
+        receipts = clock_bound.parse_receipts(_receipts([(1010.1, 3)]))
+        measurement = clock_bound.measure(rows, receipts)
+        current = measurement["sessions"][-1]
+        self.assertTrue(current["ambiguous_resets"])
+        self.assertIsNone(current["behind_upper_at_last_sample_s"])
+        self.assertIsNone(current["behind_upper_s"])
+        # The premise-free per-row bound does not need a chronology.
+        self.assertIsNotNone(current["observed_min_s"])
 
     def test_a_reset_onto_a_fresh_boot_value_withholds_the_session_wide_bound(self):
         # The phone's uptime counter falls from 100 s to 5 s and the device
@@ -183,7 +206,9 @@ class ClockBoundTests(unittest.TestCase):
         measurement = clock_bound.measure(rows, receipts)
         current = measurement["sessions"][-1]
         self.assertIsNone(current["behind_upper_s"])
-        self.assertIsNotNone(current["behind_upper_at_last_sample_s"])
+        # The order of the rows across the reset is not established either,
+        # so the freshest-sample bound is withheld as well.
+        self.assertIsNone(current["behind_upper_at_last_sample_s"])
         self.assertTrue(current["ambiguous_resets"])
         self.assertIn("fresh-boot value", current["session_wide_withheld_reason"])
 
@@ -253,6 +278,28 @@ class ClockBoundTests(unittest.TestCase):
         self.assertNotIn("host-device <=", document["reason"])
         self.assertIn("behind the host", document["reason"])
         self.assertIn("session aaaa-bbb ", document["reason"])
+
+    def test_the_reason_carries_the_covered_count_the_premise_and_no_cut(self):
+        # The document's reason is the only prose a reader of the document
+        # gets, so it has to carry the premise, the unresolved side, the
+        # count of rows the bound covers, and the delivery lateness - and it
+        # must not be cut short of any of them.
+        rows = clock_bound.parse_rows(_rows([
+            _hello(1, 1000, "aaaa-bbbb-cccc"),
+            _light(2, 1005, 800_000),
+            _light(3, 1010, 805_000),
+        ]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 2), (1510.1, 1)]))
+        measurement = clock_bound.measure(rows, receipts)
+        document = clock_bound.clock_bound_document("redmi10", measurement, 1511.0)
+        reason = document["reason"]
+        self.assertLessEqual(len(reason), clock_bound.MAX_REASON_CHARS)
+        self.assertIn("2 rows of session aaaa-bbb", reason)
+        self.assertIn("share one monotonic offset", reason)
+        self.assertIn("how far ahead it may be is unresolved", reason)
+        self.assertIn("delivered at least 500.0s after the phone produced them",
+                      reason)
+        self.assertTrue(reason.endswith("produced them"))
 
     def test_the_emitted_document_publishes_the_bound_and_no_offset(self):
         rows = clock_bound.parse_rows(_rows([

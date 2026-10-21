@@ -778,7 +778,10 @@ class ClockBoundTests(unittest.TestCase):
             reading = self._reading(root, now)
             bound = reading["clock_bound"]
             self.assertIsNone(bound["behind_upper_s"])
-            self.assertIsNotNone(bound["behind_upper_at_last_sample_s"])
+            # Which row was produced last is not established either, so the
+            # freshest-sample bound is withheld rather than guessed.
+            self.assertIsNone(bound["behind_upper_at_last_sample_s"])
+            self.assertFalse(bound["freshest_sample_established"])
             self.assertTrue(bound["ambiguous_resets"])
             self.assertTrue(bound["session_wide_withheld_reason"])
             unknowns = " ".join(reading["unknowns"])
