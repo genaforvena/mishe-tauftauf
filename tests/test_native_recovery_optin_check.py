@@ -1,0 +1,438 @@
+"""The recovery opt-in detector must name the wake the plant will not deliver.
+
+``checks/native-recovery-optin.py`` reads a role launcher's recovery opt-in
+and the wake the plant still owes that role. The opt-in lives in a file the
+integration owner edits by hand, and nothing in the plant reads the mismatch:
+measured on 2026-10-21, ``minds/docs`` named wake 70477 while the plant owed
+docs wake 75277. The recovery the owner wanted did not happen and the hold
+that replaced it named no cause.
+
+These tests pin the detector's decisions on synthetic sites, so the readings
+are fixed by the fixture rather than by the machine:
+
+* an opt-in that names the pending wake reads agreement, and a launcher
+  without an opt-in is not a finding;
+* an opt-in that names another wake while one is pending reads a mismatch,
+  naming both wakes, and so does one that spells the number differently, names
+  a text that is not a number, or names no wake at all;
+* an opt-in with a shell comment is read as the value the shell would export;
+* a finding that needs only the launcher's bytes survives a plant whose state
+  cannot be read;
+* the consumer's comparison is cited only when its operands are the opt-in and
+  a stringified wake;
+* the detector decides with the reviewed tree, not with the working tree;
+* a launcher, a tape or a reviewed tree that cannot be read reads UNKNOWN,
+  never a verdict, and never a traceback;
+* the check writes nothing into the site it reads, and it does not decide the
+  question it deliberately leaves open.
+"""
+from __future__ import annotations
+
+import hashlib
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+from mishe_tauftauf.feed import Feed
+
+REPO = Path(__file__).resolve().parents[1]
+CHECK = REPO / "checks" / "native-recovery-optin.py"
+ROLE = "docs"
+RECORD_DIGEST = "0" * 64
+
+LAUNCHER = """#!/bin/sh
+export MISHE_NATIVE_RECOVERY_WAKE={wake}
+export MISHE_NATIVE_RECOVERY_ATTEMPT={attempt}
+{runner}
+"""
+
+# A stand-in for the recovery consumer: the shape the detector reads — the
+# opt-in taken out of the environment and compared with a stringified wake.
+RUNNER = '''"""A stand-in for the recovery runner, with the bytes the plant runs."""
+import os
+
+
+def run_wake(wake):
+    recovery = os.environ.get("MISHE_NATIVE_RECOVERY_WAKE") == str(wake)
+    number = int(os.environ.get("MISHE_NATIVE_RECOVERY_ATTEMPT", "1"))
+    return recovery, number
+'''
+
+# A minimal plant package, enough for the detector's reviewed readers, used
+# to prove that the detector decides with the committed tree and not with the
+# working tree's bytes.
+SYNTHETIC = {
+    "activity.py": "def roles(home):\n    return ['docs']\n",
+    "seed.py": ("def _state(home, role, entries=None):\n"
+                "    return (None, PENDING, None, None)\n"),
+    "feed.py": (
+        "from pathlib import Path\n\n\n"
+        "class Feed:\n"
+        "    def __init__(self, home):\n"
+        "        self.home = Path(home)\n\n"
+        "    def read_bytes(self):\n"
+        "        return b''\n\n"
+        "    @staticmethod\n"
+        "    def _verify_records(entries, sink=None):\n"
+        "        return None\n\n\n"
+        "def parse_feed(data, *, start_sequence=1, home=None):\n"
+        "    return []\n"
+    ),
+}
+
+
+def make_home(tmp_path: Path, *, launcher: str | None = None) -> Path:
+    """A site home with a launcher and a tape the plant can read."""
+    home = tmp_path / "site"
+    (home / "minds").mkdir(parents=True)
+    (home / "top-pains").mkdir(parents=True)
+    if launcher is not None:
+        (home / "minds" / ROLE).write_text(launcher, encoding="utf-8")
+    return home
+
+
+def wake(home: Path) -> int:
+    """Deliver a wake to the role; return the plant's number for it."""
+    entry = Feed(home).append("seed", "seed wake %s observation=1\nOwed work.\n" % ROLE)
+    return entry.sequence
+
+
+def settle(home: Path, number: int) -> None:
+    """Settle a delivered wake."""
+    Feed(home).append("seed", "seed yield %s wake=%d\nTurn settled (changed); done.\n"
+                       % (ROLE, number))
+
+
+def run_check(home: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, str(CHECK), "--home", str(home),
+                           "--repo", str(REPO), *args],
+                          capture_output=True, text=True, timeout=300)
+
+
+def launcher_text(wake_number: int, attempt: int = 1, runner: str = "") -> str:
+    return LAUNCHER.format(wake=wake_number, attempt=attempt, runner=runner)
+
+
+def runner_line(home: Path, source: str = RUNNER) -> str:
+    """A launcher that runs a fixture consumer."""
+    runner = home / "runner.py"
+    runner.write_text(source, encoding="utf-8")
+    return "exec %s" % runner
+
+
+def site_state(home: Path) -> str:
+    """The site's own bytes, sizes and times, so a check that writes into it is caught."""
+    state = hashlib.sha256()
+    for path in sorted(home.rglob("*")):
+        info = path.stat()
+        state.update(str(path.relative_to(home)).encode("utf-8"))
+        state.update(b"\0")
+        state.update(("%d %d" % (info.st_size, info.st_mtime_ns)).encode("utf-8"))
+        state.update(b"\0")
+        if path.is_file():
+            state.update(path.read_bytes())
+        state.update(b"\0")
+    return state.hexdigest()
+
+
+def synthetic_repo(tmp_path: Path, pending: str) -> Path:
+    """A repository whose committed tree reports one pending wake."""
+    repo = tmp_path / "repo"
+    package = repo / "src" / "mishe_tauftauf"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    for name, body in SYNTHETIC.items():
+        text = body.replace("PENDING", pending) if name == "seed.py" else body
+        (package / name).write_text(text, encoding="utf-8")
+    environment = dict(os.environ, GIT_AUTHOR_NAME="test", GIT_AUTHOR_EMAIL="test@example",
+                       GIT_COMMITTER_NAME="test", GIT_COMMITTER_EMAIL="test@example")
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "reviewed tree"],
+                   check=True, capture_output=True, env=environment)
+    # The working tree now says something else; the committed tree does not.
+    (package / "seed.py").write_text(SYNTHETIC["seed.py"].replace("PENDING", "999"),
+                                     encoding="utf-8")
+    return repo
+
+
+def test_opt_in_naming_the_pending_wake_reads_agreement(tmp_path):
+    home = make_home(tmp_path)
+    number = wake(home)
+    (home / "minds" / ROLE).write_text(launcher_text(number), encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 0, result.stdout
+    assert "AGREE" in result.stdout
+
+
+def test_a_launcher_without_an_opt_in_is_not_a_finding(tmp_path):
+    home = make_home(tmp_path, launcher="#!/bin/sh\nexport MISHE_NATIVE_SELECTOR=x\n")
+    wake(home)
+    result = run_check(home)
+    assert result.returncode == 0, result.stdout
+    assert "MISMATCH" not in result.stdout
+
+
+def test_opt_in_naming_another_wake_reads_a_mismatch(tmp_path):
+    home = make_home(tmp_path)
+    settled = wake(home)
+    settle(home, settled)
+    pending = wake(home)
+    (home / "minds" / ROLE).write_text(launcher_text(settled), encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 2, result.stdout
+    assert "MISMATCH" in result.stdout
+    assert "the opt-in names wake %d" % settled in result.stdout
+    assert "the plant owes %s wake %d" % (ROLE, pending) in result.stdout
+    assert str(home / "minds" / ROLE) in result.stdout
+
+
+def test_an_opt_in_that_spells_the_number_differently_reads_a_mismatch(tmp_path):
+    """The consumer compares texts, so a spelled-different number is not the wake."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number).replace("WAKE=%d" % number, "WAKE=0%d" % number),
+        encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 2, result.stdout
+    assert "MISMATCH" in result.stdout
+    assert "the opt-in names wake 0%d" % number in result.stdout
+
+
+def test_an_opt_in_that_names_a_text_reads_a_mismatch(tmp_path):
+    home = make_home(tmp_path)
+    number = wake(home)
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number).replace("WAKE=%d" % number, "WAKE=seven"), encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 2, result.stdout
+    assert "not a wake number" in result.stdout
+
+
+def test_opt_in_naming_a_wake_the_plant_does_not_owe_reads_a_mismatch(tmp_path):
+    home = make_home(tmp_path)
+    number = wake(home)
+    settle(home, number)
+    (home / "minds" / ROLE).write_text(launcher_text(number), encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 2, result.stdout
+    assert "MISMATCH" in result.stdout
+    assert "owes %s no wake" % ROLE in result.stdout
+
+
+def test_an_attempt_number_without_a_wake_reads_a_mismatch(tmp_path):
+    home = make_home(tmp_path, launcher="#!/bin/sh\nexport MISHE_NATIVE_RECOVERY_ATTEMPT=1\n")
+    wake(home)
+    result = run_check(home)
+    assert result.returncode == 2, result.stdout
+    assert "MISMATCH" in result.stdout
+    assert "without naming the" in result.stdout
+
+
+def test_a_launcher_finding_survives_a_plant_whose_state_cannot_be_read(tmp_path):
+    home = make_home(tmp_path, launcher="#!/bin/sh\nexport MISHE_NATIVE_RECOVERY_ATTEMPT=1\n")
+    wake(home)
+    result = run_check(home, "--repo", str(tmp_path))
+    assert result.returncode == 2, result.stdout
+    assert "MISMATCH" in result.stdout
+    assert "UNKNOWN" in result.stdout
+
+
+def test_an_empty_opt_in_value_does_not_consume_the_next_line(tmp_path):
+    home = make_home(tmp_path, launcher="#!/bin/sh\nexport MISHE_NATIVE_RECOVERY_WAKE=\n"
+                                         "export MISHE_NATIVE_RECOVERY_ATTEMPT=1\n")
+    wake(home)
+    result = run_check(home)
+    assert result.returncode == 2, result.stdout
+    assert "opt-in    : wake= attempt=1" in result.stdout
+    assert "not a wake number" in result.stdout
+
+
+def test_a_quoted_opt_in_value_is_read_as_the_wake_it_names(tmp_path):
+    home = make_home(tmp_path)
+    number = wake(home)
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number).replace("WAKE=%d" % number, "WAKE='%d'" % number),
+        encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 0, result.stdout
+    assert "opt-in    : wake=%d attempt=1" % number in result.stdout
+
+
+def test_an_opt_in_with_a_shell_comment_is_read_as_the_shell_reads_it(tmp_path):
+    home = make_home(tmp_path)
+    number = wake(home)
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number).replace("WAKE=%d" % number, "WAKE=%d # the wake to recover" % number),
+        encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 0, result.stdout
+    assert "opt-in    : wake=%d attempt=1" % number in result.stdout
+
+
+def test_the_consumer_comparison_is_cited_from_its_own_bytes(tmp_path):
+    home = make_home(tmp_path)
+    number = wake(home)
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number, runner=runner_line(home)), encoding="utf-8")
+    source = (home / "runner.py").read_text(encoding="utf-8")
+    line = next(index for index, text in enumerate(source.splitlines(), 1)
+                if "MISHE_NATIVE_RECOVERY_WAKE" in text and "==" in text)
+    result = run_check(home)
+    assert result.returncode == 0, result.stdout
+    assert str(home / "runner.py") in result.stdout
+    assert "compares the opt-in with the pending wake at line %d" % line in result.stdout
+
+
+def test_a_consumer_that_compares_the_opt_in_with_something_else_is_not_cited(tmp_path):
+    home = make_home(tmp_path)
+    number = wake(home)
+    other = RUNNER.replace('os.environ.get("MISHE_NATIVE_RECOVERY_WAKE") == str(wake)',
+                            'os.environ.get("MISHE_NATIVE_RECOVERY_WAKE") == "1"')
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number, runner=runner_line(home, other)), encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 0, result.stdout
+    assert "no comparison of the opt-in with a wake found" in result.stdout
+
+
+def test_the_detector_decides_with_the_committed_tree_not_the_working_tree(tmp_path):
+    home = make_home(tmp_path)
+    number = wake(home)
+    (home / "minds" / ROLE).write_text(launcher_text(number), encoding="utf-8")
+    repo = synthetic_repo(tmp_path, pending="1")
+    result = subprocess.run([sys.executable, str(CHECK), "--home", str(home),
+                             "--repo", str(repo)], capture_output=True, text=True, timeout=300)
+    assert result.returncode == 0, result.stdout
+    assert "pending   : 1" in result.stdout
+    assert "999" not in result.stdout
+
+
+def test_an_unreadable_tape_reads_unknown(tmp_path):
+    home = make_home(tmp_path, launcher=launcher_text(1))
+    wake(home)
+    with (home / "chat.log").open("a", encoding="utf-8") as handle:
+        handle.write("v1 00000000000000009999 2026-10-21T00:00:00.000000Z seed ::\n"
+                     "    | seed wake docs\n"
+                     "    .-\n")
+    result = run_check(home)
+    assert result.returncode == 3, result.stdout
+    assert result.stdout.startswith("UNKNOWN")
+    assert "Traceback" not in result.stdout + result.stderr
+
+
+def test_a_malformed_lifecycle_sentence_reads_unknown(tmp_path):
+    home = make_home(tmp_path, launcher=launcher_text(1))
+    wake(home)
+    frames = sum(1 for line in (home / "chat.log").read_text(encoding="utf-8").splitlines()
+                 if line.startswith("v1 "))
+    with (home / "chat.log").open("a", encoding="utf-8") as handle:
+        handle.write("v1 %020d 2026-10-21T00:00:00.000000Z seed ::\n"
+                     "    | seed wake docs\n"
+                     "    | prose\n"
+                     "    .-\n" % (frames + 1))
+    result = run_check(home)
+    assert result.returncode == 3, result.stdout
+    assert "Traceback" not in result.stdout + result.stderr
+
+
+def test_a_tape_whose_record_cannot_be_resolved_reads_unknown(tmp_path):
+    home = make_home(tmp_path, launcher=launcher_text(1))
+    wake(home)
+    # The frame is validly framed and contiguous, so the tape parses; the
+    # record it references does not exist, so the reviewed verification of the
+    # tape's records rejects it.
+    frames = sum(1 for line in (home / "chat.log").read_text(encoding="utf-8").splitlines()
+                 if line.startswith("v1 "))
+    with (home / "chat.log").open("a", encoding="utf-8") as handle:
+        handle.write("v1 %020d 2026-10-21T00:00:00.000000Z seed ::\n"
+                     "    | [record] records/%s.json sha256=%s\n"
+                     "    | prose\n"
+                     "    .-\n" % (frames + 1, RECORD_DIGEST, RECORD_DIGEST))
+    result = run_check(home)
+    assert result.returncode == 3, result.stdout
+    assert "UNKNOWN" in result.stdout
+
+
+def test_an_unreadable_launcher_reads_unknown(tmp_path):
+    home = make_home(tmp_path)
+    wake(home)
+    (home / "minds" / ROLE).write_bytes(b"#!/bin/sh\nexport MISHE_NATIVE_RECOVERY_WAKE=\xff\xfe\n")
+    result = run_check(home)
+    assert result.returncode == 3, result.stdout
+    assert "UNKNOWN" in result.stdout
+    assert "launcher is unreadable" in result.stdout
+
+
+def test_a_launcher_that_cannot_be_read_reads_unknown(tmp_path):
+    home = make_home(tmp_path)
+    wake(home)
+    (home / "minds" / ROLE).mkdir()
+    result = run_check(home)
+    assert result.returncode == 3, result.stdout
+    assert "UNKNOWN" in result.stdout
+    assert "launcher is unreadable" in result.stdout
+
+
+def test_a_missing_reviewed_tree_reads_unknown(tmp_path):
+    home = make_home(tmp_path, launcher=launcher_text(1))
+    wake(home)
+    empty = tmp_path / "empty-repo"
+    empty.mkdir()
+    subprocess.run(["git", "init", "-q", str(empty)], check=True, capture_output=True)
+    result = run_check(home, "--repo", str(empty))
+    assert result.returncode == 3, result.stdout
+    assert "UNKNOWN" in result.stdout
+    assert "Traceback" not in result.stdout + result.stderr
+
+
+def test_an_unknown_role_reads_unknown(tmp_path):
+    home = make_home(tmp_path, launcher=launcher_text(1))
+    wake(home)
+    result = run_check(home, "--role", "no-such-role")
+    assert result.returncode == 3, result.stdout
+    assert "not a role the reviewed tree knows" in result.stdout
+
+
+def test_the_check_does_not_decide_the_collision_question(tmp_path):
+    """The attempt directory is the consumer's own business; the check leaves it."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    (home / "minds" / ROLE).write_text(launcher_text(number), encoding="utf-8")
+    used = home / "native-canary" / ROLE / "wakes" / ("%d-recovery-1" % number)
+    used.mkdir(parents=True)
+    result = run_check(home)
+    assert result.returncode == 0, result.stdout
+    assert "REDELIVERY" not in result.stdout
+    assert "collision" not in result.stdout.lower()
+
+
+def test_a_temporary_directory_inside_the_site_home_reads_unknown(tmp_path):
+    home = make_home(tmp_path, launcher=launcher_text(1))
+    wake(home)
+    inside = home / "tmp"
+    inside.mkdir()
+    environment = dict(os.environ, TMPDIR=str(inside))
+    result = subprocess.run([sys.executable, str(CHECK), "--home", str(home),
+                             "--repo", str(REPO)], capture_output=True, text=True,
+                            timeout=300, env=environment)
+    assert result.returncode == 3, result.stdout
+    assert "the temporary directory is inside the site home" in result.stdout
+    assert list(inside.iterdir()) == []
+
+
+def test_the_check_writes_nothing_into_the_site_it_reads(tmp_path):
+    home = make_home(tmp_path)
+    number = wake(home)
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number, runner=runner_line(home)), encoding="utf-8")
+    # The fixture's own writer left a checkpoint behind; the check must not
+    # need one, and must not create one.
+    (home / "feed.index.json").unlink(missing_ok=True)
+    before = site_state(home)
+    result = run_check(home)
+    assert result.returncode == 0, result.stdout
+    assert site_state(home) == before
+    assert not (home / "feed.index.json").exists()
