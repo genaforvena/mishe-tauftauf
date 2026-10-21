@@ -27,6 +27,18 @@ publishes, does it carry every field the reviewed tree's line carries? Field
 *names* are compared, never values: a counter that moves between two samples
 is not a disagreement, and a missing field is not a value that changed.
 
+The published frame is a sequence of segments: the evidence block the renderer
+prints, a renderer-failure line, the plant's own check report (``SYSTEM ZERO``
+and the role's observations file) and the edited-notes pane. The evidence block
+ends where the next segment starts. Measured on 2026-10-21: a reader that
+stopped the block at the next ``MIND WALL`` heading swallowed the plant's own
+check report, so the plant's live observation (``FAIL witness wedge-suspect
+…``) read as a projection the reviewed tree does not publish. Four roles
+carried such a report, so the check was permanently RED on exactly the roles
+that publish one — a RED that says nothing about the reviewed tree. The block
+now ends at the report heading, and the segment after it is named as outside
+the block instead of being compared as one of its lines.
+
 Exit status:
   0  every published line carries the fields the reviewed tree's line carries
   2  a published line lacks a field the reviewed tree publishes, carries a
@@ -49,6 +61,14 @@ from pathlib import Path
 
 PACKAGE = "mishe_tauftauf"
 SECTION = "MIND WALL — shared follow-through evidence"
+
+# The published frame's segments.  The evidence block ends where the next
+# segment starts: the plant's own check report is headed ``SYSTEM ZERO`` and a
+# renderer failure is headed ``RENDERER: RED``; neither is part of the block
+# the reviewed tree publishes.
+REPORT_HEADING = "SYSTEM ZERO"
+FAILURE_PREFIX = "RENDERER: RED"
+
 ROLE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 PYTHONPATH_RE = re.compile(r"PYTHONPATH=['\"]?([^'\"\s:]+)")
 
@@ -152,7 +172,9 @@ def published_section(home: Path, slug: str) -> tuple:
 
     The block is read from the published dashboard frame, because that frame
     is what every role's pane shows — the plant's own published output, not a
-    re-run of it.
+    re-run of it.  The block ends where the frame's next segment starts, so
+    the plant's own check report is not read as one of the block's lines; the
+    segment after the block is returned separately and named in the verdict.
     """
     path = home / "dashboards" / f"{slug}.json"
     try:
@@ -188,11 +210,21 @@ def published_section(home: Path, slug: str) -> tuple:
         if line.startswith("MIND WALL —"):
             end = index
             break
+        if line.strip() == REPORT_HEADING or line.startswith(FAILURE_PREFIX):
+            end = index
+            break
         if line.strip():
             body.append(line)
     if not body:
         raise Undecidable("the published evidence block is empty")
-    return body, lines[:start - 1] + lines[end:], record.get("created")
+    after = []
+    for index in range(end, len(lines)):
+        line = lines[index]
+        if line.startswith("MIND WALL —"):
+            break
+        if line.strip():
+            after.append(line)
+    return body, lines[:start - 1] + lines[end:], after, record.get("created")
 
 
 def export_head(repo: Path, workdir: Path) -> Path:
@@ -268,7 +300,7 @@ def main() -> int:
     try:
         reference = (args.reference_src.resolve() if args.reference_src
                      else export_head(repo, workdir))
-        published, _outside, created = published_section(home, args.slug)
+        published, _outside, after, created = published_section(home, args.slug)
         expected = read_lines(reference, home, workdir)
     except Undecidable as exc:
         print("UNKNOWN — " + str(exc))
@@ -298,6 +330,11 @@ def main() -> int:
     print("reference  :", reference)
     print("renderer   :", renderer_root(home, args.slug))
     print("classes    : published=%d reference=%d" % (len(shown), len(wanted)))
+    if after:
+        print("published  : OUTSIDE — %d line(s) the plant publishes after the evidence "
+              "block (the plant's own check report), not part of the block:" % len(after))
+        for line in after[:10]:
+            print("    outside :", line[:200])
     if missing_lines:
         print("published  : MISSING LINE — the plant does not publish %d line(s) "
               "the reviewed tree publishes" % len(missing_lines))

@@ -168,12 +168,13 @@ def test_missing_line_is_named(tmp_path):
     assert "body-research" in result.stdout
 
 
-def test_extra_line_is_named(tmp_path):
-    """A published line the reviewed tree does not publish reads extra.
+def test_the_plant_report_segment_is_outside_the_evidence_block(tmp_path):
+    """The plant's own check report is not a projection of the reviewed tree.
 
-    The plant's own projection-level check reports such a line, so this
-    detector must not disagree with it about the same frame: a check that
-    stays silent where a peer check reports a difference is a false green.
+    The published frame puts the plant's report segment after the evidence
+    block.  A reader that stopped the block at the next ``MIND WALL`` heading
+    swallowed that report, so the plant's live observation read as an extra
+    line of the reviewed tree — a RED that said nothing about the tree.
     """
     home = tmp_path / "home"
     home.mkdir()
@@ -184,9 +185,45 @@ def test_extra_line_is_named(tmp_path):
                               "FAIL witness overdue pending wake docs"])
     reference = write_package(tmp_path / "ref", field="checked-evidence-age")
     result = run_check(home, reference)
+    assert result.returncode == 0, result.stdout
+    assert "AGREE" in result.stdout
+    assert "OUTSIDE" in result.stdout
+    assert "SYSTEM ZERO" in result.stdout
+
+
+def test_an_extra_line_inside_the_block_is_named(tmp_path):
+    """A line the reviewed tree does not publish, inside the block, reads extra.
+
+    The plant's own projection-level check reports such a line, so this
+    detector must not disagree with it about the same frame: a check that
+    stays silent where a peer check reports a difference is a false green.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    write_frame(home, SLUG, ["SUBSTRATE: KNOWN unchanged checked_at=2026-10-21T00:00:00Z",
+                              "body-research: OBSERVED; wakes=1 checked-evidence-age=none "
+                              "evidence-UNKNOWN=0",
+                              "GHOST: a line the reviewed tree does not publish"])
+    reference = write_package(tmp_path / "ref", field="checked-evidence-age")
+    result = run_check(home, reference)
     assert result.returncode == 2, result.stdout
     assert "EXTRA LINE" in result.stdout
-    assert "SYSTEM" in result.stdout
+    assert "GHOST" in result.stdout
+
+
+def test_a_renderer_failure_line_is_outside_the_block(tmp_path):
+    """A failed renderer is the plant's report, not a line of the block."""
+    home = tmp_path / "home"
+    home.mkdir()
+    write_frame(home, SLUG, ["SUBSTRATE: KNOWN unchanged checked_at=2026-10-21T00:00:00Z",
+                              "body-research: OBSERVED; wakes=1 checked-evidence-age=none "
+                              "evidence-UNKNOWN=0",
+                              "RENDERER: RED the renderer failed"])
+    reference = write_package(tmp_path / "ref", field="checked-evidence-age")
+    result = run_check(home, reference)
+    assert result.returncode == 0, result.stdout
+    assert "OUTSIDE" in result.stdout
+    assert "RENDERER: RED" in result.stdout
 
 
 def test_absent_frame_reads_unknown(tmp_path):

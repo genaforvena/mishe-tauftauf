@@ -153,6 +153,23 @@ def test_projection_quoted_elsewhere_in_the_frame_is_still_missing(plant, refere
     assert "appears elsewhere in the frame" in result.stdout
 
 
+def test_the_plant_report_segment_is_not_an_extra_projection(plant, reference):
+    """The plant's own check report follows the block and is not one of its lines.
+
+    The published frame puts the plant's report segment (``SYSTEM ZERO`` and
+    the role's observations file) after the evidence block.  A reader that
+    stopped the block at the next ``MIND WALL`` heading swallowed that report
+    and read the plant's live observation as a projection the reviewed tree
+    does not publish.
+    """
+    write_frame(plant, [*REVIEWED, "SYSTEM ZERO", "FAIL alpha wedge-suspect"])
+    result = run_check(plant, reference)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "AGREE" in result.stdout
+    assert "OUTSIDE" in result.stdout
+    assert "SYSTEM ZERO" in result.stdout
+
+
 def test_projection_only_the_plant_prints_reads_extra(plant, reference):
     write_frame(plant, [*REVIEWED, "GHOST: a projection the reviewed tree does not publish"])
     result = run_check(plant, reference)
