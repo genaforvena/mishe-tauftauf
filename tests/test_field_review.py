@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -73,7 +75,12 @@ Add the decay coefficient to the existing reading.
 """
 
 
-def _repo(root: Path, reviews: dict[str, str] | None = None) -> Path:
+def _repo(root: Path, reviews: dict[str, str] | None = None, *, commit_reviews: bool = True) -> Path:
+    """A repository whose branch carries the grid, the example files and reviews.
+
+    ``commit_reviews=False`` leaves the reviews staged but uncommitted, which is
+    the state the retired mesh's lane spent most of its life in.
+    """
     repo = root / "repo"
     (repo / "research" / "field-review" / "reviews").mkdir(parents=True)
     (repo / "research" / "field-review" / "fields.json").write_text(
@@ -82,12 +89,19 @@ def _repo(root: Path, reviews: dict[str, str] | None = None) -> Path:
     (repo / "src" / "example.py").write_text("# alpha lives here\n", encoding="utf-8")
     (repo / "docs").mkdir()
     (repo / "docs" / "note.md").write_text("beta note\n", encoding="utf-8")
-    for name, text in (reviews or {}).items():
-        (repo / "research" / "field-review" / "reviews" / name).write_text(text, encoding="utf-8")
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
     subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
     subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@example.org",
                     "-c", "user.name=test", "commit", "-qm", "seed"], check=True)
+    for name, text in (reviews or {}).items():
+        (repo / "research" / "field-review" / "reviews" / name).write_text(text, encoding="utf-8")
+    if reviews:
+        if commit_reviews:
+            subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+            subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@example.org",
+                            "-c", "user.name=test", "commit", "-qm", "reviews"], check=True)
+        else:
+            subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
     return repo
 
 
@@ -194,7 +208,7 @@ class LandingContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = _repo(Path(tmp), {"alpha--recent--2026-10-21.md": broken})
             problems = field_review.validate_tree(repo)["alpha--recent--2026-10-21.md"]
-            self.assertIn("no source URL", problems)
+            self.assertTrue(any("cites no source URL" in p for p in problems))
 
     def test_a_missing_section_is_reported(self):
         broken = GOOD_REVIEW.replace("## What is new here", "## Something else")
@@ -202,6 +216,30 @@ class LandingContractTest(unittest.TestCase):
             repo = _repo(Path(tmp), {"alpha--recent--2026-10-21.md": broken})
             problems = field_review.validate_tree(repo)["alpha--recent--2026-10-21.md"]
             self.assertTrue(any("missing section" in p for p in problems))
+
+    def test_a_url_outside_the_reading_section_does_not_cite_a_source(self):
+        broken = GOOD_REVIEW.replace("Paper title, author, 2026, https://example.org/paper — sections 2 and 3.",
+                                     "Paper title, author, 2026 — sections 2 and 3.")
+        broken = broken.replace("## What is new here",
+                                "## What is new here\n\nSee https://example.org/unrelated for background.")
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--recent--2026-10-21.md": broken})
+            problems = field_review.validate_tree(repo)["alpha--recent--2026-10-21.md"]
+            self.assertTrue(any("cites no source URL" in p for p in problems))
+
+    def test_an_empty_reading_section_is_refused(self):
+        broken = GOOD_REVIEW.replace("Paper title, author, 2026, https://example.org/paper — sections 2 and 3.", "")
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--recent--2026-10-21.md": broken})
+            problems = field_review.validate_tree(repo)["alpha--recent--2026-10-21.md"]
+            self.assertTrue(any("What we read section is empty" in p for p in problems))
+
+    def test_a_directory_is_not_an_application_target(self):
+        broken = GOOD_REVIEW.replace("target: src/example.py", "target: src")
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--recent--2026-10-21.md": broken})
+            problems = field_review.validate_tree(repo)["alpha--recent--2026-10-21.md"]
+            self.assertTrue(any("not an existing file" in p for p in problems))
 
     def test_both_application_and_discard_is_refused(self):
         broken = GOOD_REVIEW + "\n## Discard\n\nno\n"
@@ -256,15 +294,53 @@ The plant already implements this, so there is nothing to apply.
         with tempfile.TemporaryDirectory() as tmp:
             repo = _repo(Path(tmp), {"alpha--recent--2026-10-21.md": broken})
             problems = field_review.validate_tree(repo)["alpha--recent--2026-10-21.md"]
-            self.assertTrue(any("does not exist" in p for p in problems))
+            self.assertTrue(any("not an existing file" in p for p in problems))
 
-    def test_an_uncommitted_review_is_refused(self):
+    def test_an_uncommitted_review_is_not_a_content_failure(self):
+        """A review's own content can be sound while the review has not landed.
+
+        Landing is a property of the lane, reported by the unlanded-review
+        listing, not a defect of the file's text.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             repo = _repo(Path(tmp))
             path = repo / "research" / "field-review" / "reviews" / "alpha--recent--2026-10-21.md"
             path.write_text(GOOD_REVIEW, encoding="utf-8")
-            problems = field_review.validate_tree(repo)["alpha--recent--2026-10-21.md"]
-            self.assertTrue(any("not committed to the shared branch" in p for p in problems))
+            self.assertEqual(field_review.validate_tree(repo), {})
+
+    def test_a_staged_but_uncommitted_review_has_not_landed(self):
+        """`git ls-files` describes the index; a staged review is not landed."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--recent--2026-10-21.md": GOOD_REVIEW},
+                         commit_reviews=False)
+            self.assertEqual(field_review.covered_cells(repo), {})
+            self.assertEqual(field_review.landed_review_names(repo), [])
+
+    def test_a_review_that_waited_too_long_is_reported_as_never_landed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--recent--2026-10-21.md": GOOD_REVIEW},
+                         commit_reviews=False)
+            waiting = field_review.unlanded_reviews(repo, grace_seconds=0)
+            self.assertTrue(waiting)
+            self.assertIn("alpha--recent--2026-10-21.md", waiting[0][0])
+
+    def test_a_landed_review_edited_after_landing_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--recent--2026-10-21.md": GOOD_REVIEW})
+            path = repo / "research" / "field-review" / "reviews" / "alpha--recent--2026-10-21.md"
+            path.write_text(GOOD_REVIEW + "\nA later edit.\n", encoding="utf-8")
+            self.assertEqual(field_review.edited_landed_reviews(repo),
+                             ["research/field-review/reviews/alpha--recent--2026-10-21.md"])
+
+    def test_coverage_reads_the_branch_not_the_working_tree(self):
+        """A review edited on disk after landing does not change the coverage."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--recent--2026-10-21.md": GOOD_REVIEW})
+            path = repo / "research" / "field-review" / "reviews" / "alpha--recent--2026-10-21.md"
+            path.write_text(GOOD_REVIEW.replace("field: alpha", "field: beta"), encoding="utf-8")
+            covered = field_review.covered_cells(repo)
+            self.assertIn("alpha--recent", covered)
+            self.assertNotIn("beta--recent", covered)
 
     def test_an_unknown_owner_is_refused(self):
         broken = GOOD_REVIEW.replace("owner: genome", "owner: the-operator")
@@ -326,6 +402,84 @@ class CommandTest(unittest.TestCase):
             stderr = reader.stderr.read().decode("utf-8", "replace")
             self.assertNotIn("BrokenPipeError", stderr)
             self.assertNotIn("Traceback", stderr)
+
+
+class ScheduledCheckTest(unittest.TestCase):
+    """The detector itself, end to end, against a repository it can read."""
+
+    CHECK = Path(__file__).resolve().parents[1] / "checks" / "field-review-contract.py"
+
+    def _repo_with_tool(self, root: Path, reviews: dict[str, str] | None = None) -> Path:
+        repo = _repo(root, reviews)
+        tool = Path(__file__).resolve().parents[1] / "research" / "field-review" / "field_review.py"
+        (repo / "research" / "field-review" / "field_review.py").write_bytes(tool.read_bytes())
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@example.org",
+                        "-c", "user.name=test", "commit", "-qm", "tool"], check=True)
+        return repo
+
+    def _run(self, repo: Path) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["python3", str(self.CHECK), "--home", str(repo), "--repo", str(repo)],
+            capture_output=True, text=True)
+
+    def test_a_clean_branch_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo_with_tool(Path(tmp), {"alpha--recent--2026-10-21.md": GOOD_REVIEW})
+            result = self._run(repo)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("1 landed review", result.stdout)
+
+    def test_a_dirty_working_tree_cannot_change_the_content_verdict(self):
+        """The check reads the branch: a broken edit on disk must not decide the content.
+
+        The edit is still reported on its own terms — a landed review changed
+        after it landed is the class-B shape the plant already has a name for
+        — but the broken text on disk does not decide the content contract.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo_with_tool(Path(tmp), {"alpha--recent--2026-10-21.md": GOOD_REVIEW})
+            path = repo / "research" / "field-review" / "reviews" / "alpha--recent--2026-10-21.md"
+            path.write_text(GOOD_REVIEW.replace("https://example.org/paper", "a paper I read"),
+                            encoding="utf-8")
+            result = self._run(repo)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("edited after it landed", result.stdout)
+            self.assertNotIn("cites no source URL", result.stdout)
+
+    def test_a_broken_landed_review_fails(self):
+        broken = GOOD_REVIEW.replace("https://example.org/paper", "a paper I read")
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo_with_tool(Path(tmp), {"alpha--recent--2026-10-21.md": broken})
+            result = self._run(repo)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("cites no source URL", result.stdout)
+
+    def test_a_review_that_never_landed_fails_after_the_grace_period(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo_with_tool(Path(tmp))
+            path = repo / "research" / "field-review" / "reviews" / "alpha--recent--2026-10-21.md"
+            path.write_text(GOOD_REVIEW, encoding="utf-8")
+            subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+            old = time.time() - 7200
+            os.utime(path, (old, old))
+            result = self._run(repo)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("without landing on the branch", result.stdout)
+
+    def test_no_landed_review_says_so_rather_than_claiming_a_round_trip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo_with_tool(Path(tmp))
+            result = self._run(repo)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("no review has landed yet", result.stdout)
+
+    def test_a_missing_reviewed_tool_is_unknown_not_a_pass(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp))
+            result = self._run(repo)
+            self.assertEqual(result.returncode, 3)
+            self.assertIn("UNKNOWN", result.stdout)
 
 
 if __name__ == "__main__":
