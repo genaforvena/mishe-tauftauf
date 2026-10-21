@@ -107,27 +107,38 @@ def _launcher_commands(text: str) -> list[list[str]]:
     return commands
 
 
-def _invokes_omp(tokens: list[str]) -> bool:
-    """Whether a command runs omp, the pane's own program."""
-    return any(token == "omp" or token.endswith("/omp") for token in tokens)
-
-
 _SHELL_WRAPPERS = frozenset({"exec", "env", "command", "nohup", "setsid"})
 """The words a launcher puts before the program it runs."""
 
 
-def _runs_a_program_by_path(tokens: list[str]) -> bool:
-    """Whether a command runs a program the launcher names by its path.
+def _program_word(tokens: list[str]) -> str | None:
+    """The program a command runs, in the position the shell runs it.
 
-    A launcher that reaches omp through a wrapper -- ``exec /usr/bin/python3
-    .../longcat-launch.py --model=...`` -- names no omp at all, and the model it
-    selects is still the model's the pane runs on.
+    A word that names a path is an argument, not a program: ``printf %s
+    /home/user/bin/omp --model=...`` prints an omp path and runs no omp, and a
+    reader that takes the model from it records a model no process ever ran on.
     """
     for token in tokens:
         if token in _SHELL_WRAPPERS:
             continue
-        return token.startswith("/")
-    return False
+        name, separator, _ = token.partition("=")
+        if separator and not token.startswith("-") and name.isidentifier():
+            continue
+        return token
+    return None
+
+
+def _runs_a_program(program: str | None) -> bool:
+    """Whether a command runs a program the plant can see running.
+
+    omp is the pane's own program; a launcher that reaches it through a
+    wrapper -- ``exec /usr/bin/python3 .../longcat-launch.py --model=...`` --
+    names a program by its path instead, and the model it selects is still the
+    model's the pane runs on.
+    """
+    if program is None:
+        return False
+    return program == "omp" or program.endswith("/omp") or program.startswith("/")
 
 
 def launcher_model(text: str) -> str | None:
@@ -138,31 +149,27 @@ def launcher_model(text: str) -> str | None:
     knows only one of them reports a model the bytes plainly name as absent.
 
     The model belongs to the command that runs the program, so that is where
-    it is read: a decoy flag in another command of the same script is not the
-    model the pane runs on, and the last command that runs the program is the
-    one whose process the plant sees. The command is the one that runs omp
-    directly; failing that, the one that runs a program the launcher names by
-    its path, which is how a launcher reaches omp through a wrapper. The value
-    rules of :func:`model` apply unchanged -- an empty value, or another
-    option in the value's place, is no model -- and a value that is not
-    written like a model name reads ``None`` as well: a launcher written in a
-    language the shell only quotes, ``"--model=vendor/model",``, yields a
-    value carrying the source's own punctuation, and a record that names
-    ``vendor/model,`` as the model is a wrong fact wearing a model's name.
+    it is read: the program word decides whether a command runs anything, and
+    a flag that only appears as an argument names no model the pane runs on. A
+    command that ``exec``s replaces the shell, so the commands after it never
+    run and are not read; the last command that runs a program is the one
+    whose process the plant sees. The value rules of :func:`model` apply
+    unchanged -- an empty value, or another option in the value's place, is no
+    model -- and a value that is not written like a model name reads ``None``
+    as well: a launcher written in a language the shell only quotes,
+    ``"--model=vendor/model",``, yields a value carrying the source's own
+    punctuation, and a record that names ``vendor/model,`` as the model is a
+    wrong fact wearing a model's name.
     """
-    commands = _launcher_commands(text)
-    for selector in (_invokes_omp, _runs_a_program_by_path):
-        chosen = None
-        found = False
-        for command in commands:
-            if not selector(command):
-                continue
-            found = True
-            value = model(command)
-            chosen = value if value is not None and set(value) <= _MODEL_NAME_CHARS else None
-        if found:
-            return chosen
-    return None
+    chosen = None
+    for command in _launcher_commands(text):
+        if not _runs_a_program(_program_word(command)):
+            continue
+        value = model(command)
+        chosen = value if value is not None and set(value) <= _MODEL_NAME_CHARS else None
+        if command and command[0] == "exec":
+            break
+    return chosen
 
 _SPINNER_GLYPHS = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 """Braille spinner frames the omp/opencode TUI advances without new content."""

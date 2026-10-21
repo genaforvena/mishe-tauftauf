@@ -131,6 +131,35 @@ class LauncherModelTests(unittest.TestCase):
         )
         self.assertEqual(self.seed._launcher_model(path), "vendor/model-a")
 
+    def test_a_data_argument_that_names_omp_is_not_a_launch(self):
+        """A path in an argument is an argument; the command runs no omp."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nprintf %s /home/user/bin/omp --model=vendor/decoy\n"
+            "exec /usr/bin/python3 /site/wrapper.py --model=vendor/real\n",
+        )
+        self.assertEqual(self.seed._launcher_model(path), "vendor/real")
+
+    def test_a_command_after_an_exec_never_runs(self):
+        """``exec`` replaces the shell, so the lines after it are unreachable."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nexec /usr/bin/python3 /site/wrapper.py --model=vendor/real\n"
+            "/bin/echo --model=vendor/decoy\n",
+        )
+        self.assertEqual(self.seed._launcher_model(path), "vendor/real")
+
+    def test_an_exec_without_a_model_is_no_model(self):
+        """The pane's own command decides, even when it names no model."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nprintf '%s\\n' --model=vendor/decoy\nexec /home/user/bin/omp --cwd /repo\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
     def test_missing_launcher_is_none(self):
         self.assertIsNone(self.seed._launcher_model(Path(self.directory) / "minds" / "absent"))
 
