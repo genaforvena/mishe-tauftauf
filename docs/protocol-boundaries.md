@@ -277,6 +277,30 @@ it, while the advisor's previous-context reader in `witness_analysis.py` decodes
 the whole publication or treats it as absent. Retain damaged publication
 evidence and coverage gaps.
 
+The budget is frozen by a second record, `parsing-legacy-freeze.json`, and
+`checks/parsing-legacy-freeze.py` compares the two:
+
+```sh
+python checks/parsing-legacy-freeze.py --repo REPO
+```
+
+The freeze records, per budgeted path, how many sites the policy allows and a
+digest of the expressions it allows. The check fails when the policy carries
+debt the freeze does not: a path the freeze does not know, more sites in a
+known path, or the same number of sites hiding a different set of expressions.
+A smaller budget passes — that is a migration — and the standing allowance is
+reported so it can be closed. A missing or unreadable policy or freeze is
+UNKNOWN, never a pass. `--working-tree` compares the files on disk, so a
+pending widening is visible before it is committed; `--update-baseline` rewrites
+the freeze to the policy's current budget and refuses to widen it, so the
+allowance to re-add migrated debt closes with the migration.
+
+The freeze exists because the rule above was prose. The budget was widened once
+before it was recorded — commit `23f9b1e6` on 2026-10-10 raised one
+fingerprint's count and added another, in exchange for a discovery fix — and
+every check in the guard suite passed throughout, because a budget entry added
+beside a failing change makes the guard pass again.
+
 The checker conservatively treats some formatting operations as parsing. It
 cannot prove that arbitrary Python implements no parser: indexing, loops,
 dynamic aliases or another executable can implement one without calling a

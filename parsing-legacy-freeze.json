@@ -1,0 +1,260 @@
+{
+  "version": 1,
+  "frozen_at": "2026-10-21T17:02:03.695772+00:00",
+  "frozen_from_commit": "45aabd78314b9573a760f5625a952b6b5060fdcb",
+  "updated_at": "2026-10-21T17:02:03.697344+00:00",
+  "updated_from_commit": "45aabd78314b9573a760f5625a952b6b5060fdcb",
+  "note": "The frozen legacy parsing budget: the debt tools/check_parsing.py still allows. It may shrink when a consumer migrates behind an adapter; it may not grow.",
+  "paths": {
+    "coordination/launcher.py": {
+      "sites": 2,
+      "entries": 2,
+      "digest": "8c94d41b8370989d98b9e503edc5ee94e220379378635943aa413f4d62162e12"
+    },
+    "coordination/site_sync.py": {
+      "sites": 22,
+      "entries": 20,
+      "digest": "23efc1e3777fd9f44e95341b45358869a9cfaa342fa6e48a15810c703b130cd1"
+    },
+    "src/mishe_tauftauf/access.py": {
+      "sites": 18,
+      "entries": 14,
+      "digest": "59e447260111281388031ee7b68cbe3a8376d24a0ed00f2c2c7303229a4b50ef"
+    },
+    "src/mishe_tauftauf/activity.py": {
+      "sites": 11,
+      "entries": 9,
+      "digest": "b0cc20395aa5ffb23d921ee551d960e80b3a9f7a266b71676a1a8d867709026d"
+    },
+    "src/mishe_tauftauf/checks.py": {
+      "sites": 4,
+      "entries": 4,
+      "digest": "65a2f1fc8db2ca06782dcae1d9f3d4900e99a5a47bb202b362cabf73b99bf5d7"
+    },
+    "src/mishe_tauftauf/ci_watch.py": {
+      "sites": 7,
+      "entries": 7,
+      "digest": "6197fefc529a3a12bab15ff7d4f7c4b27fe4e282a437067915cf869598f87fca"
+    },
+    "src/mishe_tauftauf/codex_review.py": {
+      "sites": 9,
+      "entries": 8,
+      "digest": "f624be9539570ad29629ddd908e22888a932961ff96b0f90eac8ce5f1777f31e"
+    },
+    "src/mishe_tauftauf/completions_judge.py": {
+      "sites": 20,
+      "entries": 20,
+      "digest": "1eee04fca3a027f2739e8e0a254fd2a2e9de5b6422dab11cc0decba6a9ecda22"
+    },
+    "src/mishe_tauftauf/control_cache.py": {
+      "sites": 1,
+      "entries": 1,
+      "digest": "c08b49ddc0e1c49f2da885f57e8a9479a182c849598fe683fafd60a3f4604a5f"
+    },
+    "src/mishe_tauftauf/coordination_checks.py": {
+      "sites": 25,
+      "entries": 24,
+      "digest": "9e6d6c57b226790d0a6f42d5ac2bd8cb6fe0088ae8fc163729a883e4ba4cd28a"
+    },
+    "src/mishe_tauftauf/dashboard.py": {
+      "sites": 2,
+      "entries": 2,
+      "digest": "dcae8addaa800f861c35a1fc6e0fee816becd836124b0e6e72d13afb8acf5a55"
+    },
+    "src/mishe_tauftauf/delivery.py": {
+      "sites": 11,
+      "entries": 10,
+      "digest": "5a43bd0ec788d7545a9e3bdd2c5a81fb8e9cfeb70c405218189d3d3ab056a16c"
+    },
+    "src/mishe_tauftauf/discovery.py": {
+      "sites": 198,
+      "entries": 146,
+      "digest": "edeeef544e78427e143a4ac591cfb7ffffad66d932b89d89e78452d62e75624c"
+    },
+    "src/mishe_tauftauf/external_view.py": {
+      "sites": 28,
+      "entries": 22,
+      "digest": "3cffb802ae220b4dcb1eebce16dd9a8bc04a9f775a4dd991d893de7e75826c16"
+    },
+    "src/mishe_tauftauf/handoff_check.py": {
+      "sites": 17,
+      "entries": 14,
+      "digest": "a8c96d5559fa8ee96cfedc90dafb1592b128b22280d81a04c43ec270869d0741"
+    },
+    "src/mishe_tauftauf/inference_inspect.py": {
+      "sites": 3,
+      "entries": 3,
+      "digest": "f695b4d2806ca468984471cb3c37d748ffc83a41d483a21588a31fd36d61e184"
+    },
+    "src/mishe_tauftauf/inference_loop.py": {
+      "sites": 5,
+      "entries": 5,
+      "digest": "c427d73d24a54019394e3e3a0c855c2d9d9e08b401287fddfe67f08c461d354c"
+    },
+    "src/mishe_tauftauf/inference_transport.py": {
+      "sites": 5,
+      "entries": 4,
+      "digest": "512d27c6f8d7b804ab786a4ad30320f339058ebd7b63e483af1744c3413e636e"
+    },
+    "src/mishe_tauftauf/inference_worker.py": {
+      "sites": 2,
+      "entries": 2,
+      "digest": "40a8005ffb72a56cd827371cc853562de57ea0e0fdb6d58b935180e720e2e69e"
+    },
+    "src/mishe_tauftauf/jev_judge.py": {
+      "sites": 29,
+      "entries": 21,
+      "digest": "446005705cfa553f85ce96f5d4e4c32c2d1613f74e4870772ac72dada716b99f"
+    },
+    "src/mishe_tauftauf/judges.py": {
+      "sites": 13,
+      "entries": 11,
+      "digest": "7d87763f2494d7400eff8441893b14e08b415caeeb38bbd4df8f760b048e84cf"
+    },
+    "src/mishe_tauftauf/landing.py": {
+      "sites": 7,
+      "entries": 7,
+      "digest": "b8767cba5226d1eb36e2178ccb333378e415bb4fc632d0e78fbad36dd93af610"
+    },
+    "src/mishe_tauftauf/laya_analysis.py": {
+      "sites": 2,
+      "entries": 2,
+      "digest": "5f3ec9cddb8b272a0a39510daf95421cfde9a5c72bc57b9901b5c59a29e09787"
+    },
+    "src/mishe_tauftauf/laya_judge.py": {
+      "sites": 2,
+      "entries": 2,
+      "digest": "904ae86c9674c447d9ff54533946312f80c60ed776bd08417282069442fd62d5"
+    },
+    "src/mishe_tauftauf/laya_review.py": {
+      "sites": 2,
+      "entries": 2,
+      "digest": "5f3ec9cddb8b272a0a39510daf95421cfde9a5c72bc57b9901b5c59a29e09787"
+    },
+    "src/mishe_tauftauf/permission_menu.py": {
+      "sites": 4,
+      "entries": 4,
+      "digest": "60609d4f19cb94e147a76d03f989bb7338bf1b4ad853bc4077f7a188ec63f966"
+    },
+    "src/mishe_tauftauf/pitfall_questions.py": {
+      "sites": 1,
+      "entries": 1,
+      "digest": "a2f4d5dd874700ae4014688720e6536ec24515c497d17c3d975e8df4b7fe99c8"
+    },
+    "src/mishe_tauftauf/plant.py": {
+      "sites": 31,
+      "entries": 29,
+      "digest": "b35c8e05aab8e6c995ff47892b31e59ef0f649b72c12df7477e329e620c49c6b"
+    },
+    "src/mishe_tauftauf/policy.py": {
+      "sites": 2,
+      "entries": 2,
+      "digest": "9b693f589126f8de32244469ca039f8da4a84cf925985fb96ac9b80960ce247a"
+    },
+    "src/mishe_tauftauf/post_check.py": {
+      "sites": 12,
+      "entries": 11,
+      "digest": "20d3bff0216d01d975783ed7eb4e2e3595221ff03f1e989ba137484bda394f04"
+    },
+    "src/mishe_tauftauf/predictions.py": {
+      "sites": 15,
+      "entries": 15,
+      "digest": "f2b69033585ad7fff58f77e164489e0a36e7286db0ffe1ad5b7975aa5f54b056"
+    },
+    "src/mishe_tauftauf/release_readiness.py": {
+      "sites": 5,
+      "entries": 5,
+      "digest": "41733896a784e939af206bdc57a4bb59b92e6018e97ba286da0d56fa7fbddbc8"
+    },
+    "src/mishe_tauftauf/retirement.py": {
+      "sites": 21,
+      "entries": 18,
+      "digest": "ffd1b9446ffc8219d7f1ea912b6f6fa6fc29d6144deebb522bda43005de29596"
+    },
+    "src/mishe_tauftauf/runtime.py": {
+      "sites": 31,
+      "entries": 29,
+      "digest": "b4c2020b72f9f5b1e45aa29795f215797ac30b7f4acaf94f793f502f4d7978c7"
+    },
+    "src/mishe_tauftauf/runtime_source.py": {
+      "sites": 10,
+      "entries": 10,
+      "digest": "38928563b14afa1c892c37129c1c40b56c150723e168f16f407e23ea47492366"
+    },
+    "src/mishe_tauftauf/scan_freshness.py": {
+      "sites": 7,
+      "entries": 7,
+      "digest": "fd3a71864e6b570e5ad19b33841f37528767e7303113ed51e2c8a5ac64b80035"
+    },
+    "src/mishe_tauftauf/seed.py": {
+      "sites": 91,
+      "entries": 65,
+      "digest": "dcb068ff171f8afa8ab4cc8e50ea4149ab3149a86431f9cf820af5a9970f11c4"
+    },
+    "src/mishe_tauftauf/seed_board.py": {
+      "sites": 3,
+      "entries": 3,
+      "digest": "81caf2ecb35c350465531329b724df351a5593557885a938be62d4a7fc6ebc17"
+    },
+    "src/mishe_tauftauf/seed_culture_views.py": {
+      "sites": 24,
+      "entries": 21,
+      "digest": "b25f580346da3ae567cad364fc9b2321e9653c0b70ebfeb007f96d2aff44ca6d"
+    },
+    "src/mishe_tauftauf/seed_permission_panel.py": {
+      "sites": 9,
+      "entries": 9,
+      "digest": "8c603300d5f7e27ab7578e4f78b9aa9423bb092255e2084dfe38cad00866e98a"
+    },
+    "src/mishe_tauftauf/seed_witness_view.py": {
+      "sites": 22,
+      "entries": 15,
+      "digest": "558b400713c07df833efc1fe1de1b7f6c65541be08f432deb7773d22cadaa49d"
+    },
+    "src/mishe_tauftauf/task_state.py": {
+      "sites": 56,
+      "entries": 28,
+      "digest": "b9a09cc292198dd5827de47645d21aaa0859af22af073cd45278bcaa104957b7"
+    },
+    "src/mishe_tauftauf/tmux.py": {
+      "sites": 29,
+      "entries": 26,
+      "digest": "853f763557e54d5d349a1e3778dd7b123e749b4c62932947af42a41ae5d0ba06"
+    },
+    "src/mishe_tauftauf/trial_metrics.py": {
+      "sites": 18,
+      "entries": 16,
+      "digest": "4ccacee50652e3b94bf4d548c364f7b5cd1b2a42a74136e478cce8d8547f022f"
+    },
+    "src/mishe_tauftauf/viewport.py": {
+      "sites": 3,
+      "entries": 3,
+      "digest": "bb51a7f5dbcc5875b959fb18e5417394163ced0dfac020bbafb65dc20ec381cb"
+    },
+    "src/mishe_tauftauf/wall.py": {
+      "sites": 44,
+      "entries": 36,
+      "digest": "d7cc6f9bb9efafd8e84f62a93a33b7ff974e7fd891124bf9fbfba6a582bd6f79"
+    },
+    "src/mishe_tauftauf/wall_patch.py": {
+      "sites": 19,
+      "entries": 15,
+      "digest": "bba843291b43fee365b464ed5db65dcb2a629e6bafbe17f6dec8cbb41028b86a"
+    },
+    "src/mishe_tauftauf/wall_review.py": {
+      "sites": 8,
+      "entries": 7,
+      "digest": "95844e8c7ff9d0e636c18a829b5edf9bb1242fd09f57835f8bfbfbd479b28eee"
+    },
+    "src/mishe_tauftauf/wall_view.py": {
+      "sites": 22,
+      "entries": 21,
+      "digest": "9a7543639510057505020a984f40a62c37d5136b96705b292c8392edfe1e86c4"
+    },
+    "src/mishe_tauftauf/witness_analysis.py": {
+      "sites": 8,
+      "entries": 6,
+      "digest": "3a6e1eea2d88d7a3c36d0b68be8af9b888ac4efed0d66356e757ae6e12a513d3"
+    }
+  }
+}
