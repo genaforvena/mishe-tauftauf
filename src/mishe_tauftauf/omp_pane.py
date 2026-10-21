@@ -114,11 +114,25 @@ unknown, never a guess. A token that carries one of these characters is
 refused whatever else it carries, so a quoted operator is refused too.
 """
 
+_SHELL_EXPANSIONS = "$*?"
+"""The characters the shell expands before it runs anything.
+
+A parameter expansion can name another program, or inject a flag the reader
+would not have seen, so a word that carries one of these is refused before
+any fact is taken from the command.
+"""
+
 _UNSUPPORTED_WORDS = frozenset({
     "if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done",
-    "case", "esac", "select", "function", "time", "coproc",
+    "case", "esac", "select", "function", "time", "coproc", "command",
+    "nohup", "setsid",
 })
-"""The shell keywords that make a script's control flow rather than a command."""
+"""The shell keywords and wrappers this reader does not model.
+
+``command``, ``nohup`` and ``setsid`` each have their own option grammar, and
+an option this reader mis-reads would make it name a program the shell never
+runs. They are refused rather than half-modelled.
+"""
 
 
 def _words(line: str) -> list[str]:
@@ -136,10 +150,11 @@ def _words(line: str) -> list[str]:
 def _launcher_commands(text: str) -> list[list[str]] | None:
     """The commands of a launcher script, or ``None`` when the script is more.
 
-    A whole-line comment is skipped. A command the shell cannot word (an
-    unterminated quote) is skipped. Any operator, grouping word or keyword
-    that this reader does not model refuses the whole script, because the
-    reader would not know which command the pane is running.
+    A whole-line comment is skipped. Any operator, grouping character,
+    keyword, expansion or ``#`` this reader cannot place refuses the whole
+    script, because the reader would not know which command the pane is
+    running. A line the shell cannot word refuses it too: the shell rejects
+    such a script, so a later line of it never runs.
     """
     commands = []
     for logical in _logical_lines(text) or []:
@@ -148,11 +163,13 @@ def _launcher_commands(text: str) -> list[list[str]] | None:
         try:
             tokens = _words(logical)
         except ValueError:
-            continue
+            return None
         if not tokens:
             continue
         for token in tokens:
             if any(character in _SHELL_PUNCTUATION for character in token):
+                return None
+            if any(character in _SHELL_EXPANSIONS for character in token):
                 return None
             if token in _UNSUPPORTED_WORDS:
                 return None
@@ -162,10 +179,10 @@ def _launcher_commands(text: str) -> list[list[str]] | None:
     return commands
 
 
-_SHELL_WRAPPERS = frozenset({"exec", "env", "command", "nohup", "setsid"})
-"""The words a launcher puts before the program it runs."""
+_ENV_FLAGS = frozenset({"-i", "-0", "--ignore-environment", "--debug"})
+"""The ``env`` options that are flags and take no word."""
 
-_ENV_OPTIONS_WITH_OPERAND = frozenset({"-u", "--unset", "-S", "--split-string", "-C", "--chdir"})
+_ENV_OPTIONS_WITH_OPERAND = frozenset({"-u", "--unset", "-C", "--chdir", "-S", "--split-string"})
 """The ``env`` options that take a word after them."""
 
 
@@ -175,30 +192,51 @@ def _is_assignment(token: str) -> bool:
     return bool(separator) and not token.startswith("-") and name.isidentifier()
 
 
-def _skip_env_options(tokens: list[str], index: int) -> int:
-    """The index of the program ``env`` runs, past its options."""
+def _skip_env_options(tokens: list[str], index: int) -> int | None:
+    """The index of the program ``env`` runs, or ``None`` for an option it does not know.
+
+    An option ``env`` rejects means no program runs at all, so an option this
+    reader does not model refuses the reading rather than being stepped over.
+    """
     while index < len(tokens):
         token = tokens[index]
         if token == "--":
             return index + 1
+        if token in _ENV_FLAGS:
+            index += 1
+            continue
         if token in _ENV_OPTIONS_WITH_OPERAND:
             index += 2
             continue
-        if token.startswith("--") or (token.startswith("-") and token != "-"):
-            index += 1
-            continue
+        if token.startswith("--"):
+            name, separator, _ = token.partition("=")
+            if name in _ENV_FLAGS:
+                index += 1
+                continue
+            if name in _ENV_OPTIONS_WITH_OPERAND:
+                index += 1 if separator else 2
+                continue
+            return None
+        if token.startswith("-") and token != "-":
+            if any(token.startswith(flag) and len(token) > len(flag)
+                   for flag in _ENV_OPTIONS_WITH_OPERAND):
+                index += 1
+                continue
+            return None
         break
     return index
 
 
-def _program_and_exec(tokens: list[str]) -> tuple[str | None, bool]:
-    """The program a command runs, and whether the command replaces the shell.
+def _program_and_exec(tokens: list[str]) -> tuple[str | None, bool, int]:
+    """The program a command runs, whether it replaces the shell, and where.
 
     The program is the word the shell runs, in the position it runs it: after
-    the shell wrappers and any environment assignment. A word that names a
-    path is an argument, not a program -- ``printf %s /home/user/bin/omp
-    --model=...`` prints an omp path and runs no omp -- and a reader that takes
-    the model from it records a model no process ever ran on.
+    the shell's own ``exec`` and any environment assignment. ``env`` is an
+    external program, so the word after it is the program it runs and not
+    another wrapper. A word that names a path is an argument, not a program --
+    ``printf %s /home/user/bin/omp --model=...`` prints an omp path and runs no
+    omp -- and a reader that takes the model from it records a model no
+    process ever ran on.
     """
     index = 0
     uses_exec = False
@@ -207,27 +245,38 @@ def _program_and_exec(tokens: list[str]) -> tuple[str | None, bool]:
         if _is_assignment(token):
             index += 1
             continue
-        if token in _SHELL_WRAPPERS:
-            uses_exec = uses_exec or token == "exec"
+        if token == "exec":
+            uses_exec = True
             index += 1
-            if token == "env":
-                index = _skip_env_options(tokens, index)
             continue
-        return token, uses_exec
-    return None, uses_exec
+        if token == "env":
+            index = _skip_env_options(tokens, index + 1)
+            if index is None or index >= len(tokens):
+                return None, uses_exec, -1
+            return tokens[index], uses_exec, index
+        return token, uses_exec, index
+    return None, uses_exec, -1
 
 
-def _runs_the_pane(program: str | None) -> bool:
+def _runs_the_pane(program: str | None, command: list[str], index: int) -> bool:
     """Whether a command runs the program the pane is.
 
-    omp is the pane's own program; a launcher that reaches it through a
-    wrapper -- ``exec /usr/bin/python3 .../longcat-launch.py --model=...`` --
-    names a program by its path instead, and the model it selects is still the
-    model's the pane runs on.
+    omp is the pane's own program. A launcher that reaches it through a
+    wrapper -- the plant's own ``exec /usr/bin/python3 .../longcat-launch.py
+    --model=...`` -- names a python interpreter running a launcher script, and
+    the model it selects is the model's the pane runs on. Any other program is
+    not the pane: ``/bin/echo --model=...`` prints a model and runs no pane.
     """
     if program is None:
         return False
-    return program == "omp" or program.endswith("/omp") or program.startswith("/")
+    if program == "omp" or program.endswith("/omp"):
+        return True
+    if not program.startswith("/"):
+        return False
+    if not program.rsplit("/", 1)[-1].startswith("python"):
+        return False
+    following = command[index + 1] if index + 1 < len(command) else ""
+    return following.endswith(".py")
 
 
 def launcher_model(text: str) -> str | None:
@@ -238,18 +287,19 @@ def launcher_model(text: str) -> str | None:
     knows only one of them reports a model the bytes plainly name as absent.
 
     This reader recognizes the launcher's shape and refuses the rest. It reads
-    a script of plain commands -- comments, environment assignments, the shell
-    wrappers, one program and its flags -- and it reads the model from the
-    command that runs the pane's program. A command that ``exec``s replaces
-    the shell, so it decides and the commands after it never run. A script
-    that launches the pane's program twice without an ``exec`` settles
-    nothing, so it reads no model.
+    a script of plain commands -- comments, environment assignments, the
+    shell's own ``exec``, ``env`` with the options it knows, one program and
+    its flags -- and it reads the model from the command that runs the pane's
+    program. A command that ``exec``s replaces the shell, so it decides and
+    the commands after it never run. A script that launches the pane's program
+    twice without an ``exec`` settles nothing, so it reads no model.
 
     Any construct this reader does not model -- a pipeline, an AND-list, a
     redirection, a here-document, a subshell, a group, a conditional, a
-    keyword, a quoted ``#`` -- makes the whole reading unknown. The contract
-    is deliberately narrow: a wrong model name is worse than an unknown one,
-    because the plant records it as the fact about what the mind runs on.
+    keyword, an expansion, a quoted ``#``, an option the reader does not know
+    -- makes the whole reading unknown. The contract is deliberately narrow: a
+    wrong model name is worse than an unknown one, because the plant records
+    it as the fact about what the mind runs on.
 
     The value rules of :func:`model` apply unchanged -- an empty value, or
     another option in the value's place, is no model -- and a value that is
@@ -263,8 +313,8 @@ def launcher_model(text: str) -> str | None:
         return None
     candidates = []
     for command in commands:
-        program, uses_exec = _program_and_exec(command)
-        if not _runs_the_pane(program):
+        program, uses_exec, index = _program_and_exec(command)
+        if not _runs_the_pane(program, command, index):
             continue
         value = model(command)
         usable = value if value is not None and set(value) <= _MODEL_NAME_CHARS else None
