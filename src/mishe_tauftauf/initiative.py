@@ -23,7 +23,7 @@ from .activity import roles as registered_roles
 from .chat_protocol import ProtocolError, decode_lifecycle
 from .feed import parse_feed
 from .outcome_events import classify_outcomes
-from .outcome_publication import eligible_evidence_path
+from .outcome_publication import eligible_evidence_path, remedy_successor
 from .post_check import _save
 from .predictions import PLAN_RE, STATUS_RE, replay_predictions
 from .records import MAX_BYTES
@@ -41,6 +41,7 @@ LIMITS = [
     "Counts describe recorded evidence, not initiative, courage, productivity or bugs fixed.",
     "Settlements are reported turn results; changed and verified are not independent acceptance.",
     "Outcomes are author reports with currently digest-checked evidence, not semantic acceptance.",
+    "An outcome whose own bound file no longer matches its digest is re-evidenced, not checked, when a later outcome of the same role binds the clause's corrected form of it under the remedy naming; the row's own defect and the successor are published beside it, and the evidence-binding gate publishes the successor's byte relation beside the same link.",
     "Prediction attribution is exact role/channel identity, not proof of the submitting person's identity.",
     "Patch records do not record a role: all patch attribution remains UNKNOWN; no filename/prose inference.",
     "Patch state is the latest saved scoped exercise, not permanent runtime health or a complete attempt history.",
@@ -198,7 +199,8 @@ def collect(home, *, now=None, entries=None):
         role_names.add(name)
         if name not in role_data:
             role_data[name] = {"state": "UNKNOWN", "wakes": 0, "settlements": {}, "open_wakes": [],
-                               "lifecycle_gaps": [], "outcomes": {}, "outcome_gaps": [], "predictions": [],
+                               "lifecycle_gaps": [], "outcomes": {}, "outcome_gaps": [],
+                               "re_evidenced_outcomes": [], "predictions": [],
                                "newest_checked_evidence": None}
         return role_data[name]
 
@@ -259,14 +261,68 @@ def collect(home, *, now=None, entries=None):
                 evidence_cache[key] = {"state": "OBSERVED"}
             except (OSError, ValueError) as exc:
                 evidence_cache[key] = _unknown(exc)
-        item = {**event, **evidence_cache[key], "ref": f"chat.log#{event['sequence']}"}
+
+    def re_evidenced_by(event):
+        """A later outcome of the same role that re-evidences this one.
+
+        The clause's remedy for an already-bound artifact that was edited after
+        publication is a new artifact under the lost artifact's own stem plus a
+        remedy suffix, cited in a new outcome. The reader therefore recognises
+        the plant's own relation instead of reporting a coverage gap for work
+        the plant already replaced.
+
+        The relation is decidable without reading prose: the successor's path
+        names the lost artifact's corrected form. Three conditions keep it
+        honest, and each is required:
+
+        * the successor is **later** than the row it re-evidences, ordered by
+          the event's own timestamp with the tape sequence as the tie-breaker,
+          so a backdated publication cannot act as a future repair;
+        * the successor is of the **same role**, so one role's outcome cannot
+          re-evidence another's;
+        * the successor's own evidence is **intact** — digest-checked — so a
+          broken successor moves the loss instead of replacing it.
+
+        The row's own evidence defect is not erased: the item keeps its
+        original state and reason beside the successor that re-evidenced it.
+        """
+        lost_path = Path(event["evidence"]["path"])
+        lost_order = (_time(event["timestamp"]), event["sequence"])
+        for candidate in outcomes["events"]:
+            if candidate["role"] != event["role"]:
+                continue
+            if (_time(candidate["timestamp"]), candidate["sequence"]) <= lost_order:
+                continue
+            if not remedy_successor(lost_path, Path(candidate["evidence"]["path"])):
+                continue
+            state = evidence_cache.get((candidate["evidence"]["path"], candidate["evidence"]["sha256"]))
+            if state is None or state.get("state") != "OBSERVED":
+                continue
+            return candidate
+        return None
+
+    for event in outcomes["events"]:
+        evidence = event["evidence"]
+        key = (evidence["path"], evidence["sha256"])
+        state = evidence_cache[key]
+        item = {**event, **state, "ref": f"chat.log#{event['sequence']}"}
+        successor = None
+        if item["state"] != "OBSERVED":
+            successor = re_evidenced_by(event)
+            if successor is not None:
+                item = {**item, "state": "OBSERVED", "link_kind": "remedy-name",
+                        "re_evidenced_by": f"chat.log#{successor['sequence']}",
+                        "own_evidence_state": state["state"],
+                        "own_evidence_reason": state.get("reason")}
         outcome_refs.append(item)
         row = role(event["role"])
-        if item["state"] == "OBSERVED":
+        if item["state"] == "OBSERVED" and successor is None:
             row["outcomes"][event["kind"]] = row["outcomes"].get(event["kind"], 0) + 1
             age = (now - _time(item["timestamp"])).total_seconds()
             if row["newest_checked_evidence"] is None or age < row["newest_checked_evidence"]:
                 row["newest_checked_evidence"] = age
+        elif successor is not None:
+            row["re_evidenced_outcomes"].append(item)
         else:
             row["outcome_gaps"].append(item)
     source_by_sequence = {entry.sequence: entry.source for entry in window_entries}
@@ -362,7 +418,8 @@ def _lines(report):
     if report["history"]["state"] != "OBSERVED":
         result.append("History UNKNOWN/partial: " + report["history"].get("reason", "unavailable"))
     visible_roles = [(name, row) for name, row in report["roles"].items()
-                     if row["state"] != "UNKNOWN" or row["lifecycle_gaps"] or row["outcome_gaps"]]
+                     if row["state"] != "UNKNOWN" or row["lifecycle_gaps"] or row["outcome_gaps"]
+                     or row.get("re_evidenced_outcomes")]
     for name, row in visible_roles[:16]:
         settled = ",".join(f"{key}={value}" for key, value in sorted(row["settlements"].items())) or "none recorded"
         outcomes = ",".join(f"{key}={value}" for key, value in sorted(row["outcomes"].items())) or "none recorded"
@@ -373,6 +430,9 @@ def _lines(report):
         result.append(f"{name}: {row['state']}; wakes={row['wakes']} settled[{settled}] outcomes[{outcomes}] {recency} evidence-UNKNOWN={len(row['outcome_gaps'])}")
         for item in row["open_wakes"]:
             result.append(f"  open wake {item['ref']} age={item['age_seconds']:.0f}s")
+        for item in row.get("re_evidenced_outcomes", []):
+            result.append(f"  outcome {item['ref']} re-evidenced by {item['re_evidenced_by']} "
+                          f"({item['link_kind']}); own evidence {item['own_evidence_state']}")
     if len(visible_roles) > 16:
         result.append(f"  {len(visible_roles) - 16} more roles in checks/initiative.json")
     unknown_roles = len(report["roles"]) - len(visible_roles)

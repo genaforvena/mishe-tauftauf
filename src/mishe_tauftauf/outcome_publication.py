@@ -78,6 +78,24 @@ def remedy_stem(value, vocabulary=None) -> str | None:
     return match.group("stem") if match else None
 
 
+def remedy_successor(lost_path, successor_path) -> bool:
+    """Whether the successor names the lost artifact's corrected form.
+
+    The clause's remedy naming, applied in the lost artifact's own path
+    namespace: the successor's stem is the lost artifact's stem plus a remedy
+    suffix, and both live in the same directory. The directory rule matters
+    because two different losses can share a stem, and one successor cannot be
+    the corrected form of both.
+
+    The relation is decidable without reading prose, which is why a reader can
+    apply it without interpreting an artifact's content.
+    """
+    lost = Path(lost_path)
+    successor = Path(successor_path)
+    stem = remedy_stem(successor)
+    return stem is not None and stem == lost.stem and successor.parent == lost.parent
+
+
 def _contained_parts(home, value):
     """The site-relative parts of a path inside the owned site, else None.
 
