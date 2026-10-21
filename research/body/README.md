@@ -74,6 +74,10 @@ a reader can check them rather than believe them.
   clock is at most *N* seconds behind the host. How far it may be *ahead* is
   not bounded, so the reading says that too instead of implying a two-sided
   interval.
+- **The lane's lateness is a distribution, not a number** - a row's age comes
+  from that row's own receipt. When the lane's backlog moves, no single
+  session-level figure can age the session, and the reading says so instead of
+  publishing one number that reads as if it applied to every row.
 - **Motion labels need gait resolution** - at 5 s per sample the 1-2 Hz gait
   band is aliased away, so no activity, motion or posture label is
   supportable however stable the magnitude is.
@@ -202,7 +206,44 @@ and the instrument measures them instead of assuming them:
   clock, and the lower bound on the delivery delay that follows from the
   clock bound - on the redmi10's live lane, a wall clock that moved at most
   1.305 s against its own monotonic clock, and rows delivered at least
-  8296.7 s after the phone produced them.
+  18539.9 s after the phone produced them (a lower bound that follows from
+  the clock bound; it is not a measurement of the lane's delay, and it grows
+  as the lane's backlog grows).
+
+### The lane's lateness is a backlog, not a constant
+
+One worst-case figure is not what a consumer of the lane has to cope with. A
+lane that is usually prompt and occasionally hours behind is a different
+animal from a lane that is uniformly late, and the two need different
+handling. The instrument therefore publishes a `lateness` profile per session:
+the spread of `observed` over the rows that carry the phone's monotonic
+reading, the median and the 95th percentile, how many rows are more than a
+minute old, and the worst-case residual of *one* constant correction.
+
+Measured on the redmi10's live lane (session `af9d723f`, 2026-10-21):
+
+| figure | value |
+|---|---|
+| rows covered | 56516 |
+| observed lag, smallest | 0.06 s |
+| observed lag, median | 3.6 s |
+| observed lag, 95th percentile | 12752 s |
+| observed lag, largest | 18541 s |
+| rows more than 60 s old | 23203 (41%) |
+| worst residual of one constant correction | 18542 s |
+
+So the transport floor is about 0.06 s - the lane can deliver a row
+essentially at once - and the staleness is a queue backlog that builds and
+drains. One figure cannot age the session; a row's age has to come from that
+row's own receipt. In an earlier session of the same lane (`bf9d0097`) the lag
+was steady at 21.9 s median with a 15.8 s spread over 7.2 h, so the backlog is
+episodic and where it is absent one correction ages the session's rows to
+within 16.8 s - the spread of the lag plus the whole-second slack of the
+device epoch - instead of the 18542 s the live session's backlog costs.
+
+The profile is about *relative* age. The absolute age of a row is still not
+recoverable from the lane - that is the identifiability limit above - and the
+profile does not claim it.
 
 Where the third reference *does* exist, the lag does decompose. The clock
 document's offset is `phone clock - host clock` and the lag is `host receipt -

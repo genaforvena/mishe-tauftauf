@@ -1041,6 +1041,7 @@ def _delivered_clock_bound(body: Path, node: str, now: float) -> dict:
         "wall_drift_s": summary["wall_drift_s"],
         "clock_step": summary["clock_step"],
         "delivery_latency_lower_s": summary["delivery_latency_lower_s"],
+        "lateness": summary["lateness"],
         "ambiguous_resets": summary["ambiguous_resets"],
         "masked_resets": summary["masked_resets"],
         "premise": summary["premise"],
@@ -1272,6 +1273,21 @@ def node_reading(node: dict, body: Path, max_age: float, now: float,
                           f"lateness rather than the phone's clock: at its worst "
                           f"the lane delivered a row at least {latency:.1f} s "
                           f"after the phone produced it")
+            lateness = bound.get("lateness") or {}
+            if lateness.get("rows"):
+                claim += (f"; that lateness is not one figure: over the session it "
+                          f"spans {lateness['observed_min_s']:.2f} s to "
+                          f"{lateness['observed_max_s']:.0f} s, with a median of "
+                          f"{lateness['observed_median_s']:.1f} s and "
+                          f"{lateness['stale_rows']} of {lateness['rows']} rows "
+                          f"more than {lateness['stale_threshold_s']:.0f} s old, so "
+                          f"the staleness is a queue backlog rather than a constant "
+                          f"delay")
+                if not lateness.get("constant_correction_within_tolerance"):
+                    claim += (f" and one correction cannot age the whole session "
+                              f"(the worst residual is "
+                              f"{lateness['relative_age_residual_s']:.0f} s)")
+                claim += ", so a row's age has to come from that row's own receipt"
         else:
             tightest = bound.get("observed_min_s")
             if tightest is not None:
@@ -1416,6 +1432,21 @@ def render(report: dict) -> str:
                          f"{bound.get('delivery_latency_lower_s')}")
             if bound.get("reason"):
                 lines.append(f"     reason: {bound.get('reason')}")
+            lateness = bound.get("lateness") or {}
+            if lateness:
+                lines.append(f"   lane lateness: rows={lateness.get('rows')} "
+                             f"min_s={lateness.get('observed_min_s')} "
+                             f"median_s={lateness.get('observed_median_s')} "
+                             f"p95_s={lateness.get('observed_p95_s')} "
+                             f"max_s={lateness.get('observed_max_s')} "
+                             f"spread_s={lateness.get('spread_s')} "
+                             f"stale_rows={lateness.get('stale_rows')} "
+                             f"stale_threshold_s={lateness.get('stale_threshold_s')} "
+                             f"relative_age_residual_s="
+                             f"{lateness.get('relative_age_residual_s')} "
+                             f"constant_correction_within_"
+                             f"{lateness.get('tolerance_s')}s="
+                             f"{lateness.get('constant_correction_within_tolerance')}")
             if bound.get("premise"):
                 lines.append(f"     premise: {bound.get('premise')}")
             if bound.get("session_wide_withheld_reason"):

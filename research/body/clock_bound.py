@@ -105,6 +105,15 @@ SOURCE = "research/body/clock_bound.py"
 METHOD = "delivered-row-epoch-vs-host-receipt"
 #: The device epoch is whole seconds, so every pairing carries this much slack.
 QUANTIZATION_S = 1.0
+#: How stale a delivered row has to be before the profile counts it as stale.
+#: A minute is where a row stops being usable as a present observation of a
+#: person, and it is a parameter because the body that owns the queue sets
+#: its own cadence.
+STALE_ROW_THRESHOLD_S = 60.0
+#: The tolerance a consumer of the human's own analysis needs from a row's
+#: age: the age of one delivered row relative to another, to within this
+#: many seconds.
+CORRECTION_TOLERANCE_S = 1.0
 #: How long the emitted reading is treated as current.
 VALIDITY_SECONDS = 3600.0
 #: The longest reason the producer's reader will carry into a rendered pane.
@@ -452,6 +461,60 @@ class Session:
         return max(pair.observed for pair, _ in covered) - bound
 
     @property
+    def lateness_profile(self) -> dict:
+        """How the lane's own lateness is spread over the session's rows.
+
+        ``observed`` is the phone's clock error plus a non-negative transport
+        delay, so its spread over the rows is the spread of the two
+        together.  One worst-case figure hides what a consumer actually has
+        to cope with: a lane that is usually prompt and occasionally hours
+        behind is a different animal from a lane that is uniformly late, and
+        only the first can be aged row by row.
+
+        The profile says how stale the typical row is, how stale the tail is,
+        and whether one constant correction could serve the whole session.
+        That last statement is about *relative* age - how well a row's age
+        relative to the session's tightest row is known - because the
+        absolute age of a row is not recoverable from the lane at all: a
+        constant transport delay and a constant clock offset produce
+        identical bytes (see :data:`BEHIND_BOUND_PREMISE`).
+
+        The residual carries :data:`QUANTIZATION_S` on top of the spread: the
+        device epoch is whole seconds, so the difference between two rows'
+        ages carries up to that much rounding slack of its own, and the
+        residual is what a consumer's age estimate can be wrong by.  It is
+        reported as the *worst case* over the session, not as an average.
+        """
+        values = sorted(pair.observed for pair, _ in self.wall_values())
+        if not values:
+            return {}
+        count = len(values)
+        stale = sum(1 for value in values if value > STALE_ROW_THRESHOLD_S)
+        spread = values[-1] - values[0]
+        residual = spread + QUANTIZATION_S
+        return {
+            "rows": count,
+            "observed_min_s": values[0],
+            "observed_median_s": statistics.median(values),
+            "observed_p95_s": values[min(count - 1, int(0.95 * count))],
+            "observed_max_s": values[-1],
+            "spread_s": spread,
+            "stale_threshold_s": STALE_ROW_THRESHOLD_S,
+            "stale_rows": stale,
+            "stale_fraction": stale / count,
+            "relative_age_residual_s": residual,
+            "tolerance_s": CORRECTION_TOLERANCE_S,
+            "constant_correction_within_tolerance": residual <= CORRECTION_TOLERANCE_S,
+            "note": (f"the lane's lateness varies by {spread:.3f} s across the "
+                     f"session, so one correction leaves up to {residual:.3f} s "
+                     f"of error and a row's age has to come from that row's own "
+                     f"receipt"
+                     if not residual <= CORRECTION_TOLERANCE_S else
+                     "the lane's lateness is steady here, so one correction "
+                     "serves the session's rows"),
+        }
+
+    @property
     def behind_upper_at_last_sample_s(self) -> float | None:
         """The exact bound at the freshest delivered sample.
 
@@ -501,6 +564,7 @@ class Session:
             "premise": BEHIND_BOUND_PREMISE,
             "wall_drift_s": self.drift_s,
             "delivery_latency_lower_s": self.delivery_latency_lower_s,
+            "lateness": self.lateness_profile,
             "session_wide_withheld_reason": self.session_wide_withheld_reason,
             "ambiguous_resets": list(self.ambiguous_resets),
             "masked_resets": list(self.masked_resets),
@@ -887,6 +951,17 @@ def render_summary(node: str, measurement: dict) -> str:
             f"masked resets={entry['masked_resets'] or 'none'}; "
             f"reboots={entry['reboots'] or 'none'}; "
             f"opened after reboot={entry['opened_after_reboot']}")
+        lateness = entry.get("lateness") or {}
+        if lateness:
+            lines.append(
+                f"    lateness: rows={lateness['rows']} "
+                f"observed spread={lateness['spread_s']:.3f}s; "
+                f"stale rows (>{lateness['stale_threshold_s']:.0f}s)="
+                f"{lateness['stale_rows']}; "
+                f"one constant correction within {lateness['tolerance_s']:.0f}s="
+                f"{lateness['constant_correction_within_tolerance']}; "
+                f"worst relative-age residual="
+                f"{lateness['relative_age_residual_s']:.3f}s")
     return "\n".join(lines)
 
 
