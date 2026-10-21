@@ -84,48 +84,123 @@ _MODEL_NAME_CHARS = frozenset(
 """The characters a model name is written with; shell and source punctuation is not one."""
 
 
+def _logical_lines(text: str) -> list[str]:
+    """The script's logical lines: a backslash at the end continues a line."""
+    lines = []
+    buffer = ""
+    for line in text.splitlines():
+        stripped = line.rstrip()
+        if stripped.endswith("\\"):
+            buffer += stripped[:-1] + " "
+            continue
+        lines.append(buffer + line)
+        buffer = ""
+    if buffer:
+        lines.append(buffer)
+    return lines
+
+
+_COMMAND_SEPARATORS = frozenset({";", "&", "|", "then", "do", "else", "elif", "fi", "done", "esac"})
+"""The words and characters the shell puts between two commands."""
+
+
+def _words(line: str) -> list[str]:
+    """The words of a line, the way the shell words it.
+
+    The punctuation the shell reads as a boundary is a word of its own, so a
+    command separator is visible in the stream; ``#`` is left in the stream
+    because the shell reads a ``#`` that *begins a word* as a comment and one
+    inside a word as an ordinary character.
+    """
+    lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    return list(lexer)
+
+
 def _launcher_commands(text: str) -> list[list[str]]:
     """The commands of a launcher script, each read the way the shell words it.
 
-    A ``#`` that begins a word starts a comment; a ``#`` inside a word is an
-    ordinary character, so a value like ``vendor/model#suffix`` is one word and
-    not a truncated one. A command the shell cannot word (an unterminated
-    quote) is skipped rather than guessed at.
+    A comment runs to the end of its line, so the words after it are dropped;
+    a command the shell cannot word (an unterminated quote) is skipped rather
+    than guessed at.
     """
     commands = []
-    for line in text.splitlines():
+    for logical in _logical_lines(text):
         try:
-            tokens = shlex.split(line, comments=False)
+            tokens = _words(logical)
         except ValueError:
             continue
-        for index, token in enumerate(tokens):
+        current: list[str] = []
+        for token in tokens:
             if token.startswith("#"):
-                tokens = tokens[:index]
                 break
-        if tokens:
-            commands.append(tokens)
+            if token in _COMMAND_SEPARATORS:
+                if current:
+                    commands.append(current)
+                current = []
+                continue
+            current.append(token)
+        if current:
+            commands.append(current)
     return commands
 
 
 _SHELL_WRAPPERS = frozenset({"exec", "env", "command", "nohup", "setsid"})
 """The words a launcher puts before the program it runs."""
 
+_ENV_OPTIONS_WITH_OPERAND = frozenset({"-u", "--unset", "-S", "--split-string", "-C", "--chdir"})
+"""The ``env`` options that take a word after them."""
 
-def _program_word(tokens: list[str]) -> str | None:
-    """The program a command runs, in the position the shell runs it.
 
-    A word that names a path is an argument, not a program: ``printf %s
-    /home/user/bin/omp --model=...`` prints an omp path and runs no omp, and a
-    reader that takes the model from it records a model no process ever ran on.
+def _is_assignment(token: str) -> bool:
+    """Whether a word is an environment assignment, which the shell runs nothing."""
+    name, separator, _ = token.partition("=")
+    return bool(separator) and not token.startswith("-") and name.isidentifier()
+
+
+def _skip_env_options(tokens: list[str], index: int) -> int:
+    """The index of the program ``env`` runs, past its options."""
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            return index + 1
+        if token.startswith("--"):
+            index += 1
+            continue
+        if token.startswith("-") and token != "-":
+            index += 1
+            if token in _ENV_OPTIONS_WITH_OPERAND:
+                index += 1
+            continue
+        break
+    return index
+
+
+def _program_and_exec(tokens: list[str]) -> tuple[str | None, bool]:
+    """The program a command runs, and whether the command replaces the shell.
+
+    The program is the word the shell runs, in the position it runs it: after
+    the shell wrappers and any environment assignment. A word that names a
+    path is an argument, not a program -- ``printf %s /home/user/bin/omp
+    --model=...`` prints an omp path and runs no omp -- and a reader that takes
+    the model from it records a model no process ever ran on.
     """
-    for token in tokens:
+    index = 0
+    uses_exec = False
+    while index < len(tokens):
+        token = tokens[index]
+        if _is_assignment(token):
+            index += 1
+            continue
         if token in _SHELL_WRAPPERS:
+            uses_exec = uses_exec or token == "exec"
+            index += 1
+            if token == "env":
+                index = _skip_env_options(tokens, index)
             continue
-        name, separator, _ = token.partition("=")
-        if separator and not token.startswith("-") and name.isidentifier():
-            continue
-        return token
-    return None
+        return token, uses_exec
+    return None, uses_exec
 
 
 def _runs_a_program(program: str | None) -> bool:
@@ -148,28 +223,36 @@ def launcher_model(text: str) -> str | None:
     spellings -- ``--model value`` and ``--model=value`` -- and a reader that
     knows only one of them reports a model the bytes plainly name as absent.
 
-    The model belongs to the command that runs the program, so that is where
-    it is read: the program word decides whether a command runs anything, and
-    a flag that only appears as an argument names no model the pane runs on. A
-    command that ``exec``s replaces the shell, so the commands after it never
-    run and are not read; the last command that runs a program is the one
-    whose process the plant sees. The value rules of :func:`model` apply
-    unchanged -- an empty value, or another option in the value's place, is no
-    model -- and a value that is not written like a model name reads ``None``
-    as well: a launcher written in a language the shell only quotes,
-    ``"--model=vendor/model",``, yields a value carrying the source's own
-    punctuation, and a record that names ``vendor/model,`` as the model is a
-    wrong fact wearing a model's name.
+    The model belongs to the command that runs the program, so that is where it
+    is read. The commands are the shell's own: a backslash continues a line, a
+    separator ends a command, and a comment runs to the end of its line. The
+    program is the word the shell runs, so a flag that only appears as an
+    argument names no model the pane runs on. A command that ``exec``s replaces
+    the shell, so it decides and the commands after it never run. A script that
+    launches more than one program and does not ``exec`` settles nothing: the
+    shell runs them in turn, and which one the pane is running is not in the
+    bytes, so the reading is ``None`` rather than a guess.
+
+    The value rules of :func:`model` apply unchanged -- an empty value, or
+    another option in the value's place, is no model -- and a value that is
+    not written like a model name reads ``None`` as well: a launcher written
+    in a language the shell only quotes, ``"--model=vendor/model",``, yields a
+    value carrying the source's own punctuation, and a record that names
+    ``vendor/model,`` as the model is a wrong fact wearing a model's name.
     """
-    chosen = None
+    candidates = []
     for command in _launcher_commands(text):
-        if not _runs_a_program(_program_word(command)):
+        program, uses_exec = _program_and_exec(command)
+        if not _runs_a_program(program):
             continue
         value = model(command)
-        chosen = value if value is not None and set(value) <= _MODEL_NAME_CHARS else None
-        if command and command[0] == "exec":
-            break
-    return chosen
+        usable = value if value is not None and set(value) <= _MODEL_NAME_CHARS else None
+        if uses_exec:
+            return usable
+        candidates.append(usable)
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
 
 _SPINNER_GLYPHS = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 """Braille spinner frames the omp/opencode TUI advances without new content."""

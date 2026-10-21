@@ -160,6 +160,48 @@ class LauncherModelTests(unittest.TestCase):
         )
         self.assertIsNone(self.seed._launcher_model(path))
 
+    def test_an_exec_behind_an_assignment_still_replaces_the_shell(self):
+        """``MODE=x exec ...`` is the shell's own exec, and it ends the script."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nMODE=x exec /usr/bin/python3 /site/wrapper.py --model=vendor/real\n"
+            "/bin/echo --model=vendor/decoy\n",
+        )
+        self.assertEqual(self.seed._launcher_model(path), "vendor/real")
+
+    def test_two_launches_without_an_exec_settle_nothing(self):
+        """The shell runs them in turn; which one the pane runs is not in the bytes."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\n/home/user/bin/omp --model=vendor/real\n/bin/echo --model=vendor/decoy\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_a_separator_ends_a_command(self):
+        """Two commands on one line are two commands."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\n/bin/echo --model=vendor/decoy ; exec omp --model=vendor/real\n",
+        )
+        self.assertEqual(self.seed._launcher_model(path), "vendor/real")
+
+    def test_a_backslash_continues_a_line(self):
+        """The flag on the continuation line is the flag of the command."""
+        path = write_mind(self.directory, "probe", "#!/bin/sh\nexec omp \\\n  --model vendor/real\n")
+        self.assertEqual(self.seed._launcher_model(path), "vendor/real")
+
+    def test_env_options_are_not_the_program(self):
+        """``env -u OLD /path/omp`` runs omp."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nexec env -u OLD /home/user/bin/omp --model vendor/real\n",
+        )
+        self.assertEqual(self.seed._launcher_model(path), "vendor/real")
+
     def test_missing_launcher_is_none(self):
         self.assertIsNone(self.seed._launcher_model(Path(self.directory) / "minds" / "absent"))
 
