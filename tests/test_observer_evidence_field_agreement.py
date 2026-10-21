@@ -168,6 +168,27 @@ def test_missing_line_is_named(tmp_path):
     assert "body-research" in result.stdout
 
 
+def test_extra_line_is_named(tmp_path):
+    """A published line the reviewed tree does not publish reads extra.
+
+    The plant's own projection-level check reports such a line, so this
+    detector must not disagree with it about the same frame: a check that
+    stays silent where a peer check reports a difference is a false green.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    write_frame(home, SLUG, ["SUBSTRATE: KNOWN unchanged checked_at=2026-10-21T00:00:00Z",
+                              "body-research: OBSERVED; wakes=1 checked-evidence-age=none "
+                              "evidence-UNKNOWN=0",
+                              "SYSTEM ZERO",
+                              "FAIL witness overdue pending wake docs"])
+    reference = write_package(tmp_path / "ref", field="checked-evidence-age")
+    result = run_check(home, reference)
+    assert result.returncode == 2, result.stdout
+    assert "EXTRA LINE" in result.stdout
+    assert "SYSTEM" in result.stdout
+
+
 def test_absent_frame_reads_unknown(tmp_path):
     """No published frame reads UNKNOWN, never a verdict."""
     home = tmp_path / "home"
