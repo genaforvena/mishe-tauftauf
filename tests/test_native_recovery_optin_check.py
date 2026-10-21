@@ -472,6 +472,67 @@ def test_the_role_comes_from_the_consumer_not_from_the_file_name(tmp_path):
     assert "role      : docs" in result.stdout
 
 
+def test_an_export_followed_by_a_metacharacter_reads_agreement(tmp_path):
+    """`export NAME=value && export OTHER=1` is two commands, not a bad name.
+
+    The shell ends the export at the metacharacter and exports the value; a
+    reader that treated the rest as another name to export would name a
+    correct launcher as broken.
+    """
+    home = make_home(tmp_path)
+    number = wake(home)
+    (home / "minds" / ROLE).write_text(
+        "#!/bin/sh\nexport MISHE_NATIVE_RECOVERY_WAKE=%d && export MISHE_NATIVE_RECOVERY_ATTEMPT=1\n"
+        % number, encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 0, result.stdout
+
+
+def test_an_export_with_two_names_reads_agreement(tmp_path):
+    """`export NAME=value OTHER=1` exports both names and reports no error."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    (home / "minds" / ROLE).write_text(
+        "#!/bin/sh\nexport MISHE_NATIVE_RECOVERY_WAKE=%d MISHE_NATIVE_RECOVERY_ATTEMPT=1\n"
+        % number, encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 0, result.stdout
+
+
+def test_an_export_ended_by_a_semicolon_reads_agreement(tmp_path):
+    """`export NAME=value; export OTHER=1` is two commands, not a bad name."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    (home / "minds" / ROLE).write_text(
+        "#!/bin/sh\nexport MISHE_NATIVE_RECOVERY_WAKE=%d; export MISHE_NATIVE_RECOVERY_ATTEMPT=1\n"
+        % number, encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 0, result.stdout
+
+
+def test_a_metacharacter_inside_quotes_is_part_of_the_value(tmp_path):
+    """`export NAME='7;7'` exports a value the shell quotes; the `;` is not a break."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    (home / "minds" / ROLE).write_text(
+        "#!/bin/sh\nexport MISHE_NATIVE_RECOVERY_WAKE='%d;%d'\n" % (number, number),
+        encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 2, result.stdout
+    assert "MISMATCH" in result.stdout
+
+
+def test_a_word_the_shell_refuses_as_a_name_still_reads_a_mismatch(tmp_path):
+    """`export NAME=value 2` is the shell's bad variable name, and stays a finding."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    (home / "minds" / ROLE).write_text(
+        "#!/bin/sh\nexport MISHE_NATIVE_RECOVERY_WAKE=%d 2\n" % number, encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 2, result.stdout
+    assert "MISMATCH" in result.stdout
+
+
 def test_an_export_the_shell_rejects_reads_a_mismatch(tmp_path):
     """`export NAME = value` names three words; the shell exports no value."""
     home = make_home(tmp_path)
