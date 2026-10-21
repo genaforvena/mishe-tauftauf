@@ -787,6 +787,28 @@ class ClockBoundTests(unittest.TestCase):
             unknowns = " ".join(reading["unknowns"])
             self.assertIn("no session-wide clock bound", unknowns)
 
+    def test_the_reading_says_the_lateness_is_a_backlog_not_one_figure(self) -> None:
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # One row is delivered on time and another 500 s late.  The
+            # worst-case latency alone would read as "every row is hours
+            # old"; the reading has to say that the staleness is a backlog
+            # and that a row's age comes from its own receipt.
+            _lane(root, "redmi10",
+                  [(1, 1000, None), (2, 1005, 5000), (3, 1010, 10000)],
+                  [(1005.05, 2), (1510.1, 1)])
+            reading = self._reading(root, now)
+            lateness = reading["clock_bound"]["lateness"]
+            self.assertEqual(lateness["rows"], 2)
+            self.assertAlmostEqual(lateness["observed_min_s"], 0.05)
+            self.assertAlmostEqual(lateness["observed_max_s"], 500.1)
+            self.assertEqual(lateness["stale_rows"], 1)
+            self.assertFalse(lateness["constant_correction_within_tolerance"])
+            claims = " ".join(reading["claims_supported"])
+            self.assertIn("queue backlog", claims)
+            self.assertIn("own receipt", claims)
+
     def test_the_bound_is_never_a_two_sided_interval(self) -> None:
         now = 1_800_000_000.0
         with tempfile.TemporaryDirectory() as tmp:

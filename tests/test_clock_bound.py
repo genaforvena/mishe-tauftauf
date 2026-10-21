@@ -267,6 +267,47 @@ class ClockBoundTests(unittest.TestCase):
         self.assertAlmostEqual(current["behind_upper_s"], 0.1)
         self.assertAlmostEqual(current["delivery_latency_lower_s"], 500.0)
 
+    def test_a_prompt_lane_has_a_steady_lateness_profile(self):
+        # Every row is delivered 0.1 s after the phone produced it, so one
+        # correction ages the whole session and the profile says so.
+        rows = clock_bound.parse_rows(_rows([
+            _hello(1, 1000),
+            _light(2, 1005, 5000),
+            _light(3, 1010, 10000),
+        ]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 2), (1010.1, 1)]))
+        measurement = clock_bound.measure(rows, receipts)
+        lateness = measurement["sessions"][-1]["lateness"]
+        self.assertEqual(lateness["rows"], 2)
+        self.assertAlmostEqual(lateness["observed_min_s"], 0.1)
+        self.assertAlmostEqual(lateness["observed_max_s"], 0.1)
+        self.assertAlmostEqual(lateness["spread_s"], 0.0)
+        self.assertEqual(lateness["stale_rows"], 0)
+        self.assertTrue(lateness["constant_correction_within_tolerance"])
+
+    def test_a_backlogged_lane_is_not_correctable_by_one_figure(self):
+        # One row is delivered on time and another 500 s late.  The median
+        # and the worst case alone do not say that one figure cannot serve
+        # the session, so the profile carries the spread and the verdict.
+        rows = clock_bound.parse_rows(_rows([
+            _hello(1, 1000),
+            _light(2, 1005, 5000),
+            _light(3, 1010, 10000),
+        ]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 1), (1510.1, 1)]))
+        measurement = clock_bound.measure(rows, receipts)
+        lateness = measurement["sessions"][-1]["lateness"]
+        self.assertEqual(lateness["rows"], 2)
+        self.assertAlmostEqual(lateness["observed_min_s"], 0.1)
+        self.assertAlmostEqual(lateness["observed_max_s"], 500.1)
+        self.assertAlmostEqual(lateness["spread_s"], 500.0)
+        self.assertEqual(lateness["stale_rows"], 1)
+        self.assertFalse(lateness["constant_correction_within_tolerance"])
+        # The residual is the spread plus the device epoch's own slack.
+        self.assertAlmostEqual(lateness["relative_age_residual_s"],
+                               500.0 + clock_bound.QUANTIZATION_S)
+        self.assertIn("own receipt", lateness["note"])
+
     def test_the_reason_never_states_an_inequality_the_lane_does_not_support(self):
         rows = clock_bound.parse_rows(_rows([
             _hello(1, 1000, "aaaa-bbbb-cccc"),
