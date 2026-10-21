@@ -104,8 +104,30 @@ def _queue(directory: Path, node: str, rows: list[tuple[int, int, str]],
         "\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _lane(directory: Path, node: str, rows: list[tuple[int, int, int]],
+          posts: list[tuple[float, int]]) -> None:
+    """Write a delivered lane that carries the phone's own uptime readings.
+
+    ``rows`` are ``(sequence, device epoch, uptime in ms)``.  The uptime
+    reading is what lets the instrument account for the phone's own clock
+    movement, so a lane without it cannot carry a session-wide bound.
+    """
+    queues = directory / "body" / "queues"
+    queues.mkdir(parents=True, exist_ok=True)
+    lines = []
+    for sequence, epoch, elapsed in rows:
+        if elapsed is None:
+            lines.append(f"{sequence} {epoch} hello node={node} protocol=1 "
+                         f"session=aaaa-bbbb-cccc")
+        else:
+            lines.append(f"{sequence} {epoch} light lux=1.0 accuracy=3 "
+                         f"age_ms=10 phone_elapsed_ms={elapsed}")
+    (queues / f"{node}.observations.log").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8")
+    _journal(directory, node, posts)
+
+
 def _journal(directory: Path, node: str, posts: list[tuple[float, int]]) -> None:
-    """Write the host's accepted-POST journal for one node."""
     queues = directory / "body" / "queues"
     queues.mkdir(parents=True, exist_ok=True)
     entries = []
@@ -684,6 +706,95 @@ class BoundaryTests(unittest.TestCase):
             # a 100 s gap is below the hole threshold but is still missing time
             self.assertEqual(continuity["body_holes"], [])
             self.assertLess(continuity["coverage"]["observation_coverage"], 1.0)
+
+
+class ClockBoundTests(unittest.TestCase):
+    """What the delivered lane can say about a phone's clock, and no more.
+
+    A node with no measured clock-domain document used to be reported as
+    "absolute phone time is UNKNOWN" and nothing else.  The delivered lane
+    does bound the phone's clock from above, and the reading has to say so
+    with the side that stays unresolved named.
+    """
+
+    def _reading(self, root: Path, now: float) -> dict:
+        space = _space(root, [_node("redmi10", "fail", 100.0, "absent")],
+                       {"redmi10": _history(now)})
+        report = personal_multibody.build_report(space, 300.0, now)
+        return report["nodes"][0]
+
+    def test_the_delivered_lane_bounds_the_phone_clock_from_above(self) -> None:
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _lane(root, "redmi10",
+                  [(1, 1000, None), (2, 1005, 5000), (3, 1010, 10000)],
+                  [(1005.05, 2), (1010.1, 1)])
+            reading = self._reading(root, now)
+            bound = reading["clock_bound"]
+            self.assertEqual(bound["status"], "bounded-from-the-delivered-lane")
+            self.assertIsNotNone(bound["behind_upper_s"])
+            self.assertIsNone(bound["behind_lower_s"])
+            self.assertEqual(bound["session"], "aaaa-bbbb-cccc")
+            self.assertEqual(bound["rows"], 3)
+            self.assertTrue(bound["premise"])
+
+    def test_the_bound_is_named_in_the_claim_and_the_unresolved_side_in_the_unknown(self) -> None:
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _lane(root, "redmi10",
+                  [(1, 1000, None), (2, 1005, 5000), (3, 1010, 10000)],
+                  [(1005.05, 2), (1010.1, 1)])
+            reading = self._reading(root, now)
+            claims = " ".join(reading["claims_supported"])
+            unknowns = " ".join(reading["unknowns"])
+            self.assertIn("behind", claims)
+            self.assertIn("aaaa-bbbb-cccc", claims)
+            self.assertIn("AHEAD", unknowns)
+            self.assertIn("absolute phone time is UNKNOWN", unknowns)
+
+    def test_without_a_delivered_lane_no_bound_is_claimed(self) -> None:
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            reading = self._reading(root, now)
+            bound = reading["clock_bound"]
+            self.assertEqual(bound["status"], "unavailable")
+            self.assertTrue(bound["reason"])
+            self.assertNotIn("behind", " ".join(reading["claims_supported"]))
+
+    def test_a_reset_withholds_the_session_wide_bound_and_says_why(self) -> None:
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # The phone's uptime counter falls onto a fresh-boot value: a
+            # reset and a reverse-order batch look alike here, so no
+            # session-wide bound is published and the reading says why.
+            _lane(root, "redmi10",
+                  [(1, 1000, None), (2, 1005, 100_000), (3, 905, 5_000),
+                   (4, 1005, 105_000)],
+                  [(1005.1, 4)])
+            reading = self._reading(root, now)
+            bound = reading["clock_bound"]
+            self.assertIsNone(bound["behind_upper_s"])
+            self.assertIsNotNone(bound["behind_upper_at_last_sample_s"])
+            self.assertTrue(bound["ambiguous_resets"])
+            self.assertTrue(bound["session_wide_withheld_reason"])
+            unknowns = " ".join(reading["unknowns"])
+            self.assertIn("no session-wide clock bound", unknowns)
+
+    def test_the_bound_is_never_a_two_sided_interval(self) -> None:
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _lane(root, "redmi10",
+                  [(1, 1000, None), (2, 1005, 5000), (3, 1010, 10000)],
+                  [(1005.05, 2), (1010.1, 1)])
+            reading = self._reading(root, now)
+            self.assertIsNone(reading["clock_bound"]["behind_lower_s"])
+            self.assertIsNone(reading["clock_offset_nominal_s"])
+            self.assertEqual(reading["clock_offset_bounds_s"], [None, None])
 
 
 if __name__ == "__main__":

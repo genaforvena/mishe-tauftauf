@@ -76,8 +76,26 @@ class ClockBoundTests(unittest.TestCase):
         receipts = clock_bound.parse_receipts(_receipts([(1005.05, 1), (1010.5, 1)]))
         measurement = clock_bound.measure(rows, receipts)
         current = measurement["sessions"][-1]
-        self.assertAlmostEqual(current["skew_upper_s"], 0.05)
-        self.assertIsNone(current["skew_lower_s"])
+        self.assertAlmostEqual(current["behind_upper_s"], 0.05)
+        self.assertIsNone(current["behind_lower_s"])
+        self.assertAlmostEqual(current["behind_upper_at_last_sample_s"], 0.5)
+
+    def test_the_bound_accounts_for_the_phones_own_clock_movement(self):
+        # The wall clock moves against the phone's monotonic clock by 1 s
+        # across the session, so the smallest observed value - which happens
+        # at the later row - is not a bound for the whole session: the
+        # earlier row's level is the worse one and the bound must carry it.
+        rows = clock_bound.parse_rows(_rows([
+            _hello(1, 1000),
+            _light(2, 1005, 5000),
+            _light(3, 1011, 10000),
+        ]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.5, 1), (1011.05, 1)]))
+        measurement = clock_bound.measure(rows, receipts)
+        current = measurement["sessions"][-1]
+        self.assertAlmostEqual(current["observed_min_s"], 0.05)
+        self.assertAlmostEqual(current["behind_upper_s"], 0.5)
+        self.assertAlmostEqual(current["wall_drift_s"], 1.0)
 
     def test_a_reboot_marks_the_session_that_opened_after_it(self):
         rows = clock_bound.parse_rows(_rows([
@@ -114,6 +132,127 @@ class ClockBoundTests(unittest.TestCase):
         receipts = clock_bound.parse_receipts(_receipts([(1005.1, 1), (1010.1, 1)]))
         measurement = clock_bound.measure(rows, receipts)
         self.assertFalse(measurement["sessions"][-1]["clock_step"])
+
+    def test_a_batch_written_in_reverse_order_is_not_read_as_a_reboot(self):
+        # A delivery batch is written newest first, so the phone's uptime
+        # counter decreases inside it.  Nothing restarted: the counter is
+        # still large, and the device epoch moves with it.
+        rows = clock_bound.parse_rows(_rows([
+            _hello(1, 1000, "aaaa-bbbb-cccc"),
+            _light(2, 1010, 10000),
+            _light(3, 1005, 5000),
+        ]))
+        receipts = clock_bound.parse_receipts(_receipts([(1010.1, 3)]))
+        measurement = clock_bound.measure(rows, receipts)
+        current = measurement["sessions"][-1]
+        self.assertEqual(current["reboots"], [])
+        self.assertFalse(current["opened_after_reboot"])
+
+    def test_the_freshest_sample_is_the_greatest_uptime_not_the_last_row(self):
+        # The same batch, written newest first: the last row in the queue is
+        # the oldest row of the batch, so the bound at the freshest sample
+        # must come from the row with the greatest uptime.
+        rows = clock_bound.parse_rows(_rows([
+            _hello(1, 1000, "aaaa-bbbb-cccc"),
+            _light(2, 1010, 10000),
+            _light(3, 1005, 5000),
+        ]))
+        receipts = clock_bound.parse_receipts(_receipts([(1010.05, 3)]))
+        measurement = clock_bound.measure(rows, receipts)
+        current = measurement["sessions"][-1]
+        # The row with uptime 10000 was produced at device epoch 1010 and
+        # received at 1010.05, so its observed value is 0.05 - the last row
+        # in the queue would have said 5.05.
+        self.assertAlmostEqual(current["behind_upper_at_last_sample_s"], 0.05)
+
+    def test_a_reset_onto_a_fresh_boot_value_withholds_the_session_wide_bound(self):
+        # The phone's uptime counter falls from 100 s to 5 s and the device
+        # epoch falls with it.  Those bytes are two things at once: a
+        # reverse-order batch (the device kept running) or a reboot whose
+        # wall clock was re-read backwards (the rows on either side of it
+        # then do not share one monotonic offset).  The lane cannot tell
+        # them apart, so the bound is withheld rather than published on the
+        # reordering reading.
+        rows = clock_bound.parse_rows(_rows([
+            _hello(1, 1000),
+            _light(2, 1005, 100_000),
+            _light(3, 905, 5_000),
+            _light(4, 1005, 105_000),
+        ]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 4)]))
+        measurement = clock_bound.measure(rows, receipts)
+        current = measurement["sessions"][-1]
+        self.assertIsNone(current["behind_upper_s"])
+        self.assertIsNotNone(current["behind_upper_at_last_sample_s"])
+        self.assertTrue(current["ambiguous_resets"])
+        self.assertIn("fresh-boot value", current["session_wide_withheld_reason"])
+
+    def test_a_reset_hidden_in_the_devices_own_order_withholds_the_bound(self):
+        # The uptime counter falls by more than the wall clock's own
+        # quantization when the rows are ordered by the phone's own clock:
+        # the session spans a reset whatever the delivered order says.
+        rows = clock_bound.parse_rows(_rows([
+            _hello(1, 1000),
+            _light(2, 1005, 100_000),
+            _light(3, 1010, 50_000),
+            _light(4, 1015, 55_000),
+        ]))
+        receipts = clock_bound.parse_receipts(_receipts([(1015.1, 4)]))
+        measurement = clock_bound.measure(rows, receipts)
+        current = measurement["sessions"][-1]
+        self.assertIsNone(current["behind_upper_s"])
+        self.assertTrue(current["masked_resets"])
+
+    def test_a_wall_clock_step_is_accounted_for_rather_than_withholding_the_bound(self):
+        # The wall clock jumps 60 s against the phone's own monotonic clock
+        # while the rows arrive on time.  The movement is measured (the
+        # drift), and the bound follows the rows rather than being withheld:
+        # the phone's clock was at most the observed amount behind at every
+        # row, and the step shows up as the clock being ahead afterwards.
+        rows = clock_bound.parse_rows(_rows([
+            _hello(1, 1000),
+            _light(2, 1005, 5000),
+            _light(3, 1065, 6000),
+        ]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 1), (1065.1, 1)]))
+        measurement = clock_bound.measure(rows, receipts)
+        current = measurement["sessions"][-1]
+        # The wall clock moved 60 s while the monotonic clock moved 1 s, so
+        # the value against the monotonic reference moved 59 s.
+        self.assertAlmostEqual(current["wall_drift_s"], 59.0)
+        self.assertIsNotNone(current["behind_upper_s"])
+        self.assertAlmostEqual(current["behind_upper_s"], 0.1)
+
+    def test_the_delivery_latency_is_bounded_below_by_the_clock_bound(self):
+        # One row arrives on time and another 500 s late, while the phone's
+        # own clock tracks its monotonic clock throughout.  The clock bound
+        # is then tight (0.1 s), and the lateness of the late row cannot be
+        # the clock: it was delivered at least 500 s after the phone
+        # produced it.
+        rows = clock_bound.parse_rows(_rows([
+            _hello(1, 1000),
+            _light(2, 1005, 5000),
+            _light(3, 1010, 10000),
+        ]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 1), (1510.1, 1)]))
+        measurement = clock_bound.measure(rows, receipts)
+        current = measurement["sessions"][-1]
+        self.assertAlmostEqual(current["observed_min_s"], 0.1)
+        self.assertAlmostEqual(current["observed_max_s"], 500.1)
+        self.assertAlmostEqual(current["behind_upper_s"], 0.1)
+        self.assertAlmostEqual(current["delivery_latency_lower_s"], 500.0)
+
+    def test_the_reason_never_states_an_inequality_the_lane_does_not_support(self):
+        rows = clock_bound.parse_rows(_rows([
+            _hello(1, 1000, "aaaa-bbbb-cccc"),
+            _light(2, 1005, 5000),
+        ]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.02, 2)]))
+        measurement = clock_bound.measure(rows, receipts)
+        document = clock_bound.clock_bound_document("redmi10", measurement, 1006.0)
+        self.assertNotIn("host-device <=", document["reason"])
+        self.assertIn("behind the host", document["reason"])
+        self.assertIn("session aaaa-bbb ", document["reason"])
 
     def test_the_emitted_document_publishes_the_bound_and_no_offset(self):
         rows = clock_bound.parse_rows(_rows([

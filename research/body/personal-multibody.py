@@ -82,8 +82,43 @@ MALFORMED_SAMPLES_KEPT = 3
 _CLOCK_NOT_IDENTIFIABLE = (
     "the phone clock offset is not recoverable from the delivered lane: a "
     "constant transport delay and a constant clock offset produce identical "
-    "rows, so the phone's own timestamps are only as good as an unverified "
-    "clock")
+    "rows, so the offset stays one-sided; what the lane does measure is the "
+    "phone's clock movement against its own monotonic clock and the lane's "
+    "own lateness, and those are reported beside the bound")
+
+#: The sibling instrument that measures what the delivered lane can say about
+#: a phone's clock.  It is loaded from this file's own directory, so the
+#: reading does not depend on how the tool was invoked.
+_CLOCK_BOUND_PATH = Path(__file__).resolve().parent / "clock_bound.py"
+
+#: The loaded sibling instrument, once.
+_CLOCK_BOUND_MODULE = None
+
+
+def _clock_bound_module():
+    """Load the sibling clock-bound instrument, once.
+
+    The reading computes the delivered lane's bound itself rather than
+    parsing another plant's document: the bound is a measurement of the
+    delivered bytes, and a document that carried it would be a second thing
+    to keep in step with the lane.
+    """
+    global _CLOCK_BOUND_MODULE
+    if _CLOCK_BOUND_MODULE is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("clock_bound",
+                                                      _CLOCK_BOUND_PATH)
+        if spec is None or spec.loader is None:
+            raise ImportError("cannot load the clock-bound instrument at "
+                              f"{_CLOCK_BOUND_PATH}")
+        module = importlib.util.module_from_spec(spec)
+        # The dataclasses in the sibling look their own module up in
+        # ``sys.modules`` while they are being built, so it has to be there
+        # before the module runs.
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        _CLOCK_BOUND_MODULE = module
+    return _CLOCK_BOUND_MODULE
 
 
 def _iso(epoch: float | None) -> str | None:
@@ -891,6 +926,121 @@ def _clock_identifiability(lag: dict | None, clock_status: str | None = None,
     return result
 
 
+def _behind_phrase(value: float) -> str:
+    """A bound on the clock error, with its sign said the right way round.
+
+    A negative bound is not "at most -1 s behind": it says the phone's clock
+    was *ahead* of the host's by at least that much.
+    """
+    if value < 0:
+        return f"at least {abs(value):.3f} s ahead of the host"
+    return f"at most {value:.3f} s behind the host"
+
+
+def _bound_text(bound: dict) -> str:
+    """The bound, in words, with the side that is unresolved named.
+
+    The session-wide figure and the figure at the freshest sample answer
+    different questions, and both are said: the first holds at every row
+    that carries the phone's own monotonic reading, the second holds at the
+    sample it was measured at.  The age of that sample is said with it: a
+    bound measured hours ago is not a bound on the phone's clock now, and a
+    reader must not have to ask.
+    """
+    session_wide = bound.get("behind_upper_s")
+    at_sample = bound.get("behind_upper_at_last_sample_s")
+    age = bound.get("host_receipt_age_seconds")
+    withheld = bound.get("session_wide_withheld_reason")
+    if session_wide is None:
+        if at_sample is None:
+            return "not bounded by the delivered lane"
+        text = (f"{_behind_phrase(at_sample)} at the freshest delivered "
+                f"sample")
+        if age is not None:
+            text += f" ({age:.0f} s ago)"
+        if withheld:
+            text += f", with no session-wide bound because {withheld}"
+        return text
+    covered = bound.get("monotonic_reference_rows")
+    text = (f"{_behind_phrase(session_wide)} at every one of the {covered} "
+            f"rows that carry the phone's own monotonic reading")
+    if at_sample is not None:
+        text += (f", and {_behind_phrase(at_sample)} at the freshest of them")
+        if age is not None:
+            text += f" ({age:.0f} s ago)"
+    return text
+
+
+def _delivered_clock_bound(body: Path, node: str, now: float) -> dict:
+    """What the delivered lane can say about this body's phone clock.
+
+    A delivered row carries the phone's own clock reading and the host's
+    receipt time.  The difference is the phone's clock error plus a transport
+    delay that cannot be negative, so every row bounds the phone's clock
+    from above: the phone is at most that far *behind* the host at that row.
+    The lane does not bound the other side - how far the phone may be *ahead*
+    of the host needs a device-side clock read, which this lane does not have.
+
+    Two numbers are published.  The bound at the freshest delivered sample
+    holds with no premise at all.  The session-wide bound holds only when the
+    phone's uptime counter shows no reset inside the session - a reset would
+    re-read the wall clock and the rows on either side of it would not share
+    one monotonic offset - and it carries the premise it rests on.
+
+    The reading also publishes the drift of the phone's wall clock against
+    its own monotonic clock, and the lower bound on the delivery delay that
+    follows from the bound, because those two are what tell a reader that a
+    stale timestamp is the lane being late rather than the phone's clock
+    being wrong.
+    """
+    try:
+        module = _clock_bound_module()
+    except (ImportError, OSError) as error:
+        return {"status": "unavailable",
+                "reason": f"the clock-bound instrument could not be loaded: {error}"}
+    queues = body / "queues"
+    try:
+        rows_text = (queues / f"{node}.observations.log").read_text(
+            encoding="utf-8", errors="replace")
+        writes_text = (queues / "writes.jsonl").read_text(
+            encoding="utf-8", errors="replace")
+    except OSError as error:
+        return {"status": "unavailable",
+                "reason": f"the delivered lane could not be read: {error}"}
+
+    rows = module.parse_rows(rows_text)
+    receipts = [receipt for receipt in module.parse_receipts(writes_text)
+                if receipt.node == node and receipt.kind == "observations"]
+    measurement = module.measure(rows, receipts)
+    sessions = measurement["session_objects"]
+    if not sessions or not sessions[-1].pairs:
+        return {"status": "unavailable",
+                "reason": "the delivered lane holds no paired rows for this node"}
+    current = sessions[-1]
+    summary = current.summary()
+    newest = current.freshest_pair.host_epoch if current.freshest_pair else now
+    return {
+        "status": "bounded-from-the-delivered-lane",
+        "session": summary["session"],
+        "rows": summary["rows"],
+        "monotonic_reference_rows": summary["monotonic_reference_rows"],
+        "behind_upper_s": summary["behind_upper_s"],
+        "behind_upper_at_last_sample_s": summary["behind_upper_at_last_sample_s"],
+        "behind_lower_s": None,
+        "behind_level_now_s": summary["behind_level_now_s"],
+        "level_change_s": summary["level_change_s"],
+        "wall_drift_s": summary["wall_drift_s"],
+        "clock_step": summary["clock_step"],
+        "delivery_latency_lower_s": summary["delivery_latency_lower_s"],
+        "ambiguous_resets": summary["ambiguous_resets"],
+        "masked_resets": summary["masked_resets"],
+        "premise": summary["premise"],
+        "session_wide_withheld_reason": current.session_wide_withheld_reason,
+        "observed_at_epoch_s": newest,
+        "host_receipt_age_seconds": round(now - newest, 3),
+    }
+
+
 def _attach_clock_anchor(reading: dict, clock: dict) -> None:
     """Say whether a hole's timestamps are anchored to the host's timeline.
 
@@ -947,6 +1097,12 @@ def node_reading(node: dict, body: Path, max_age: float, now: float,
         "capabilities": node.get("capabilities"),
         "owner_checkboxes": node.get("owner_checkboxes"),
     }
+
+    # The delivered lane bounds the phone's clock from above even where no
+    # clock-domain document measures it.  The bound is one-sided: it says how
+    # far the phone may be *behind* the host, never how far it may be ahead.
+    if clock.get("status") != "ok":
+        reading["clock_bound"] = _delivered_clock_bound(body, name, now)
 
     # --- current window -------------------------------------------------
     state = _read_json(body / "perception" / f"{name}.json")
@@ -1021,13 +1177,25 @@ def node_reading(node: dict, body: Path, max_age: float, now: float,
 
     # --- gates ----------------------------------------------------------
     unknowns: list[str] = []
+    bound = reading.get("clock_bound") or {}
+    bound_status = bound.get("status")
     if clock.get("status") != "ok":
         reason = reading.get("clock_reason")
         detail = f": {reason}" if reason else ""
-        unknowns.append(
-            "absolute phone time is UNKNOWN for this node (no measured "
-            f"phone/host clock offset{detail}): only host receipt anchors a "
-            "reading here")
+        if bound_status == "bounded-from-the-delivered-lane":
+            session = bound.get("session") or "unknown-session"
+            unknowns.append(
+                "absolute phone time is UNKNOWN for this node: the delivered "
+                "lane bounds the phone's clock from above only, so it says how "
+                f"far the phone may be behind ({_bound_text(bound)}; session "
+                f"{session}, {bound.get('rows')} paired rows) and not how far "
+                f"it may be ahead{detail}: only the host receipt anchors a "
+                "reading here")
+        else:
+            unknowns.append(
+                "absolute phone time is UNKNOWN for this node (no measured "
+                f"phone/host clock offset{detail}): only host receipt anchors "
+                "a reading here")
     if not current:
         unknowns.append(
             "this node has no current delivered window, so it cannot carry a "
@@ -1053,6 +1221,16 @@ def node_reading(node: dict, body: Path, max_age: float, now: float,
     unknowns.extend(_continuity_unknowns(reading["continuity"]))
     if clock.get("status") != "ok":
         unknowns.append(_CLOCK_NOT_IDENTIFIABLE)
+        if bound_status == "bounded-from-the-delivered-lane":
+            unknowns.append(
+                "how far the phone's clock may be AHEAD of the host is "
+                "unresolved: the delivered lane cannot separate the phone's "
+                "clock error from the transport delay, and a device-side clock "
+                "read is what would")
+            if bound.get("behind_upper_s") is None:
+                unknowns.append(
+                    "no session-wide clock bound holds for this node: "
+                    f"{bound.get('session_wide_withheld_reason') or 'the lane does not support one'}")
     reading["unknowns"] = unknowns
     claims = (["a current, host-anchored reading of this body's own sensed channels"]
               if current else [])
@@ -1060,6 +1238,26 @@ def node_reading(node: dict, body: Path, max_age: float, now: float,
         claims.append("the body's own timestamps are anchored to the host "
                       "timeline within the measured clock offset, so its "
                       "observations can be placed on the host's clock")
+    elif bound_status == "bounded-from-the-delivered-lane":
+        claim = (f"the phone's clock is {_bound_text(bound)}, measured over "
+                 f"session {bound.get('session') or 'unknown-session'} "
+                 f"({bound.get('rows')} paired rows, "
+                 f"{bound.get('monotonic_reference_rows')} of them carrying the "
+                 "phone's own monotonic reference)")
+        if bound.get("behind_upper_s") is not None:
+            claim += ("; the session-wide bound assumes the phone's own "
+                      "monotonic clock tracks true time, which the delivered "
+                      "lane cannot test")
+            drift = bound.get("wall_drift_s")
+            latency = bound.get("delivery_latency_lower_s")
+            if drift is not None and latency is not None:
+                claim += (f"; the phone's wall clock moved at most {drift:.3f} s "
+                          f"against its own monotonic clock over the session, so "
+                          f"the staleness of the phone's timestamps is the lane's "
+                          f"lateness rather than the phone's clock: at its worst "
+                          f"the lane delivered a row at least {latency:.1f} s "
+                          f"after the phone produced it")
+        claims.append(claim)
     reading["claims_supported"] = claims
     return reading
 
@@ -1182,6 +1380,35 @@ def render(report: dict) -> str:
             lines.append(f"   clock document: status={document.get('status')} "
                          f"samples={document.get('samples')} "
                          f"observed_at_epoch_s={document.get('observed_at_epoch_s')}")
+        bound = node.get("clock_bound")
+        if bound:
+            lines.append(f"   clock bound (delivered lane): "
+                         f"status={bound.get('status')} "
+                         f"behind_upper_s={bound.get('behind_upper_s')} "
+                         f"behind_at_last_sample_s="
+                         f"{bound.get('behind_upper_at_last_sample_s')} "
+                         f"behind_lower_s={bound.get('behind_lower_s')} "
+                         f"session={bound.get('session')} "
+                         f"rows={bound.get('rows')} "
+                         f"monotonic_rows={bound.get('monotonic_reference_rows')} "
+                         f"wall_drift_s={bound.get('wall_drift_s')} "
+                         f"delivery_latency_lower_s="
+                         f"{bound.get('delivery_latency_lower_s')}")
+            if bound.get("reason"):
+                lines.append(f"     reason: {bound.get('reason')}")
+            if bound.get("premise"):
+                lines.append(f"     premise: {bound.get('premise')}")
+            if bound.get("session_wide_withheld_reason"):
+                lines.append("     no session-wide bound: "
+                             f"{bound.get('session_wide_withheld_reason')}")
+            if bound.get("ambiguous_resets"):
+                lines.append("     ambiguous resets (a reset and a "
+                             "reverse-order batch look alike here): "
+                             f"{bound.get('ambiguous_resets')}")
+            if bound.get("masked_resets"):
+                lines.append("     masked resets (the counter falls when the "
+                             "rows are ordered by the phone's own clock): "
+                             f"{bound.get('masked_resets')}")
         lines.append(f"   current_window={node.get('current_window')} "
                      f"host_receipt_age_s={node.get('host_receipt_age_seconds')} "
                      f"cursor={node.get('cursor')}")

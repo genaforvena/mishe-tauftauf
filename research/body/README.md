@@ -25,6 +25,19 @@ PYTHONPATH=src .venv/bin/python -m pytest tests/test_personal_multibody.py -q
 The tool never writes, never mutates the site it reads, and never phones
 anything. It only reads files that already exist.
 
+`clock_bound.py` is the sibling instrument that measures what the delivered
+lane can say about a phone's clock. The reading above uses it for the clock
+bound; it can also be run on its own, and it emits a clock-domain document
+that carries the bound and no offset:
+
+```bash
+python research/body/clock_bound.py --space <site home> --node redmi10
+python research/body/clock_bound.py --space <site home> --node redmi10 \
+    --emit-document <path>/clock-domain-redmi10.json
+```
+
+Its tests are `tests/test_clock_bound.py`.
+
 ## Sources
 
 | source | what it carries |
@@ -56,6 +69,11 @@ a reader can check them rather than believe them.
 - **A clock document without a measurement is not an absent document** - its
   status and reason are reported, so the missing prerequisite is named instead
   of lost.
+- **The delivered lane bounds the phone's clock from above, and only from
+  above** - a node with no measured offset still gets a bound: the phone's
+  clock is at most *N* seconds behind the host. How far it may be *ahead* is
+  not bounded, so the reading says that too instead of implying a two-sided
+  interval.
 - **Motion labels need gait resolution** - at 5 s per sample the 1-2 Hz gait
   band is aliased away, so no activity, motion or posture label is
   supportable however stable the magnitude is.
@@ -124,6 +142,63 @@ This is why the redmi10's clock document reads `unavailable` with a reason,
 and why no reading here reports an absolute phone time for it. The instrument
 reports the observed lag between the phone's sample clock and the host receipt,
 and names it as a lag, not an offset.
+
+## The one-sided bound the lane does support
+
+A delivered row carries the phone's own clock reading and the host's receipt
+time, and their difference is
+
+```
+observed = host_receipt - device_epoch = (how far the phone's clock is behind) + (transport delay)
+```
+
+The transport delay cannot be negative, so **every row bounds the phone's
+clock from above**: at that row, the phone's clock was at most `observed`
+behind the host. The lane does not bound the other side - how far the phone
+may be *ahead* - and a device-side clock read is what would.
+
+Two figures are published, and they answer different questions:
+
+- the bound at the **freshest delivered sample**, which holds with no premise
+  at all;
+- the **session-wide** bound, which holds at every row of the session that
+  carries the phone's own monotonic reading, and which carries the premise it
+  rests on: that monotonic clock is assumed to track true time, and that the
+  rows carrying the reading share one monotonic offset. Neither is testable
+  from the lane, so both are published with the bound.
+
+The premise-free reading is the one to trust. The session-wide figure is
+tighter, and the reason it is published with its premise is that a reader who
+does not see the premise will read it as a fact.
+
+### What the lane's own shape does to the reading
+
+Three things about the delivered lane are easy to mistake for clock events,
+and the instrument measures them instead of assuming them:
+
+- **A delivery batch is written newest first.** The last row of a batch is
+  the *oldest* row of that batch, so the freshest sample is the row with the
+  greatest phone uptime, not the last row in the file. A batch also makes the
+  phone's uptime counter *decrease* from row to row; a decrease that leaves
+  the counter large is a reordering, not a reboot.
+- **A reset and a reordering look alike in the delivered order.** A reboot
+  resets the uptime counter to a fresh-boot value and re-reads the wall clock,
+  so the rows on either side of it do not share one monotonic offset - but a
+  reverse-order batch of the device's first minutes produces the same bytes.
+  A fall that lands on a fresh-boot value is therefore recorded as
+  *ambiguous* and withholds the session-wide bound, rather than being
+  resolved by assuming one reading. A fall that shows up only when the rows
+  are ordered by the phone's own clock is a reset the delivered order would
+  have hidden, and it withholds the bound too.
+- **A late lane is not a wrong clock.** `observed` is the clock error plus the
+  delivery delay, and the two cannot be separated from the delay alone. The
+  phone's own monotonic reading is what separates them: if the wall clock
+  tracked it, the staleness of the timestamps is the lane's lateness. So the
+  instrument publishes the drift of the wall clock against the monotonic
+  clock, and the lower bound on the delivery delay that follows from the
+  clock bound - on the redmi10's live lane, a wall clock that moved at most
+  1.305 s against its own monotonic clock, and rows delivered at least
+  8296.7 s after the phone produced them.
 
 Where the third reference *does* exist, the lag does decompose. The clock
 document's offset is `phone clock - host clock` and the lag is `host receipt -
