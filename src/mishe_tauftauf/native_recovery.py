@@ -575,7 +575,11 @@ def attempt_disposition(attempts, wake: int, *, limit: int = DEFAULT_RETRY_LIMIT
     an attempt that dispatched an effect, proposed a capability call, settled,
     or whose own evidence is unknown never authorizes another attempt. A wake
     whose attempt is still being written is left alone, and a wake whose
-    settlement is already confirmed needs no attempt at all.
+    settlement is already confirmed needs no attempt at all. A wake that has
+    used every bounded fresh attempt is held as well, and that hold carries the
+    attempts' own bytes and their classified cause: the budget stopped a wake
+    that dispatched nothing, and the record must say so rather than leave the
+    reader to re-derive it.
     """
     directory = Path(attempts)
     paths = _wake_directories(directory, wake)
@@ -600,13 +604,35 @@ def attempt_disposition(attempts, wake: int, *, limit: int = DEFAULT_RETRY_LIMIT
                            transient=held.transient)
     fresh = fresh_attempt(directory, wake, limit=limit)
     if fresh is None:
+        # Every attempt of this wake was effect-free and transient, so the
+        # budget is what stopped it. The plant-visible record of that hold
+        # names the attempts and their cause: a reader must not have to
+        # re-derive the classification to learn that nothing was dispatched.
+        causes = list(dict.fromkeys(report.reason for report in reports))
         return Disposition(action='reconcile', attempt=None, verdict=RECONCILE,
                            reason=(f'wake {wake} used every bounded fresh attempt '
-                                   f'({limit}); reconcile before any further attempt'))
+                                   f'({limit}); every attempt was effect-free and transient '
+                                   f'({len(reports)} attempt(s): {"; ".join(causes)}); '
+                                   f'reconcile before any further attempt'),
+                           evidence=_attempt_evidence(reports))
     return Disposition(action='fresh-attempt', attempt=fresh, verdict=RETRYABLE,
                        reason=(f'every attempt of wake {wake} is effect-free and transient; '
                                f'a fresh attempt may start'),
                        evidence=reports[-1].evidence, settled=False, transient=True)
+
+
+def _attempt_evidence(reports) -> tuple[str, ...]:
+    """The recorded bytes of every attempt, in the order the attempts ran.
+
+    A hold that names no attempt still has to say what was reconciled, so the
+    evidence of all of them is carried: one path per file, no path twice.
+    """
+    paths = []
+    for report in reports:
+        for path in report.evidence:
+            if path not in paths:
+                paths.append(path)
+    return tuple(paths)
 
 
 # The plant-visible record of a wake that cannot proceed. The resident writes

@@ -574,6 +574,34 @@ def test_disposition_stops_at_the_bounded_number_of_fresh_attempts(tmp_path):
     assert 'bounded fresh attempt' in disposition.reason
 
 
+def test_the_hold_for_an_exhausted_budget_names_the_attempts_and_their_cause(tmp_path):
+    # The wake was stopped by the budget, not by anything it did. A reader of
+    # the plant-visible record must learn that from the record itself.
+    for number in range(1, 4):
+        attempt(tmp_path, name=f'70040-retry-{number}')
+    disposition = recovery.attempt_disposition(tmp_path / 'wakes', 70040)
+    assert disposition.action == 'reconcile'
+    assert 'effect-free and transient' in disposition.reason
+    assert 'no effect admitted' in disposition.reason
+    assert '3 attempt(s)' in disposition.reason
+    assert disposition.evidence
+    for number in range(1, 4):
+        assert any(f'70040-retry-{number}' in path for path in disposition.evidence)
+
+
+def test_the_hold_for_an_exhausted_budget_carries_every_attempts_bytes(tmp_path):
+    attempt(tmp_path)
+    for number in range(1, 4):
+        attempt(tmp_path, name=f'70040-retry-{number}')
+    disposition = recovery.attempt_disposition(tmp_path / 'wakes', 70040)
+    joined = ' '.join(disposition.evidence)
+    for name in ('70040', '70040-retry-1', '70040-retry-2', '70040-retry-3'):
+        assert f'{name}/result.json' in joined
+        assert f'{name}/journal.jsonl' in joined
+    # No path is named twice: the record stays readable.
+    assert len(disposition.evidence) == len(set(disposition.evidence))
+
+
 def test_disposition_leaves_a_wake_whose_writer_is_active(tmp_path):
     directory = attempt(tmp_path)
     lock = directory / 'effects' / recovery.STORE_LOCK
