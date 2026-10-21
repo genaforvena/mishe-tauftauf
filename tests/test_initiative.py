@@ -99,6 +99,19 @@ def test_outcomes_use_canonical_kind_role_and_live_evidence(home):
     assert report["outcomes"]["items"][0]["ref"] == "chat.log#2"
     assert report["outcomes"]["state"] == "OBSERVED"
 
+def test_checked_evidence_recency_uses_newest_digest_checked_outcome_only(home):
+    older, _ = outcome(home, 1, age=3600, name="older.txt")
+    newer, _ = outcome(home, 2, age=600, name="newer.txt")
+    report = initiative.collect(home, now=NOW, entries=[older, newer])
+    assert report["roles"]["discover"]["newest_checked_evidence"] == 600.0
+
+
+def test_damaged_evidence_does_not_set_recency_and_none_is_reported(home):
+    publication, evidence = outcome(home, age=600)
+    evidence.unlink()
+    report = initiative.collect(home, now=NOW, entries=[publication])
+    assert report["roles"]["discover"]["newest_checked_evidence"] is None
+    assert "checked-evidence-age=none" in "\n".join(initiative._lines(report))
 
 @pytest.mark.parametrize("damage", ["changed", "missing", "oversized"])
 def test_missing_changed_or_bounded_outcome_evidence_is_unknown(home, monkeypatch, damage):

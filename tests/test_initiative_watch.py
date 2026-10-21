@@ -1,0 +1,348 @@
+from datetime import datetime, timedelta, timezone
+import hashlib
+import json
+
+import pytest
+
+from mishe_tauftauf import feed, initiative, initiative_watch as watch, records
+from mishe_tauftauf.feed import Feed, FeedEntry, _encode_entry, parse_feed
+
+
+NOW = datetime(2026, 10, 20, 12, tzinfo=timezone.utc)
+
+
+def stamp(value):
+    return value.isoformat().replace("+00:00", "Z")
+
+
+@pytest.fixture
+def home(tmp_path, monkeypatch):
+    for directory in ("patches", "records", "artifacts", "checks"):
+        (tmp_path / directory).mkdir()
+    (tmp_path / "chat.log").write_bytes(b"")
+    monkeypatch.setattr(feed, "utc_now", lambda: stamp(NOW))
+    monkeypatch.delenv("MISHE_SEED_HOME", raising=False)
+    return tmp_path
+
+
+def append(home, source, body, *, age=0, now=NOW):
+    path = home / "chat.log"
+    entries = parse_feed(path.read_bytes(), home=home)
+    sequence = len(entries) + 1
+    with path.open("ab") as stream:
+        stream.write(_encode_entry(sequence, stamp(now - timedelta(seconds=age)), source, body))
+    return sequence
+
+
+def publish(home, *, now=NOW):
+    entries = parse_feed((home / "chat.log").read_bytes(), home=home)
+    report = initiative.collect(home, now=now, entries=entries)
+    (home / "checks/initiative.json").write_text(json.dumps(report))
+    return report
+
+
+def kinds(row, kind):
+    return [item for item in row["findings"] if item["kind"] == kind]
+
+
+def messages(home, *, recipient=None, text=None):
+    return [entry for entry in Feed(home).entries() if entry.source == watch.SOURCE
+            and (recipient is None or entry.body.startswith(f"[dm] to={recipient}\n"))
+            and (text is None or text in entry.body)]
+
+
+def chain(home, *, role="discover", count=6, labels=("changed", "verified")):
+    for index in range(count):
+        age = 1200 - index * 100
+        wake = append(home, "seed", f"seed wake {role} observation=1", age=age + 1)
+        append(home, "seed", f"seed yield {role} wake={wake} continue=1\nTurn settled ({labels[index % len(labels)]}); bounded prose", age=age)
+
+
+def outcome(home, *, age=60):
+    evidence = home / "artifacts/proof.txt"
+    evidence.write_text("Observed a bounded actual result")
+    binding = {"path": str(evidence), "sha256": hashlib.sha256(evidence.read_bytes()).hexdigest()}
+    reference = records.prepare(home, {"role": "discover", "kind": "accepted", "text": "Observed result", "evidence": binding}, kind="wall-outcome")
+    append(home, "discover", "Wall outcome accepted by discover\nObserved result\n" + reference, age=age)
+    return evidence
+
+
+def test_aged_wake_boundary_and_exact_matching_settlement(home):
+    wake = append(home, "seed", "seed wake discover observation=1", age=3599)
+    publish(home)
+    before = watch.check(home, now=NOW)
+    assert before["state"] == "OBSERVED"
+    at = NOW + timedelta(seconds=1)
+    publish(home, now=at)
+    aged = watch.check(home, now=at)
+    finding = kinds(aged, "aged-wake")[0]
+    assert finding["id"] == f"aged-wake:discover:chat.log#{wake}"
+    assert finding["primary"] == ["health", "discover"]
+    append(home, "seed", "seed yield health wake=1\nTurn settled (verified); wrong role", now=at)
+    publish(home, now=at)
+    assert kinds(watch.check(home, now=at), "aged-wake")
+    append(home, "seed", f"seed yield discover wake={wake}\nTurn settled (changed); no assertion the bug is fixed", now=at)
+    publish(home, now=at)
+    cleared = watch.check(home, now=at)
+    assert not kinds(cleared, "aged-wake")
+    assert kinds(cleared, "unknown")  # The unrelated malformed lifecycle is not hidden.
+
+
+def test_administrative_clear_does_not_forge_settlement(home):
+    wake = append(home, "seed", "seed wake health observation=1", age=3600)
+    append(home, "seed", f"seed clear health after={wake}", age=1)
+    publish(home)
+    assert kinds(watch.check(home, now=NOW), "aged-wake")[0]["ref"] == f"chat.log#{wake}"
+
+
+def test_continuation_review_ignores_changed_verified_labels_and_wall_edits(home):
+    chain(home)
+    publish(home)
+    initial = watch.check(home, now=NOW)
+    review = kinds(initial, "continuation-review")[0]
+    assert review["primary"] == ["genome", "discover"]
+    (home / "wall.md").write_text("All fixed, verified, changed; not outcome evidence")
+    later = NOW + timedelta(seconds=30)
+    append(home, "seed", "seed wake health observation=1", now=later)
+    publish(home, now=later)
+    repeated = watch.check(home, now=later)
+    assert repeated["incidents"][review["id"]]["first_seen"] == initial["incidents"][review["id"]]["first_seen"]
+    assert len(messages(home, recipient="genome", text="continuation-review:discover")) == 1
+
+
+def test_genome_continuation_is_owned_by_health(home):
+    chain(home, role="genome")
+    publish(home)
+    finding = kinds(watch.check(home, now=NOW), "continuation-review")[0]
+    assert finding["primary"] == ["health", "genome"]
+
+
+def test_only_matching_continuations_inside_window_count(home):
+    chain(home, count=5)
+    append(home, "discover", "seed yield discover wake=1 continue=1", age=1)
+    publish(home)
+    assert not kinds(watch.check(home, now=NOW), "continuation-review")
+
+
+@pytest.mark.parametrize("age,suppressed", [(60, True), (1300, False)])
+def test_checked_outcome_since_first_continuation_suppresses_review(home, age, suppressed):
+    chain(home)
+    outcome(home, age=age)
+    publish(home)
+    row = watch.check(home, now=NOW)
+    assert bool(kinds(row, "continuation-review")) is not suppressed
+
+
+def test_changed_outcome_evidence_cannot_suppress_review(home):
+    chain(home)
+    evidence = outcome(home)
+    evidence.write_text("Changed bytes")
+    publish(home)
+    row = watch.check(home, now=NOW)
+    assert row["state"] == "UNKNOWN"
+    assert kinds(row, "continuation-review")
+    assert any(item["ref"] == "outcomes" for item in kinds(row, "unknown"))
+
+
+def test_producer_outcome_coverage_must_cover_new_continuations(home):
+    publish(home)
+    chain(home)
+    row = watch.check(home, now=NOW)
+    assert row["state"] == "UNKNOWN"
+    assert kinds(row, "continuation-review")
+    assert any(item["ref"] == "outcomes:discover" for item in kinds(row, "unknown"))
+
+
+def test_overdue_accepted_open_prediction_and_unknown_prediction(home):
+    append(home, "seed", "seed wake discover observation=1", age=300)
+    append(home, "seed", "seed yield discover wake=1\nTurn settled (changed); result", age=290)
+    prediction = append(home, "prediction/discover", "Expected bounded result\nCheck at: " + stamp(NOW - timedelta(seconds=60)), age=200)
+    append(home, "mishe-tauftauf", f"prediction {prediction}: accepted", age=190)
+    publish(home)
+    row = watch.check(home, now=NOW)
+    finding = kinds(row, "prediction")[0]
+    assert finding["id"] == f"prediction:chat.log#{prediction}"
+    assert finding["primary"] == ["discover", "genome"]
+    append(home, "mishe-tauftauf", f"prediction {prediction}: met", age=10)
+    append(home, "prediction/health", "No canonical check time", age=5)
+    publish(home)
+    later = watch.check(home, now=NOW)
+    assert not kinds(later, "prediction")
+    assert later["state"] == "UNKNOWN"
+
+
+@pytest.mark.parametrize("damage", ["missing", "corrupt", "stale", "future"])
+def test_unavailable_producer_is_unknown_and_routes_health(home, damage):
+    publish(home)
+    path = home / "checks/initiative.json"
+    if damage == "missing":
+        path.unlink()
+    elif damage == "corrupt":
+        path.write_text("{")
+    else:
+        report = json.loads(path.read_text())
+        report["generated_at"] = (NOW + timedelta(seconds=1) if damage == "future" else NOW - timedelta(seconds=181)).isoformat()
+        path.write_text(json.dumps(report))
+    row = watch.check(home, now=NOW)
+    assert row["state"] == "UNKNOWN"
+    assert messages(home, recipient="health", text="unknown:producer")
+
+
+def test_patch_only_partial_does_not_become_whole_plant_health(home):
+    (home / "patches/old.json").write_text("{")
+    report = publish(home)
+    assert report["state"] == "PARTIAL"
+    row = watch.check(home, now=NOW)
+    assert row["state"] == "OBSERVED"  # No monitored review condition, not whole-plant health.
+    assert row["producer_state"] == "PARTIAL"
+
+
+def test_initial_dedup_escalation_and_bounded_reminder(home):
+    append(home, "seed", "seed wake discover observation=1", age=3600)
+    publish(home)
+    initial = watch.check(home, now=NOW)
+    key = kinds(initial, "aged-wake")[0]["id"]
+    for seconds in (59, 599):
+        at = NOW + timedelta(seconds=seconds)
+        publish(home, now=at)
+        watch.check(home, now=at)
+    assert len(messages(home, recipient="health")) == 1
+    at = NOW + timedelta(seconds=600)
+    publish(home, now=at)
+    escalation = watch.check(home, now=at)
+    assert escalation["incidents"][key]["stage"] == "escalation"
+    assert escalation["incidents"][key]["first_seen"] == initial["incidents"][key]["first_seen"]
+    assert len(messages(home, recipient="witness")) == 1
+    for seconds in (2399, 2400, 2401):
+        at = NOW + timedelta(seconds=seconds)
+        publish(home, now=at)
+        watch.check(home, now=at)
+    assert len(messages(home, recipient="health")) == 3
+    assert len(messages(home, recipient="witness")) == 2
+
+
+def test_failed_delivery_survives_newer_cleared_findings(home, monkeypatch):
+    wake = append(home, "seed", "seed wake discover observation=1", age=3600)
+    publish(home)
+    real_send = watch._send
+
+    def fail(home, recipient, text):
+        if recipient == "health":
+            raise OSError("recipient unavailable")
+        return real_send(home, recipient, text)
+
+    monkeypatch.setattr(watch, "_send", fail)
+    failed = watch.check(home, now=NOW)
+    assert failed["state"] == "UNKNOWN"
+    assert failed["pending"][0]["recipients"] == ["health"]
+    append(home, "seed", f"seed yield discover wake={wake}\nTurn settled (verified); closed exact wake")
+    publish(home)
+    monkeypatch.setattr(watch, "_send", real_send)
+    recovered = watch.check(home, now=NOW)
+    assert not recovered["pending"]
+    assert not kinds(recovered, "aged-wake")
+    assert len(messages(home, recipient="health", text=f"aged-wake:discover:chat.log#{wake}")) == 1
+    assert len(messages(home, recipient="discover", text=f"aged-wake:discover:chat.log#{wake}")) == 1
+
+
+def test_crash_after_append_retries_exactly_once(home, monkeypatch):
+    append(home, "seed", "seed wake health observation=1", age=3600)
+    publish(home)
+    real_send = watch._send
+
+    class Crash(BaseException):
+        pass
+
+    def crash(home, recipient, text):
+        real_send(home, recipient, text)
+        raise Crash()
+
+    monkeypatch.setattr(watch, "_send", crash)
+    with pytest.raises(Crash):
+        watch.check(home, now=NOW)
+    assert len(messages(home, recipient="health")) == 1
+    monkeypatch.setattr(watch, "_send", real_send)
+    recovered = watch.check(home, now=NOW + timedelta(seconds=1))
+    assert recovered["state"] == "ATTENTION"
+    assert not recovered["pending"]
+    assert len(messages(home, recipient="health")) == 1
+
+
+@pytest.mark.parametrize("damage", ["missing", "corrupt"])
+def test_established_state_loss_is_unknown_retains_and_dedups(home, damage):
+    append(home, "seed", "seed wake health observation=1", age=3600)
+    publish(home)
+    watch.check(home, now=NOW)
+    path = home / "checks/initiative-watch.json"
+    raw = b"{broken state"
+    if damage == "missing":
+        path.unlink()
+    else:
+        path.write_bytes(raw)
+    repaired = watch.check(home, now=NOW + timedelta(seconds=1))
+    assert repaired["state"] == "UNKNOWN"
+    assert repaired["state_damage"]
+    assert len(messages(home, recipient="health", text="aged-wake:health")) == 1
+    if damage == "corrupt":
+        retained = home / "checks/initiative-watch-corrupt" / (hashlib.sha256(raw).hexdigest() + ".bin")
+        assert retained.read_bytes() == raw
+
+
+def test_retention_failure_leaves_original_untouched(home, monkeypatch):
+    publish(home)
+    watch.check(home, now=NOW)
+    path = home / "checks/initiative-watch.json"
+    path.write_bytes(b"{corrupt")
+    monkeypatch.setattr(watch, "_retain", lambda *args: (_ for _ in ()).throw(OSError("read-only retention")))
+    with pytest.raises(OSError):
+        watch.check(home, now=NOW)
+    assert path.read_bytes() == b"{corrupt"
+
+
+@pytest.mark.parametrize("seconds", [-1, 181])
+def test_reader_rejects_future_and_stale_cache(home, seconds):
+    publish(home)
+    watch.check(home, now=NOW)
+    with pytest.raises(ValueError):
+        watch.read_snapshot(home, now=NOW + timedelta(seconds=seconds))
+    assert "UNKNOWN" in watch.snapshot_lines(home, now=NOW + timedelta(seconds=seconds))[0]
+
+
+@pytest.mark.parametrize("damage", ["missing", "checksum", "incident", "receipt", "pending", "healthy", "nan", "duplicate"])
+def test_strict_cache_reader_rejects_malformed_state(home, damage):
+    append(home, "seed", "seed wake discover observation=1", age=3600)
+    publish(home)
+    row = watch.check(home, now=NOW)
+    path = home / "checks/initiative-watch.json"
+    if damage == "missing":
+        path.unlink()
+    elif damage == "checksum":
+        row["state"] = "OBSERVED"
+        path.write_text(json.dumps(row))
+    elif damage == "nan":
+        path.write_text('{"version": NaN}')
+    elif damage == "duplicate":
+        path.write_text('{"version":1,"version":1}')
+    else:
+        if damage == "incident":
+            row["incidents"] = {}
+        elif damage == "receipt":
+            row["deliveries"][next(iter(row["deliveries"]))]["health"] = True
+        elif damage == "pending":
+            row["pending"] = [{"event_id": "x", "recipients": ["health"]}]
+        else:
+            row["state"] = "OBSERVED"
+        watch._save(path, row)
+    with pytest.raises((OSError, ValueError)):
+        watch.read_snapshot(home, now=NOW)
+    assert "UNKNOWN" in watch.snapshot_lines(home, now=NOW)[0]
+
+
+def test_projection_never_reads_tape_or_observes(home, monkeypatch):
+    publish(home)
+    watch.check(home, now=NOW)
+    (home / "chat.log").unlink()
+    monkeypatch.setattr(watch, "check", lambda *args, **kwargs: pytest.fail("projection observed"))
+    monkeypatch.setattr(watch, "parse_feed", lambda *args, **kwargs: pytest.fail("projection scanned tape"))
+    assert watch.snapshot_lines(home, now=NOW)[0].startswith("INITIATIVE: OBSERVED")
+    assert not (home / "chat.log").exists()
