@@ -172,6 +172,8 @@ def test_a_launcher_without_an_opt_in_is_not_a_finding(tmp_path):
     result = run_check(home)
     assert result.returncode == 0, result.stdout
     assert "MISMATCH" not in result.stdout
+    # The check reports the launchers that carry an opt-in, and no others.
+    assert str(home / "minds" / ROLE) not in result.stdout
 
 
 def test_opt_in_naming_another_wake_reads_a_mismatch(tmp_path):
@@ -436,3 +438,157 @@ def test_the_check_writes_nothing_into_the_site_it_reads(tmp_path):
     assert result.returncode == 0, result.stdout
     assert site_state(home) == before
     assert not (home / "feed.index.json").exists()
+
+
+def fake_shell(tmp_path: Path, name: str, body: str) -> Path:
+    """A shell the check can ask, so its answer does not depend on the host."""
+    shell = tmp_path / name
+    shell.write_text(body, encoding="utf-8")
+    shell.chmod(0o755)
+    return shell
+
+
+def test_a_launcher_the_plant_knows_no_role_for_reads_unknown(tmp_path):
+    """An opt-in in a launcher the plant knows no role for is not an agreement."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    (home / "minds" / "docs-native").write_text(launcher_text(number), encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 3, result.stdout
+    assert "UNKNOWN" in result.stdout
+    assert "AGREE" not in result.stdout
+    assert "knows no role docs-native" in result.stdout
+
+
+def test_the_role_comes_from_the_consumer_not_from_the_file_name(tmp_path):
+    """The consumer declares the role it serves; the file name may differ."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    source = "ROLE = 'docs'\n" + RUNNER
+    (home / "minds" / "docs-native").write_text(
+        launcher_text(number, runner=runner_line(home, source)), encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 0, result.stdout
+    assert "role      : docs" in result.stdout
+
+
+def test_an_export_the_shell_rejects_reads_a_mismatch(tmp_path):
+    """`export NAME = value` names three words; the shell exports no value."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number).replace("WAKE=%d" % number, "WAKE = %d" % number),
+        encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 2, result.stdout
+    assert "MISMATCH" in result.stdout
+    assert "the shell rejects" in result.stdout
+
+
+def test_an_export_the_shell_ends_at_reads_a_mismatch(tmp_path):
+    """A shell that stops at the rejected export never starts the resident."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    shell = fake_shell(tmp_path, "ends", "#!/bin/sh\nexit 2\n")
+    (home / "minds" / ROLE).write_text(
+        "#!%s\nexport MISHE_NATIVE_RECOVERY_WAKE=%d 2\n" % (shell, number),
+        encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 2, result.stdout
+    assert "ends the launcher" in result.stdout
+
+
+def test_an_export_the_shell_continues_past_reads_unknown(tmp_path):
+    """A shell that continues may still export the value, so the reading is unknown."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    shell = fake_shell(tmp_path, "continues",
+                       "#!/bin/sh\n/bin/sh -c \"$2\" >/dev/null 2>&1 || true\nprintf REACHED\n")
+    (home / "minds" / ROLE).write_text(
+        "#!%s\nexport MISHE_NATIVE_RECOVERY_WAKE=%d 2\n" % (shell, number),
+        encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 3, result.stdout
+    assert "only if the shell continues" in result.stdout
+
+
+def test_an_expanding_opt_in_reads_unknown(tmp_path):
+    """The consumer would see the expansion; the check does not read the environment."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number).replace("WAKE=%d" % number, "WAKE=$MISHE_TEST_WAKE"),
+        encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 3, result.stdout
+    assert "expands" in result.stdout
+
+
+def test_an_opt_in_that_is_only_assigned_reads_unknown(tmp_path):
+    """An assignment does not export; the consumer may see an inherited value."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    (home / "minds" / ROLE).write_text(
+        "#!/bin/sh\nMISHE_NATIVE_RECOVERY_WAKE=%d\n" % number, encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 3, result.stdout
+    assert "not exported" in result.stdout
+
+
+def test_a_wake_that_is_not_an_ascii_number_reads_a_mismatch(tmp_path):
+    """`²` is a digit to `str.isdigit` and not a number to `int()`."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number).replace("WAKE=%d" % number, "WAKE=²"), encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 2, result.stdout
+    assert "not a wake number" in result.stdout
+    assert "Traceback" not in result.stdout + result.stderr
+
+
+def test_a_unicode_decimal_digit_is_not_a_wake_number(tmp_path):
+    """`٣` is a digit to `\\d` and to `int()`; the plant's wakes are ASCII."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number).replace("WAKE=%d" % number, "WAKE=٣"), encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 2, result.stdout
+    assert "not a wake number" in result.stdout
+    assert "Traceback" not in result.stdout + result.stderr
+
+
+def test_a_wake_of_zero_reads_a_mismatch(tmp_path):
+    """Wake 0 is a number and not a wake; the plant's wakes count from one."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number).replace("WAKE=%d" % number, "WAKE=0"), encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 2, result.stdout
+    assert "not a wake number" in result.stdout
+
+
+def test_an_attempt_the_consumer_cannot_read_reads_a_mismatch(tmp_path):
+    """The consumer reads the attempt with int(); the check reads that rule."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number, attempt="one", runner=runner_line(home)), encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 2, result.stdout
+    assert "int()" in result.stdout
+
+
+def test_the_last_export_of_a_name_decides(tmp_path):
+    """The shell exports the variable's current value, so the last export wins."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number).replace("WAKE=%d" % number,
+                                      "WAKE=1\nMISHE_NATIVE_RECOVERY_WAKE=%d" % number),
+        encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 0, result.stdout
+    assert "opt-in    : wake=%d attempt=1" % number in result.stdout
