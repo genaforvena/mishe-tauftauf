@@ -234,13 +234,19 @@ def _make(kind, role, ref, summary):
 
 
 def _owner(finding):
-    """The role that can act on the finding; escalation peers are not owners."""
+    """The role that can act on the finding; escalation peers are not owners.
+
+    A scoped gap names its owner as "<scope>:<role>"; the scope is free text
+    and the role must be one the reader can accept. A ref that names no role
+    leaves the resolver as the owner.
+    """
     role = finding.get("role")
     if _role(role):
         return role
     ref = finding.get("ref") or ""
-    if ref.startswith("outcomes:") and _role(ref.split(":", 1)[1]):
-        return ref.split(":", 1)[1]
+    _, _, name = ref.partition(":")
+    if _role(name):
+        return name
     return finding["primary"][0]
 
 
