@@ -416,4 +416,14 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except BrokenPipeError:
+        # A reader that stops reading (`| head`) closes the pipe early. That is
+        # the reader's choice, not a tool failure, and the traceback would
+        # read as one.
+        try:
+            sys.stdout.close()
+        except OSError:
+            pass
+        raise SystemExit(0)

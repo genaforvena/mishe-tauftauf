@@ -313,6 +313,20 @@ class CommandTest(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             self.assertIn("UNKNOWN", result.stderr)
 
+    def test_a_reader_that_stops_reading_is_not_a_tool_failure(self):
+        """`coverage | head` closes the pipe; the tool must not traceback."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp))
+            reader = subprocess.Popen(
+                ["python3", str(TOOL), "--repo", str(repo), "coverage"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            reader.stdout.readline()
+            reader.stdout.close()
+            reader.wait(timeout=30)
+            stderr = reader.stderr.read().decode("utf-8", "replace")
+            self.assertNotIn("BrokenPipeError", stderr)
+            self.assertNotIn("Traceback", stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
