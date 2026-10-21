@@ -180,13 +180,22 @@ class LauncherModelTests(unittest.TestCase):
         self.assertEqual(self.seed._launcher_model(path), "vendor/real")
 
     def test_two_launches_without_an_exec_settle_nothing(self):
-        """The shell runs them in turn; which one the pane runs is not in the bytes."""
+        """The shell runs the first and waits, so the first is the pane's model."""
         path = write_mind(
             self.directory,
             "probe",
             "#!/bin/sh\n/home/user/bin/omp --model=vendor/real\n/home/user/bin/omp --model=vendor/decoy\n",
         )
-        self.assertIsNone(self.seed._launcher_model(path))
+        self.assertEqual(self.seed._launcher_model(path), "vendor/real")
+
+    def test_a_later_exec_does_not_override_a_running_pane(self):
+        """The shell waits for the first process, so the second line never runs."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nomp --model=vendor/first\nexec omp --model=vendor/second\n",
+        )
+        self.assertEqual(self.seed._launcher_model(path), "vendor/first")
 
     def test_a_separator_on_one_line_is_refused(self):
         """A construct the reader does not model makes the reading unknown."""
@@ -399,6 +408,59 @@ class LauncherModelTests(unittest.TestCase):
             "#!/bin/sh\nexec /usr/bin/python3 -u /site/longcat-launch.py --model=vendor/real\n",
         )
         self.assertEqual(self.seed._launcher_model(path), "vendor/real")
+
+    def test_a_negated_command_is_refused(self):
+        """``!`` negates a pipeline; the reader does not model it."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\n! exec omp --model=vendor/decoy\nexec omp --model=vendor/real\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_a_path_assignment_is_refused(self):
+        """A PATH that does not hold omp means omp never runs."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nPATH=/definitely/not/here exec omp --model=vendor/decoy\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_an_exported_path_is_refused(self):
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nexport PATH=/definitely/not/here\nexec omp --model=vendor/decoy\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_env_split_string_is_refused(self):
+        """``env -S`` injects words; the reader does not model its argv."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            '#!/bin/sh\nexec env -S "/bin/echo --model=vendor/decoy" -- omp --model=vendor/real\n',
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_an_attached_env_operand_is_validated(self):
+        """``env -u=BAD`` is rejected by env, so nothing runs."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nexec env -u=BAD omp --model=vendor/real\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_only_the_plants_launcher_script_is_the_wrapper(self):
+        """An arbitrary script that ends in ``-launch.py`` is not the plant's."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nexec /usr/bin/python3 /not/the/plant/report-launch.py --model=vendor/decoy\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
 
     def test_a_backslash_continues_a_line(self):
         """The flag on the continuation line is the flag of the command."""
