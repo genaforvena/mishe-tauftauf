@@ -49,6 +49,9 @@ export MISHE_NATIVE_RECOVERY_ATTEMPT={attempt}
 
 # A stand-in for the recovery consumer: the shape the detector reads — the
 # opt-in taken out of the environment and compared with a stringified wake.
+# The real runner calls its own worker from the module's main block, so the
+# stand-in calls it too: a conversion on a path the module never takes is not
+# the consumer's rule.
 RUNNER = '''"""A stand-in for the recovery runner, with the bytes the plant runs."""
 import os
 
@@ -57,6 +60,10 @@ def run_wake(wake):
     recovery = os.environ.get("MISHE_NATIVE_RECOVERY_WAKE") == str(wake)
     number = int(os.environ.get("MISHE_NATIVE_RECOVERY_ATTEMPT", "1"))
     return recovery, number
+
+
+if __name__ == "__main__":
+    run_wake(1)
 '''
 
 # A minimal plant package, enough for the detector's reviewed readers, used
@@ -653,3 +660,90 @@ def test_the_last_export_of_a_name_decides(tmp_path):
     result = run_check(home)
     assert result.returncode == 0, result.stdout
     assert "opt-in    : wake=%d attempt=1" % number in result.stdout
+
+
+def test_an_attempt_read_with_a_subscript_reads_a_mismatch(tmp_path):
+    """``os.environ[NAME]`` reads the attempt as surely as ``os.environ.get``."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    source = RUNNER.replace(
+        'int(os.environ.get("MISHE_NATIVE_RECOVERY_ATTEMPT", "1"))',
+        'int(os.environ["MISHE_NATIVE_RECOVERY_ATTEMPT"])')
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number, attempt="one", runner=runner_line(home, source)),
+        encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 2, result.stdout
+    assert "int()" in result.stdout
+    assert "Traceback" not in result.stdout + result.stderr
+
+
+def test_an_attempt_read_into_a_name_and_converted_afterwards_reads_a_mismatch(tmp_path):
+    """The conversion may be a step after the read; the rule is still the consumer's."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    source = RUNNER.replace(
+        'number = int(os.environ.get("MISHE_NATIVE_RECOVERY_ATTEMPT", "1"))',
+        'raw = os.environ.get("MISHE_NATIVE_RECOVERY_ATTEMPT", "1")\n'
+        '    number = int(raw)')
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number, attempt="one", runner=runner_line(home, source)),
+        encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 2, result.stdout
+    assert "int()" in result.stdout
+    assert "Traceback" not in result.stdout + result.stderr
+
+
+def test_a_conversion_the_consumer_survives_is_not_a_mismatch(tmp_path):
+    """A consumer that catches the error can read a text attempt; that is not a defect."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    source = RUNNER.replace(
+        'number = int(os.environ.get("MISHE_NATIVE_RECOVERY_ATTEMPT", "1"))',
+        'try:\n'
+        '        number = int(os.environ.get("MISHE_NATIVE_RECOVERY_ATTEMPT", "1"))\n'
+        '    except ValueError:\n'
+        '        number = 1')
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number, attempt="one", runner=runner_line(home, source)),
+        encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 0, result.stdout
+    assert "MISMATCH" not in result.stdout
+    assert "survives the failure" in result.stdout
+
+
+def test_a_conversion_the_module_never_reaches_is_not_a_mismatch(tmp_path):
+    """A conversion in a function the module never calls is not the consumer's rule."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    source = '''"""A consumer whose conversion is on a path the module never takes."""
+import os
+
+
+def never_called():
+    return int(os.environ.get("MISHE_NATIVE_RECOVERY_ATTEMPT", "1"))
+'''
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number, attempt="one", runner=runner_line(home, source)),
+        encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 0, result.stdout
+    assert "MISMATCH" not in result.stdout
+    assert "a function the module never calls" in result.stdout
+    assert "Traceback" not in result.stdout + result.stderr
+
+
+def test_a_consumer_that_compares_with_a_subscript_read_is_cited(tmp_path):
+    """The opt-in read with a subscript is the same comparison, and it is cited."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    source = RUNNER.replace(
+        'os.environ.get("MISHE_NATIVE_RECOVERY_WAKE") == str(wake)',
+        'os.environ["MISHE_NATIVE_RECOVERY_WAKE"] == str(wake)')
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number, runner=runner_line(home, source)), encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 0, result.stdout
+    assert "compares the opt-in with the pending wake at line" in result.stdout
