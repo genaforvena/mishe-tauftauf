@@ -39,6 +39,7 @@ CONTINUATION_SECONDS = 1800
 ESCALATE_SECONDS = 600
 REMINDER_SECONDS = 1800
 MAX_REMINDER_SECONDS = 14400
+MAX_DETAIL_ROWS = 12
 STAGES = ("initial", "changed", "escalation", "reminder")
 
 
@@ -421,7 +422,41 @@ def _retain(home, path):
     return "Corrupt prior state retained sha256=" + fingerprint
 
 
-def _notice(event, *, interval=None):
+def _outcome_detail(report, finding):
+    """Name the bound evidence rows behind an outcome-coverage gap.
+
+    An owner who is told only that its outcome coverage is incomplete cannot
+    act: the failing artifact, its recorded digest and the reason are the
+    repairable facts. The detail names them from the producer's own report,
+    so the notice carries the same rows the producer measured.
+    """
+    if not report or finding.get("kind") != "unknown":
+        return []
+    ref = finding.get("ref") or ""
+    roles = report.get("roles") or {}
+    if ref.startswith("outcomes:"):
+        names = [ref.split(":", 1)[1]]
+    elif ref == "outcomes":
+        names = sorted(name for name, row in roles.items() if (row or {}).get("outcome_gaps"))
+    else:
+        return []
+    lines = []
+    for name in names:
+        rows = (roles.get(name) or {}).get("outcome_gaps") or []
+        if not rows:
+            continue
+        lines.append("Evidence rows for " + name + " (" + str(len(rows)) + "):")
+        for row in rows[:MAX_DETAIL_ROWS]:
+            evidence = row.get("evidence") or {}
+            lines.append("  - " + str(row.get("ref")) + " " + str(evidence.get("path"))
+                         + " recorded_sha256=" + str(evidence.get("sha256"))
+                         + " reason=" + str(row.get("reason")))
+        if len(rows) > MAX_DETAIL_ROWS:
+            lines.append("  - ... " + str(len(rows) - MAX_DETAIL_ROWS) + " further rows")
+    return lines
+
+
+def _notice(event, *, interval=None, detail=None):
     incident = event["incident"]
     finding = incident["finding"]
     stage = incident["stage"]
@@ -435,14 +470,17 @@ def _notice(event, *, interval=None):
     else:
         routing = "Resolver=" + ",".join(finding["primary"]) + "; escalation=" + ",".join(finding["escalation"])
         timing = "First seen=" + incident["first_seen"] + "; evidence/escalation deadline=" + deadline.isoformat()
-    return "\n".join([
+    lines = [
         "INITIATIVE REVIEW " + stage + " event=" + event["event_id"],
         finding["id"] + " ref=" + finding["ref"], finding["summary"],
         routing,
         timing,
         "Action: " + finding["action"],
-        "Clearing this observation does not certify that a semantic issue is fixed.",
-    ])
+    ]
+    if detail:
+        lines.extend(detail)
+    lines.append("Clearing this observation does not certify that a semantic issue is fixed.")
+    return "\n".join(lines)
 
 
 def _send(home, recipient, text):
@@ -560,7 +598,9 @@ def check(home, *, now=None):
                 if recipient in receipts:
                     continue
                 try:
-                    receipt = _send(home, recipient, _notice(event, interval=_event_interval(events, event)))
+                    receipt = _send(home, recipient, _notice(
+                        event, interval=_event_interval(events, event),
+                        detail=_outcome_detail(report, event["incident"]["finding"])))
                     receipts[recipient] = receipt.sequence
                     row["pending"] = _pending(events, deliveries)
                     _status(row)
