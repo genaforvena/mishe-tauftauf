@@ -49,6 +49,28 @@ Two modes:
     because it is proved the same way -- the refreshed copy must run and must
     publish the reviewed tree's facts before anything is written.
 
+Two more answers, neither of which writes:
+
+``--check``
+    report the bundle's identity as one comparable observation: the sha256 of
+    the bundle's package and the sha256 of the reviewed tree's package, over
+    the same set of names, so the two can be compared by a reader or a runner
+    without re-deriving anything. The names that differ are listed. The
+    published facts are compared as well, so the answer distinguishes a
+    bundle that is *current* (its bytes are the reviewed tree's), one that is
+    *mixed* (its bytes differ but it still publishes the reviewed tree's
+    facts) and one that is *stale* (its facts differ). A commit identity is
+    not used for this answer: a commit names bytes the bundle may not carry,
+    and a bundle that is a mixture of commits has no commit to name.
+
+``--allow-mixture``
+    permit a refresh that would leave the bundle without a reviewed commit
+    identity. The site records which reviewed commit each off-pin root
+    carries, and a bundle that no reviewed commit reproduces cannot be
+    described by such a record, so the tool refuses that refresh by default
+    and says which mode keeps the identity. The plant's own identity check
+    answers the question; the tool asks it rather than re-deriving it.
+
 The package is not only Python: it ships the role charters
 (``seed_<slug>_charter.md``), the doctrine and the agent contract, and
 ``seed.py`` reads a charter out of the package directory at runtime, so those
@@ -64,12 +86,16 @@ publishes. That is the same execution the plant's own closure check performs.
 
 Exit status:
   0  the plan is safe (dry run), the refresh was written and verified
-     (apply), or the previous bytes were restored (revert)
+     (apply), the previous bytes were restored (revert), or the bundle's
+     published facts agree with the reviewed tree's (check)
   2  the refresh was refused: the plan cannot be made safe, the refresh failed
-     its verification, or the rollback could not restore every byte
+     its verification, the rollback could not restore every byte, or the
+     refresh would leave the bundle without a reviewed commit identity
   3  the question cannot be decided: no bundle, no reviewed tree, an
      unreadable manifest, or the discovery module is unavailable
-  4  the plan leaves published facts differing, and was not applied
+  4  the plan leaves published facts differing, and was not applied; under
+     ``--check``, the bundle's published facts differ from the reviewed
+     tree's
 """
 from __future__ import annotations
 
@@ -81,12 +107,14 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 DISCOVERY = REPO / "checks" / "observer-refresh-closure.py"
+IDENTITY = REPO / "checks" / "observer-source-identity.py"
 PACKAGE = "mishe_tauftauf"
 STAMP = "%Y%m%dT%H%M%SZ"
 CACHES = ("__pycache__",)
@@ -123,6 +151,74 @@ def load_discovery(path: Path = DISCOVERY):
             raise Undecidable("the discovery module at " + str(path)
                               + " does not provide " + name)
     return module
+
+
+def load_identity(path: Path = IDENTITY):
+    """The plant's own identity check, loaded by path.
+
+    ``checks/observer-source-identity.py`` answers whether a package
+    directory's bytes are reproduced by a reviewed commit. The site records
+    which commit each off-pin root carries, so "which commit is this bundle"
+    is a question the plant already answers; the tool asks it rather than
+    keeping a second convention for it.
+    """
+    try:
+        spec = importlib.util.spec_from_file_location("observer_source_identity", path)
+    except (OSError, ValueError) as exc:
+        raise Undecidable("cannot read the identity module at " + str(path)
+                          + ": " + type(exc).__name__)
+    if spec is None or spec.loader is None:
+        raise Undecidable("the identity module at " + str(path) + " is not loadable")
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except (OSError, ValueError, SyntaxError) as exc:
+        raise Undecidable("cannot load the identity module at " + str(path)
+                          + ": " + type(exc).__name__)
+    for name in ("module_blobs", "reproducing_commits", "Undecidable"):
+        if not hasattr(module, name):
+            raise Undecidable("the identity module at " + str(path)
+                              + " does not provide " + name)
+    return module
+
+
+_IDENTITY = None
+
+
+def identity_check():
+    """The plant's identity check, loaded once."""
+    global _IDENTITY
+    if _IDENTITY is None:
+        _IDENTITY = load_identity()
+    return _IDENTITY
+
+
+def identity_state(repo: Path, directory: Path) -> tuple:
+    """Whether a package directory's bytes are reproduced by a reviewed commit.
+
+    "identity" means at least one reviewed commit reproduces the directory's
+    module bytes, so the site can name a commit for the root. "mixed" means
+    none does: the directory is a hand copy of several commits, and the
+    site's declared-root record has no commit to name for it. "undecidable"
+    means the question could not be asked -- no repository, no modules, an
+    unreadable file -- and is not the same answer as "mixed".
+    """
+    try:
+        module = identity_check()
+    except Undecidable as exc:
+        return "undecidable", str(exc)
+    try:
+        blobs = module.module_blobs(repo, directory)
+        commits = module.reproducing_commits(repo, blobs)
+    except module.Undecidable as exc:
+        return "undecidable", str(exc)
+    except (OSError, ValueError) as exc:
+        return "undecidable", type(exc).__name__
+    if not commits:
+        return "mixed", "no reviewed commit reproduces these bytes"
+    if len(commits) == 1:
+        return "identity", sorted(commits)[0]
+    return "identity", (str(len(commits)) + " reviewed commits reproduce these bytes")
 
 
 def digest(path: Path) -> str:
@@ -176,6 +272,22 @@ class Plan:
     distance: int = 0
     from_repo: bool = True
     notes: list = field(default_factory=list)
+    identity_before: str = "undecidable"
+    identity_after: str = "undecidable"
+    identity_detail: str = ""
+    moving: list = field(default_factory=list)
+
+    @property
+    def identity_regression(self) -> bool:
+        """Whether the refresh would take the bundle's reviewed identity away.
+
+        The site records which reviewed commit each off-pin root carries. A
+        bundle that no reviewed commit reproduces cannot be described by such
+        a record, and the plant's own identity check reads it as a
+        difference. A refresh that creates that state is refused unless the
+        caller accepts a mixture on purpose.
+        """
+        return self.identity_before == "identity" and self.identity_after == "mixed"
 
     def describe(self) -> list:
         """The plan, one line per part of it."""
@@ -192,6 +304,9 @@ class Plan:
         if self.stale_left:
             lines.append("left stale: " + ", ".join(self.stale_left)
                          + " (the planned set publishes the reviewed tree's facts without them)")
+        if self.identity_regression:
+            lines.append("identity  : WOULD BE LOST — the bundle now carries a reviewed "
+                         "commit and this refresh would leave it with none")
         for note in self.notes:
             lines.append("note      : " + note)
         return lines
@@ -216,6 +331,179 @@ def package_files(root: Path) -> list:
             continue
         out.append(path.relative_to(directory).as_posix())
     return out
+
+
+def package_digest(root: Path, names: list) -> str:
+    """The sha256 of a package's bytes over a fixed set of names.
+
+    Both sides are digested over the same names, and a name that is missing on
+    one side is recorded as absent rather than skipped, so the two digests are
+    comparable: equal digests mean equal bytes, and different digests mean the
+    packages differ.
+    """
+    parts = []
+    for name in sorted(names):
+        path = root / PACKAGE / name
+        if path.is_file():
+            parts.append(name + ":" + digest(path))
+        else:
+            parts.append(name + ":absent")
+    return hashlib.sha256("\n".join(parts).encode()).hexdigest()
+
+
+@dataclass
+class Observation:
+    """The bundle's bytes against the reviewed tree's bytes."""
+
+    bundle: Path
+    reference: Path
+    names: list = field(default_factory=list)
+    bundle_digest: str = ""
+    reference_digest: str = ""
+    differing: list = field(default_factory=list)
+    only_in_bundle: list = field(default_factory=list)
+    only_in_reference: list = field(default_factory=list)
+    distance: int = 0
+    facts: str = "unknown"
+    facts_reason: str = ""
+    moving: list = field(default_factory=list)
+
+    def state(self) -> str:
+        """The one word that names what the observation says.
+
+        CURRENT: the bundle's bytes are the reviewed tree's bytes.
+        MIXED: the bytes differ but the published facts still agree, so the
+        plant publishes what the reviewed tree publishes.
+        STALE: the published facts differ, so the plant publishes something
+        the reviewed tree does not.
+        UNKNOWN: the bytes differ and the facts could not be read.
+        """
+        if self.bundle_digest == self.reference_digest:
+            return "CURRENT"
+        if self.facts == "agree":
+            return "MIXED"
+        if self.facts == "differ":
+            return "STALE"
+        return "UNKNOWN"
+
+    def describe(self) -> list:
+        """The observation, one line per part of it."""
+        lines = ["bundle    : " + str(self.bundle),
+                 "reference : " + str(self.reference),
+                 "bundle    : sha256-" + self.bundle_digest + " (" + str(len(self.names))
+                 + " name(s))",
+                 "reference : sha256-" + self.reference_digest + " (" + str(len(self.names))
+                 + " name(s))"]
+        if self.differing:
+            lines.append("bytes     : DIFFER — " + str(len(self.differing))
+                         + " file(s) differ: " + ", ".join(self.differing))
+        elif self.only_in_bundle:
+            lines.append("bytes     : DIFFER — only in the bundle: "
+                         + ", ".join(self.only_in_bundle))
+        elif self.only_in_reference:
+            lines.append("bytes     : DIFFER — only in the reviewed tree: "
+                         + ", ".join(self.only_in_reference))
+        else:
+            lines.append("bytes     : SAME — the bundle's package is the reviewed tree's package")
+        if self.facts == "agree":
+            lines.append("facts     : AGREE — the bundle publishes the reviewed tree's facts")
+        elif self.facts == "differ":
+            lines.append("facts     : DIFFER — " + str(self.distance)
+                         + " published fact(s) differ")
+        else:
+            lines.append("facts     : UNKNOWN — " + (self.facts_reason or "the facts could not be read"))
+        if self.moving:
+            lines.append("moved     : " + str(len(self.moving))
+                         + " published line(s) moved between two samples (they carry the "
+                         "plant's own live state), so they are not a difference in the bytes")
+        lines.append("state     : " + self.state())
+        return lines
+
+
+def observe(discovery, home: Path, repo: Path, reference_src,
+            workdir: Path) -> Observation:
+    """What the bundle's bytes are, against the reviewed tree's bytes.
+
+    Read-only: the plant's bundle is not written, and the reviewed tree is
+    read from the repository's HEAD unless a reference is named.
+    """
+    try:
+        bundle = discovery.bundle_root(home)
+    except discovery.Undecidable as exc:
+        raise Undecidable(str(exc))
+    if reference_src is not None:
+        reference = Path(reference_src).resolve()
+    else:
+        try:
+            reference = discovery.export_head(repo, workdir)
+        except discovery.Undecidable as exc:
+            raise Undecidable(str(exc))
+    if not (reference / PACKAGE / "__init__.py").is_file():
+        raise Undecidable("the reviewed tree at " + str(reference) + " carries no plant package")
+    bundle_files = set(package_files(bundle))
+    reference_files = set(package_files(reference))
+    names = sorted(bundle_files | reference_files)
+    observation = Observation(bundle=bundle, reference=reference, names=names,
+                               bundle_digest=package_digest(bundle, names),
+                               reference_digest=package_digest(reference, names),
+                               differing=sorted(name for name in names
+                                                if _bytes(bundle, name) is not None
+                                                and _bytes(reference, name) is not None
+                                                and _bytes(bundle, name) != _bytes(reference, name)),
+                               only_in_bundle=sorted(bundle_files - reference_files),
+                               only_in_reference=sorted(reference_files - bundle_files))
+    try:
+        distance, moving = sampled_distance(discovery, bundle, reference, home, repo)
+    except discovery.Undecidable as exc:
+        observation.facts = "unknown"
+        observation.facts_reason = str(exc)
+        return observation
+    observation.distance = distance
+    observation.moving = moving
+    observation.facts = "differ" if distance else "agree"
+    return observation
+
+
+def _bytes(root: Path, name: str):
+    """A file's bytes under a package root, or None when it is not there."""
+    path = root / PACKAGE / name
+    if not path.is_file():
+        return None
+    return path.read_bytes()
+
+
+def _stable_lines(first: list, second: list) -> list:
+    """The published lines that are the same in two samples of one tree.
+
+    A line that appears in only one of the two samples carries the plant's
+    own live state -- the newest outcome refusal names a role and a file
+    path -- so it cannot be compared between two trees: it is not a fact
+    about the bytes.
+    """
+    common = Counter(first) & Counter(second)
+    return list(common.elements())
+
+
+def sampled_distance(discovery, root: Path, reference: Path, home: Path,
+                     repo: Path) -> tuple:
+    """How many published facts really differ, and which lines merely moved.
+
+    Each tree is sampled twice, and the lines that are the same in both
+    samples of that tree are the ones that describe its bytes. The trees are
+    then compared on those lines, so a line that moves with the plant's own
+    state is named as moved instead of being reported as a difference in the
+    bytes.
+    """
+    published_first = discovery.evidence_lines(root, home, repo)
+    expected_first = discovery.evidence_lines(reference, home, repo)
+    published_second = discovery.evidence_lines(root, home, repo)
+    expected_second = discovery.evidence_lines(reference, home, repo)
+    stable_published = _stable_lines(published_first, published_second)
+    stable_expected = _stable_lines(expected_first, expected_second)
+    missing, extra = discovery.fact_gap(stable_published, stable_expected)
+    moved = sorted(set(published_first) - set(stable_published))
+    moved += sorted(set(expected_first) - set(stable_expected))
+    return len(missing) + len(extra), sorted(set(moved))
 
 
 def build_plan(discovery, home: Path, repo: Path, reference_src, mode: str,
@@ -296,10 +584,26 @@ def build_plan(discovery, home: Path, repo: Path, reference_src, mode: str,
         for name in plan.only_in_bundle:
             (copy / PACKAGE / name).unlink(missing_ok=True)
     try:
-        lines = discovery.evidence_lines(copy, home, repo)
+        distance, moving = sampled_distance(discovery, copy, reference, home, repo)
     except discovery.Undecidable as exc:
         raise Undecidable("the planned refresh does not run: " + str(exc))
-    plan.distance = discovery.fact_distance(lines, reference_lines)
+    plan.distance = distance
+    plan.moving = moving
+    if moving:
+        plan.notes.append(str(len(moving)) + " published line(s) moved between two samples "
+                          "(they carry the plant's own live state), so they are not a "
+                          "difference in the bytes")
+    # The refreshed copy must still have a reviewed identity: the site names a
+    # reviewed commit for this root, and a bundle that no commit reproduces
+    # cannot be described by that name. The plant's own identity check answers
+    # the question, on the copy, before anything is written.
+    plan.identity_before, detail_before = identity_state(repo, bundle / PACKAGE)
+    plan.identity_after, detail_after = identity_state(repo, copy / PACKAGE)
+    if plan.identity_regression:
+        plan.identity_detail = ("the bundle now carries the reviewed commit "
+                                + detail_before + " and this refresh would leave it with "
+                                "none (" + detail_after + "); --mode tree keeps the identity")
+        plan.notes.append(plan.identity_detail)
     return plan
 
 
@@ -416,18 +720,20 @@ def apply_plan(discovery, plan: Plan, home: Path, repo: Path, workdir: Path,
         for entry in removed:
             (plan.bundle / PACKAGE / entry["module"]).unlink(missing_ok=True)
         try:
-            lines = discovery.evidence_lines(plan.bundle, home, repo)
+            distance, moving = sampled_distance(discovery, plan.bundle, plan.reference,
+                                                home, repo)
         except discovery.Undecidable as exc:
             problems = restore(backup, files, removed, plan.bundle)
             return _outcome("ROLLBACK FAILED" if problems else "ROLLED BACK", backup,
                             "the refreshed bundle does not run: " + str(exc), problems)
-        distance = discovery.fact_distance(lines, plan.reference_lines)
         if distance:
             problems = restore(backup, files, removed, plan.bundle)
             return _outcome("ROLLBACK FAILED" if problems else "ROLLED BACK", backup,
                             "the refreshed bundle still publishes " + str(distance)
                             + " fact(s) the reviewed tree does not", problems)
         record["files"] = files
+        if moving:
+            record["moving_lines"] = moving
         activation = write_activation(plan.bundle, record, stamp)
         record["activation"] = str(activation)
         (backup / "manifest.json").write_text(
@@ -502,6 +808,12 @@ def main(argv=None) -> int:
                         help="remove the files the reviewed tree does not carry")
     parser.add_argument("--revert", type=Path, default=None, metavar="MANIFEST",
                         help="restore the bytes a refresh replaced")
+    parser.add_argument("--check", action="store_true",
+                        help="report the bundle's identity against the reviewed tree's, "
+                             "read-only, and write nothing")
+    parser.add_argument("--allow-mixture", action="store_true",
+                        help="permit a refresh that would leave the bundle without a "
+                             "reviewed commit identity")
     args = parser.parse_args(argv)
     home = args.home.resolve()
     repo = (args.repo or home.parent).resolve()
@@ -519,6 +831,20 @@ def main(argv=None) -> int:
     workdir = Path(tempfile.mkdtemp(prefix="refresh-observer-bundle-"))
     try:
         discovery = load_discovery()
+        if args.check:
+            try:
+                observation = observe(discovery, home, repo, args.reference_src, workdir)
+            except Undecidable as exc:
+                print("UNKNOWN — " + str(exc))
+                return 3
+            for line in observation.describe():
+                print(line)
+            state = observation.state()
+            if state == "STALE":
+                return 4
+            if state == "UNKNOWN":
+                return 3
+            return 0
         try:
             plan = build_plan(discovery, home, repo, args.reference_src, args.mode,
                               workdir, prune=args.prune)
@@ -532,6 +858,11 @@ def main(argv=None) -> int:
                   + str(plan.distance) + " fact(s) the reviewed tree does not")
             return 4
         print("facts     : AGREE — the planned refresh publishes the reviewed tree's facts")
+        if plan.identity_regression and not args.allow_mixture:
+            print("identity  : REFUSED — " + plan.identity_detail)
+            print("           pass --mode tree to keep the bundle's reviewed commit, "
+                  "or --allow-mixture to accept a bundle with no reviewed commit")
+            return 2
         if not args.apply:
             print("apply     : no — this was a dry run; pass --apply to write it")
             return 0
