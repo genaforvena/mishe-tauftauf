@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import subprocess
 
-from mishe_tauftauf import trial_metrics, wall
+from mishe_tauftauf import timestamp_text, trial_metrics, wall
 
 
 def site(tmp_path, monkeypatch):
@@ -68,3 +68,32 @@ def test_sampler_accepts_open_ended_window_until_null(tmp_path, monkeypatch):
     trial_metrics.main()
     assert (directory / "latest.json").exists()
     assert (directory / "report.md").exists()
+
+
+class _Py310Datetime(datetime):
+    """``datetime.fromisoformat`` under Python 3.10's accepted formats.
+
+    Python 3.11 added the trailing "Z" to the formats ``fromisoformat``
+    accepts; 3.10 rejects it, and the coordination-mode writer stamps its
+    start with it.
+    """
+
+    @classmethod
+    def fromisoformat(cls, value):
+        if isinstance(value, str) and value.endswith("Z"):
+            raise ValueError("invalid isoformat string on Python 3.10: " + value)
+        return super().fromisoformat(value)
+
+
+def test_the_window_reads_the_coordination_mode_stamp_on_python310(monkeypatch):
+    """The sampler's window must decode the writer's own stamp on 3.10."""
+    monkeypatch.setattr(trial_metrics, "datetime", _Py310Datetime)
+    monkeypatch.setattr(timestamp_text, "datetime", _Py310Datetime)
+    start, until = trial_metrics._window({
+        "started": "2026-10-01T15:33:48.126048Z", "until": None})
+    assert start == datetime(2026, 10, 1, 15, 33, 48, 126048, tzinfo=timezone.utc)
+    assert until is None
+    start, until = trial_metrics._window({
+        "started": "2026-10-01T15:33:48.126048Z", "until": "2026-10-02T00:00:00Z"})
+    assert start == datetime(2026, 10, 1, 15, 33, 48, 126048, tzinfo=timezone.utc)
+    assert until == datetime(2026, 10, 2, tzinfo=timezone.utc)
