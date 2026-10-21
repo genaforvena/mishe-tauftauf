@@ -160,7 +160,8 @@ may be *ahead* - and a device-side clock read is what would.
 Two figures are published, and they answer different questions:
 
 - the bound at the **freshest delivered sample**, which holds with no premise
-  at all;
+  at all - and is withheld when the lane cannot establish which row was
+  produced last;
 - the **session-wide** bound, which holds at every row of the session that
   carries the phone's own monotonic reading, and which carries the premise it
   rests on: that monotonic clock is assumed to track true time, and that the
@@ -169,7 +170,10 @@ Two figures are published, and they answer different questions:
 
 The premise-free reading is the one to trust. The session-wide figure is
 tighter, and the reason it is published with its premise is that a reader who
-does not see the premise will read it as a fact.
+does not see the premise will read it as a fact. When the lane cannot
+establish the order of the rows, both figures are withheld and the tightest
+per-row bound the session's rows support is published instead, because that
+one needs no chronology.
 
 ### What the lane's own shape does to the reading
 

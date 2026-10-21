@@ -109,8 +109,9 @@ QUANTIZATION_S = 1.0
 VALIDITY_SECONDS = 3600.0
 #: The longest reason the producer's reader will carry into a rendered pane.
 #: It has to hold the bound, the unresolved side and the premise the
-#: session-wide bound rests on, so it is not cut short of them.
-MAX_REASON_CHARS = 400
+#: session-wide bound rests on, so it is not cut short of them.  A reason
+#: that would not fit is cut at a clause boundary, never inside one.
+MAX_REASON_CHARS = 600
 
 #: The clock-domain document's keys, as the producer's reader defines them.
 #: A document with a key outside this set is not a reading.
@@ -257,7 +258,13 @@ class Session:
         by_device_time = sorted(covered, key=lambda item: item[0].device_epoch)
         for index in range(1, len(by_device_time)):
             previous, current = by_device_time[index - 1][1], by_device_time[index][1]
-            if current < previous - MASKED_RESET_TOLERANCE_S * 1000:
+            if (current < previous - MASKED_RESET_TOLERANCE_S * 1000
+                    and current <= REBOOT_RESET_MS):
+                # A counter that falls by more than the wall clock's own
+                # quantization *and* lands on a fresh-boot value is a reset
+                # the delivered order hid.  A fall that leaves the counter
+                # large is a wall clock that stepped backwards, which the
+                # drift measurement already accounts for.
                 self.masked_resets.append(by_device_time[index][0].seq)
 
     @property
@@ -376,29 +383,37 @@ class Session:
 
     @property
     def freshest_pair(self) -> Pair | None:
-        """The freshest sample of the session.
+        """The freshest sample of the session, or ``None`` when the lane
+        cannot establish one.
 
         The freshest sample is the row with the greatest phone uptime, not
         the last row in the queue: a delivery batch is written in reverse
         device-time order, so the last row of a batch is the oldest row of
         that batch.
 
-        The uptime counter is only chronological within one boot, so the
-        search is confined to the rows after the session's last reset: a row
-        from before a reset carries a larger counter and is not the freshest
-        sample.  When no row carries the reading at all, the row with the
-        greatest device epoch is used, and the figure is then the lane's
-        last-known row rather than a monotonic witness.
+        Two situations make the lane unable to say which row was produced
+        last, and the figure is withheld rather than guessed:
+
+        * a **reset inside the session.**  The uptime counter is only
+          chronological within one boot, and a reset re-reads the wall
+          clock, so the rows on either side of it cannot be ordered against
+          each other at all.  A row from before the reset carries the
+          larger counter, and picking it would name a stale row as the
+          freshest one.
+        * **no monotonic reading at all.**  The device epoch is the phone's
+          wall clock, and a wall clock that was re-read backwards makes the
+          greatest epoch the *oldest* row, so the fallback would publish a
+          bound about the wrong row.
+
+        The premise-free per-row bound at the session's tightest row does
+        not need a chronology, so it is published instead.
         """
+        if self.ambiguous_resets or self.masked_resets:
+            return None
         covered = self.covered_pairs()
         if not covered:
-            if not self.pairs:
-                return None
-            return max(self.pairs, key=lambda pair: pair.device_epoch)
-        resets = set(self.ambiguous_resets) | set(self.masked_resets)
-        after_reset = [item for item in covered if item[0].seq not in resets]
-        usable = after_reset or covered
-        return max(usable, key=lambda item: (item[1], item[0].device_epoch))[0]
+            return None
+        return max(covered, key=lambda item: (item[1], item[0].device_epoch))[0]
 
     @property
     def delivery_latency_lower_s(self) -> float | None:
@@ -425,9 +440,25 @@ class Session:
         ``observed`` at that sample is the phone's clock error plus a
         non-negative delay, so the error is at most ``observed`` there.  This
         holds with no premise at all, unlike :attr:`behind_upper_s`.
+
+        It is ``None`` when the lane cannot establish which row was produced
+        last - see :attr:`freshest_pair`.
         """
         freshest = self.freshest_pair
         return freshest.observed if freshest is not None else None
+
+    @property
+    def last_receipt_epoch(self) -> float | None:
+        """When the host last received a row of this session.
+
+        This is the lane's own clock, and it is established: the host knows
+        when it received the rows.  It is not the same thing as the age of
+        the freshest *sample*, which depends on when the phone produced that
+        row.
+        """
+        if not self.pairs:
+            return None
+        return max(pair.host_epoch for pair in self.pairs)
 
     def summary(self) -> dict:
         observed = sorted(self.observed)
@@ -640,21 +671,38 @@ def reason_text(measurement: dict) -> str:
     if bound is None:
         withheld = (current.session_wide_withheld_reason
                     or "the lane does not support one")
-        text = (f"delivered-row lane: at the last delivered sample the phone's "
-                f"clock was at most {current.behind_upper_at_last_sample_s:+.3f}s "
-                f"behind the host (session {label}, {rows} rows); how far ahead "
-                f"it may be is unresolved; no session-wide bound: {withheld}")
+        at_sample = current.behind_upper_at_last_sample_s
+        if at_sample is None:
+            text = (f"delivered-row lane: the lane does not establish which row "
+                    f"of session {label} was produced last ({rows} rows), so no "
+                    f"freshest-sample bound is published; the tightest bound the "
+                    f"session's rows support is {current.observed_min_s:+.3f}s "
+                    f"behind the host, at the row that produced it; how far "
+                    f"ahead the phone's clock may be is unresolved; no "
+                    f"session-wide bound: {withheld}")
+        else:
+            text = (f"delivered-row lane: at the last delivered sample the "
+                    f"phone's clock was at most {at_sample:+.3f}s behind the "
+                    f"host (session {label}, {rows} rows); how far ahead it may "
+                    f"be is unresolved; no session-wide bound: {withheld}")
     else:
         latency = current.delivery_latency_lower_s
+        covered = len(current.wall_values())
         text = (f"delivered-row lane: the phone's clock was at most {bound:+.3f}s "
-                f"behind the host at every row of session {label} that carries "
-                f"the phone's own monotonic reading ({rows} rows); how far ahead "
-                f"it may be is unresolved; premise: the phone's monotonic clock "
-                f"is assumed to track true time")
+                f"behind the host at every one of the {covered} rows of session "
+                f"{label} that carry the phone's own monotonic reading; how far "
+                f"ahead it may be is unresolved; premise: that monotonic clock "
+                f"tracks true time and that those rows share one monotonic "
+                f"offset, neither of which the lane can test")
         if latency is not None:
             text += (f"; the rows were delivered at least {latency:.1f}s after "
                      f"the phone produced them")
-    return text[:MAX_REASON_CHARS]
+    if len(text) <= MAX_REASON_CHARS:
+        return text
+    # A reason that does not fit is cut at a clause boundary, so it never
+    # ends inside a clause and never loses a number without saying so.
+    cut = text.rfind("; ", 0, MAX_REASON_CHARS)
+    return text[:cut] if cut > 0 else text[:MAX_REASON_CHARS]
 
 
 def clock_bound_document(node: str, measurement: dict, now: float) -> dict:

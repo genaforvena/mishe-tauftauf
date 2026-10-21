@@ -943,21 +943,29 @@ def _bound_text(bound: dict) -> str:
     The session-wide figure and the figure at the freshest sample answer
     different questions, and both are said: the first holds at every row
     that carries the phone's own monotonic reading, the second holds at the
-    sample it was measured at.  The age of that sample is said with it: a
-    bound measured hours ago is not a bound on the phone's clock now, and a
-    reader must not have to ask.
+    sample it was measured at.
+
+    The age that is said with them is the age of the host's **receipt**,
+    not of the sample: the lane knows when it received the rows and does
+    not know exactly when the phone produced them, so the two must not be
+    confused.  The delivery-latency figure beside the bound is what says
+    how long before the receipt the sample was produced.
     """
     session_wide = bound.get("behind_upper_s")
     at_sample = bound.get("behind_upper_at_last_sample_s")
     age = bound.get("host_receipt_age_seconds")
     withheld = bound.get("session_wide_withheld_reason")
+    receipt = (f"the host received the last row {age:.0f} s ago"
+               if age is not None else None)
     if session_wide is None:
         if at_sample is None:
+            if not bound.get("freshest_sample_established"):
+                return ("not bounded by the delivered lane: the lane does not "
+                        "establish which row was produced last")
             return "not bounded by the delivered lane"
-        text = (f"{_behind_phrase(at_sample)} at the freshest delivered "
-                f"sample")
-        if age is not None:
-            text += f" ({age:.0f} s ago)"
+        text = f"{_behind_phrase(at_sample)} at the freshest delivered sample"
+        if receipt:
+            text += f", and {receipt}"
         if withheld:
             text += f", with no session-wide bound because {withheld}"
         return text
@@ -965,9 +973,9 @@ def _bound_text(bound: dict) -> str:
     text = (f"{_behind_phrase(session_wide)} at every one of the {covered} "
             f"rows that carry the phone's own monotonic reading")
     if at_sample is not None:
-        text += (f", and {_behind_phrase(at_sample)} at the freshest of them")
-        if age is not None:
-            text += f" ({age:.0f} s ago)"
+        text += f", and {_behind_phrase(at_sample)} at the freshest of them"
+        if receipt:
+            text += f", and {receipt}"
     return text
 
 
@@ -1018,7 +1026,8 @@ def _delivered_clock_bound(body: Path, node: str, now: float) -> dict:
                 "reason": "the delivered lane holds no paired rows for this node"}
     current = sessions[-1]
     summary = current.summary()
-    newest = current.freshest_pair.host_epoch if current.freshest_pair else now
+    freshest = current.freshest_pair
+    last_receipt = current.last_receipt_epoch
     return {
         "status": "bounded-from-the-delivered-lane",
         "session": summary["session"],
@@ -1036,8 +1045,13 @@ def _delivered_clock_bound(body: Path, node: str, now: float) -> dict:
         "masked_resets": summary["masked_resets"],
         "premise": summary["premise"],
         "session_wide_withheld_reason": current.session_wide_withheld_reason,
-        "observed_at_epoch_s": newest,
-        "host_receipt_age_seconds": round(now - newest, 3),
+        "observed_min_s": summary["observed_min_s"],
+        "freshest_sample_established": freshest is not None,
+        "observed_at_epoch_s": (freshest.host_epoch if freshest is not None
+                                else last_receipt),
+        "last_receipt_epoch_s": last_receipt,
+        "host_receipt_age_seconds": (round(now - last_receipt, 3)
+                                      if last_receipt is not None else None),
     }
 
 
@@ -1246,8 +1260,9 @@ def node_reading(node: dict, body: Path, max_age: float, now: float,
                  "phone's own monotonic reference)")
         if bound.get("behind_upper_s") is not None:
             claim += ("; the session-wide bound assumes the phone's own "
-                      "monotonic clock tracks true time, which the delivered "
-                      "lane cannot test")
+                      "monotonic clock tracks true time and that those rows "
+                      "share one monotonic offset, neither of which the "
+                      "delivered lane can test")
             drift = bound.get("wall_drift_s")
             latency = bound.get("delivery_latency_lower_s")
             if drift is not None and latency is not None:
@@ -1257,6 +1272,11 @@ def node_reading(node: dict, body: Path, max_age: float, now: float,
                           f"lateness rather than the phone's clock: at its worst "
                           f"the lane delivered a row at least {latency:.1f} s "
                           f"after the phone produced it")
+        else:
+            tightest = bound.get("observed_min_s")
+            if tightest is not None:
+                claim += (f"; the tightest bound the session's rows support is "
+                          f"{tightest:+.3f} s, at the row that produced it")
         claims.append(claim)
     reading["claims_supported"] = claims
     return reading
