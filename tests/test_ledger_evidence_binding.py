@@ -991,6 +991,80 @@ def test_evidence_binding_bands_partition_the_standing_audit(tmp_path):
     assert result["state"] == "drift"
 
 
+def test_evidence_binding_publishes_the_band_of_every_violating_row(tmp_path):
+    """Every violating row carries its band, not only the cleared and owed ones.
+
+    A row that is neither cleared nor owed — recoverable, versioned,
+    permanent — appears in no detail list, so its band used to be published
+    only as a count. A second reader could not see the band per row and had
+    to re-derive it, which is the one thing the band's own name exists to
+    prevent. The reading publishes the whole partition per row.
+    """
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "walls").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    # An edited file: the bound bytes are gone, so the row is owed.
+    lost = home / "artifacts" / "lost.md"
+    lost.write_text("original\n")
+    lost_digest = _write_evidenced_outcome(home, "bob", lost)
+    lost.write_text("edited after record\n")
+    # An appended file: the bound bytes survive as a prefix, so the row is
+    # recoverable and carries no lost work.
+    appended = home / "artifacts" / "appended.md"
+    appended.write_text("original\n")
+    appended_digest = _write_evidenced_outcome(home, "bob", appended)
+    with appended.open("a", encoding="utf-8") as stream:
+        stream.write("more\n")
+    # A wall path bound before the allowlist amendment: a policy version.
+    wall_file = home / "walls" / "alice.md"
+    wall_file.write_text("wall file\n")
+    wall_digest = _write_evidenced_outcome(home, "alice", wall_file)
+    # A path outside the owned site: no rule can make it eligible, so the
+    # row is permanent.
+    outside = tmp_path / "elsewhere" / "carol.md"
+    outside.parent.mkdir(parents=True)
+    outside.write_text("outside the site home\n")
+    outside_digest = _write_evidenced_outcome(home, "carol", outside)
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "bob",
+         f"[record] records/{lost_digest}.json sha256={lost_digest}\n"),
+        (2, "2026-10-06T17:10:00Z", "bob",
+         f"[record] records/{appended_digest}.json sha256={appended_digest}\n"),
+        (3, "2026-10-06T17:20:00Z", "alice",
+         f"[record] records/{wall_digest}.json sha256={wall_digest}\n"),
+        (4, "2026-10-20T17:00:00Z", "carol",
+         f"[record] records/{outside_digest}.json sha256={outside_digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    bands = {row["sequence"]: row["band"] for row in result["row_bands"]}
+    assert len(result["row_bands"]) == result["all_bad"] == 4
+    assert sorted(bands.values()) == ["owed", "permanent", "recoverable", "versioned"]
+    # The rows that no detail list carries are published here all the same.
+    published = {row["sequence"]: row for row in result["row_bands"]}
+    assert published[2]["band"] == "recoverable"
+    assert published[3]["band"] == "versioned"
+    assert published[4]["band"] == "permanent"
+    assert published[2]["role"] == "bob"
+    assert published[2]["classes"] == "B"
+    assert published[3]["evidence"] == "walls/alice.md"
+    # The per-row partition is the band table's partition, so a reader can
+    # check that it consumed the same one.
+    counts: dict[str, int] = {}
+    for row in result["row_bands"]:
+        counts[row["band"]] = counts.get(row["band"], 0) + 1
+    assert counts == {name: value for name, value in result["remediation_bands"].items()
+                      if value}
+    index = result["remediation_band_sequences"]
+    assert index["recoverable"] == [2]
+    assert index["versioned"] == [3]
+    assert index["permanent"] == [4]
+    assert index["owed"] == [1]
+    # The rows are published by tape sequence, so a reader can join them to
+    # the ledger without re-deriving the order.
+    assert [row["sequence"] for row in result["row_bands"]] == sorted(bands)
+
+
 def test_evidence_binding_a_digest_citation_clears_the_owed_row(tmp_path):
     """A later artifact carrying the lost row's digest clears the row.
 
