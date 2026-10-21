@@ -225,6 +225,21 @@ def _check_keeper(home: Path, session: str, properties: dict) -> None:
             raise ValueError(f"session keeper contains unowned process {pid}")
 
 
+def _socket_without_server(result) -> bool:
+    """True when tmux states that no server is running on the socket.
+
+    tmux leaves its socket file behind after the last server exits, so the
+    file's existence says nothing about a live server: the file outlives the
+    server exactly as long as nothing unlinks it. tmux's own answer —
+    "no server running on <path>" — is the precise statement that nothing
+    listens there, and a socket with no server cannot hold a session. Every
+    other inspection failure stays fail-closed.
+    """
+    if result.returncode == 0:
+        return False
+    return result.stderr.decode("utf-8", "replace").strip().startswith("no server running on")
+
+
 def _sessions(home: Path, session: str) -> list[dict]:
     sessions = []
     for socket in _socket_candidates(home):
@@ -232,6 +247,10 @@ def _sessions(home: Path, session: str) -> list[dict]:
             continue
         result = _tmux("list-sessions", "-F", "#{session_name}|#{session_id}|#{" + OWNED_OPTION + "}", socket=socket, check=False)
         if result.returncode:
+            if _socket_without_server(result):
+                # A leftover socket file with no server behind it: nothing can
+                # be running here, so it holds no session of this site.
+                continue
             raise ValueError(f"uninspectable tmux socket: {socket}")
         for line in result.stdout.decode().splitlines():
             words = line.split("|")

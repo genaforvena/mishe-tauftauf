@@ -11,8 +11,11 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -97,3 +100,63 @@ def test_refuses_tracked_source_inside_site(tmp_path: Path) -> None:
                     "commit", "-q", "-m", "x"], check=True)
     with pytest.raises(ValueError, match="tracked source"):
         inspect(site, "mishe-seed")
+
+
+def _private_socket_root(tmp_path: Path) -> tuple[Path, Path]:
+    """The root TMUX_TMPDIR would name, and the socket inside it."""
+    root = tmp_path / "tmux-root"
+    socket_path = root / f"tmux-{os.getuid()}" / "default"
+    socket_path.parent.mkdir(parents=True)
+    return root, socket_path
+
+
+def test_preview_survives_a_stale_tmux_socket_file(tmp_path: Path, monkeypatch) -> None:
+    """A socket file left behind by a dead server holds no session.
+
+    tmux keeps its socket file after the last server exits, so the file's
+    existence is not evidence of a live server. The preview must read such a
+    socket as empty instead of refusing to inspect it.
+    """
+    site = planted_site(tmp_path)
+    root, socket_path = _private_socket_root(tmp_path)
+    environment = dict(os.environ, TMUX_TMPDIR=str(root))
+    subprocess.run(["tmux", "-S", str(socket_path), "new-session", "-d", "-s", "stale"],
+                   check=True, env=environment)
+    subprocess.run(["tmux", "-S", str(socket_path), "kill-server"], check=False, env=environment)
+    assert socket_path.exists(), "tmux is expected to leave the socket file behind"
+    monkeypatch.setenv("TMUX_TMPDIR", str(root))
+    plan = uninstall(site, "mishe-seed")
+    assert plan["status"] == "preview"
+    assert plan["sessions"] == []
+
+
+def test_preview_refuses_a_socket_that_is_not_a_tmux_server(tmp_path: Path, monkeypatch) -> None:
+    """A socket that answers but is not tmux stays fail-closed."""
+    site = planted_site(tmp_path)
+    root, socket_path = _private_socket_root(tmp_path)
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(socket_path))
+    server.listen(1)
+    stop = threading.Event()
+
+    def serve() -> None:
+        server.settimeout(0.2)
+        while not stop.is_set():
+            try:
+                connection, _ = server.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            time.sleep(0.05)
+            connection.close()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        monkeypatch.setenv("TMUX_TMPDIR", str(root))
+        with pytest.raises(ValueError, match="uninspectable tmux socket"):
+            uninstall(site, "mishe-seed")
+    finally:
+        stop.set()
+        server.close()
