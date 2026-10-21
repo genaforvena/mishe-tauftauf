@@ -277,13 +277,15 @@ class ClockBoundTests(unittest.TestCase):
         document = clock_bound.clock_bound_document("redmi10", measurement, 1006.0)
         self.assertNotIn("host-device <=", document["reason"])
         self.assertIn("behind the host", document["reason"])
-        self.assertIn("session aaaa-bbb ", document["reason"])
+        self.assertIn("session aaaa-bbb", document["reason"])
 
-    def test_the_reason_carries_the_covered_count_the_premise_and_no_cut(self):
-        # The document's reason is the only prose a reader of the document
-        # gets, so it has to carry the premise, the unresolved side, the
-        # count of rows the bound covers, and the delivery lateness - and it
-        # must not be cut short of any of them.
+    def test_the_reason_fits_the_reader_budget_and_keeps_the_bound(self):
+        # The reason is the prose a reader of the document gets, and the
+        # reader's budget is 200 characters: past that the android-body
+        # reader replaces the whole reason with a bare class token, so
+        # every fact it carried is lost.  The reason therefore has to fit,
+        # and the facts that do not fit are carried by the typed field
+        # instead of being truncated away.
         rows = clock_bound.parse_rows(_rows([
             _hello(1, 1000, "aaaa-bbbb-cccc"),
             _light(2, 1005, 800_000),
@@ -294,12 +296,134 @@ class ClockBoundTests(unittest.TestCase):
         document = clock_bound.clock_bound_document("redmi10", measurement, 1511.0)
         reason = document["reason"]
         self.assertLessEqual(len(reason), clock_bound.MAX_REASON_CHARS)
-        self.assertIn("2 rows of session aaaa-bbb", reason)
-        self.assertIn("share one monotonic offset", reason)
-        self.assertIn("how far ahead it may be is unresolved", reason)
-        self.assertIn("delivered at least 500.0s after the phone produced them",
-                      reason)
-        self.assertTrue(reason.endswith("produced them"))
+        self.assertEqual(clock_bound.MAX_REASON_CHARS, 200)
+        # The bound, its coverage and the side the lane does not bound all
+        # survive, and the reason is never cut inside a clause.
+        self.assertIn("at most 0.100s behind the host", reason)
+        self.assertIn("2 monotonic rows of session aaaa-bbb", reason)
+        self.assertIn("the ahead side is unbounded by this lane", reason)
+        self.assertNotIn("...", reason)
+
+    def test_the_typed_field_carries_the_bound_the_premise_and_the_coverage(self):
+        # The reason's budget cannot hold the premise and the coverage, so
+        # the typed field carries them: the bound as a number with its
+        # relation stated, the premise it rests on, and the rows it covers.
+        # The shape is the one core proposed (genome DM 85077).
+        rows = clock_bound.parse_rows(_rows([
+            _hello(1, 1000, "aaaa-bbbb-cccc"),
+            _light(2, 1005, 800_000),
+            _light(3, 1010, 805_000),
+        ]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 2), (1510.1, 1)]))
+        measurement = clock_bound.measure(rows, receipts)
+        document = clock_bound.clock_bound_document("redmi10", measurement, 1511.0)
+        field = document["clock_bound"]
+        self.assertEqual(field["version"], clock_bound.CLOCK_BOUND_VERSION)
+        # The relation is signed and explicit: the phone's clock minus the
+        # host's is at least this many seconds.  A consumer cannot read it
+        # as a measured offset or as an interval, because the field also
+        # names the side the lane does not bound.
+        self.assertAlmostEqual(field["phone_minus_host_gte_s"], -0.100)
+        self.assertEqual(field["unbounded_side"], "above")
+        self.assertTrue(field["published"])
+        self.assertEqual(field["session_id"], "aaaa-bbbb-cccc")
+        self.assertEqual(field["covered_rows"], 2)
+        self.assertEqual(field["rows"], 3)
+        self.assertEqual(field["premise"], list(clock_bound.BEHIND_BOUND_PREMISES))
+        self.assertEqual(len(field["premise"]), 2)
+
+    def test_the_typed_field_carries_the_lane_lateness_the_prose_drops(self):
+        # The delivery-latency lower bound says that a stale timestamp is
+        # the lane's lateness and not the phone's clock.  The prose reason
+        # cannot hold it - the budget drops the optional clause - so the
+        # typed field carries it, or the fact is lost entirely.
+        rows = clock_bound.parse_rows(_rows([
+            _hello(1, 1000, "aaaa-bbbb-cccc"),
+            _light(2, 1005, 800_000),
+            _light(3, 1010, 805_000),
+        ]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 2), (1510.1, 1)]))
+        measurement = clock_bound.measure(rows, receipts)
+        document = clock_bound.clock_bound_document("redmi10", measurement, 1511.0)
+        field = document["clock_bound"]
+        self.assertIn("delivery_latency_lower_s", field)
+        self.assertAlmostEqual(field["delivery_latency_lower_s"], 500.0)
+
+    def test_the_typed_field_is_absent_when_the_lane_supports_no_bound(self):
+        # A reset the lane cannot classify withholds the session-wide bound,
+        # and with it the freshest-sample bound, so there is no bound to
+        # publish and the field says nothing rather than guessing.
+        rows = clock_bound.parse_rows(_rows([
+            _hello(1, 1000),
+            _light(2, 1005, 100_000),
+            _light(3, 905, 5_000),
+            _light(4, 1005, 105_000),
+        ]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 4)]))
+        measurement = clock_bound.measure(rows, receipts)
+        document = clock_bound.clock_bound_document("redmi10", measurement, 1006.0)
+        field = document["clock_bound"]
+        self.assertFalse(field["published"])
+        self.assertIsNone(field["phone_minus_host_gte_s"])
+        self.assertIn("fresh-boot value", field["withheld_reason"])
+        self.assertIn("no session-wide bound", document["reason"])
+
+    def test_the_typed_field_carries_no_value_when_the_bound_is_withheld(self):
+        # A field that says "not published" must not also carry a number a
+        # consumer could read as a bound, and it must say why in a value
+        # rather than in prose.
+        rows = clock_bound.parse_rows(_rows([
+            _hello(1, 1000),
+            _light(2, 1005, 500_000),
+            _light(3, 1010, 5_000),
+        ]))
+        receipts = clock_bound.parse_receipts(_receipts([(1010.1, 3)]))
+        measurement = clock_bound.measure(rows, receipts)
+        document = clock_bound.clock_bound_document("redmi10", measurement, 1011.0)
+        field = document["clock_bound"]
+        self.assertFalse(field["published"])
+        self.assertIsNone(field["phone_minus_host_gte_s"])
+        self.assertEqual(field["premise"], [])
+        self.assertIn("fresh-boot value", field["withheld_reason"])
+
+    def test_the_withheld_reason_fits_the_reader_budget(self):
+        # The android-body reader replaces a reason past 200 characters with
+        # the bare token "clock-domain-unavailable", which loses every fact
+        # the reason carried.  The withheld branch's reason is the longest
+        # one this producer writes, so it is the one that has to fit.
+        rows = clock_bound.parse_rows(_rows([
+            _hello(1, 1000),
+            _light(2, 1005, 500_000),
+            _light(3, 1010, 5_000),
+        ]))
+        receipts = clock_bound.parse_receipts(_receipts([(1010.1, 3)]))
+        measurement = clock_bound.measure(rows, receipts)
+        document = clock_bound.clock_bound_document("redmi10", measurement, 1011.0)
+        reason = document["reason"]
+        self.assertLessEqual(
+            len(reason), clock_bound.MAX_REASON_CHARS,
+            f"the withheld reason is {len(reason)} characters: {reason!r}")
+        # The facts a reader needs survive, and the tightest bound is
+        # qualified as the bound at the row that produced it - it is not a
+        # bound that holds across the session.
+        self.assertIn("no session-wide bound", reason)
+        self.assertIn("at most 0.100s behind the host", reason)
+        self.assertIn("at the row that produced it", reason)
+        self.assertIn("the ahead side is unbounded by this lane", reason)
+
+    def test_the_withheld_reason_says_which_row_the_tightest_bound_is_at(self):
+        # 82349's independent reading found that publishing min(observed)
+        # as a session-wide bound was wrong: it is a bound at the row that
+        # produced it.  The qualifier is what keeps that finding fixed.
+        rows = clock_bound.parse_rows(_rows([
+            _hello(1, 1000),
+            _light(2, 1005, 500_000),
+            _light(3, 1010, 5_000),
+        ]))
+        receipts = clock_bound.parse_receipts(_receipts([(1010.1, 3)]))
+        measurement = clock_bound.measure(rows, receipts)
+        document = clock_bound.clock_bound_document("redmi10", measurement, 1011.0)
+        self.assertIn("at the row that produced it", document["reason"])
 
     def test_the_emitted_document_publishes_the_bound_and_no_offset(self):
         rows = clock_bound.parse_rows(_rows([
@@ -315,7 +439,7 @@ class ClockBoundTests(unittest.TestCase):
         self.assertIsNone(document["offset_nominal_s"])
         self.assertEqual(document["node"], "redmi10")
         self.assertLessEqual(len(document["reason"]), clock_bound.MAX_REASON_CHARS)
-        self.assertIn("+0.020s", document["reason"])
+        self.assertIn("0.020s behind the host", document["reason"])
         self.assertLessEqual(set(document), clock_bound.DOCUMENT_KEYS)
 
     def test_a_malformed_journal_line_is_skipped_not_guessed(self):

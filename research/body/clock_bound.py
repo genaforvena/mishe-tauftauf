@@ -108,10 +108,19 @@ QUANTIZATION_S = 1.0
 #: How long the emitted reading is treated as current.
 VALIDITY_SECONDS = 3600.0
 #: The longest reason the producer's reader will carry into a rendered pane.
-#: It has to hold the bound, the unresolved side and the premise the
-#: session-wide bound rests on, so it is not cut short of them.  A reason
-#: that would not fit is cut at a clause boundary, never inside one.
-MAX_REASON_CHARS = 600
+#: The bound on this is the reader's, not this producer's: the android-body
+#: reader replaces a longer reason with a bare class token
+#: (``body/runtime/watch.py``: ``CLOCK_DOMAIN_REASON_MAX_CHARS = 200``, and
+#: ``body/runtime/clock_offset.py``'s own validator caps a published reason
+#: at the same 200).  A reason past that limit is not shortened - it is
+#: *dropped*, so every fact it carried is lost.  The reason is therefore
+#: built to fit, and the facts that do not fit are carried by the typed field
+#: instead.
+MAX_REASON_CHARS = 200
+
+#: The version of the typed clock-bound field.  A consumer that does not
+#: know this version must ignore the field rather than guess its shape.
+CLOCK_BOUND_VERSION = 1
 
 #: The clock-domain document's keys, as the producer's reader defines them.
 #: A document with a key outside this set is not a reading.
@@ -120,6 +129,7 @@ DOCUMENT_KEYS = frozenset({
     "validity_seconds", "samples", "quantization_s", "rtt_max_s",
     "offset_min_s", "offset_max_s", "offset_nominal_s",
     "device_serial", "device_model", "host_ntp_synchronized", "jump", "reason",
+    "clock_bound",
 })
 
 ROW_RE = re.compile(r"^(\d+) (\d+) (.*)$")
@@ -141,11 +151,19 @@ MASKED_RESET_TOLERANCE_S = 5.0
 #: level.
 LEVEL_WINDOW_S = 900.0
 
-#: The premise the session-wide bound rests on.  It is published with the
-#: bound because the delivered lane cannot test it: nothing in the lane says
-#: how fast the phone's monotonic clock runs against true time, and nothing in
-#: the lane says that a row without a monotonic reading did not sit on a
-#: reset.
+#: The premises the session-wide bound rests on, one claim each.  They are
+#: published with the bound because the delivered lane cannot test either:
+#: nothing in the lane says how fast the phone's monotonic clock runs
+#: against true time, and nothing in the lane says that a row without a
+#: monotonic reading did not sit on a reset.
+BEHIND_BOUND_PREMISES = (
+    "the phone's monotonic clock tracks true time",
+    "the rows carrying the reading share one monotonic offset",
+)
+
+#: The same two premises as one sentence, for the prose reason and for the
+#: measurement summary.  The typed field carries them as the list above,
+#: because a consumer checks each claim separately.
 BEHIND_BOUND_PREMISE = (
     "the phone's wall clock is measured against its own monotonic clock, and "
     "the bound assumes that monotonic clock tracks true time and that the "
@@ -648,61 +666,150 @@ def measure(rows: list[Row], receipts: list[Receipt]) -> dict:
     }
 
 
+def _behind_phrase(bound: float) -> str:
+    """The bound said with its sign the right way round.
+
+    A negative bound is not "at most -1 s behind": it says the phone's clock
+    was *ahead* of the host's by at least that much.
+    """
+    if bound < 0:
+        return f"at least {abs(bound):.3f}s ahead of the host"
+    return f"at most {bound:.3f}s behind the host"
+
+
 def reason_text(measurement: dict) -> str:
     """A bounded reason naming the route, the bound and the limit.
 
     The bound is one-sided: it says how far the phone's clock was *behind*
     the host, never how far it may be ahead.  The session-wide figure is the
-    one the phone's own monotonic reference makes derivable, and it is
-    published with its premise.
+    one the phone's own monotonic reference makes derivable.
 
-    The reason is the only prose a reader of the emitted document gets, so
-    it carries the premise and the unresolved side itself: a reader who sees
-    only the document must not be able to mistake the bound for a measured
-    offset.
+    The reason is the prose a reader of the emitted document gets, so it
+    carries the bound and the unresolved side itself: a reader who sees only
+    the document must not be able to mistake the bound for a measured offset.
+    Its budget is the reader's, not this producer's - a reason past
+    :data:`MAX_REASON_CHARS` is replaced by a bare class token, so every
+    fact it carried is lost.  The premise and the coverage therefore live in
+    the typed field (:func:`clock_bound_field`), which no length limit
+    touches, and the clauses that do not fit are dropped rather than
+    truncated.
     """
     sessions = measurement["session_objects"]
     if not sessions or not sessions[-1].pairs:
         return "delivered-row lane: no paired rows"
     current = sessions[-1]
     label = (current.session_id or "unknown-session")[:8]
-    rows = len(current.pairs)
     bound = current.behind_upper_s
     if bound is None:
-        withheld = (current.session_wide_withheld_reason
-                    or "the lane does not support one")
-        at_sample = current.behind_upper_at_last_sample_s
-        if at_sample is None:
-            text = (f"delivered-row lane: the lane does not establish which row "
-                    f"of session {label} was produced last ({rows} rows), so no "
-                    f"freshest-sample bound is published; the tightest bound the "
-                    f"session's rows support is {current.observed_min_s:+.3f}s "
-                    f"behind the host, at the row that produced it; how far "
-                    f"ahead the phone's clock may be is unresolved; no "
-                    f"session-wide bound: {withheld}")
-        else:
-            text = (f"delivered-row lane: at the last delivered sample the "
-                    f"phone's clock was at most {at_sample:+.3f}s behind the "
-                    f"host (session {label}, {rows} rows); how far ahead it may "
-                    f"be is unresolved; no session-wide bound: {withheld}")
+        # No bound is published: the session-wide bound and the premise-free
+        # per-sample bound stand or fall together, because both are withheld
+        # by the same reset.  The reason says what the lane does support -
+        # the tightest bound its rows give - and the typed field carries the
+        # reason the bound is withheld and the coverage the prose cannot
+        # hold.
+        #
+        # The tightest bound is a bound *at the row that produced it*, not a
+        # bound that holds across the session, so it says so.  Without that
+        # qualifier a reader would take it for a session-wide bound, which is
+        # the reading 82349's independent review rejected.
+        tightest = min(current.observed) if current.observed else None
+        required = [
+            f"delivered-row lane: no session-wide bound for session {label}",
+            f"the tightest bound is {_behind_phrase(tightest)}, at the row "
+            f"that produced it" if tightest is not None else
+            "the session's rows support no bound",
+            "the ahead side is unbounded by this lane",
+        ]
+        optional = []
     else:
-        latency = current.delivery_latency_lower_s
         covered = len(current.wall_values())
-        text = (f"delivered-row lane: the phone's clock was at most {bound:+.3f}s "
-                f"behind the host at every one of the {covered} rows of session "
-                f"{label} that carry the phone's own monotonic reading; how far "
-                f"ahead it may be is unresolved; premise: that monotonic clock "
-                f"tracks true time and that those rows share one monotonic "
-                f"offset, neither of which the lane can test")
+        required = [
+            f"delivered-row lane: the phone's clock was {_behind_phrase(bound)} "
+            f"at all {covered} monotonic rows of session {label}",
+            "the ahead side is unbounded by this lane",
+        ]
+        optional = []
+        latency = current.delivery_latency_lower_s
         if latency is not None:
-            text += (f"; the rows were delivered at least {latency:.1f}s after "
-                     f"the phone produced them")
-    if len(text) <= MAX_REASON_CHARS:
-        return text
-    # A reason that does not fit is cut at a clause boundary, so it never
-    # ends inside a clause and never loses a number without saying so.
-    cut = text.rfind("; ", 0, MAX_REASON_CHARS)
-    return text[:cut] if cut > 0 else text[:MAX_REASON_CHARS]
+            optional.append(f"rows were delivered at least {latency:.1f}s late")
+    text = "; ".join(required)
+    # The required clauses are short enough to fit by construction; the
+    # optional ones are dropped rather than truncated when they do not.  A
+    # reason past the reader's limit is not shortened by the reader - it is
+    # replaced by a bare class token, which loses every fact it carried.
+    for clause in optional:
+        candidate = f"{text}; {clause}"
+        if len(candidate) <= MAX_REASON_CHARS:
+            text = candidate
+    return text
+
+
+def clock_bound_field(measurement: dict) -> dict | None:
+    """The typed, versioned bound this lane establishes, or ``None``.
+
+    The field carries what prose cannot: the bound as a number with its
+    relation stated, the premise it rests on, and the coverage that says
+    which rows it holds at.  It is deliberately *not* an offset: the
+    delivered lane bounds the skew from one side only, so the field states a
+    one-sided relation in the ``phone_minus_host_gte_s`` convention - the
+    quantity is the phone's clock minus the host's, and the relation says the
+    quantity is at least that many seconds.  ``unbounded_side`` names the
+    side the lane does not bound.  A consumer therefore cannot read the
+    field as a measured offset, and cannot read it as an interval either.
+
+    The shape is the one core proposed (genome DM 85077): a sibling
+    ``clock_bound`` object, version 1, with the signed relation stated as
+    ``phone_minus_host_gte_s``, the session it covers, the number of rows
+    that carry the monotonic reading, and the premise as a list of the two
+    claims it rests on.  The producer agrees that shape; a consumer that
+    does not know :data:`CLOCK_BOUND_VERSION` must ignore the field rather
+    than guess its shape, which is why the version is inside the field and
+    not beside it.
+
+    When the lane supports no bound the field says so and carries the reason
+    it is withheld, so a consumer never has to read a paragraph to learn that
+    there is no number.  The session-wide bound and the premise-free
+    per-sample bound stand or fall together - both are withheld by the same
+    reset - so there is no case where one is published and the other is not.
+    """
+    sessions = measurement["session_objects"]
+    if not sessions or not sessions[-1].pairs:
+        return None
+    current = sessions[-1]
+    bound = current.behind_upper_s
+    covered = len(current.wall_values())
+    if bound is None:
+        return {
+            "version": CLOCK_BOUND_VERSION,
+            "published": False,
+            "phone_minus_host_gte_s": None,
+            "unbounded_side": "above",
+            "withheld_reason": (current.session_wide_withheld_reason
+                                or "the lane does not support one"),
+            "session_id": current.session_id,
+            "covered_rows": covered,
+            "rows": len(current.pairs),
+            "premise": [],
+        }
+    latency = current.delivery_latency_lower_s
+    field = {
+        "version": CLOCK_BOUND_VERSION,
+        "published": True,
+        # The signed relation: the phone's clock minus the host's is at
+        # least this many seconds.  It is a one-sided bound, not an offset.
+        "phone_minus_host_gte_s": -bound,
+        "unbounded_side": "above",
+        "session_id": current.session_id,
+        "covered_rows": covered,
+        "rows": len(current.pairs),
+        "premise": list(BEHIND_BOUND_PREMISES),
+    }
+    if latency is not None:
+        # The lane's lateness, not the phone's clock.  It is what says that a
+        # stale timestamp is the delivery path's fault, so it travels with
+        # the bound rather than only in prose - the prose budget drops it.
+        field["delivery_latency_lower_s"] = latency
+    return field
 
 
 def clock_bound_document(node: str, measurement: dict, now: float) -> dict:
@@ -711,6 +818,12 @@ def clock_bound_document(node: str, measurement: dict, now: float) -> dict:
     ``status`` is ``unavailable`` and every offset is null: the delivered lane
     bounds the skew from above only, and a document that carried an offset
     would be a reading the lane cannot support.
+
+    The bound itself rides in the typed ``clock_bound`` field, which states
+    the relation, the premise and the coverage as values.  The ``reason``
+    stays as the prose a reader sees; it is bounded by the reader's own
+    limit, so it names the route, the bound and the unresolved side, and
+    points at nothing it cannot carry.
     """
     sessions = measurement["session_objects"]
     current = sessions[-1] if sessions else None
@@ -735,6 +848,9 @@ def clock_bound_document(node: str, measurement: dict, now: float) -> dict:
         "jump": None,
         "reason": reason_text(measurement),
     }
+    bound = clock_bound_field(measurement)
+    if bound is not None:
+        document["clock_bound"] = bound
     if not set(document) <= DOCUMENT_KEYS:
         raise ValueError("document carries a key the reader does not accept")
     return document
