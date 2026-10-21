@@ -5335,20 +5335,40 @@ def _rebind_links(events: list[dict], checked: list[tuple],
     # The citation relation: a later same-role outcome's bound artifact
     # carries the lost row's record digest. Each artifact is read once, and
     # the reads are bounded per file and per scan.
-    bodies: dict[str, bytes] = {}
+    #
+    # The needles each candidate artifact must answer are known before any
+    # artifact is read: a lost row's candidate successors are fixed by the
+    # role, the order and the intactness of the outcomes, and none of that
+    # depends on the bytes. So each artifact is read once, for every needle
+    # it must answer, and only the digests it carries are retained — the
+    # body is released as soon as the digests are known, so the search holds
+    # one body at a time instead of every body it read.
+    candidates: dict[int, list[tuple[int, str]]] = {}
+    path_needles: dict[str, set[str]] = {}
+    # How many lost rows still need each artifact, so a retained digest set
+    # is released when the last row that could use it has passed.
+    path_uses: dict[str, int] = {}
+    for sequence, role, digest in lost_rows:
+        if sequence in links or not digest:
+            continue
+        for successor in role_sequences.get(role, ()):
+            if not later(successor, sequence) or successor not in intact:
+                continue
+            path = by_sequence[successor]["evidence"]["path"]
+            candidates.setdefault(sequence, []).append((successor, path))
+            path_needles.setdefault(path, set()).add(digest)
+            path_uses[path] = path_uses.get(path, 0) + 1
+    carried: dict[str, set[str]] = {}
     too_large: set[str] = set()
     searched = 0
     bytes_read = 0
     for sequence, role, digest in lost_rows:
         if sequence in links or not digest:
             continue
-        needle = digest.encode()
-        for successor in role_sequences.get(role, ()):
-            if not later(successor, sequence) or successor not in intact:
-                continue
-            path = by_sequence[successor]["evidence"]["path"]
-            body = bodies.get(path)
-            if body is None:
+        row_candidates = candidates.get(sequence, [])
+        for successor, path in row_candidates:
+            digests = carried.get(path)
+            if digests is None:
                 if path in too_large:
                     continue
                 # The budget is enforced on the bytes actually read, not on a
@@ -5373,12 +5393,19 @@ def _rebind_links(events: list[dict], checked: list[tuple],
                     # the debt instead of hiding it.
                     too_large.add(path)
                     continue
-                bodies[path] = body
+                digests = {needle for needle in path_needles.get(path, ())
+                           if needle.encode() in body}
+                carried[path] = digests
                 bytes_read += len(body)
                 searched += 1
-            if needle in body:
+            if digest in digests:
                 links[sequence] = ("digest-cited", successor)
                 break
+        for _successor, path in row_candidates:
+            path_uses[path] = path_uses.get(path, 0) - 1
+            if path_uses[path] <= 0:
+                carried.pop(path, None)
+                path_needles.pop(path, None)
     stats = {"citation_files_searched": searched, "citation_bytes_read": bytes_read,
              "citation_files_skipped": len(too_large)}
     # The byte relation of every remedy-named link. The successor is intact,
