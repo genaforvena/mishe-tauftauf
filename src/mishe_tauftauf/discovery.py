@@ -5079,6 +5079,60 @@ EVIDENCE_PREFIX_SEARCH_TOTAL_BYTES = 32 * 1024 * 1024
 EVIDENCE_READ_CHUNK_BYTES = 1024 * 1024
 
 
+#: The byte relations a rebound row can carry. The band decides a **link**
+#: relation — a remedy-named successor exists — so the byte relation is
+#: published beside it, per row, rather than folded into the band's name.
+#: ``restored`` — the successor's bytes are the row's published bytes, so the
+#: content came back. ``copy-of-current`` — the successor's bytes are the lost
+#: path's current bytes, so the work was carried forward and the published
+#: bytes did not come back. ``unrelated`` — the successor's bytes are neither.
+#: ``unknown`` — the relation cannot be decided from the bytes at hand.
+EVIDENCE_BYTE_RELATIONS = ("restored", "copy-of-current", "unrelated", "unknown")
+
+#: The relation a link that is not a byte relation carries, so every linked
+#: row publishes the same field with an honest value.
+EVIDENCE_BYTE_RELATION_NA = "not-a-byte-relation"
+
+
+#: The relation each band decides, published with the band table so a reader
+#: does not have to infer what a band's name claims. A band is a relation on
+#: rows; the byte relation of a row that carries a link is published per row
+#: beside it.
+EVIDENCE_BAND_RELATIONS = {
+    "owed": "the work was lost and no later intact outcome re-evidenced it",
+    "recoverable": "the bound bytes survive verbatim as a prefix of the current file",
+    "disposed": "a later intact outcome declared the row's record digest in its "
+                "structured supersedes field",
+    "rebound": "a later intact outcome bound a remedy-named successor of the lost "
+               "artifact; the byte relation of that successor is published per row",
+    "cited": "a later intact outcome's artifact carries the row's record digest",
+    "versioned": "the row was bound before the allowlist amendment and was "
+                 "compliant under the rule then in force",
+    "permanent": "no later rule can repair the defect",
+}
+
+
+def _byte_relation(lost_published: object, lost_current: object,
+                   successor_current: object) -> str:
+    """How a successor's bytes relate to the lost row's bytes.
+
+    The band says a remedy-named successor exists. That link says nothing
+    about the bytes: the remedy-named copy may hold the artifact as it was
+    published, or a copy of the file as it now stands after the edit that
+    lost the row. The two are decidable from digests alone, so the relation
+    is published per row instead of being left inside the band's name.
+    """
+    if not isinstance(lost_published, str) or not lost_published:
+        return "unknown"
+    if not isinstance(successor_current, str) or not successor_current:
+        return "unknown"
+    if successor_current == lost_published:
+        return "restored"
+    if isinstance(lost_current, str) and lost_current and successor_current == lost_current:
+        return "copy-of-current"
+    return "unrelated"
+
+
 def _file_digest(path: Path) -> str:
     """The sha256 of a whole file, read in bounded chunks.
 
@@ -5186,7 +5240,8 @@ EVIDENCE_CITATION_SEARCH_TOTAL_BYTES = 64 * 1024 * 1024
 """The byte bound for one scan's citation searches, so the gate stays bounded."""
 
 
-def _rebind_links(events: list[dict], checked: list[tuple]) -> tuple[dict, dict]:
+def _rebind_links(events: list[dict], checked: list[tuple],
+                  current_digests: dict[int, str] | None = None) -> tuple[dict, dict, dict]:
     """Which violating rows a later, intact outcome re-evidences.
 
     A row leaves the gate when a later outcome **of the same role** binds an
@@ -5215,8 +5270,16 @@ def _rebind_links(events: list[dict], checked: list[tuple]) -> tuple[dict, dict]
     absence "a distinct and more severe class" — so it is admitted here and can
     be re-evidenced by a successor exactly like an amended file.
 
+    The remedy relation is a **link** relation: it says a remedy-named
+    successor of the lost artifact exists. It does not say the published bytes
+    came back — the remedy-named copy may hold the file as it now stands
+    rather than as it was published. So the byte relation is decided here and
+    published per row beside the link, rather than being left to the band's
+    name.
+
     Returns the mapping ``{sequence: (link_kind, successor_sequence)}`` for
-    the rows that carry a link, and the citation search's own accounting.
+    the rows that carry a link, the citation search's own accounting, and the
+    byte relation of every remedy-named link.
     """
     by_sequence = {row["sequence"]: row for row in events}
     # A successor must be later than the row it re-evidences, ordered the way
@@ -5318,7 +5381,22 @@ def _rebind_links(events: list[dict], checked: list[tuple]) -> tuple[dict, dict]
                 break
     stats = {"citation_files_searched": searched, "citation_bytes_read": bytes_read,
              "citation_files_skipped": len(too_large)}
-    return links, stats
+    # The byte relation of every remedy-named link. The successor is intact,
+    # so the digest kept for it while the gate classified the rows is the
+    # digest of the bytes now at its path; the lost row's published digest is
+    # the one its outcome bound, and its current digest is the file as it now
+    # stands. The relation is decided here, not in the reader.
+    byte_relations: dict[int, str] = {}
+    digests = current_digests or {}
+    for sequence, (kind, successor) in links.items():
+        if kind != "remedy-name":
+            continue
+        lost_row = by_sequence.get(sequence) or {}
+        byte_relations[sequence] = _byte_relation(
+            (lost_row.get("evidence") or {}).get("sha256"),
+            digests.get(sequence),
+            digests.get(successor))
+    return links, stats, byte_relations
 
 
 def _ledger_evidence_binding(home: Path) -> dict[str, object]:
@@ -5414,7 +5492,12 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
       row's record digest in its structured ``supersedes`` field: the role
       acknowledged and re-evidenced the work.
     * ``rebound`` — a class-B row whose lost artifact a later, intact outcome
-      re-bound under the remedy naming.
+      re-bound under the remedy naming. This is a link relation: the
+      remedy-named successor may hold the file as it now stands rather than
+      the bytes as published, so the byte relation of each such row is
+      published per row in ``linked_detail`` — ``restored`` when the published
+      bytes came back, ``copy-of-current`` when the work was carried forward
+      without them.
     * ``cited`` — a class-B row whose record digest a later, intact outcome's
       artifact carries. This is the weakest relation: a citation cannot be
       told from an audit that cites the row it diagnosed, so these rows keep
@@ -5498,6 +5581,10 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     # search needs the bytes in order and the comparison only needs their
     # digest.
     amendments: dict[int, str] = {}
+    # The digest of the bytes now at each bound path, kept so the gate can
+    # compare a successor's bytes against a lost row's published bytes and
+    # against the file as it now stands, without reading either file again.
+    current_digests: dict[int, str] = {}
     prefix_budget = EVIDENCE_PREFIX_SEARCH_TOTAL_BYTES
     for ts, sequence, role, evidence in loaded:
         path = evidence.get("path")
@@ -5517,6 +5604,8 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
                 classes.append("C")
             else:
                 current = _file_digest(resolved) if resolved is not None else None
+                if current is not None:
+                    current_digests[sequence] = current
                 if current != digest:
                     classes.append("B")
                     if current is None:
@@ -5592,7 +5681,8 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     # is decidable — the structured supersession link, the clause's remedy
     # naming, or a digest citation — so the gate's count falls when a role
     # re-evidences its own row, and the verdict is reachable.
-    links, citation_stats = _rebind_links(coverage["events"], checked)
+    links, citation_stats, byte_relations = _rebind_links(
+        coverage["events"], checked, current_digests)
     by_sequence = {row["sequence"]: row for row in coverage["events"]}
     # Every violating row is placed in exactly one band, so the bands sum to
     # the standing audit and no row is quietly dropped from the accounting.
@@ -5604,8 +5694,11 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     #                   intact and only the binding is broken.
     # * ``disposed``   a later, intact outcome declared the row's record
     #                   digest in its structured field.
-    # * ``rebound``    a later, intact outcome bound the lost artifact's
-    #                   corrected form under the remedy naming.
+    # * ``rebound``    a later, intact outcome bound a remedy-named successor
+    #                   of the lost artifact. This is a link relation: the
+    #                   successor may be a copy of the file as it now stands
+    #                   rather than the bytes as published, so the byte
+    #                   relation is published per row beside the band.
     # * ``cited``      a later, intact outcome's artifact carries the row's
     #                   record digest. This is the weakest relation and keeps
     #                   its own band, because a citation cannot be told from
@@ -5648,8 +5741,10 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
                 # record digest: the role acknowledged and re-evidenced the work.
                 band = "disposed"
             elif link_kind == "remedy-name":
-                # A later, intact outcome bound the lost artifact's corrected
-                # form under the remedy naming: the work was re-evidenced.
+                # A later, intact outcome bound a remedy-named successor of the
+                # lost artifact: the work was re-evidenced under the clause's
+                # naming. The link does not claim the published bytes came
+                # back, so the row's byte relation is published beside it.
                 band = "rebound"
             elif link_kind == "digest-cited":
                 # A later, intact outcome's artifact carries this row's record
@@ -5694,14 +5789,23 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     # Every link that cleared a row, with the successor that cleared it. The
     # citation relation is the weakest of the three, so its rows are published
     # with the successor's artifact: a reader can see which rows rest on a
-    # citation and judge it.
+    # citation and judge it. The byte relation is published on every linked
+    # row: for a remedy-named link it says whether the published bytes came
+    # back or the work was merely carried forward, and for the other links it
+    # says the link is not a byte relation at all.
     linked_detail = []
+    byte_relation_counts: dict[str, int] = {name: 0 for name in EVIDENCE_BYTE_RELATIONS}
     for sequence, (kind, successor) in sorted(links.items()):
         successor_event = by_sequence.get(successor) or {}
+        relation = (byte_relations.get(sequence)
+                    if kind == "remedy-name" else EVIDENCE_BYTE_RELATION_NA)
+        if relation in byte_relation_counts:
+            byte_relation_counts[relation] += 1
         linked_detail.append({
             "sequence": sequence, "kind": kind, "band": row_bands.get(sequence),
             "successor": successor,
             "role": (by_sequence.get(sequence) or {}).get("role"),
+            "byte_relation": relation,
             "successor_evidence": _display_path(
                 successor_event.get("evidence", {}).get("path", ""), home)})
     # The rows whose defect can never be repaired: a path bound by two
@@ -5839,6 +5943,14 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
                                   "owed": band_counts["owed"]},
             "remediation_band_roles": {name: dict(sorted(roles.items()))
                                         for name, roles in band_roles.items() if roles},
+            # The relation each band decides, so the band table states what it
+            # claims instead of leaving the reader to infer it from the name.
+            "remediation_band_relations": dict(EVIDENCE_BAND_RELATIONS),
+            # How the rebound rows' bytes relate to the bytes they published:
+            # restored (the content came back), copy-of-current (the work was
+            # carried forward and the published bytes did not come back),
+            # unrelated, or unknown.
+            "remediation_byte_relations": byte_relation_counts,
             # The rows whose defect can never be repaired, and the class-A rows
             # split by the policy version they were bound under. A
             # policy-version row is a labelled reassessment, not damage.
