@@ -55,6 +55,82 @@ class LauncherModelTests(unittest.TestCase):
         path = write_mind(self.directory, "probe", "#!/bin/sh\nexec omp --cwd /repo\n")
         self.assertIsNone(self.seed._launcher_model(path))
 
+    def test_reads_the_equals_spelling(self):
+        """The shell accepts both spellings; a launcher that uses one is not nameless.
+
+        The plant's launchers are written ``--model=vendor/model-a``. A reader
+        that knows only ``--model value`` records "no model" for a launcher that
+        plainly names one, which is how the plant's own model record went blind
+        for every role but one.
+        """
+        path = write_mind(self.directory, "probe", "#!/bin/sh\nexec omp --model=vendor/model-a --cwd /repo\n")
+        self.assertEqual(self.seed._launcher_model(path), "vendor/model-a")
+
+    def test_follows_a_launcher_swap_in_the_equals_spelling(self):
+        path = write_mind(self.directory, "probe", "#!/bin/sh\nexec omp --model=vendor/model-a --cwd /repo\n")
+        self.assertEqual(self.seed._launcher_model(path), "vendor/model-a")
+        path.write_text("#!/bin/sh\nexec omp --model=vendor/model-b --cwd /repo\n")
+        self.assertEqual(self.seed._launcher_model(path), "vendor/model-b")
+
+    def test_ignores_a_comment_decoy_in_the_equals_spelling(self):
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\n# --model=vendor/decoy is only a comment\nexec omp --cwd /repo --model=vendor/real\n",
+        )
+        self.assertEqual(self.seed._launcher_model(path), "vendor/real")
+
+    def test_an_empty_model_value_is_no_model(self):
+        path = write_mind(self.directory, "probe", "#!/bin/sh\nexec omp --model= --cwd /repo\n")
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_an_option_in_the_value_place_is_no_model(self):
+        path = write_mind(self.directory, "probe", "#!/bin/sh\nexec omp --model --thinking high --cwd /repo\n")
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_an_unterminated_quote_is_no_model(self):
+        path = write_mind(self.directory, "probe", "#!/bin/sh\nexec omp --model \"unterminated\n")
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_a_value_wearing_source_punctuation_is_no_model(self):
+        """A record that names ``vendor/model,`` as the model is a wrong fact."""
+        path = write_mind(self.directory, "probe", "#!/bin/sh\nexec omp --model=vendor/model, --cwd /repo\n")
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_a_hash_inside_a_word_is_not_a_comment(self):
+        """The shell reads ``vendor/model#suffix`` as one word, not a truncated one.
+
+        A reader that treats every ``#`` as a comment start records a plausible
+        but wrong model name; the shell's own rule is that a ``#`` which begins
+        a word starts a comment and one inside a word is an ordinary character.
+        """
+        path = write_mind(self.directory, "probe", "#!/bin/sh\nexec omp --model=vendor/model#suffix --cwd /repo\n")
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_a_decoy_in_another_command_is_not_the_model(self):
+        """The model belongs to the command that runs omp."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nprintf '%s\\n' --model=vendor/decoy\nexec omp --model=vendor/real\n",
+        )
+        self.assertEqual(self.seed._launcher_model(path), "vendor/real")
+
+    def test_a_flag_at_the_end_of_its_command_is_no_model(self):
+        """A bare newline ends the command, so the next line is not its value."""
+        path = write_mind(self.directory, "probe", "#!/bin/sh\nexec omp --model\nvendor/model\n")
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_a_launcher_that_reaches_omp_through_a_wrapper(self):
+        """The plant's own genome launcher names a wrapper, not omp."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nexec /usr/bin/python3 /site/longcat-launch.py --role probe "
+            "--model=vendor/model-a --thinking high\n",
+        )
+        self.assertEqual(self.seed._launcher_model(path), "vendor/model-a")
+
     def test_missing_launcher_is_none(self):
         self.assertIsNone(self.seed._launcher_model(Path(self.directory) / "minds" / "absent"))
 

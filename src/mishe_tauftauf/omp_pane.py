@@ -1,10 +1,14 @@
 """Decode a pane's own omp model from its process command line.
 
-Three external spellings meet here, so consumers act on decoded values:
+Four external spellings meet here, so consumers act on decoded values:
 
 * ``/proc/<pid>/cmdline`` is NUL-separated bytes, an external kernel dialect.
   The fields are decoded once, here, and an unreadable or empty file reads
   ``None`` rather than an empty success.
+* A launcher's own bytes are another dialect: the shell that runs it accepts
+  ``--model value`` and ``--model=value`` as the same option, so a reader that
+  knows only one of the two spellings reports a model that is plainly named as
+  absent. ``launcher_model`` reads the script the way the shell words it.
 * omp names one model differently in different places. A launcher writes the
   provider-qualified ``opencode-go/longcat-2.5-preview-free`` while the session
   log records the bare ``longcat-2.5-preview-free``, and a name may carry more
@@ -30,6 +34,7 @@ attribute an error.
 from __future__ import annotations
 
 import re
+import shlex
 
 from pathlib import Path
 
@@ -71,6 +76,93 @@ def model(argv: list[str]) -> str | None:
 def same_model(left: str, right: str) -> bool:
     """Whether two model names denote the same model."""
     return left.rsplit("/", 1)[-1] == right.rsplit("/", 1)[-1]
+
+
+_MODEL_NAME_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/:@+"
+)
+"""The characters a model name is written with; shell and source punctuation is not one."""
+
+
+def _launcher_commands(text: str) -> list[list[str]]:
+    """The commands of a launcher script, each read the way the shell words it.
+
+    A ``#`` that begins a word starts a comment; a ``#`` inside a word is an
+    ordinary character, so a value like ``vendor/model#suffix`` is one word and
+    not a truncated one. A command the shell cannot word (an unterminated
+    quote) is skipped rather than guessed at.
+    """
+    commands = []
+    for line in text.splitlines():
+        try:
+            tokens = shlex.split(line, comments=False)
+        except ValueError:
+            continue
+        for index, token in enumerate(tokens):
+            if token.startswith("#"):
+                tokens = tokens[:index]
+                break
+        if tokens:
+            commands.append(tokens)
+    return commands
+
+
+def _invokes_omp(tokens: list[str]) -> bool:
+    """Whether a command runs omp, the pane's own program."""
+    return any(token == "omp" or token.endswith("/omp") for token in tokens)
+
+
+_SHELL_WRAPPERS = frozenset({"exec", "env", "command", "nohup", "setsid"})
+"""The words a launcher puts before the program it runs."""
+
+
+def _runs_a_program_by_path(tokens: list[str]) -> bool:
+    """Whether a command runs a program the launcher names by its path.
+
+    A launcher that reaches omp through a wrapper -- ``exec /usr/bin/python3
+    .../longcat-launch.py --model=...`` -- names no omp at all, and the model it
+    selects is still the model's the pane runs on.
+    """
+    for token in tokens:
+        if token in _SHELL_WRAPPERS:
+            continue
+        return token.startswith("/")
+    return False
+
+
+def launcher_model(text: str) -> str | None:
+    """The ``--model`` a launcher script selects, or ``None``.
+
+    A launcher is a shell script, so the flag arrives in the shell's own two
+    spellings -- ``--model value`` and ``--model=value`` -- and a reader that
+    knows only one of them reports a model the bytes plainly name as absent.
+
+    The model belongs to the command that runs the program, so that is where
+    it is read: a decoy flag in another command of the same script is not the
+    model the pane runs on, and the last command that runs the program is the
+    one whose process the plant sees. The command is the one that runs omp
+    directly; failing that, the one that runs a program the launcher names by
+    its path, which is how a launcher reaches omp through a wrapper. The value
+    rules of :func:`model` apply unchanged -- an empty value, or another
+    option in the value's place, is no model -- and a value that is not
+    written like a model name reads ``None`` as well: a launcher written in a
+    language the shell only quotes, ``"--model=vendor/model",``, yields a
+    value carrying the source's own punctuation, and a record that names
+    ``vendor/model,`` as the model is a wrong fact wearing a model's name.
+    """
+    commands = _launcher_commands(text)
+    for selector in (_invokes_omp, _runs_a_program_by_path):
+        chosen = None
+        found = False
+        for command in commands:
+            if not selector(command):
+                continue
+            found = True
+            value = model(command)
+            chosen = value if value is not None and set(value) <= _MODEL_NAME_CHARS else None
+        if found:
+            return chosen
+    return None
 
 _SPINNER_GLYPHS = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 """Braille spinner frames the omp/opencode TUI advances without new content."""

@@ -655,27 +655,24 @@ def _mind_launch_argv(home: Path, slug: str) -> tuple[str, ...]:
             str(home / "minds" / slug))
 
 
-_MODEL_FLAG_RE = re.compile(r"(?:^|\s)--model[ \t]+(\S+)")
-
-
 def _launcher_model(path: Path) -> str | None:
     """Read the model a mind launcher selects, without running it.
 
     Model identity is otherwise observable only from ``/proc/<pid>/cmdline``; the
     launcher bytes are the durable record of which model an invocation runs on.
-    Shell comments are skipped so a decoy ``--model`` in a comment cannot mask it.
+    The reading is the plant's own adapter (``omp_pane.launcher_model``): a
+    launcher is a shell script, so it names its model in the shell's two
+    spellings -- ``--model value`` and ``--model=value`` -- and a reader that
+    knows only one of them records "no model" for a launcher that plainly names
+    one. Shell comments are skipped so a decoy ``--model`` in a comment cannot
+    mask it.
     """
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return None
-    for line in text.splitlines():
-        if line.lstrip().startswith("#"):
-            continue
-        match = _MODEL_FLAG_RE.search(line)
-        if match:
-            return match.group(1)
-    return None
+    from .omp_pane import launcher_model
+    return launcher_model(text)
 
 
 def _record_mind_model(home: Path, slug: str, launcher: Path, reason: str) -> None:
