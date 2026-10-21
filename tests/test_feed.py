@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import fcntl
+import json
 import multiprocessing
 import shutil
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -312,6 +316,215 @@ class FeedTests(unittest.TestCase):
             shutil.copyfile(old_index, feed.identity_path)
             self.assertEqual(Feed(directory).append_runtime_once("mishe-tauftauf", request).sequence, 1)
             self.assertEqual(feed.tail_sequence(), 2)
+
+    def test_reader_does_not_hold_the_shared_lock_while_it_parses(self):
+        # The writer's exclusive lock must not wait for a reader's parse. A
+        # reader that parsed under the shared lock would starve every writer
+        # behind it, because a queued exclusive request is not granted while
+        # readers keep re-acquiring the shared lock.
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            for number in range(200):
+                feed.append("human", f"event {number} " + "x" * 100)
+            parsing = threading.Event()
+            release = threading.Event()
+            real_parse = parse_feed
+
+            def blocking(data, **kwargs):
+                if len(data) > 1000 and not parsing.is_set():
+                    parsing.set()
+                    release.wait(20)
+                return real_parse(data, **kwargs)
+
+            result = {}
+
+            def read():
+                try:
+                    result["entries"] = Feed(directory).entries()
+                except Exception as exc:  # pragma: no cover - surfaced by the assertions
+                    result["error"] = exc
+
+            with patch("mishe_tauftauf.feed.parse_feed", side_effect=blocking):
+                worker = threading.Thread(target=read)
+                worker.start()
+                self.assertTrue(parsing.wait(20), "the reader never reached the parse")
+                acquired = False
+                with feed.path.open("rb") as writer:
+                    deadline = time.monotonic() + 10
+                    while time.monotonic() < deadline:
+                        try:
+                            fcntl.flock(writer.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                            acquired = True
+                            break
+                        except OSError:
+                            time.sleep(0.02)
+                    if acquired:
+                        fcntl.flock(writer.fileno(), fcntl.LOCK_UN)
+                self.assertTrue(acquired, "the reader held the shared lock while it parsed")
+                release.set()
+                worker.join(30)
+            self.assertNotIn("error", result)
+            self.assertEqual(len(result["entries"]), 200)
+
+    def test_reader_returns_the_snapshot_it_captured_while_a_writer_appends(self):
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            for number in range(200):
+                feed.append("human", f"event {number} " + "x" * 100)
+            parsing = threading.Event()
+            release = threading.Event()
+            real_parse = parse_feed
+
+            def blocking(data, **kwargs):
+                if len(data) > 1000 and not parsing.is_set():
+                    parsing.set()
+                    release.wait(20)
+                return real_parse(data, **kwargs)
+
+            result = {}
+
+            def read():
+                try:
+                    result["entries"] = Feed(directory).entries()
+                except Exception as exc:  # pragma: no cover - surfaced by the assertions
+                    result["error"] = exc
+
+            with patch("mishe_tauftauf.feed.parse_feed", side_effect=blocking):
+                worker = threading.Thread(target=read)
+                worker.start()
+                self.assertTrue(parsing.wait(20), "the reader never reached the parse")
+                appended = feed.append("human", "appended while the reader parsed")
+                release.set()
+                worker.join(30)
+            self.assertNotIn("error", result)
+            self.assertEqual(len(result["entries"]), 200,
+                             "the reader must return the revision it captured")
+            self.assertNotIn("appended while the reader parsed",
+                             [entry.body for entry in result["entries"]])
+            self.assertEqual(len(Feed(directory).entries()), 201)
+            self.assertEqual(Feed(directory).tail_sequence(), appended.sequence)
+
+    def test_rebuilt_checkpoint_does_not_regress_a_newer_writer_revision(self):
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            for number in range(200):
+                feed.append("human", f"event {number} " + "x" * 100)
+            feed.index_path.unlink()
+            parsing = threading.Event()
+            release = threading.Event()
+            real_parse = parse_feed
+
+            def blocking(data, **kwargs):
+                if len(data) > 1000 and not parsing.is_set():
+                    parsing.set()
+                    release.wait(20)
+                return real_parse(data, **kwargs)
+
+            result = {}
+
+            def read():
+                try:
+                    result["entries"] = Feed(directory).entries()
+                except Exception as exc:  # pragma: no cover - surfaced by the assertions
+                    result["error"] = exc
+
+            with patch("mishe_tauftauf.feed.parse_feed", side_effect=blocking):
+                worker = threading.Thread(target=read)
+                worker.start()
+                self.assertTrue(parsing.wait(20), "the reader never reached the rebuild")
+                feed.append("human", "appended while the reader rebuilt")
+                release.set()
+                worker.join(30)
+            self.assertNotIn("error", result)
+            self.assertEqual(len(result["entries"]), 200)
+            checkpoint = json.loads(feed.index_path.read_text(encoding="utf-8"))["payload"]
+            self.assertEqual(checkpoint["sequence"], 201,
+                             "the rebuilt checkpoint must not regress the writer's revision")
+
+    def test_reader_does_not_publish_a_checkpoint_for_bytes_it_never_read(self):
+        # The reader rebuilds its checkpoint after it released the tape lock, so
+        # the tape can grow while it parses. It must not install a checkpoint
+        # that describes the whole file, because its index was built from the
+        # bytes it captured, before that growth.
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            for number in range(200):
+                feed.append("human", f"event {number} " + "x" * 100)
+            feed.index_path.unlink()
+            parsing = threading.Event()
+            release = threading.Event()
+            real_parse = parse_feed
+
+            def blocking(data, **kwargs):
+                if len(data) > 1000 and not parsing.is_set():
+                    parsing.set()
+                    release.wait(20)
+                return real_parse(data, **kwargs)
+
+            result = {}
+
+            def read():
+                try:
+                    result["entries"] = Feed(directory).entries()
+                except Exception as exc:  # pragma: no cover - surfaced by the assertions
+                    result["error"] = exc
+
+            with patch("mishe_tauftauf.feed.parse_feed", side_effect=blocking):
+                worker = threading.Thread(target=read)
+                worker.start()
+                self.assertTrue(parsing.wait(20), "the reader never reached the rebuild")
+                feed.append("human", "appended while the reader rebuilt")
+                # Leave the tape grown and the checkpoint absent, so the
+                # reader's own publish is the only candidate.
+                feed.index_path.unlink()
+                release.set()
+                worker.join(30)
+            self.assertNotIn("error", result)
+            self.assertEqual(len(result["entries"]), 200)
+            if feed.index_path.exists():
+                checkpoint = json.loads(feed.index_path.read_text(encoding="utf-8"))["payload"]
+                self.assertEqual(checkpoint["sequence"], 200,
+                                 "a published checkpoint must describe exactly the bytes that were parsed")
+            self.assertEqual(len(Feed(directory).entries()), 201,
+                             "the next reader must still see every appended frame")
+
+    def test_reader_fails_closed_when_the_checkpoint_corrupts_while_it_parses(self):
+        # A corrupt checkpoint is a corruption, not an absent one. The reader
+        # that rebuilt outside the tape lock must not silently replace it.
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            for number in range(200):
+                feed.append("human", f"event {number} " + "x" * 100)
+            feed.index_path.unlink()
+            parsing = threading.Event()
+            release = threading.Event()
+            real_parse = parse_feed
+
+            def blocking(data, **kwargs):
+                if len(data) > 1000 and not parsing.is_set():
+                    parsing.set()
+                    release.wait(20)
+                return real_parse(data, **kwargs)
+
+            result = {}
+
+            def read():
+                try:
+                    result["entries"] = Feed(directory).entries()
+                except Exception as exc:  # pragma: no cover - surfaced by the assertions
+                    result["error"] = exc
+
+            with patch("mishe_tauftauf.feed.parse_feed", side_effect=blocking):
+                worker = threading.Thread(target=read)
+                worker.start()
+                self.assertTrue(parsing.wait(20), "the reader never reached the rebuild")
+                feed.index_path.write_text('{"version":99}', encoding="utf-8")
+                release.set()
+                worker.join(30)
+            self.assertIn("error", result, "a corrupt checkpoint must not be replaced silently")
+            self.assertIsInstance(result.get("error"), FeedError)
+            self.assertEqual(feed.index_path.read_text(encoding="utf-8"), '{"version":99}',
+                             "the corrupt checkpoint must survive the failed read")
 
     def test_receipt_lookup_does_not_scan_feed_history(self):
         with tempfile.TemporaryDirectory() as directory:
