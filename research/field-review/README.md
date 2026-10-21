@@ -52,15 +52,22 @@ is counted, not hidden.
 **L3 — landing (deterministic).** The review is a tracked file under
 `research/field-review/reviews/`, committed to `main` by its author, and the
 proposal is routed to the owning role by addressed message. `field_review.py
-check` enforces the contract:
+check` enforces the content contract:
 
 - front matter names field, angle, date, status (`applied`/`discarded`) and
   owner (a plant role);
 - the body has `## What we read`, `## What this plant already does`, `## What
   is new here`, and exactly one of `## Application` (with `target:` naming an
-  existing repository file) or `## Discard` (one line of why);
-- a source URL is present;
-- the file is committed to the shared branch.
+  existing repository **file**) or `## Discard` (one line of why);
+- the source URL is in the reading section, and that section is not empty.
+
+Landing is a separate question from content, and it is answered by the branch:
+coverage counts the reviews `git ls-tree HEAD` carries, never the index and
+never the working tree. A review that is written but not committed is reported
+as unlanded (and as a problem once it has waited past the grace period), and a
+landed review that was edited afterwards is reported as edited. The scheduled
+check `checks/field-review-contract.py` answers the same questions against the
+reviewed tree, so a dirty working tree cannot decide the plant's monitoring.
 
 Coverage is derived from the review files themselves. There is no second
 ledger, so nothing can drift from the artifacts it describes.
@@ -72,7 +79,7 @@ counterpart here.
 
 | retired mesh | here |
 | --- | --- |
-| 245/376 reviews ended "uncommitted in the tree (steward lands)" | the contract check fails a review that is not on the branch |
+| 245/376 reviews ended "uncommitted in the tree (steward lands)" | coverage counts the branch, not the disk; a review that waits past the grace period without landing is a scheduled finding |
 | the field registry was node-local runtime state and died in the 2026-07-14 migration | the grid is a tracked file in the repository |
 | registry rows were annotated with hit counts that anticorrelated with aboutness ("Raft" scored highest and had dissolved) | selection never counts hits; it reads the source |
 | the producer outran its receivers — 27 ideas in flight, oldest 43 days, while the floor read empty | one cell at a time, one review per cell, and the next cell only exists after the previous one lands |
