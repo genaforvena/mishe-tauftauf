@@ -5044,6 +5044,57 @@ def _display_path(path: str, home: Path) -> str:
         return str(path)
 
 
+#: The byte budget for one file's prefix search, which tells an amended bound
+#: file from an extended one. The search hashes the current file's prefixes
+#: until the bound digest appears, so it costs time proportional to the file's
+#: size. A file larger than the budget is left unclassified rather than
+#: guessed at.
+EVIDENCE_PREFIX_SEARCH_BYTES = 8 * 1024 * 1024
+#: The total byte budget for one scan's prefix searches, so a store full of
+#: large amended files cannot make the sense unboundedly slow.
+EVIDENCE_PREFIX_SEARCH_TOTAL_BYTES = 32 * 1024 * 1024
+
+
+def _classify_amendment(data: bytes, digest: object, budget: int) -> tuple[str, int]:
+    """How the bound file was amended, from the bytes now at the path.
+
+    ``append`` means the bound digest is the digest of a prefix of the current
+    file: the bound bytes are still there and the file was extended past them
+    (the empty prefix counts, so a file bound while empty and extended since is
+    an append). ``rewrite`` means the whole file was searched and the bound
+    digest appears at no prefix, so the bound bytes are gone. ``unknown`` means
+    the file could not be read, the recorded digest is not a sha256, or the
+    search stopped at ``budget`` bytes without reaching the end of the file.
+
+    The second value is the number of bytes read, so the caller can budget the
+    scan. The classification never changes the class or the verdict: it names
+    the mechanism of a class-B row, whose requirement (the bound bytes stay
+    unchanged) both mechanisms break.
+    """
+    if not isinstance(digest, str):
+        return "unknown", 0
+    try:
+        target = bytes.fromhex(digest)
+    except ValueError:
+        return "unknown", 0
+    if len(target) != hashlib.sha256().digest_size:
+        return "unknown", 0
+    limit = min(len(data), budget)
+    running = hashlib.sha256()
+    view = memoryview(data)
+    # The empty prefix is a prefix of every file, so a file bound while empty
+    # and extended since is an append, not a rewrite.
+    if running.digest() == target:
+        return "append", 0
+    for index in range(limit):
+        running.update(view[index:index + 1])
+        if running.digest() == target:
+            return "append", index + 1
+    if limit < len(data):
+        return "unknown", limit
+    return "rewrite", limit
+
+
 def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     """Check that post-clause wall outcomes bind write-once evidence.
 
@@ -5084,6 +5135,21 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     hold them, so a reader sees that the loss is spread rather than
     concentrated.
 
+    ``permanent_loss_kind`` names how each class-B row was amended, because the
+    two mechanisms are different failures. ``append`` means the bound digest is
+    the digest of a prefix of the current file — the bound bytes are still
+    there and the file was extended past them; ``rewrite`` means the bound
+    bytes are gone; ``unknown`` means the file could not be read, the recorded
+    digest is not a sha256, or the prefix search ran out of its byte budget.
+    The three counts sum to ``permanent_loss``. This is a name for the failure,
+    not a different verdict: the clause treats an edit and an append alike (both
+    invalidate the bound digest and drop the outcome from the evidenced count),
+    so the class letter and the drift verdict do not move. The search is
+    bounded per file and per scan, so a large amended file is left ``unknown``
+    rather than guessed at. ``permanent_loss_rewrite_roles`` spreads the
+    rewritten rows over the roles that hold them, because a rewrite is the
+    failure that destroys the evidence rather than extending it.
+
     The sample preserves the standing-audit cause, live window, read
     watermark and coverage tier within the pane's clipped prefix. State
     follows the live window: ``drift`` when a role's latest outcome violates,
@@ -5116,6 +5182,13 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
         if isinstance(path, str):
             path_counts[path] = path_counts.get(path, 0) + 1
     checked: list[tuple[datetime, int, str, str, str]] = []
+    # The mechanism of each class-B row: how the bound file was amended. It is
+    # a name for the failure, not a different verdict — the clause treats an
+    # edit and an append alike (both invalidate the bound digest and drop the
+    # outcome), so the class and the drift verdict do not move. The bytes are
+    # read once, here, where the digest is compared anyway.
+    amendments: dict[int, str] = {}
+    prefix_budget = EVIDENCE_PREFIX_SEARCH_TOTAL_BYTES
     for ts, sequence, role, evidence in loaded:
         path = evidence.get("path")
         digest = evidence.get("sha256")
@@ -5133,12 +5206,20 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
             if resolved is not None and not resolved.exists():
                 classes.append("C")
             else:
-                current = (hashlib.sha256(resolved.read_bytes()).hexdigest()
-                           if resolved is not None else None)
+                data = resolved.read_bytes() if resolved is not None else None
+                current = hashlib.sha256(data).hexdigest() if data is not None else None
                 if current != digest:
                     classes.append("B")
+                    if data is None:
+                        amendments[sequence] = "unknown"
+                    else:
+                        kind, read = _classify_amendment(
+                            data, digest, min(EVIDENCE_PREFIX_SEARCH_BYTES, prefix_budget))
+                        amendments[sequence] = kind
+                        prefix_budget = max(0, prefix_budget - read)
         except OSError:
             classes.append("B")
+            amendments[sequence] = "unknown"
         if path_counts.get(path, 0) > 1:
             classes.append("D")
         name = _display_path(path, home) if file_path is not None else str(path)
@@ -5162,7 +5243,13 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     class_rows: dict[str, int] = {}
     permanent_loss = 0
     permanent_loss_roles: dict[str, int] = {}
-    for _ts, _sequence, role, _name, classes in checked:
+    # How the class-B rows were amended: ``append`` (the bound bytes are still
+    # a prefix of the file, so it was extended) against ``rewrite`` (the bound
+    # bytes are gone) against ``unknown`` (the file could not be read or the
+    # search ran out of budget). The three counts sum to ``permanent_loss``.
+    permanent_loss_kind: dict[str, int] = {"append": 0, "rewrite": 0, "unknown": 0}
+    permanent_loss_kind_roles: dict[str, int] = {}
+    for _ts, sequence, role, _name, classes in checked:
         if not classes:
             continue
         class_rows[classes] = class_rows.get(classes, 0) + 1
@@ -5171,6 +5258,10 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
         if "B" in classes:
             permanent_loss += 1
             permanent_loss_roles[role] = permanent_loss_roles.get(role, 0) + 1
+            kind = amendments.get(sequence, "unknown")
+            permanent_loss_kind[kind] = permanent_loss_kind.get(kind, 0) + 1
+            if kind == "rewrite":
+                permanent_loss_kind_roles[role] = permanent_loss_kind_roles.get(role, 0) + 1
     # A class-B row stays excluded from the evidenced count forever, but it is
     # the role's current outcome only until that role publishes another one.
     # The two counts answer different questions, so the reading reports both.
@@ -5208,6 +5299,8 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
             "permanent_loss_current": permanent_loss_current,
             "permanent_loss_superseded": permanent_loss_superseded,
             "permanent_loss_roles": permanent_loss_roles,
+            "permanent_loss_kind": permanent_loss_kind,
+            "permanent_loss_rewrite_roles": permanent_loss_kind_roles,
             "class_counts": class_counts, "class_rows": class_rows,
             "coverage_incomplete": len(incomplete), "incomplete": incomplete,
             "event_sequences": [row["sequence"] for row in coverage["events"]],

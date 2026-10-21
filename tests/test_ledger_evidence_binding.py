@@ -410,3 +410,141 @@ def test_evidence_binding_state_follows_the_live_window(tmp_path):
     assert result["permanent_loss"] == 1
     assert result["violations"] == [
         "bob@2026-10-06T17:00:00Z:artifacts/stale.md(B)"]
+
+
+def test_evidence_binding_names_how_the_bound_file_was_amended(tmp_path):
+    """An appended file and a rewritten file are different failures.
+
+    Both break the same requirement (the bound bytes stay unchanged), so both
+    are class B and the verdict does not move. But a mind that extended its
+    notes and a mind that re-authored a published file are different
+    behaviours, and a reader cannot tell them apart from the class letter
+    alone. The mechanism counts say which.
+    """
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    # alice extended her bound file: the bound bytes are still a prefix.
+    appended = home / "artifacts" / "appended.md"
+    appended.write_text("original\n")
+    alice_digest = _write_evidenced_outcome(home, "alice", appended)
+    appended.write_text("original\nappended later\n")
+    # bob re-authored his bound file: the bound bytes are gone.
+    rewritten = home / "artifacts" / "rewritten.md"
+    rewritten.write_text("original\n")
+    bob_digest = _write_evidenced_outcome(home, "bob", rewritten)
+    rewritten.write_text("something else entirely\n")
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "alice",
+         f"[record] records/{alice_digest}.json sha256={alice_digest}\n"),
+        (2, "2026-10-06T17:30:00Z", "bob",
+         f"[record] records/{bob_digest}.json sha256={bob_digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    assert result["permanent_loss"] == 2
+    assert result["permanent_loss_kind"] == {"append": 1, "rewrite": 1, "unknown": 0}
+    # The mechanism names the failure; it does not move the class or the verdict.
+    assert result["class_counts"]["B"] == 2
+    assert result["state"] == "drift"
+    # The rewritten rows are the ones whose evidence is destroyed, so they are
+    # spread over the roles that hold them.
+    assert result["permanent_loss_rewrite_roles"] == {"bob": 1}
+
+
+def test_evidence_binding_mechanism_counts_sum_to_the_permanent_loss(tmp_path):
+    """Every class-B row gets a mechanism, or an honest ``unknown``.
+
+    A row whose bound file cannot be read, or whose prefix search ran out of
+    its byte budget, is ``unknown`` — never counted as a rewrite on the
+    strength of a truncated search.
+    """
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    edited = home / "artifacts" / "edited.md"
+    edited.write_text("original\n")
+    digest = _write_evidenced_outcome(home, "alice", edited)
+    edited.write_text("edited after record\n")
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "alice",
+         f"[record] records/{digest}.json sha256={digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    assert sum(result["permanent_loss_kind"].values()) == result["permanent_loss"]
+
+
+def test_evidence_binding_leaves_a_file_over_the_search_budget_unclassified(tmp_path, monkeypatch):
+    """A file too large to search is ``unknown``, not a guessed rewrite.
+
+    The prefix search is bounded per file and per scan. A file over the budget
+    is left unclassified so the reading never claims a rewrite it did not
+    measure.
+    """
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    big = home / "artifacts" / "big.md"
+    big.write_bytes(b"x" * 4096)
+    digest = _write_evidenced_outcome(home, "alice", big)
+    big.write_bytes(b"y" * 4096)
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "alice",
+         f"[record] records/{digest}.json sha256={digest}\n"),
+    ])
+    monkeypatch.setattr(discovery, "EVIDENCE_PREFIX_SEARCH_BYTES", 16)
+    result = discovery._ledger_evidence_binding(home)
+    assert result["permanent_loss"] == 1
+    assert result["permanent_loss_kind"] == {"append": 0, "rewrite": 0, "unknown": 1}
+    # The class and the verdict do not depend on the mechanism.
+    assert result["class_counts"]["B"] == 1
+    assert result["state"] == "drift"
+
+
+def test_evidence_binding_treats_a_file_bound_while_empty_as_an_append(tmp_path):
+    """The empty prefix is a prefix of every file.
+
+    A file bound while it was empty and extended since has its bound bytes
+    (none) still present, so it is an append, not a rewrite. Reading it as a
+    rewrite would claim the evidence was destroyed when nothing was lost.
+    """
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    empty = home / "artifacts" / "empty.md"
+    empty.write_bytes(b"")
+    digest = _write_evidenced_outcome(home, "alice", empty)
+    empty.write_bytes(b"written after the binding\n")
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "alice",
+         f"[record] records/{digest}.json sha256={digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    assert result["permanent_loss_kind"]["append"] == 1
+    assert result["permanent_loss_kind"]["rewrite"] == 0
+
+
+def test_evidence_binding_mechanism_does_not_move_the_class_or_the_verdict(tmp_path):
+    """The mechanism is a name for the failure, not a second verdict.
+
+    An appended file and a rewritten file both break the unchanged-bytes
+    requirement, so both are class B and both drop the outcome from the
+    evidenced count. Splitting them into separate classes would let a reader
+    count a rewrite as a lesser failure than the clause treats it as.
+    """
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    appended = home / "artifacts" / "appended.md"
+    appended.write_text("original\n")
+    digest = _write_evidenced_outcome(home, "alice", appended)
+    appended.write_text("original\nmore\n")
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "alice",
+         f"[record] records/{digest}.json sha256={digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    assert result["permanent_loss_kind"]["append"] == 1
+    assert result["class_counts"] == {"B": 1}
+    assert result["class_rows"] == {"B": 1}
+    assert result["permanent_loss"] == 1
+    assert result["state"] == "drift"
