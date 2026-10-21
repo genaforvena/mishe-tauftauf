@@ -1238,3 +1238,40 @@ def test_evidence_binding_classifies_large_amendments_across_chunk_boundaries(tm
     assert result["permanent_loss_kind"] == {"append": 1, "rewrite": 1, "unknown": 0}
     assert result["remediation_bands"]["recoverable"] == 1
     assert result["remediation_bands"]["owed"] == 1
+
+
+def test_evidence_binding_publishes_the_band_of_every_cleared_row(tmp_path):
+    """A second reader of these rows must not re-derive the gate's relation.
+
+    The gate's band is the relation a renderer needs: it says the row's work
+    was re-evidenced. The link kind is how the relation was decided. Both are
+    published per cleared row, so a renderer reads the band instead of
+    mapping kinds to bands with a vocabulary of its own — which is how two
+    readers drift apart.
+    """
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    lost = home / "artifacts" / "lost.md"
+    lost.write_text("the work\n")
+    lost_digest = _write_evidenced_outcome(home, "bob", lost)
+    lost.write_text("the work, re-authored\n")
+    repaired = home / "artifacts" / "lost-v2.md"
+    repaired.write_text("the same work\n")
+    repair_digest = _write_evidenced_outcome(home, "bob", repaired)
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "bob",
+         f"[record] records/{lost_digest}.json sha256={lost_digest}\n"),
+        (2, "2026-10-06T17:30:00Z", "bob",
+         f"[record] records/{repair_digest}.json sha256={repair_digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    assert result["rebind_link_kinds"] == {"remedy-name": 1}
+    assert result["remediation_bands"]["rebound"] == 1
+    linked = result["linked_detail"]
+    assert len(linked) == 1
+    # The band is the relation; the kind is how it was decided.
+    assert linked[0]["band"] == "rebound"
+    assert linked[0]["kind"] == "remedy-name"
+    assert linked[0]["sequence"] == 1
+    assert linked[0]["successor"] == 2

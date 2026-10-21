@@ -5436,6 +5436,13 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     amended moves the loss rather than repairing it, and a link declared by
     another role clears nothing.
 
+    Every cleared row is published with both the band it fell into and the
+    link kind that decided it (``linked_detail``), and every still-owed row
+    with its band (``owed_detail``). A second reader of these rows therefore
+    reads the relation instead of re-deriving it: the band is the gate's own
+    name for the row's state and the kind is how it was decided, so the two
+    readers cannot drift apart by each holding its own vocabulary.
+
     The standing audit stays published as history beside the gate: it is
     append-only, so a repaid row stays in it, and a reader who wants the
     ledger's whole history has it. The live window (``latest_bad_roles``)
@@ -5612,6 +5619,11 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     band_counts = {"versioned": 0, "permanent": 0, "disposed": 0, "rebound": 0,
                    "cited": 0, "recoverable": 0, "owed": 0}
     band_roles: dict[str, dict[str, int]] = {name: {} for name in band_counts}
+    # The band every violating row falls into, by tape sequence. The band is
+    # the relation a reader of these rows needs; the link kind is how the
+    # relation was decided. Both are published per row, so a second reader
+    # does not have to re-derive one from the other.
+    row_bands: dict[int, str] = {}
     gate_rows: list[dict] = []
     policy_version_rows = 0
     for ts, sequence, role, name, classes in violations:
@@ -5664,6 +5676,7 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
         else:
             band = "owed"
         band_counts[band] += 1
+        row_bands[sequence] = band
         roles = band_roles[band]
         roles[role] = roles.get(role, 0) + 1
         if band == "owed":
@@ -5686,7 +5699,8 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     for sequence, (kind, successor) in sorted(links.items()):
         successor_event = by_sequence.get(successor) or {}
         linked_detail.append({
-            "sequence": sequence, "kind": kind, "successor": successor,
+            "sequence": sequence, "kind": kind, "band": row_bands.get(sequence),
+            "successor": successor,
             "role": (by_sequence.get(sequence) or {}).get("role"),
             "successor_evidence": _display_path(
                 successor_event.get("evidence", {}).get("path", ""), home)})
