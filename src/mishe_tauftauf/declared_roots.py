@@ -14,9 +14,11 @@ def entries(home: Path) -> dict[str, str]:
     not carry the module it runs. The site records that decision — unit name, root,
     owning role, the activation record for the reviewed bytes and the retiring
     condition — because the runtime sensors read the pin, not the checkout, so the
-    record must be readable from the site home to take effect without a release
-    advance. An unreadable record declares nothing: a broken allowlist must not read
-    as agreement, so every unit it fails to cover is left to the drift verdict.
+    record must be readable from the site home to be consulted at all. Consulting it
+    needs a renderer that carries this reader: a pinned release without
+    ``declared_roots`` cannot read the record, so every unit it fails to cover reads
+    DRIFT until such a release is activated. An unreadable record declares nothing: a
+    broken allowlist must not read as agreement.
 
     A root is reported the way ``wall_view._import_roots`` reports one, so a record
     naming ``<root>/src`` compares equal to a unit that names the same ``src``.
