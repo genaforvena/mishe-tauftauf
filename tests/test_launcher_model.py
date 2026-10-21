@@ -137,7 +137,7 @@ class LauncherModelTests(unittest.TestCase):
             self.directory,
             "probe",
             "#!/bin/sh\nprintf %s /home/user/bin/omp --model=vendor/decoy\n"
-            "exec /usr/bin/python3 /site/wrapper.py --model=vendor/real\n",
+            "exec /usr/bin/python3 /site/longcat-launch.py --model=vendor/real\n",
         )
         self.assertEqual(self.seed._launcher_model(path), "vendor/real")
 
@@ -146,7 +146,7 @@ class LauncherModelTests(unittest.TestCase):
         path = write_mind(
             self.directory,
             "probe",
-            "#!/bin/sh\nexec /usr/bin/python3 /site/wrapper.py --model=vendor/real\n"
+            "#!/bin/sh\nexec /usr/bin/python3 /site/longcat-launch.py --model=vendor/real\n"
             "/bin/echo --model=vendor/decoy\n",
         )
         self.assertEqual(self.seed._launcher_model(path), "vendor/real")
@@ -165,7 +165,7 @@ class LauncherModelTests(unittest.TestCase):
         path = write_mind(
             self.directory,
             "probe",
-            "#!/bin/sh\nMODE=x exec /usr/bin/python3 /site/wrapper.py --model=vendor/real\n"
+            "#!/bin/sh\nMODE=x exec /usr/bin/python3 /site/longcat-launch.py --model=vendor/real\n"
             "/bin/echo --model=vendor/decoy\n",
         )
         self.assertEqual(self.seed._launcher_model(path), "vendor/real")
@@ -326,6 +326,79 @@ class LauncherModelTests(unittest.TestCase):
             "#!/bin/sh\ncommand -p omp --model=vendor/real\n",
         )
         self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_a_continued_word_is_one_word(self):
+        """The shell deletes the backslash-newline pair and puts nothing in its place."""
+        path = write_mind(self.directory, "probe", "#!/bin/sh\nexec omp --model=vendor/mo\\\ndel\n")
+        self.assertEqual(self.seed._launcher_model(path), "vendor/model")
+
+    def test_a_control_builtin_is_refused(self):
+        """``exit`` ends the script before the launcher reaches its program."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nexit 0\nexec omp --model=vendor/decoy\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_a_second_exec_is_a_program_name(self):
+        """``exec`` takes the command as its operand, so a second one is a name."""
+        path = write_mind(self.directory, "probe", "#!/bin/sh\nexec exec omp --model=vendor/decoy\n")
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_an_assignment_after_exec_is_a_program_name(self):
+        path = write_mind(self.directory, "probe", "#!/bin/sh\nexec FOO=bar omp --model=vendor/decoy\n")
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_a_unicode_name_is_not_an_assignment(self):
+        """The shell's assignment names are ASCII."""
+        path = write_mind(self.directory, "probe", "#!/bin/sh\nλ=x exec omp --model=vendor/decoy\n")
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_the_model_comes_from_the_pane_argument_list(self):
+        """An ``env`` operand named ``--model`` is not the pane's flag."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nexec env -u --model omp --model=vendor/real\n",
+        )
+        self.assertEqual(self.seed._launcher_model(path), "vendor/real")
+
+    def test_an_arbitrary_python_script_is_not_the_pane(self):
+        """Only the plant's own launcher script reaches the pane."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nexec /usr/bin/python3 /not/the/plant/report.py --model=vendor/decoy\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_an_env_flag_with_a_word_attached_is_refused(self):
+        """``env`` rejects a word attached to a flag that takes none."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nexec env --debug=bogus omp --model=vendor/real\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_env_assignments_are_not_the_program(self):
+        """``env ROLE=probe /path/omp`` runs omp."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nexec env ROLE=probe /home/user/bin/omp --model=vendor/real\n",
+        )
+        self.assertEqual(self.seed._launcher_model(path), "vendor/real")
+
+    def test_a_python_flag_before_the_launcher_script(self):
+        """``python3 -u launcher.py`` is the plant's own wrapper shape."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nexec /usr/bin/python3 -u /site/longcat-launch.py --model=vendor/real\n",
+        )
+        self.assertEqual(self.seed._launcher_model(path), "vendor/real")
 
     def test_a_backslash_continues_a_line(self):
         """The flag on the continuation line is the flag of the command."""

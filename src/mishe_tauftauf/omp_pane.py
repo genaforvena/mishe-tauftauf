@@ -87,15 +87,17 @@ _MODEL_NAME_CHARS = frozenset(
 def _logical_lines(text: str) -> list[str] | None:
     """The script's logical lines, or ``None`` when a line is not one.
 
-    A backslash at the very end of a physical line continues it. A backslash
-    followed by a space escapes the space instead, and the line ends there, so
-    only an immediate backslash-newline pair continues.
+    A backslash at the very end of a physical line continues it, and the shell
+    deletes the pair: nothing is put in its place, so a word split across the
+    pair is one word. A backslash followed by a space escapes the space
+    instead, and the line ends there, so only an immediate backslash-newline
+    pair continues.
     """
     lines = []
     buffer = ""
     for line in text.splitlines():
         if line.endswith("\\"):
-            buffer += line[:-1] + " "
+            buffer += line[:-1]
             continue
         lines.append(buffer + line)
         buffer = ""
@@ -132,6 +134,17 @@ _UNSUPPORTED_WORDS = frozenset({
 ``command``, ``nohup`` and ``setsid`` each have their own option grammar, and
 an option this reader mis-reads would make it name a program the shell never
 runs. They are refused rather than half-modelled.
+"""
+
+_CONTROL_BUILTINS = frozenset({
+    "exit", "return", "break", "continue", "set", "trap", "eval", "source",
+    ".", "wait",
+})
+"""The shell builtins that can stop the launcher before it reaches its program.
+
+``exit`` ends the script, ``set -e`` ends it on the first failure, and
+``source`` runs a file whose bytes this reader has not read. None of them is a
+program launch, so a script that contains one settles nothing: it is refused.
 """
 
 
@@ -171,7 +184,7 @@ def _launcher_commands(text: str) -> list[list[str]] | None:
                 return None
             if any(character in _SHELL_EXPANSIONS for character in token):
                 return None
-            if token in _UNSUPPORTED_WORDS:
+            if token in _UNSUPPORTED_WORDS or token in _CONTROL_BUILTINS:
                 return None
             if token.startswith("#"):
                 return None
@@ -185,11 +198,26 @@ _ENV_FLAGS = frozenset({"-i", "-0", "--ignore-environment", "--debug"})
 _ENV_OPTIONS_WITH_OPERAND = frozenset({"-u", "--unset", "-C", "--chdir", "-S", "--split-string"})
 """The ``env`` options that take a word after them."""
 
+_ASSIGNMENT_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+"""The shell's own rule for the name of an assignment: ASCII letters, digits and underscore."""
+
+_PYTHON_FLAGS = frozenset({
+    "-u", "-B", "-E", "-s", "-S", "-O", "-OO", "-q", "-I", "-P", "-v", "-x",
+})
+"""The python interpreter options that take no argument."""
+
 
 def _is_assignment(token: str) -> bool:
-    """Whether a word is an environment assignment, which the shell runs nothing."""
+    """Whether a word is an environment assignment, which the shell runs nothing.
+
+    The name follows the shell's own rule: a unicode letter is not an
+    assignment name to the shell, so ``λ=x`` is a command name, not an
+    assignment.
+    """
     name, separator, _ = token.partition("=")
-    return bool(separator) and not token.startswith("-") and name.isidentifier()
+    if not separator or token.startswith("-"):
+        return False
+    return _ASSIGNMENT_NAME.fullmatch(name) is not None
 
 
 def _skip_env_options(tokens: list[str], index: int) -> int | None:
@@ -197,6 +225,8 @@ def _skip_env_options(tokens: list[str], index: int) -> int | None:
 
     An option ``env`` rejects means no program runs at all, so an option this
     reader does not model refuses the reading rather than being stepped over.
+    A flag that takes no word refuses a word attached to it, because ``env``
+    rejects that too.
     """
     while index < len(tokens):
         token = tokens[index]
@@ -211,6 +241,8 @@ def _skip_env_options(tokens: list[str], index: int) -> int | None:
         if token.startswith("--"):
             name, separator, _ = token.partition("=")
             if name in _ENV_FLAGS:
+                if separator:
+                    return None
                 index += 1
                 continue
             if name in _ENV_OPTIONS_WITH_OPERAND:
@@ -230,31 +262,34 @@ def _skip_env_options(tokens: list[str], index: int) -> int | None:
 def _program_and_exec(tokens: list[str]) -> tuple[str | None, bool, int]:
     """The program a command runs, whether it replaces the shell, and where.
 
-    The program is the word the shell runs, in the position it runs it: after
-    the shell's own ``exec`` and any environment assignment. ``env`` is an
-    external program, so the word after it is the program it runs and not
+    The program is the word the shell runs, in the position it runs it: the
+    shell's own prefix assignments, then at most one ``exec``, then the word
+    itself. ``exec`` is a builtin that takes the command as its operand, so a
+    second ``exec`` after it is a program name and not another builtin. ``env``
+    is an external program, so the word after it is the program it runs and not
     another wrapper. A word that names a path is an argument, not a program --
     ``printf %s /home/user/bin/omp --model=...`` prints an omp path and runs no
     omp -- and a reader that takes the model from it records a model no
     process ever ran on.
     """
     index = 0
+    while index < len(tokens) and _is_assignment(tokens[index]):
+        index += 1
     uses_exec = False
-    while index < len(tokens):
-        token = tokens[index]
-        if _is_assignment(token):
+    if index < len(tokens) and tokens[index] == "exec":
+        uses_exec = True
+        index += 1
+    if index < len(tokens) and tokens[index] == "env":
+        index = _skip_env_options(tokens, index + 1)
+        if index is None:
+            return None, uses_exec, -1
+        while index < len(tokens) and _is_assignment(tokens[index]):
             index += 1
-            continue
-        if token == "exec":
-            uses_exec = True
-            index += 1
-            continue
-        if token == "env":
-            index = _skip_env_options(tokens, index + 1)
-            if index is None or index >= len(tokens):
-                return None, uses_exec, -1
-            return tokens[index], uses_exec, index
-        return token, uses_exec, index
+        if index >= len(tokens):
+            return None, uses_exec, -1
+        return tokens[index], uses_exec, index
+    if index < len(tokens):
+        return tokens[index], uses_exec, index
     return None, uses_exec, -1
 
 
@@ -265,7 +300,8 @@ def _runs_the_pane(program: str | None, command: list[str], index: int) -> bool:
     wrapper -- the plant's own ``exec /usr/bin/python3 .../longcat-launch.py
     --model=...`` -- names a python interpreter running a launcher script, and
     the model it selects is the model's the pane runs on. Any other program is
-    not the pane: ``/bin/echo --model=...`` prints a model and runs no pane.
+    not the pane: ``/bin/echo --model=...`` prints a model and runs no pane,
+    and an arbitrary python script is not the plant's launcher either.
     """
     if program is None:
         return False
@@ -275,8 +311,11 @@ def _runs_the_pane(program: str | None, command: list[str], index: int) -> bool:
         return False
     if not program.rsplit("/", 1)[-1].startswith("python"):
         return False
-    following = command[index + 1] if index + 1 < len(command) else ""
-    return following.endswith(".py")
+    following = index + 1
+    while following < len(command) and command[following] in _PYTHON_FLAGS:
+        following += 1
+    script = command[following] if following < len(command) else ""
+    return script.endswith("-launch.py")
 
 
 def launcher_model(text: str) -> str | None:
@@ -316,7 +355,7 @@ def launcher_model(text: str) -> str | None:
         program, uses_exec, index = _program_and_exec(command)
         if not _runs_the_pane(program, command, index):
             continue
-        value = model(command)
+        value = model(command[index:])
         usable = value if value is not None and set(value) <= _MODEL_NAME_CHARS else None
         if uses_exec:
             return usable
