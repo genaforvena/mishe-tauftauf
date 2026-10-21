@@ -610,7 +610,7 @@ def consumer_comparison(path: Path | None) -> dict:
         return facts
     facts["line"] = comparison_line(tree)
     facts["role"] = consumer_role(tree)
-    facts["attempt_int"] = False
+    facts["attempt_int"] = attempt_is_read_as_int(tree)
     return facts
 
 
