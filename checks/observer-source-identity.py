@@ -118,25 +118,25 @@ def _package_commits(repo, prefix=REPO_PACKAGE):
 
 
 def _tree_blobs(repo, commit, prefix=REPO_PACKAGE):
-    """The blob ids one commit holds under the package directory."""
-    listed = _run(["git", "-C", str(repo), "ls-tree", "-r", commit, prefix], check=False)
+    """The top-level Python module blobs one commit holds under a package."""
+    listed = _run(["git", "-C", str(repo), "ls-tree", commit + ":" + prefix], check=False)
     if listed.returncode:
         return {}
     blobs = {}
     for line in listed.stdout.splitlines():
         meta, _, name = line.partition("\t")
         parts = meta.split()
-        if len(parts) >= 3 and parts[1] == "blob":
+        if len(parts) >= 3 and parts[1] == "blob" and name.endswith(".py"):
             blobs[name.rsplit("/", 1)[-1]] = parts[2]
     return blobs
 
 
 def reproducing_commits(repo, blobs, prefix=REPO_PACKAGE):
-    """Commits whose whole package tree reproduces these module bytes.
+    """Commits whose whole package tree exactly reproduces these module bytes.
 
-    A commit that changed the package is a candidate for every module in it,
-    so each candidate's tree is read once and compared against every observed
-    module at once.
+    Both blob contents and the package module set must match. A copy that omits
+    a module introduced later still carries the older tree; subset matching
+    would incorrectly make multiple historical commits reproduce it.
     """
     candidates = _package_commits(repo, prefix)
     if not candidates:
@@ -144,7 +144,7 @@ def reproducing_commits(repo, blobs, prefix=REPO_PACKAGE):
     reproducing = set()
     for commit in candidates:
         tree = _tree_blobs(repo, commit, prefix)
-        if all(tree.get(name) == blob for name, blob in blobs.items()):
+        if tree == blobs:
             reproducing.add(commit)
     return reproducing
 
@@ -194,11 +194,15 @@ def declared_finding(repo, directory, commit):
         return {"root": str(directory), "state": "unknown-commit",
                 "detail": "declared commit " + commit[:12] + " is not in the repository",
                 "modules": len(blobs)}
-    differing = sorted(name for name, blob in blobs.items() if tree.get(name) != blob)
-    if differing:
+    if tree != blobs:
+        changed = sorted(name for name, blob in blobs.items() if tree.get(name) != blob)
+        missing = sorted(name for name in tree if name not in blobs)
+        extra = sorted(name for name in blobs if name not in tree)
         return {"root": str(directory), "state": "differs",
-                "detail": "modules differ from the declared commit " + commit[:12]
-                          + ": " + ", ".join(differing),
+                "detail": "declared commit difference: changed=%d [%s], missing=%d [%s], extra=%d [%s]"
+                          % (len(changed), ", ".join(changed[:8]),
+                             len(missing), ", ".join(missing[:8]),
+                             len(extra), ", ".join(extra[:8])),
                 "modules": len(blobs)}
     return {"root": str(directory), "state": "current", "commit": commit,
             "detail": "root carries the declared commit's bytes",
@@ -230,7 +234,12 @@ def tracked_relative(repo, directory):
 
 def head_blobs(repo, relative):
     """The HEAD blob ids of the Python modules directly under a tracked path."""
-    listed = _run(["git", "-C", str(repo), "ls-tree", "HEAD", relative + "/"], check=False)
+    return commit_blobs(repo, "HEAD", relative)
+
+
+def commit_blobs(repo, commit, relative):
+    """The blob ids of the Python modules one commit holds under a path."""
+    listed = _run(["git", "-C", str(repo), "ls-tree", commit, relative + "/"], check=False)
     if listed.returncode:
         return {}
     blobs = {}
@@ -259,12 +268,35 @@ def classify_tracked(repo, directory, relative, blobs):
             "detail": "working tree matches HEAD", "modules": len(blobs)}
 
 
+def differing_modules(repo, directory, head, blobs=None, prefix=REPO_PACKAGE):
+    """The modules one copy carries that HEAD's tree does not carry.
+
+    The question is byte identity, so it is answered by comparing the copy's
+    module blobs with the blobs HEAD's tree holds under the same path. A
+    commit that did not change the package directory is not a candidate for
+    "the commit that reproduces these bytes", so a copy whose bytes are
+    HEAD's own would otherwise be named after an older commit that last
+    touched the directory.
+    """
+    head_tree = commit_blobs(repo, head, prefix)
+    if blobs is None:
+        blobs = module_blobs(repo, directory)
+    changed = sorted(name for name, blob in blobs.items() if head_tree.get(name) != blob)
+    missing = sorted(name for name in head_tree if name not in blobs)
+    extra = sorted(name for name in blobs if name not in head_tree)
+    return changed, missing, extra
+
+
 def classify_package(repo, directory, head):
     """One package directory: which reviewed commit, if any, reproduces it."""
     blobs = module_blobs(repo, directory)
     tracked = tracked_relative(repo, directory)
     if tracked:
         return classify_tracked(repo, directory, tracked, blobs)
+    changed, missing, extra = differing_modules(repo, directory, head, blobs)
+    if not changed and not missing and not extra:
+        return {"root": str(directory), "state": "current", "commit": head,
+                "detail": "running tree carries HEAD's bytes", "modules": len(blobs)}
     commits = reproducing_commits(repo, blobs)
     if not commits:
         return {"root": str(directory), "state": "mixed",
@@ -277,7 +309,11 @@ def classify_package(repo, directory, head):
     commit = sorted(commits)[0]
     if commit != head:
         return {"root": str(directory), "state": "stale", "commit": commit,
-                "detail": "running tree reproduces " + commit[:12] + ", HEAD is " + head[:12],
+                "detail": "running tree reproduces " + commit[:12] + ", HEAD is " + head[:12]
+                          + "; HEAD difference: changed=%d [%s], missing=%d [%s], extra=%d [%s]"
+                          % (len(changed), ", ".join(changed[:8]),
+                             len(missing), ", ".join(missing[:8]),
+                             len(extra), ", ".join(extra[:8])),
                 "modules": len(blobs)}
     return {"root": str(directory), "state": "current", "commit": commit,
             "detail": "running tree reproduces HEAD", "modules": len(blobs)}

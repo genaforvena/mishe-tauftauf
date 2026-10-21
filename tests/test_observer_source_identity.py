@@ -94,6 +94,13 @@ def test_a_root_that_reproduces_head_is_current(plant, tmp_path):
     assert finding["commit"] == head, finding
 
 
+def test_a_tracked_package_with_an_extra_module_is_dirty(plant):
+    """An untracked module in the checkout cannot be reported as current."""
+    root = _write_module(plant, "extra.py", "VALUE = 3\n").parent
+    finding = _MODULE.classify_package(plant, root, _MODULE.head_commit(plant))
+    assert finding["state"] == "dirty", finding
+
+
 def test_a_root_that_mixes_two_commits_is_mixed(plant, tmp_path):
     """Modules drawn from two commits match no reviewed tree."""
     mixed = tmp_path / "mixed" / "mishe_tauftauf"
@@ -121,6 +128,57 @@ def test_a_root_behind_head_is_stale(plant, tmp_path):
     finding = _MODULE.classify_package(plant, root, head)
     assert finding["state"] == "stale", finding
     assert finding["commit"] == first, finding
+
+
+def test_a_copy_of_head_bytes_is_current_when_head_never_touched_the_package(plant, tmp_path):
+    """A copy carrying HEAD's own bytes is current, even if HEAD changed nothing.
+
+    The commit that last changed the package directory is not necessarily
+    HEAD: a commit that touched other files leaves the package's bytes
+    unchanged, and those bytes are still HEAD's bytes. Answering "stale"
+    from the commit that last touched the directory names an identity the
+    running tree does not have.
+    """
+    (plant / "notes.md").write_text("unrelated\n", encoding="utf-8")
+    _git(plant, "add", "-A")
+    _git(plant, "commit", "-qm", "notes only")
+    root = _copy_tree(plant, tmp_path / "copy" / "mishe_tauftauf",
+                      ["__init__.py", "watch.py", "gate.py"])
+    head = _MODULE.head_commit(plant)
+    finding = _MODULE.classify_package(plant, root, head)
+    assert finding["state"] == "current", finding
+    assert finding["commit"] == head, finding
+
+
+def test_a_root_that_differs_from_head_names_the_differing_modules(plant, tmp_path):
+    """A copy behind HEAD says which modules differ, not only which commit."""
+    first = _git(plant, "rev-list", "--max-parents=0", "HEAD").strip()
+    root = tmp_path / "old" / "mishe_tauftauf"
+    root.mkdir(parents=True)
+    for name in ("__init__.py", "watch.py", "gate.py"):
+        (root / name).write_text(_git(plant, "show", first + ":src/mishe_tauftauf/" + name),
+                                 encoding="utf-8")
+    head = _MODULE.head_commit(plant)
+    finding = _MODULE.classify_package(plant, root, head)
+    assert finding["state"] == "stale", finding
+    assert "watch.py" in finding["detail"], finding
+    assert "gate.py" in finding["detail"], finding
+
+
+def test_a_stale_copy_reports_modules_added_after_its_commit(plant, tmp_path):
+    """A package missing newer modules names the missing HEAD files."""
+    _write_module(plant, "new.py", "VALUE = 4\n")
+    _git(plant, "add", "-A")
+    _git(plant, "commit", "-qm", "add module")
+    first = _git(plant, "rev-parse", "HEAD^").strip()
+    root = tmp_path / "old" / "mishe_tauftauf"
+    root.mkdir(parents=True)
+    for name in ("__init__.py", "watch.py", "gate.py"):
+        (root / name).write_text(
+            _git(plant, "show", first + ":src/mishe_tauftauf/" + name), encoding="utf-8")
+    finding = _MODULE.classify_package(plant, root, _MODULE.head_commit(plant))
+    assert finding["state"] == "stale", finding
+    assert "missing=1 [new.py]" in finding["detail"], finding
 
 
 def test_a_root_without_a_repository_is_undecided(tmp_path):
