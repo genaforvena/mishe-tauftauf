@@ -49,6 +49,7 @@ HOME_ISP_IP = "5.227.25.226"        # the home ISP's egress address
 LAN_PROBE = "http://192.168.8.1/"   # the router's own web UI
 IP_ECHO = "https://api.ipify.org"
 SOCKS = "127.0.0.1:1080"            # the iMac's tailscaled SOCKS5 door
+NOTE3_SERIAL = "4d00553d61ab90b7"   # the plant's Note3, over USB adb
 
 
 @dataclass
@@ -56,10 +57,12 @@ class Target:
     """One client and the commands that speak to it."""
 
     name: str
-    how: str                        # "local" or "ssh"
+    how: str                        # "local", "ssh" or "adb"
     ts: str                         # the tailscale CLI invocation
-    egress: str                     # the curl invocation that leaves the client
+    egress: str                     # the command that leaves the client
+    lan: str                        # the command that proves the LAN answers
     ssh: tuple = ()                 # (host, user) when how == "ssh"
+    serial: str = ""                # adb serial when how == "adb"
     attempts: int = 4
     notes: str = ""
 
@@ -70,6 +73,7 @@ TARGETS: tuple[Target, ...] = (
         how="local",
         ts="tailscale",
         egress=f"curl -s --max-time 12 {IP_ECHO}",
+        lan=f"curl -fsS -o /dev/null --max-time 8 {LAN_PROBE}",
         notes="Linux, kernel TUN; egress leaves directly.",
     ),
     Target(
@@ -78,9 +82,21 @@ TARGETS: tuple[Target, ...] = (
         ssh=("ilya@192.168.8.214",),
         ts="~/bin/tailscale --socket=$HOME/.tailscale/tailscaled.sock",
         egress=f"curl -s --max-time 12 --socks5-hostname {SOCKS} {IP_ECHO}",
+        lan=f"curl -fsS -o /dev/null --max-time 8 {LAN_PROBE}",
         notes="macOS 10.13, tailscaled in userspace mode; egress leaves "
               "through the local SOCKS door, the OS itself cannot reach the "
               "tailnet.",
+    ),
+    Target(
+        name="note3",
+        how="adb",
+        serial=NOTE3_SERIAL,
+        ts="/data/local/tmp/tailscale --socket=/data/local/tmp/ts/ts.sock",
+        egress="/data/local/tmp/egress-ip",
+        lan="ping -c 1 -W 2 192.168.8.1",
+        notes="Android 5.0, rooted, headless tailscaled; the phone has no "
+              "HTTP client of its own, so egress-ip is a small static prober "
+              "that reads the source address out of a Cloudflare trace.",
     ),
 )
 
@@ -98,12 +114,14 @@ class Result:
 
 
 def run(cmd: str, target: Target, timeout: int = 40) -> subprocess.CompletedProcess:
-    """Run one shell command, locally or on the target's host."""
+    """Run one shell command, locally, on the target's host, or on the phone."""
     if target.how == "local":
         argv = ["sh", "-c", cmd]
-    else:
+    elif target.how == "ssh":
         argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
                 *target.ssh, cmd]
+    else:
+        argv = ["adb", "-s", target.serial, "shell", "su", "-c", cmd]
     return subprocess.run(argv, text=True, capture_output=True, timeout=timeout)
 
 
@@ -161,16 +179,34 @@ def egress_identity(target: Target) -> tuple[str, str, list]:
 
 def lan_reachable(target: Target) -> tuple[str, str]:
     """Return (state, detail) for "the local network is still reachable"."""
-    proc = run(f"curl -s -o /dev/null -w '%{{http_code}}' --max-time 8 {LAN_PROBE}", target)
-    code = (proc.stdout or "").strip()
-    if code == "200":
-        return "GREEN", "the router answers on the LAN"
-    if not code:
-        return "UNKNOWN", "the LAN probe returned nothing"
-    return "RED", f"the LAN probe answered {code!r}"
+    proc = run(target.lan, target)
+    if proc.returncode == 0:
+        return "GREEN", "the local network answers"
+    detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+    tail = detail[-1] if detail else f"exit {proc.returncode}"
+    return "RED", f"the local network did not answer: {tail}"
+
+
+def reachable(target: Target) -> tuple[bool, str]:
+    """Whether the client can be asked anything at all.
+
+    A client that cannot answer is not a client with a fault: the reading is
+    UNKNOWN, and UNKNOWN is not RED. The distinction matters here, because a
+    phone that dropped off the WiFi and a client whose exit node is broken
+    look identical to a probe that only looks at the wrong thing.
+    """
+    proc = run("true", target, timeout=25)
+    if proc.returncode == 0:
+        return True, ""
+    detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+    return False, (detail[-1] if detail else f"exit {proc.returncode}")
 
 
 def check(target: Target) -> Result:
+    ok, why = reachable(target)
+    if not ok:
+        return Result(name=target.name, state="UNKNOWN",
+                      reasons=[f"the client could not be reached: {why}"])
     result = Result(name=target.name, state="GREEN")
     states = []
     for probe in (selected_exit_node, egress_identity, lan_reachable):

@@ -95,13 +95,51 @@ directions were exercised on 2026-10-21: deselecting the exit node produced
 DM; disallowing LAN access produced `RED` on the LAN probe alone, which is
 the discriminating case the other two probes cannot see.
 
+## The Note3 (plant-owned, always on adb)
+
+The Note3 is a rooted Samsung Galaxy Note3 on **Android 5.0 (API 21)**. The
+official Tailscale Android app needs **API 26** (F-Droid's own notice for
+1.102.x, and `aapt dump badging` on the 1.68.0 package: `sdkVersion:'26'`),
+so the app is not an option. What works is the standalone daemon, and the
+obstacles were real and are now cleared:
+
+- `tailscaled` 1.104.2 (static ARM) runs on the phone; `--tun=tailscale0`
+  creates a **kernel TUN** successfully.
+- The kernel engine then refused to start because it expected to manage
+  netfilter and `/system/bin/iptables` cannot be executed on this ROM
+  (SELinux, enforcing). The fix is the node's own preference:
+  `tailscale up --netfilter-mode=off` — the phone's netfilter mode is now
+  `NetfilterMode: 0` and the kernel engine starts without iptables.
+- The phone has no HTTP client (`/system/bin` has `ping` and nothing else),
+  so its egress cannot be read with a normal request. `tools/note3-egress-ip.go`
+  is a small static prober that asks an address-echo service over an address
+  literal (Android 5.0 has no `/etc/resolv.conf`, so DNS is not available to
+  it) and prints the source address. It reads `5.227.25.226` — the home ISP
+  address — until an exit node is selected.
+- The daemon runs inside an adb shell that `mishe-note3-tailscaled.service`
+  holds open: adbd reaps the process group when the session ends, and the
+  Note3 is the plant's sensor body, so the supervisor lives next to it.
+
+**One human step is left**: the node must join the tailnet. It is waiting at
+
+    https://login.tailscale.com/a/e62820401ea34
+
+Open it once on any device where the operator is signed in to Tailscale.
+After that, selecting the exit node (`tailscale set --exit-node=100.94.116.17
+--exit-node-allow-lan-access=true`) and the verification are the plant's.
+
 ## What is still open
 
-- **Operator's hands**: redmi-10 (Tailscale app → exit node = phaedra),
-  default-string on Windows (client → exit node), note3 (no Tailscale
-  installed at all; Android 5.0 / API 21 is exactly the app's floor, so the
-  release's `minSdk` must be checked before sideloading), rip (offline, LAN
-  unreachable). The household `tinangel266@` devices stay direct by decision.
+- **Operator's hands**: the Note3's one login click (above); redmi-10
+  (Tailscale app → exit node = phaedra); default-string on Windows (client →
+  exit node = phaedra); rip (offline, LAN unreachable). The household
+  `tinangel266@` devices stay direct by decision.
+- **The iMac is off the network.** Its WiFi is still associated with the
+  router's AP at -25 dBm with 0 packets in both directions, and the router's
+  neighbour entry for it is `FAILED`: the machine is powered with a live
+  association but not answering, which is what an asleep or wedged macOS
+  looks like. Its exit-node reading is therefore UNKNOWN, not GREEN, and
+  nothing here can wake it — that needs a person at the machine.
 - **Deferred by decision**: router cleanup, the household devices, the
   iMac's 2024 client build (no auto-update on 10.13), and split routing for
   `.ru` domains — Russian sites now see a Canadian address on the machines
