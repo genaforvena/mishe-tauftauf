@@ -106,14 +106,15 @@ def _logical_lines(text: str) -> list[str] | None:
     return lines
 
 
-_SHELL_PUNCTUATION = ";&|<>(){}`"
+_SHELL_PUNCTUATION = ";&|<>(){}`!"
 """The shell's own operators and grouping characters this reader does not model.
 
-A pipeline, an AND-list, a redirection, a here-document, a subshell or a
-group all change *what the shell runs*, so a reader that does not model them
-cannot say which command the pane is running. It refuses them: the reading is
-unknown, never a guess. A token that carries one of these characters is
-refused whatever else it carries, so a quoted operator is refused too.
+A pipeline, an AND-list, a redirection, a here-document, a subshell, a group
+or a negation all change *what the shell runs*, so a reader that does not model
+them cannot say which command the pane is running. It refuses them: the
+reading is unknown, never a guess. A token that carries one of these
+characters is refused whatever else it carries, so a quoted operator is
+refused too.
 """
 
 _SHELL_EXPANSIONS = "$*?"
@@ -188,14 +189,25 @@ def _launcher_commands(text: str) -> list[list[str]] | None:
                 return None
             if token.startswith("#"):
                 return None
+            name = token.partition("=")[0]
+            if name in _LOOKUP_VARIABLES:
+                return None
         commands.append(tokens)
     return commands
 
 
+_LOOKUP_VARIABLES = frozenset({"PATH", "LD_LIBRARY_PATH"})
+"""The variables the shell looks a program up with.
+
+A launcher that changes them can make the program it names unlaunchable -- a
+bare ``omp`` with a PATH that does not hold it -- so a script that changes one
+settles nothing and is refused.
+"""
+
 _ENV_FLAGS = frozenset({"-i", "-0", "--ignore-environment", "--debug"})
 """The ``env`` options that are flags and take no word."""
 
-_ENV_OPTIONS_WITH_OPERAND = frozenset({"-u", "--unset", "-C", "--chdir", "-S", "--split-string"})
+_ENV_OPTIONS_WITH_OPERAND = frozenset({"-u", "--unset", "-C", "--chdir"})
 """The ``env`` options that take a word after them."""
 
 _ASSIGNMENT_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -205,6 +217,9 @@ _PYTHON_FLAGS = frozenset({
     "-u", "-B", "-E", "-s", "-S", "-O", "-OO", "-q", "-I", "-P", "-v", "-x",
 })
 """The python interpreter options that take no argument."""
+
+_PLANT_LAUNCHER = "longcat-launch.py"
+"""The plant's own launcher script: the wrapper that starts a pane's omp."""
 
 
 def _is_assignment(token: str) -> bool:
@@ -250,11 +265,17 @@ def _skip_env_options(tokens: list[str], index: int) -> int | None:
                 continue
             return None
         if token.startswith("-") and token != "-":
-            if any(token.startswith(flag) and len(token) > len(flag)
-                   for flag in _ENV_OPTIONS_WITH_OPERAND):
-                index += 1
-                continue
-            return None
+            attached = None
+            for flag in _ENV_OPTIONS_WITH_OPERAND:
+                if token.startswith(flag) and len(token) > len(flag):
+                    attached = token[len(flag):]
+                    break
+            if attached is None:
+                return None
+            if not attached or _ASSIGNMENT_NAME.fullmatch(attached) is None:
+                return None
+            index += 1
+            continue
         break
     return index
 
@@ -315,7 +336,7 @@ def _runs_the_pane(program: str | None, command: list[str], index: int) -> bool:
     while following < len(command) and command[following] in _PYTHON_FLAGS:
         following += 1
     script = command[following] if following < len(command) else ""
-    return script.endswith("-launch.py")
+    return script.rsplit("/", 1)[-1] == _PLANT_LAUNCHER
 
 
 def launcher_model(text: str) -> str | None:
@@ -329,9 +350,10 @@ def launcher_model(text: str) -> str | None:
     a script of plain commands -- comments, environment assignments, the
     shell's own ``exec``, ``env`` with the options it knows, one program and
     its flags -- and it reads the model from the command that runs the pane's
-    program. A command that ``exec``s replaces the shell, so it decides and
-    the commands after it never run. A script that launches the pane's program
-    twice without an ``exec`` settles nothing, so it reads no model.
+    program. The first such command decides: the shell runs it and waits, so
+    the commands after it -- including an ``exec`` -- run only after the pane
+    has exited, and the model's the pane runs on is the one it was started
+    with.
 
     Any construct this reader does not model -- a pipeline, an AND-list, a
     redirection, a here-document, a subshell, a group, a conditional, a
@@ -357,9 +379,8 @@ def launcher_model(text: str) -> str | None:
             continue
         value = model(command[index:])
         usable = value if value is not None and set(value) <= _MODEL_NAME_CHARS else None
-        if uses_exec:
-            return usable
         candidates.append(usable)
+        break
     if len(candidates) == 1:
         return candidates[0]
     return None
