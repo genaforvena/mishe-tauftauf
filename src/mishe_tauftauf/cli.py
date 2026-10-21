@@ -463,6 +463,17 @@ def cmd_tmux_stop(args) -> int:
     return 0
 
 
+def cmd_seed_uninstall(args) -> int:
+    from .site_uninstall import uninstall
+    try:
+        result = uninstall(args.home, args.session, execute=args.execute,
+                           confirm_home=args.confirm_home, purge_site=args.purge_site)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"uninstall could not complete: {exc}") from exc
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
 def cmd_seed(args) -> int:
     from .plant import _site_tmux_tmpdir
     from . import seed
@@ -475,6 +486,12 @@ def cmd_seed(args) -> int:
     action = args.seed_command
     if action == "init":
         result = seed.init(args.home, args.slug, args.engine_command)
+    elif action == "loop":
+        result = seed.loop(
+            args.home, args.slug, kind=args.kind, model=args.model, bun=args.bun,
+            node_modules=args.node_modules, engine_command=args.engine_command,
+            max_turns=args.max_turns, max_calls=args.max_calls, timeout=args.timeout,
+            reasoning=args.reasoning, restore=args.restore)
     elif action == "start":
         result = seed.start(args.home, args.session, args.slug, args.interval)
     elif action == "stop":
@@ -914,8 +931,28 @@ def parser() -> argparse.ArgumentParser:
     p = tmux.add_parser("stop"); p.add_argument("--session", default="mishe-tauftauf"); p.set_defaults(func=cmd_tmux_stop)
     seed = sub.add_parser("seed").add_subparsers(dest="seed_command", required=True)
     p = seed.add_parser("init"); p.add_argument("--slug", default="genome"); p.add_argument("--engine-command", default="codex"); p.set_defaults(func=cmd_seed)
+    p = seed.add_parser("loop", help="Inspect or select one mind's next idle launcher; never restart it")
+    p.add_argument("--slug", required=True, help="Registered mind to inspect or select independently")
+    choice = p.add_mutually_exclusive_group()
+    choice.add_argument("--kind", choices=("internal", "external"), help="Desired loop at the next canonical idle rotation")
+    choice.add_argument("--restore", metavar="RECEIPT", help="Restore the exact launcher/probe saved before this role's receipt")
+    p.add_argument("--model", help="Internal provider/model identity")
+    p.add_argument("--bun", type=Path, help="Absolute executable Bun path")
+    p.add_argument("--node-modules", type=Path, help="Absolute worker dependency directory")
+    p.add_argument("--engine-command", help="External executable and argv (shell quoting, not a shell program)")
+    p.add_argument("--max-turns", type=int, help="Internal turn budget (default: 32)")
+    p.add_argument("--max-calls", type=int, help="Internal tool-call budget (default: 64)")
+    p.add_argument("--timeout", type=float, help="Internal wake deadline in seconds (default: 900)")
+    p.add_argument("--reasoning", choices=("minimal", "low", "medium", "high", "xhigh", "max"), help="Internal reasoning effort (default: medium)")
+    p.set_defaults(func=cmd_seed)
     p = seed.add_parser("start"); p.add_argument("--slug", default="genome"); p.add_argument("--session", default="mishe-seed"); p.add_argument("--interval", type=float, default=5.0); p.set_defaults(func=cmd_seed)
     p = seed.add_parser("stop"); p.add_argument("--session", default="mishe-seed"); p.set_defaults(func=cmd_seed)
+    p = seed.add_parser("uninstall", help="Preview or explicitly remove one owned site's installation")
+    p.add_argument("--session", required=True)
+    p.add_argument("--execute", action="store_true")
+    p.add_argument("--confirm-home", help="Exact absolute site path, required with --execute")
+    p.add_argument("--purge-site", action="store_true", help="Also delete all selected site-local state")
+    p.set_defaults(func=cmd_seed_uninstall)
     p = seed.add_parser("tick"); p.add_argument("--slug", default="genome"); p.add_argument("--session", default="mishe-seed"); p.add_argument("--self-pick-seconds", type=float, default=0); p.set_defaults(func=cmd_seed)
     p = seed.add_parser("follow"); p.add_argument("--slug", default="genome"); p.add_argument("--session", default="mishe-seed"); p.add_argument("--interval", type=float, default=5.0); p.add_argument("--self-pick-seconds", type=float, default=3600); p.set_defaults(func=cmd_seed)
     p = seed.add_parser("run"); p.add_argument("--slug", default="genome"); p.add_argument("--session", default="mishe-seed"); p.add_argument("--interval", type=float, default=5.0); p.add_argument("--self-pick-seconds", type=float, default=3600); p.add_argument("--clear-grace-seconds", type=float, default=15); p.set_defaults(func=cmd_seed)
@@ -932,7 +969,8 @@ def parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
-    args.home = args.home.resolve()
+    if args.func is not cmd_seed_uninstall:
+        args.home = args.home.resolve()
     try:
         validate_home_binding(args.home)
         if not (args.func is cmd_init or getattr(args, "seed_command", None) == "init"):
