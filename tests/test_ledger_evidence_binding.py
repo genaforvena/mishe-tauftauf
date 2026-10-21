@@ -7,6 +7,7 @@ the roles it counts instead of being re-derived from ``violating``, which lists
 the standing audit's newest rows — a different window.
 """
 import re
+import tracemalloc
 
 from pathlib import Path
 
@@ -1117,3 +1118,123 @@ def test_evidence_binding_recoverable_content_does_not_keep_the_verdict_at_drift
     assert result["remediation_bands"]["recoverable"] == 1
     assert result["owed_rows"] == 0
     assert result["state"] == "settled"
+
+
+#: The chunk size the gate reads a bound artifact in. A whole-file read made
+#: one retained evidence file the largest thing the live observer held in
+#: memory, and the prefix-search budgets bound time, not memory.
+GATE_CHUNK_BYTES = 1024 * 1024
+
+
+def _large_artifact(home: Path, name: str, size: int, filler: bytes = b"a") -> Path:
+    """A bound artifact of a size that dwarfs the gate's read chunk."""
+    path = home / "artifacts" / name
+    path.write_bytes(filler * size)
+    return path
+
+
+def test_evidence_binding_bounds_the_memory_a_large_bound_artifact_costs(tmp_path, monkeypatch):
+    """A large retained artifact is checked without being materialized.
+
+    The gate compares each bound artifact's current bytes with the digest
+    recorded at binding time and, when they differ, searches the file's
+    prefixes for that digest. Both reads are chunked, so the memory the gate
+    spends on an artifact is bounded by the chunk rather than by the artifact:
+    the search budgets bound time, not memory, and a whole-file read let one
+    retained evidence file end the live observer.
+
+    The edit here is in the file's **last** byte, so the row is only class B
+    if the whole file was hashed — a digest taken over the first chunk alone
+    would match the bound digest and read the intact artifact as amended.
+    """
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    size = 16 * GATE_CHUNK_BYTES
+    large = _large_artifact(home, "large.md", size)
+    digest = _write_evidenced_outcome(home, "alice", large)
+    large.write_bytes(b"a" * (size - 1) + b"z")
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "alice",
+         f"[record] records/{digest}.json sha256={digest}\n"),
+    ])
+    # The prefix search is capped, so the search stays cheap; the file is far
+    # larger than the budget and is left unclassified rather than guessed at.
+    monkeypatch.setattr(discovery, "EVIDENCE_PREFIX_SEARCH_BYTES", 64 * 1024)
+    reads: list[Path] = []
+    original = Path.read_bytes
+
+    def spy(self):
+        reads.append(self)
+        return original(self)
+
+    monkeypatch.setattr(Path, "read_bytes", spy)
+    tracemalloc.start()
+    try:
+        result = discovery._ledger_evidence_binding(home)
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert result["class_counts"]["B"] == 1
+    assert result["permanent_loss_kind"] == {"append": 0, "rewrite": 0, "unknown": 1}
+    assert result["state"] == "drift"
+    # The gate holds a chunk, not a file: the peak it allocates is a small
+    # multiple of the chunk, and far below the artifact it checked.
+    assert peak < 4 * GATE_CHUNK_BYTES
+    assert peak < size
+    # The artifact was never read whole.
+    assert large.resolve() not in [path.resolve() for path in reads]
+
+
+def test_evidence_binding_keeps_a_large_unchanged_artifact_intact(tmp_path):
+    """The whole-file digest comparison survives the chunked read.
+
+    The bound bytes of a large artifact are still the bytes that are there
+    now, so the row is not a violation. A digest taken over the first chunk
+    alone would also pass here, so the pair of tests — an intact large file
+    and one edited in its last byte — is what pins the comparison as a
+    whole-file comparison.
+    """
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    large = _large_artifact(home, "large.md", 16 * GATE_CHUNK_BYTES)
+    digest = _write_evidenced_outcome(home, "alice", large)
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "alice",
+         f"[record] records/{digest}.json sha256={digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    assert result["all_bad"] == 0
+    assert result["permanent_loss"] == 0
+    assert result["state"] == "verified"
+
+
+def test_evidence_binding_classifies_large_amendments_across_chunk_boundaries(tmp_path):
+    """The mechanism names the failure for artifacts larger than one chunk.
+
+    The prefix search runs across chunk boundaries: an appended artifact is
+    an append when its bound digest is the digest of a prefix that ends past
+    the first chunk, and a rewritten artifact is a rewrite when no prefix
+    matches.
+    """
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    appended = _large_artifact(home, "appended.md", GATE_CHUNK_BYTES)
+    alice_digest = _write_evidenced_outcome(home, "alice", appended)
+    appended.write_bytes(b"a" * GATE_CHUNK_BYTES + b"b" * GATE_CHUNK_BYTES)
+    rewritten = _large_artifact(home, "rewritten.md", GATE_CHUNK_BYTES, b"c")
+    bob_digest = _write_evidenced_outcome(home, "bob", rewritten)
+    rewritten.write_bytes(b"d" * GATE_CHUNK_BYTES)
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "alice",
+         f"[record] records/{alice_digest}.json sha256={alice_digest}\n"),
+        (2, "2026-10-06T17:30:00Z", "bob",
+         f"[record] records/{bob_digest}.json sha256={bob_digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    assert result["permanent_loss"] == 2
+    assert result["permanent_loss_kind"] == {"append": 1, "rewrite": 1, "unknown": 0}
+    assert result["remediation_bands"]["recoverable"] == 1
+    assert result["remediation_bands"]["owed"] == 1

@@ -5068,9 +5068,35 @@ EVIDENCE_PREFIX_SEARCH_BYTES = 8 * 1024 * 1024
 #: The total byte budget for one scan's prefix searches, so a store full of
 #: large amended files cannot make the sense unboundedly slow.
 EVIDENCE_PREFIX_SEARCH_TOTAL_BYTES = 32 * 1024 * 1024
+#: The bytes retained per read while a bound artifact is hashed. The gate
+#: compares each artifact's current bytes with the digest recorded at binding
+#: time and, when they differ, searches the file's prefixes for that digest.
+#: Both reads run in chunks of this size, so the memory the gate spends on an
+#: artifact is bounded by this constant rather than by the artifact's own
+#: size. The search budgets above bound time, not memory: a whole-file read
+#: made one retained evidence file the largest thing the live observer held,
+#: and a file of any size could end the observer.
+EVIDENCE_READ_CHUNK_BYTES = 1024 * 1024
 
 
-def _classify_amendment(data: bytes, digest: object, budget: int) -> tuple[str, int]:
+def _file_digest(path: Path) -> str:
+    """The sha256 of a whole file, read in bounded chunks.
+
+    The digest covers every byte of the file, so the comparison with the
+    digest recorded at binding time is unchanged. Only the retention changes:
+    one chunk is held at a time, and the file is never materialized.
+    """
+    running = hashlib.sha256()
+    with open(path, "rb") as stream:
+        while True:
+            chunk = stream.read(EVIDENCE_READ_CHUNK_BYTES)
+            if not chunk:
+                break
+            running.update(chunk)
+    return running.hexdigest()
+
+
+def _classify_amendment(path: Path, digest: object, budget: int) -> tuple[str, int]:
     """How the bound file was amended, from the bytes now at the path.
 
     ``append`` means the bound digest is the digest of a prefix of the current
@@ -5085,6 +5111,14 @@ def _classify_amendment(data: bytes, digest: object, budget: int) -> tuple[str, 
     scan. The classification never changes the class or the verdict: it names
     the mechanism of a class-B row, whose requirement (the bound bytes stay
     unchanged) both mechanisms break.
+
+    The file is read forward in chunks of ``EVIDENCE_READ_CHUNK_BYTES`` and
+    hashed as it is read, so the search holds one chunk at a time instead of
+    the whole file: the bytes searched and the bytes retained are two
+    different things, and only the first is bounded by ``budget``. Every byte
+    boundary is a candidate prefix, because the bound digest is the digest of
+    a prefix of unknown length, so the running hash is finalised once per
+    byte; that costs time, not memory.
     """
     if not isinstance(digest, str):
         return "unknown", 0
@@ -5094,20 +5128,35 @@ def _classify_amendment(data: bytes, digest: object, budget: int) -> tuple[str, 
         return "unknown", 0
     if len(target) != hashlib.sha256().digest_size:
         return "unknown", 0
-    limit = min(len(data), budget)
     running = hashlib.sha256()
-    view = memoryview(data)
     # The empty prefix is a prefix of every file, so a file bound while empty
     # and extended since is an append, not a rewrite.
     if running.digest() == target:
         return "append", 0
-    for index in range(limit):
-        running.update(view[index:index + 1])
-        if running.digest() == target:
-            return "append", index + 1
-    if limit < len(data):
-        return "unknown", limit
-    return "rewrite", limit
+    searched = 0
+    try:
+        with open(path, "rb") as stream:
+            while searched < budget:
+                chunk = stream.read(min(EVIDENCE_READ_CHUNK_BYTES, budget - searched))
+                if not chunk:
+                    # The whole file was searched and the bound digest is at no
+                    # prefix, so the bound bytes are gone.
+                    return "rewrite", searched
+                view = memoryview(chunk)
+                for index in range(len(view)):
+                    running.update(view[index:index + 1])
+                    searched += 1
+                    if running.digest() == target:
+                        return "append", searched
+            # The search budget is spent. The file is searched to the end only
+            # when it ends here; a longer file is left unclassified rather
+            # than guessed at, which is the safe direction: the gate
+            # overstates the debt instead of hiding it.
+            if stream.read(1):
+                return "unknown", searched
+            return "rewrite", searched
+    except OSError:
+        return "unknown", searched
 
 
 #: The clause's own remedy-naming convention — a corrected artifact is written
@@ -5437,7 +5486,10 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     # a name for the failure, not a different verdict — the clause treats an
     # edit and an append alike (both invalidate the bound digest and drop the
     # outcome), so the class and the drift verdict do not move. The bytes are
-    # read once, here, where the digest is compared anyway.
+    # read here, in chunks, where the digest is compared anyway; a file whose
+    # bytes differ is read a second time for the prefix search, because the
+    # search needs the bytes in order and the comparison only needs their
+    # digest.
     amendments: dict[int, str] = {}
     prefix_budget = EVIDENCE_PREFIX_SEARCH_TOTAL_BYTES
     for ts, sequence, role, evidence in loaded:
@@ -5457,15 +5509,14 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
             if resolved is not None and not resolved.exists():
                 classes.append("C")
             else:
-                data = resolved.read_bytes() if resolved is not None else None
-                current = hashlib.sha256(data).hexdigest() if data is not None else None
+                current = _file_digest(resolved) if resolved is not None else None
                 if current != digest:
                     classes.append("B")
-                    if data is None:
+                    if current is None:
                         amendments[sequence] = "unknown"
                     else:
                         kind, read = _classify_amendment(
-                            data, digest, min(EVIDENCE_PREFIX_SEARCH_BYTES, prefix_budget))
+                            resolved, digest, min(EVIDENCE_PREFIX_SEARCH_BYTES, prefix_budget))
                         amendments[sequence] = kind
                         prefix_budget = max(0, prefix_budget - read)
         except OSError:
