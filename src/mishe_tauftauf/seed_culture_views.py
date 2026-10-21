@@ -228,10 +228,17 @@ def discover(home: Path) -> str:
         observations.append(_space_light_read(home))
         unknown = 0
         drift = 0
+        settled = 0
         for item in observations:
             state, line = _observation_reading(item, freshness, home)
             if state == "drift":
                 drift += 1
+            elif state == "settled":
+                # A settled reading is checked: it reports that its history is
+                # accounted for and that nothing is owed. Counting it as
+                # unchecked would make this pane say UNKNOWN about a sample
+                # the senses pane calls a checked read.
+                settled += 1
             elif state not in {"verified", "unavailable", "available"}:
                 unknown += 1
             lines.append(line)
@@ -319,6 +326,7 @@ def senses(home: Path) -> str:
         unknown = 0
         unavailable = 0
         drift = 0
+        settled = 0
         for item in senses_rows:
             # The carried-body rows are re-read at render time, so the scan's
             # own freshness does not age them: a stale scan must not turn a
@@ -330,9 +338,14 @@ def senses(home: Path) -> str:
             # A drift row is a checked read whose own value is a drift state,
             # not a read that never happened. Counting it as unchecked made the
             # pane claim four readings needed a read while it printed those four
-            # as DRIFT on the same frame.
+            # as DRIFT on the same frame. A settled row is checked too: it
+            # reports that its history is accounted for and that nothing is
+            # owed, which is neither drift nor a clean reading, so it is
+            # counted apart rather than as unchecked.
             if state == "drift":
                 drift += 1
+            elif state == "settled":
+                settled += 1
             elif state not in {"verified", "unavailable"}:
                 unknown += 1
             unavailable += state == "unavailable"
@@ -383,9 +396,23 @@ def senses(home: Path) -> str:
             verdict = "UNKNOWN senses " + "; ".join(
                 ([f"{unknown} unverified"] if unknown else []) +
                 ([f"{drift} report drift"] if drift else []))
+        elif settled:
+            # The reads are all checked, but one of them reports an accounted
+            # history rather than a clean reading. Saying "all verified" here
+            # would claim exactly what the settled word exists not to claim.
+            verdict = f"PASS senses {len(senses_rows)} checked samples ({settled} settled)"
+            lines.append(f"STATE: GREEN — all wired sample reads checked "
+                         f"({settled} settled, not verified)")
         else:
             verdict = f"PASS senses {len(senses_rows)} verified samples"
             lines.append("STATE: GREEN — all wired sample reads verified")
+        if settled:
+            # A settled reading is checked and reports that its history is
+            # accounted for, so it is neither drift nor an unchecked read.
+            # Saying so keeps the STATE line truthful: the pane is green about
+            # the reads, and the settled history is named wherever it appears.
+            lines.append(f"SETTLED senses {settled} reading(s) report accounted "
+                         "history, not a clean reading")
         if unavailable:
             lines.append(f"UNAVAILABLE senses {unavailable} named an absent source, not a failed read")
     _report(home, "senses", verdict)

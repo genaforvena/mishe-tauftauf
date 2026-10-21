@@ -1674,3 +1674,30 @@ def test_health_keeps_a_partial_redmi_channel_stale_as_unknown(
     report = (home / "observations" / "health").read_text(encoding="utf-8")
     assert "REDMI10 MONITOR: UNKNOWN consumer-not-current" in rendered
     assert report.startswith("UNKNOWN health Redmi10 monitor consumer-not-current")
+
+
+def test_a_settled_row_is_a_checked_read_not_an_unchecked_one(
+        tmp_path: Path, current_endpoint) -> None:
+    """A settled reading is checked; it reports history, not an unchecked read.
+
+    The evidence-binding sense can read ``settled``: nothing is owed, and the
+    standing audit still holds the history. That is a checked read whose value
+    is not a clean reading, so the pane must not count it as a read that never
+    happened — and must not claim the reading is verified either.
+    """
+    without = tmp_path / "without"
+    home = tmp_path / "site"
+    _write_scan(without, [])
+    _write_scan(home, [
+        {"id": "sense.ledger.evidence-binding", "state": "settled", "kind": "read",
+         "sample": "owed=0 all_bad=211 permanent_loss=140"},
+    ])
+    baseline = senses(without)
+    rendered = senses(home)
+    assert "SETTLED sense.ledger.evidence-binding" in rendered
+    # The read is checked: the unchecked count is the one the fixture already
+    # had, so the settled row did not join the reads that never happened.
+    assert (next(line for line in rendered.splitlines() if "need a checked read" in line)
+            == next(line for line in baseline.splitlines() if "need a checked read" in line))
+    # And the pane does not claim the reading is verified.
+    assert "SETTLED senses 1 reading(s) report accounted history" in rendered
