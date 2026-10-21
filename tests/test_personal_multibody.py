@@ -822,5 +822,99 @@ class ClockBoundTests(unittest.TestCase):
             self.assertEqual(reading["clock_offset_bounds_s"], [None, None])
 
 
+class RowAgeReadingTests(unittest.TestCase):
+    """The reading publishes every delivered row's age."""
+
+    def _reading(self, root: Path, now: float) -> dict:
+        space = _space(root, [_node("redmi10", "pass", 2.0, "absent")],
+                       {"redmi10": _history(now)})
+        report = personal_multibody.build_report(space, 300.0, now)
+        return report["nodes"][0]
+
+    def test_every_window_row_carries_its_own_age(self) -> None:
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _lane(root, "redmi10",
+                  [(1, 1000, None), (2, 1005, 5000)], [(1005.05, 2)])
+            reading = self._reading(root, now)
+            ages = reading["row_ages"]
+            self.assertEqual(ages["status"], "ok")
+            window = ages["window"]
+            self.assertEqual(window["rows"], len(window["ages"]))
+            self.assertEqual(window["rows"], 24)
+            for entry in window["ages"]:
+                self.assertIsNotNone(entry["delivery_age_s"])
+                self.assertGreaterEqual(entry["delivery_age_s"], 0.0)
+                # The row's own lag is the difference between the two frames.
+                self.assertAlmostEqual(entry["sample_age_s"] - entry["delivery_age_s"],
+                                       entry["observed_s"], places=3)
+            claims = " ".join(reading["claims_supported"])
+            self.assertIn("every delivered row carries its own age", claims)
+            self.assertIn("lower bound of the observation's own age", claims)
+
+    def test_the_history_age_comes_from_the_posts_own_receipts(self) -> None:
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # One POST delivered two rows on time; another delivered the last
+            # row 500 s late.  The history's ages are the POSTs' own receipt
+            # ages, so the reading can name how old each part of the history
+            # is without re-deriving the pairing.
+            _lane(root, "redmi10",
+                  [(1, 1000, None), (2, 1005, 5000), (3, 1010, 10000)],
+                  [(1005.05, 2), (1510.1, 1)])
+            reading = self._reading(root, now)
+            history = reading["row_ages"]["history"]
+            self.assertEqual(history["status"], "ok")
+            self.assertEqual(history["rows"], 3)
+            self.assertEqual(history["posts"], 2)
+            self.assertEqual(history["unpaired_head_rows"], 0)
+            self.assertAlmostEqual(history["newest_row_delivery_age_s"],
+                                   now - 1510.1, places=3)
+            self.assertAlmostEqual(history["oldest_row_delivery_age_s"],
+                                   now - 1005.05, places=3)
+            self.assertAlmostEqual(history["oldest_row_sample_age_s"],
+                                   now - 1000, places=3)
+            self.assertEqual(history["index_posts"], 2)
+            self.assertEqual(len(history["index_tail"]), 2)
+
+    def test_the_reading_names_the_limit_of_a_rows_age(self) -> None:
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _lane(root, "redmi10",
+                  [(1, 1000, None), (2, 1005, 5000)], [(1005.05, 2)])
+            reading = self._reading(root, now)
+            limits = reading["row_ages"]["limits"]
+            self.assertIn("lower bound", limits)
+            self.assertIn("transport delay", limits)
+            self.assertIn("ahead", limits)
+
+    def test_the_reader_poll_delay_is_measured_not_assumed(self) -> None:
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # The host accepted the POST at 1005.05; the reader read the page
+            # that carried the row at 1006.0.  Both instants are host clock,
+            # and they are two different instants.
+            _lane(root, "redmi10",
+                  [(1, 1000, None), (2, 1005, 5000)], [(1005.05, 2)])
+            space = _space(root, [_node("redmi10", "pass", 2.0, "absent")],
+                           {"redmi10": [{"sequence": 2, "kind": "light",
+                                         "collected": 1005, "received": 1006.0,
+                                         "fields": {"lux": "1.0"}}]})
+            report = personal_multibody.build_report(space, 300.0, now)
+            ages = report["nodes"][0]["row_ages"]
+            entry = ages["window"]["ages"][0]
+            self.assertAlmostEqual(entry["reader_poll_delay_s"], 0.95, places=3)
+            self.assertAlmostEqual(entry["host_arrival_age_s"],
+                                   now - 1005.05, places=3)
+            self.assertAlmostEqual(entry["delivery_age_s"], now - 1006.0, places=3)
+            sources = ages["receipt_sources"]
+            self.assertIn("poll time", sources["window"])
+            self.assertIn("accepted-POST", sources["history"])
+
+
 if __name__ == "__main__":
     unittest.main()

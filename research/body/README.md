@@ -38,6 +38,50 @@ python research/body/clock_bound.py --space <site home> --node redmi10 \
 
 Its tests are `tests/test_clock_bound.py`.
 
+## Every row has its own age
+
+A consumer that wants to know whether *this* observation was live must not
+re-derive the pairing - walk backward from the live tail, because every
+receipt states how many rows its POST appended - and get it wrong the way two
+implementations do. So the instrument publishes the pairing:
+
+```bash
+python research/body/clock_bound.py --space <site home> --node redmi10 \
+    --emit-age-index <path>/age-index.jsonl
+```
+
+One JSON line per delivered POST, with the sequence range it carried, its
+receipt time, and the age of every row it carried. Because every row of one
+POST shares that POST's delivery age, the index *is* the per-row age table in
+compressed form: a consumer looks a row up by its sequence number and reads
+its age there.
+
+The reading publishes the same thing for the rows a person actually reads:
+
+- **the current window's rows**, each with its own age, its own lag, and the
+  reference instant the age was measured against;
+- **the delivered history's ends**: how old the newest delivered row is, how
+  old the oldest is, and how far back the recovered observations reach.
+
+Three ages, and the difference between them is the lane's backlog:
+
+| age | what it is |
+|---|---|
+| the delivery age | how long the host has held the row; exact on the host clock, and the **lower bound** of the observation's own age |
+| the row's own lag | `host receipt - device epoch`: the phone's clock error plus the transport delay, which the lane cannot separate |
+| the sample age | the sample's age in the phone's own clock frame; between two rows of one session the difference is the true age difference, because the same clock's offset cancels |
+
+Two receipt instants, and they are not the same instant: the **journal**
+records when the host *accepted* the POST, and the **window** records when
+the perception reader *read* the page that carried the row. The reading
+measures the gap between them for every row they share, so the reader's own
+poll delay is a measured number (0.5-1.5 s on the redmi10's live lane at
+2026-10-21) rather than an assumption.
+
+The limit that does not go away: the lane does not recover the transport
+delay, so it does not bound a row's age from above, and it does not bound how
+far the phone's clock may be ahead of the host.
+
 ## Sources
 
 | source | what it carries |
@@ -78,6 +122,11 @@ a reader can check them rather than believe them.
   from that row's own receipt. When the lane's backlog moves, no single
   session-level figure can age the session, and the reading says so instead of
   publishing one number that reads as if it applied to every row.
+- **A row's age is the age of its delivery** - the delivery age is exact on
+  the host clock and is the lower bound of the observation's own age. The
+  observation is older by that row's transport delay, which the lane does not
+  recover, and the lane does not bound how far the phone's clock may be ahead
+  of the host, so it does not bound the observation's age from above.
 - **Motion labels need gait resolution** - at 5 s per sample the 1-2 Hz gait
   band is aliased away, so no activity, motion or posture label is
   supportable however stable the magnitude is.

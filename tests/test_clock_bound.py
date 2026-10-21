@@ -506,5 +506,86 @@ class ClockBoundTests(unittest.TestCase):
             self.assertEqual(oct(path.stat().st_mode)[-3:], "600")
 
 
+class RowAgeTests(unittest.TestCase):
+    """Every delivered row's age comes from that row's own receipt."""
+
+    def _lane(self) -> tuple[list, list]:
+        rows = clock_bound.parse_rows(_rows([
+            _hello(1, 1000),
+            _light(2, 1005, 5000),
+            _light(3, 1010, 10000),
+        ]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.05, 2), (1510.1, 1)]))
+        return rows, receipts
+
+    def test_every_delivered_row_carries_its_own_age(self):
+        rows, receipts = self._lane()
+        chunks, unpaired = clock_bound.pair_chunks(rows, receipts)
+        ages = clock_bound.row_ages(chunks, 2000.0)
+        self.assertEqual(unpaired, 0)
+        self.assertEqual([age.seq for age in ages], [1, 2, 3])
+        # The last POST delivered one row 500 s late; the two rows before it
+        # were delivered together.  Each row's age is its own receipt's age.
+        self.assertAlmostEqual(ages[0].delivery_age_s, 2000.0 - 1005.05)
+        self.assertAlmostEqual(ages[1].delivery_age_s, 2000.0 - 1005.05)
+        self.assertAlmostEqual(ages[2].delivery_age_s, 2000.0 - 1510.1)
+        self.assertAlmostEqual(ages[2].observed_s, 1510.1 - 1010)
+        self.assertAlmostEqual(ages[2].sample_age_s, 2000.0 - 1010)
+
+    def test_the_delivery_age_is_the_lower_bound_of_the_observation_age(self):
+        rows, receipts = self._lane()
+        chunks, _ = clock_bound.pair_chunks(rows, receipts)
+        for age in clock_bound.row_ages(chunks, 2000.0):
+            # The observation happened no later than the delivery, so the
+            # delivery age is the lower bound of the observation's age; the
+            # row's own lag is the difference between the two frames.
+            self.assertAlmostEqual(age.sample_age_s - age.delivery_age_s,
+                                   age.observed_s)
+            self.assertGreaterEqual(age.delivery_age_s, 0.0)
+
+    def test_the_age_index_covers_the_history_without_re_deriving_the_pairing(self):
+        rows, receipts = self._lane()
+        chunks, unpaired = clock_bound.pair_chunks(rows, receipts)
+        index = clock_bound.age_index(chunks, 2000.0)
+        self.assertEqual(sum(entry["rows"] for entry in index), 3)
+        self.assertEqual((index[0]["first_seq"], index[0]["last_seq"]), (1, 2))
+        self.assertEqual((index[1]["first_seq"], index[1]["last_seq"]), (3, 3))
+        self.assertAlmostEqual(index[0]["delivery_age_s"], 2000.0 - 1005.05)
+        self.assertAlmostEqual(index[1]["delivery_age_s"], 2000.0 - 1510.1)
+        # The rows of one POST share its age, and each row's own sample clock
+        # still says when it was produced.
+        self.assertAlmostEqual(index[0]["sample_age_min_s"], 2000.0 - 1005)
+        self.assertAlmostEqual(index[0]["sample_age_max_s"], 2000.0 - 1000)
+
+    def test_the_profile_names_the_lane_s_own_ends(self):
+        rows, receipts = self._lane()
+        chunks, unpaired = clock_bound.pair_chunks(rows, receipts)
+        profile = clock_bound.age_profile(chunks, 2000.0, unpaired)
+        self.assertEqual(profile["status"], "ok")
+        self.assertEqual(profile["rows"], 3)
+        self.assertEqual(profile["posts"], 2)
+        self.assertEqual(profile["unpaired_head_rows"], unpaired)
+        self.assertAlmostEqual(profile["newest_row_delivery_age_s"], 2000.0 - 1510.1)
+        self.assertAlmostEqual(profile["oldest_row_delivery_age_s"], 2000.0 - 1005.05)
+        # The oldest sample is the one with the smallest clock reading, so it
+        # is the one that reaches furthest back.
+        self.assertAlmostEqual(profile["oldest_row_sample_age_s"], 2000.0 - 1000)
+        self.assertAlmostEqual(profile["newest_row_sample_age_s"], 2000.0 - 1010)
+        self.assertAlmostEqual(profile["history_span_s"], 10)
+
+    def test_the_index_is_written_atomically_as_one_json_line_per_post(self):
+        rows, receipts = self._lane()
+        chunks, _ = clock_bound.pair_chunks(rows, receipts)
+        index = clock_bound.age_index(chunks, 2000.0)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "artifacts" / "age-index.jsonl"
+            clock_bound.write_age_index(path, index)
+            lines = path.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(lines), 2)
+            self.assertAlmostEqual(json.loads(lines[1])["delivery_age_s"],
+                                   2000.0 - 1510.1)
+            self.assertEqual(oct(path.stat().st_mode)[-3:], "600")
+
+
 if __name__ == "__main__":
     unittest.main()

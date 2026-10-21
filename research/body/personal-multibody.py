@@ -61,6 +61,7 @@ import math
 import re
 import statistics
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -979,7 +980,167 @@ def _bound_text(bound: dict) -> str:
     return text
 
 
-def _delivered_clock_bound(body: Path, node: str, now: float) -> dict:
+def _delivered_lane(body: Path, node: str) -> dict:
+    """The delivered lane's rows, receipts and pairing, parsed once.
+
+    The lane is the whole delivered history, so it is read once per node and
+    both the clock bound and the per-row ages are derived from the same
+    parse.  The pairing is the part that is easy to get wrong: it walks
+    backward from the live tail, because every receipt states how many rows
+    its POST appended.
+
+    The journal is read *after* the queue, and the instant it was read is
+    kept: the journal is the lane's own record of what the host had received
+    by then, and the ages of the delivered rows are measured against that
+    instant rather than against an earlier one.  A lane that keeps
+    delivering while it is read would otherwise make its own freshest rows
+    look older than they are.
+    """
+    try:
+        module = _clock_bound_module()
+    except (ImportError, OSError) as error:
+        return {"status": "unavailable",
+                "reason": f"the clock-bound instrument could not be loaded: {error}"}
+    queues = body / "queues"
+    try:
+        rows_text = (queues / f"{node}.observations.log").read_text(
+            encoding="utf-8", errors="replace")
+        writes_text = (queues / "writes.jsonl").read_text(
+            encoding="utf-8", errors="replace")
+    except OSError as error:
+        return {"status": "unavailable",
+                "reason": f"the delivered lane could not be read: {error}"}
+    read_at = time.time()
+
+    rows = module.parse_rows(rows_text)
+    receipts = [receipt for receipt in module.parse_receipts(writes_text)
+                if receipt.node == node and receipt.kind == "observations"]
+    chunks, unpaired = module.pair_chunks(rows, receipts)
+    return {
+        "status": "ok",
+        "module": module,
+        "chunks": chunks,
+        "unpaired_head_rows": unpaired,
+        "read_at": read_at,
+        "read_at_utc": _iso(read_at),
+        "measurement": module.measure_chunks(chunks, unpaired),
+    }
+
+
+#: How many of the delivered POSTs the reading names.  The whole index is one
+#: line per POST of the delivered history, which is far more than a reading
+#: can carry; the newest entries are the ones that show the lane's live lag.
+AGE_INDEX_TAIL = 12
+
+#: What a row's age does and does not say.  The delivery age is exact; the
+#: observation's own age is older by that row's transport delay, which the
+#: delivered lane does not recover, and the lane does not bound the phone's
+#: clock from the ahead side, so it does not bound that age from above.
+ROW_AGE_LIMITS = (
+    "a row's delivery age is exact on the host clock and is the lower bound "
+    "of the observation's own age; the observation is older by that row's "
+    "transport delay, which the delivered lane does not recover, and the lane "
+    "does not bound how far the phone's clock may be ahead of the host, so it "
+    "does not bound the observation's age from above"
+)
+
+
+def _age_span(ages: list[dict]) -> tuple[float, float] | None:
+    """The newest and oldest delivery age in a table of row ages.
+
+    A row that was received after the reference instant carries no age, so
+    it is left out of the span rather than counted as a negative age.
+    """
+    values = [entry["delivery_age_s"] for entry in ages
+              if isinstance(entry.get("delivery_age_s"), (int, float))]
+    if not values:
+        return None
+    return min(values), max(values)
+
+
+def _delivered_row_ages(lane: dict, lane_now: float, window_rows: list[dict],
+                        window_now: float) -> dict:
+    """Every delivered row's age, from that row's own receipt.
+
+    The current window's rows carry their own host receipt, so their age is
+    exact there.  The delivered history's rows do not, so their age comes
+    from the pairing with the accepted-POST journal - published here once per
+    POST, so a consumer does not re-derive the pairing and get it wrong.
+
+    Two reference instants, one per source, because the lane keeps
+    delivering while it is read: the window's ages are measured against the
+    instant the window file was read, and the history's ages against the
+    instant the journal was read.  Both instants are published, so a reader
+    can tell how far apart they are.
+    """
+    if lane.get("status") != "ok":
+        return {"status": "unavailable", "reason": lane.get("reason")}
+    module = lane["module"]
+    ages: list[dict] = []
+    for row in window_rows:
+        if not isinstance(row, dict):
+            continue
+        collected = row.get("collected")
+        received = row.get("received")
+        if not isinstance(collected, (int, float)) or not isinstance(received, (int, float)):
+            continue
+        delivery_age = window_now - float(received)
+        entry = {
+            "sequence": row.get("sequence"),
+            "kind": row.get("kind"),
+            "sample_utc": _iso(float(collected)),
+            "receipt_utc": _iso(float(received)),
+            "observed_s": round(float(received) - float(collected), 3),
+        }
+        if delivery_age < 0:
+            # The row was received after the reference instant, so it had no
+            # age at that instant.  A negative age would read as an age, so
+            # the row carries the fact instead.
+            entry["delivery_age_s"] = None
+            entry["received_after_reference_s"] = round(-delivery_age, 3)
+        else:
+            entry["delivery_age_s"] = round(delivery_age, 3)
+            entry["sample_age_s"] = round(window_now - float(collected), 3)
+        ages.append(entry)
+    profile = module.age_profile(lane["chunks"], lane_now, lane["unpaired_head_rows"])
+    index = module.age_index(lane["chunks"], lane_now)
+    # The window's rows carry the reader's own poll time; the journal carries
+    # the host's accepted-POST time.  Both are host instants, and they are
+    # two different instants: the reader reads a page the host has already
+    # received.  Where the index carries the same row, the gap between them
+    # is measured rather than assumed.
+    for entry in ages:
+        sequence = entry.get("sequence")
+        receipt_utc = entry.get("receipt_utc")
+        if not isinstance(sequence, int) or not isinstance(receipt_utc, str):
+            continue
+        found = module.age_index_lookup(index, sequence)
+        if found is None:
+            continue
+        entry["host_arrival_epoch_s"] = found["receipt_epoch"]
+        entry["host_arrival_age_s"] = round(window_now - found["receipt_epoch"], 3)
+        entry["reader_poll_delay_s"] = round(
+            datetime.fromisoformat(receipt_utc).timestamp() - found["receipt_epoch"], 3)
+    history = dict(profile)
+    history["index_posts"] = len(index)
+    history["index_tail"] = index[-AGE_INDEX_TAIL:]
+    return {
+        "status": "ok",
+        "window": {"rows": len(ages), "ages": ages,
+                   "reference_utc": _iso(window_now)},
+        "history": history,
+        "history_reference_utc": _iso(lane_now),
+        "receipt_sources": {
+            "window": "the reader's own poll time, stamped when it read the "
+                      "page that carried the row",
+            "history": "the host's accepted-POST time, stamped when the row "
+                       "arrived at the host",
+        },
+        "limits": ROW_AGE_LIMITS,
+    }
+
+
+def _delivered_clock_bound(lane: dict, now: float) -> dict:
     """What the delivered lane can say about this body's phone clock.
 
     A delivered row carries the phone's own clock reading and the host's
@@ -1001,26 +1162,9 @@ def _delivered_clock_bound(body: Path, node: str, now: float) -> dict:
     stale timestamp is the lane being late rather than the phone's clock
     being wrong.
     """
-    try:
-        module = _clock_bound_module()
-    except (ImportError, OSError) as error:
-        return {"status": "unavailable",
-                "reason": f"the clock-bound instrument could not be loaded: {error}"}
-    queues = body / "queues"
-    try:
-        rows_text = (queues / f"{node}.observations.log").read_text(
-            encoding="utf-8", errors="replace")
-        writes_text = (queues / "writes.jsonl").read_text(
-            encoding="utf-8", errors="replace")
-    except OSError as error:
-        return {"status": "unavailable",
-                "reason": f"the delivered lane could not be read: {error}"}
-
-    rows = module.parse_rows(rows_text)
-    receipts = [receipt for receipt in module.parse_receipts(writes_text)
-                if receipt.node == node and receipt.kind == "observations"]
-    measurement = module.measure(rows, receipts)
-    sessions = measurement["session_objects"]
+    if lane.get("status") != "ok":
+        return {"status": "unavailable", "reason": lane.get("reason")}
+    sessions = lane["measurement"]["session_objects"]
     if not sessions or not sessions[-1].pairs:
         return {"status": "unavailable",
                 "reason": "the delivered lane holds no paired rows for this node"}
@@ -1113,14 +1257,26 @@ def node_reading(node: dict, body: Path, max_age: float, now: float,
         "owner_checkboxes": node.get("owner_checkboxes"),
     }
 
+    # --- current window -------------------------------------------------
+    state = _read_json(body / "perception" / f"{name}.json")
+    window_read_at = time.time()
+
     # The delivered lane bounds the phone's clock from above even where no
     # clock-domain document measures it.  The bound is one-sided: it says how
     # far the phone may be *behind* the host, never how far it may be ahead.
+    # The lane is parsed once here: the bound and the per-row ages come from
+    # the same pairing.
+    lane = _delivered_lane(body, name)
+    # The lane keeps delivering while it is read, so each source's ages are
+    # measured against the instant that source was read - never against an
+    # earlier one, which would make the freshest rows look older than they
+    # are, or even younger than the reading itself.
+    window_now = max(now, window_read_at)
+    lane_now = max(now, lane.get("read_at") or window_now)
+    reading["window_reference_utc"] = _iso(window_now)
     if clock.get("status") != "ok":
-        reading["clock_bound"] = _delivered_clock_bound(body, name, now)
+        reading["clock_bound"] = _delivered_clock_bound(lane, lane_now)
 
-    # --- current window -------------------------------------------------
-    state = _read_json(body / "perception" / f"{name}.json")
     if state is None:
         reading["current_window"] = False
         reading["clock_identifiability"] = _clock_identifiability(
@@ -1132,6 +1288,7 @@ def node_reading(node: dict, body: Path, max_age: float, now: float,
         reading["continuity"] = _continuity(body, name, threshold, clock)
         _attach_clock_anchor(reading, clock)
         reading["unknowns"].extend(_continuity_unknowns(reading["continuity"]))
+        reading["row_ages"] = _delivered_row_ages(lane, lane_now, [], window_now)
         return reading
 
     history = state.get("history")
@@ -1139,11 +1296,12 @@ def node_reading(node: dict, body: Path, max_age: float, now: float,
     span = _row_span(history)
     reading["window"] = span
     reading["cursor"] = state.get("cursor")
+    reading["row_ages"] = _delivered_row_ages(lane, lane_now, history, window_now)
 
     receipts = [row.get("received") for row in history
                 if isinstance(row.get("received"), (int, float))]
     newest = max(receipts) if receipts else None
-    age = (now - newest) if newest is not None else None
+    age = (window_now - newest) if newest is not None else None
     reading["host_receipt_age_seconds"] = round(age, 3) if age is not None else None
     current = (delivery.get("status") == "pass" and age is not None and age <= max_age)
     reading["current_window"] = current
@@ -1293,6 +1451,25 @@ def node_reading(node: dict, body: Path, max_age: float, now: float,
             if tightest is not None:
                 claim += (f"; the tightest bound the session's rows support is "
                           f"{tightest:+.3f} s, at the row that produced it")
+        claims.append(claim)
+    ages = reading.get("row_ages") or {}
+    if ages.get("status") == "ok":
+        window_ages = (ages.get("window") or {}).get("ages") or []
+        history = ages.get("history") or {}
+        claim = "every delivered row carries its own age"
+        span = _age_span(window_ages)
+        if span is not None:
+            newest, oldest = span
+            claim += (f": the current window's {len(window_ages)} rows are "
+                      f"{newest:.1f} s to {oldest:.1f} s old")
+        if history.get("rows"):
+            claim += (f", and the delivered history of {history['rows']} rows "
+                      f"reaches back {history['oldest_row_sample_age_s']:.0f} s "
+                      f"in the phone's own clock frame")
+        claim += ("; that age is the age of the delivery, and it is the lower "
+                  "bound of the observation's own age - the observation is older "
+                  "by that row's transport delay, which the lane does not "
+                  "recover")
         claims.append(claim)
     reading["claims_supported"] = claims
     return reading
@@ -1463,6 +1640,44 @@ def render(report: dict) -> str:
         lines.append(f"   current_window={node.get('current_window')} "
                      f"host_receipt_age_s={node.get('host_receipt_age_seconds')} "
                      f"cursor={node.get('cursor')}")
+        ages = node.get("row_ages") or {}
+        if ages.get("status") == "ok":
+            window_ages = (ages.get("window") or {}).get("ages") or []
+            history = ages.get("history") or {}
+            lines.append(f"   row ages: window reference="
+                         f"{(ages.get('window') or {}).get('reference_utc')} "
+                         f"history reference={ages.get('history_reference_utc')}")
+            if window_ages:
+                span = _age_span(window_ages)
+                if span is not None:
+                    newest, oldest = span
+                    lines.append(f"   row ages: window rows={len(window_ages)} "
+                                 f"delivery_age_s={newest:.3f}..{oldest:.3f}")
+                for entry in window_ages:
+                    lines.append(f"     seq={entry.get('sequence')} "
+                                 f"kind={entry.get('kind')} "
+                                 f"sample={entry.get('sample_utc')} "
+                                 f"receipt={entry.get('receipt_utc')} "
+                                 f"delivery_age_s={entry.get('delivery_age_s')} "
+                                 f"observed_s={entry.get('observed_s')} "
+                                 f"sample_age_s={entry.get('sample_age_s')} "
+                                 f"host_arrival_age_s="
+                                 f"{entry.get('host_arrival_age_s')} "
+                                 f"reader_poll_delay_s="
+                                 f"{entry.get('reader_poll_delay_s')}")
+            if history.get("rows"):
+                lines.append(f"   delivered history: rows={history.get('rows')} "
+                             f"posts={history.get('posts')} "
+                             f"unpaired_head_rows={history.get('unpaired_head_rows')} "
+                             f"newest_delivery_age_s="
+                             f"{history.get('newest_row_delivery_age_s')} "
+                             f"oldest_delivery_age_s="
+                             f"{history.get('oldest_row_delivery_age_s')} "
+                             f"oldest_sample_age_s="
+                             f"{history.get('oldest_row_sample_age_s')} "
+                             f"history_span_s={history.get('history_span_s')}")
+            if ages.get("limits"):
+                lines.append(f"     limit: {ages['limits']}")
         window = node.get("window") or {}
         lines.append(f"   window rows={window.get('rows')} "
                      f"phone_sample={window.get('phone_sample_first_utc')}..{window.get('phone_sample_last_utc')} "

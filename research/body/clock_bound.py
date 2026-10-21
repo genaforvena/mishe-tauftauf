@@ -619,8 +619,21 @@ def parse_rows(text: str) -> list[Row]:
     return rows
 
 
-def pair_rows(rows: list[Row], receipts: list[Receipt]) -> tuple[list[Pair], int]:
-    """Pair each delivered row with the receipt that delivered it.
+@dataclass(frozen=True)
+class Chunk:
+    """One POST's worth of delivered rows, with the receipt that delivered them.
+
+    Every row in a chunk was delivered by the same POST, so every row in it
+    has the same delivery age.  That is what makes the per-row age table
+    compressible: the age belongs to the POST, and the row's own sample clock
+    carries the rest.
+    """
+    receipt: Receipt
+    rows: tuple[Row, ...]
+
+
+def pair_chunks(rows: list[Row], receipts: list[Receipt]) -> tuple[list[Chunk], int]:
+    """Group the delivered rows by the POST that delivered them.
 
     The pairing walks **backward from the live tail**: every receipt states how
     many rows its POST appended, so the last receipt owns the last N rows, the
@@ -628,7 +641,7 @@ def pair_rows(rows: list[Row], receipts: list[Receipt]) -> tuple[list[Pair], int
     itself are left unpaired at the head, and their number is reported rather
     than absorbed -- a reader that silently absorbs them mis-pairs the history.
     """
-    chunks: list[tuple[Receipt, list[Row]]] = []
+    chunks: list[Chunk] = []
     index = len(rows) - 1
     for receipt in reversed(receipts):
         count = receipt.records
@@ -636,13 +649,161 @@ def pair_rows(rows: list[Row], receipts: list[Receipt]) -> tuple[list[Pair], int
             continue
         if index - count + 1 < 0:
             break
-        chunks.append((receipt, rows[index - count + 1: index + 1]))
+        chunks.append(Chunk(receipt, tuple(rows[index - count + 1: index + 1])))
         index -= count
-    pairs: list[Pair] = []
-    for receipt, chunk in reversed(chunks):
-        for row in chunk:
-            pairs.append(Pair(receipt.host_epoch, row.seq, row.device_epoch, row.body))
-    return pairs, index + 1
+    chunks.reverse()
+    return chunks, index + 1
+
+
+def pair_rows(rows: list[Row], receipts: list[Receipt]) -> tuple[list[Pair], int]:
+    """Pair each delivered row with the receipt that delivered it."""
+    chunks, unpaired = pair_chunks(rows, receipts)
+    pairs = [Pair(chunk.receipt.host_epoch, row.seq, row.device_epoch, row.body)
+             for chunk in chunks for row in chunk.rows]
+    return pairs, unpaired
+
+
+@dataclass(frozen=True, slots=True)
+class RowAge:
+    """One delivered row's age, taken from that row's own receipt.
+
+    Three different ages, and the difference between them is the lane's
+    backlog:
+
+    - ``delivery_age_s`` - how long the host has held the row.  Exact on the
+      host clock, and the lower bound of the observation's own age: the
+      sample happened no later than the delivery.
+    - ``observed_s`` - the row's own lag, ``host receipt - device epoch``:
+      the phone's clock error plus the transport delay, which the lane cannot
+      separate.
+    - ``sample_age_s`` - the sample's age in the phone's own clock frame.
+      Between two rows of one session this difference is the true age
+      difference (the same clock, so its offset cancels), and it is the
+      frame a consumer must use to compare two observations with each other.
+
+    The lane does **not** bound the observation's absolute age from above: the
+    phone's clock may be arbitrarily far ahead of the host, and that is the
+    same unresolved side as the clock bound's.
+    """
+    seq: int
+    kind: str
+    device_epoch: int
+    host_epoch: float
+    now: float
+
+    @property
+    def delivery_age_s(self) -> float:
+        """How long the host has held this row: exact on the host clock."""
+        return self.now - self.host_epoch
+
+    @property
+    def observed_s(self) -> float:
+        """The row's own lag: the phone's clock error plus the transport delay."""
+        return self.host_epoch - self.device_epoch
+
+    @property
+    def sample_age_s(self) -> float:
+        """The sample's age in the phone's own clock frame."""
+        return self.now - self.device_epoch
+
+
+def row_ages(chunks: list[Chunk], now: float) -> list[RowAge]:
+    """Every delivered row's age, from that row's own receipt.
+
+    A consumer that wants to know whether *this* observation was live must not
+    re-derive the pairing - walking backward from the live tail, because every
+    receipt states how many rows its POST appended - and get it wrong the way
+    two implementations do.  This is that pairing, published per row.
+    """
+    ages: list[RowAge] = []
+    for chunk in chunks:
+        for row in chunk.rows:
+            ages.append(RowAge(row.seq, row.kind, row.device_epoch,
+                               chunk.receipt.host_epoch, now))
+    return ages
+
+
+def age_index(chunks: list[Chunk], now: float) -> list[dict]:
+    """The per-row age table in its compressed form: one entry per POST.
+
+    Every row a POST delivered shares that POST's delivery age, so the index
+    carries the age once per POST and names the sequence range it covers.  A
+    consumer looks a row up by its sequence number and reads its age here,
+    instead of pairing the queue with the journal itself.
+    """
+    index: list[dict] = []
+    for chunk in chunks:
+        if not chunk.rows:
+            continue
+        epochs = [row.device_epoch for row in chunk.rows]
+        observed = [chunk.receipt.host_epoch - epoch for epoch in epochs]
+        index.append({
+            "receipt_epoch": chunk.receipt.host_epoch,
+            "receipt_utc": datetime.fromtimestamp(
+                chunk.receipt.host_epoch, timezone.utc).isoformat(),
+            "rows": len(chunk.rows),
+            "first_seq": min(row.seq for row in chunk.rows),
+            "last_seq": max(row.seq for row in chunk.rows),
+            "delivery_age_s": now - chunk.receipt.host_epoch,
+            "sample_age_min_s": now - max(epochs),
+            "sample_age_max_s": now - min(epochs),
+            "observed_min_s": min(observed),
+            "observed_max_s": max(observed),
+        })
+    return index
+
+
+def age_index_lookup(index: list[dict], seq: int) -> dict | None:
+    """The index entry that carried a given row, if the index carries it.
+
+    The index is in delivery order and its sequence ranges do not overlap, so
+    the entry is found by bisection rather than by a scan of the whole
+    history.  A delivery batch is written newest first, so the rows inside
+    one entry are in descending order; the entries themselves still follow the
+    sequence order, and a bisection that finds nothing falls back to a scan,
+    so a lane whose batches are not in sequence order is answered correctly
+    rather than silently not at all.
+    """
+    low, high = 0, len(index) - 1
+    while low <= high:
+        middle = (low + high) // 2
+        entry = index[middle]
+        if seq < entry["first_seq"]:
+            high = middle - 1
+        elif seq > entry["last_seq"]:
+            low = middle + 1
+        else:
+            return entry
+    for entry in index:
+        if entry["first_seq"] <= seq <= entry["last_seq"]:
+            return entry
+    return None
+
+
+def age_profile(chunks: list[Chunk], now: float, unpaired_head_rows: int = 0) -> dict:
+    """The delivered history's ages, summarised.
+
+    The two ends of the history answer two different questions: the newest
+    row's delivery age is the lane's live lag, and the oldest row's sample
+    age says how far back the recovered observations reach.
+    """
+    rows = sum(len(chunk.rows) for chunk in chunks)
+    if not chunks:
+        return {"status": "unavailable", "reason": "the lane holds no paired rows",
+                "rows": 0, "posts": 0, "unpaired_head_rows": unpaired_head_rows}
+    receipts = [chunk.receipt.host_epoch for chunk in chunks]
+    epochs = [row.device_epoch for chunk in chunks for row in chunk.rows]
+    return {
+        "status": "ok",
+        "rows": rows,
+        "posts": len(chunks),
+        "unpaired_head_rows": unpaired_head_rows,
+        "newest_row_delivery_age_s": now - max(receipts),
+        "oldest_row_delivery_age_s": now - min(receipts),
+        "newest_row_sample_age_s": now - max(epochs),
+        "oldest_row_sample_age_s": now - min(epochs),
+        "history_span_s": max(epochs) - min(epochs),
+    }
 
 
 def split_sessions(pairs: list[Pair]) -> list[Session]:
@@ -720,11 +881,22 @@ def _mark_reboots_between_sessions(sessions: list[Session]) -> None:
 
 def measure(rows: list[Row], receipts: list[Receipt]) -> dict:
     """The full delivered-lane reading for one node."""
-    pairs, unpaired = pair_rows(rows, receipts)
+    chunks, unpaired = pair_chunks(rows, receipts)
+    return measure_chunks(chunks, unpaired)
+
+
+def measure_chunks(chunks: list[Chunk], unpaired_head_rows: int) -> dict:
+    """The full delivered-lane reading, from an already-paired lane.
+
+    The pairing is the expensive part of reading a delivered history, so it is
+    done once and both the bound and the per-row ages are derived from it.
+    """
+    pairs = [Pair(chunk.receipt.host_epoch, row.seq, row.device_epoch, row.body)
+             for chunk in chunks for row in chunk.rows]
     sessions = split_sessions(pairs)
     return {
         "paired_rows": len(pairs),
-        "unpaired_head_rows": unpaired,
+        "unpaired_head_rows": unpaired_head_rows,
         "sessions": [session.summary() for session in sessions],
         "session_objects": sessions,
     }
@@ -981,6 +1153,29 @@ def write_document(path: Path, document: dict) -> None:
         raise
 
 
+def write_age_index(path: Path, index: list[dict]) -> None:
+    """Write the age index atomically, one JSON line per delivered POST.
+
+    The index is large - one line per POST of the whole delivered history -
+    so it is written as a stream rather than as one JSON document, and it is
+    written atomically for the same reason the clock-domain document is: a
+    reader must never see half of one.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, temporary = tempfile.mkstemp(dir=str(path.parent), prefix=".age-index-")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            for entry in index:
+                stream.write(json.dumps(entry, sort_keys=True))
+                stream.write("\n")
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    except BaseException:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+        raise
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--space", default="/home/mesh-home/android-body/.mishe-tauftauf",
@@ -988,6 +1183,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--node", default="redmi10")
     parser.add_argument("--emit-document", default=None,
                         help="write the clock-domain document here")
+    parser.add_argument("--emit-age-index", default=None,
+                        help="write the per-row age index here, one JSON line "
+                             "per delivered POST")
     parser.add_argument("--json", action="store_true", help="print the measurement as JSON")
     arguments = parser.parse_args(argv)
 
@@ -1019,6 +1217,15 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.emit_document:
         write_document(Path(arguments.emit_document), document)
         print(f"document written: {arguments.emit_document}")
+    if arguments.emit_age_index:
+        chunks, unpaired = pair_chunks(rows, receipts)
+        now = datetime.now(timezone.utc).timestamp()
+        index = age_index(chunks, now)
+        path = Path(arguments.emit_age_index)
+        write_age_index(path, index)
+        print(f"age index written: {arguments.emit_age_index} "
+              f"({len(index)} posts, {sum(entry['rows'] for entry in index)} rows, "
+              f"{unpaired} unpaired head rows)")
     return 0
 
 
