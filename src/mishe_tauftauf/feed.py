@@ -290,8 +290,11 @@ class Feed:
         stat = os.fstat(handle.fileno())
         return [stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
 
-    def _save_index(self, handle, index: dict) -> None:
-        index["metadata"] = self._metadata(handle)
+    def _save_index(self, handle, index: dict, metadata: list[int] | None = None) -> None:
+        # A checkpoint rebuilt outside the tape lock describes the bytes that
+        # were captured, not the file as it is now. Record that captured
+        # metadata so the checkpoint keeps describing one exact revision.
+        index["metadata"] = list(metadata) if metadata is not None else self._metadata(handle)
         payload = json.dumps(index, sort_keys=True, separators=(",", ":")).encode()
         wrapper = {"payload": index, "sha256": hashlib.sha256(payload).hexdigest()}
         fd, temporary = tempfile.mkstemp(prefix=".feed.index.", dir=self.home)
@@ -314,16 +317,19 @@ class Feed:
         index, _ = self._load_index(handle)
         return index
 
-    def _load_index(self, handle) -> tuple[dict, bool]:
-        """Return the checkpoint and whether it already described this exact file.
-
-        A reused checkpoint is the writer's own record that the tape reached its
-        current size through the canonical append that rewrote it. A rebuild means
-        the bytes changed without that record, so growth is not necessarily an
-        append and a cached read must not be extended.
-        """
+    def _assert_locked_path(self, handle) -> None:
+        """Refuse a tape whose path was replaced while the handle was open."""
         if os.stat(self.path).st_ino != os.fstat(handle.fileno()).st_ino:
             raise FeedError("feed path changed while locked")
+
+    def _read_checkpoint(self) -> dict | None:
+        """Return the on-disk checkpoint when it is well formed, else None.
+
+        None means the checkpoint is absent or was torn by an interrupted write,
+        so the canonical tape has to be parsed to rebuild it. A checkpoint that
+        is present but inconsistent is a corruption and raises, so a damaged
+        checkpoint still fails closed instead of being silently replaced.
+        """
         try:
             wrapper = json.loads(self.index_path.read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -334,27 +340,40 @@ class Feed:
             # out-of-band reader merely opened the path. The canonical tape is intact,
             # so rebuild instead of failing every read and append on that home.
             wrapper = None
-        if wrapper is not None:
-            try:
-                index = wrapper["payload"]
-                payload = json.dumps(index, sort_keys=True, separators=(",", ":")).encode()
-                if wrapper["sha256"] != hashlib.sha256(payload).hexdigest() or index["version"] != 1:
-                    raise ValueError("checksum or version mismatch")
-                if not isinstance(index["sequence"], int) or not isinstance(index["tail_offset"], int):
-                    raise ValueError("invalid cursor")
-                checkpoints = index["checkpoints"]
-                if (not isinstance(checkpoints, list) or
-                    checkpoints != [[seq, offset] for seq, offset in checkpoints] or
-                    (index["sequence"] == 0) != (len(checkpoints) == 0) or
-                    (checkpoints and checkpoints[0] != [1, 0]) or
-                    any(seq != 1 + pos * INDEX_STRIDE or not isinstance(offset, int) or offset < 0
-                        for pos, (seq, offset) in enumerate(checkpoints)) or
-                    index["tail_offset"] < 0 or index["tail_offset"] > index["metadata"][1]):
-                    raise ValueError("invalid checkpoints")
-                if index["metadata"] == self._metadata(handle):
-                    return index, True
-            except (KeyError, TypeError, ValueError) as exc:
-                raise FeedError(f"corrupt feed index: {exc}") from exc
+        if wrapper is None:
+            return None
+        try:
+            index = wrapper["payload"]
+            payload = json.dumps(index, sort_keys=True, separators=(",", ":")).encode()
+            if wrapper["sha256"] != hashlib.sha256(payload).hexdigest() or index["version"] != 1:
+                raise ValueError("checksum or version mismatch")
+            if not isinstance(index["sequence"], int) or not isinstance(index["tail_offset"], int):
+                raise ValueError("invalid cursor")
+            checkpoints = index["checkpoints"]
+            if (not isinstance(checkpoints, list) or
+                checkpoints != [[seq, offset] for seq, offset in checkpoints] or
+                (index["sequence"] == 0) != (len(checkpoints) == 0) or
+                (checkpoints and checkpoints[0] != [1, 0]) or
+                any(seq != 1 + pos * INDEX_STRIDE or not isinstance(offset, int) or offset < 0
+                    for pos, (seq, offset) in enumerate(checkpoints)) or
+                index["tail_offset"] < 0 or index["tail_offset"] > index["metadata"][1]):
+                raise ValueError("invalid checkpoints")
+            return index
+        except (KeyError, TypeError, ValueError) as exc:
+            raise FeedError(f"corrupt feed index: {exc}") from exc
+
+    def _load_index(self, handle) -> tuple[dict, bool]:
+        """Return the checkpoint and whether it already described this exact file.
+
+        A reused checkpoint is the writer's own record that the tape reached its
+        current size through the canonical append that rewrote it. A rebuild means
+        the bytes changed without that record, so growth is not necessarily an
+        append and a cached read must not be extended.
+        """
+        index = self._read_checkpoint()
+        self._assert_locked_path(handle)
+        if index is not None and index["metadata"] == self._metadata(handle):
+            return index, True
         handle.seek(0)
         data = handle.read()
         entries = parse_feed(data)
@@ -367,6 +386,31 @@ class Feed:
         self._save_index(handle, index)
         return index, False
 
+    def _publish_checkpoint(self, index: dict, metadata: list[int]) -> None:
+        """Record a rebuilt checkpoint without regressing a newer revision.
+
+        The rebuild happens outside the tape lock, so the file may have grown
+        since the bytes were captured, or the path may have been replaced. Save
+        under the exclusive lock, and only when the checkpoint on disk does not
+        already describe a later revision and the file is still the exact
+        revision whose bytes were parsed. A corrupt checkpoint raises instead
+        of being silently replaced: it fails closed, as a reader that held the
+        shared lock across its own checkpoint save did.
+        """
+        with self.path.open("rb") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            current = self._read_checkpoint()
+            if current is not None:
+                described = current["metadata"]
+                if described[0] != metadata[0] or described[1] > metadata[1]:
+                    return
+            if self._metadata(handle) != list(metadata):
+                # The tape grew or was replaced while the reader parsed: the
+                # rebuilt index describes bytes that are no longer the whole
+                # file, so it must not be published as this file's checkpoint.
+                return
+            self._save_index(handle, index, metadata)
+
     @staticmethod
     def _verify_records(entries, sink: dict | None = None) -> None:
         from .records import payload
@@ -376,7 +420,7 @@ class Feed:
                 if sink is not None:
                     sink[entry.sequence] = data
 
-    def _extend_entries(self, handle, cached, metadata) -> list[FeedEntry] | None:
+    def _extend_entries(self, cached, data: bytes, metadata) -> list[FeedEntry] | None:
         """Continue a cached full read with the frames appended since it was taken.
 
         A live pane re-reads the whole tape every tick, so replaying the entire
@@ -384,21 +428,59 @@ class Feed:
         the feed lock, so reading only the new suffix keeps that cost proportional
         to what changed. Return None unless the suffix is a contiguous continuation
         of the cached revision, so a rewrite or truncation is never read as an
-        append and the caller falls back to a full parse.
+        append and the caller falls back to a full parse. The suffix bytes are
+        captured under the tape lock and parsed after it is released.
         """
         previous, entries = cached
         if not entries or previous[0] != metadata[0] or previous[1] >= metadata[1]:
             return None
-        handle.seek(previous[1])
         try:
-            parsed = parse_feed(handle.read(metadata[1] - previous[1]),
-                                start_sequence=entries[-1].sequence + 1, home=self.home)
+            parsed = parse_feed(data, start_sequence=entries[-1].sequence + 1, home=self.home)
         except FeedError:
             return None
         if not parsed or parsed[0].sequence != entries[-1].sequence + 1:
             return None
         self._verify_records(parsed)
         return entries + parsed
+
+    def _capture(self, handle, start: int, limit: int | None, allow_extend: bool = True):
+        """Capture the bytes a reader will parse, under the tape's shared lock.
+
+        The tape is append-only and the writer's exclusive lock excludes every
+        reader, so the captured bytes are a consistent revision of the tape. The
+        shared lock covers this capture only: parsing, verification and a
+        checkpoint rebuild happen after it is released, so a cold full-tape read
+        no longer holds the writer off for the length of a parse.
+
+        Returns (mode, data, span). The modes are "extend" (only the appended
+        suffix changed since a cached revision), "range" (the byte range the
+        checkpoint names) and "rebuild" (the checkpoint cannot describe the file,
+        so the whole tape was captured).
+        """
+        self._assert_locked_path(handle)
+        checkpoint = self._read_checkpoint()
+        metadata = tuple(self._metadata(handle))
+        if checkpoint is None or tuple(checkpoint["metadata"]) != metadata:
+            handle.seek(0)
+            return ("rebuild", handle.read(), (1, None))
+        index = checkpoint
+        if start > index["sequence"]:
+            return ("empty", b"", (1, index["sequence"]))
+        cached = None
+        if start == 1 and limit is None:
+            with _ENTRIES_CACHE_LOCK:
+                cached = _ENTRIES_CACHE.get(str(self.path))
+            if cached is not None and tuple(cached[0]) == metadata:
+                return ("cached", b"", cached)
+        if allow_extend and cached is not None and cached[0][0] == metadata[0] and cached[0][1] < metadata[1]:
+            handle.seek(cached[0][1])
+            return ("extend", handle.read(metadata[1] - cached[0][1]), cached)
+        checkpoints = index["checkpoints"]
+        first_seq, first_offset = max((seq, offset) for seq, offset in checkpoints if seq <= start)
+        target = index["sequence"] if limit is None else min(index["sequence"], start + limit - 1)
+        end_offset = next((offset for seq, offset in checkpoints if seq > target), metadata[1])
+        handle.seek(first_offset)
+        return ("range", handle.read(end_offset - first_offset), (first_seq, target))
 
     def entries(self, *, start: int = 1, limit: int | None = None,
                 payloads: dict | None = None) -> list[FeedEntry]:
@@ -410,34 +492,45 @@ class Feed:
             return []
         if limit == 0:
             return []
-        with self.path.open("rb") as handle:
-            # A shared lock keeps concurrent readers concurrent; the writer's
-            # LOCK_EX still excludes every reader. Index rebuilds use an atomic
-            # replace, so racing readers waste a rebuild but cannot corrupt.
-            fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
-            index, checkpoint_reused = self._load_index(handle)
-            if start > index["sequence"]:
+        allow_extend = True
+        while True:
+            with self.path.open("rb") as handle:
+                # A shared lock keeps concurrent readers concurrent; the writer's
+                # LOCK_EX still excludes every reader. The lock is held only for
+                # the capture: parsing and verification follow after it is
+                # released, so a cold full-tape read does not starve the writer.
+                fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
+                mode, data, span = self._capture(handle, start, limit, allow_extend)
+                metadata = tuple(self._metadata(handle))
+            if mode == "cached":
+                return list(span[1])
+            if mode == "empty":
                 return []
-            metadata = tuple(index["metadata"])
-            if start == 1 and limit is None:
-                with _ENTRIES_CACHE_LOCK:
-                    cached = _ENTRIES_CACHE.get(str(self.path))
-                if cached is not None:
-                    if cached[0] == metadata:
-                        return list(cached[1])
-                    if checkpoint_reused:
-                        extended = self._extend_entries(handle, cached, metadata)
-                        if extended is not None:
-                            with _ENTRIES_CACHE_LOCK:
-                                _ENTRIES_CACHE[str(self.path)] = (metadata, extended)
-                            return list(extended)
-            checkpoints = index["checkpoints"]
-            first_seq, first_offset = max((seq, offset) for seq, offset in checkpoints if seq <= start)
-            target = index["sequence"] if limit is None else min(index["sequence"], start + limit - 1)
-            end_offset = next((offset for seq, offset in checkpoints if seq > target), index["metadata"][1])
-            handle.seek(first_offset)
-            selected = parse_feed(handle.read(end_offset - first_offset), start_sequence=first_seq, home=self.home)
-            result = [entry for entry in selected if start <= entry.sequence <= target]
+            if mode == "extend":
+                extended = self._extend_entries(span, data, metadata)
+                if extended is not None:
+                    with _ENTRIES_CACHE_LOCK:
+                        _ENTRIES_CACHE[str(self.path)] = (metadata, extended)
+                    return list(extended)
+                # The suffix was not a contiguous continuation of the cached
+                # revision. Read the whole revision instead of splicing it.
+                allow_extend = False
+                continue
+            if mode == "rebuild":
+                entries = parse_feed(data, home=self.home)
+                offsets = [match.start() for match in FRAME_START_RE.finditer(data)]
+                if len(offsets) != len(entries):
+                    raise FeedError("feed frame index disagrees with canonical parser")
+                index = {"version": 1, "sequence": len(entries),
+                         "tail_offset": offsets[-1] if offsets else 0,
+                         "checkpoints": [[entry.sequence, offsets[n]] for n, entry in enumerate(entries) if n % INDEX_STRIDE == 0]}
+                self._publish_checkpoint(index, list(metadata))
+                target = index["sequence"] if limit is None else min(index["sequence"], start + limit - 1)
+                result = [entry for entry in entries if start <= entry.sequence <= target]
+            else:
+                first_seq, target = span
+                selected = parse_feed(data, start_sequence=first_seq, home=self.home)
+                result = [entry for entry in selected if start <= entry.sequence <= target]
             # Fill the sink only on a full verify pass; a cache hit leaves it
             # empty so the caller's projection falls back to per-entry
             # resolution, exactly as before.
@@ -455,13 +548,34 @@ class Feed:
             return 0
         with self.path.open("rb") as handle:
             fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
-            index = self._index(handle)
-            if index["sequence"]:
-                handle.seek(index["tail_offset"])
-                tail = parse_feed(handle.read(), start_sequence=index["sequence"])
-                if len(tail) != 1:
-                    raise FeedError("feed tail disagrees with checkpoint")
+            self._assert_locked_path(handle)
+            checkpoint = self._read_checkpoint()
+            metadata = tuple(self._metadata(handle))
+            if checkpoint is None or tuple(checkpoint["metadata"]) != metadata:
+                handle.seek(0)
+                data = handle.read()
+                index = None
+            else:
+                index = checkpoint
+                data = b""
+                if index["sequence"]:
+                    handle.seek(index["tail_offset"])
+                    data = handle.read()
+        if index is None:
+            entries = parse_feed(data, home=self.home)
+            offsets = [match.start() for match in FRAME_START_RE.finditer(data)]
+            if len(offsets) != len(entries):
+                raise FeedError("feed frame index disagrees with canonical parser")
+            index = {"version": 1, "sequence": len(entries),
+                     "tail_offset": offsets[-1] if offsets else 0,
+                     "checkpoints": [[entry.sequence, offsets[n]] for n, entry in enumerate(entries) if n % INDEX_STRIDE == 0]}
+            self._publish_checkpoint(index, list(metadata))
             return index["sequence"]
+        if index["sequence"]:
+            tail = parse_feed(data, start_sequence=index["sequence"])
+            if len(tail) != 1:
+                raise FeedError("feed tail disagrees with checkpoint")
+        return index["sequence"]
 
     def append(self, source: str, body: str, **kwargs) -> FeedEntry:
         from .observations import validate_home
