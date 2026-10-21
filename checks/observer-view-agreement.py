@@ -32,6 +32,12 @@ does not make the block carry it. When such a quote is the only place the text
 appears, the check says so, so a reader cannot mistake a quotation for a
 reading.
 
+The frame is a sequence of segments, and the block ends where the next one
+starts. The plant's own check report (``SYSTEM ZERO`` and the role's
+observations file) follows the block; it is the plant's observation, not a
+projection of the reviewed tree, so it is named as outside the block instead of
+being compared as one of its lines.
+
 ``checks/observer-source-identity.py`` answers why the running bytes have no
 commit identity; this check answers what the difference costs.
 
@@ -56,6 +62,18 @@ from pathlib import Path
 
 PACKAGE = "mishe_tauftauf"
 SECTION = "MIND WALL — shared follow-through evidence"
+
+# The published frame's segments.  The evidence block ends where the next
+# segment starts: the plant's own check report is headed ``SYSTEM ZERO`` and a
+# renderer failure is headed ``RENDERER: RED``; neither is part of the block
+# the reviewed tree publishes.  Measured on 2026-10-21: a reader that stopped
+# the block at the next ``MIND WALL`` heading swallowed the check report, so
+# the plant's live observation read as a projection the reviewed tree does not
+# publish, and the check was permanently RED on the four roles that publish
+# one.
+REPORT_HEADING = "SYSTEM ZERO"
+FAILURE_PREFIX = "RENDERER: RED"
+
 ROLE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 PYTHONPATH_RE = re.compile(r"PYTHONPATH=['\"]?([^'\"\s:]+)")
 
@@ -174,12 +192,22 @@ def published_section(home: Path, slug: str) -> tuple:
         if line.startswith("MIND WALL —"):
             end = index
             break
+        if line.strip() == REPORT_HEADING or line.startswith(FAILURE_PREFIX):
+            end = index
+            break
         if line.strip():
             body.append(line)
     if not body:
         raise Undecidable("the published evidence block is empty")
+    after = []
+    for index in range(end, len(lines)):
+        line = lines[index]
+        if line.startswith("MIND WALL —"):
+            break
+        if line.strip():
+            after.append(line)
     outside = lines[:start - 1] + lines[end:]
-    return body, outside, record.get("created")
+    return body, outside, after, record.get("created")
 
 
 def export_head(repo: Path, workdir: Path) -> Path:
@@ -256,7 +284,7 @@ def main() -> int:
     try:
         reference = (args.reference_src.resolve() if args.reference_src
                      else export_head(repo, workdir))
-        published, outside, created = published_section(home, args.slug)
+        published, outside, after, created = published_section(home, args.slug)
         expected = read_lines(reference, home, workdir)
     except Undecidable as exc:
         print("UNKNOWN — " + str(exc))
@@ -274,6 +302,11 @@ def main() -> int:
     print("reference  :", reference)
     print("renderer   :", renderer_root(home, args.slug))
     print("projections: published=%d reference=%d" % (len(shown), len(wanted)))
+    if after:
+        print("published  : OUTSIDE — %d line(s) the plant publishes after the evidence "
+              "block (the plant's own check report), not part of the block:" % len(after))
+        for line in after[:10]:
+            print("    outside :", line[:200])
     if missing:
         print("published  : MISSING — the plant does not print %d projection(s) "
               "the reviewed tree publishes" % len(missing))
