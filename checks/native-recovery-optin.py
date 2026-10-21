@@ -72,15 +72,20 @@ How it reads, and what it therefore claims:
   rule, so the check asks the consumer's bytes before it judges one.
 - The consumer's rule about the attempt is read, not assumed. The conversion is
   found wherever the consumer writes it — including a read of the environment
-  with a subscript and a read into a name that is converted afterwards — and
-  the check then asks two more questions of the same bytes: whether the
-  consumer survives a failed conversion, and whether the conversion sits on a
-  path the module takes. A conversion the consumer survives is not a defect; a
-  conversion on a path the module never takes is not a decision the check can
-  make; a value the check cannot trace back to the attempt is not the attempt.
-  One limit is named: a value the consumer receives as an argument is not
-  traced, so a consumer that converts a passed-in attempt reads UNKNOWN rather
-  than an agreement.
+  with a subscript, a read into a name that is converted afterwards, and a
+  read that is passed to a function of the consumer's own that converts it
+  there — and the check then asks two more questions of the same bytes:
+  whether the consumer survives a failed conversion, and whether the
+  conversion sits on a path the module takes. A conversion the consumer
+  survives is not a defect; a conversion on a path the module never takes is
+  not a decision the check can make; a value the check cannot trace back to
+  the attempt is not the attempt. One limit is named: a flow the consumer's
+  own bytes do not settle — a call that passes the attempt on a path the
+  module does not take, a name the module binds in more than one place — is
+  read UNKNOWN, so a consumer that converts a passed-in attempt reads either
+  the conversion the trace establishes or UNKNOWN, never an agreement. One
+  further limit is named: these are the consumer's own bytes, so a conversion
+  inside a function the consumer imports is outside what this check reads.
 
 Exit status:
   0  every role's opt-in names the wake the plant will deliver
@@ -691,6 +696,176 @@ def _binding_kind(name: str, tree: ast.Module, parents: dict, node, cache: dict)
     return bindings.get(name)
 
 
+def _functions(tree: ast.Module) -> dict:
+    """The functions the module defines, by name.
+
+    A name with more than one definition cannot be traced: the call site does
+    not say which definition it reaches, so a flow through it is unknown.
+    """
+    functions: dict = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            functions.setdefault(node.name, []).append(node)
+    return functions
+
+
+def _parameter_position(function_node, name: str) -> tuple:
+    """Where a parameter sits in a function's signature: (index, keyword, name)."""
+    arguments = function_node.args
+    positional = list(getattr(arguments, "posonlyargs", [])) + list(arguments.args)
+    for index, argument in enumerate(positional):
+        if argument.arg == name:
+            return (index, None, argument.arg)
+    for argument in arguments.kwonlyargs:
+        if argument.arg == name:
+            return (None, argument.arg, argument.arg)
+    return (None, None, None)
+
+
+def _direct_statement(node, parents: dict) -> bool:
+    """Whether a node sits in a statement its scope takes unconditionally.
+
+    A statement nested in a branch is taken on one path only, so a value that
+    reaches the conversion on that path may never reach it.
+    """
+    current = node
+    while current in parents:
+        if isinstance(current, ast.stmt):
+            parent = parents[current]
+            if isinstance(parent, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef,
+                                   ast.ClassDef)):
+                return current in getattr(parent, "body", [])
+            return False
+        current = parents[current]
+    return False
+
+
+def _scope_is_taken(node, parents: dict, called: set) -> bool:
+    """Whether the module ever takes the scope a node sits in."""
+    for scope in _scope_chain(node, parents):
+        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return scope.name in called
+    return True
+
+
+def _visible_binding(name: str, node, tree: ast.Module, parents: dict, cache: dict) -> tuple:
+    """The expression the innermost visible scope binds a name to.
+
+    The second element says whether the name is bound more than once, which
+    makes the value it holds undecidable here.
+    """
+    for scope in _scope_chain(node, parents):
+        key = ("bindings", id(scope))
+        expressions = cache.get(key)
+        if expressions is None:
+            expressions = {}
+            for statement in _scope_nodes(scope):
+                for target, value in _assignments(statement):
+                    if value is not None:
+                        expressions.setdefault(target.id, []).append(value)
+            cache[key] = expressions
+        if name in expressions:
+            values = expressions[name]
+            if len(values) > 1:
+                return (None, True)
+            return (values[0], False)
+    return (None, False)
+
+
+def _argument_kind(expression, tree: ast.Module, parents: dict, node, called: set,
+                   cache: dict) -> str:
+    """How a value passed at a call site reads the attempt."""
+    if _environment_read(expression, RECOVERY_ATTEMPT):
+        if not _direct_statement(node, parents) or not _scope_is_taken(node, parents, called):
+            return "maybe"
+        return "env"
+    if isinstance(expression, ast.Name):
+        kind = _binding_kind(expression.id, tree, parents, node, cache)
+        return {"env": "env", "env?": "maybe"}.get(kind, "other")
+    return "other"
+
+
+def _attempt_reaches(scope, index, keyword, parameter, tree: ast.Module, parents: dict,
+                     functions: dict, called: set, cache: dict) -> str:
+    """Whether the module passes the attempt into the parameter a conversion reads."""
+    definitions = functions.get(scope.name) or []
+    if len(definitions) > 1:
+        return "maybe"
+    best = "other"
+    for call in ast.walk(tree):
+        if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                and call.func.id == scope.name):
+            continue
+        expression = None
+        if keyword is not None:
+            for entry in call.keywords:
+                if entry.arg == keyword:
+                    expression = entry.value
+        else:
+            if any(isinstance(entry, ast.Starred) for entry in call.args):
+                return "maybe"
+            if index is not None and index < len(call.args):
+                expression = call.args[index]
+            else:
+                # A parameter may also be passed by name.
+                for entry in call.keywords:
+                    if entry.arg is not None and entry.arg == parameter:
+                        expression = entry.value
+        if expression is None:
+            continue
+        kind = _argument_kind(expression, tree, parents, call, called, cache)
+        if kind == "env":
+            return "env"
+        if kind == "maybe":
+            best = "maybe"
+    return best
+
+
+def _parameter_source(name: str, node, tree: ast.Module, parents: dict, functions: dict,
+                      called: set, cache: dict, depth: int = 0) -> str:
+    """How the attempt reaches a conversion of a parameter, from the module's calls."""
+    if depth > 3:
+        return "other"
+    scope = None
+    for candidate in _scope_chain(node, parents):
+        if isinstance(candidate, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            scope = candidate
+            break
+    if scope is None:
+        return "other"
+    index, keyword, parameter = _parameter_position(scope, name)
+    if index is None and keyword is None:
+        expression, ambiguous = _visible_binding(name, node, tree, parents, cache)
+        if ambiguous:
+            return "maybe"
+        if isinstance(expression, ast.Name):
+            return _parameter_source(expression.id, node, tree, parents, functions, called,
+                                     cache, depth + 1)
+        return "other"
+    reached = _attempt_reaches(scope, index, keyword, parameter, tree, parents, functions,
+                               called, cache)
+    if reached == "other" and scope.name not in called:
+        # The module never calls the function the conversion sits in, so the
+        # module's run does not take that path.
+        return "unreached"
+    return reached
+
+
+def _conversion_source(argument, node, tree: ast.Module, parents: dict, functions: dict,
+                       called: set, cache: dict) -> str:
+    """How the value a conversion reads reaches the attempt."""
+    if _environment_read(argument, RECOVERY_ATTEMPT):
+        return "env"
+    if not isinstance(argument, ast.Name):
+        return "other"
+    kind = _binding_kind(argument.id, tree, parents, node, cache)
+    if kind == "env":
+        return "env"
+    if kind == "env?":
+        return "maybe"
+    return _parameter_source(argument.id, node, tree, parents, functions, called, cache)
+
+
 def _handler_catches(handler) -> bool:
     """Whether the handler catches the error a failed conversion raises."""
     kind = handler.type
@@ -768,8 +943,9 @@ def attempt_rule(tree: ast.Module) -> dict:
     because each of them can turn a finding into no finding:
 
     * the conversion is found wherever it is written, including the form that
-      reads the environment with a subscript and the form that reads it into a
-      name first and converts the name afterwards;
+      reads the environment with a subscript, the form that reads it into a
+      name first and converts the name afterwards, and the form that passes it
+      to a function of the module that converts it there;
     * the guard around the conversion is read, so a conversion the consumer
       survives is not a defect;
     * the path the conversion sits on is read, so a conversion on a path the
@@ -781,9 +957,23 @@ def attempt_rule(tree: ast.Module) -> dict:
     never calls, so the module's run does not take that path), ``untraced``
     (the value the conversion reads cannot be traced back to the attempt) and
     ``none`` (the consumer does not convert the attempt).
+
+    The attempt is traced through the module's own call sites, so a consumer
+    that reads the attempt, passes it to a function of its own and converts it
+    there reads as a consumer that converts it. A flow the bytes do not
+    settle — a call that passes the attempt on a path the module does not
+    take, a name the module binds in more than one place, a name that several
+    definitions share — reads ``untraced``: an unknown reading a reader can
+    route, never an agreement.
+
+    One limit is named: these are the module's own bytes. A conversion inside
+    a function the module imports is outside them, so a consumer that passes
+    the attempt to such a function reads ``none`` — the module does not
+    convert the attempt itself.
     """
     parents = _parents(tree)
     called = _called_names(tree)
+    functions = _functions(tree)
     cache: dict = {}
     states = []
     for node in ast.walk(tree):
@@ -791,13 +981,7 @@ def attempt_rule(tree: ast.Module) -> dict:
                 and node.func.id == "int" and node.args):
             continue
         argument = node.args[0]
-        if _environment_read(argument, RECOVERY_ATTEMPT):
-            source = "env"
-        elif isinstance(argument, ast.Name):
-            kind = _binding_kind(argument.id, tree, parents, node, cache)
-            source = {"env": "env", "env?": "maybe"}.get(kind, "other")
-        else:
-            source = "other"
+        source = _conversion_source(argument, node, tree, parents, functions, called, cache)
         if source == "other":
             continue
         if _is_guarded(node, parents):
@@ -805,7 +989,7 @@ def attempt_rule(tree: ast.Module) -> dict:
         elif source == "maybe":
             states.append(("untraced", node.lineno,
                            "the value the conversion reads cannot be traced back to the attempt"))
-        elif not _is_reached(node, parents, called):
+        elif source == "unreached" or not _is_reached(node, parents, called):
             states.append(("unreached", node.lineno,
                            "the conversion sits in a function the module never calls"))
         else:

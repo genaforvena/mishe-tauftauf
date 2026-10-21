@@ -735,6 +735,147 @@ def never_called():
     assert "Traceback" not in result.stdout + result.stderr
 
 
+def test_an_attempt_passed_into_a_function_and_converted_there_reads_a_mismatch(tmp_path):
+    """The consumer passes the attempt to its own function and converts it there."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    source = '''"""A consumer that converts the attempt in a function of its own."""
+import os
+
+
+def worker(attempt):
+    return int(attempt)
+
+
+def run_wake(wake):
+    return worker(os.environ.get("MISHE_NATIVE_RECOVERY_ATTEMPT", "1"))
+
+
+run_wake(1)
+'''
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number, attempt="one", runner=runner_line(home, source)),
+        encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 2, result.stdout
+    assert "int()" in result.stdout
+    assert "Traceback" not in result.stdout + result.stderr
+
+
+def test_an_attempt_passed_on_a_path_the_module_does_not_take_reads_unknown(tmp_path):
+    """A call on a path the module may not take is a flow the check cannot trace."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    source = '''"""A consumer that passes the attempt on one path only."""
+import os
+
+
+def worker(attempt):
+    return int(attempt)
+
+
+def run_wake(wake):
+    if True:
+        return worker(os.environ.get("MISHE_NATIVE_RECOVERY_ATTEMPT", "1"))
+    return 1
+
+
+run_wake(1)
+'''
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number, attempt="one", runner=runner_line(home, source)),
+        encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 3, result.stdout
+    assert "MISMATCH" not in result.stdout
+    assert "cannot be traced back to the attempt" in result.stdout
+    assert "Traceback" not in result.stdout + result.stderr
+
+
+def test_a_conversion_the_callee_survives_is_not_a_mismatch(tmp_path):
+    """A callee that catches the error can read a text attempt; that is not a defect."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    source = '''"""A consumer whose callee survives a failed conversion."""
+import os
+
+
+def worker(attempt):
+    try:
+        return int(attempt)
+    except ValueError:
+        return 1
+
+
+def run_wake(wake):
+    return worker(os.environ.get("MISHE_NATIVE_RECOVERY_ATTEMPT", "1"))
+
+
+run_wake(1)
+'''
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number, attempt="one", runner=runner_line(home, source)),
+        encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 0, result.stdout
+    assert "MISMATCH" not in result.stdout
+    assert "survives the failure" in result.stdout
+
+
+def test_a_conversion_in_a_callee_the_module_never_calls_is_not_a_mismatch(tmp_path):
+    """A callee the module never calls is not a path the module takes."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    source = '''"""A consumer whose callee is never called."""
+import os
+
+
+def worker(attempt):
+    return int(attempt)
+
+
+def run_wake(wake):
+    return 1
+
+
+run_wake(1)
+'''
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number, attempt="one", runner=runner_line(home, source)),
+        encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 0, result.stdout
+    assert "MISMATCH" not in result.stdout
+    assert "a function the module never calls" in result.stdout
+
+
+def test_an_attempt_passed_to_a_parameter_the_conversion_does_not_read_is_not_a_mismatch(tmp_path):
+    """The attempt reaches the call, but not the value the conversion reads."""
+    home = make_home(tmp_path)
+    number = wake(home)
+    source = '''"""A consumer that converts a value the attempt does not reach."""
+import os
+
+
+def worker(first, second):
+    return int(second)
+
+
+def run_wake(wake):
+    return worker(os.environ.get("MISHE_NATIVE_RECOVERY_ATTEMPT", "1"), 2)
+
+
+run_wake(1)
+'''
+    (home / "minds" / ROLE).write_text(
+        launcher_text(number, attempt="one", runner=runner_line(home, source)),
+        encoding="utf-8")
+    result = run_check(home)
+    assert result.returncode == 0, result.stdout
+    assert "MISMATCH" not in result.stdout
+    assert "Traceback" not in result.stdout + result.stderr
+
+
 def test_a_consumer_that_compares_with_a_subscript_read_is_cited(tmp_path):
     """The opt-in read with a subscript is the same comparison, and it is cited."""
     home = make_home(tmp_path)
