@@ -24,6 +24,7 @@
     "src/mishe_tauftauf/session_restarts.py",
     "src/mishe_tauftauf/session_runner.py",
     "src/mishe_tauftauf/session_watch.py",
+    "src/mishe_tauftauf/site_uninstall.py",
     "src/mishe_tauftauf/substrate_watch.py",
     "src/mishe_tauftauf/unit_properties.py",
     "src/mishe_tauftauf/wall_text.py",

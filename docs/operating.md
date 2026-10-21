@@ -10,6 +10,7 @@ Jump to: [find your site](#find-the-site-you-mean) ·
 [replant](#repeat-a-plant-without-erasing-local-work) ·
 [CI and releases](#understand-ci-and-linked-releases) ·
 [permissions](#decide-a-scoped-permission) ·
+[uninstall](#uninstall-one-site-without-a-resident) ·
 [local state](#keep-local-state-out-of-shared-source).
 
 ## Find the site you mean
@@ -777,6 +778,57 @@ Keep these boundaries when inspecting or landing work:
 - A reusable lesson becomes shared behavior through a deliberate source change, verification, independent review, and scoped landing.
 - Commit scoped work to the single `main` branch; there are no publication or candidate branches. Genome pushes `main` and checks the pushed commit's CI; authors verify rollout and deployed consumers. Delivery remains incomplete until live verification succeeds; CI repairs also need the successful replacement run.
 - Preserve the append-only tape and handoff trail during diagnosis. They explain what happened and which action remains owed.
+
+## Uninstall one site without a resident
+
+`seed stop` stops panes only; persistent services can raise them again. The
+model-independent `seed uninstall` command disables and stops owned user
+services, timers and socket units, removes their installed links/fragments and
+drop-ins, unregisters the selected site from known linked-site registries,
+terminates attributed processes, and removes copied credentials at
+`SITE/pub/access` and `SITE/operator/telegram/env`. It never calls a model.
+Run from the source checkout or another directory **outside** the selected site.
+Use the actual absolute site and session discovered above:
+
+```bash
+python3 -m mishe_tauftauf --home "$SITE" seed uninstall --session "$SESSION" --purge-site
+```
+
+That is a read-only preview. Inspect its exact target, units, files, processes,
+sessions and registries. To remove the selected plant and **all** its local
+state, including logs, runtime copies, access copies and the site directory:
+
+```bash
+python3 -m mishe_tauftauf --home "$SITE" seed uninstall --session "$SESSION" \
+  --execute --confirm-home "$SITE" --purge-site
+```
+
+Omit `--purge-site` to uninstall activation/runtime consumers and copied
+credentials while retaining local history and the uninstall journal; that mode
+is deliberately **not** “left nothing.” Source repositories, other sites,
+original user credentials outside the site, provider accounts and published
+remote articles are not deleted in either mode. Deletion is not secure media
+erasure and cannot revoke a credential already copied elsewhere.
+
+Uninstall requires an ignored, untracked direct child of its Git worktree,
+matching plant/session ownership evidence and a reachable user systemd manager.
+It refuses malformed manifests, foreign units, ambiguous sessions, mounts,
+unsupported system-wide installs/drop-in locations, and another site's
+dependency on the selected site's releases. A transient session keeper that
+hosts another site's shared tmux server is also refused: first migrate that
+server to its proper owner. Arbitrary custom integrations outside the supported
+site, unit and linked registry conventions cannot be inferred; inventory them
+explicitly rather than treating a successful command as proof about unknown
+external copies. Unit discovery includes site-owned units omitted from the
+health manifest, such as oneshot observer timers.
+
+A nonzero exit means removal is incomplete. Once execution starts,
+`SITE/health/uninstall-result.json` retains the plan and failure; the site is
+purged only after services, processes, sessions and registrations satisfy their
+checked postconditions. No recovery path restarts the plant. Keep that evidence,
+repair the named ownership/remnant issue, then preview and rerun the same exact
+target. Use a CLI from a retained checkout, not the wrapper inside a purged site.
+
 
 The local agent contract is [AGENTS.md](../AGENTS.md). Tracked [seed doctrine](../src/mishe_tauftauf/seed_doctrine.md) is loaded at restore and mirrored into `SITE/doctrine.md` at planting. The [mesh culture mapping](../instructions/mesh-culture.md) describes the source rules this narrower seed carries; this plant does not claim fleet authority or the larger mesh's native lifecycle accounting.
 
