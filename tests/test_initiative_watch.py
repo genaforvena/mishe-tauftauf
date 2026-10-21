@@ -551,13 +551,38 @@ def test_a_stale_report_after_the_monitor_missed_cycles_is_not_a_running_produce
     assert "liveness is not yet observed" in summary
 
 
-def test_a_stale_report_while_the_monitor_was_running_names_a_stopped_producer(home):
+def test_a_stale_report_within_the_monitor_tolerance_band_does_not_claim_a_stopped_producer(home):
+    """The reading names the failing evidence, not a producer verdict it cannot support.
+
+    A monitor gap above its interval means it missed a cycle, so "was running"
+    would assert something the watch cannot know across the whole tolerance
+    band -- and a plant outage shorter than the band is exactly the class of
+    event this reading exists for.
+    """
     publish(home)
     watch.check(home, now=NOW, interval=120)
     row = watch.check(home, now=NOW + timedelta(seconds=200), interval=120)
     summary = kinds(row, "unknown")[0]["summary"]
     assert "producer report stale" in summary
-    assert "this monitor was running" in summary
+    assert "cycle continuity was within tolerance" in summary
+    assert "this monitor was running" not in summary
+    assert "stopped" not in summary
+
+
+def test_a_monitor_gap_inside_the_tolerance_band_is_read_as_within_tolerance(home):
+    """The band between one interval and the tolerance still misses a cycle.
+
+    At the live interval of 120 s a monitor gap of 200 s means one cycle was
+    missed, yet it is inside the tolerance band, so the reading must state the
+    tolerance and not claim the monitor was running.
+    """
+    publish(home, now=NOW - timedelta(seconds=200))
+    watch.check(home, now=NOW - timedelta(seconds=200), interval=120)
+    row = watch.check(home, now=NOW, interval=120)
+    summary = kinds(row, "unknown")[0]["summary"]
+    assert "producer report stale" in summary
+    assert "cycle continuity was within tolerance" in summary
+    assert "missed its own cycles" not in summary
 
 
 def test_an_unchanged_producer_fault_is_not_routed_again(home):
@@ -578,3 +603,4 @@ def test_a_fault_without_a_known_cycle_interval_does_not_claim_the_monitor_was_r
     summary = kinds(row, "unknown")[0]["summary"]
     assert "cycle interval is unknown" in summary
     assert "this monitor was running" not in summary
+    assert "cycle continuity was within tolerance" not in summary

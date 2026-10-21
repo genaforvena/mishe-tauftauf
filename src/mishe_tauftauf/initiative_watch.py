@@ -535,9 +535,15 @@ def _continuity(previous, now, interval):
 
     A watch that missed its own cycles was not observing, so an old producer
     report is as old as the watch's own gap and the producer's liveness is not
-    yet observed. A watch that was running cannot say that, and a report that
-    is nevertheless outside the freshness bound is a producer that stopped
-    publishing while the monitor ran.
+    yet observed.
+
+    Otherwise the watch's own cycle continuity was within tolerance, and a
+    report that is nevertheless outside the freshness bound is a producer that
+    did not publish while the monitor kept observing. The clause says exactly
+    that much and no more: a gap above the interval means the monitor missed a
+    cycle, so "was running" would assert something the watch cannot know for
+    the whole tolerance band, and a plant outage shorter than the band is
+    precisely the class of event this reading exists for.
     """
     if not previous:
         return "this monitor has no previous cycle, so the producer's liveness is not observed"
@@ -549,7 +555,8 @@ def _continuity(previous, now, interval):
         return "this monitor's own cycle interval is unknown, so the producer's liveness is not observed"
     if gap > interval + PRODUCER_MAX_AGE:
         return ("this monitor missed its own cycles, so the producer's liveness is not yet observed")
-    return "this monitor was running, so the producer's liveness is not observed"
+    return ("this monitor's own cycle continuity was within tolerance, so the producer's "
+            "liveness is not observed")
 
 
 def _producer_fault(home, domain, exc, previous, now, interval=None):
