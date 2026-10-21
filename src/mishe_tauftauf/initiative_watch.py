@@ -36,7 +36,10 @@ REMINDER_SECONDS = 1800
 def _time(value=None):
     value = datetime.now(timezone.utc) if value is None else value
     if isinstance(value, str):
-        value = datetime.fromisoformat(value)
+        # The tape stamps every instant with a trailing "Z"; Python 3.10's
+        # fromisoformat rejects that suffix, so decode it the way the rest of
+        # the plant does (initiative._time, feed.entry_timestamp).
+        value = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if not isinstance(value, datetime) or value.tzinfo is None:
         raise ValueError("time must be timezone-aware")
     return value.astimezone(timezone.utc)

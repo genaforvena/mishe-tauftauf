@@ -133,6 +133,35 @@ def test_checked_outcome_since_first_continuation_suppresses_review(home, age, s
     assert bool(kinds(row, "continuation-review")) is not suppressed
 
 
+class _Py310Datetime(datetime):
+    """``datetime.fromisoformat`` under Python 3.10's accepted formats.
+
+    Python 3.11 added the trailing "Z" to the formats ``fromisoformat``
+    accepts; 3.10 rejects it, and the tape stamps every instant with it.
+    """
+
+    @classmethod
+    def fromisoformat(cls, value):
+        if isinstance(value, str) and value.endswith("Z"):
+            raise ValueError("invalid isoformat string on Python 3.10: " + value)
+        return super().fromisoformat(value)
+
+
+def test_the_monitor_reads_the_tapes_z_stamps_under_python310_iso_rules(home, monkeypatch):
+    """The monitor's own instants must decode on every supported Python.
+
+    A rejected "Z" collapses the whole evaluation into one unknown finding,
+    so the review signals vanish exactly where the plant cannot read them.
+    """
+    monkeypatch.setattr(watch, "datetime", _Py310Datetime)
+    chain(home)
+    outcome(home, age=1300)
+    publish(home)
+    row = watch.check(home, now=_Py310Datetime(2026, 10, 20, 12, tzinfo=timezone.utc))
+    assert kinds(row, "continuation-review"), row["findings"]
+    assert not kinds(row, "unknown"), row["findings"]
+
+
 def test_changed_outcome_evidence_cannot_suppress_review(home):
     chain(home)
     evidence = outcome(home)
