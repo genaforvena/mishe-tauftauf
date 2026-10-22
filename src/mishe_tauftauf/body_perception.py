@@ -166,6 +166,7 @@ def read_redmi10(home: Path, now: float | None = None) -> dict[str, object]:
         statuses[kind], fields_by_kind[kind], rows[kind] = _row_status(
             latest.get(kind), kind, current)
 
+    row_status = dict(statuses)
     battery = _value(fields_by_kind["battery"], "level")
     lux = _value(fields_by_kind["light"], "lux")
     axes = tuple(_value(fields_by_kind["acceleration"], axis) for axis in ("x", "y", "z"))
@@ -180,6 +181,26 @@ def read_redmi10(home: Path, now: float | None = None) -> dict[str, object]:
         statuses["light"] = "invalid/value"
     if magnitude is None:
         statuses["acceleration"] = "unknown/value"
+    # The producer publishes a channel it has no current sample for, with its
+    # own reason ("unavailable reason=stale"). That is a fact about the
+    # source, and it is not the same fact as a payload this reader could not
+    # use: the plant's own dense baseline already counts such a row as a
+    # delivery and not as motion. Reading it as "unknown/value" hid the
+    # producer's cause behind a word that reads like a reader-side fault, so
+    # the cause is named here and the reader's verdict stays honest. Only a
+    # current row can be producer-unavailable: a row that is old by age is
+    # stale, and that word stays.
+    unavailable: dict[str, str] = {}
+    for kind, keys in (("battery", ("level",)),
+                       ("light", ("lux",)),
+                       ("acceleration", ("x", "y", "z"))):
+        fields = fields_by_kind.get(kind)
+        if fields is None or row_status.get(kind) != "fresh-clock-conditional":
+            continue
+        reason = fields.get("reason")
+        if reason and all(key not in fields for key in keys):
+            unavailable[kind] = reason
+            statuses[kind] = f"unavailable/{reason}"
     battery_fields = fields_by_kind["battery"]
     charging = battery_fields.get("charging") if battery_fields is not None else None
     if charging not in {"true", "false"}:
@@ -200,7 +221,9 @@ def read_redmi10(home: Path, now: float | None = None) -> dict[str, object]:
     light_text = (f"{lux:g}lux"
                   if statuses["light"] == "fresh-clock-conditional" and lux is not None
                   else statuses["light"])
-    if statuses["acceleration"] == "fresh-clock-conditional" and magnitude is not None:
+    if statuses["acceleration"].startswith("unavailable/"):
+        acceleration_text = statuses["acceleration"]
+    elif statuses["acceleration"] == "fresh-clock-conditional" and magnitude is not None:
         acceleration_text = f"{magnitude:.2f}m/s² incl-g"
     elif statuses["acceleration"] == "stale":
         acceleration_text = "motion-leg-absent"
@@ -247,12 +270,21 @@ def read_redmi10(home: Path, now: float | None = None) -> dict[str, object]:
                            f"{transition['bucket_from']}->{transition['bucket_to']}"
                            f" validity={transition['validity_seconds']}s"
                            f" freshness={transition['freshness_at_detection']};")
+    unavailable_text = "".join(
+        f"{kind} unavailable reason={reason}; "
+        for kind, reason in sorted(unavailable.items()))
     details = (f"source={REDMI_SOURCE} session={session} cursor={cursor}; "
                f"acceleration phone_sample={_utc(phone_time)} consumer_receipt={_utc(receipt_time)}; "
-               f"host-receipt freshness conditional; {wifi_text}; {ble_text};{transition_text} "
+               f"host-receipt freshness conditional; {unavailable_text}{wifi_text}; {ble_text};{transition_text} "
                "phone/host clock split unknown; acceleration includes gravity and is not person-movement evidence.")
+    # The reason names the channels that are not current and why each is not,
+    # so a reader is not left with a verdict and no cause.
+    not_current = sorted(kind for kind, value in statuses.items()
+                          if value != "fresh-clock-conditional")
+    reason = ("fresh-clock-conditional" if status == "verified" else
+              ",".join(f"{kind}={statuses[kind]}" for kind in not_current))
     return {"id": SENSE_ID, "kind": "read", "state": status,
-            "reason": "fresh-clock-conditional" if status == "verified" else "channel-not-current",
+            "reason": reason,
             "sample": sample, "source": REDMI_SOURCE, "cursor": cursor,
             "session": session,
             "channel_provenance": channel_provenance,
@@ -273,7 +305,10 @@ def read_redmi10_light(home: Path, now: float | None = None) -> dict[str, object
     channels = base.get("channels") if isinstance(base.get("channels"), dict) else {}
     light_status = channels.get("light", "stale")
     state = "verified" if light_status == "fresh-clock-conditional" else "unknown"
-    reason = "fresh-clock-conditional" if state == "verified" else str(base.get("reason", "channel-not-current"))
+    # The light reading's own reason is the light channel's own status: the
+    # composite's reason names every channel that is not current, and a light
+    # reading must not be given the acceleration channel's cause.
+    reason = "fresh-clock-conditional" if state == "verified" else str(light_status)
     sample = str(base.get("sample", "Redmi10 light unknown"))
     return {"id": LIGHT_SENSE_ID, "kind": "read", "state": state, "reason": reason,
             "sample": sample, "source": REDMI_SOURCE,
