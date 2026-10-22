@@ -53,6 +53,100 @@ EVIDENCE_BAND_RELATIONS = {
 EVIDENCE_BAND_NAMES = ("versioned", "permanent", "disposed", "rebound", "cited",
                        "recoverable", "owed")
 
+#: The relation each discharge carries. A discharge is a link that took a row
+#: out of the gate: a supersession, a remedy-named successor, or a digest
+#: citation. Only the remedy-named discharge says anything about the row's
+#: published bytes, so it carries that byte relation; the other two carry the
+#: relation that says so plainly -- the link is not a byte relation, so no
+#: claim is made about the bytes that were published.
+#:
+#: ``byte_relation`` says the relation is a claim about bytes at all, and
+#: ``restores`` says the discharge returned the row's published bytes. Both
+#: are published with the counts, so a reader re-derives the exposure from
+#: published fields alone and does not need this module's vocabulary.
+EVIDENCE_DISCHARGE_RELATIONS = {
+    "restored": {
+        "claims": "the successor's bytes are the bytes the outcome published, so "
+                  "the published content came back",
+        "byte_relation": True,
+        "restores": True},
+    "copy-of-current": {
+        "claims": "the successor carries the file as it now stands, so the work "
+                  "was carried forward and the published bytes did not come back",
+        "byte_relation": True,
+        "restores": False},
+    "unrelated": {
+        "claims": "the successor's bytes are neither the published bytes nor "
+                  "the current ones",
+        "byte_relation": True,
+        "restores": False},
+    "unknown": {
+        "claims": "the relation cannot be decided from the bytes at hand",
+        "byte_relation": True,
+        "restores": False},
+    "not-a-byte-relation": {
+        "claims": "the discharge is a supersession or a citation: it clears the "
+                  "row without making any claim about the published bytes",
+        "byte_relation": False,
+        "restores": False},
+}
+
+#: How the discharge exposure is defined, published with the numbers so a
+#: reader cannot mistake a counterfactual for the gate.
+EVIDENCE_DISCHARGE_EXPOSURE_DEFINITION = (
+    "the gate size if only a discharge that returned the row's published bytes "
+    "counted as clearing the row: over the discharges that carry a byte "
+    "relation at all -- the remedy-named successors, whose bytes the plant "
+    "compares against the row's published bytes -- every one that did not "
+    "return those bytes returns its row to the gate; a supersession and a "
+    "citation carry no byte relation and are counted in discharged_rows and "
+    "byte_relation_discharges only")
+
+
+def discharge_strength(relations: list[str]) -> dict[str, int]:
+    """How many discharges carry each relation, over the plant's vocabulary.
+
+    Every relation the plant defines is counted, so a reader sees a relation
+    that never happened as a zero rather than as an absence.
+    """
+    counts = {name: 0 for name in EVIDENCE_DISCHARGE_RELATIONS}
+    for relation in relations:
+        counts[relation] = counts.get(relation, 0) + 1
+    return counts
+
+
+def discharge_exposure(*, gate_rows: int, discharged_rows: int,
+                       restoring_discharges: int,
+                       byte_relation_discharges: int) -> dict[str, int]:
+    """The gate size the discharges imply.
+
+    The counterfactual the plant's own verdict does not state: if only a
+    discharge that returned the row's published bytes counted as clearing the
+    row, the gate would hold every row a discharge cleared without restoring
+    those bytes.
+
+    The exposure is over the discharges that carry a byte relation at all --
+    the remedy-named successors, whose bytes the plant compares against the
+    row's published bytes. A supersession and a citation make no byte claim,
+    so they are counted in ``discharged_rows`` and neither restore nor
+    re-open a row here. A discharge whose relation could not be decided
+    counts as non-restoring, so the exposure overstates the debt rather than
+    hiding it.
+
+    It is a measurement of the strength of the discharges, not a claim that
+    any row is repairable -- the gate stays as it is, and the standing
+    audit's ``permanent_loss`` counter is untouched by this.
+    """
+    non_restoring = max(0, byte_relation_discharges - restoring_discharges)
+    return {
+        "gate_rows": gate_rows,
+        "discharged_rows": discharged_rows,
+        "byte_relation_discharges": byte_relation_discharges,
+        "restoring_discharges": restoring_discharges,
+        "non_restoring_discharges": non_restoring,
+        "gate_if_only_restoring_counted": gate_rows + non_restoring,
+    }
+
 
 def byte_relation(lost_published: object, lost_current: object,
                   successor_current: object) -> str:

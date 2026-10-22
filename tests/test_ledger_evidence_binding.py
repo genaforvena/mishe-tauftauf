@@ -1444,6 +1444,139 @@ def test_evidence_binding_states_the_relation_of_every_band(tmp_path):
     assert all(isinstance(text, str) and text.strip() for text in relations.values())
 
 
+def _discharge_site(home: Path, *, restored: bool) -> None:
+    """A site whose lost row is cleared by a remedy-named successor.
+
+    With ``restored`` the successor holds the bytes as they were published, so
+    the content came back; without it the successor carries the file as it now
+    stands, so the work was carried forward and the published bytes did not.
+    """
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    published = "the work\n"
+    lost = home / "artifacts" / "lost.md"
+    lost.write_text(published)
+    lost_digest = _write_evidenced_outcome(home, "bob", lost)
+    lost.write_text("the work, re-authored\n")
+    repaired = home / "artifacts" / "lost-v2.md"
+    repaired.write_text(published if restored else "the work, re-authored\n")
+    repair_digest = _write_evidenced_outcome(home, "bob", repaired)
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "bob",
+         f"[record] records/{lost_digest}.json sha256={lost_digest}\n"),
+        (2, "2026-10-06T17:30:00Z", "bob",
+         f"[record] records/{repair_digest}.json sha256={repair_digest}\n"),
+    ])
+
+
+def test_evidence_binding_publishes_the_strength_of_the_discharges(tmp_path):
+    """The discharges that emptied the gate carry a strength, and it is published.
+
+    A band says the row was re-evidenced; it does not say how strongly. A
+    discharge that returned the row's published bytes and one that merely
+    carried the work forward clear the row the same way, so a reader of the
+    verdict needs the strength beside the count to read it at its own.
+    """
+    home = tmp_path / "site"
+    _discharge_site(home, restored=False)
+    result = discovery._ledger_evidence_binding(home)
+    strength = result["discharge_strength"]
+    assert strength["copy-of-current"] == 1
+    assert strength["restored"] == 0
+    # Every relation the plant defines is counted, so a relation that never
+    # happened reads as a zero rather than as an absence.
+    assert set(strength) == set(result["discharge_relations"])
+
+
+def test_evidence_binding_names_the_relation_each_discharge_carries(tmp_path):
+    """The relation a discharge carried is published per row and per count.
+
+    A reader cannot re-derive the strength from the link kinds alone: the
+    remedy-named successor's bytes are compared against the row's published
+    bytes, and the other two links make no byte claim at all. So the relation
+    is published on the row, and the count is published over the rows.
+    """
+    home = tmp_path / "site"
+    _discharge_site(home, restored=True)
+    result = discovery._ledger_evidence_binding(home)
+    assert result["linked_detail"][0]["byte_relation"] == "restored"
+    assert result["discharge_strength"]["restored"] == 1
+
+
+def test_evidence_binding_publishes_the_exposure_over_the_discharge_dimension(tmp_path):
+    """The gate size the discharges imply is published with its definition.
+
+    The counterfactual: if only a discharge that returned the row's published
+    bytes counted as clearing the row, the gate would hold every row a
+    discharge cleared without restoring those bytes. It is published beside
+    the verdict so the number that certifies the ledger carries the strength
+    of the discharges that emptied it, and the definition is published with
+    it so a reader cannot mistake the counterfactual for the gate.
+    """
+    home = tmp_path / "site"
+    _discharge_site(home, restored=False)
+    result = discovery._ledger_evidence_binding(home)
+    exposure = result["discharge_exposure"]
+    assert exposure["gate_rows"] == result["owed_rows"] == 0
+    assert exposure["discharged_rows"] == 1
+    assert exposure["restoring_discharges"] == 0
+    assert exposure["non_restoring_discharges"] == 1
+    # The row returns to the gate: the discharge carried the work forward but
+    # the published bytes did not come back.
+    assert exposure["gate_if_only_restoring_counted"] == 1
+    assert result["discharge_exposure_definition"]
+
+
+def test_evidence_binding_a_restored_discharge_does_not_reopen_the_row(tmp_path):
+    """A discharge that returned the published bytes is a repair at its own strength.
+
+    The exposure counts the rows a discharge cleared without restoring the
+    published bytes. A restoration restores them, so its row does not return
+    to the gate under the counterfactual.
+    """
+    home = tmp_path / "site"
+    _discharge_site(home, restored=True)
+    result = discovery._ledger_evidence_binding(home)
+    exposure = result["discharge_exposure"]
+    assert exposure["restoring_discharges"] == 1
+    assert exposure["non_restoring_discharges"] == 0
+    assert exposure["gate_if_only_restoring_counted"] == exposure["gate_rows"]
+
+
+def test_evidence_binding_the_verdict_basis_carries_the_discharge_strength(tmp_path):
+    """The verdict's own basis says how strong the discharges were.
+
+    The word ``settled`` claims every violation is accounted for. A reader who
+    wants the evidence to be verifiable needs to know how many of the
+    discharges returned the published bytes, so the basis carries the strength
+    and the gate size the discharges imply.
+    """
+    home = tmp_path / "site"
+    _discharge_site(home, restored=False)
+    result = discovery._ledger_evidence_binding(home)
+    basis = result["verdict_basis"]
+    assert "discharged=1" in basis
+    assert "restored=0" in basis
+    assert "copy_of_current=1" in basis
+    assert "gate_if_only_restoring_counted=1" in basis
+
+
+def test_evidence_binding_the_discharge_exposure_does_not_move_the_gate(tmp_path):
+    """The exposure is a measurement, not a verdict.
+
+    The gate is the plant's debt and the standing audit's ``permanent_loss``
+    counter is the published bytes that are gone. Neither moves because the
+    reading publishes what the discharges were worth.
+    """
+    home = tmp_path / "site"
+    _discharge_site(home, restored=False)
+    result = discovery._ledger_evidence_binding(home)
+    assert result["state"] == "settled"
+    assert result["owed_rows"] == 0
+    assert result["permanent_loss"] == 1
+    assert result["discharge_exposure"]["gate_if_only_restoring_counted"] == 1
+
+
 def _citation_site(home: Path, body: bytes, rows: int = 4) -> list[tuple[int, str, str, str]]:
     """A site whose lost rows are each cleared by a citation in a successor.
 
