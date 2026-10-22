@@ -278,7 +278,7 @@ def test_observation_reads_share_one_bounded_budget(monkeypatch, tmp_path):
     watch.observe(tmp_path, "session")
     assert [command for command, _ in calls] == [
         "tmux", "tmux", "tmux", str(tmp_path / "bin/mishe-tauftauf")]
-    assert [timeout for _, timeout in calls] == [5.0, 5.0, 5.0, 8.0]
+    assert [timeout for _, timeout in calls] == [15.0, 15.0, 12.0, 8.0]
 
 
 def test_a_spent_observation_budget_fails_instead_of_reading_on(monkeypatch, tmp_path):

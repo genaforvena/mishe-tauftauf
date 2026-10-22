@@ -53,7 +53,7 @@ def observe(home: Path, session: str) -> dict:
     # earlier read fails the observation instead of overrunning the watchdog.
     deadline = time.monotonic() + 20.0
 
-    def run(argv, timeout=5.0):
+    def run(argv, timeout=15.0):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise subprocess.TimeoutExpired(argv, timeout)
