@@ -280,7 +280,21 @@ def _skip_env_options(tokens: list[str], index: int) -> int | None:
     return index
 
 
-def _program_and_exec(tokens: list[str]) -> tuple[str | None, bool, int]:
+def _is_env(token: str) -> bool:
+    """Whether a word names the ``env`` program.
+
+    ``env`` is an external program with its own option grammar, so a reader
+    that does not recognize it as ``env`` refuses the model the shell would
+    pass. The program is named by its bare word or by an absolute path --
+    ``/usr/bin/env`` is the same program -- and a relative path is refused
+    because the reader cannot know which program it names.
+    """
+    if token == "env":
+        return True
+    return token.startswith("/") and token.rsplit("/", 1)[-1] == "env"
+
+
+def _program_and_exec(tokens: list[str]) -> tuple[str | None, bool, int, str | None]:
     """The program a command runs, whether it replaces the shell, and where.
 
     The program is the word the shell runs, in the position it runs it: the
@@ -292,26 +306,35 @@ def _program_and_exec(tokens: list[str]) -> tuple[str | None, bool, int]:
     ``printf %s /home/user/bin/omp --model=...`` prints an omp path and runs no
     omp -- and a reader that takes the model from it records a model no
     process ever ran on.
+
+    The fourth value is the operand ``exec`` was given, or ``None`` when it
+    was given none. It is what tells the reader whether the script ends at
+    that command: ``exec`` replaces the shell with the program it names, so
+    every line after it is unreachable, while a bare ``exec`` is a no-op that
+    leaves the shell running.
     """
     index = 0
     while index < len(tokens) and _is_assignment(tokens[index]):
         index += 1
     uses_exec = False
+    operand = None
     if index < len(tokens) and tokens[index] == "exec":
         uses_exec = True
         index += 1
-    if index < len(tokens) and tokens[index] == "env":
+        if index < len(tokens):
+            operand = tokens[index]
+    if index < len(tokens) and _is_env(tokens[index]):
         index = _skip_env_options(tokens, index + 1)
         if index is None:
-            return None, uses_exec, -1
+            return None, uses_exec, -1, operand
         while index < len(tokens) and _is_assignment(tokens[index]):
             index += 1
         if index >= len(tokens):
-            return None, uses_exec, -1
-        return tokens[index], uses_exec, index
+            return None, uses_exec, -1, operand
+        return tokens[index], uses_exec, index, operand
     if index < len(tokens):
-        return tokens[index], uses_exec, index
-    return None, uses_exec, -1
+        return tokens[index], uses_exec, index, operand
+    return None, uses_exec, -1, operand
 
 
 def _runs_the_pane(program: str | None, command: list[str], index: int) -> bool:
@@ -355,6 +378,12 @@ def launcher_model(text: str) -> str | None:
     has exited, and the model's the pane runs on is the one it was started
     with.
 
+    An ``exec`` that names a program ends the script there: the shell becomes
+    that program, so no line after it runs. When that program is not the pane,
+    no pane starts at all and the reading is unknown -- the model of a later
+    line would be a model no process ever ran on. A bare ``exec`` names no
+    program and changes nothing, so the script continues.
+
     Any construct this reader does not model -- a pipeline, an AND-list, a
     redirection, a here-document, a subshell, a group, a conditional, a
     keyword, an expansion, a quoted ``#``, an option the reader does not know
@@ -374,13 +403,19 @@ def launcher_model(text: str) -> str | None:
         return None
     candidates = []
     for command in commands:
-        program, uses_exec, index = _program_and_exec(command)
-        if not _runs_the_pane(program, command, index):
-            continue
-        value = model(command[index:])
-        usable = value if value is not None and set(value) <= _MODEL_NAME_CHARS else None
-        candidates.append(usable)
-        break
+        program, uses_exec, index, operand = _program_and_exec(command)
+        if _runs_the_pane(program, command, index):
+            value = model(command[index:])
+            usable = value if value is not None and set(value) <= _MODEL_NAME_CHARS else None
+            candidates.append(usable)
+            break
+        if uses_exec and operand is not None:
+            # ``exec`` replaces the shell with the program it names, so every
+            # line after this one is unreachable. That program is not the pane,
+            # so no pane starts and the script settles no model. A reader that
+            # kept scanning would name the model of a later line -- a model no
+            # process ever ran on.
+            return None
     if len(candidates) == 1:
         return candidates[0]
     return None
