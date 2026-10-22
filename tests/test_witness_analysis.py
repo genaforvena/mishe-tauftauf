@@ -184,6 +184,7 @@ def test_invalid_latest_outcome_is_unknown_not_stale_legacy(tmp_path, failure):
     elif failure == 'missing-evidence':
         evidence.unlink()
     elif failure == 'changed-evidence':
+        evidence.chmod(0o600)
         evidence.write_text('changed result')
     else:
         import hashlib

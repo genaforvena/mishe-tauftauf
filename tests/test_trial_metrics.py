@@ -29,6 +29,7 @@ def test_metrics_count_only_in_window_outcomes_with_intact_evidence(tmp_path, mo
     assert sample["outcomes"]["evidence_unavailable"] == 0
     assert sample["model_cost"]["state"] == "UNKNOWN"
     assert trial_metrics.collect(home, start + timedelta(hours=1))["outcomes"]["reported"] == {}
+    evidence.chmod(0o600)
     evidence.write_text("changed evidence")
     sample = trial_metrics.collect(home, start)
     assert sample["outcomes"]["reported"] == {}

@@ -4947,15 +4947,17 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
     parts.append(f"nested={len(nested)}{'+' if nested_truncated else ''}")
     # Whether Git would stage a stray name: the ignore rule covers the
     # reserved prefix, so a literal-variable tree is one broad ``git add``
-    # away from the history while a reserved one is invisible to Git.
+    # away from the history while a reserved one is invisible to Git. A name
+    # Git would stage is named early, where a reader sees it; when Git cannot
+    # be asked the fact is carried at the end of the sample and as a null
+    # field, never as "nothing is stageable".
     ignore_answer = _git_ignores(checkout, sorted(set(ghosts) | set(stray)))
     if ignore_answer is None:
         stageable: list[str] | None = None
-        parts.append("stageable=unknown")
     else:
         stageable = sorted(name for name, ignored in ignore_answer.items() if not ignored)
         if stageable:
-            parts.append("stageable=" + named(stageable))
+            parts.insert(2, "stageable=" + named(stageable))
     if symlinked:
         parts.append("symlink=" + named(symlinked)
                      + ("+" if symlinked_truncated else ""))  # named, never walked
@@ -4975,6 +4977,7 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
             "stray_truncated": stray_truncated,
             "no_process": sorted(no_process),
             "stageable": stageable,
+            "stageable_state": "unknown" if stageable is None else "known",
 
             "files_at_least": capped or work_truncated or bool(symlinked),
             "roots_at_least": roots_at_least,
