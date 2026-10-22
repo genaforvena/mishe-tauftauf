@@ -604,3 +604,44 @@ def test_a_fault_without_a_known_cycle_interval_does_not_claim_the_monitor_was_r
     assert "cycle interval is unknown" in summary
     assert "this monitor was running" not in summary
     assert "cycle continuity was within tolerance" not in summary
+
+
+def test_an_entry_appended_while_the_monitor_reads_the_tape_is_not_a_future_event(home, monkeypatch):
+    """The tape grows while the monitor reads it, and a reader that judges the
+    tape against the clock it took before the read calls that growth a future
+    event. The entry is real, so the monitor must read it.
+
+    The live monitor does not pin its clock, so this test does not either: the
+    clock is the wall clock, and the entry carries a stamp the wall clock
+    reaches during the read.
+    """
+    wall = datetime.now(timezone.utc)
+    publish(home, now=wall)
+    original = watch._read
+
+    def appending_read(path, maximum):
+        if path.name == "chat.log":
+            # Another writer appends after the monitor took its clock and
+            # before the monitor reads the tape. The stamp is the wall clock,
+            # which is what the live monitor reads.
+            entries = feed.parse_feed(path.read_bytes(), home=home)
+            moment = datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+            with path.open("ab") as stream:
+                stream.write(feed._encode_entry(len(entries) + 1, moment, "seed",
+                                                "seed observation discover"))
+        return original(path, maximum)
+
+    monkeypatch.setattr(watch, "_read", appending_read)
+    row = watch.check(home)
+    assert "unknown:tape-time" not in [item["id"] for item in kinds(row, "unknown")]
+    assert row["state"] != "UNKNOWN", kinds(row, "unknown")
+
+
+def test_a_pinned_clock_still_judges_the_tape_against_that_instant(home):
+    """A caller that pins the instant pins the whole cycle: the monitor must
+    not silently move the reference clock it was given."""
+    publish(home)
+    append(home, "seed", "seed observation discover", now=NOW + timedelta(seconds=1))
+    publish(home)
+    row = watch.check(home, now=NOW)
+    assert "unknown:tape-time" in [item["id"] for item in kinds(row, "unknown")]
