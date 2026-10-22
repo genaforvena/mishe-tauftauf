@@ -1299,6 +1299,38 @@ def test_wall_outcome_allows_distinct_evidence_paths(tmp_path):
     wall.outcome(tmp_path, "discover", "hypothesis-changed", "First outcome.", evidence1)
     wall.outcome(tmp_path, "health", "accepted", "Second outcome.", evidence2)
 
+def test_wall_outcome_makes_only_newly_bound_evidence_read_only(tmp_path):
+    from mishe_tauftauf import wall
+    setup_wall(tmp_path)
+    evidence = tmp_path / "artifacts" / "sample.md"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text("final evidence\n")
+    wall.outcome(tmp_path, "genome", "accepted", "Recorded evidence.", evidence)
+    assert evidence.read_bytes() == b"final evidence\n"
+    assert evidence.stat().st_mode & 0o222 == 0
+    with pytest.raises(ValueError, match="already bound"):
+        wall.outcome(tmp_path, "health", "accepted", "Replay refused.", evidence)
+
+
+def test_wall_outcome_restores_evidence_mode_when_append_fails(tmp_path, monkeypatch):
+    from mishe_tauftauf import wall
+    setup_wall(tmp_path)
+    evidence = tmp_path / "artifacts" / "sample.md"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text("final evidence\n")
+    original_mode = evidence.stat().st_mode & 0o7777
+
+    def fail_append(*args, **kwargs):
+        raise ValueError("simulated append refusal")
+
+    monkeypatch.setattr(Feed, "append_record", fail_append)
+    with pytest.raises(ValueError, match="simulated append refusal"):
+        wall.outcome(tmp_path, "genome", "accepted", "Not published.", evidence)
+
+    assert evidence.stat().st_mode & 0o7777 == original_mode
+    assert not any(entry.body.startswith("Wall outcome ")
+                   for entry in Feed(tmp_path).entries())
+
 
 def test_wall_outcome_ignores_an_outcome_recorded_before_the_clause_time(tmp_path):
     """D-check scope: a pre-clause outcome does not bind its evidence path.

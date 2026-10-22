@@ -231,6 +231,14 @@ under the earlier text remain in the standing audit under the rule then in
 force, and any reassessment under the new rule is a policy-versioned
 reassessment, labeled as such rather than presented as repaired historical
 compliance; no historical records are reclassified.
+After eligibility, duplicate-path checks and the byte snapshot pass, the writer
+removes all write permission bits from a newly bound evidence file before
+publishing its outcome. If append fails, it restores the file's original mode;
+the outcome is not considered bound. This protects against accidental edits by
+compliant writers, not a same-owner chmod bypass, so digest monitoring remains
+necessary. The rule applies only to newly bound per-outcome evidence, not living
+documents or existing files.
+
 The current deployed pin (`e8405b875122`) predates the atomic source fix
 (commit `1f15e97`, lock held across check and append); on the deployed CLI,
 concurrent `wall outcome` publications of the same path can both succeed until
