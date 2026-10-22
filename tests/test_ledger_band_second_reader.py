@@ -130,6 +130,7 @@ def partition(rows: list[tuple[int, str]], *, table: dict | None = None,
     entry = {
         "state": "drift",
         "all_bad": len(rows) if all_bad is None else all_bad,
+        "bound": len(rows),
         "violations": (["health@2026-10-21T00:00:00Z:artifacts/a.md(B)"] * len(rows)
                        if violations is None else violations),
         "row_bands": band_rows,
@@ -166,6 +167,13 @@ DISCHARGE_VOCABULARY = {
                             "byte_relation": False, "restores": False},
 }
 
+#: The scopes the exposure is published over, and the published field each
+#: scope's population is counted over.
+EXPOSURE_SCOPES = {
+    "all_discharged_rows": "discharged_rows",
+    "byte_relation_discharges": "byte_relation_discharges",
+}
+
 
 def discharge_fields(rows: list[tuple[int, str]], linked_rows: list[dict],
                      strength: dict | None = None,
@@ -175,7 +183,10 @@ def discharge_fields(rows: list[tuple[int, str]], linked_rows: list[dict],
 
     The counts tally over the published rows and the exposure is the
     arithmetic they imply, so a reading built here is one a second reader can
-    check without re-deriving anything.
+    check without re-deriving anything. The scope is published as data: each
+    scope names the field its population is counted over and carries its own
+    definition, so the figure and the definition beside it cannot be read two
+    ways.
     """
     vocabulary = relations if relations is not None else DISCHARGE_VOCABULARY
     counted = {name: 0 for name in vocabulary}
@@ -192,21 +203,55 @@ def discharge_fields(rows: list[tuple[int, str]], linked_rows: list[dict],
                  if claims.get("restores") is True}
     byte_discharges = sum(counted.get(name, 0) for name in byte_relations)
     restored = sum(counted.get(name, 0) for name in restoring)
-    derived = {
+    populations = {"discharged_rows": sum(counted.values()),
+                   "byte_relation_discharges": byte_discharges}
+    scopes: dict[str, dict] = {}
+    for name, field in EXPOSURE_SCOPES.items():
+        population = populations[field]
+        non_restoring = max(0, population - restored)
+        scopes[name] = {
+            "population_field": field,
+            "population": population,
+            "non_restoring_discharges": non_restoring,
+            "gate_if_only_restoring_counted": gate_rows + non_restoring,
+            "definition": ("the gate size if only a discharge that returned the "
+                           "row's published bytes counted as clearing the row, "
+                           "over " + name),
+        }
+    named = "all_discharged_rows"
+    published = {
         "gate_rows": gate_rows,
-        "discharged_rows": sum(counted.values()),
+        "discharged_rows": populations["discharged_rows"],
         "byte_relation_discharges": byte_discharges,
         "restoring_discharges": restored,
-        "non_restoring_discharges": byte_discharges - restored,
-        "gate_if_only_restoring_counted": gate_rows + byte_discharges - restored,
+        "exposure_scope": named,
+        "non_restoring_discharges": scopes[named]["non_restoring_discharges"],
+        "gate_if_only_restoring_counted": scopes[named]["gate_if_only_restoring_counted"],
+        "exposure_scopes": scopes,
     }
     return {
         "discharge_strength": counted,
         "discharge_relations": vocabulary,
-        "discharge_exposure": derived if exposure is None else exposure,
-        "discharge_exposure_definition": (
-            "the gate size if only a discharge that returned the row's published "
-            "bytes counted as clearing the row"),
+        "discharge_exposure": published if exposure is None else exposure,
+        "discharge_exposure_definition": scopes[named]["definition"],
+        "audited_population": {
+            "source": "the current chat tape (chat.log)",
+            "kind": "post-clause wall-outcome publications the tape names",
+            "size": len(rows),
+            "window_scoped": True,
+            "clause_time": "2026-10-06T16:22:11+00:00",
+        },
+        "unaudited_population": {
+            "source": "the outcome store (records/)",
+            "basis": "store records of kind wall-outcome that no entry of the "
+                     "current tape names",
+            "size": 7,
+            "records_without_tape_entry": 19,
+            "store_records": 64,
+            "tape_named_records": 45,
+            "state": "verified",
+            "measured_at": stamp(),
+        },
     }
 
 
@@ -720,3 +765,114 @@ def test_a_discharge_exposure_with_no_definition_is_inconsistent(tmp_path):
 
     assert result.returncode == 2, result.stdout + result.stderr
     assert "definition" in result.stdout
+
+
+def test_a_scope_figure_from_another_scope_is_inconsistent(tmp_path):
+    """A figure that belongs to another scope cannot stand under this one.
+
+    The scope says which discharges the counterfactual counts, and it is
+    published as data, so a second reader re-derives the figure from the
+    scope's own population instead of trusting the number beside it.
+    """
+    home = tmp_path / "home"
+    entry = partition([(1, "owed"), (2, "rebound"), (3, "cited")],
+                      linked=[_linked(2, "copy-of-current"),
+                              _linked(3, "not-a-byte-relation")])
+    scopes = entry["discharge_exposure"]["exposure_scopes"]
+    entry["discharge_exposure"]["gate_if_only_restoring_counted"] = (
+        scopes["byte_relation_discharges"]["gate_if_only_restoring_counted"])
+    write_reading(home, entry)
+
+    result = run_check(home)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "all_discharged_rows" in result.stdout
+
+
+def test_a_definition_from_another_scope_is_inconsistent(tmp_path):
+    """The definition beside a figure must be that figure's own scope.
+
+    A definition that states one counterfactual and a number that counts
+    another is the defect the scope makes checkable: the reader compares the
+    published definition with the definition the named scope publishes.
+    """
+    home = tmp_path / "home"
+    entry = partition([(1, "owed"), (2, "rebound")],
+                      linked=[_linked(2, "copy-of-current")])
+    scopes = entry["discharge_exposure"]["exposure_scopes"]
+    entry["discharge_exposure_definition"] = scopes["byte_relation_discharges"]["definition"]
+    write_reading(home, entry)
+
+    result = run_check(home)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "another scope" in result.stdout
+
+
+def test_a_reading_with_no_exposure_scopes_is_inconsistent(tmp_path):
+    """A figure with no scope cannot be checked against one."""
+    home = tmp_path / "home"
+    entry = partition([(1, "owed")])
+    del entry["discharge_exposure"]["exposure_scopes"]
+    write_reading(home, entry)
+
+    result = run_check(home)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "scope" in result.stdout
+
+
+def test_a_scope_population_that_disagrees_with_the_published_field_is_inconsistent(tmp_path):
+    """A scope's population must be the published field it names."""
+    home = tmp_path / "home"
+    entry = partition([(1, "owed"), (2, "rebound")],
+                      linked=[_linked(2, "copy-of-current")])
+    scopes = entry["discharge_exposure"]["exposure_scopes"]
+    scopes["byte_relation_discharges"]["population"] = 99
+    write_reading(home, entry)
+
+    result = run_check(home)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "population" in result.stdout
+
+
+def test_a_reading_with_no_populations_is_inconsistent(tmp_path):
+    """A count with no population beside it cannot be read as a whole."""
+    home = tmp_path / "home"
+    entry = partition([(1, "owed")])
+    del entry["audited_population"]
+    write_reading(home, entry)
+
+    result = run_check(home)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "audited population" in result.stdout
+
+
+def test_an_audited_population_that_disagrees_with_the_count_is_inconsistent(tmp_path):
+    """The published population's size must be the count the reading publishes."""
+    home = tmp_path / "home"
+    entry = partition([(1, "owed"), (2, "rebound")])
+    entry["audited_population"] = dict(entry["audited_population"])
+    entry["audited_population"]["size"] = 9
+    write_reading(home, entry)
+
+    result = run_check(home)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "audited population" in result.stdout
+
+
+def test_an_unaudited_population_larger_than_the_store_complement_is_inconsistent(tmp_path):
+    """The unaudited population cannot exceed the records it is counted over."""
+    home = tmp_path / "home"
+    entry = partition([(1, "owed")])
+    entry["unaudited_population"] = dict(entry["unaudited_population"])
+    entry["unaudited_population"]["size"] = 999
+    write_reading(home, entry)
+
+    result = run_check(home)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "unaudited population" in result.stdout

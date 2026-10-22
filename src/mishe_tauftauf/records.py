@@ -12,11 +12,67 @@ from pathlib import Path
 MAX_BYTES = 1024 * 1024
 REFERENCE_RE = re.compile(r"\[record\] records/([0-9a-f]{64})\.json sha256=([0-9a-f]{64})\Z")
 
+#: A record names its kind in its first field: the record is written with
+#: sorted keys, so the head of the file begins ``{"kind":"``.
+KIND_PREFIX = b'{"kind":"'
+
+#: How many bytes of a record the kind is read from. The kind is the first
+#: field, so the head is enough and the census never reads a whole record.
+HEAD_BYTES = 64
+
 
 def reference(digest: str) -> str:
     if not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise ValueError("invalid record digest")
     return f"[record] records/{digest}.json sha256={digest}"
+
+
+def record_kind(head: bytes) -> str | None:
+    """The kind a record's head names, or None when it names none.
+
+    The record is written with sorted keys, so its kind is the first field
+    and the head of the file says which kind it is. A head that does not
+    begin with the kind field names no kind: the answer is None, never a
+    guess.
+    """
+    if not head.startswith(KIND_PREFIX):
+        return None
+    end = head.find(b'"', len(KIND_PREFIX))
+    if end < 0:
+        return None
+    try:
+        return head[len(KIND_PREFIX):end].decode()
+    except UnicodeDecodeError:
+        return None
+
+
+def record_digests(home: Path | str) -> list[str]:
+    """The content digests of the records the store holds.
+
+    A store file is named by the digest of its own content, so the names are
+    the digests. The store is read through the record directory's own file
+    descriptor, so the path is never followed.
+    """
+    directory = _directory(Path(home))
+    try:
+        names = os.listdir(directory)
+    finally:
+        os.close(directory)
+    return sorted(name[:-5] for name in names if name.endswith(".json"))
+
+
+def record_head(home: Path | str, digest: str) -> bytes | None:
+    """The first bytes of a stored record, or None when it cannot be read."""
+    directory = _directory(Path(home))
+    try:
+        fd = os.open(digest + ".json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                     dir_fd=directory)
+        with os.fdopen(fd, "rb") as handle:
+            return handle.read(HEAD_BYTES)
+    except OSError:
+        return None
+    finally:
+        os.close(directory)
 
 
 def _directory(home: Path) -> int:
