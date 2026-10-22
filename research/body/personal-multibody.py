@@ -62,7 +62,8 @@ import re
 import statistics
 import sys
 import time
-from datetime import datetime, timezone
+from collections import Counter
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 #: A gait band of roughly 1-2 Hz needs at least this many samples per second
@@ -1200,6 +1201,168 @@ def _delivered_clock_bound(lane: dict, now: float) -> dict:
     }
 
 
+#: How long a delivered row may wait before the hour that produced it is
+#: reported as backlogged rather than live.  It is a parameter because the
+#: lane's own cadence sets it: a body that posts every five seconds is not
+#: backlogged by a minute, and a body that posts once an hour is.
+DAY_SHAPE_BACKLOG_S = 7200.0
+
+#: How many hours of the day-shape table the rendered reading carries.  The
+#: whole table is published in the report, but a reading is bounded prose: the
+#: hours with the largest waits are the ones that carry the day, so those are
+#: the ones rendered.
+DAY_SHAPE_HOURS_RENDERED = 12
+
+
+def _hour_key(epoch: float) -> str:
+    """The UTC hour an instant falls in, as ``YYYY-MM-DD HH``."""
+    return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%d %H")
+
+
+def _day_shape(lane: dict, backlog_s: float = DAY_SHAPE_BACKLOG_S) -> dict:
+    """The human's day, as the delivered lane carries it.
+
+    The lane is read in two hours at once, because the human's day and the
+    host's delivery are two different clocks:
+
+    * the **phone's own clock** decides the hour a row belongs to, because the
+      hour is the human's day;
+    * the **host's clock** decides when the row arrived, and the difference
+      between the two is the row's wait.
+
+    The acceleration channel's coverage travels with every hour.  A row that
+    was delivered without an accelerometer sample is a fact about the
+    producer's freshness check, not about the human's motion, so an hour in
+    which the phone produced no sample is not an hour in which the human was
+    still.  The coverage is therefore published beside the hour, and the
+    reader is told which hours carry no sample at all.
+
+    The body's own silences are published as intervals, not as missing table
+    rows: an hour that does not appear in the table because the body produced
+    nothing is a different fact from an hour whose rows all arrived late.
+    """
+    if lane.get("status") != "ok":
+        return {"status": "unavailable", "reason": lane.get("reason")}
+    chunks = lane["chunks"]
+
+    produced: dict[str, int] = {}
+    acc_value: dict[str, int] = {}
+    acc_unavailable: dict[str, int] = {}
+    acc_reasons: dict[str, Counter] = {}
+    waits: dict[str, list[float]] = {}
+    host_posts: dict[str, int] = {}
+    host_rows: dict[str, int] = {}
+
+    for chunk in chunks:
+        host_hour = _hour_key(chunk.receipt.host_epoch)
+        host_posts[host_hour] = host_posts.get(host_hour, 0) + 1
+        host_rows[host_hour] = host_rows.get(host_hour, 0) + len(chunk.rows)
+        for row in chunk.rows:
+            hour = _hour_key(row.device_epoch)
+            produced[hour] = produced.get(hour, 0) + 1
+            if row.kind == "acceleration":
+                if "unavailable" in row.body:
+                    acc_unavailable[hour] = acc_unavailable.get(hour, 0) + 1
+                    reason = ("unknown")
+                    if "reason=" in row.body:
+                        reason = row.body.split("reason=", 1)[1].strip() or "unknown"
+                    acc_reasons.setdefault(hour, Counter())[reason] += 1
+                else:
+                    acc_value[hour] = acc_value.get(hour, 0) + 1
+            waits.setdefault(hour, []).append(chunk.receipt.host_epoch - row.device_epoch)
+
+    # The body's own silences: hours inside the delivered span with no row at
+    # all.  These are the phone's clock, so they are the human's hours, not
+    # the host's.
+    silences: list[dict] = []
+    if produced:
+        first = min(produced)
+        last = max(produced)
+        cursor = datetime.strptime(first, "%Y-%m-%d %H").replace(tzinfo=timezone.utc)
+        end = datetime.strptime(last, "%Y-%m-%d %H").replace(tzinfo=timezone.utc)
+        run_start = None
+        while cursor <= end:
+            label = cursor.strftime("%Y-%m-%d %H")
+            if label in produced:
+                if run_start is not None:
+                    silences.append({"start_hour": run_start, "end_hour": previous,
+                                     "hours": _hours_between(run_start, previous)})
+                    run_start = None
+            elif run_start is None:
+                run_start = label
+            previous = label
+            cursor += timedelta(hours=1)
+        if run_start is not None:
+            silences.append({"start_hour": run_start, "end_hour": previous,
+                             "hours": _hours_between(run_start, previous)})
+
+    hours: list[dict] = []
+    for hour in sorted(produced):
+        hour_waits = waits.get(hour, [])
+        value = acc_value.get(hour, 0)
+        unavailable = acc_unavailable.get(hour, 0)
+        acc_rows = value + unavailable
+        late = [wait for wait in hour_waits if wait > backlog_s]
+        reasons = acc_reasons.get(hour)
+        hours.append({
+            "phone_hour": hour,
+            "produced_rows": produced[hour],
+            "acceleration_value_rows": value,
+            "acceleration_unavailable_rows": unavailable,
+            "acceleration_sample_coverage": (round(value / acc_rows, 6) if acc_rows else None),
+            "acceleration_unavailable_reasons": dict(reasons) if reasons else {},
+            "arrived_within_backlog_window": len(hour_waits) - len(late),
+            "arrived_after_backlog_window": len(late),
+            "worst_wait_s": round(max(hour_waits), 3) if hour_waits else None,
+        })
+
+    total_wait = [wait for values in waits.values() for wait in values]
+    backlogged = sum(hour["arrived_after_backlog_window"] for hour in hours)
+    no_sample_hours = [hour["phone_hour"] for hour in hours
+                       if hour["acceleration_value_rows"] == 0
+                       and hour["acceleration_unavailable_rows"] > 0]
+    return {
+        "status": "ok",
+        "phone_clock_hours": len(hours),
+        "host_clock_hours": len(host_posts),
+        "first_phone_hour": hours[0]["phone_hour"] if hours else None,
+        "last_phone_hour": hours[-1]["phone_hour"] if hours else None,
+        "produced_rows": sum(produced.values()),
+        "backlog_window_s": backlog_s,
+        "rows_arrived_after_backlog_window": backlogged,
+        "worst_wait_s": round(max(total_wait), 3) if total_wait else None,
+        "acceleration_value_rows": sum(acc_value.values()),
+        "acceleration_unavailable_rows": sum(acc_unavailable.values()),
+        "acceleration_sample_coverage": (
+            round(sum(acc_value.values())
+                  / (sum(acc_value.values()) + sum(acc_unavailable.values())), 6)
+            if (sum(acc_value.values()) + sum(acc_unavailable.values())) else None),
+        "hours_without_any_acceleration_sample": len(no_sample_hours),
+        "body_silences": silences,
+        "hours": hours,
+        "host_arrivals": [
+            {"host_hour": hour, "posts": host_posts[hour], "rows": host_rows[hour]}
+            for hour in sorted(host_posts)
+        ],
+        "limits": (
+            "an hour here is the phone's own clock, so the table is the "
+            "human's day and not the host's; the wait is the host receipt "
+            "minus the phone's own reading, so it carries the phone's clock "
+            "error as well as the transport delay and the lane does not "
+            "separate them; and an hour whose acceleration rows carry no "
+            "sample is a fact about the producer's freshness check, not a "
+            "measurement of the human's stillness"
+        ),
+    }
+
+
+def _hours_between(start: str, end: str) -> int:
+    """The number of hours from one hour label to another, inclusive."""
+    first = datetime.strptime(start, "%Y-%m-%d %H")
+    last = datetime.strptime(end, "%Y-%m-%d %H")
+    return int((last - first).total_seconds() // 3600) + 1
+
+
 def _attach_clock_anchor(reading: dict, clock: dict) -> None:
     """Say whether a hole's timestamps are anchored to the host's timeline.
 
@@ -1289,6 +1452,7 @@ def node_reading(node: dict, body: Path, max_age: float, now: float,
         _attach_clock_anchor(reading, clock)
         reading["unknowns"].extend(_continuity_unknowns(reading["continuity"]))
         reading["row_ages"] = _delivered_row_ages(lane, lane_now, [], window_now)
+        reading["day_shape"] = _day_shape(lane)
         return reading
 
     history = state.get("history")
@@ -1297,6 +1461,7 @@ def node_reading(node: dict, body: Path, max_age: float, now: float,
     reading["window"] = span
     reading["cursor"] = state.get("cursor")
     reading["row_ages"] = _delivered_row_ages(lane, lane_now, history, window_now)
+    reading["day_shape"] = _day_shape(lane)
 
     receipts = [row.get("received") for row in history
                 if isinstance(row.get("received"), (int, float))]
@@ -1392,6 +1557,26 @@ def node_reading(node: dict, body: Path, max_age: float, now: float,
             f"composite stillness is {stillness.get('status')} (not a presence "
             "or occupancy claim)")
     unknowns.extend(_continuity_unknowns(reading["continuity"]))
+    day = reading.get("day_shape") or {}
+    if day.get("status") == "ok":
+        no_sample = day.get("hours_without_any_acceleration_sample") or 0
+        coverage = day.get("acceleration_sample_coverage")
+        if no_sample:
+            unknowns.append(
+                f"{no_sample} hour(s) of the delivered history carry no "
+                "accelerometer sample at all: the producer published the "
+                "channel as unavailable, so those hours measure the "
+                "producer's freshness check and not the human's motion - "
+                "counting them as still minutes would read the producer as "
+                "the body")
+        if coverage is not None and coverage < 1.0:
+            unknowns.append(
+                f"the acceleration channel carries a sample on only "
+                f"{coverage * 100:.1f}% of its delivered rows, so any statement "
+                "about the human's motion over this history must name the "
+                "window it was measured over and the coverage that window had; "
+                "a missing acceleration row is the producer's sampling "
+                "behaviour and not a measurement of the human's stillness")
     if clock.get("status") != "ok":
         unknowns.append(_CLOCK_NOT_IDENTIFIABLE)
         if bound_status == "bounded-from-the-delivered-lane":
@@ -1470,6 +1655,27 @@ def node_reading(node: dict, body: Path, max_age: float, now: float,
                   "bound of the observation's own age - the observation is older "
                   "by that row's transport delay, which the lane does not "
                   "recover")
+        claims.append(claim)
+    day = reading.get("day_shape") or {}
+    if day.get("status") == "ok":
+        claim = ("the human's day is readable hour by hour in the phone's own "
+                 f"clock: {day['phone_clock_hours']} hours carry "
+                 f"{day['produced_rows']} delivered rows")
+        coverage = day.get("acceleration_sample_coverage")
+        if coverage is not None:
+            claim += (f", and the acceleration channel carries a sample on "
+                      f"{coverage * 100:.1f}% of its rows")
+        if day.get("rows_arrived_after_backlog_window"):
+            claim += (f"; {day['rows_arrived_after_backlog_window']} rows reached "
+                      f"the host more than {day['backlog_window_s']:.0f} s after "
+                      "the phone produced them, so they were not live when they "
+                      "arrived")
+        if day.get("body_silences"):
+            longest = max(day["body_silences"], key=lambda s: s["hours"])
+            claim += (f"; the body produced nothing at all across "
+                      f"{len(day['body_silences'])} interval(s), the longest "
+                      f"{longest['hours']} h from {longest['start_hour']} to "
+                      f"{longest['end_hour']} in the phone's own clock")
         claims.append(claim)
     reading["claims_supported"] = claims
     return reading
@@ -1678,6 +1884,50 @@ def render(report: dict) -> str:
                              f"history_span_s={history.get('history_span_s')}")
             if ages.get("limits"):
                 lines.append(f"     limit: {ages['limits']}")
+        day = node.get("day_shape") or {}
+        if day.get("status") == "ok":
+            lines.append(f"   day shape: phone-clock hours={day.get('phone_clock_hours')} "
+                         f"host-clock hours={day.get('host_clock_hours')} "
+                         f"first={day.get('first_phone_hour')} "
+                         f"last={day.get('last_phone_hour')} "
+                         f"produced_rows={day.get('produced_rows')}")
+            lines.append(f"     acceleration coverage="
+                         f"{day.get('acceleration_sample_coverage')} "
+                         f"value_rows={day.get('acceleration_value_rows')} "
+                         f"unavailable_rows={day.get('acceleration_unavailable_rows')} "
+                         f"hours_without_any_sample="
+                         f"{day.get('hours_without_any_acceleration_sample')}")
+            lines.append(f"     backlog: rows_after_{day.get('backlog_window_s')}s="
+                         f"{day.get('rows_arrived_after_backlog_window')} "
+                         f"worst_wait_s={day.get('worst_wait_s')}")
+            for silence in day.get("body_silences") or []:
+                lines.append(f"     body silence: {silence.get('hours')}h "
+                             f"{silence.get('start_hour')} -> {silence.get('end_hour')} "
+                             f"[phone clock] (the body produced nothing)")
+            hours = day.get("hours") or []
+            # The rendered hours are the ones that carry the day: the latest,
+            # and those with the largest waits.  The whole table stays in the
+            # report for a consumer that wants it.
+            rendered = sorted(
+                hours,
+                key=lambda hour: (-(hour.get("worst_wait_s") or 0.0),
+                                  hour.get("phone_hour") or ""),
+            )[:DAY_SHAPE_HOURS_RENDERED]
+            rendered = sorted(rendered, key=lambda hour: hour.get("phone_hour") or "")
+            for hour in rendered:
+                lines.append(f"     hour {hour.get('phone_hour')}: "
+                             f"produced={hour.get('produced_rows')} "
+                             f"acc_value={hour.get('acceleration_value_rows')} "
+                             f"acc_unavailable={hour.get('acceleration_unavailable_rows')} "
+                             f"coverage={hour.get('acceleration_sample_coverage')} "
+                             f"late={hour.get('arrived_after_backlog_window')} "
+                             f"worst_wait_s={hour.get('worst_wait_s')}")
+            if len(hours) > len(rendered):
+                lines.append(f"     ({len(hours)} hours in the delivered "
+                             f"history; {len(rendered)} rendered here, the rest "
+                             "in the report)")
+            if day.get("limits"):
+                lines.append(f"     limit: {day['limits']}")
         window = node.get("window") or {}
         lines.append(f"   window rows={window.get('rows')} "
                      f"phone_sample={window.get('phone_sample_first_utc')}..{window.get('phone_sample_last_utc')} "

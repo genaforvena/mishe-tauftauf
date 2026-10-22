@@ -916,5 +916,145 @@ class RowAgeReadingTests(unittest.TestCase):
             self.assertIn("accepted-POST", sources["history"])
 
 
+class DayShapeTests(unittest.TestCase):
+    """The human's day, read hour by hour in the phone's own clock.
+
+    Each test builds a delivered lane with a known shape and asserts that the
+    reading names that shape, rather than reporting a lane statistic that a
+    consumer has to re-derive.
+    """
+
+    @staticmethod
+    def _day_lane(root: Path, rows: list[tuple[int, int, str]],
+                  posts: list[tuple[float, int]]) -> None:
+        """A delivered lane whose rows carry their own channel and fields."""
+        queues = root / "body" / "queues"
+        queues.mkdir(parents=True, exist_ok=True)
+        lines = [f"{seq} {epoch} {body}" for seq, epoch, body in rows]
+        (queues / "redmi10.observations.log").write_text(
+            "\n".join(lines) + "\n", encoding="utf-8")
+        _journal(root, "redmi10", posts)
+
+    def _reading(self, root: Path, now: float) -> dict:
+        space = _space(root, [_node("redmi10", "pass", 2.0, "absent")], {"redmi10": []})
+        report = personal_multibody.build_report(space, 300.0, now)
+        return report["nodes"][0]
+
+    def test_the_hour_is_the_phone_own_clock_not_the_host_own(self) -> None:
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # The phone's clock reads 2026-01-01 10:00 UTC (1767261600); the
+            # host accepts the POST at 1767268800, which is 2026-01-01 12:00
+            # UTC.  The row belongs to the phone's hour.
+            self._day_lane(
+                root,
+                [(1, 1767261600, "acceleration x=0.0 y=0.0 z=9.8")],
+                [(1767268800.0, 1)],
+            )
+            day = self._reading(root, now)["day_shape"]
+            self.assertEqual(day["status"], "ok")
+            self.assertEqual(day["first_phone_hour"], "2026-01-01 10")
+            self.assertEqual(day["host_clock_hours"], 1)
+            arrivals = day["host_arrivals"][0]
+            self.assertEqual(arrivals["host_hour"], "2026-01-01 12")
+
+    def test_a_sample_less_row_is_not_counted_as_a_still_minute(self) -> None:
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._day_lane(
+                root,
+                [(1, 1767261600, "acceleration x=0.0 y=0.0 z=9.8"),
+                 (2, 1767261605, "acceleration unavailable reason=stale"),
+                 (3, 1767261610, "acceleration unavailable reason=stale")],
+                [(1767261700.0, 3)],
+            )
+            reading = self._reading(root, now)
+            day = reading["day_shape"]
+            hour = day["hours"][0]
+            self.assertEqual(hour["acceleration_value_rows"], 1)
+            self.assertEqual(hour["acceleration_unavailable_rows"], 2)
+            self.assertAlmostEqual(hour["acceleration_sample_coverage"], 1 / 3,
+                                   places=5)
+            self.assertEqual(hour["acceleration_unavailable_reasons"],
+                             {"stale": 2})
+            # The coverage has to travel with the claim: the reading names the
+            # partial coverage and says that a missing row is the producer's
+            # behaviour rather than a measurement of the human's stillness.
+            self.assertTrue(any("33.3%" in unknown and "stillness" in unknown
+                                for unknown in reading["unknowns"]))
+
+    def test_an_hour_with_no_sample_at_all_is_named(self) -> None:
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._day_lane(
+                root,
+                [(1, 1767261600, "acceleration unavailable reason=stale"),
+                 (2, 1767261605, "acceleration unavailable reason=stale")],
+                [(1767261700.0, 2)],
+            )
+            reading = self._reading(root, now)
+            day = reading["day_shape"]
+            self.assertEqual(day["hours_without_any_acceleration_sample"], 1)
+            self.assertEqual(day["acceleration_sample_coverage"], 0.0)
+
+    def test_a_backlogged_row_is_reported_as_not_live(self) -> None:
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # The phone produced the row at 1767261600; the host accepted it
+            # at 1767268800 - two hours later, past the backlog window.
+            self._day_lane(
+                root,
+                [(1, 1767261600, "acceleration x=0.0 y=0.0 z=9.8")],
+                [(1767268900.0, 1)],
+            )
+            day = self._reading(root, now)["day_shape"]
+            hour = day["hours"][0]
+            self.assertEqual(hour["arrived_within_backlog_window"], 0)
+            self.assertEqual(hour["arrived_after_backlog_window"], 1)
+            self.assertAlmostEqual(hour["worst_wait_s"], 7300.0, places=3)
+
+    def test_a_body_silence_is_published_as_an_interval_not_a_missing_hour(self) -> None:
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # Two hours with rows, then a three-hour gap, then a row again.
+            self._day_lane(
+                root,
+                [(1, 1767261600, "acceleration x=0.0 y=0.0 z=9.8"),
+                 (2, 1767265200, "acceleration x=0.0 y=0.0 z=9.8"),
+                 (3, 1767279600, "acceleration x=0.0 y=0.0 z=9.8")],
+                [(1767265300.0, 2), (1767279700.0, 1)],
+            )
+            day = self._reading(root, now)["day_shape"]
+            self.assertEqual(len(day["body_silences"]), 1)
+            silence = day["body_silences"][0]
+            # The rows sit at 10:00, 11:00 and 15:00, so the silent hours are
+            # 12:00, 13:00 and 14:00 - three hours, with the body's own
+            # clock naming them.
+            self.assertEqual(silence["hours"], 3)
+            self.assertEqual(silence["start_hour"], "2026-01-01 12")
+            self.assertEqual(silence["end_hour"], "2026-01-01 14")
+            # The silent hours are not in the hour table: the table holds the
+            # hours the body produced something in - 10:00, 11:00 and 15:00 -
+            # and the silence is published beside it as an interval.
+            self.assertEqual(len(day["hours"]), 3)
+            self.assertEqual([hour["phone_hour"] for hour in day["hours"]],
+                             ["2026-01-01 10", "2026-01-01 11", "2026-01-01 15"])
+
+    def test_an_unreadable_lane_leaves_the_day_shape_unavailable(self) -> None:
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            space = _space(root, [_node("redmi10", "pass", 2.0, "absent")], {"redmi10": []})
+            report = personal_multibody.build_report(space, 300.0, now)
+            day = report["nodes"][0]["day_shape"]
+            self.assertEqual(day["status"], "unavailable")
+            self.assertIn("reason", day)
+
+
 if __name__ == "__main__":
     unittest.main()
