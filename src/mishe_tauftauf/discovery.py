@@ -41,6 +41,9 @@ from .outcome_events import (blocking_gaps, classify_outcomes, eligible_evidence
 from .outcome_publication import (EVIDENCE_REMEDY_SUFFIX, contained_evidence_path,
                                    remedy_stem)
 from .observations import literal_site_home_name, reserved_home_name
+from .remediation_bands import (EVIDENCE_BAND_NAMES, EVIDENCE_BAND_RELATIONS,
+                                EVIDENCE_BYTE_RELATION_NA, EVIDENCE_BYTE_RELATIONS,
+                                byte_relation, classify_remediation_band)
 from .runtime_source import source_for
 from .scan_freshness import age_bounds, classify_age, endpoint
 from .spawn_dialect import (script_spawns_site_package,
@@ -4430,6 +4433,166 @@ def _repo_release_retention(home: Path, now: datetime | None = None) -> dict[str
             "reasons": reasons}
 
 
+GIT_LOCK_STALE_AGE_S = 60
+"""Age beyond which an unheld index lock is stale on its own terms. Git writes
+the new index and renames it over the old one within milliseconds, so a lock
+older than this that no live process holds is not an in-flight write. The floor
+keeps a commit that started a moment ago from reading as stale."""
+
+GIT_INDEX_LOCK_VALIDITY_S = 60
+"""Validity of this reading for the consumer's decision ("can this checkout
+commit right now?"). The lock's presence changes in milliseconds and a stale
+sample would answer that question wrongly, so the reading is valid for one
+producer cycle and no longer."""
+
+
+def _live_git_process_count(proc_root: Path) -> int:
+    """Count live Git processes, or -1 when the process table cannot be read.
+
+    Only ``/proc/<pid>/comm`` is read, so a count is exact for the sample and a
+    ``-1`` says the table was unreadable rather than that no Git is running.
+    """
+    count = 0
+    try:
+        with os.scandir(proc_root) as scan:
+            for entry in scan:
+                if not entry.name.isdigit():
+                    continue
+                try:
+                    comm = Path(entry.path, "comm").read_bytes()
+                except (OSError, ValueError):
+                    continue
+                if comm in (b"git", b"git\n", b"git-lfs", b"git-lfs\n"):
+                    count += 1
+    except OSError:
+        return -1
+    return count
+
+
+def _lock_holder_count(proc_root: Path, lock: Path) -> int:
+    """Count live processes holding the lock file open, or -1 when unreadable.
+
+    A process that has the lock open is the one that created it: Git keeps the
+    descriptor while it writes the new index. A lock with no holder was left by
+    a process that died. The scan reads only ``/proc/<pid>/fd``, so a count of
+    zero means exactly "no live process holds this file open" and nothing more
+    about who created it.
+    """
+    target = str(lock)
+    holders = 0
+    try:
+        with os.scandir(proc_root) as scan:
+            for entry in scan:
+                if not entry.name.isdigit():
+                    continue
+                try:
+                    with os.scandir(Path(entry.path, "fd")) as fds:
+                        for fd in fds:
+                            try:
+                                if os.readlink(fd.path) == target:
+                                    holders += 1
+                                    break
+                            except OSError:
+                                continue
+                except OSError:
+                    continue
+    except OSError:
+        return -1
+    return holders
+
+
+def _staged_path_count(checkout: Path) -> int | None:
+    """Number of paths staged in the checkout's index, or None when unreadable.
+
+    The count is what makes a lock removal safe to consider: removing a lock
+    while a peer has staged work does not lose that work, but a lock that
+    outlives its writer blocks the commit that would have recorded it, so the
+    consumer needs the staged set named beside the lock. The read is a
+    ``--no-optional-locks`` diff, so it never writes the index and never
+    creates a lock of its own.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "--no-optional-locks", "diff", "--cached", "--name-only"],
+            capture_output=True, cwd=checkout, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.count(b"\n")
+
+
+def _repo_git_index_lock(home: Path, now: float | None = None,
+                         proc_root: Path | None = None) -> dict[str, object]:
+    """Report the checkout's Git index lock: a delivery hazard with a known shape.
+
+    While ``.git/index.lock`` exists, every ``git add`` and ``git commit`` in
+    the checkout fails, so no mind can record a commit; ``git push`` still
+    works because it touches refs, not the index, which is why the tape keeps
+    moving while the checkout cannot record anything. A crashed Git process
+    leaves the lock behind with no process holding it, and the checkout then
+    stays blocked for as long as nobody removes it. On 2026-10-22 this plant
+    lost two hours of commits to exactly that, and no reading named it.
+
+    The reading separates three states that look alike from the outside: no
+    lock (the checkout can commit), a lock held by a live process (a commit in
+    flight, which ends on its own), and a lock no live process holds (the
+    crashed-writer case, which does not end on its own). Only the last is
+    ``stale``, and it is reported with its age, its size, and the number of
+    staged paths, so the consumer can see both that the block is real and
+    whether a peer's staged work is waiting behind it.
+
+    The holder count reads ``/proc/<pid>/fd`` and the process count reads
+    ``/proc/<pid>/comm``: both are exact for the sample they took, and both
+    answer "none" only about that sample. A count of ``-1`` (the table could
+    not be read) is carried as ``unknown`` in the sample, never as zero, so a
+    broken monitor cannot read as a healthy checkout.
+
+    State is ``verified`` when no lock exists, ``drift`` when one does -- a
+    present lock is a deviation whatever holds it -- and ``unknown`` when the
+    checkout's Git directory cannot be found, because a worktree's Git
+    directory is a file whose pointer would have to be parsed and this reading
+    does not parse text.
+    """
+    if now is None:
+        now = time.time()
+    if proc_root is None:
+        proc_root = Path("/proc")
+    checkout = Path(home).resolve().parent
+    gitdir = checkout / ".git"
+    if not gitdir.is_dir():
+        return {"id": "sense.repo.git-index-lock", "state": "unknown", "kind": "read",
+                "sample": f"index-lock=unknown reason=no-gitdir path={gitdir}",
+                "lock": None, "stale": None}
+    lock = gitdir / "index.lock"
+    try:
+        stat = lock.stat()
+    except FileNotFoundError:
+        return {"id": "sense.repo.git-index-lock", "state": "verified", "kind": "read",
+                "sample": "index-lock=absent", "lock": False, "age_s": 0, "size": 0,
+                "holders": 0, "git_processes": 0, "staged": 0, "stale": False,
+                "validity_s": GIT_INDEX_LOCK_VALIDITY_S}
+    except OSError as error:
+        return {"id": "sense.repo.git-index-lock", "state": "unknown", "kind": "read",
+                "sample": f"index-lock=unknown reason=stat-failed error={error}",
+                "lock": None, "stale": None}
+    age = max(0.0, now - stat.st_mtime)
+    holders = _lock_holder_count(proc_root, lock)
+    git_processes = _live_git_process_count(proc_root)
+    staged = _staged_path_count(checkout)
+    stale = (holders == 0 and git_processes == 0 and age >= GIT_LOCK_STALE_AGE_S)
+    holder_label = "unknown" if holders < 0 else str(holders)
+    git_label = "unknown" if git_processes < 0 else str(git_processes)
+    staged_label = "unknown" if staged is None else str(staged)
+    sample = (f"index-lock=present age={int(age)}s size={stat.st_size} "
+              f"holder={holder_label} git={git_label} staged={staged_label} "
+              f"stale={'yes' if stale else 'no'}")
+    return {"id": "sense.repo.git-index-lock", "state": "drift", "kind": "read",
+            "sample": sample, "lock": True, "age_s": int(age), "size": stat.st_size,
+            "holders": holders, "git_processes": git_processes, "staged": staged,
+            "stale": stale, "path": str(lock),
+            "validity_s": GIT_INDEX_LOCK_VALIDITY_S}
+
 
 GHOST_FILE_LIMIT = 10_000
 """Enumeration bound across ghost-home trees: an exact count to the limit, then
@@ -4503,6 +4666,34 @@ def _ghost_home_name(name: str) -> bool:
     different question, answered by the caller against the site it serves.
     """
     return reserved_home_name(name) or literal_site_home_name(name)
+
+
+def _git_ignores(checkout: Path, names: list[str]) -> dict[str, bool] | None:
+    """Whether Git ignores each name in the checkout, or None when it cannot say.
+
+    The checkout's ignore rule covers the reserved ``.mishe-*`` prefix, so a
+    ghost tree under that prefix is invisible to Git and to every peer, while
+    an unexpanded-variable name is not covered and Git stages it: a reviewer
+    can commit a site-home literal by accident. The fact belongs beside the
+    ghost's name, so the consumer does not have to run Git to learn whether a
+    stray tree is one broad ``git add`` away from the history. A ``None``
+    answer means Git could not be asked, never that nothing is ignored.
+    """
+    ignored: dict[str, bool] = {}
+    for name in names:
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(checkout), "check-ignore", "-q", "--", name],
+                capture_output=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if result.returncode == 0:
+            ignored[name] = True
+        elif result.returncode == 1:
+            ignored[name] = False
+        else:
+            return None
+    return ignored
 
 
 def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]:
@@ -4754,6 +4945,17 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
         parts.append("no-process=" + named(no_process))
 
     parts.append(f"nested={len(nested)}{'+' if nested_truncated else ''}")
+    # Whether Git would stage a stray name: the ignore rule covers the
+    # reserved prefix, so a literal-variable tree is one broad ``git add``
+    # away from the history while a reserved one is invisible to Git.
+    ignore_answer = _git_ignores(checkout, sorted(set(ghosts) | set(stray)))
+    if ignore_answer is None:
+        stageable: list[str] | None = None
+        parts.append("stageable=unknown")
+    else:
+        stageable = sorted(name for name, ignored in ignore_answer.items() if not ignored)
+        if stageable:
+            parts.append("stageable=" + named(stageable))
     if symlinked:
         parts.append("symlink=" + named(symlinked)
                      + ("+" if symlinked_truncated else ""))  # named, never walked
@@ -4772,6 +4974,7 @@ def _ghost_site_homes(home: Path, now: float | None = None) -> dict[str, object]
             "stray": sorted(stray),
             "stray_truncated": stray_truncated,
             "no_process": sorted(no_process),
+            "stageable": stageable,
 
             "files_at_least": capped or work_truncated or bool(symlinked),
             "roots_at_least": roots_at_least,
@@ -5117,58 +5320,11 @@ EVIDENCE_PREFIX_SEARCH_TOTAL_BYTES = 32 * 1024 * 1024
 EVIDENCE_READ_CHUNK_BYTES = 1024 * 1024
 
 
-#: The byte relations a rebound row can carry. The band decides a **link**
-#: relation — a remedy-named successor exists — so the byte relation is
-#: published beside it, per row, rather than folded into the band's name.
-#: ``restored`` — the successor's bytes are the row's published bytes, so the
-#: content came back. ``copy-of-current`` — the successor's bytes are the lost
-#: path's current bytes, so the work was carried forward and the published
-#: bytes did not come back. ``unrelated`` — the successor's bytes are neither.
-#: ``unknown`` — the relation cannot be decided from the bytes at hand.
-EVIDENCE_BYTE_RELATIONS = ("restored", "copy-of-current", "unrelated", "unknown")
-
-#: The relation a link that is not a byte relation carries, so every linked
-#: row publishes the same field with an honest value.
-EVIDENCE_BYTE_RELATION_NA = "not-a-byte-relation"
-
-
-#: The relation each band decides, published with the band table so a reader
-#: does not have to infer what a band's name claims. A band is a relation on
-#: rows; the byte relation of a row that carries a link is published per row
-#: beside it.
-EVIDENCE_BAND_RELATIONS = {
-    "owed": "the work was lost and no later intact outcome re-evidenced it",
-    "recoverable": "the bound bytes survive verbatim as a prefix of the current file",
-    "disposed": "a later intact outcome declared the row's record digest in its "
-                "structured supersedes field",
-    "rebound": "a later intact outcome bound a remedy-named successor of the lost "
-               "artifact; the byte relation of that successor is published per row",
-    "cited": "a later intact outcome's artifact carries the row's record digest",
-    "versioned": "the row was bound before the allowlist amendment and was "
-                 "compliant under the rule then in force",
-    "permanent": "no later rule can repair the defect",
-}
-
-
-def _byte_relation(lost_published: object, lost_current: object,
-                   successor_current: object) -> str:
-    """How a successor's bytes relate to the lost row's bytes.
-
-    The band says a remedy-named successor exists. That link says nothing
-    about the bytes: the remedy-named copy may hold the artifact as it was
-    published, or a copy of the file as it now stands after the edit that
-    lost the row. The two are decidable from digests alone, so the relation
-    is published per row instead of being left inside the band's name.
-    """
-    if not isinstance(lost_published, str) or not lost_published:
-        return "unknown"
-    if not isinstance(successor_current, str) or not successor_current:
-        return "unknown"
-    if successor_current == lost_published:
-        return "restored"
-    if isinstance(lost_current, str) and lost_current and successor_current == lost_current:
-        return "copy-of-current"
-    return "unrelated"
+#: The byte relations a rebound row can carry, the band vocabulary and the
+#: one computation that decides a row's band live in
+#: ``mishe_tauftauf.remediation_bands``, so a reader that classifies published
+#: rows imports the same answers the publisher wrote instead of re-deriving
+#: them from a link kind.
 
 
 def _file_digest(path: Path) -> str:
@@ -5457,7 +5613,7 @@ def _rebind_links(events: list[dict], checked: list[tuple],
         if kind != "remedy-name":
             continue
         lost_row = by_sequence.get(sequence) or {}
-        byte_relations[sequence] = _byte_relation(
+        byte_relations[sequence] = byte_relation(
             (lost_row.get("evidence") or {}).get("sha256"),
             digests.get(sequence),
             digests.get(successor))
@@ -5782,8 +5938,7 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     # * ``permanent``  a defect no later rule can repair: a path bound by two
     #                   outcomes, or a path bound after the amendment that the
     #                   current allowlist excludes.
-    band_counts = {"versioned": 0, "permanent": 0, "disposed": 0, "rebound": 0,
-                   "cited": 0, "recoverable": 0, "owed": 0}
+    band_counts = {name: 0 for name in EVIDENCE_BAND_NAMES}
     band_roles: dict[str, dict[str, int]] = {name: {} for name in band_counts}
     # The band every violating row falls into, by tape sequence. The band is
     # the relation a reader of these rows needs; the link kind is how the
@@ -5810,46 +5965,14 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
             # published over rows, not bands: a row that also lost its content
             # is banded by that loss, and this counter still names the version.
             policy_version_rows += 1
-        if "B" in classes or "C" in classes:
-            # The content was lost (amended) or is absent (deleted), so the
-            # row's band says what re-evidenced it. Absence takes precedence
-            # over a binding defect: the clause calls a deletion "a distinct
-            # and more severe class", so an ineligible or doubly bound path
-            # does not excuse a file that is gone.
-            if link_kind == "supersedes":
-                # A later, intact outcome of the same role declared this row's
-                # record digest: the role acknowledged and re-evidenced the work.
-                band = "disposed"
-            elif link_kind == "remedy-name":
-                # A later, intact outcome bound a remedy-named successor of the
-                # lost artifact: the work was re-evidenced under the clause's
-                # naming. The link does not claim the published bytes came
-                # back, so the row's byte relation is published beside it.
-                band = "rebound"
-            elif link_kind == "digest-cited":
-                # A later, intact outcome's artifact carries this row's record
-                # digest: the work was cited, and the citation is published
-                # with the row so a reader can audit it.
-                band = "cited"
-            elif "B" in classes and amendments.get(sequence) == "append":
-                # The bound bytes survive verbatim at the bound path: the
-                # content is intact and only the binding is broken. Nothing
-                # was lost, so the plant owes no work on it. A deleted file
-                # never reaches here: its bytes do not survive anywhere.
-                band = "recoverable"
-            else:
-                band = "owed"
-        elif "D" in classes:
-            # The path is bound by two outcomes and the store is append-only,
-            # so the second binding can never be undone.
-            band = "permanent"
-        elif "A" in classes:
-            # An ineligible path. Bound before the amendment and inside the
-            # owned site, it was compliant then: a policy version. Bound after
-            # it, or outside the site, no later rule can make it eligible.
-            band = "versioned" if versioned_row else "permanent"
-        else:
-            band = "owed"
+        # The band is decided once, in ``remediation_bands``: the row's own
+        # facts in, the band's name out, with the order the clause decides in.
+        # A reader that classifies published rows imports the same function
+        # instead of re-deriving a band from a link kind.
+        band = classify_remediation_band(
+            link_kind=link_kind, classes=classes,
+            versioned_row=bool(versioned_row),
+            amendment=amendments.get(sequence, "unknown"))
         band_counts[band] += 1
         row_bands[sequence] = band
         band_sequences[band].append(sequence)
@@ -7257,6 +7380,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_runtime_pin_lag(home))
     observed.append(_repo_branch_inventory(home))
     observed.append(_repo_release_retention(home))
+    observed.append(_repo_git_index_lock(home))
     observed.append(_ghost_site_homes(home))
     observed.append(_coord_dm_disposition_age(home))
     observed.append(_coord_authorship_fog(home))
