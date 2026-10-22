@@ -65,3 +65,21 @@ def test_a_reserved_prefix_tree_is_not_named_as_stageable(tmp_path):
 
     assert reading["ghosts"] == [".mishe-seed-home"]
     assert reading["stageable"] == []
+    assert reading["stageable_state"] == "known"
+
+
+def test_a_checkout_git_cannot_answer_for_reads_unknown_not_empty(tmp_path):
+    """Git may not be able to answer at all (a checkout that is not a
+    repository). The reading then says the fact is unknown, never that nothing
+    is stageable."""
+    from mishe_tauftauf import discovery
+
+    checkout = tmp_path / "checkout"
+    (checkout / ".mishe-tauftauf").mkdir(parents=True)
+    (checkout / "$MISHE_SEED_HOME").mkdir()
+
+    reading = discovery._ghost_site_homes(checkout / ".mishe-tauftauf")
+
+    assert reading["state"] == "drift"
+    assert reading["stageable"] is None
+    assert reading["stageable_state"] == "unknown"
