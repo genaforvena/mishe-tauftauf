@@ -544,6 +544,119 @@ class FeedTests(unittest.TestCase):
             self.assertTrue(parsed_sizes)
             self.assertLess(max(parsed_sizes), 150_000)
 
+    def test_streaming_reader_yields_the_same_entries_as_the_whole_tape_read(self):
+        """The streaming reader is a reader, not a second dialect.
+
+        The evidence-binding gate's peak was the tape parse: the whole-tape
+        read kept every entry in memory at once, and the peak grew with the
+        tape. The streaming reader reads the same tape without holding it, so
+        the two must agree on every entry.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            bodies = [
+                "one line\n",
+                "two\nlines\n",
+                "trailing without a newline",
+                "carriage\rreturn inside\n",
+                "héllo → ✓ multibyte\n",
+            ]
+            for body in bodies:
+                feed.append("genome", body)
+            path = Path(directory) / "chat.log"
+            whole = parse_feed(path.read_bytes(), home=directory)
+            streamed = list(feed_module.iter_feed_file(path, home=directory))
+            self.assertEqual(whole, streamed)
+            self.assertTrue(whole)
+
+    def test_streaming_reader_reports_the_same_faults_as_the_whole_tape_read(self):
+        """A tape that faults faults the same way, with the same reason.
+
+        A malformed tape must read as unreadable rather than as a shorter
+        tape, so the streaming reader has to fail where the whole-tape read
+        fails and say why. A body carrying a separator that ends a line is
+        one of these faults: the framed body no longer reads as a framed
+        body, and both readers must say so.
+        """
+        faults = {
+            "malformed header": b"not a header\n",
+            "non-contiguous": (b"v1 00000000000000000001 2026-10-10T15:51:56.625536Z seed ::\n"
+                               b"    | a\n    .\n"
+                               b"v1 00000000000000000003 2026-10-10T15:51:57.625536Z seed ::\n"
+                               b"    | b\n    .\n"),
+            "unterminated": b"v1 00000000000000000001 2026-10-10T15:51:56.625536Z seed ::\n    | a\n",
+            "malformed body framing": (b"v1 00000000000000000001 2026-10-10T15:51:56.625536Z seed ::\n"
+                                       b"    | a\n  bad\n    .\n"),
+            "empty body": b"v1 00000000000000000001 2026-10-10T15:51:56.625536Z seed ::\n    .\n",
+            "vertical tab in a body": (b"v1 00000000000000000001 2026-10-10T15:51:56.625536Z seed ::\n"
+                                       b"    | a\vb\n    .\n"),
+            "unicode separator in a body": (b"v1 00000000000000000001 2026-10-10T15:51:56.625536Z seed ::\n"
+                                            b"    | a\xe2\x80\xa8b\n    .\n"),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "chat.log"
+            for reason, data in faults.items():
+                path.write_bytes(data)
+                with self.assertRaises(FeedError) as whole_error:
+                    parse_feed(data)
+                with self.assertRaises(FeedError) as streamed_error:
+                    list(feed_module.iter_feed_file(path, home=directory))
+                self.assertEqual(str(whole_error.exception), str(streamed_error.exception),
+                                 f"the streaming reader must fault the same way: {reason}")
+
+    def test_streaming_reader_does_not_hold_the_tape(self):
+        """The streaming reader's memory does not grow with the tape.
+
+        The gate's peak is what the plant's live observer pays, and the tape
+        grows with every message. The whole-tape read keeps every entry at
+        once, so its cost grows with the tape; the streaming reader holds one
+        chunk and one entry, so its cost does not. The property is measured
+        against the whole-tape read on the same tape, because that is the
+        cost the reader is there to avoid.
+        """
+        import tracemalloc
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "chat.log"
+            body = "x" * 16384
+            with path.open("w", encoding="utf-8") as handle:
+                for sequence in range(1, 401):
+                    handle.write(f"v1 {sequence:020d} 2026-10-10T15:51:56.625536Z seed ::\n")
+                    handle.write(f"    | {body}\n    .\n")
+            tape_bytes = path.stat().st_size
+
+            tracemalloc.start()
+            try:
+                whole = parse_feed(path.read_bytes(), home=directory)
+                _current, whole_peak = tracemalloc.get_traced_memory()
+            finally:
+                tracemalloc.stop()
+            tracemalloc.start()
+            try:
+                count = sum(1 for _entry in feed_module.iter_feed_file(path, home=directory))
+                _current, streamed_peak = tracemalloc.get_traced_memory()
+            finally:
+                tracemalloc.stop()
+            self.assertEqual(len(whole), 400)
+            self.assertEqual(count, 400)
+            # The streaming reader must cost a fraction of the whole-tape
+            # read on the same tape, and must not cost the tape itself.
+            self.assertLess(streamed_peak, whole_peak // 2)
+            self.assertLess(streamed_peak, tape_bytes)
+
+    def test_streaming_reader_sees_a_torn_tail_as_a_fault(self):
+        """A half-written entry is a fault, not a shorter tape.
+
+        A writer appends under an exclusive lock, so a reader that captures
+        the tape's length under the shared lock sees whole entries. A tail
+        that is torn anyway must read as unreadable.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "chat.log"
+            path.write_bytes(b"v1 00000000000000000001 2026-10-10T15:51:56.625536Z seed ::\n"
+                             b"    | half an entry")
+            with self.assertRaises(FeedError):
+                list(feed_module.iter_feed_file(path, home=directory))
+
 
 if __name__ == "__main__":
     unittest.main()

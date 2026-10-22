@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 import fcntl
 import hashlib
 import json
@@ -134,14 +135,35 @@ def parse_feed(data: bytes, *, start_sequence: int = 1, home: Path | str | None 
         raise FeedError(f"feed is not UTF-8: {exc}") from exc
     if not text:
         return []
-    lines = text.splitlines(keepends=True)
-    entries: list[FeedEntry] = []
+    return list(iter_feed_entries(text.splitlines(keepends=True),
+                                  start_sequence=start_sequence, home=home))
+
+
+def iter_feed_entries(lines, *, start_sequence: int = 1,
+                      home: Path | str | None = None):
+    """Yield the tape's entries from an iterable of framed lines.
+
+    The framing rules live here so that every reader of the tape applies one
+    vocabulary: a header line, body lines that carry their ``    | `` prefix,
+    and a terminator that says whether the body ended with a newline. The
+    whole-tape reader and the streaming reader both come through here, so
+    they cannot drift apart on what a well-framed tape is.
+
+    A malformed tape raises ``FeedError`` at the first fault, and the entries
+    before it are still yielded: a reader that stops early must be able to say
+    that the tape broke here rather than that the tape was short.
+    """
     index = 0
     expected = start_sequence
-    while index < len(lines):
-        match = HEADER_RE.fullmatch(lines[index])
+    lines = iter(lines)
+    while True:
+        header = next(lines, None)
+        if header is None:
+            return
+        index += 1
+        match = HEADER_RE.fullmatch(header)
         if not match:
-            raise FeedError(f"malformed header at line {index + 1}")
+            raise FeedError(f"malformed header at line {index}")
         sequence = int(match.group(1))
         if sequence != expected:
             raise FeedError(f"non-contiguous sequence {sequence}, expected {expected}")
@@ -150,23 +172,19 @@ def parse_feed(data: bytes, *, start_sequence: int = 1, home: Path | str | None 
             datetime.fromisoformat(timestamp.removesuffix("Z") + "+00:00")
         except ValueError as exc:
             raise FeedError(f"invalid timestamp at sequence {sequence}") from exc
-        index += 1
         body_parts: list[str] = []
         final_newline: bool | None = None
-        while index < len(lines):
-            line = lines[index]
+        for line in lines:
+            index += 1
             if line == "    .\n":
                 final_newline = True
-                index += 1
                 break
             if line == "    .-\n":
                 final_newline = False
-                index += 1
                 break
             if not line.startswith("    | ") or not line.endswith("\n"):
-                raise FeedError(f"malformed body framing at line {index + 1}")
+                raise FeedError(f"malformed body framing at line {index}")
             body_parts.append(line[6:])
-            index += 1
         if final_newline is None:
             raise FeedError(f"unterminated entry {sequence}")
         body = "".join(body_parts)
@@ -176,9 +194,92 @@ def parse_feed(data: bytes, *, start_sequence: int = 1, home: Path | str | None 
             body = body[:-1]
         if not body:
             raise FeedError(f"empty body at sequence {sequence}")
-        entries.append(FeedEntry(sequence, timestamp, source, body, Path(home) if home is not None else None))
+        yield FeedEntry(sequence, timestamp, source, body,
+                        Path(home) if home is not None else None)
         expected += 1
-    return entries
+
+
+def iter_feed_file(path: Path | str, *, home: Path | str | None = None,
+                   chunk_bytes: int = 1024 * 1024):
+    """Yield the tape's entries without holding the tape in memory.
+
+    The whole-tape reader decodes the tape, splits it into lines and keeps
+    every entry, so its cost grows with the tape: measured over the live site
+    home, the evidence-binding gate peaked at 433.0 MiB against a 67.5 MiB
+    tape, and 363.8 MiB of that was the parse. This reader holds one chunk
+    and one entry at a time, so its peak does not grow with the tape.
+
+    The prefix it reads is captured under the tape's shared lock, so it ends
+    at an entry boundary even while a writer appends, and the bytes it reads
+    are the ones that were on the tape when it looked. A writer's exclusive
+    lock excludes this reader for the capture only, never for the parse.
+    """
+    path = Path(path)
+    with path.open("rb") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
+        try:
+            size = os.fstat(handle.fileno()).st_size
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+        def chunks():
+            decoder = codecs.getincrementaldecoder("utf-8")()
+            remaining = size
+            while remaining > 0:
+                chunk = handle.read(min(chunk_bytes, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                yield decoder.decode(chunk)
+            yield decoder.decode(b"", final=True)
+
+        try:
+            for entry in iter_feed_entries(_iter_text_lines(chunks()), home=home):
+                yield entry
+        except UnicodeDecodeError as exc:
+            raise FeedError(f"feed is not UTF-8: {exc}") from exc
+
+
+#: The line boundaries ``str.splitlines`` recognises. A tape is framed with
+#: LF, but a body may carry any of these, and the whole-tape reader splits
+#: on all of them, so the streaming reader must split on the same set or the
+#: two readers would disagree about where an entry ends.
+_LINE_BREAK = re.compile(r"\r\n|[\n\r\v\f\x1c\x1d\x1e\x85  ]")
+
+
+def _iter_text_lines(chunks):
+    """Yield the lines of decoded text chunks the way ``splitlines`` does.
+
+    ``str.splitlines`` ends a line at more than LF: a carriage return, the
+    vertical tab, the form feed, the ASCII separators, NEL and the Unicode
+    line and paragraph separators, and it keeps the terminator with the line
+    it ends. The streaming reader splits on the same set, and it defers a
+    trailing carriage return until the next chunk arrives, because that
+    carriage return may be the first half of a CRLF pair.
+    """
+    pending = ""
+    offset = 0
+    for text in chunks:
+        pending = pending[offset:] + text
+        offset = 0
+        while True:
+            match = _LINE_BREAK.search(pending, offset)
+            if match is None:
+                break
+            if match.group(0) == "\r" and match.end() == len(pending):
+                # The next chunk may begin with the LF that completes this
+                # CRLF pair, and a CRLF is one terminator, not two.
+                break
+            yield pending[offset:match.end()]
+            offset = match.end()
+    while True:
+        match = _LINE_BREAK.search(pending, offset)
+        if match is None:
+            break
+        yield pending[offset:match.end()]
+        offset = match.end()
+    if offset < len(pending):
+        yield pending[offset:]
 
 
 class Feed:
