@@ -479,8 +479,13 @@ def read_snapshot(home, *, now=None, max_age=SNAPSHOT_MAX_AGE):
     try:
         if isinstance(max_age, bool) or not isinstance(max_age, (int, float)) or not math.isfinite(max_age) or max_age < 0:
             raise ValueError("snapshot max_age must be finite and nonnegative")
-        now = _time(datetime.now(timezone.utc) if now is None else now)
         report = json.loads(_read(Path(home) / "checks/initiative.json", MAX_TAPE_BYTES))
+        # The clock is taken after the read, not before it: a report that the
+        # producer wrote while this reader was reading it carries a later
+        # stamp than the reader's start, and it was already on disk when the
+        # reader saw it. Reading it as future-dated would report a race as a
+        # broken producer.
+        now = _time(datetime.now(timezone.utc) if now is None else now)
         states = {"OBSERVED", "PARTIAL", "UNKNOWN"}
 
         def require(value, expected, name):

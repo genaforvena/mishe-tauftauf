@@ -586,7 +586,15 @@ def _producer_fault(home, domain, exc, previous, now, interval=None):
 
 def check(home, *, now=None, interval=None):
     """Observe and route once. Persist evidence/outbox before any addressed append."""
-    home, now = Path(home).resolve(), _time(now)
+    home = Path(home).resolve()
+    # A caller that pins ``now`` pins the whole cycle, so every reading is
+    # taken against that instant. A caller that does not pin it is asking for
+    # the live plant, and the live plant is written while the monitor reads:
+    # the clock is then taken per reading, after the evidence was read, so an
+    # entry another writer appended during the read is not read as evidence
+    # from the future.
+    pinned = now is not None
+    now = _time(now)
     path = home / "checks/initiative-watch.json"
     with _lock(home):
         events = _archive(home)
@@ -609,9 +617,19 @@ def check(home, *, now=None, interval=None):
         problems, report = [], None
         domain = "producer report"
         try:
-            report = initiative.read_snapshot(home, now=now, max_age=PRODUCER_MAX_AGE)
+            # The report is validated against the clock taken after it was
+            # read, so a report the producer wrote while this cycle was
+            # reading it is fresh rather than future-dated.
+            report = initiative.read_snapshot(home, now=(now if pinned else None),
+                                              max_age=PRODUCER_MAX_AGE)
             domain = "tape"
-            entries = parse_feed(_read(home / "chat.log", MAX_TAPE_BYTES), home=home)
+            raw = _read(home / "chat.log", MAX_TAPE_BYTES)
+            # The tape is read against the clock taken after it was read. An
+            # entry appended during the read carries a later stamp than the
+            # monitor's start, and it is a real entry of a tape that is growing
+            # under the monitor, not an event from the future.
+            observed = now if pinned else _time(None)
+            entries = parse_feed(raw, home=home)
             if len(entries) > MAX_ENTRIES:
                 raise ValueError("tape entry bound exceeded")
             domain = "tape coverage"
@@ -619,7 +637,7 @@ def check(home, *, now=None, interval=None):
             if last is not None and (type(last) is not int or last > len(entries)):
                 raise ValueError("producer history is not covered by available tape")
             domain = "evaluation"
-            findings = evaluate(report, entries, now=now)
+            findings = evaluate(report, entries, now=observed)
         except (OSError, ValueError, TypeError, KeyError, UnicodeError) as exc:
             findings = [_make("unknown", None, "producer",
                               _producer_fault(home, domain, exc, previous, now, interval))]
