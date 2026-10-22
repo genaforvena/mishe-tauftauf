@@ -47,8 +47,11 @@ derives from the shell's own behaviour.
 The corpus is the plant's live launchers (``SITE/minds/*`` and
 ``SITE/top-pains/*``) plus a fixed set of grammar edges that the reader's
 accepted set has to survive. A candidate that is not a shell script is skipped
-and named; a candidate whose program the sandbox cannot neutralize is skipped
-and named, because running it would run the real program.
+and named; a candidate that holds a shell expansion is skipped and named,
+because the expansion can name a program the sandbox cannot see and the reader
+refuses every such candidate anyway, so there is no model claim to check. Every
+program a candidate does run is replaced by a stand-in of the same name, so the
+check never runs the plant's own program.
 
 Exit status:
   0  every candidate agrees: the reader names the model the shell passes, or
@@ -235,6 +238,18 @@ def _is_shell_script(text: str) -> bool:
     return any(part.rsplit("/", 1)[-1] in _SHELL_NAMES for part in parts)
 
 
+def _holds_expansion(text: str) -> bool:
+    """Whether a candidate holds a word the shell expands before it runs it.
+
+    An expansion can name a program the sandbox cannot see -- ``$OMP`` can be
+    the plant's own pane -- and the reader refuses every candidate that holds
+    one, so there is no model claim to check. Such a candidate is skipped
+    rather than run: a check must not start a pane to find out what a pane
+    would have been started with.
+    """
+    return any(character in text for character in "$*?`")
+
+
 def _blocks(text: str) -> list[tuple[str, list[str]]]:
     """The recorded program invocations, in the order the shell made them."""
     blocks: list[tuple[str, list[str]]] = []
@@ -382,6 +397,9 @@ def main(argv=None) -> int:
     for name, text in candidates:
         if not _is_shell_script(text):
             skipped.append((name, "not a shell script"))
+            continue
+        if _holds_expansion(text):
+            skipped.append((name, "holds a shell expansion the sandbox cannot resolve"))
             continue
         root = Path(tempfile.mkdtemp(prefix="launcher-parity-"))
         try:

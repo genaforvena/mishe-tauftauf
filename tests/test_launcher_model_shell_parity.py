@@ -110,3 +110,20 @@ def test_a_missing_home_is_undecidable(tmp_path):
     result = _run(tmp_path / "absent", "--corpus", "plant")
     assert result.returncode == 3
     assert result.stdout.startswith("UNKNOWN")
+
+
+def test_a_candidate_that_holds_an_expansion_is_skipped(tmp_path):
+    """An expansion can name the plant's own pane, so the check does not run it."""
+    home = _home(tmp_path, {"expanded": "#!/bin/sh\nexec $OMP --model=vendor/fake\n"})
+    result = _run(home, "--corpus", "plant")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "holds a shell expansion" in result.stdout
+
+
+def test_the_check_runs_no_program_of_the_candidate(tmp_path):
+    """A check must have no effect: the candidate's program never runs."""
+    canary = tmp_path / "canary"
+    home = _home(tmp_path, {"writer": "#!/bin/sh\nexec /bin/touch %s\n" % canary})
+    result = _run(home, "--corpus", "plant")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not canary.exists()
