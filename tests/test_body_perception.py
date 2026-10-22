@@ -299,6 +299,45 @@ def test_redmi_light_sense_stays_verified_when_acceleration_is_stale(tmp_path: P
     assert "L=101lux" in row["sample"]
 
 
+def test_redmi_names_the_producer_s_own_reason_for_an_absent_motion_sample(
+        tmp_path: Path) -> None:
+    """A current acceleration row that carries no sample says so, by name.
+
+    The phone publishes "acceleration unavailable reason=stale" when it has no
+    current accelerometer sample, and the live reading reported that as
+    "unknown/value" — a word that reads like this reader could not use a
+    payload it had, with the producer's cause lost behind it. The plant's own
+    dense baseline already counts such a row as a delivery and not as motion,
+    so the reading names the cause: the motion leg is absent because the
+    producer has no current sample, and the reason is the producer's.
+
+    Measured over the live queue at 2026-10-22: 27,586 of 55,647 acceleration
+    rows carry no sample, in 127 runs whose longest is 12,496 s. Half the
+    carried body's rows have no motion data, and "the body did not move" is
+    not what that says.
+    """
+    now = 1_800_000_000.0
+    core, state_path, state = _linked_state(tmp_path, now)
+    state["latest"]["acceleration"]["fields"] = {"reason": "stale"}
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    row = body_perception.read_redmi10(core, now)
+
+    # The composite is still not a verified observation: one of its three
+    # channels has no current sample, and that stays UNKNOWN.
+    assert row["state"] == "unknown"
+    assert row["channels"]["acceleration"] == "unavailable/stale"
+    assert "|a|=unavailable/stale" in row["sample"]
+    assert "acceleration unavailable reason=stale" in row["details"]
+    # The verdict carries its cause, not a generic word.
+    assert row["reason"] == "acceleration=unavailable/stale"
+    # The light channel is current, so the light reading stays verified and
+    # is given no cause of the acceleration channel's.
+    light = body_perception.read_redmi10_light(core, now)
+    assert light["state"] == "verified"
+    assert light["reason"] == "fresh-clock-conditional"
+
+
 def test_redmi_light_sense_becomes_unknown_when_light_is_not_current(tmp_path: Path) -> None:
     now = 1_800_000_000.0
     core, state_path, state = _linked_state(tmp_path, now)
