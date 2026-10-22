@@ -4548,6 +4548,18 @@ def _repo_git_index_lock(home: Path, now: float | None = None,
     not be read) is carried as ``unknown`` in the sample, never as zero, so a
     broken monitor cannot read as a healthy checkout.
 
+    The **holder** count decides the stale verdict, because it is the evidence
+    that matches the failure: Git keeps the lock descriptor open while it
+    writes the new index, so a lock no visible process holds open is one a
+    crashed writer left behind. The host-wide Git process count is reported as
+    context and deliberately does not decide anything -- nine minds share this
+    checkout, another mind's routine Git work is the normal state of the host,
+    and letting it decide would mask exactly the lock this reading exists to
+    name. When the holder count cannot be read at all, the verdict is
+    ``unknown`` rather than "not stale": a broken monitor must not read as a
+    healthy checkout. A zero holder count is exact about Git, because the
+    processes this user cannot inspect are not Git writers.
+
     State is ``verified`` when no lock exists, ``drift`` when one does -- a
     present lock is a deviation whatever holds it -- and ``unknown`` when the
     checkout's Git directory cannot be found, because a worktree's Git
@@ -4580,13 +4592,19 @@ def _repo_git_index_lock(home: Path, now: float | None = None,
     holders = _lock_holder_count(proc_root, lock)
     git_processes = _live_git_process_count(proc_root)
     staged = _staged_path_count(checkout)
-    stale = (holders == 0 and git_processes == 0 and age >= GIT_LOCK_STALE_AGE_S)
+    # The holder count decides; the host-wide Git count is context only, and an
+    # unreadable holder count leaves the verdict unknown rather than "no".
+    if holders < 0:
+        stale = None
+    else:
+        stale = (holders == 0 and age >= GIT_LOCK_STALE_AGE_S)
     holder_label = "unknown" if holders < 0 else str(holders)
     git_label = "unknown" if git_processes < 0 else str(git_processes)
     staged_label = "unknown" if staged is None else str(staged)
+    stale_label = "unknown" if stale is None else ("yes" if stale else "no")
     sample = (f"index-lock=present age={int(age)}s size={stat.st_size} "
               f"holder={holder_label} git={git_label} staged={staged_label} "
-              f"stale={'yes' if stale else 'no'}")
+              f"stale={stale_label}")
     return {"id": "sense.repo.git-index-lock", "state": "drift", "kind": "read",
             "sample": sample, "lock": True, "age_s": int(age), "size": stat.st_size,
             "holders": holders, "git_processes": git_processes, "staged": staged,

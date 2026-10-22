@@ -122,9 +122,36 @@ def test_a_fresh_unheld_lock_is_not_stale(tmp_path):
     assert reading["stale"] is False
 
 
+def test_a_live_git_process_elsewhere_does_not_mask_a_crashed_lock(tmp_path):
+    """Another mind's routine Git work must not hide a crashed writer's lock.
+
+    Nine minds share this checkout, so a live Git process somewhere on the host
+    is the normal state of the machine. The holder count is the evidence that
+    matches the failure, so a lock no visible process holds open stays stale
+    even while Git is running elsewhere."""
+    from mishe_tauftauf import discovery
+
+    checkout = _checkout(tmp_path)
+    lock = checkout / ".git" / "index.lock"
+    lock.write_bytes(b"")
+    os.utime(lock, (400.0, 400.0))
+    proc = _proc(tmp_path)
+    _process(proc, "303", b"git\n")
+
+    reading = discovery._repo_git_index_lock(checkout / ".mishe-tauftauf",
+                                             now=1000.0, proc_root=proc)
+
+    assert reading["state"] == "drift"
+    assert reading["holders"] == 0
+    assert reading["git_processes"] == 1
+    assert reading["stale"] is True
+    assert "stale=yes" in reading["sample"]
+
+
 def test_an_unreadable_process_table_is_not_zero(tmp_path):
     """A broken monitor must not read as a healthy checkout: an unreadable
-    process table is carried as unknown, not as an empty count."""
+    process table is carried as unknown, not as an empty count, and an unknown
+    holder count leaves the stale verdict unknown rather than "not stale"."""
     from mishe_tauftauf import discovery
 
     checkout = _checkout(tmp_path)
@@ -137,9 +164,10 @@ def test_an_unreadable_process_table_is_not_zero(tmp_path):
     assert reading["state"] == "drift"
     assert reading["holders"] == -1
     assert reading["git_processes"] == -1
-    assert reading["stale"] is False
+    assert reading["stale"] is None
     assert "holder=unknown" in reading["sample"]
     assert "git=unknown" in reading["sample"]
+    assert "stale=unknown" in reading["sample"]
 
 
 def test_a_checkout_without_a_git_directory_reads_unknown(tmp_path):
