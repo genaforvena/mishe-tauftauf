@@ -4581,8 +4581,36 @@ def test_branch_inventory_verified_when_main_is_the_sole_branch(tmp_path):
     reading = discovery._repo_branch_inventory(_inventory_home(root))
     assert reading["state"] == "verified"
     assert reading["sample"] == ("local=1 extra=none remote=1 extra_remote=none "
-                                 "worktrees=1 nonmain=0 dirty=0 strays=none "
-                                 "nonmain_names=none dirty_names=none")
+                                 "worktrees=1 nonmain=0 dirty=0 absent=0 strays=none "
+                                 "nonmain_names=none dirty_names=none "
+                                 "absent_names=none")
+
+
+def test_branch_inventory_names_an_absent_worktree_instead_of_reading_unknown(tmp_path):
+    """A registered worktree whose directory is gone is named, not swallowed.
+
+    The live reading sat UNKNOWN with "worktree status unreadable:
+    /tmp/disc-head" for a peer experiment's worktree that no longer exists.
+    One dead path made the whole inventory opaque: the branch regime, the
+    dirty bytes and the strays were all hidden behind it. The absence is a
+    fact about the inventory and belongs in the reading, while a worktree
+    that is present and still unreadable stays UNKNOWN.
+    """
+    from mishe_tauftauf import discovery
+
+    root = tmp_path / "checkout"
+    _init_repo(root)
+    _pushable_origin(root, tmp_path)
+    gone = tmp_path / "gone-worktree"
+    added = _git(root, "worktree", "add", "--detach", str(gone), "main")
+    assert added.returncode == 0
+    shutil.rmtree(gone)
+
+    reading = discovery._repo_branch_inventory(_inventory_home(root))
+    assert reading["state"] != "unknown"
+    assert reading["absent"] == [str(gone)]
+    assert "absent=1" in reading["sample"]
+    assert str(gone) in reading["sample"]
 
 
 def test_branch_inventory_drift_on_an_extra_local_branch(tmp_path):
@@ -7638,6 +7666,50 @@ def test_gate_latency_no_tape_is_unknown(tmp_path):
     home.mkdir()
     result = discovery._coord_gate_latency(home)
     assert result["state"] == "unknown"
+
+
+def test_malformed_tape_reads_unknown_in_the_readings_that_read_it(tmp_path):
+    """A tape that faults reads UNKNOWN, in every reading that reads it.
+
+    The tape is read through the streaming reader now, and the reader raises
+    where the whole-tape read raised. A reading that let that fault escape
+    would take the scan down with it, and a reading that swallowed it would
+    report a shorter tape as a whole one: both are worse than saying the tape
+    is unreadable. The gate-latency reading reads the tape through the
+    disposition reading, so it is covered by the same fault.
+    """
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir()
+    (home / "chat.log").write_bytes(
+        b"v1 00000000000000000001 2026-10-10T15:51:56.625536Z seed ::\n"
+        b"    | a\n    .\n"
+        b"v1 00000000000000000003 2026-10-10T15:51:57.625536Z seed ::\n"
+        b"    | b\n    .\n")
+    for reading in (discovery._coord_dm_disposition_age,
+                    discovery._seed_settle_result_mix,
+                    discovery._coord_gate_latency):
+        result = reading(home)
+        assert result["state"] == "unknown", reading.__name__
+        assert "unreadable" in result["sample"], reading.__name__
+
+
+def test_gate_latency_carries_the_disposition_readings_own_reason(tmp_path):
+    """The gate's UNKNOWN names why the tape could not be read.
+
+    The gate-latency reading does not parse the tape itself — the disposition
+    reading it calls already parses the whole tape — so the reason the tape
+    failed has to travel with the reading instead of being dropped on the way.
+    """
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir()
+    (home / "chat.log").write_bytes(b"not a header\n")
+    result = discovery._coord_gate_latency(home)
+    assert result["state"] == "unknown"
+    assert "chat tape unreadable" in result["sample"]
 
 
 def _landing_home(tmp_path, suite: bool):

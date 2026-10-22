@@ -27,7 +27,8 @@ from .body_perception import (read_redmi10, read_redmi10_dense_baseline,
                              read_redmi10_peer_delivery)
 from .multibody import read_multibody_coverage
 from .activity import roles as seated_roles
-from .feed import Feed, FeedEntry, entry_timestamp as _feed_entry_timestamp, parse_feed, publication_lock, read_scan_series
+from .feed import (Feed, FeedEntry, entry_timestamp as _feed_entry_timestamp,
+                  iter_feed_file, publication_lock, read_scan_series)
 from .chat_protocol import decode_lifecycle, ProtocolError
 from .host_radio import (BLUETOOTH_ROOT, COMMAND_TIMEOUT_SECONDS, NET_ROOT,
                          RFKILL_ROOT, admin_up, bluetooth_controllers, carrier_state,
@@ -4101,15 +4102,16 @@ def _coord_gate_latency(home: Path, now: datetime | None = None) -> dict[str, ob
     if not tape_path.exists():
         return {"id": "sense.coord.gate-latency", "state": "unknown",
                 "sample": "chat tape unavailable", "kind": "read"}
-    try:
-        entries = parse_feed(tape_path.read_bytes(), home=home)
-    except (OSError, ValueError) as exc:
-        return {"id": "sense.coord.gate-latency", "state": "unknown",
-                "sample": f"chat tape unreadable: {exc}", "kind": "read"}
+    # The disposition reading below reads the whole tape itself, so this
+    # reading does not read it a second time only to say the same thing: the
+    # tape's readability is established by that read, on the same bytes, and
+    # its reason is carried into this reading's own UNKNOWN instead of a
+    # second copy of the parse.
     disp = _coord_dm_disposition_age(home, now)
     if disp.get("state") != "verified":
         return {"id": "sense.coord.gate-latency", "state": "unknown",
-                "sample": "disposition reading unavailable", "kind": "read"}
+                "sample": f"disposition reading unavailable: {disp.get('sample', '')}",
+                "kind": "read"}
     oldest = str(disp.get("oldest_open", ""))
     stall = int(disp.get("stall", 0))
     state = "drift" if stall else "verified"
@@ -4135,6 +4137,13 @@ def _repo_branch_inventory(home: Path) -> dict[str, object]:
     state is unchanged by strays, as by ``dirty``: neither is itself a branch
     violation. State is ``unknown`` when the workspace is not a git repo or the
     remote cannot be read.
+
+    A registered worktree whose directory is gone is named as **absent**
+    rather than making the whole reading unknown: git marks such a worktree
+    prunable, the bytes it would have held are gone with it, and one dead path
+    must not hide the branch regime the reading exists to report. A worktree
+    that is there and still cannot be read stays unknown — an unreadable
+    worktree is a fault, an absent one is a fact.
     """
     checkout_root = Path(home).resolve().parent
     unknown = {"id": "sense.repo.branch-inventory", "state": "unknown", "kind": "read"}
@@ -4216,9 +4225,21 @@ def _repo_branch_inventory(home: Path) -> dict[str, object]:
             drift_names.append(display(path))
     dirty_names: list[str] = []
     strays: list[str] = []
+    absent_names: list[str] = []
     for path, _head in entries:
         if releases_area in Path(path).parents:
             continue  # pinned release snapshots: their bytes are the pin's business
+        if not Path(path).is_dir():
+            # A registered worktree whose directory is gone is absent, not
+            # unreadable: git marks it prunable and the bytes it would have
+            # held are gone with it. Reading it as unreadable made the whole
+            # inventory UNKNOWN for one dead path, which hid every other fact
+            # the reading measures — the branch regime, the dirty bytes, the
+            # strays. The absence is named here instead of swallowing the
+            # reading; a worktree that IS there and still cannot be read stays
+            # UNKNOWN below.
+            absent_names.append(display(path))
+            continue
         status = run("-C", path, "status", "--porcelain", "-z")
         if status is None or status.returncode != 0:
             return unread(f"worktree status unreadable: {display(path)}")
@@ -4243,6 +4264,7 @@ def _repo_branch_inventory(home: Path) -> dict[str, object]:
     parts.append(f"worktrees={len(entries)}")
     parts.append(f"nonmain={len(nonmain_names)}")
     parts.append(f"dirty={len(dirty_names)}")
+    parts.append(f"absent={len(absent_names)}")
     parts.append("strays=" + (",".join(strays[:3]) if strays else "none"))
     if len(strays) > 3:
         parts.append(f"strays_more=+{len(strays) - 3}")
@@ -4252,6 +4274,9 @@ def _repo_branch_inventory(home: Path) -> dict[str, object]:
     parts.append("dirty_names=" + (",".join(dirty_names[:3]) if dirty_names else "none"))
     if len(dirty_names) > 3:
         parts.append(f"dirty_more=+{len(dirty_names) - 3}")
+    parts.append("absent_names=" + (",".join(absent_names[:3]) if absent_names else "none"))
+    if len(absent_names) > 3:
+        parts.append(f"absent_more=+{len(absent_names) - 3}")
     state = "drift" if extra or extra_remote or drift_names else "verified"
     return {"id": "sense.repo.branch-inventory",
             "state": state, "sample": " ".join(parts), "kind": "read",
@@ -4260,6 +4285,7 @@ def _repo_branch_inventory(home: Path) -> dict[str, object]:
             "nonmain": len(nonmain_names), "dirty": len(dirty_names),
             "nonmain_names": nonmain_names, "dirty_names": dirty_names,
             "strays": strays,
+            "absent": absent_names,
             "drift": drift_names}
 
 _RELEASE_RETENTION_KEEP = 8
@@ -4814,25 +4840,31 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
         return {"id": "sense.coord.dm-disposition-age", "state": "unknown",
                 "sample": "chat tape unavailable", "kind": "read"}
     try:
-        entries = parse_feed(tape_path.read_bytes(), home=home)
+        entries = iter_feed_file(tape_path, home=home)
     except (OSError, ValueError) as exc:
         return {"id": "sense.coord.dm-disposition-age", "state": "unknown",
                 "sample": f"chat tape unreadable: {exc}", "kind": "read"}
     ref_time: dict[str, datetime] = {}
     outcome_entries: list[tuple[datetime, str, str]] = []
     all_dms: list[tuple[datetime, str, str, int]] = []
-    for entry in entries:
-        ts = datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))
-        dm_match = DM_TO_RE.match(entry.body)
-        if dm_match:
-            all_dms.append((ts, entry.source, dm_match.group(1), entry.sequence))
-        ref_match = RECORD_REF_RE.search(entry.body)
-        if ref_match:
-            ref_time.setdefault(ref_match.group(1), ts)
-        if entry.body.startswith("Wall outcome "):
-            out_match = WALL_OUTCOME_RE.match(entry.body)
-            if out_match:
-                outcome_entries.append((ts, out_match.group(1), entry.body))
+    try:
+        for entry in entries:
+            ts = datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))
+            dm_match = DM_TO_RE.match(entry.body)
+            if dm_match:
+                all_dms.append((ts, entry.source, dm_match.group(1), entry.sequence))
+            ref_match = RECORD_REF_RE.search(entry.body)
+            if ref_match:
+                ref_time.setdefault(ref_match.group(1), ts)
+            if entry.body.startswith("Wall outcome "):
+                out_match = WALL_OUTCOME_RE.match(entry.body)
+                if out_match:
+                    outcome_entries.append((ts, out_match.group(1), entry.body))
+    except (OSError, ValueError) as exc:
+        # A tape that faults is not a shorter tape: the reading is abandoned
+        # whole, as the whole-tape read abandoned it.
+        return {"id": "sense.coord.dm-disposition-age", "state": "unknown",
+                "sample": f"chat tape unreadable: {exc}", "kind": "read"}
     records_dir = home / "records"
     if not records_dir.is_dir():
         return {"id": "sense.coord.dm-disposition-age", "state": "unknown",
@@ -4990,21 +5022,27 @@ def _seed_settle_result_mix(home: Path) -> dict[str, object]:
         return {"id": "sense.seed.settle-result-mix", "state": "unknown",
                 "sample": "chat tape unavailable", "kind": "read"}
     try:
-        entries = parse_feed(tape_path.read_bytes(), home=home)
+        entries = iter_feed_file(tape_path, home=home)
     except (OSError, ValueError) as exc:
         return {"id": "sense.seed.settle-result-mix", "state": "unknown",
                 "sample": f"chat tape unreadable: {exc}", "kind": "read"}
     settlements: list[tuple[datetime, str]] = []
-    for entry in entries:
-        try:
-            control = decode_lifecycle(entry)
-        except ValueError as exc:
-            return {"id": "sense.seed.settle-result-mix", "state": "unknown",
-                    "sample": f"invalid lifecycle control: {exc}", "kind": "read"}
-        if control is None or control.kind != "yield" or control.result is None:
-            continue
-        ts = datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))
-        settlements.append((ts, control.result))
+    try:
+        for entry in entries:
+            try:
+                control = decode_lifecycle(entry)
+            except ValueError as exc:
+                return {"id": "sense.seed.settle-result-mix", "state": "unknown",
+                        "sample": f"invalid lifecycle control: {exc}", "kind": "read"}
+            if control is None or control.kind != "yield" or control.result is None:
+                continue
+            ts = datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))
+            settlements.append((ts, control.result))
+    except (OSError, ValueError) as exc:
+        # A tape that faults is not a shorter tape: the reading is abandoned
+        # whole, as the whole-tape read abandoned it.
+        return {"id": "sense.seed.settle-result-mix", "state": "unknown",
+                "sample": f"chat tape unreadable: {exc}", "kind": "read"}
     window = settlements[-SETTLE_RESULT_WINDOW:]
     counts = {"verified": 0, "changed": 0, "blocked": 0, "other": 0}
     for _ts, result in window:
