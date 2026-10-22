@@ -316,7 +316,12 @@ def test_the_detector_decides_with_the_committed_tree_not_the_working_tree(tmp_p
                              "--repo", str(repo)], capture_output=True, text=True, timeout=300)
     assert result.returncode == 0, result.stdout
     assert "pending   : 1" in result.stdout
-    assert "999" not in result.stdout
+    # The sentinel is anchored to the field it means. The check prints the
+    # reviewed tree's commit SHA and the temporary home's path beside the
+    # verdict, and either can contain "999" by chance — a SHA does so for
+    # roughly one run in a hundred — so a scan of the whole stream fails
+    # although the check read the committed tree exactly as it should.
+    assert "pending   : 999" not in result.stdout
 
 
 def test_an_unreadable_tape_reads_unknown(tmp_path):
