@@ -968,6 +968,8 @@ def parser() -> argparse.ArgumentParser:
     c = p.add_parser("status"); c.set_defaults(func=cmd_publication)
     c = p.add_parser("check"); c.add_argument("--source", required=True); c.add_argument("--file", type=Path, required=True); c.add_argument("--stage", choices=("post", "selection", "handoff"), default="post"); c.add_argument("--task"); c.set_defaults(func=cmd_publication)
     c = task.add_parser("coordination-report"); c.add_argument("--task"); c.add_argument("--cutoff", type=int); c.set_defaults(func=cmd_task)
+    from .model_cli import register
+    register(sub)
     return root
 
 

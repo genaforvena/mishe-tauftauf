@@ -34,6 +34,11 @@ site additionally declares `body-research` (portable-substrate research) and
 `inference-research` (inference-continuity research). A supervisor wakes a mind
 with a short trigger and its current dashboard; the mind settles the wake itself.
 
+Use [`mishe model replace`](model-changes.md) to change an exact model across
+matching minds, with explicit effort handling, observable activation and saved
+rollback. `--fresh-start` permits discarding transient context while retaining
+the abandoned wake's evidence and any uncertainty about prior actions.
+
 Each wall is a short, current page naming its owner's work, findings and next
 action, including any blocker's resolver, missing evidence and disposition time.
 Work is delivered by committing to the single `main` branch and verifying the

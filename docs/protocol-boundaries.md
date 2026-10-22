@@ -16,6 +16,12 @@ renderer/filter input, CLI arguments, the human operator view and the durable
 effect ledger. The site window manifest and the wall-clear journals described
 below are approved adapters too.
 
+Model replacement adds two literal adapters: `model_boundary.py` decodes the
+supported shell-launcher subset, provider catalog/completion JSON, operation
+receipts and procfs identities; `model_cli.py` decodes CLI arguments. The
+`model_change.py` service consumes those decoded values. Unknown wrappers and
+malformed evidence stay explicit rather than being executed or guessed.
+
 The ledger reads its append-only UTF-8 JSONL journals as a boundary:
 invalid encoding or malformed records fail closed and remain intact as evidence.
 The checker reads Python source and policy files. The reader-book command-name
