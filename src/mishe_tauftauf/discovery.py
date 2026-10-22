@@ -43,10 +43,12 @@ from .outcome_publication import (EVIDENCE_REMEDY_SUFFIX, contained_evidence_pat
 from .observations import literal_site_home_name, reserved_home_name
 from .remediation_bands import (EVIDENCE_BAND_NAMES, EVIDENCE_BAND_RELATIONS,
                                 EVIDENCE_BYTE_RELATION_NA, EVIDENCE_BYTE_RELATIONS,
-                                EVIDENCE_DISCHARGE_EXPOSURE_DEFINITION,
                                 EVIDENCE_DISCHARGE_RELATIONS,
+                                EVIDENCE_EXPOSURE_DEFINITIONS,
+                                EVIDENCE_EXPOSURE_SCOPES,
                                 byte_relation, classify_remediation_band,
                                 discharge_exposure, discharge_strength)
+from . import store_census
 from .runtime_source import source_for
 from .scan_freshness import age_bounds, classify_age, endpoint
 from .spawn_dialect import (script_spawns_site_package,
@@ -5493,11 +5495,13 @@ def _rebind_links(events: list[dict], checked: list[tuple],
     came back — the remedy-named copy may hold the file as it now stands
     rather than as it was published. So the byte relation is decided here and
     published per row beside the link, rather than being left to the band's
-    name.
+    name. The same holds for a supersession: it says a later outcome of the
+    same role re-evidenced the row, and the successor's bytes still decide
+    whether the published bytes came back with it.
 
     Returns the mapping ``{sequence: (link_kind, successor_sequence)}`` for
     the rows that carry a link, the citation search's own accounting, and the
-    byte relation of every remedy-named link.
+    byte relation of every link that names a successor's bytes.
     """
     by_sequence = {row["sequence"]: row for row in events}
     # A successor must be later than the row it re-evidences, ordered the way
@@ -5626,15 +5630,24 @@ def _rebind_links(events: list[dict], checked: list[tuple],
                 path_needles.pop(path, None)
     stats = {"citation_files_searched": searched, "citation_bytes_read": bytes_read,
              "citation_files_skipped": len(too_large)}
-    # The byte relation of every remedy-named link. The successor is intact,
-    # so the digest kept for it while the gate classified the rows is the
-    # digest of the bytes now at its path; the lost row's published digest is
-    # the one its outcome bound, and its current digest is the file as it now
-    # stands. The relation is decided here, not in the reader.
+    # The byte relation of every link that names a successor's bytes. The
+    # successor is intact, so the digest kept for it while the gate
+    # classified the rows is the digest of the bytes now at its path; the
+    # lost row's published digest is the one its outcome bound, and its
+    # current digest is the file as it now stands. The relation is decided
+    # here, not in the reader.
+    #
+    # A remedy-named successor and a supersession both name a successor whose
+    # bytes the plant can compare against the lost row's published bytes, so
+    # both carry the relation: a reader of a superseded row can then tell
+    # "the published bytes came back" from "the work was carried forward".
+    # A digest citation names no successor's bytes in that sense -- its
+    # artifact merely carries the row's record digest -- so it keeps the
+    # relation that says so plainly.
     byte_relations: dict[int, str] = {}
     digests = current_digests or {}
     for sequence, (kind, successor) in links.items():
-        if kind != "remedy-name":
+        if kind not in ("remedy-name", "supersedes"):
             continue
         lost_row = by_sequence.get(sequence) or {}
         byte_relations[sequence] = byte_relation(
@@ -5804,7 +5817,16 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     D counts identical stored path strings. Symlink aliases and traversal are
     not eligible, even when their resolved target is in an allowed directory.
     """
-    coverage = classify_outcomes(home, EVIDENCE_BINDING_CLAUSE_TIME)
+    home = home.resolve()
+    # The tape is read through the classifier's own seam, and the record
+    # digests its entries name are collected as they stream past: the census
+    # of the store then measures exactly the records this reading cannot see,
+    # and the tape is read once.
+    named_records: set[str] = set()
+    tape = home / "chat.log"
+    entries = (store_census.tape_entries(tape, home, named_records)
+               if tape.exists() else None)
+    coverage = classify_outcomes(home, EVIDENCE_BINDING_CLAUSE_TIME, entries=entries)
     read_at = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     incomplete = coverage["incomplete"]
     if coverage["unavailable"]:
@@ -5818,7 +5840,36 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
         return {"id": "sense.ledger.evidence-binding", "state": "unknown",
                 "sample": "no post-clause outcomes", "kind": "read",
                 "coverage_incomplete": 0, "incomplete": []}
-    home = home.resolve()
+    # The population this reading audited, and the one it cannot see. The
+    # audited population is the post-clause outcome publications the current
+    # tape names; the store holds outcome records the tape does not name, and
+    # a record carries no publication instant, so how many of them are
+    # outside the clause window and how many lost their tape entry cannot be
+    # told from the store.
+    census = store_census.store_census(home, named_records)
+    audited_population = {
+        "source": "the current chat tape (chat.log)",
+        "kind": "post-clause wall-outcome publications the tape names",
+        "size": len(loaded),
+        "window_scoped": True,
+        "clause_time": EVIDENCE_BINDING_CLAUSE_TIME.isoformat(),
+    }
+    unaudited_population = {
+        "source": "the outcome store (records/)",
+        "basis": "store records of kind wall-outcome that no entry of the "
+                 "current tape names",
+        "size": census.get("wall_outcome"),
+        "records_without_tape_entry": census.get("records_without_tape_entry"),
+        "store_records": census.get("store_records"),
+        "tape_named_records": census.get("tape_named_records"),
+        "state": census.get("state"),
+        "measured_at": census.get("measured_at"),
+        "limit": "the store record carries no publication instant, so how many "
+                 "of these records are outside the clause window and how many "
+                 "lost their tape entry cannot be told from the store",
+    }
+    if census.get("reason"):
+        unaudited_population["reason"] = census["reason"]
     path_counts: dict[str, int] = {}
     for _ts, _sequence, _role, evidence in loaded:
         path = evidence.get("path")
@@ -6020,15 +6071,15 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     # citation relation is the weakest of the three, so its rows are published
     # with the successor's artifact: a reader can see which rows rest on a
     # citation and judge it. The byte relation is published on every linked
-    # row: for a remedy-named link it says whether the published bytes came
-    # back or the work was merely carried forward, and for the other links it
-    # says the link is not a byte relation at all.
+    # row: for a remedy-named successor and for a supersession it says
+    # whether the published bytes came back or the work was merely carried
+    # forward, and for a citation it says the link is not a byte relation at
+    # all.
     linked_detail = []
     byte_relation_counts: dict[str, int] = {name: 0 for name in EVIDENCE_BYTE_RELATIONS}
     for sequence, (kind, successor) in sorted(links.items()):
         successor_event = by_sequence.get(successor) or {}
-        relation = (byte_relations.get(sequence)
-                    if kind == "remedy-name" else EVIDENCE_BYTE_RELATION_NA)
+        relation = byte_relations.get(sequence, EVIDENCE_BYTE_RELATION_NA)
         if relation in byte_relation_counts:
             byte_relation_counts[relation] += 1
         linked_detail.append({
@@ -6036,8 +6087,8 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
             "successor": successor,
             "role": (by_sequence.get(sequence) or {}).get("role"),
             # The relation this discharge carries: the byte relation for a
-            # remedy-named successor, and the relation that says plainly that
-            # a supersession or a citation makes no byte claim at all.
+            # remedy-named successor and for a supersession, and the relation
+            # that says plainly that a citation makes no byte claim at all.
             "byte_relation": relation,
             "successor_evidence": _display_path(
                 successor_event.get("evidence", {}).get("path", ""), home)})
@@ -6110,7 +6161,9 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     # discharge that returned the row's published bytes counted as clearing
     # the row. It is derived from the counts the reading already computed, so
     # it costs no byte read, and a second reader re-derives it from the
-    # published fields alone.
+    # published fields alone. The scope is published as data beside the
+    # figure, so the figure and the definition that accompanies it cannot be
+    # read two ways.
     exposure = discharge_exposure(
         gate_rows=len(gate_rows),
         discharged_rows=len(linked_detail),
@@ -6135,6 +6188,7 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
         f"unrelated={discharge_counts.get('unrelated', 0)} "
         f"unknown={discharge_counts.get('unknown', 0)} "
         f"not_a_byte_relation={discharge_counts.get(EVIDENCE_BYTE_RELATION_NA, 0)}; "
+        f"exposure_scope={exposure['exposure_scope']} "
         f"gate_if_only_restoring_counted={exposure['gate_if_only_restoring_counted']})")
     # Field order is the pane's visible-prefix order, not a listing order: the
     # pane clips a sample to 120 cells, so a verdict whose cause sits past that
@@ -6235,10 +6289,20 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
                 EVIDENCE_DISCHARGE_RELATIONS.items()},
             # The exposure over the discharge dimension: the gate size if only
             # a discharge that returned the row's published bytes counted as
-            # clearing the row. The definition is published with the numbers,
-            # so a reader cannot mistake the counterfactual for the gate.
+            # clearing the row. The scope is published beside the figure and
+            # every scope carries its own definition, so the figure and the
+            # definition that accompanies it cannot be read two ways.
             "discharge_exposure": dict(exposure),
-            "discharge_exposure_definition": EVIDENCE_DISCHARGE_EXPOSURE_DEFINITION,
+            "discharge_exposure_definition": (
+                exposure["exposure_scopes"][exposure["exposure_scope"]]["definition"]),
+            "discharge_exposure_scopes": sorted(EVIDENCE_EXPOSURE_SCOPES),
+            # The population this reading audited, and the population it could
+            # not see. ``all_bad`` counts rows of the audited population, so
+            # the audited population's source and size are published beside
+            # it; the store holds outcome records the tape does not name, and
+            # their number is published beside that.
+            "audited_population": audited_population,
+            "unaudited_population": unaudited_population,
             # The rows whose defect can never be repaired, and the class-A rows
             # split by the policy version they were bound under. A
             # policy-version row is a labelled reassessment, not damage.

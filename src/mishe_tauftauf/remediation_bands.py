@@ -55,10 +55,11 @@ EVIDENCE_BAND_NAMES = ("versioned", "permanent", "disposed", "rebound", "cited",
 
 #: The relation each discharge carries. A discharge is a link that took a row
 #: out of the gate: a supersession, a remedy-named successor, or a digest
-#: citation. Only the remedy-named discharge says anything about the row's
-#: published bytes, so it carries that byte relation; the other two carry the
-#: relation that says so plainly -- the link is not a byte relation, so no
-#: claim is made about the bytes that were published.
+#: citation. A remedy-named successor and a supersession say something about
+#: the row's published bytes -- the plant compares the successor's bytes
+#: against the bytes the row published -- so both carry that byte relation. A
+#: digest citation carries the relation that says so plainly: the link is not
+#: a byte relation, so no claim is made about the bytes that were published.
 #:
 #: ``byte_relation`` says the relation is a claim about bytes at all, and
 #: ``restores`` says the discharge returned the row's published bytes. Both
@@ -85,22 +86,50 @@ EVIDENCE_DISCHARGE_RELATIONS = {
         "byte_relation": True,
         "restores": False},
     "not-a-byte-relation": {
-        "claims": "the discharge is a supersession or a citation: it clears the "
-                  "row without making any claim about the published bytes",
+        "claims": "the discharge is a digest citation: it clears the row "
+                  "without making any claim about the published bytes",
         "byte_relation": False,
         "restores": False},
 }
 
-#: How the discharge exposure is defined, published with the numbers so a
-#: reader cannot mistake a counterfactual for the gate.
-EVIDENCE_DISCHARGE_EXPOSURE_DEFINITION = (
-    "the gate size if only a discharge that returned the row's published bytes "
-    "counted as clearing the row: over the discharges that carry a byte "
-    "relation at all -- the remedy-named successors, whose bytes the plant "
-    "compares against the row's published bytes -- every one that did not "
-    "return those bytes returns its row to the gate; a supersession and a "
-    "citation carry no byte relation and are counted in discharged_rows and "
-    "byte_relation_discharges only")
+#: The scopes the discharge exposure can be read over. The scope is the
+#: population of discharges the counterfactual counts, and it is published as
+#: data: a second reader checks the figure against the scope instead of
+#: against prose, so a number and the definition that accompanies it cannot
+#: be read two ways.
+EVIDENCE_EXPOSURE_SCOPES = ("all_discharged_rows", "byte_relation_discharges")
+
+#: The published field each scope's population is counted over. A scope names
+#: its population field, so the figure is re-derivable from published fields
+#: alone and the scope cannot be counted one way and read another.
+EVIDENCE_EXPOSURE_SCOPE_POPULATION = {
+    "all_discharged_rows": "discharged_rows",
+    "byte_relation_discharges": "byte_relation_discharges",
+}
+
+#: How each scope's exposure is defined, published with the numbers so a
+#: reader cannot mistake a counterfactual for the gate. Each definition names
+#: the counterfactual it defines and the scope it is over, and names where
+#: the supersessions and the citations are counted, so the definition that
+#: accompanies a figure is the definition of that figure's scope.
+EVIDENCE_EXPOSURE_DEFINITIONS = {
+    "all_discharged_rows": (
+        "the gate size if only a discharge that returned the row's published "
+        "bytes counted as clearing the row, over every discharge that emptied "
+        "the gate; a discharge that returned no published bytes returns its "
+        "row to the gate, and a digest citation returns no published bytes at "
+        "all; the remedy-named successors and the supersessions are counted "
+        "in discharged_rows and in byte_relation_discharges, and the citations "
+        "in discharged_rows only"),
+    "byte_relation_discharges": (
+        "the gate size if only a discharge that returned the row's published "
+        "bytes counted as clearing the row, over the discharges that carry a "
+        "byte relation at all; a digest citation carries no byte relation and "
+        "is outside this scope, so it neither restores nor re-opens a row "
+        "here; the remedy-named successors and the supersessions are counted "
+        "in discharged_rows and in byte_relation_discharges, and the citations "
+        "in discharged_rows only"),
+}
 
 
 def discharge_strength(relations: list[str]) -> dict[str, int]:
@@ -117,34 +146,60 @@ def discharge_strength(relations: list[str]) -> dict[str, int]:
 
 def discharge_exposure(*, gate_rows: int, discharged_rows: int,
                        restoring_discharges: int,
-                       byte_relation_discharges: int) -> dict[str, int]:
-    """The gate size the discharges imply.
+                       byte_relation_discharges: int,
+                       scope: str = "all_discharged_rows") -> dict:
+    """The gate size the discharges imply, over a named scope.
 
     The counterfactual the plant's own verdict does not state: if only a
     discharge that returned the row's published bytes counted as clearing the
     row, the gate would hold every row a discharge cleared without restoring
     those bytes.
 
-    The exposure is over the discharges that carry a byte relation at all --
-    the remedy-named successors, whose bytes the plant compares against the
-    row's published bytes. A supersession and a citation make no byte claim,
-    so they are counted in ``discharged_rows`` and neither restore nor
-    re-open a row here. A discharge whose relation could not be decided
-    counts as non-restoring, so the exposure overstates the debt rather than
-    hiding it.
+    The scope says which discharges the counterfactual counts, and it is data
+    rather than prose: every scope names the published field its population is
+    counted over, so a second reader re-derives the figure from published
+    fields alone and cannot read one scope's number against another scope's
+    definition.
+
+    ``all_discharged_rows`` counts every discharge that emptied the gate. A
+    discharge that makes no byte claim is precisely a discharge that moved
+    the certifier without repairing bytes, so it belongs in the exposure.
+    ``byte_relation_discharges`` counts only the discharges that carry a byte
+    relation at all, which is the strength of the byte-claiming repairs.
+
+    A discharge whose relation could not be decided counts as non-restoring,
+    so the exposure overstates the debt rather than hiding it.
 
     It is a measurement of the strength of the discharges, not a claim that
     any row is repairable -- the gate stays as it is, and the standing
     audit's ``permanent_loss`` counter is untouched by this.
     """
-    non_restoring = max(0, byte_relation_discharges - restoring_discharges)
+    if scope not in EVIDENCE_EXPOSURE_SCOPES:
+        raise ValueError("unknown discharge exposure scope: " + str(scope))
+    populations = {"discharged_rows": discharged_rows,
+                   "byte_relation_discharges": byte_relation_discharges}
+    scopes: dict[str, dict] = {}
+    for name in EVIDENCE_EXPOSURE_SCOPES:
+        population_field = EVIDENCE_EXPOSURE_SCOPE_POPULATION[name]
+        population = populations[population_field]
+        non_restoring = max(0, population - restoring_discharges)
+        scopes[name] = {
+            "population_field": population_field,
+            "population": population,
+            "non_restoring_discharges": non_restoring,
+            "gate_if_only_restoring_counted": gate_rows + non_restoring,
+            "definition": EVIDENCE_EXPOSURE_DEFINITIONS[name],
+        }
+    named = scopes[scope]
     return {
         "gate_rows": gate_rows,
         "discharged_rows": discharged_rows,
         "byte_relation_discharges": byte_relation_discharges,
         "restoring_discharges": restoring_discharges,
-        "non_restoring_discharges": non_restoring,
-        "gate_if_only_restoring_counted": gate_rows + non_restoring,
+        "exposure_scope": scope,
+        "non_restoring_discharges": named["non_restoring_discharges"],
+        "gate_if_only_restoring_counted": named["gate_if_only_restoring_counted"],
+        "exposure_scopes": scopes,
     }
 
 

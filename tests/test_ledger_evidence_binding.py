@@ -1649,3 +1649,149 @@ def test_evidence_binding_citation_search_holds_one_successor_body_at_a_time(tmp
     # Four half-megabyte bodies were read. The search must not hold their sum:
     # two bodies' worth is the most a one-at-a-time search can cost.
     assert large_peak - small_peak < len(body) * 2
+
+def _superseded_site(home: Path, *, restored: bool) -> None:
+    """A site whose lost row is cleared by a declared supersession.
+
+    The successor is a later outcome of the same role that names the lost
+    row's record digest. With ``restored`` the successor holds the bytes as
+    they were published, so the published content came back; without it the
+    successor carries different bytes, so it did not.
+    """
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    published = "the work\n"
+    lost = home / "artifacts" / "lost.md"
+    lost.write_text(published)
+    lost_digest = _write_evidenced_outcome(home, "bob", lost)
+    lost.write_text("the work, re-authored\n")
+    repair = home / "artifacts" / "repair.md"
+    repair.write_text(published if restored else "the work, re-evidenced\n")
+    repair_digest = _write_evidenced_outcome(home, "bob", repair,
+                                              supersedes=[lost_digest])
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "bob",
+         f"[record] records/{lost_digest}.json sha256={lost_digest}\n"),
+        (2, "2026-10-06T17:30:00Z", "bob",
+         f"[record] records/{repair_digest}.json sha256={repair_digest}\n"),
+    ])
+
+
+def test_evidence_binding_a_supersession_carries_the_byte_relation(tmp_path):
+    """A superseded row publishes what happened to its published bytes.
+
+    The band says the row was re-evidenced and the link says which successor
+    did it; only the byte relation says what became of the bytes the row
+    published. A supersession names a successor whose bytes the plant can
+    compare, so the relation is computed for it as well -- otherwise a
+    reader of a superseded row cannot tell a restored row from a carried
+    forward one.
+    """
+    home = tmp_path / "site"
+    _superseded_site(home, restored=False)
+    result = discovery._ledger_evidence_binding(home)
+    linked = result["linked_detail"][0]
+    assert linked["kind"] == "supersedes"
+    assert linked["byte_relation"] == "unrelated"
+    assert result["discharge_strength"]["unrelated"] == 1
+    assert result["discharge_strength"]["not-a-byte-relation"] == 0
+
+
+def test_evidence_binding_a_supersession_that_restores_the_bytes_says_so(tmp_path):
+    """A supersession whose successor holds the published bytes says restored."""
+    home = tmp_path / "site"
+    _superseded_site(home, restored=True)
+    result = discovery._ledger_evidence_binding(home)
+    assert result["linked_detail"][0]["byte_relation"] == "restored"
+    assert result["discharge_strength"]["restored"] == 1
+
+
+def test_evidence_binding_publishes_the_exposure_over_both_scopes(tmp_path):
+    """The exposure names the scope it is over and publishes the other one.
+
+    The counterfactual can be counted over every discharge that emptied the
+    gate or over the discharges that carry a byte relation at all. The scope
+    is published as data with its own population and definition, so a reader
+    is never left to guess which discharges the figure counts.
+    """
+    home = tmp_path / "site"
+    _superseded_site(home, restored=False)
+    result = discovery._ledger_evidence_binding(home)
+    exposure = result["discharge_exposure"]
+    scopes = exposure["exposure_scopes"]
+    assert set(scopes) == {"all_discharged_rows", "byte_relation_discharges"}
+    assert exposure["exposure_scope"] == "all_discharged_rows"
+    # Every scope names the published field its population is counted over.
+    for name, scope in scopes.items():
+        assert scope["population"] == exposure[scope["population_field"]]
+        assert scope["definition"]
+    assert scopes["all_discharged_rows"]["population"] == exposure["discharged_rows"]
+    assert scopes["byte_relation_discharges"]["population"] == (
+        exposure["byte_relation_discharges"])
+    # The flat figure belongs to the named scope, and the definition beside
+    # it is that scope's definition.
+    assert exposure["gate_if_only_restoring_counted"] == (
+        scopes["all_discharged_rows"]["gate_if_only_restoring_counted"])
+    assert result["discharge_exposure_definition"] == (
+        scopes["all_discharged_rows"]["definition"])
+
+
+def test_evidence_binding_publishes_the_population_it_audited(tmp_path):
+    """A count is published beside the population it counts.
+
+    ``all_bad`` counts rows of a named population, so the reading publishes
+    which population it audited and how many rows that population holds, so
+    the count is never read as the ledger's whole history.
+    """
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    evidence = home / "artifacts" / "wake.md"
+    evidence.write_text("write-once\n")
+    digest = _write_evidenced_outcome(home, "alice", evidence)
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "alice",
+         f"[record] records/{digest}.json sha256={digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    audited = result["audited_population"]
+    assert audited["size"] == result["bound"] == 1
+    assert audited["window_scoped"] is True
+    assert audited["source"]
+    unaudited = result["unaudited_population"]
+    assert unaudited["source"]
+    assert unaudited["basis"]
+    assert unaudited["state"] == "verified"
+    # The store holds no outcome record the tape does not name in this site,
+    # so nothing is outside the audited population.
+    assert unaudited["size"] == 0
+
+
+def test_evidence_binding_names_the_outcome_records_the_tape_cannot_show(tmp_path):
+    """The store's outcome records the tape does not name are counted.
+
+    A store record carries no publication instant, so a record whose tape
+    entry is gone cannot be told from one that falls outside the clause
+    window; the count of them is published beside the audited population so
+    a reader sees how much of the ledger the audit cannot see.
+    """
+    home = tmp_path / "site"
+    (home / "artifacts").mkdir(parents=True)
+    (home / "records").mkdir(parents=True)
+    evidence = home / "artifacts" / "wake.md"
+    evidence.write_text("write-once\n")
+    digest = _write_evidenced_outcome(home, "alice", evidence)
+    # A second outcome record the tape never names.
+    hidden = home / "artifacts" / "hidden.md"
+    hidden.write_text("write-once too\n")
+    _write_evidenced_outcome(home, "alice", hidden)
+    _binding_tape(home, [
+        (1, "2026-10-06T17:00:00Z", "alice",
+         f"[record] records/{digest}.json sha256={digest}\n"),
+    ])
+    result = discovery._ledger_evidence_binding(home)
+    unaudited = result["unaudited_population"]
+    assert unaudited["size"] == 1
+    assert unaudited["records_without_tape_entry"] == 1
+    assert unaudited["tape_named_records"] == 1
+    assert unaudited["limit"]

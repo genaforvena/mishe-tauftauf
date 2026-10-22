@@ -266,6 +266,13 @@ def discharge_problems(entry: dict, bands: dict) -> list[str]:
     fields alone: the strength counts must tally over the published rows, the
     vocabulary must be closed over the relations those rows use, and the
     exposure must be the arithmetic those two imply.
+
+    The scope of the exposure is checked as data, not as prose: every scope
+    names the published field its population is counted over, so a second
+    reader re-derives the figure from that field and the published counts.
+    A reading whose number belongs to one scope and whose definition belongs
+    to another is inconsistent, which is the defect the scope makes
+    checkable.
     """
     problems: list[str] = []
     missing = [name for name in DISCHARGE_FIELDS if name not in entry]
@@ -326,14 +333,133 @@ def discharge_problems(entry: dict, bands: dict) -> list[str]:
         "discharged_rows": len(relations),
         "byte_relation_discharges": byte_discharges,
         "restoring_discharges": restored,
-        "non_restoring_discharges": byte_discharges - restored,
-        "gate_if_only_restoring_counted": gate_rows + byte_discharges - restored,
     }
     for name, value in derived.items():
         published = exposure.get(name)
         if published != value:
             problems.append("the published discharge exposure says %s=%r but the "
                             "published fields imply %r" % (name, published, value))
+
+    problems.extend(exposure_scope_problems(exposure, derived, definition))
+    return problems
+
+
+def exposure_scope_problems(exposure: dict, derived: dict,
+                             definition: object) -> list[str]:
+    """Every way the published exposure's scope disagrees with its figure.
+
+    The scope is the population the counterfactual counts, and it is published
+    as data: a scope names the published field its population is counted over,
+    so the figure is re-derivable without reading English. The named scope's
+    figure is the flat figure the reading publishes, and the definition that
+    accompanies it must be that scope's definition.
+    """
+    problems: list[str] = []
+    scopes = exposure.get("exposure_scopes")
+    if not isinstance(scopes, dict) or not scopes:
+        return ["the published discharge exposure names no scope, so a reader "
+                "cannot tell which discharges the figure counts"]
+    named = exposure.get("exposure_scope")
+    if not isinstance(named, str) or named not in scopes:
+        return ["the published discharge exposure names the scope %r, which it "
+                "does not publish" % (named,)]
+    gate_rows = derived["gate_rows"]
+    restoring = derived["restoring_discharges"]
+    for name, scope in scopes.items():
+        if not isinstance(scope, dict):
+            problems.append("the published discharge exposure scope %r is not an "
+                            "object" % (name,))
+            continue
+        field = scope.get("population_field")
+        population = scope.get("population")
+        if not isinstance(field, str) or field not in exposure:
+            problems.append("the published discharge exposure scope %r names the "
+                            "population field %r, which the exposure does not "
+                            "publish" % (name, field))
+            continue
+        if population != exposure.get(field):
+            problems.append("the published discharge exposure scope %r counts %r "
+                            "rows but the published %s is %r"
+                            % (name, population, field, exposure.get(field)))
+            continue
+        expected_non_restoring = max(0, population - restoring)
+        if scope.get("non_restoring_discharges") != expected_non_restoring:
+            problems.append("the published discharge exposure scope %r says %r "
+                            "discharges did not restore the published bytes but "
+                            "the published fields imply %r"
+                            % (name, scope.get("non_restoring_discharges"),
+                               expected_non_restoring))
+        expected_gate = gate_rows + expected_non_restoring
+        if scope.get("gate_if_only_restoring_counted") != expected_gate:
+            problems.append("the published discharge exposure scope %r says the "
+                            "gate would hold %r rows but the published fields "
+                            "imply %r"
+                            % (name, scope.get("gate_if_only_restoring_counted"),
+                               expected_gate))
+        scope_definition = scope.get("definition")
+        if not isinstance(scope_definition, str) or not scope_definition:
+            problems.append("the published discharge exposure scope %r carries no "
+                            "definition, so its figure cannot be read" % (name,))
+    chosen = scopes[named]
+    if exposure.get("gate_if_only_restoring_counted") != chosen.get(
+            "gate_if_only_restoring_counted"):
+        problems.append("the published discharge exposure says "
+                        "gate_if_only_restoring_counted=%r for the %s scope but "
+                        "that scope publishes %r"
+                        % (exposure.get("gate_if_only_restoring_counted"), named,
+                           chosen.get("gate_if_only_restoring_counted")))
+    if exposure.get("non_restoring_discharges") != chosen.get(
+            "non_restoring_discharges"):
+        problems.append("the published discharge exposure says %r discharges did "
+                        "not restore the published bytes but the %s scope "
+                        "publishes %r" % (exposure.get("non_restoring_discharges"),
+                                          named,
+                                          chosen.get("non_restoring_discharges")))
+    if definition != chosen.get("definition"):
+        problems.append("the published discharge exposure definition belongs to "
+                        "another scope than the %s scope the figure is over" % (named,))
+    return problems
+
+
+def population_problems(entry: dict) -> list[str]:
+    """Every way the published populations disagree with the published counts.
+
+    The reading counts rows of a named population, so the population's source
+    and size are published beside the counts: a reader of ``all_bad`` must be
+    able to see which population it audited and how much the audit could not
+    see.
+    """
+    problems: list[str] = []
+    audited = entry.get("audited_population")
+    unaudited = entry.get("unaudited_population")
+    if not isinstance(audited, dict):
+        return ["the published reading publishes no audited population, so a "
+                "reader cannot tell which rows the counts cover"]
+    if not isinstance(unaudited, dict):
+        return ["the published reading publishes no unaudited population, so a "
+                "reader cannot tell how much of the ledger the audit cannot see"]
+    for name, population in (("audited", audited), ("unaudited", unaudited)):
+        for field in ("source", "basis" if name == "unaudited" else "kind"):
+            value = population.get(field)
+            if not isinstance(value, str) or not value:
+                problems.append("the published %s population names no %s"
+                                % (name, field))
+    size = audited.get("size")
+    bound = entry.get("bound")
+    if not isinstance(size, int) or isinstance(size, bool):
+        problems.append("the published audited population carries no size, so a "
+                        "reader cannot tell how many rows it covers")
+    elif isinstance(bound, int) and not isinstance(bound, bool) and size != bound:
+        problems.append("the published audited population says %d rows but the "
+                        "reading counts %d" % (size, bound))
+    without = unaudited.get("records_without_tape_entry")
+    unseen = unaudited.get("size")
+    if unseen is not None and (not isinstance(unseen, int) or isinstance(unseen, bool)):
+        problems.append("the published unaudited population carries no size")
+    elif isinstance(unseen, int) and isinstance(without, int) and unseen > without:
+        problems.append("the published unaudited population says %d records but "
+                        "only %d store records have no tape entry"
+                        % (unseen, without))
     return problems
 
 
@@ -660,6 +786,7 @@ def main() -> int:
     problems = partition_problems(entry)
     bands = published_bands(entry)
     problems.extend(discharge_problems(entry, bands))
+    problems.extend(population_problems(entry))
 
     report = None
     report_path = None
