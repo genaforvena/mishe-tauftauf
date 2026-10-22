@@ -479,6 +479,51 @@ class LauncherModelTests(unittest.TestCase):
     def test_missing_launcher_is_none(self):
         self.assertIsNone(self.seed._launcher_model(Path(self.directory) / "minds" / "absent"))
 
+    def test_an_exec_of_a_non_pane_ends_the_script(self):
+        """``exec`` replaces the shell, so the pane that follows never starts."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nexec /bin/true\nomp --model=vendor/fake\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_an_exec_of_env_without_a_program_ends_the_script(self):
+        """``exec env`` runs env, which prints its environment and exits."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nexec env\nomp --model=vendor/fake\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
+    def test_a_bare_exec_does_not_end_the_script(self):
+        """``exec`` with no operand changes nothing and the script continues."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nexec\nomp --model=vendor/real\n",
+        )
+        self.assertEqual(self.seed._launcher_model(path), "vendor/real")
+
+    def test_env_named_by_a_path_is_env(self):
+        """``/usr/bin/env`` is the same program as ``env``."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nexec /usr/bin/env FOO=1 omp --model=vendor/real\n",
+        )
+        self.assertEqual(self.seed._launcher_model(path), "vendor/real")
+
+    def test_a_relative_env_path_is_not_env(self):
+        """The reader cannot know which program ``./env`` names."""
+        path = write_mind(
+            self.directory,
+            "probe",
+            "#!/bin/sh\nexec ./env FOO=1 omp --model=vendor/fake\n",
+        )
+        self.assertIsNone(self.seed._launcher_model(path))
+
 
 def test_respawn_reads_the_model_the_new_process_runs(tmp_path):
     """A respawn records the launcher's current bytes, which is what the pane runs."""
