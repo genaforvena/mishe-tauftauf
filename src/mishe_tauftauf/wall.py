@@ -185,8 +185,9 @@ def _publish_outcome(home: Path, role: str, kind: str, text: str, evidence: Path
     linked = decode_supersedes(supersedes)
     if supersedes and len(linked) != len(supersedes):
         raise ValueError("outcome supersedes must name record digests")
-    # Serialize the duplicate-path check, evidence snapshot and publication.
-    # Later external edits remain detectable by the observer.
+    # Serialize the duplicate-path check, evidence snapshot, mode change and
+    # publication. Later edits remain detectable by the observer; read-only
+    # mode prevents accidental edits by compliant writers.
     with publication_lock(home):
         bound = _bound_evidence_paths(home)
         if evidence_str in bound:
@@ -198,8 +199,19 @@ def _publish_outcome(home: Path, role: str, kind: str, text: str, evidence: Path
                    "evidence": {"path": str(evidence), "sha256": hashlib.sha256(data).hexdigest()}}
         if linked:
             payload["supersedes"] = linked
-        return Feed(home).append_record(role, f"Wall outcome {kind} by {role}\n{text.strip()}",
-            payload, kind="wall-outcome")
+        original_mode = evidence.stat().st_mode & 0o7777
+        os.chmod(evidence, original_mode & ~0o222)
+        try:
+            return Feed(home).append_record(role, f"Wall outcome {kind} by {role}\n{text.strip()}",
+                payload, kind="wall-outcome")
+        except BaseException:
+            try:
+                os.chmod(evidence, original_mode)
+            except OSError as restore_error:
+                raise RuntimeError(
+                    f"outcome publication failed and evidence mode restoration failed: {restore_error}"
+                ) from restore_error
+            raise
 
 
 def observation_text(role: str, sensor: str) -> str:
