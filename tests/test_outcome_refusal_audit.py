@@ -27,6 +27,10 @@ def _site(tmp_path):
 
 def _evidence(home, name="probe.txt"):
     path = home / "artifacts" / name
+    if path.exists():
+        # A bound evidence file is made read-only at the bind boundary, so a
+        # deliberate re-write restores write access first.
+        path.chmod(0o600)
     path.write_text("probe evidence\n")
     return path
 
