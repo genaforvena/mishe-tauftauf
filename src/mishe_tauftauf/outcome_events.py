@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import records
-from .feed import parse_feed
+from .feed import iter_feed_file
 from .outcome_publication import (
     body_lines,
     decode_evidence,
@@ -22,6 +22,18 @@ from .outcome_publication import (
     sole_final_reference,
 )
 
+
+
+def parse_feed(tape: Path, *, home: Path | None = None):
+    """Read the tape as a stream of entries: this module's one tape-scan seam.
+
+    The classifier reads the tape through this name, so a reader can prove that
+    a supplied snapshot reuses the classifier instead of scanning the tape a
+    second time: replacing this function turns any scan into a visible
+    failure. The tape is streamed rather than read whole, so the peak does not
+    grow with the tape.
+    """
+    return iter_feed_file(tape, home=home)
 
 
 def binding_relevance(lines: list[str]) -> str:
@@ -89,13 +101,23 @@ def classify_outcomes(home: Path, clause_time: datetime, *, entries=None) -> dic
         tape = home / 'chat.log'
         if not tape.exists():
             return {'events': events, 'incomplete': incomplete, 'unavailable': 'chat tape unavailable'}
-        try:
-            entries = parse_feed(tape.read_bytes(), home=home)
-        except (OSError, ValueError) as exc:
-            return {'events': events, 'incomplete': incomplete, 'unavailable': f'chat tape unreadable: {exc}'}
+        # The tape is read as a stream, so the classification never holds it.
+        # The whole-tape read kept every entry in memory at once, and the
+        # evidence-binding gate's peak grew with the tape because of it.
+        entries = parse_feed(tape, home=home)
     if not (home / 'records').is_dir():
         return {'events': events, 'incomplete': incomplete, 'unavailable': 'outcome store unavailable'}
-    for entry in entries:
+    stream = iter(entries)
+    while True:
+        try:
+            entry = next(stream)
+        except StopIteration:
+            break
+        except (OSError, ValueError) as exc:
+            # A tape that faults is not a shorter tape: the reading is
+            # abandoned whole, exactly as the whole-tape read abandoned it
+            # before it had classified anything.
+            return {'events': [], 'incomplete': [], 'unavailable': f'chat tape unreadable: {exc}'}
         lines = body_lines(entry.body)
         first = first_significant_line(lines)
         reserved = has_outcome_prefix(first)
