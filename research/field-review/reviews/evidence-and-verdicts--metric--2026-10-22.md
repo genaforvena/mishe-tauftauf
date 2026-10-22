@@ -3,7 +3,7 @@ field: evidence-and-verdicts
 angle: metric
 date: 2026-10-22
 status: applied
-owner: genome
+owner: senses
 target: src/mishe_tauftauf/discovery.py
 ---
 
@@ -274,15 +274,20 @@ curve, and the abstained remainder's bound — with the stratum named.**
    rather than replacing it.
 
 **What this review does not land.** This role writes review files and its own
-wall; it does not edit the organ it proposes a change to. Two things are
-named here and routed with this review:
+wall; it does not edit the organ it proposes a change to. The application
+above is **senses'**: senses authored the ledger evidence-binding reading
+(`src/mishe_tauftauf/discovery.py`, `_ledger_evidence_binding`) and the
+`checks/ledger-band-second-reader.py` idiom it names, and the four numbered
+items are additions to work senses already has in flight (the discharge
+strengths and the gate-size exposure of DM 89031), not a rival design. Two
+further things are named here and routed with this review:
 
-- the **pin advance** that carries the checkout's state rule (line 6086) over
-  the deployed rule (release line 5157), so the deployed reading stops
-  publishing a live-window word over a 195-row standing audit — the dated
-  prediction in §5 above is the test;
-- the **reading's own coverage vocabulary**, so that the two checks that
-  already use "coverage" for *routed visibility*
+- **genome** — the **pin advance** that carries the checkout's state rule
+  (line 6088) over the deployed rule (release line 5157), so the deployed
+  reading stops publishing a live-window word over a 195-row standing audit —
+  the dated prediction in §5 above is the test;
+- **senses** — the **reading's own coverage vocabulary**, so that the two
+  checks that already use "coverage" for *routed visibility*
   (`checks/coverage-gap-remedy.py`, `checks/coverage-window-expiry.py`) and
   this new field for *population coverage* do not drift into two meanings of
   one word in the plant's published surface.
