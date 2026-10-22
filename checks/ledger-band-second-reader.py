@@ -51,14 +51,26 @@ names -- so the disagreement between them stays legible after the ruling. The
 role sets are reported, not judged: which roles hold debt is what R4 changes,
 so a difference there is the ruling's subject, not a defect.
 
+It also checks the reading's **discharge strength** and the **exposure over
+the discharge dimension** -- the gate size if only a discharge that returned
+the row's published bytes counted as clearing the row. The strength counts
+must tally over the published rows, the discharge vocabulary must be closed
+over the relations those rows use, and the exposure must be the arithmetic
+those two imply. The vocabulary the reading publishes carries, per relation,
+whether the relation is a claim about bytes at all and whether it returns the
+published bytes, so this derivation reads published fields alone and does not
+need the plant's source.
+
 Exit status:
   0  the published partition agrees with itself, the band vocabulary is
-     closed, and every coverage gap row the ledger has classified carries a
-     published band
+     closed, every coverage gap row the ledger has classified carries a
+     published band, and the published discharge exposure is the arithmetic
+     the published rows imply
   2  the published reading publishes no band for its violating rows, the
      published partition contradicts itself, a band is outside the published
-     vocabulary, or a coverage gap row the ledger classified carries no
-     published band: a second reader would have to re-derive
+     vocabulary, a coverage gap row the ledger classified carries no
+     published band, or the published discharge strength and exposure do not
+     agree with the published rows: a second reader would have to re-derive
   3  the question cannot be decided: no published reading, an unreadable or
      stale one, no published coverage report, or one without the rows the
      property needs
@@ -77,6 +89,13 @@ SENSE_ID = "sense.ledger.evidence-binding"
 #: reading no second reader can consume.
 PARTITION_FIELDS = ("all_bad", "violations", "row_bands", "remediation_bands",
                     "remediation_band_sequences", "remediation_band_relations")
+
+#: The published fields the discharge-strength cross-check needs. The exposure
+#: over the discharge dimension is only meaningful if the reading publishes
+#: the strength of its discharges, the vocabulary that says what each
+#: relation claims, and the numbers the exposure was computed from.
+DISCHARGE_FIELDS = ("discharge_strength", "discharge_relations",
+                    "discharge_exposure", "discharge_exposure_definition")
 
 #: The published detail lists whose rows must agree with the partition.
 DETAIL_FIELDS = ("owed_detail", "linked_detail")
@@ -201,6 +220,121 @@ def published_vocabulary(entry: dict) -> set[str]:
     if not isinstance(relations, dict):
         return set()
     return {name for name in relations if isinstance(name, str)}
+
+
+def discharge_vocabulary(entry: dict) -> dict:
+    """The discharge relations the published reading defines, and their flags.
+
+    The vocabulary says, per relation, whether the relation is a claim about
+    bytes at all (``byte_relation``) and whether it returns the row's
+    published bytes (``restores``). The reader needs both flags to re-derive
+    the exposure, and it reads them from the published reading rather than
+    from the plant's source, so the derivation stands on published fields
+    alone.
+    """
+    relations = entry.get("discharge_relations")
+    if not isinstance(relations, dict):
+        return {}
+    vocabulary = {}
+    for name, claims in relations.items():
+        if not isinstance(name, str) or not isinstance(claims, dict):
+            continue
+        vocabulary[name] = claims
+    return vocabulary
+
+
+def linked_relations(entry: dict) -> list[str]:
+    """The discharge relation every published linked row carries."""
+    relations: list[str] = []
+    detail = entry.get("linked_detail")
+    if not isinstance(detail, list):
+        return relations
+    for row in detail:
+        if not isinstance(row, dict):
+            continue
+        relation = row.get("byte_relation")
+        if isinstance(relation, str):
+            relations.append(relation)
+    return relations
+
+
+def discharge_problems(entry: dict, bands: dict) -> list[str]:
+    """Every way the published discharge strength disagrees with itself.
+
+    The exposure over the discharge dimension is a number the reading's own
+    verdict does not carry, so it has to be re-derivable from the published
+    fields alone: the strength counts must tally over the published rows, the
+    vocabulary must be closed over the relations those rows use, and the
+    exposure must be the arithmetic those two imply.
+    """
+    problems: list[str] = []
+    missing = [name for name in DISCHARGE_FIELDS if name not in entry]
+    if missing:
+        return ["the published reading publishes no " + ", ".join(missing) +
+                ", so a second reader would have to re-derive the strength of "
+                "the discharges that emptied the gate"]
+    strength = entry["discharge_strength"]
+    vocabulary = discharge_vocabulary(entry)
+    exposure = entry["discharge_exposure"]
+    definition = entry["discharge_exposure_definition"]
+    if not isinstance(strength, dict):
+        return ["the published discharge strength is not an object"]
+    if not isinstance(exposure, dict):
+        return ["the published discharge exposure is not an object"]
+    if not isinstance(definition, str) or not definition:
+        problems.append("the published discharge exposure carries no definition, "
+                        "so a reader cannot tell the counterfactual from the gate")
+
+    relations = linked_relations(entry)
+    counted = {name: value for name, value in strength.items()
+               if isinstance(name, str)}
+    for name, value in counted.items():
+        if not isinstance(value, int) or isinstance(value, bool):
+            problems.append("the published discharge strength says %s=%r, which "
+                            "is not a count" % (name, value))
+    tallied: dict[str, int] = {}
+    for relation in relations:
+        tallied[relation] = tallied.get(relation, 0) + 1
+    for name, value in tallied.items():
+        if name not in vocabulary:
+            problems.append("the published rows carry the discharge relation %r, "
+                            "which the published vocabulary does not define"
+                            % (name,))
+        if counted.get(name) != value:
+            problems.append("the published discharge strength says %s=%r but the "
+                            "published rows carry %d" % (name, counted.get(name), value))
+    for name in counted:
+        if name not in vocabulary:
+            problems.append("the published discharge strength names %r, which the "
+                            "published vocabulary does not define" % (name,))
+        elif name not in tallied and counted[name]:
+            # A relation the plant defines but never saw reads as a zero; a
+            # relation with a count and no row behind it is a contradiction.
+            problems.append("the published discharge strength says %s=%r but no "
+                            "published row carries that relation"
+                            % (name, counted[name]))
+
+    gate_rows = len([1 for band in bands.values() if band == "owed"])
+    byte_relations = {name for name, claims in vocabulary.items()
+                      if claims.get("byte_relation") is True}
+    restoring = {name for name, claims in vocabulary.items()
+                 if claims.get("restores") is True}
+    byte_discharges = sum(1 for relation in relations if relation in byte_relations)
+    restored = sum(1 for relation in relations if relation in restoring)
+    derived = {
+        "gate_rows": gate_rows,
+        "discharged_rows": len(relations),
+        "byte_relation_discharges": byte_discharges,
+        "restoring_discharges": restored,
+        "non_restoring_discharges": byte_discharges - restored,
+        "gate_if_only_restoring_counted": gate_rows + byte_discharges - restored,
+    }
+    for name, value in derived.items():
+        published = exposure.get(name)
+        if published != value:
+            problems.append("the published discharge exposure says %s=%r but the "
+                            "published fields imply %r" % (name, published, value))
+    return problems
 
 
 def producer_undetermined(entry: dict) -> str | None:
@@ -525,6 +659,7 @@ def main() -> int:
         return 3
     problems = partition_problems(entry)
     bands = published_bands(entry)
+    problems.extend(discharge_problems(entry, bands))
 
     report = None
     report_path = None

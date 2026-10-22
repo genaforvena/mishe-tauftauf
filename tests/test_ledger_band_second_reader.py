@@ -115,7 +115,10 @@ def partition(rows: list[tuple[int, str]], *, table: dict | None = None,
               violations: list[str] | None = None,
               owed: list[dict] | None = None, linked: list[dict] | None = None,
               vocabulary: dict | None = None,
-              classified: list[int] | None = None) -> dict:
+              classified: list[int] | None = None,
+              discharge_strength: dict | None = None,
+              discharge_relations: dict | None = None,
+              discharge_exposure: dict | None = None) -> dict:
     """A published partition over the given (sequence, band) rows."""
     band_rows = [{"sequence": sequence, "role": "health", "band": band,
                   "classes": "B", "evidence": "artifacts/a.md"}
@@ -123,6 +126,7 @@ def partition(rows: list[tuple[int, str]], *, table: dict | None = None,
     counted: dict[str, int] = {name: 0 for name in BANDS}
     for _sequence, band in rows:
         counted[band] = counted.get(band, 0) + 1
+    linked_rows = linked if linked is not None else []
     entry = {
         "state": "drift",
         "all_bad": len(rows) if all_bad is None else all_bad,
@@ -136,12 +140,74 @@ def partition(rows: list[tuple[int, str]], *, table: dict | None = None,
             name: "the relation %s decides" % name for name in BANDS},
         "owed_detail": owed if owed is not None else [
             {"sequence": s, "role": "health", "band": "owed"} for s, b in rows if b == "owed"],
-        "linked_detail": linked if linked is not None else [],
+        "linked_detail": linked_rows,
         "event_sequences": classified if classified is not None else [
             s for s, _b in rows],
         "read_at": stamp(),
     }
+    entry.update(discharge_fields(rows, linked_rows, discharge_strength,
+                                  discharge_relations, discharge_exposure))
     return entry
+
+
+#: The discharge relations the published reading defines, with the flags the
+#: exposure is derived from: whether the relation is a claim about bytes at
+#: all, and whether it returns the row's published bytes.
+DISCHARGE_VOCABULARY = {
+    "restored": {"claims": "the published bytes came back",
+                 "byte_relation": True, "restores": True},
+    "copy-of-current": {"claims": "the work was carried forward",
+                        "byte_relation": True, "restores": False},
+    "unrelated": {"claims": "neither the published bytes nor the current ones",
+                  "byte_relation": True, "restores": False},
+    "unknown": {"claims": "the relation cannot be decided",
+                "byte_relation": True, "restores": False},
+    "not-a-byte-relation": {"claims": "no claim about the published bytes",
+                            "byte_relation": False, "restores": False},
+}
+
+
+def discharge_fields(rows: list[tuple[int, str]], linked_rows: list[dict],
+                     strength: dict | None = None,
+                     relations: dict | None = None,
+                     exposure: dict | None = None) -> dict:
+    """The published discharge strength and exposure, consistent with the rows.
+
+    The counts tally over the published rows and the exposure is the
+    arithmetic they imply, so a reading built here is one a second reader can
+    check without re-deriving anything.
+    """
+    vocabulary = relations if relations is not None else DISCHARGE_VOCABULARY
+    counted = {name: 0 for name in vocabulary}
+    for row in linked_rows:
+        relation = row.get("byte_relation")
+        if isinstance(relation, str):
+            counted[relation] = counted.get(relation, 0) + 1
+    if strength is not None:
+        counted = strength
+    gate_rows = len([1 for _s, band in rows if band == "owed"])
+    byte_relations = {name for name, claims in vocabulary.items()
+                      if claims.get("byte_relation") is True}
+    restoring = {name for name, claims in vocabulary.items()
+                 if claims.get("restores") is True}
+    byte_discharges = sum(counted.get(name, 0) for name in byte_relations)
+    restored = sum(counted.get(name, 0) for name in restoring)
+    derived = {
+        "gate_rows": gate_rows,
+        "discharged_rows": sum(counted.values()),
+        "byte_relation_discharges": byte_discharges,
+        "restoring_discharges": restored,
+        "non_restoring_discharges": byte_discharges - restored,
+        "gate_if_only_restoring_counted": gate_rows + byte_discharges - restored,
+    }
+    return {
+        "discharge_strength": counted,
+        "discharge_relations": vocabulary,
+        "discharge_exposure": derived if exposure is None else exposure,
+        "discharge_exposure_definition": (
+            "the gate size if only a discharge that returned the row's published "
+            "bytes counted as clearing the row"),
+    }
 
 
 def test_a_consistent_partition_with_banded_gap_rows_reads_consistent(tmp_path):
@@ -556,3 +622,101 @@ def test_the_check_reads_no_plant_module():
     source = CHECK.read_text(encoding="utf-8")
     assert "mishe_tauftauf" not in source
     assert "import discovery" not in source
+
+
+def _linked(sequence: int, relation: str) -> dict:
+    """A published cleared row carrying the given discharge relation."""
+    return {"sequence": sequence, "kind": "remedy-name", "band": "rebound",
+            "successor": sequence + 1, "role": "health",
+            "byte_relation": relation,
+            "successor_evidence": "artifacts/b.md"}
+
+
+def test_a_discharge_strength_that_agrees_with_the_rows_reads_consistent(tmp_path):
+    """The published strength tallies over the published rows."""
+    home = tmp_path / "home"
+    write_reading(home, partition([(1, "owed"), (2, "rebound")],
+                                   linked=[_linked(2, "copy-of-current")]))
+
+    result = run_check(home)
+
+    assert "INCONSISTENT" not in result.stdout
+
+
+def test_a_discharge_strength_that_does_not_tally_is_inconsistent(tmp_path):
+    """A count the published rows do not support is a finding."""
+    home = tmp_path / "home"
+    entry = partition([(1, "owed"), (2, "rebound")],
+                      linked=[_linked(2, "copy-of-current")])
+    entry["discharge_strength"] = dict(entry["discharge_strength"])
+    entry["discharge_strength"]["copy-of-current"] = 5
+    write_reading(home, entry)
+
+    result = run_check(home)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "copy-of-current" in result.stdout
+
+
+def test_a_discharge_exposure_that_disagrees_with_the_rows_is_inconsistent(tmp_path):
+    """The exposure must be the arithmetic the published rows imply.
+
+    An exposure a second reader cannot re-derive is a certifying number only
+    its author can recompute, so the check recomputes it from the published
+    strength, the published vocabulary and the published partition.
+    """
+    home = tmp_path / "home"
+    entry = partition([(1, "owed"), (2, "rebound")],
+                      linked=[_linked(2, "copy-of-current")])
+    entry["discharge_exposure"] = dict(entry["discharge_exposure"])
+    entry["discharge_exposure"]["gate_if_only_restoring_counted"] = 99
+    write_reading(home, entry)
+
+    result = run_check(home)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "gate_if_only_restoring_counted" in result.stdout
+
+
+def test_a_reading_with_no_discharge_strength_is_inconsistent(tmp_path):
+    """A reading that publishes no discharge strength cannot be checked.
+
+    The exposure over the discharge dimension is only meaningful beside the
+    strength it was computed from, so a reading without one leaves a second
+    reader to re-derive it.
+    """
+    home = tmp_path / "home"
+    entry = partition([(1, "owed")])
+    del entry["discharge_strength"]
+    write_reading(home, entry)
+
+    result = run_check(home)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "discharge_strength" in result.stdout
+
+
+def test_a_discharge_relation_outside_the_published_vocabulary_is_inconsistent(tmp_path):
+    """A relation the vocabulary does not define is a name with no claim."""
+    home = tmp_path / "home"
+    entry = partition([(1, "owed"), (2, "rebound")],
+                      linked=[_linked(2, "carried-forward")])
+    write_reading(home, entry)
+
+    result = run_check(home)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "does not define" in result.stdout
+
+
+def test_a_discharge_exposure_with_no_definition_is_inconsistent(tmp_path):
+    """A counterfactual with no definition cannot be told from the gate."""
+    home = tmp_path / "home"
+    entry = partition([(1, "owed")])
+    entry["discharge_exposure_definition"] = ""
+    write_reading(home, entry)
+
+    result = run_check(home)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "definition" in result.stdout

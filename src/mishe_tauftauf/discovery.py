@@ -43,7 +43,10 @@ from .outcome_publication import (EVIDENCE_REMEDY_SUFFIX, contained_evidence_pat
 from .observations import literal_site_home_name, reserved_home_name
 from .remediation_bands import (EVIDENCE_BAND_NAMES, EVIDENCE_BAND_RELATIONS,
                                 EVIDENCE_BYTE_RELATION_NA, EVIDENCE_BYTE_RELATIONS,
-                                byte_relation, classify_remediation_band)
+                                EVIDENCE_DISCHARGE_EXPOSURE_DEFINITION,
+                                EVIDENCE_DISCHARGE_RELATIONS,
+                                byte_relation, classify_remediation_band,
+                                discharge_exposure, discharge_strength)
 from .runtime_source import source_for
 from .scan_freshness import age_bounds, classify_age, endpoint
 from .spawn_dialect import (script_spawns_site_package,
@@ -6032,6 +6035,9 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
             "sequence": sequence, "kind": kind, "band": row_bands.get(sequence),
             "successor": successor,
             "role": (by_sequence.get(sequence) or {}).get("role"),
+            # The relation this discharge carries: the byte relation for a
+            # remedy-named successor, and the relation that says plainly that
+            # a supersession or a citation makes no byte claim at all.
             "byte_relation": relation,
             "successor_evidence": _display_path(
                 successor_event.get("evidence", {}).get("path", ""), home)})
@@ -6093,17 +6099,43 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
         state = "settled"
     else:
         state = "verified"
+    # The strength of the discharges that emptied the gate. Every linked row
+    # is a discharge: it took a row out of the gate. The relation it carried
+    # is published per row (``linked_detail``) and counted here, so a reader
+    # sees how many of the discharges returned the row's published bytes and
+    # how many merely carried the work forward or made no byte claim at all.
+    discharge_counts = discharge_strength(
+        [row["byte_relation"] for row in linked_detail])
+    # The exposure over the discharge dimension: the gate size if only a
+    # discharge that returned the row's published bytes counted as clearing
+    # the row. It is derived from the counts the reading already computed, so
+    # it costs no byte read, and a second reader re-derives it from the
+    # published fields alone.
+    exposure = discharge_exposure(
+        gate_rows=len(gate_rows),
+        discharged_rows=len(linked_detail),
+        restoring_discharges=discharge_counts.get("restored", 0),
+        byte_relation_discharges=sum(
+            discharge_counts.get(name, 0) for name in EVIDENCE_BYTE_RELATIONS))
     # The word's own basis, published with it, so a reader never has to guess
     # what the state word claims about this ledger. The bands beside it say
     # how much of the standing loss is a policy version, an acknowledgement, a
     # repair, a citation, recoverable content, a permanent defect, and work
-    # still owed.
+    # still owed. The discharge strength beside it says how strong those
+    # repairs were: the word ``settled`` is not read at the strength of a
+    # discharge that returned the published bytes unless the numbers say so.
     verdict_basis = (
         f"owed={len(gate_rows)}: violating rows whose work was lost and that no "
         f"later intact outcome re-evidenced (all_bad={len(violations)}; "
         f"cited={band_counts['cited']} rebound={band_counts['rebound']} "
         f"disposed={band_counts['disposed']} recoverable={recoverable_rows} "
-        f"versioned={band_counts['versioned']} permanent={band_counts['permanent']})")
+        f"versioned={band_counts['versioned']} permanent={band_counts['permanent']}; "
+        f"discharged={len(linked_detail)} restored={discharge_counts.get('restored', 0)} "
+        f"copy_of_current={discharge_counts.get('copy-of-current', 0)} "
+        f"unrelated={discharge_counts.get('unrelated', 0)} "
+        f"unknown={discharge_counts.get('unknown', 0)} "
+        f"not_a_byte_relation={discharge_counts.get(EVIDENCE_BYTE_RELATION_NA, 0)}; "
+        f"gate_if_only_restoring_counted={exposure['gate_if_only_restoring_counted']})")
     # Field order is the pane's visible-prefix order, not a listing order: the
     # pane clips a sample to 120 cells, so a verdict whose cause sits past that
     # prefix reaches the reader with every visible field clean. The verdict's
@@ -6190,6 +6222,23 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
             # carried forward and the published bytes did not come back),
             # unrelated, or unknown.
             "remediation_byte_relations": byte_relation_counts,
+            # The strength of the discharges that emptied the gate: how many
+            # of them returned the row's published bytes, and how many merely
+            # carried the work forward. Published beside the band table so a
+            # reader can see the strength of the repairs the verdict counts.
+            "discharge_strength": discharge_counts,
+            # What each discharge relation claims, and which of them returns
+            # the published bytes, so a reader re-derives the exposure below
+            # from published fields alone.
+            "discharge_relations": {
+                name: dict(claims) for name, claims in
+                EVIDENCE_DISCHARGE_RELATIONS.items()},
+            # The exposure over the discharge dimension: the gate size if only
+            # a discharge that returned the row's published bytes counted as
+            # clearing the row. The definition is published with the numbers,
+            # so a reader cannot mistake the counterfactual for the gate.
+            "discharge_exposure": dict(exposure),
+            "discharge_exposure_definition": EVIDENCE_DISCHARGE_EXPOSURE_DEFINITION,
             # The rows whose defect can never be repaired, and the class-A rows
             # split by the policy version they were bound under. A
             # policy-version row is a labelled reassessment, not damage.
