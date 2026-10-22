@@ -3202,6 +3202,9 @@ def test_evidence_binding_incomplete_publication_preserves_known_drift(tmp_path,
             path.chmod(0o600)
             path.write_text("{broken json")
     if changed:
+        # Bound evidence is made read-only at the bind boundary, so a later
+        # edit is a deliberate one: the writer restores write access first.
+        first.chmod(0o600)
         first.write_text("controlled evidence change\n")
     observed = discovery._ledger_evidence_binding(tmp_path)
     assert observed["state"] == ("drift" if changed else "unknown")
