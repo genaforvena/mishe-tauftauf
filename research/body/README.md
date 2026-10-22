@@ -308,6 +308,59 @@ timeline within the measured bounds (`clock_anchor: anchored`). Where it is
 not, the hole carries the phone's clock as an unverified premise
 (`clock_anchor: unanchored`), and a forward clock step cannot be excluded.
 
+## The human's day, hour by hour
+
+The human's own question is not "how old is this row" but "was my evening in
+my history, and when did it reach you". So the reading publishes the day
+itself, per hour, in the reading's `day_shape` section.
+
+Two clocks, and they are not merged:
+
+- the **phone's own clock** (`device_epoch`) decides the hour a row belongs
+  to, because the hour is the human's day;
+- the **host's clock** decides when the row arrived, and the difference
+  between the two is the row's wait.
+
+Every hour carries its production count, how many of its rows arrived within
+the backlog window and how many after it, the worst wait in that hour, and
+the acceleration channel's **coverage** for that hour: how many of its
+acceleration rows carried a sample, how many did not, and the producer's own
+reason for each one that did not.
+
+That last part is what keeps the table from being misread. A row delivered
+without an accelerometer sample is a fact about the **producer's** freshness
+check, not about the human's motion, so an hour in which the phone produced
+no sample is not an hour in which the human was still. The reading names the
+hours that carry no sample at all, and says so in terms a consumer cannot
+mistake for a measurement of stillness. The coverage denominator is the
+acceleration rows of that hour, not every row the body produced - the other
+channels carry values on every row, so mixing them in would report a healthy
+hour as a quarter covered.
+
+The body's own silences are published as **intervals** beside the table
+rather than as missing rows, because an hour the body produced nothing in is
+a different fact from an hour whose rows all arrived late. On the redmi10's
+live lane at 2026-10-22T04:06Z (81 phone-clock hours, 227,092 rows):
+
+| fact | value |
+|---|---|
+| hours the body produced nothing at all | 82 (2026-10-16 21 → 2026-10-20 06, phone clock) |
+| acceleration coverage over the history | 49.4% |
+| hours carrying no accelerometer sample at all | 10 |
+| rows that reached the host more than 2 h after production | 24,515 |
+| worst wait | 18,540.7 s |
+
+The backlog and the silence are separate facts, and the hour table keeps them
+separate: hour `2026-10-16 10` has **full** acceleration coverage and all
+2,868 of its rows still arrived late, while hour `2026-10-16 09` has 3.9%
+coverage and 2,762 late rows. An hour's coverage says what was sampled; its
+wait says when it reached the host. Neither one alone is the human's day.
+
+The reading deliberately does **not** attribute the long sample-less runs to
+the producer's threshold, or the 82-hour silence to the phone, the link or the
+human. Those are separate questions with separate owners, and the lane does
+not hold the evidence to answer them.
+
 ## Limits
 
 - The queue and the journal are the Android site's files. The tool reads them
