@@ -79,6 +79,29 @@ DEFAULT_HOLE_THRESHOLD_S = 300.0
 #: malformed line is preserved, not silently dropped.
 MALFORMED_SAMPLES_KEPT = 3
 
+#: A delivery outage the body kept producing through, as a fraction of the
+#: samples its cadence says the gap held.  A gap that shows this much of its
+#: backlog is a *control*: it shows what a delivery outage leaves behind in
+#: this lane, against the same device, app, server and network.
+BACKLOG_CONTROL_RATIO = 0.5
+
+#: How far below the lane's own weakest demonstrated outage a gap's backlog
+#: has to be before the reading calls the gap body-side.  Twenty times is two
+#: orders of magnitude: an outage withholds the production it interrupted, so
+#: its backlog is in proportion to that production.
+BACKLOG_CONTROL_FACTOR = 20.0
+
+#: The premise the backlog test rests on.  It counts the rows whose *device*
+#: clock falls inside a host-clock gap, so a device wall clock that stepped
+#: forward across the gap could hide production the test would not see.
+BACKLOG_TEST_PREMISE = (
+    "the backlog test counts delivered rows by the device's own clock, so it "
+    "assumes the device's wall clock did not step forward across the "
+    "interval; the device's monotonic counter shows that the clock did not "
+    "step inside either session, and a step that survived into the delivered "
+    "rows shows in the lane's own clock bound, but a step made during the "
+    "silence itself is not visible to this test")
+
 #: The clock of the carried body cannot be recovered from the delivered lane.
 #: This is stated for every node, whatever else the reading holds.
 _CLOCK_NOT_IDENTIFIABLE = (
@@ -435,6 +458,16 @@ def _delivery_lag(rows: list[dict]) -> dict | None:
 #: A queue row is ``SEQ <phone clock> <kind> <fields...>``.
 _QUEUE_ROW = re.compile(r"^(\d+)\s+(\d+)\s+(\S+)(.*)$")
 
+#: The app's own record that it destroyed rows its bounded spool could not
+#: hold.  The app writes the record as ``<epoch> spool overflow dropped=N
+#: policy=oldest`` and the host prefixes the queue's sequence number, so the
+#: delivered row reads ``<seq> <epoch> spool overflow dropped=N
+#: policy=oldest``.  The phrase is matched over the whole row rather than
+#: over one field, because the row's *kind* is the word ``spool``: matching
+#: only the trailing fields would never fire on a real row and would make
+#: the absence of the record look like a measurement.
+_SPOOL_OVERFLOW = re.compile(r"\bspool\s+overflow\s+dropped=(\d+)\b")
+
 
 def _read_queue(path: Path) -> dict:
     """Read the delivered observation queue into ordered samples.
@@ -445,6 +478,8 @@ def _read_queue(path: Path) -> dict:
     rows: list[tuple[int, int, str]] = []
     malformed: list[str] = []
     malformed_rows = 0
+    spool_overflow_rows = 0
+    spool_overflow_notices: list[dict] = []
     try:
         handle = path.open("r", encoding="utf-8", errors="replace")
     except OSError as error:
@@ -461,6 +496,19 @@ def _read_queue(path: Path) -> dict:
                 if len(malformed) < MALFORMED_SAMPLES_KEPT:
                     malformed.append(stripped[:160])
                 continue
+            overflow = _SPOOL_OVERFLOW.search(stripped)
+            if overflow is not None:
+                # The app's own record that it produced rows it could not
+                # deliver.  It is the one place in the delivered bytes where
+                # production that never reached the host would show.  The
+                # notice carries the epoch at which the app dropped the rows
+                # and the cumulative number of rows it has dropped, so it is
+                # evidence about an interval rather than about the lane.
+                spool_overflow_rows += 1
+                spool_overflow_notices.append({
+                    "epoch": int(match.group(2)),
+                    "dropped": int(overflow.group(1)),
+                })
             rows.append((int(match.group(1)), int(match.group(2)), match.group(3)))
     return {
         "status": "ok",
@@ -468,6 +516,8 @@ def _read_queue(path: Path) -> dict:
         "rows": rows,
         "malformed_rows": malformed_rows,
         "malformed_samples": malformed,
+        "spool_overflow_rows": spool_overflow_rows,
+        "spool_overflow_notices": spool_overflow_notices,
     }
 
 
@@ -599,7 +649,101 @@ def _overlap(start: float, end: float, other_start: float, other_end: float) -> 
     return max(0.0, min(end, other_end) - max(start, other_start))
 
 
-def _continuity(body: Path, node: str, threshold: float, clock: dict) -> dict:
+#: What the app's own overflow notice can and cannot establish.  The notice
+#: is the app's record that it produced rows it could not deliver, so it is
+#: the one place in the delivered bytes where production that never reached
+#: the host would show.  The notice reaches the host only if the app uploads
+#: after dropping, so its *absence* does not prove the app dropped nothing:
+#: a drop the app never managed to upload leaves no trace here.  The notice
+#: carries the epoch at which the app dropped the rows, so it is evidence
+#: about an interval rather than about the lane.
+_SPOOL_EVIDENCE = (
+    "the app's own spool-overflow record is the one place in the delivered "
+    "bytes where production that never reached the host would show, and it "
+    "carries the epoch at which the app dropped the rows; the notice reaches "
+    "the host only if the app uploads after dropping, so its absence does "
+    "not establish that the app dropped nothing")
+
+
+def _spool_drops_in(notices: list[dict], start: float, end: float) -> list[dict]:
+    """The app's own drop notices dated inside an interval.
+
+    The notice's epoch is the phone's wall clock at the moment of the drop,
+    so it is compared against the interval in the same clock the hole is
+    measured in.  A notice inside the interval is the app saying it produced
+    rows it could not deliver *then*, which is exactly the alternative a
+    body-side reading has to exclude.
+    """
+    inside = []
+    for notice in notices:
+        epoch = float(notice["epoch"])
+        if start <= epoch <= end:
+            inside.append(notice)
+    return inside
+
+
+def _spool_drops_in_host(notices: list[dict], start: float, end: float,
+                         to_host, uncertainty: float) -> list[dict]:
+    """The app's own drop notices dated inside a *host*-clock interval.
+
+    A delivery outage is measured on the host's clock and a drop notice
+    carries the phone's, so the notice is carried onto the host's timeline
+    before it is compared.  The comparison is only as good as the two clocks'
+    relation, so it is widened by the same uncertainty the rest of the
+    reading uses for that relation.
+    """
+    inside = []
+    for notice in notices:
+        host = to_host(float(notice["epoch"]))
+        if start - uncertainty <= host <= end + uncertainty:
+            inside.append(notice)
+    return inside
+
+
+def _backlog_control(link_holes: list[dict]) -> dict:
+    """What a delivery outage leaves behind in this lane, measured from itself.
+
+    A link outage withholds the rows the body produced and delivers them
+    afterwards, so the gap's window holds that backlog.  The lane's own other
+    outages are therefore the control: they show what a delivery outage looks
+    like *here*, against the same device, app, server and network.  A gap that
+    leaves almost no backlog while every other gap leaves a full one is a gap
+    in which the body produced nothing - there was no production for the link
+    to withhold.
+
+    Without such a control the lane offers nothing to compare against, and
+    the reading keeps saying that the two causes are not separable.
+    """
+    controls = [hole for hole in link_holes
+                if hole.get("backlog_ratio") is not None
+                and hole["backlog_ratio"] >= BACKLOG_CONTROL_RATIO]
+    if not controls:
+        return {"status": "unavailable",
+                "reason": "no other gap in this lane shows a delivery outage "
+                          "that withheld production, so the lane holds no "
+                          "control for what an outage leaves behind",
+                "gaps": 0}
+    ratios = [hole["backlog_ratio"] for hole in controls]
+    weakest = min(controls, key=lambda hole: hole["backlog_ratio"])
+    return {
+        "status": "ok",
+        "gaps": len(controls),
+        "min_ratio": round(min(ratios), 6),
+        "median_ratio": round(statistics.median(ratios), 6),
+        "weakest": {
+            "start_utc": weakest["start_utc"],
+            "end_utc": weakest["end_utc"],
+            "backlog_ratio": weakest["backlog_ratio"],
+            "samples_inside": weakest["samples_inside"],
+            "expected_samples": weakest["expected_samples"],
+        },
+        "factor": BACKLOG_CONTROL_FACTOR,
+        "premise": BACKLOG_TEST_PREMISE,
+    }
+
+
+def _continuity(body: Path, node: str, threshold: float, clock: dict,
+                lane: dict | None = None) -> dict:
     """The body's observation continuity over the delivered history.
 
     Two silences are measured and kept apart:
@@ -620,6 +764,13 @@ def _continuity(body: Path, node: str, threshold: float, clock: dict) -> dict:
     cadence is a delivery outage whose observations were recovered afterwards.
     A hole in both at once is reported as not separable: the delivered lane
     cannot say whether the body stopped or the link stopped.
+
+    One case *is* separable, and the lane separates it by its own evidence.
+    When the lane's other gaps show that a delivery outage here withholds a
+    backlog, a gap that leaves almost no backlog is a gap in which the body
+    produced nothing: there was no production for the link to withhold.  The
+    device's own monotonic counter is read beside that verdict, because a
+    counter that fell across the gap is the device saying it restarted.
     """
     queue = _read_queue(body / "queues" / f"{node}.observations.log")
     if queue.get("status") != "ok":
@@ -747,23 +898,213 @@ def _continuity(body: Path, node: str, threshold: float, clock: dict) -> dict:
     for _, epoch, kind in rows:
         first_row_at.setdefault(epoch, kind)
 
+    spool_notices = queue.get("spool_overflow_notices") or []
+
+    link_holes: list[dict] = []
+    link_windows: list[tuple[float, float, dict]] = []
+    for index in range(len(posts) - 1):
+        start = float(posts[index])
+        end = float(posts[index + 1])
+        if end - start <= threshold:
+            continue
+        produced = samples_inside(start, end)
+        expected = (end - start) / cadence
+        hole = {
+            "start_utc": _iso(start),
+            "end_utc": _iso(end),
+            "duration_s": round(end - start, 3),
+            "samples_inside": produced,
+            "expected_samples": round(expected),
+            "rows_sampled_inside": sum(1 for _, epoch, _ in rows
+                                       if start <= epoch <= end),
+            "backlog_ratio": (round(produced / expected, 6) if expected > 0
+                              else None),
+            "attribution": None,
+            "cause": None,
+            "_produced": produced,
+            "_expected": expected,
+        }
+        link_holes.append(hole)
+        link_windows.append((start, end, hole))
+
+    # The lane's own other gaps are the control for what a delivery outage
+    # leaves behind here, so the verdicts below can name a body-side pause
+    # instead of reporting every silence in both clocks as inseparable.
+    control = _backlog_control(link_holes)
+
+    for hole_start, hole_end, hole in link_windows:
+        produced = hole.pop("_produced")
+        expected = hole.pop("_expected")
+        ratio = hole["backlog_ratio"]
+        tolerance = max(2.0, 0.05 * expected)
+        # The app's own drop notices dated inside this interval, on the
+        # host's timeline.  The same evidence has to reach both verdicts of
+        # one interval: a reading that says "body-side" here and "not
+        # separable" there for the same interval is not a reading.
+        drops = _spool_drops_in_host(spool_notices, hole_start, hole_end,
+                                     to_host, uncertainty)
+        hole["spool_drops_inside"] = drops
+        if produced >= expected - tolerance:
+            hole["attribution"] = "link-side"
+            hole["cause"] = ("link-side: the body kept producing observations at "
+                             f"its cadence ({produced} samples, about "
+                             f"{round(expected)} expected) and they were "
+                             "delivered afterwards")
+        elif (control["status"] == "ok" and ratio is not None
+              and ratio < control["min_ratio"] / BACKLOG_CONTROL_FACTOR):
+            if drops:
+                # The app's own record contradicts the body-side reading: the
+                # app was holding production it could not deliver at a moment
+                # inside this interval.  A verdict cannot stand on evidence
+                # that refutes it.
+                hole["attribution"] = "not-separable"
+                hole["cause"] = (
+                    "not separable: the body produced almost nothing across "
+                    f"this interval ({produced} samples where about "
+                    f"{round(expected)} were expected at its cadence) while "
+                    "every other delivery outage in this lane left a backlog "
+                    f"of at least {round(control['min_ratio'] * 100, 1)}% of "
+                    "its expected samples, but the app's own spool-overflow "
+                    "notice is dated inside this interval, so the app did hold "
+                    "production it could not deliver then and the delivered "
+                    "lane cannot separate a body-side pause from production "
+                    "the app dropped")
+            else:
+                hole["attribution"] = "body-side"
+                hole["cause"] = (
+                    "body-side: the body produced almost nothing across this "
+                    f"interval ({produced} samples where about {round(expected)} "
+                    "were expected at its cadence), while every other delivery "
+                    "outage in this lane left a backlog of at least "
+                    f"{round(control['min_ratio'] * 100, 1)}% of its expected "
+                    "samples, so the link withheld no production because there "
+                    "was none to withhold")
+        elif produced > 0:
+            hole["attribution"] = "partial"
+            hole["cause"] = ("partial: the body produced only "
+                             f"{produced} samples where about {round(expected)} "
+                             "were expected at its cadence, so the body faltered "
+                             "as well as the link")
+        else:
+            hole["attribution"] = "not-separable"
+            hole["cause"] = ("not separable: the host received nothing and the "
+                             "body produced nothing across the same interval")
+
+    def covering_link_hole(start: float, end: float) -> dict | None:
+        """The link hole that covers a body hole, where one does.
+
+        The two are the same interval seen on two clocks, so they are matched
+        by overlap: the body hole's own window, widened by the clock
+        uncertainty, against the link holes' host-clock windows.
+        """
+        low = to_host(start) - uncertainty
+        high = to_host(end) + uncertainty
+        covering = None
+        widest = 0.0
+        for hole_start, hole_end, hole in link_windows:
+            overlap = min(hole_end, high) - max(hole_start, low)
+            if overlap > widest:
+                widest = overlap
+                covering = hole
+        return covering
+
+    boots = _device_boots(lane)
+
+    def reboot_inside(start: float, end: float) -> dict | None:
+        """The device's reboot inside an interval, where one happened."""
+        for boot in boots.get("reboots") or []:
+            epoch = boot.get("boot_estimate_epoch_s")
+            if epoch is not None and start <= epoch <= end:
+                return boot
+        return None
+
     body_holes: list[dict] = []
     for start, end in _holes(series, cadence, threshold):
         resumption_kind = first_row_at.get(end)
         share, margin = link_silent_share(start, end)
         expected = (end - start) / cadence
-        if share is None:
+        covering = covering_link_hole(start, end)
+        reboot = reboot_inside(start, end)
+        # The app's own drop notices dated inside this interval.  They are
+        # measured in the phone's clock, which is the clock the hole is
+        # measured in.
+        drops_here = _spool_drops_in(spool_notices, start, end)
+        if drops_here:
+            # The app's own record contradicts a body-side reading: the app
+            # was holding production it could not deliver at a moment inside
+            # this interval.  A verdict cannot stand on evidence that refutes
+            # it, so the reading keeps the interval open.  This is checked
+            # before the host journal's silence, because the notice is
+            # evidence of its own: a spool that overflowed is what an
+            # undeliverable link looks like from the device's side.
+            attribution = "not-separable"
+            cause = ("not separable: the body produced no observations across "
+                     "this interval of its own clock, but the app's own "
+                     "spool-overflow notice is dated inside this interval, so "
+                     "the app did hold production it could not deliver then "
+                     "and the delivered lane cannot separate a body-side pause "
+                     "from production the app dropped")
+        elif share is None:
+            attribution = "unknown"
             cause = ("the body produced no observations across this interval of "
                      "its own clock; the host journal cannot say whether it was "
                      "receiving then, so whether the link was live is UNKNOWN")
+        elif covering is not None and covering.get("attribution") == "body-side":
+            attribution = "body-side"
+            cause = ("body-side: the body produced no observations across "
+                     "this interval; every other delivery outage in this "
+                     "lane left "
+                     f"a backlog of at least "
+                     f"{round(control['min_ratio'] * 100, 1)}% of its "
+                     "expected "
+                     "samples while this interval left "
+                     f"{covering['samples_inside']} of "
+                     f"{covering['expected_samples']}, so the link withheld "
+                     "no production because there was none to withhold")
         elif share > 0.0:
+            attribution = "not-separable"
             cause = ("not separable: the body produced no observations across "
                      "this interval and the host received nothing across "
                      f"{round(share * 100, 1)}% of it, so the delivered lane "
                      "cannot separate a body-side pause from a link-side outage")
         else:
+            attribution = "body-side"
             cause = ("body-side: the body produced no observations across this "
                      "interval of its own clock while the host kept receiving")
+        if reboot is not None:
+            # The reboot is its own evidence and does not depend on the
+            # verdict above, so it is published with every attribution.
+            cause += (f"; the device's own monotonic counter fell "
+                      f"{reboot['counter_fall_s']:.0f} s across it, so the "
+                      "device rebooted, its last boot at "
+                      f"{reboot['boot_estimate']} on the device's own clock, "
+                      f"and it had been up "
+                      f"{reboot['uptime_at_first_row_s']:.0f} s when the app "
+                      "produced its first row afterwards")
+        if drops_here:
+            cause += (f"; the app's own spool-overflow notice is dated inside "
+                      f"this interval ({len(drops_here)} notice(s), the app's "
+                      "cumulative dropped count reaching "
+                      f"{max(notice['dropped'] for notice in drops_here)}), so "
+                      "the app's spool was over its bound then and the app was "
+                      "holding production it could not deliver, which "
+                      "contradicts the reading that there was none to "
+                      "withhold; the notice's epoch is the moment of the drop "
+                      "and the app discards its oldest rows, so it does not "
+                      "date the rows it discarded")
+        elif spool_notices:
+            cause += ("; the delivered queue carries the app's own "
+                      "spool-overflow record, but none of its notices is "
+                      "dated inside this interval, so it does not say the app "
+                      "dropped rows here")
+        else:
+            cause += ("; the host's journal shows no accepted POST across "
+                      "the interval and the delivered queue carries none of "
+                      "the app's own spool-overflow record, so no production "
+                      "the app dropped is visible here - but the notice "
+                      "reaches the host only if the app uploads after "
+                      "dropping, so its absence does not establish that the "
+                      "app dropped nothing")
         body_holes.append({
             "start_phone": _iso(start),
             "end_phone": _iso(end),
@@ -776,38 +1117,9 @@ def _continuity(body: Path, node: str, threshold: float, clock: dict) -> dict:
             "samples_inside": samples_inside(to_host(start), to_host(end)),
             "expected_samples": round(expected),
             "resumption_kind": resumption_kind,
-            "cause": cause,
-        })
-
-    link_holes: list[dict] = []
-    for index in range(len(posts) - 1):
-        start = float(posts[index])
-        end = float(posts[index + 1])
-        if end - start <= threshold:
-            continue
-        produced = samples_inside(start, end)
-        expected = (end - start) / cadence
-        tolerance = max(2.0, 0.05 * expected)
-        if produced >= expected - tolerance:
-            cause = ("link-side: the body kept producing observations at its "
-                     f"cadence ({produced} samples, about {round(expected)} "
-                     "expected) and they were delivered afterwards")
-        elif produced > 0:
-            cause = ("partial: the body produced only "
-                     f"{produced} samples where about {round(expected)} were "
-                     "expected at its cadence, so the body faltered as well as "
-                     "the link")
-        else:
-            cause = ("not separable: the host received nothing and the body "
-                     "produced nothing across the same interval")
-        link_holes.append({
-            "start_utc": _iso(start),
-            "end_utc": _iso(end),
-            "duration_s": round(end - start, 3),
-            "samples_inside": produced,
-            "expected_samples": round(expected),
-            "rows_sampled_inside": sum(1 for _, epoch, _ in rows
-                                       if start <= epoch <= end),
+            "attribution": attribution,
+            "reboot_inside": reboot,
+            "spool_drops_inside": drops_here,
             "cause": cause,
         })
 
@@ -831,6 +1143,9 @@ def _continuity(body: Path, node: str, threshold: float, clock: dict) -> dict:
             "sequence_contiguous": contiguous,
             "first_sequence": sequences[0],
             "last_sequence": sequences[-1],
+            "spool_overflow_rows": queue.get("spool_overflow_rows", 0),
+            "spool_overflow_notices": queue.get("spool_overflow_notices", []),
+            "spool_overflow_note": _SPOOL_EVIDENCE,
         },
         "cadence": {
             "channel": channel,
@@ -856,6 +1171,8 @@ def _continuity(body: Path, node: str, threshold: float, clock: dict) -> dict:
         },
         "body_holes": body_holes,
         "link_holes": link_holes,
+        "backlog_control": control,
+        "device_boots": boots,
         "coverage": {
             "observation_coverage": (round(1.0 - missing_s / span_s, 6)
                                      if span_s > 0 else None),
@@ -1032,6 +1349,128 @@ def _delivered_lane(body: Path, node: str) -> dict:
 #: line per POST of the delivered history, which is far more than a reading
 #: can carry; the newest entries are the ones that show the lane's live lag.
 AGE_INDEX_TAIL = 12
+
+
+#: Which clock the boot instant is stated in.  It is not the host's.
+_BOOT_FRAME = ("the device's own clock, not the host's: the estimate is the "
+               "device's clock reading minus its own monotonic counter")
+
+#: What moves and what does not when the device's wall clock is corrected.
+#: The instant moves with the correction; the reboot, the counter's fall,
+#: the uptime and the host bracket do not.
+_BOOT_INSTANT_LIMIT = (
+    "the boot instant is stated in the device's own clock frame, so a "
+    "correction of that clock applied after the boot moves it by the same "
+    "amount; the delivered lane can see such a correction inside a session "
+    "(the boot estimate's spread) but not one made during a silence it does "
+    "not cover.  What does not move is the reboot itself: the counter's "
+    "fall, the uptime the device had when the app produced its first row "
+    "afterwards, and the host bracket - the window between the host receipt "
+    "of the last row before the silence and the host receipt of the first "
+    "row after it - in which the reboot must have happened"
+)
+
+
+def _device_boots(lane: dict | None) -> dict:
+    """The device's own account of its boots, read from the delivered lane.
+
+    ``phone_elapsed_ms`` is the device's monotonic clock since boot, so it
+    never falls within one boot.  A fall across a session boundary is
+    therefore the device rebooting: the alternative, a delivery batch written
+    in reverse device-time order, cannot advance the device's own clock by
+    the hours a reboot gap carries.
+
+    The instant of the last boot is the device's clock reading minus that
+    counter.  That is an instant in the *device's* clock frame, and it moves
+    with a correction of that clock: a wall-clock step applied after the boot
+    moves the estimate by the same amount, so the estimate cannot be read as
+    an instant on the host's timeline.  What does not move is the reboot
+    itself - the counter's fall, the uptime the device had when the app
+    produced its first row afterwards, and the window between the host
+    receipt of the last row before the silence and the host receipt of the
+    first row after it, in which the reboot must have happened.  Those are
+    published beside the estimate, with the estimate's frame named.
+    """
+    measurement = (lane or {}).get("measurement") or {}
+    sessions = measurement.get("session_objects") or []
+    if not sessions:
+        return {"status": "unavailable",
+                "reason": "the delivered lane holds no paired session to read "
+                          "the device's monotonic counter from"}
+    reads: list[dict] = []
+    for session in sessions:
+        covered = session.covered_pairs()
+        walls = session.wall_values()
+        if not covered or not walls:
+            continue
+        first_pair, first_elapsed = covered[0]
+        last_pair, last_elapsed = covered[-1]
+        estimates = [value for _, value in walls]
+        reads.append({
+            "session": session.session_id,
+            "rows": len(session.pairs),
+            "device_start": _iso(float(first_pair.device_epoch)),
+            "device_end": _iso(float(last_pair.device_epoch)),
+            "host_start": _iso(float(first_pair.host_epoch)),
+            "host_end": _iso(float(last_pair.host_epoch)),
+            "uptime_first_s": round(first_elapsed / 1000.0, 3),
+            "uptime_last_s": round(last_elapsed / 1000.0, 3),
+            "boot_estimate_start": _iso(min(estimates)),
+            "boot_estimate_end": _iso(max(estimates)),
+            "boot_estimate_spread_s": round(max(estimates) - min(estimates), 3),
+            "opened_after_reboot": bool(session.opened_after_reboot),
+            "reboots_in_session": list(session.reboots),
+            "_boot_epoch": min(estimates),
+            "_device_epoch_start": float(first_pair.device_epoch),
+            "_device_epoch_end": float(last_pair.device_epoch),
+            "_host_epoch_start": float(first_pair.host_epoch),
+            "_host_epoch_end": float(last_pair.host_epoch),
+        })
+    boots: list[dict] = []
+    for older, newer in zip(reads, reads[1:]):
+        fall = older["uptime_last_s"] - newer["uptime_first_s"]
+        if fall <= 0:
+            continue
+        if newer["_device_epoch_start"] <= older["_device_epoch_end"]:
+            # The device's own clock did not advance across the boundary, so
+            # a falling counter is a delivery batch written in reverse
+            # device-time order rather than a reboot.
+            continue
+        boots.append({
+            "reboot": True,
+            "session_before": older["session"],
+            "session_after": newer["session"],
+            "device_epoch_of_first_row": newer["device_start"],
+            "uptime_before_s": older["uptime_last_s"],
+            "uptime_after_s": newer["uptime_first_s"],
+            "counter_fall_s": round(fall, 3),
+            "uptime_at_first_row_s": newer["uptime_first_s"],
+            "boot_estimate": newer["boot_estimate_start"],
+            "boot_estimate_frame": _BOOT_FRAME,
+            "boot_estimate_epoch_s": round(newer["_boot_epoch"], 3),
+            "boot_estimate_before": older["boot_estimate_start"],
+            "boot_estimate_delta_s": round(newer["_boot_epoch"] - older["_boot_epoch"], 3),
+            "host_bracket_utc": [_iso(older["_host_epoch_end"]),
+                                  _iso(newer["_host_epoch_start"])],
+            "instant_limit": _BOOT_INSTANT_LIMIT,
+            "premise": "the counter is the device's own monotonic clock since "
+                       "boot and does not fall within one boot, so a fall "
+                       "across a session boundary whose device clock advanced "
+                       "is a reboot rather than a reverse-order batch",
+        })
+    for read in reads:
+        read.pop("_boot_epoch", None)
+        read.pop("_device_epoch_start", None)
+        read.pop("_device_epoch_end", None)
+        read.pop("_host_epoch_start", None)
+        read.pop("_host_epoch_end", None)
+    return {
+        "status": "ok",
+        "sessions": reads,
+        "reboots": boots,
+        "note": _BOOT_INSTANT_LIMIT,
+    }
+
 
 #: What a row's age does and does not say.  The delivery age is exact; the
 #: observation's own age is older by that row's transport delay, which the
@@ -1448,7 +1887,7 @@ def node_reading(node: dict, body: Path, max_age: float, now: float,
         reading["unknowns"] = ["no delivered perception state file for this node"]
         if clock.get("status") != "ok":
             reading["unknowns"].append(_CLOCK_NOT_IDENTIFIABLE)
-        reading["continuity"] = _continuity(body, name, threshold, clock)
+        reading["continuity"] = _continuity(body, name, threshold, clock, lane)
         _attach_clock_anchor(reading, clock)
         reading["unknowns"].extend(_continuity_unknowns(reading["continuity"]))
         reading["row_ages"] = _delivered_row_ages(lane, lane_now, [], window_now)
@@ -1507,7 +1946,7 @@ def node_reading(node: dict, body: Path, max_age: float, now: float,
             reading["clock_reason"] = document.get("reason")
 
     reading["transitions"] = _event_transitions(body, name)
-    reading["continuity"] = _continuity(body, name, threshold, clock)
+    reading["continuity"] = _continuity(body, name, threshold, clock, lane)
     reading["clock_identifiability"] = _clock_identifiability(
         _delivery_lag(history), clock.get("status"), clock.get("offset_nominal_s"),
         clock.get("offset_min_s"), clock.get("offset_max_s"))
@@ -1699,7 +2138,7 @@ def _continuity_unknowns(continuity: dict) -> list[str]:
             "cannot say whether it was receiving then, so whether the link was "
             "live across those intervals is UNKNOWN")
     shared = [hole for hole in body_holes
-              if (hole.get("link_silent_share") or 0.0) > 0.0]
+              if hole.get("attribution") == "not-separable"]
     if shared:
         total = sum(hole["duration_s"] for hole in shared)
         unknowns.append(
@@ -1707,8 +2146,19 @@ def _continuity_unknowns(continuity: dict) -> list[str]:
             f"totalling {round(total, 1)} s, and the host received nothing "
             "across the same intervals: the delivered lane cannot separate a "
             "body-side pause from a link-side outage")
+    stopped = [hole for hole in body_holes
+               if hole.get("attribution") == "body-side"
+               and (hole.get("link_silent_share") or 0.0) > 0.0]
+    if stopped:
+        total = sum(hole["duration_s"] for hole in stopped)
+        unknowns.append(
+            f"the body produced no observations across {len(stopped)} interval(s) "
+            f"totalling {round(total, 1)} s, and the lane's own other delivery "
+            "outages show the link withheld no production because there was "
+            "none to withhold; why the body stopped is not in the delivered "
+            "lane")
     recovered = [hole for hole in link_holes
-                 if str(hole.get("cause", "")).startswith("link-side")]
+                 if hole.get("attribution") == "link-side"]
     if recovered:
         total = sum(hole["duration_s"] for hole in recovered)
         unknowns.append(
@@ -2002,6 +2452,22 @@ def _render_continuity(continuity: dict) -> list[str]:
         lines.append(f"     alignment: {alignment.get('status')} "
                      f"offset={alignment.get('offset_nominal_s')} "
                      f"uncertainty_s={alignment.get('uncertainty_s')}")
+    control = continuity.get("backlog_control") or {}
+    if control.get("status") == "ok":
+        lines.append(f"     backlog control: gaps={control.get('gaps')} "
+                     f"min_ratio={control.get('min_ratio')} "
+                     f"median_ratio={control.get('median_ratio')} "
+                     f"weakest={control.get('weakest', {}).get('start_utc')}.."
+                     f"{control.get('weakest', {}).get('end_utc')} "
+                     f"({control.get('weakest', {}).get('backlog_ratio')})")
+    boots = continuity.get("device_boots") or {}
+    for boot in boots.get("reboots") or []:
+        lines.append(f"     device reboot: boot_estimate={boot.get('boot_estimate')} "
+                     f"counter_fall_s={boot.get('counter_fall_s')} "
+                     f"uptime_at_first_row_s={boot.get('uptime_at_first_row_s')} "
+                     f"session={boot.get('session_after')} "
+                     f"host_bracket={boot.get('host_bracket_utc')}")
+        lines.append(f"       frame: {boot.get('boot_estimate_frame')}")
     for hole in continuity.get("body_holes") or []:
         lines.append(f"     body hole {hole.get('duration_s')}s "
                      f"(missing {hole.get('missing_s')}s) "
@@ -2012,11 +2478,20 @@ def _render_continuity(continuity: dict) -> list[str]:
                      f"holds_unless_clock_differs_by_s="
                      f"{hole.get('verdict_holds_unless_clock_differs_by_s')}")
         lines.append(f"       cause: {hole.get('cause')}")
+        reboot = hole.get("reboot_inside")
+        if reboot:
+            lines.append(f"       device reboot inside: "
+                         f"boot_estimate={reboot.get('boot_estimate')} "
+                         f"uptime_at_first_row_s="
+                         f"{reboot.get('uptime_at_first_row_s')}")
     for hole in continuity.get("link_holes") or []:
         lines.append(f"     link hole {hole.get('duration_s')}s "
                      f"{hole.get('start_utc')} -> {hole.get('end_utc')} "
+                     f"attribution={hole.get('attribution')} "
                      f"samples_inside={hole.get('samples_inside')} "
-                     f"expected={hole.get('expected_samples')}")
+                     f"expected={hole.get('expected_samples')} "
+                     f"backlog_ratio={hole.get('backlog_ratio')} "
+                     f"spool_drops_inside={len(hole.get('spool_drops_inside') or [])}")
         lines.append(f"       cause: {hole.get('cause')}")
     if queue.get("malformed_samples"):
         lines.append(f"     malformed samples kept: {queue.get('malformed_samples')}")

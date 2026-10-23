@@ -164,9 +164,82 @@ The verdicts:
 |---|---|---|
 | produced nothing | kept receiving | **body-side**: the body itself stopped |
 | produced nothing | received nothing across any part of the interval | **not separable**: the delivered lane cannot say which came first |
+| produced nothing | received nothing, and the lane's other gaps show an outage withholds a backlog this one did not | **body-side**: the link withheld no production because there was none to withhold |
 | produced nothing | *unmeasured* - the host journal cannot say | **UNKNOWN**: an unmeasured link is not a live link |
 | kept producing at its cadence | received nothing | **link-side**: the observations were buffered and delivered afterwards, so the data is recovered and no consumer saw it live |
 | produced fewer than its cadence | received nothing | **partial**: the body faltered as well as the link |
+
+### The lane is its own control
+
+The third row is the one case where "not separable" is too weak, and the lane
+separates it by its own evidence. A delivery outage withholds the rows the
+body produced and delivers them afterwards, so the gap's window holds that
+backlog. Every *other* gap in the same lane is therefore the control: it
+shows what a delivery outage leaves behind here, against the same device,
+app, server and network. A gap that leaves almost no backlog while the
+lane's other outages leave a full one is a gap in which the body produced
+nothing - there was no production for the link to withhold.
+
+The reading publishes that control (`backlog_control`: how many gaps qualify,
+the weakest backlog ratio among them, and the premise the test rests on), and
+every gap carries its own `backlog_ratio` and `attribution`. Without a
+control - a lane whose only gap is the one in question - the verdict stays
+*not separable*, because the lane has nothing to compare against.
+
+The test counts rows by the **device's own clock**, so it assumes the
+device's wall clock did not step forward across the interval. The device's
+monotonic counter shows that the clock did not step inside either session,
+and a step that survived into the delivered rows shows in the lane's own
+clock bound, but a step made during the silence itself is not visible to this
+test.
+
+One more place in the delivered bytes could hide production that never
+reached the host, and the reading counts it: the app's own *spool overflow*
+record, the line it writes when it drops rows it could not deliver. The
+record carries the epoch at which the app dropped the rows and the app's own
+cumulative dropped count, so it is evidence about an *interval* rather than
+about the lane. A notice dated inside an interval says the app's spool was
+over its bound then and the app was holding production it could not deliver
+- which contradicts a body-side reading, so the reading withdraws the verdict
+and keeps the interval open instead. The withdrawal reaches **both** verdicts
+of that interval: the gap's own attribution and the body hole that covers it
+say the same thing about the same bytes.
+
+The record's *absence* is weaker evidence and the reading says so: the notice
+reaches the host only if the app uploads after dropping, so a lane that
+carries no notice has not established that the app dropped nothing. The
+reading publishes the notices it finds (`spool_overflow_notices`), the count
+(`spool_overflow_rows`) and this limit, rather than turning their absence
+into a measurement.
+
+### The device's own account of its boots
+
+`phone_elapsed_ms` is the device's monotonic clock since boot, so it never
+falls within one boot. A fall across a session boundary whose device clock
+advanced is therefore the device rebooting - a delivery batch written in
+reverse device-time order cannot advance the device's own clock by the hours
+a reboot gap carries.
+
+The instant of the last boot is the device's clock reading minus that
+counter. That is an instant in the **device's own clock frame**, and the
+reading says so (`boot_estimate_frame`): a correction of the device's wall
+clock applied after the boot moves the estimate by the same amount. The
+delivered lane can see such a correction inside a session - the boot
+estimate's spread is the measure of it - but not one made during a silence
+it does not cover.
+
+What does not move is the reboot itself. The counter's fall, the uptime the
+device had when the app produced its first row afterwards, and the **host
+bracket** - the window between the host receipt of the last row before the
+silence and the host receipt of the first row after it, in which the reboot
+must have happened - are stated on the host's timeline and survive any
+correction of the device's clock. The reading publishes the bracket beside
+the estimate (`host_bracket_utc`).
+
+The reading publishes this per session and per reboot (`device_boots`), and a
+body hole names the reboot inside it. The reboot corroborates a body-side
+verdict; it does not make the verdict on its own, and it is published with
+every attribution, including the ones it does not support.
 
 Two coverage numbers follow, and they answer different questions, each in its
 own clock:
