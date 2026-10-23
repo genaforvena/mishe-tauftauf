@@ -17,6 +17,20 @@ from .records import payload
 from .task_state import TaskState, eligible, registry
 
 
+class AnomalyPayloads(dict):
+    """Retain only the decoded fields consumed by anomalies, after verification.
+
+    Empty values still retain their sequence keys so project does not reopen
+    verified unrelated records. Full public projections keep their normal data.
+    """
+    fields = frozenset({"identity", "attempt_wake", "owner", "task", "task_state",
+                        "reason", "progress", "retry_event", "retry_task", "retry_at",
+                        "prerequisite_evidence", "result", "archive"})
+
+    def __setitem__(self, sequence, data):
+        super().__setitem__(sequence, {key: value for key, value in data.items() if key in self.fields})
+
+
 def _data(entry):
     lines = entry.body.splitlines()
     if any(line.startswith('[record]') for line in lines) or (len(lines) > 1 and lines[1].lstrip().startswith('{')):
@@ -41,6 +55,9 @@ def project(entries, payloads: dict | None = None):
         else:
             try:
                 data = _data(entry)
+                if isinstance(payloads, AnomalyPayloads):
+                    payloads[entry.sequence] = data
+                    data = payloads[entry.sequence]
             except (ValueError, TypeError, KeyError, OSError) as exc:
                 errors.append({'sequence': entry.sequence, 'message': str(exc)})
                 data = {}

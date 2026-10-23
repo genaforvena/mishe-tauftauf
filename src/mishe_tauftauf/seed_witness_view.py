@@ -14,7 +14,7 @@ from .feed import Feed
 from .ci_watch import line as ci_line
 from .seed_board import open_tasks, repeated_no_change, work_receipts
 from . import task_state
-from .coordination_checks import anomalies
+from .coordination_checks import AnomalyPayloads, anomalies
 from .seed import _wedge_evidence, _treadmill_evidence, recorded_session
 from .clear_journal import read as read_record
 
@@ -433,7 +433,7 @@ def render(home: Path) -> str:
     lines.append(f"  Evidence: {home / 'discovery'} sense.mind.watch-wait; "
                  "inspect producer on unavailable evidence, not a busy-pane restart")
     wedged: list[str] = []
-    payloads = {}
+    payloads = AnomalyPayloads()
     try:
         entries = Feed(home).entries(payloads=payloads)
         feed_error = None
