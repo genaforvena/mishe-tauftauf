@@ -62,6 +62,17 @@ def reading(**overrides) -> dict:
         "incomplete": [],
         "violations": [],
         "read_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "bound": 12,
+        "latest_roles": 12,
+        "verdict_coverage": {
+            "population": 12, "judged": 12,
+            "judged_violating": 0, "population_violating": 0,
+            "coverage": 1.0, "risk_among_judged": 0.0, "risk_over_population": 0.0,
+        },
+        "verdict_stratum_bounds": [
+            {"stratum": "post_amendment", "rows": 12, "violating": 0,
+             "state": "verified", "bounds": {"delta_0.05": 0.25}},
+        ],
     }
     base.update(overrides)
     return base
@@ -142,6 +153,20 @@ def gate_reading(**overrides) -> dict:
         "incomplete": [{"sequence": 66107, "binding": "none",
                         "reason": "publication requires one standalone final record reference"}],
         "violations": ["genome@2026-10-21T04:23:44Z:artifacts/x.md(B)"],
+        "bound": 211,
+        "latest_roles": 9,
+        "verdict_coverage": {
+            "population": 211, "judged": 9,
+            "judged_violating": 0, "population_violating": 211,
+            "coverage": 9 / 211, "risk_among_judged": 0.0,
+            "risk_over_population": 1.0,
+        },
+        "verdict_stratum_bounds": [
+            {"stratum": "pre_amendment", "rows": 120, "violating": 120,
+             "state": "verified", "bounds": {"delta_0.05": 1.0}},
+            {"stratum": "post_amendment", "rows": 91, "violating": 91,
+             "state": "verified", "bounds": {"delta_0.05": 1.0}},
+        ],
     }
     base.update(overrides)
     return base
@@ -204,6 +229,73 @@ def test_a_gate_reading_publishes_its_gate_count(tmp_path):
     write_reading(home, gate_reading())
     result = run_check(home)
     assert "owed_rows=103" in result.stdout
+
+
+def test_a_reading_without_a_coverage_pair_is_a_finding(tmp_path):
+    """The pair is what makes the verdict's coverage readable, so its absence fails."""
+    home = tmp_path / "home"
+    tampered = gate_reading()
+    del tampered["verdict_coverage"]
+    write_reading(home, tampered)
+    result = run_check(home)
+    assert result.returncode == 2, result.stdout
+    assert "no verdict coverage pair" in result.stdout
+
+
+def test_a_coverage_pair_that_disagrees_with_its_counters_fails(tmp_path):
+    home = tmp_path / "home"
+    tampered = gate_reading()
+    tampered["verdict_coverage"] = dict(tampered["verdict_coverage"],
+                                        judged_violating=1)
+    write_reading(home, tampered)
+    result = run_check(home)
+    assert result.returncode == 2, result.stdout
+    assert "disagrees with the counters" in result.stdout
+    assert "judged_violating" in result.stdout
+
+
+def test_a_reading_without_stratum_bounds_is_a_finding(tmp_path):
+    home = tmp_path / "home"
+    tampered = gate_reading()
+    del tampered["verdict_stratum_bounds"]
+    write_reading(home, tampered)
+    result = run_check(home)
+    assert result.returncode == 2, result.stdout
+    assert "no policy-version stratum bounds" in result.stdout
+
+
+def test_a_bound_below_the_stratum_observed_rate_fails(tmp_path):
+    """An upper confidence limit cannot fall below the rate it was measured at."""
+    home = tmp_path / "home"
+    tampered = gate_reading()
+    tampered["verdict_stratum_bounds"] = [
+        {"stratum": "post_amendment", "rows": 91, "violating": 91,
+         "state": "verified", "bounds": {"delta_0.05": 0.5}},
+    ]
+    write_reading(home, tampered)
+    result = run_check(home)
+    assert result.returncode == 2, result.stdout
+    assert "below the stratum's own observed rate" in result.stdout
+
+
+def test_an_empty_stratum_must_read_unknown(tmp_path):
+    home = tmp_path / "home"
+    tampered = gate_reading()
+    tampered["verdict_stratum_bounds"] = [
+        {"stratum": "pre_amendment", "rows": 0, "violating": 0,
+         "state": "verified", "bounds": {"delta_0.05": 0.1}},
+    ]
+    write_reading(home, tampered)
+    result = run_check(home)
+    assert result.returncode == 2, result.stdout
+    assert "no rows claims a state other than unknown" in result.stdout
+
+
+def test_the_coverage_pair_is_printed(tmp_path):
+    home = tmp_path / "home"
+    write_reading(home, gate_reading())
+    result = run_check(home)
+    assert "coverage  : judged=9/211" in result.stdout
 
 
 def test_a_missing_reading_reads_unknown(tmp_path):

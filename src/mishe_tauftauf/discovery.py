@@ -48,6 +48,13 @@ from .remediation_bands import (EVIDENCE_BAND_NAMES, EVIDENCE_BAND_RELATIONS,
                                 EVIDENCE_EXPOSURE_SCOPES,
                                 byte_relation, classify_remediation_band,
                                 discharge_exposure, discharge_strength)
+from .verdict_coverage import (EVIDENCE_BOUND_ASSUMPTION, EVIDENCE_BOUND_DELTAS,
+                               EVIDENCE_BOUND_METHOD, EVIDENCE_BOUND_METHOD_DEFINITION,
+                               EVIDENCE_BOUND_STATE_UNKNOWN, EVIDENCE_BOUND_STATE_VERIFIED,
+                               EVIDENCE_STRATUM_DEFINITIONS,
+                               EVIDENCE_STRATUM_NO_SAMPLE_REASON,
+                               EVIDENCE_UNNAMEABLE_REASON, clopper_pearson_upper,
+                               coverage_pair)
 from . import store_census
 from .runtime_source import source_for
 from .scan_freshness import age_bounds, classify_age, endpoint
@@ -6122,6 +6129,50 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
             continue
         permanent_defect_rows += 1
         permanent_defect_roles[role] = permanent_defect_roles.get(role, 0) + 1
+    # The coverage of the verdict's own counters: the live window is the
+    # most recent outcome row of each role, so the verdict's figures speak
+    # for one row per role and for no other row. The pair publishes that
+    # as a fraction and as the risk among the rows the figures speak for,
+    # with the selection rule named beside them, so the fraction cannot be
+    # read as a claim about the ledger's whole population.
+    verdict_coverage = coverage_pair(
+        population=len(checked),
+        judged=len(latest),
+        judged_violating=len(latest_bad_roles),
+        population_violating=len(violations))
+    # The bound each policy-version stratum of the audited population
+    # supports, quoted per stratum because a bound is exchangeable only
+    # within the policy a row was bound under. A stratum with no row has no
+    # sample and so no bound; the unaudited store records carry no
+    # publication instant, so they cannot be placed in a stratum at all and
+    # are named as unnameable rather than folded into a quoted figure.
+    stratum_bounds = []
+    for name, definition in EVIDENCE_STRATUM_DEFINITIONS.items():
+        rows = [row for row in checked
+                if ((name == "pre_amendment") is
+                    (row[0] < EVIDENCE_POLICY_AMENDMENT_TIME))]
+        errors = sum(1 for row in rows if row[4])
+        if not rows:
+            stratum_bounds.append({"stratum": name, "definition": definition,
+                                   "rows": 0, "violating": 0,
+                                   "state": EVIDENCE_BOUND_STATE_UNKNOWN,
+                                   "reason": EVIDENCE_STRATUM_NO_SAMPLE_REASON})
+            continue
+        bounds = {("delta_%g" % delta):
+                  clopper_pearson_upper(errors, len(rows), delta)
+                  for delta in EVIDENCE_BOUND_DELTAS}
+        stratum_bounds.append({"stratum": name, "definition": definition,
+                               "rows": len(rows), "violating": errors,
+                               "state": EVIDENCE_BOUND_STATE_VERIFIED,
+                               "bounds": bounds})
+    # The bound method, its assumption and the unnameable remainder are
+    # published beside the bounds, so a reader never has to guess what the
+    # quoted figures rest on or what they exclude.
+    verdict_coverage["bound_method"] = EVIDENCE_BOUND_METHOD
+    verdict_coverage["bound_method_definition"] = EVIDENCE_BOUND_METHOD_DEFINITION
+    verdict_coverage["bound_assumption"] = EVIDENCE_BOUND_ASSUMPTION
+    verdict_coverage["unnameable"] = {"rows": unaudited_population["size"],
+                                      "reason": EVIDENCE_UNNAMEABLE_REASON}
     # The verdict. The gate decides the drift, and the standing audit decides
     # the green:
     #
@@ -6295,6 +6346,19 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
             "discharge_exposure": dict(exposure),
             "discharge_exposure_definition": (
                 exposure["exposure_scopes"][exposure["exposure_scope"]]["definition"]),
+            # The coverage of the verdict's own figures: the fraction of the
+            # audited population the live window speaks for, and the risk
+            # among the rows it does speak for, with the selection rule,
+            # the bound method and its assumption, and the unnameable
+            # remainder published beside them. A second reader re-derives
+            # the pair from the published counts alone.
+            "verdict_coverage": verdict_coverage,
+            # The distribution-free upper bound on a fresh row's violation
+            # rate, quoted per policy-version stratum because a bound is
+            # exchangeable only within the policy a row was bound under. A
+            # stratum with no row has no sample and reads UNKNOWN; the rows
+            # the reading cannot place in a stratum are named beside them.
+            "verdict_stratum_bounds": stratum_bounds,
             "discharge_exposure_scopes": sorted(EVIDENCE_EXPOSURE_SCOPES),
             # The population this reading audited, and the population it could
             # not see. ``all_bad`` counts rows of the audited population, so

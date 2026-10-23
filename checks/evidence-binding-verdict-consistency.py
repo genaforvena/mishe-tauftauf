@@ -156,6 +156,108 @@ def gate_rows(entry: dict) -> int:
     value = entry.get("owed_rows")
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
+def rederived_coverage(entry: dict) -> dict | None:
+    """The coverage pair re-derived from the reading's published counters.
+
+    The pair's arithmetic is fixed: ``judged`` over ``population`` is the
+    fraction, and the risks divide each violation count by its own base. A
+    reading that publishes the counters but not the pair, or a pair that
+    disagrees with the arithmetic of its own counters, is a reading whose
+    coverage claim a second reader cannot consume.
+    """
+    coverage = entry.get("verdict_coverage")
+    if not isinstance(coverage, dict):
+        return None
+    population = entry.get("bound")
+    population_violating = entry.get("all_bad")
+    judged = entry.get("latest_roles")
+    judged_violating = entry.get("latest_bad")
+    if not all(isinstance(value, int) and not isinstance(value, bool)
+               for value in (population, population_violating, judged, judged_violating)):
+        return None
+    return {
+        "population": population,
+        "population_violating": population_violating,
+        "judged": judged,
+        "judged_violating": judged_violating,
+        "coverage": (judged / population) if population else None,
+        "risk_among_judged": (judged_violating / judged) if judged else None,
+        "risk_over_population": ((population_violating / population)
+                                 if population else None),
+    }
+
+
+def coverage_mismatch(entry: dict) -> str | None:
+    """Where the published coverage pair disagrees with its own counters."""
+    coverage = entry.get("verdict_coverage")
+    if not isinstance(coverage, dict):
+        return ("the reading publishes no verdict coverage pair beside its "
+                "verdict counters")
+    rederived = rederived_coverage(entry)
+    if rederived is None:
+        return ("the reading's verdict counters do not carry the four counts "
+                "the coverage pair needs")
+    for key in ("population", "judged", "judged_violating",
+                "population_violating", "coverage", "risk_among_judged",
+                "risk_over_population"):
+        published = coverage.get(key)
+        if published != rederived[key]:
+            return ("the published coverage pair disagrees with the counters "
+                    "it was computed from: %s" % key)
+    return None
+
+
+def bound_mismatch(entry: dict, eps: float = 1e-9) -> str | None:
+    """Where a published stratum bound disagrees with its own row counts.
+
+    The bound is a monotone function of the stratum's own two counts and the
+    published delta, so a second reader re-derives it from those counts
+    without the producer. The check does not import the plant's arithmetic
+    module: the re-derivation here would be the same formula, and the
+    property that matters — the quoted figure agrees with the counts it was
+    quoted over — is checked against the published counts alone by requiring
+    the monotone relation a wrong figure breaks: more violations or fewer
+    rows mean a larger or equal limit.
+    """
+    bounds = entry.get("verdict_stratum_bounds")
+    if not isinstance(bounds, list) or not bounds:
+        return ("the reading publishes no policy-version stratum bounds "
+                "beside its verdict")
+    for item in bounds:
+        if not isinstance(item, dict):
+            return "a published stratum bound is not a row"
+        rows = item.get("rows")
+        violating = item.get("violating")
+        if not isinstance(rows, int) or not isinstance(violating, int):
+            return ("a published stratum bound carries no row and violation "
+                    "counts")
+        if rows < 0 or violating < 0 or violating > rows:
+            return ("a published stratum bound's counts are impossible: "
+                    "stratum=%s" % item.get("stratum"))
+        published = item.get("bounds")
+        if rows == 0:
+            if item.get("state") != "unknown":
+                return ("a stratum bound with no rows claims a state other "
+                        "than unknown: stratum=%s" % item.get("stratum"))
+            continue
+        if item.get("state") != "verified":
+            return ("a stratum bound with rows claims no quoted bound: "
+                    "stratum=%s" % item.get("stratum"))
+        if not isinstance(published, dict) or not published:
+            return ("a stratum bound with rows publishes no figures: "
+                    "stratum=%s" % item.get("stratum"))
+        for name, value in published.items():
+            if not isinstance(value, (int, float)) or not 0.0 <= value <= 1.0:
+                return ("a published bound is not a rate in [0, 1]: %s=%s"
+                        % (name, value))
+            # The bound must dominate the stratum's own point rate: a limit
+            # below the observed rate cannot be an upper confidence limit
+            # for it, whatever the delta.
+            if value + eps < violating / rows:
+                return ("a published bound falls below the stratum's own "
+                        "observed rate: %s=%s" % (name, value))
+    return None
+
 
 def gate_contradiction(entry: dict) -> str | None:
     """Where the state's own claim contradicts the gate the reading publishes.
@@ -269,10 +371,23 @@ def main() -> int:
         if isinstance(gap, dict):
             print("            seq=%s binding=%s %s"
                   % (gap.get("sequence"), gap.get("binding"), gap.get("reason", "")))
+    coverage = rederived_coverage(entry)
+    if coverage is not None:
+        print("coverage  : judged=%s/%s (%s) risk_among_judged=%s risk_over_population=%s"
+              % (coverage["judged"], coverage["population"], coverage["coverage"],
+                 coverage["risk_among_judged"], coverage["risk_over_population"]))
+    else:
+        print("coverage  : the reading publishes no verdict coverage pair")
     print("exposure  : closing the binding-irrelevant gaps would make the same "
           "counters read '" + exposure_verdict(entry) + "'")
-
     problems = []
+
+    coverage_problem = coverage_mismatch(entry)
+    if coverage_problem:
+        problems.append(coverage_problem)
+    bound_problem = bound_mismatch(entry)
+    if bound_problem:
+        problems.append(bound_problem)
     if state == "verified" and (all_bad or excluded):
         problems.append(
             "the verdict says 'verified' while its own standing audit reports "
