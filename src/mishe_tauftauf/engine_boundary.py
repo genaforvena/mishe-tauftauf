@@ -34,17 +34,26 @@ def _finite(value):
     return type(value) in (int, float) and math.isfinite(value)
 
 
+def _store_path(value):
+    if not isinstance(value, str) or not value or Path(value).is_absolute() or '..' in Path(value).parts:
+        raise ValueError('invalid engine credential store path')
+    return value
+
+
 def load_registry(home):
-    """Return (credential_store_relative_path, {alias: entry}) from home/engine/accounts.json."""
+    """Return (default_store, {alias: entry}) from home/engine/accounts.json.
+
+    A store is an OMP agent directory relative to home. Each account reads quota
+    through its own store, so a second credential for one provider needs its own
+    store to be attributable; accounts without one use the default store.
+    """
     path = home / 'engine' / 'accounts.json'
     if path.is_symlink() or not path.is_file():
         raise ValueError('engine account registry unavailable')
     value = json.loads(path.read_text(encoding='utf-8'))
     if not isinstance(value, dict) or value.get('version') != 1 or not isinstance(value.get('accounts'), dict):
         raise ValueError('invalid engine account registry')
-    store = value.get('store', STORE_DEFAULT)
-    if not isinstance(store, str) or Path(store).is_absolute() or '..' in Path(store).parts or not store:
-        raise ValueError('invalid engine credential store path')
+    default = _store_path(value.get('store', STORE_DEFAULT))
     accounts, credentials = {}, set()
     for alias, row in value['accounts'].items():
         if not isinstance(alias, str) or not ALIAS.fullmatch(alias) or not isinstance(row, dict):
@@ -52,10 +61,11 @@ def load_registry(home):
         provider, state, credential = row.get('provider'), row.get('state'), row.get('credential_id')
         if provider not in PROVIDERS or state not in REGISTRY_STATES:
             raise ValueError('invalid engine account entry')
+        store = _store_path(row['store']) if 'store' in row else default
         if state == 'configured':
-            if type(credential) is not int or credential <= 0 or credential in credentials:
-                raise ValueError('configured account needs one unique credential reference')
-            credentials.add(credential)
+            if type(credential) is not int or credential <= 0 or (store, credential) in credentials:
+                raise ValueError('configured account needs one unique credential reference per store')
+            credentials.add((store, credential))
         elif credential is not None:
             raise ValueError('unconfigured account must not reference a credential')
         for key in ('entitlement', 'evidence', 'evidence_at'):
@@ -64,12 +74,13 @@ def load_registry(home):
         accounts[alias] = {
             'provider': provider,
             'state': state,
+            'store': store,
             'credential_id': credential,
             'entitlement': row.get('entitlement'),
             'evidence': row.get('evidence'),
             'evidence_at': row.get('evidence_at'),
         }
-    return store, accounts
+    return default, accounts
 
 
 def credential_store(directory):
@@ -212,3 +223,27 @@ def usage(store_dir, omp='omp'):
         result['error'] = 'malformed-json'
         result['reports'] = []
     return result
+
+
+def last_good_samples(path):
+    """Return ({alias: {fetched_ms, windows}}, error) from engine/last-good.json.
+
+    A malformed file or entry is reported so the caller refuses to overwrite it.
+    """
+    if not path.exists():
+        return {}, None
+    if path.is_symlink() or not path.is_file():
+        return {}, 'last-good file is not a regular file'
+    try:
+        value = json.loads(path.read_text(encoding='utf-8'))
+    except (ValueError, UnicodeDecodeError):
+        return {}, 'last-good file malformed'
+    if not isinstance(value, dict) or value.get('version') != 1 or not isinstance(value.get('accounts'), dict):
+        return {}, 'last-good file malformed'
+    samples, bad = {}, False
+    for alias, sample in value['accounts'].items():
+        if isinstance(sample, dict) and _finite(sample.get('fetched_ms')) and isinstance(sample.get('windows'), list):
+            samples[alias] = sample
+        else:
+            bad = True
+    return samples, 'last-good file has malformed entries' if bad else None

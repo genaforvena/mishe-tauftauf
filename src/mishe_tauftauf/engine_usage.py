@@ -5,16 +5,24 @@ each account-bound window, and what is UNKNOWN. It makes no routing decision and
 changes no launcher, credential or runtime. Protocol parsing lives in
 engine_boundary; this module consumes decoded values only.
 
-Attribution rule: OMP usage reports for opencode-go carry no credential identity,
-so a report is attributed to a configured account only when that provider has
-exactly one configured account and exactly one report. Any other shape is
-UNATTRIBUTED rather than guessed.
+Each account reads quota through its own OMP credential store. OMP usage reports
+carry no credential identity, so a report is attributed to a configured account
+only when that account's store holds exactly one configured account for the
+provider and yields exactly one report for it. Any other shape is UNATTRIBUTED
+rather than guessed. Two accounts whose quota windows reset at identical instants
+are treated as one entitlement under two credentials; both stay UNATTRIBUTED.
+
+Last-good retention: a successful FRESH or STALE sample is kept in
+engine/last-good.json. When a later read fails the row is UNKNOWN and carries that
+sample as `last_good`, labelled with its own age; it is never presented as current.
 """
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import contextlib
 import json
 import os
+import tempfile
 import time
 
 from . import engine_boundary as boundary
@@ -22,6 +30,7 @@ from . import engine_boundary as boundary
 REPORT_TTL_MS = 180_000
 FUTURE_SKEW_MS = 5_000
 ERROR_LOG = 'usage-errors.jsonl'
+LAST_GOOD = 'last-good.json'
 RANK = {'UNKNOWN': 3, 'UNATTRIBUTED': 2, 'STALE': 1, 'FRESH': 0}
 
 
@@ -29,6 +38,10 @@ def _iso(ms):
     if ms is None:
         return None
     return datetime.fromtimestamp(ms / 1000, UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+def _pct(remaining):
+    return f"{remaining * 100:.0f}%" if remaining is not None else 'n/a'
 
 
 def _window_verdict(window, fetched, now):
@@ -66,6 +79,7 @@ def _registry_view(alias, entry, auth):
     return {
         'alias': alias,
         'provider': entry['provider'],
+        'store': entry['store'],
         'registry_state': entry['state'],
         'entitlement': entry['entitlement'],
         'credential_id': entry['credential_id'],
@@ -75,27 +89,22 @@ def _registry_view(alias, entry, auth):
     }
 
 
-def accounts(home, now_ms=None):
-    """Registry and credential-store view. Reads no provider quota."""
-    now = now_ms if now_ms is not None else time.time() * 1000
-    store, registry = boundary.load_registry(home)
-    store_error = None
-    try:
-        creds, blocks = boundary.credential_store(home / store)
-    except ValueError as exc:
-        creds, blocks, store_error = {}, {}, str(exc)
-    rows = {alias: _registry_view(alias, entry, _auth(entry, creds, blocks, store_error, now))
-            for alias, entry in registry.items()}
-    unregistered = _unregistered(registry, creds)
-    state = 'FRESH' if rows and all(r['registry_state'] == 'configured' and r['auth']['state'] == 'ok' for r in rows.values()) else 'PARTIAL'
-    if store_error:
-        state = 'UNKNOWN'
-    return {'state': state, 'observed_at': _iso(now), 'accounts': rows,
-            'unregistered_credentials': unregistered, 'store_error': store_error}
+def _credential_stores(home, registry):
+    """Credential metadata for each store a configured account reads: {store: (creds, blocks, error)}."""
+    stores = {}
+    for entry in registry.values():
+        if entry['state'] != 'configured' or entry['store'] in stores:
+            continue
+        try:
+            creds, blocks = boundary.credential_store(home / entry['store'])
+            stores[entry['store']] = (creds, blocks, None)
+        except ValueError as exc:
+            stores[entry['store']] = ({}, {}, str(exc))
+    return stores
 
 
-def _unregistered(registry, creds):
-    referenced = {entry['credential_id'] for entry in registry.values() if entry['state'] == 'configured'}
+def _unregistered(registry, store, creds):
+    referenced = {e['credential_id'] for e in registry.values() if e['state'] == 'configured' and e['store'] == store}
     counts = {}
     for cid, row in creds.items():
         if cid not in referenced:
@@ -103,78 +112,74 @@ def _unregistered(registry, creds):
     return counts
 
 
-def _log_usage_error(home, now, usage):
+def _unregistered_by_store(registry, stores):
+    found = {}
+    for store, (creds, _, error) in stores.items():
+        counts = {} if error else _unregistered(registry, store, creds)
+        if counts:
+            found[store] = counts
+    return found
+
+
+def accounts(home, now_ms=None):
+    """Registry and credential-store view. Reads no provider quota."""
+    now = now_ms if now_ms is not None else time.time() * 1000
+    _, registry = boundary.load_registry(home)
+    stores = _credential_stores(home, registry)
+    rows = {}
+    for alias, entry in registry.items():
+        creds, blocks, store_error = stores.get(entry['store'], ({}, {}, None))
+        rows[alias] = _registry_view(alias, entry, _auth(entry, creds, blocks, store_error, now))
+    store_errors = {store: err for store, (_, _, err) in stores.items() if err}
+    state = 'FRESH' if rows and all(r['registry_state'] == 'configured' and r['auth']['state'] == 'ok' for r in rows.values()) else 'PARTIAL'
+    if store_errors:
+        state = 'UNKNOWN'
+    return {'state': state, 'observed_at': _iso(now), 'accounts': rows,
+            'unregistered_credentials': _unregistered_by_store(registry, stores), 'store_errors': store_errors}
+
+
+def _log_usage_error(home, now, store, usage):
     directory = home / 'engine'
     directory.mkdir(parents=True, exist_ok=True)
-    line = json.dumps({'observed_at': _iso(now), 'error': usage['error'], 'stderr': usage['stderr']}, sort_keys=True)
+    line = json.dumps({'observed_at': _iso(now), 'store': store, 'error': usage['error'],
+                       'stderr': usage['stderr']}, sort_keys=True)
     path = directory / ERROR_LOG
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     with os.fdopen(fd, 'a', encoding='utf-8') as handle:
         handle.write(line + '\n')
 
 
-def status(home, now_ms=None, omp='omp'):
-    """Full dashboard: registry, credential metadata, and OMP usage windows with freshness."""
-    now = now_ms if now_ms is not None else time.time() * 1000
-    store, registry = boundary.load_registry(home)
-    store_error = None
+def _save_last_good(home, samples):
+    directory = home / 'engine'
+    directory.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix='.last-good-', suffix='.tmp')
     try:
-        creds, blocks = boundary.credential_store(home / store)
-    except ValueError as exc:
-        creds, blocks, store_error = {}, {}, str(exc)
-    usage = boundary.usage(home / store, omp)
-    if usage['error']:
-        _log_usage_error(home, now, usage)
-    reports_by_provider = {}
-    for report in usage['reports']:
-        reports_by_provider.setdefault(report['provider'], []).append(report)
-    rows = {}
-    for alias, entry in registry.items():
-        auth = _auth(entry, creds, blocks, store_error, now)
-        row = _registry_view(alias, entry, auth)
-        if entry['state'] != 'configured':
-            row.update(state='NOT_CONFIGURED', reason='validated but no credential configured', windows=[],
-                       fetched_at=None, age_seconds=None)
-        elif usage['error']:
-            row.update(state='UNKNOWN', reason=f"usage read failed: {usage['error']}", windows=[],
-                       fetched_at=None, age_seconds=None)
-        elif auth['state'] not in ('ok', 'blocked'):
-            row.update(state='UNKNOWN', reason=auth['reason'], windows=[], fetched_at=None, age_seconds=None)
-        else:
-            row.update(_attribute(entry, alias, reports_by_provider, registry, now))
-        rows[alias] = row
-    gaps = {
-        'usage_error': usage['error'],
-        'store_error': store_error,
-        'unregistered_credentials': _unregistered(registry, creds),
-        'without_usage': usage['without_usage'],
-        'disabled': usage['disabled'],
-    }
-    if all(r['state'] == 'FRESH' for r in rows.values()) and rows and not any(gaps[k] for k in gaps):
-        state = 'FRESH'
-    elif any(r['state'] == 'FRESH' for r in rows.values()):
-        state = 'PARTIAL'
-    else:
-        state = 'UNKNOWN'
-    return {'state': state, 'observed_at': _iso(now), 'ttl_seconds': REPORT_TTL_MS // 1000,
-            'omp_generated_at': _iso(usage['generated_ms']), 'accounts': rows, 'coverage': gaps}
+        with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+            json.dump({'version': 1, 'accounts': samples}, handle, sort_keys=True)
+        os.replace(tmp, directory / LAST_GOOD)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)
+        raise
 
 
-def _attribute(entry, alias, reports_by_provider, registry, now):
+def _attribute(entry, registry, store_reports, now):
     provider = entry['provider']
-    configured = [a for a, e in registry.items() if e['provider'] == provider and e['state'] == 'configured']
-    reports = reports_by_provider.get(provider, [])
+    peers = [a for a, e in registry.items()
+             if e['state'] == 'configured' and e['store'] == entry['store'] and e['provider'] == provider]
+    reports = [r for r in store_reports if r['provider'] == provider]
+    empty = {'windows': [], 'fetched_at': None, 'fetched_ms': None, 'age_seconds': None}
     if not reports:
-        return {'state': 'UNKNOWN', 'reason': 'no provider report', 'windows': [], 'fetched_at': None, 'age_seconds': None}
-    if len(configured) > 1:
-        return {'state': 'UNATTRIBUTED', 'reason': 'several accounts share this provider; OMP report carries no credential identity',
-                'windows': [], 'fetched_at': None, 'age_seconds': None}
+        return {'state': 'UNKNOWN', 'reason': 'no provider report', **empty}
+    if len(peers) > 1:
+        return {'state': 'UNATTRIBUTED',
+                'reason': 'several accounts share this credential store and provider; OMP report carries no credential identity',
+                **empty}
     if len(reports) > 1:
-        return {'state': 'UNATTRIBUTED', 'reason': 'several reports for one configured account', 'windows': [],
-                'fetched_at': None, 'age_seconds': None}
+        return {'state': 'UNATTRIBUTED', 'reason': 'several reports for one configured account', **empty}
     report = reports[0]
     if report['problem']:
-        return {'state': 'UNKNOWN', 'reason': report['problem'], 'windows': [], 'fetched_at': None, 'age_seconds': None}
+        return {'state': 'UNKNOWN', 'reason': report['problem'], **empty}
     verdicts, windows = [], []
     for window in report['windows']:
         verdict, reason = _window_verdict(window, report['fetched_ms'], now)
@@ -199,8 +204,93 @@ def _attribute(entry, alias, reports_by_provider, registry, now):
         'reason': reason,
         'windows': windows,
         'fetched_at': _iso(report['fetched_ms']),
+        'fetched_ms': report['fetched_ms'],
         'age_seconds': round((now - report['fetched_ms']) / 1000, 1),
     }
+
+
+def _shared_windows(rows, registry):
+    """Mark configured accounts of one provider whose windows reset at identical instants."""
+    signatures = {alias: {(w['limit'], w['window'], w['reset_at']) for w in row['windows'] if w['reset_at']}
+                  for alias, row in rows.items()
+                  if row['state'] in ('FRESH', 'STALE') and registry[alias]['state'] == 'configured'}
+    flagged = set()
+    aliases = sorted(signatures)
+    for i, a in enumerate(aliases):
+        for b in aliases[i + 1:]:
+            if rows[a]['provider'] == rows[b]['provider'] and signatures[a] & signatures[b]:
+                flagged |= {a, b}
+    for alias in flagged:
+        rows[alias].update(state='UNATTRIBUTED', windows=[], fetched_at=None, fetched_ms=None, age_seconds=None,
+                           reason='window resets match another account; possibly one entitlement under two credentials')
+    return flagged
+
+
+def status(home, now_ms=None, omp='omp'):
+    """Full dashboard: registry, credential metadata, per-store OMP usage windows with freshness and last-good samples."""
+    now = now_ms if now_ms is not None else time.time() * 1000
+    _, registry = boundary.load_registry(home)
+    stores = _credential_stores(home, registry)
+    # A store whose metadata cannot be read is not handed to OMP, which could migrate it.
+    usages = {store: boundary.usage(home / store, omp) for store, (_, _, err) in stores.items() if not err}
+    for store, usage in usages.items():
+        if usage['error']:
+            _log_usage_error(home, now, store, usage)
+    rows = {}
+    for alias, entry in registry.items():
+        creds, blocks, store_error = stores.get(entry['store'], ({}, {}, None))
+        auth = _auth(entry, creds, blocks, store_error, now)
+        row = _registry_view(alias, entry, auth)
+        if entry['state'] != 'configured':
+            row.update(state='NOT_CONFIGURED', reason='validated but no credential configured', windows=[],
+                       fetched_at=None, fetched_ms=None, age_seconds=None)
+        elif auth['state'] not in ('ok', 'blocked'):
+            row.update(state='UNKNOWN', reason=auth['reason'], windows=[], fetched_at=None, fetched_ms=None,
+                       age_seconds=None)
+        elif usages[entry['store']]['error']:
+            row.update(state='UNKNOWN', reason=f"usage read failed: {usages[entry['store']]['error']}", windows=[],
+                       fetched_at=None, fetched_ms=None, age_seconds=None)
+        else:
+            row.update(_attribute(entry, registry, usages[entry['store']]['reports'], now))
+        rows[alias] = row
+    flagged = _shared_windows(rows, registry)
+
+    last_good, last_good_error = boundary.last_good_samples(home / 'engine' / LAST_GOOD)
+    samples = {}
+    for alias, row in rows.items():
+        if row['state'] in ('FRESH', 'STALE') and row['fetched_ms'] is not None:
+            samples[alias] = {'fetched_ms': row['fetched_ms'], 'windows': row['windows']}
+        elif row['state'] == 'UNKNOWN' and alias in last_good:
+            sample = last_good[alias]
+            row['last_good'] = {'fetched_at': _iso(sample['fetched_ms']),
+                                'age_seconds': round((now - sample['fetched_ms']) / 1000, 1),
+                                'windows': sample['windows']}
+    if samples and not last_good_error:
+        retained = {alias: s for alias, s in last_good.items() if alias in registry}
+        retained.update(samples)
+        _save_last_good(home, retained)
+    for row in rows.values():
+        row.pop('fetched_ms', None)
+        row.setdefault('last_good', None)
+
+    gaps = {
+        'usage_errors': {store: u['error'] for store, u in usages.items() if u['error']},
+        'store_errors': {store: err for store, (_, _, err) in stores.items() if err},
+        'unregistered_credentials': _unregistered_by_store(registry, stores),
+        'without_usage': {store: u['without_usage'] for store, u in usages.items() if u['without_usage']},
+        'disabled': {store: u['disabled'] for store, u in usages.items() if u['disabled']},
+        'shared_windows': sorted(flagged),
+        'last_good': last_good_error,
+    }
+    if rows and all(r['state'] == 'FRESH' for r in rows.values()) and not any(gaps.values()):
+        state = 'FRESH'
+    elif any(r['state'] == 'FRESH' for r in rows.values()):
+        state = 'PARTIAL'
+    else:
+        state = 'UNKNOWN'
+    return {'state': state, 'observed_at': _iso(now), 'ttl_seconds': REPORT_TTL_MS // 1000,
+            'omp_generated_at': {store: _iso(u['generated_ms']) for store, u in usages.items() if u['generated_ms']},
+            'accounts': rows, 'coverage': gaps}
 
 
 def render(report):
@@ -213,29 +303,31 @@ def render(report):
         if row.get('reason'):
             head += f"  ({row['reason']})"
         lines.append(head)
+        lines.append(f"  store {row['store']}")
         if row.get('fetched_at'):
             lines.append(f"  fetched {row['fetched_at']} age {row['age_seconds']}s")
         for w in row.get('windows', []):
-            remaining = w['remaining_fraction']
-            pct = f"{remaining * 100:.0f}%" if remaining is not None else 'n/a'
-            lines.append(f"  {w['limit']:<16} remaining {pct:<5} resets {w['reset_at']}  {w['state']}")
+            lines.append(f"  {w['limit']:<16} remaining {_pct(w['remaining_fraction']):<5} resets {w['reset_at']}  {w['state']}")
+        last = row.get('last_good')
+        if last:
+            lines.append(f"  last good {last['fetched_at']} age {last['age_seconds']}s (not current)")
+            for w in last['windows']:
+                lines.append(f"    {w['limit']:<16} remaining {_pct(w['remaining_fraction']):<5} resets {w['reset_at']}")
         if row.get('evidence'):
             lines.append(f"  evidence: {row['evidence']} ({row.get('evidence_at')})")
+    gaps = {k: v for k, v in (report.get('coverage') or {}).items() if v}
+    if gaps:
+        lines.append('coverage gaps: ' + json.dumps(gaps, sort_keys=True))
     return '\n'.join(lines)
 
 
 def cmd_engine(args) -> int:
-    if args.engine_command == 'accounts':
-        report = accounts(args.home)
-        ok = report['state'] == 'FRESH'
-    else:
-        report = status(args.home)
-        ok = report['state'] == 'FRESH'
-    if args.json:
+    report = accounts(args.home) if args.engine_command == 'accounts' else status(args.home)
+    if args.json or args.engine_command == 'accounts':
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
-        print(render(report) if args.engine_command == 'status' else json.dumps(report, indent=2, sort_keys=True))
-    return 0 if ok else 3
+        print(render(report))
+    return 0 if report['state'] == 'FRESH' else 3
 
 
 def register(sub):

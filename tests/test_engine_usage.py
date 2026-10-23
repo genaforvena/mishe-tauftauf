@@ -1,7 +1,5 @@
 """Engine account inventory and quota dashboard: attribution, freshness and failure states."""
 import json
-import os
-from pathlib import Path
 import sqlite3
 import stat
 
@@ -13,6 +11,9 @@ from mishe_tauftauf import engine_usage as usage
 NOW = 1_792_712_432_436
 FRESH = NOW - 10_000
 RESET = NOW + 3_600_000
+RESET_B = RESET + 86_400_000
+RESIDENT = 'omp-recovery/agent'
+GO_B = 'engine/go-b'
 
 
 def limit(limit_id='rolling-5h', window_id='5h', remaining=1.0, resets=RESET, unit='percent', status='ok'):
@@ -36,12 +37,7 @@ def usage_doc(*reports, **extra):
     return doc
 
 
-def make_site(tmp_path, accounts, credentials=(), blocks=()):
-    home = tmp_path / 'site'
-    (home / 'engine').mkdir(parents=True)
-    (home / 'engine' / 'accounts.json').write_text(json.dumps({'version': 1, 'accounts': accounts}))
-    store = home / 'omp-recovery' / 'agent'
-    store.mkdir(parents=True)
+def _write_store(store, credentials, blocks):
     con = sqlite3.connect(store / 'agent.db')
     con.execute('create table auth_schema_version (id integer primary key, version integer)')
     con.execute('insert into auth_schema_version values (1, 8)')
@@ -56,18 +52,39 @@ def make_site(tmp_path, accounts, credentials=(), blocks=()):
         con.execute('insert into auth_credential_blocks values (?,?,?,?,0)', (cid, 'p', scope, until))
     con.commit()
     con.close()
+
+
+def make_site(tmp_path, accounts, credentials=(), blocks=()):
+    home = tmp_path / 'site'
+    (home / 'engine').mkdir(parents=True)
+    (home / 'engine' / 'accounts.json').write_text(json.dumps({'version': 1, 'accounts': accounts}))
+    store = home / RESIDENT
+    store.mkdir(parents=True)
+    _write_store(store, credentials, blocks)
     return home
+
+
+def add_store(home, relative, credentials=(), blocks=()):
+    store = home / relative
+    store.mkdir(parents=True)
+    _write_store(store, credentials, blocks)
 
 
 def go(alias, cid):
     return {'provider': 'opencode-go', 'state': 'configured', 'credential_id': cid, 'entitlement': alias}
 
 
-def fake_omp(tmp_path, payload=None, exit_code=0, sleep=0):
+def fake_omp(tmp_path, payload=None, exit_code=0, sleep=0, per_store=None):
+    """Fake `omp usage`. per_store maps a store-path suffix to (payload, exit_code), chosen by PI_CODING_AGENT_DIR."""
     body = tmp_path / 'payload.txt'
     body.write_text(payload if payload is not None else '')
+    branches = ''
+    for n, (suffix, (text, code)) in enumerate((per_store or {}).items()):
+        path = tmp_path / f'payload-{n}.txt'
+        path.write_text(text)
+        branches += f'case "$PI_CODING_AGENT_DIR" in *"{suffix}") cat "{path}"; exit {code};; esac\n'
     script = tmp_path / 'omp'
-    script.write_text(f'#!/bin/sh\n[ "{sleep}" = 0 ] || sleep {sleep}\ncat "{body}"\nexit {exit_code}\n')
+    script.write_text(f'#!/bin/sh\n[ "{sleep}" = 0 ] || sleep {sleep}\n{branches}cat "{body}"\nexit {exit_code}\n')
     script.chmod(0o755)
     return str(script)
 
@@ -76,7 +93,7 @@ def dashboard(home, omp, now=NOW):
     return usage.status(home, now_ms=now, omp=omp)
 
 
-def test_two_go_entitlements_are_never_merged_into_one_report(tmp_path):
+def test_two_go_entitlements_in_one_store_are_never_merged_into_one_report(tmp_path):
     home = make_site(tmp_path, {'go-a': go('a', 8), 'go-b': go('b', 9)}, [(8, 'opencode-go', None), (9, 'opencode-go', None)])
     omp = fake_omp(tmp_path, json.dumps(usage_doc(report('opencode-go'))))
     result = dashboard(home, omp)
@@ -84,6 +101,49 @@ def test_two_go_entitlements_are_never_merged_into_one_report(tmp_path):
     assert result['accounts']['go-b']['state'] == 'UNATTRIBUTED'
     assert result['accounts']['go-a']['windows'] == []
     assert result['state'] == 'UNKNOWN'
+
+
+def test_go_entitlements_in_separate_stores_are_each_attributed_to_their_own_pool(tmp_path):
+    home = make_site(tmp_path, {'go-a': go('a', 8), 'go-b': {**go('b', 9), 'store': GO_B}}, [(8, 'opencode-go', None)])
+    add_store(home, GO_B, [(9, 'opencode-go', None)])
+    omp = fake_omp(tmp_path, json.dumps(usage_doc(report('opencode-go', limits=[limit(remaining=0.98)]))),
+                   per_store={GO_B: (json.dumps(usage_doc(report('opencode-go', limits=[limit(remaining=0.79, resets=RESET_B)]))), 0)})
+    result = dashboard(home, omp)
+    assert result['accounts']['go-a']['state'] == 'FRESH'
+    assert result['accounts']['go-b']['state'] == 'FRESH'
+    assert result['accounts']['go-a']['windows'][0]['remaining_fraction'] == 0.98
+    assert result['accounts']['go-b']['windows'][0]['remaining_fraction'] == 0.79
+    assert result['accounts']['go-b']['store'] == GO_B
+    assert result['state'] == 'FRESH'
+
+
+def test_identical_window_resets_across_stores_mark_both_as_one_entitlement(tmp_path):
+    home = make_site(tmp_path, {'go-a': go('a', 8), 'go-b': {**go('b', 9), 'store': GO_B}}, [(8, 'opencode-go', None)])
+    add_store(home, GO_B, [(9, 'opencode-go', None)])
+    doc = json.dumps(usage_doc(report('opencode-go')))
+    omp = fake_omp(tmp_path, doc, per_store={GO_B: (doc, 0)})
+    result = dashboard(home, omp)
+    assert result['accounts']['go-a']['state'] == 'UNATTRIBUTED'
+    assert result['accounts']['go-b']['state'] == 'UNATTRIBUTED'
+    assert result['coverage']['shared_windows'] == ['go-a', 'go-b']
+    assert result['state'] != 'FRESH'
+
+
+def test_failing_store_is_unknown_while_the_other_store_stays_fresh(tmp_path):
+    home = make_site(tmp_path, {'go-a': go('a', 8), 'go-b': {**go('b', 9), 'store': GO_B}}, [(8, 'opencode-go', None)])
+    add_store(home, GO_B, [(9, 'opencode-go', None)])
+    omp = fake_omp(tmp_path, json.dumps(usage_doc(report('opencode-go'))), per_store={GO_B: ('', 3)})
+    result = dashboard(home, omp)
+    assert result['accounts']['go-a']['state'] == 'FRESH'
+    assert result['accounts']['go-b']['state'] == 'UNKNOWN'
+    assert result['coverage']['usage_errors'] == {GO_B: 'exit-3'}
+    assert result['state'] == 'PARTIAL'
+
+
+def test_per_account_store_outside_home_is_refused(tmp_path):
+    home = make_site(tmp_path, {'go-a': {**go('a', 8), 'store': '../elsewhere'}})
+    with pytest.raises(ValueError, match='store path'):
+        boundary.load_registry(home)
 
 
 def test_duplicate_credential_reference_is_one_pool_and_rejected_as_two(tmp_path):
@@ -104,7 +164,7 @@ def test_cached_old_provider_sample_stays_stale_under_fresh_aggregate(tmp_path):
     old = NOW - 400_000
     omp = fake_omp(tmp_path, json.dumps(usage_doc(report('opencode-go', fetched=old))))
     result = dashboard(home, omp)
-    assert result['omp_generated_at'] is not None
+    assert result['omp_generated_at'][RESIDENT] is not None
     assert result['accounts']['go-a']['state'] == 'STALE'
     assert result['accounts']['go-a']['age_seconds'] == 400.0
     assert result['state'] != 'FRESH'
@@ -140,7 +200,7 @@ def test_malformed_usage_json_fails_closed_and_is_logged_privately(tmp_path):
     home = make_site(tmp_path, {'go-a': go('a', 8)}, [(8, 'opencode-go', None)])
     omp = fake_omp(tmp_path, '{not json')
     result = dashboard(home, omp)
-    assert result['coverage']['usage_error'] == 'malformed-json'
+    assert result['coverage']['usage_errors'] == {RESIDENT: 'malformed-json'}
     assert result['accounts']['go-a']['state'] == 'UNKNOWN'
     log = home / 'engine' / usage.ERROR_LOG
     assert stat.S_IMODE(log.stat().st_mode) == 0o600
@@ -150,7 +210,7 @@ def test_provider_exit_failure_is_unknown_and_never_fresh(tmp_path):
     home = make_site(tmp_path, {'go-a': go('a', 8)}, [(8, 'opencode-go', None)])
     omp = fake_omp(tmp_path, '', exit_code=3)
     result = dashboard(home, omp)
-    assert result['coverage']['usage_error'] == 'exit-3'
+    assert result['coverage']['usage_errors'] == {RESIDENT: 'exit-3'}
     assert result['state'] == 'UNKNOWN'
 
 
@@ -159,8 +219,29 @@ def test_fetch_timeout_is_bounded_and_reported(tmp_path, monkeypatch):
     home = make_site(tmp_path, {'go-a': go('a', 8)}, [(8, 'opencode-go', None)])
     omp = fake_omp(tmp_path, json.dumps(usage_doc(report('opencode-go'))), sleep=5)
     result = dashboard(home, omp)
-    assert result['coverage']['usage_error'] == 'timeout'
+    assert result['coverage']['usage_errors'] == {RESIDENT: 'timeout'}
     assert result['accounts']['go-a']['state'] == 'UNKNOWN'
+
+
+def test_failed_read_keeps_last_good_sample_labelled_with_its_own_age(tmp_path):
+    home = make_site(tmp_path, {'go-a': go('a', 8)}, [(8, 'opencode-go', None)])
+    good = fake_omp(tmp_path, json.dumps(usage_doc(report('opencode-go', limits=[limit(remaining=0.5)]))))
+    assert dashboard(home, good)['accounts']['go-a']['state'] == 'FRESH'
+    bad = fake_omp(tmp_path, '', exit_code=3)
+    row = dashboard(home, bad, now=NOW + 60_000)['accounts']['go-a']
+    assert row['state'] == 'UNKNOWN'
+    assert row['windows'] == []
+    assert row['last_good']['age_seconds'] == 70.0
+    assert row['last_good']['windows'][0]['remaining_fraction'] == 0.5
+
+
+def test_malformed_last_good_file_is_reported_and_not_overwritten(tmp_path):
+    home = make_site(tmp_path, {'go-a': go('a', 8)}, [(8, 'opencode-go', None)])
+    (home / 'engine' / usage.LAST_GOOD).write_text('{not json')
+    omp = fake_omp(tmp_path, json.dumps(usage_doc(report('opencode-go'))))
+    result = dashboard(home, omp)
+    assert result['coverage']['last_good'] == 'last-good file malformed'
+    assert (home / 'engine' / usage.LAST_GOOD).read_text() == '{not json'
 
 
 def test_disabled_credential_is_quarantined_not_quota_checked(tmp_path):
@@ -201,22 +282,35 @@ def test_not_configured_alias_is_listed_with_evidence_and_no_quota(tmp_path):
     assert row['windows'] == []
 
 
-def test_unregistered_credential_rows_are_counted_as_coverage_gap(tmp_path):
+def test_unregistered_credential_rows_are_counted_per_store_as_coverage_gap(tmp_path):
     home = make_site(tmp_path, {'go-a': go('a', 8)}, [(8, 'opencode-go', None), (9, 'opencode-go', None)])
     omp = fake_omp(tmp_path, json.dumps(usage_doc(report('opencode-go'))))
     result = dashboard(home, omp)
-    assert result['coverage']['unregistered_credentials'] == {'opencode-go': 1}
+    assert result['coverage']['unregistered_credentials'] == {RESIDENT: {'opencode-go': 1}}
     assert result['state'] != 'FRESH'
 
 
 def test_schema_version_mismatch_refuses_credential_metadata(tmp_path):
     home = make_site(tmp_path, {'go-a': go('a', 8)}, [(8, 'opencode-go', None)])
-    con = sqlite3.connect(home / 'omp-recovery' / 'agent' / 'agent.db')
+    con = sqlite3.connect(home / RESIDENT / 'agent.db')
     con.execute('update auth_schema_version set version = 99')
     con.commit()
     con.close()
     with pytest.raises(ValueError, match='unsupported credential store schema'):
-        boundary.credential_store(home / 'omp-recovery' / 'agent')
+        boundary.credential_store(home / RESIDENT)
+
+
+def test_mismatched_store_refuses_usage_read_and_is_unknown(tmp_path):
+    home = make_site(tmp_path, {'go-a': go('a', 8)}, [(8, 'opencode-go', None)])
+    con = sqlite3.connect(home / RESIDENT / 'agent.db')
+    con.execute('update auth_schema_version set version = 99')
+    con.commit()
+    con.close()
+    omp = fake_omp(tmp_path, json.dumps(usage_doc(report('opencode-go'))))
+    result = dashboard(home, omp)
+    assert result['coverage']['store_errors'] == {RESIDENT: 'unsupported credential store schema'}
+    assert result['coverage']['usage_errors'] == {}
+    assert result['accounts']['go-a']['state'] == 'UNKNOWN'
 
 
 def test_registry_rejects_unknown_provider_and_escaping_store(tmp_path):
