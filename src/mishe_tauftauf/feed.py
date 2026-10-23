@@ -129,14 +129,31 @@ def entry_timestamp(entry: object) -> datetime | None:
 
 
 def parse_feed(data: bytes, *, start_sequence: int = 1, home: Path | str | None = None) -> list[FeedEntry]:
+    # A single astral character widens an entire decoded tape to four bytes
+    # per character. Decoding and splitlines over the whole tape kept both
+    # copies alive alongside every parsed entry in each resident supervisor.
+    # Reuse the streaming reader's literal line boundary and UTF-8 decoder.
+    def chunks():
+        decoder = codecs.getincrementaldecoder("utf-8")()
+        for offset in range(0, len(data), 64 * 1024):
+            base = offset - len(decoder.getstate()[0])
+            try:
+                yield decoder.decode(data[offset:offset + 64 * 1024])
+            except UnicodeDecodeError as exc:
+                raise UnicodeDecodeError(exc.encoding, data, base + exc.start,
+                                         base + exc.end, exc.reason) from exc
+        base = len(data) - len(decoder.getstate()[0])
+        try:
+            yield decoder.decode(b"", final=True)
+        except UnicodeDecodeError as exc:
+            raise UnicodeDecodeError(exc.encoding, data, base + exc.start,
+                                     base + exc.end, exc.reason) from exc
+
     try:
-        text = data.decode("utf-8")
+        return list(iter_feed_entries(_iter_text_lines(chunks()),
+                                      start_sequence=start_sequence, home=home))
     except UnicodeDecodeError as exc:
         raise FeedError(f"feed is not UTF-8: {exc}") from exc
-    if not text:
-        return []
-    return list(iter_feed_entries(text.splitlines(keepends=True),
-                                  start_sequence=start_sequence, home=home))
 
 
 def iter_feed_entries(lines, *, start_sequence: int = 1,
@@ -203,11 +220,9 @@ def iter_feed_file(path: Path | str, *, home: Path | str | None = None,
                    chunk_bytes: int = 1024 * 1024):
     """Yield the tape's entries without holding the tape in memory.
 
-    The whole-tape reader decodes the tape, splits it into lines and keeps
-    every entry, so its cost grows with the tape: measured over the live site
-    home, the evidence-binding gate peaked at 433.0 MiB against a 67.5 MiB
-    tape, and 363.8 MiB of that was the parse. This reader holds one chunk
-    and one entry at a time, so its peak does not grow with the tape.
+    Whole-feed reads retain the raw tape and every returned entry even though
+    their decoding is chunked. This reader holds chunks and one entry at a
+    time, so its peak depends on chunk and entry size rather than tape length.
 
     The prefix it reads is captured under the tape's shared lock, so it ends
     at an entry boundary even while a writer appends, and the bytes it reads
@@ -257,29 +272,40 @@ def _iter_text_lines(chunks):
     trailing carriage return until the next chunk arrives, because that
     carriage return may be the first half of a CRLF pair.
     """
-    pending = ""
-    offset = 0
+    parts = []
+    trailing_cr = False
     for text in chunks:
-        pending = pending[offset:] + text
-        offset = 0
-        while True:
-            match = _LINE_BREAK.search(pending, offset)
-            if match is None:
+        if not text:
+            continue
+        if trailing_cr:
+            # A CR at the end of the previous chunk might belong to CRLF.
+            parts.append("\r\n" if text.startswith("\n") else "\r")
+            yield "".join(parts)
+            parts = []
+            if text.startswith("\n"):
+                text = text[1:]
+            trailing_cr = False
+        lines = text.splitlines(keepends=True)
+        for index, line in enumerate(lines):
+            # Let the C splitter scan each bounded chunk; only inspect the
+            # final character to distinguish a complete line from a fragment.
+            if _LINE_BREAK.search(line, len(line) - 1) is None:
+                parts.append(line)
+                continue
+            if line.endswith("\r") and index == len(lines) - 1:
+                parts.append(line[:-1])
+                trailing_cr = True
                 break
-            if match.group(0) == "\r" and match.end() == len(pending):
-                # The next chunk may begin with the LF that completes this
-                # CRLF pair, and a CRLF is one terminator, not two.
-                break
-            yield pending[offset:match.end()]
-            offset = match.end()
-    while True:
-        match = _LINE_BREAK.search(pending, offset)
-        if match is None:
-            break
-        yield pending[offset:match.end()]
-        offset = match.end()
-    if offset < len(pending):
-        yield pending[offset:]
+            if parts:
+                parts.append(line)
+                yield "".join(parts)
+                parts = []
+            else:
+                yield line
+    if trailing_cr:
+        parts.append("\r")
+    if parts:
+        yield "".join(parts)
 
 
 class Feed:

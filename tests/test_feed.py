@@ -36,6 +36,57 @@ class FeedTests(unittest.TestCase):
                     feed.append("genome", body)
                 self.assertEqual(feed.read_bytes(), before)
 
+    def test_full_parse_avoids_whole_tape_unicode_and_line_copies(self):
+        # One astral character widens a whole decoded tape to four bytes per
+        # character. Repeated cold readers used >600 MiB for a 72 MiB tape.
+        # Charge only parser allocations: the caller already owns its bytes.
+        import tracemalloc
+        frames = [feed_module._encode_entry(n, "2026-10-23T18:00:00Z", "seed",
+                                           "x" * 16384 + (" 🐾" if n == 256 else ""))
+                  for n in range(1, 257)]
+        data = b"".join(frames)
+        del frames
+        tracemalloc.start()
+        try:
+            entries = parse_feed(data)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(len(entries), 256)
+        self.assertTrue(entries[-1].body.endswith(" 🐾"))
+        self.assertLess(peak, len(data) * 3,
+                        "cold parsing must avoid whole decoded/line copies")
+
+    def test_chunked_line_reader_scans_long_lines_once(self):
+        # Count the search span rather than using a machine-dependent timeout.
+        # Rescanning each unfinished prefix is quadratic for valid long lines.
+        class Meter:
+            scanned = 0
+
+            def search(self, text, start=0):
+                self.scanned += len(text) - start
+                return original.search(text, start)
+
+            def finditer(self, text):
+                self.scanned += len(text)
+                return original.finditer(text)
+
+        original = feed_module._LINE_BREAK
+        meter = Meter()
+        data = feed_module._encode_entry(1, "2026-10-23T18:00:00Z", "seed", "x" * (2 * 1024**2))
+        with patch.object(feed_module, "_LINE_BREAK", meter):
+            entries = parse_feed(data)
+        self.assertEqual(entries[0].body, "x" * (2 * 1024**2))
+        self.assertLess(meter.scanned, len(data) * 3,
+                        "unfinished lines must not be rescanned on every chunk")
+
+    def test_invalid_utf8_reports_absolute_tape_offset(self):
+        data = feed_module._encode_entry(1, "2026-10-23T18:00:00Z", "seed", "x" * 70000)
+        data += b"\xff"
+        with self.assertRaises(FeedError) as error:
+            parse_feed(data)
+        self.assertIn("position " + str(len(data) - 1), str(error.exception))
+
     def test_unchanged_full_read_reuses_the_parsed_revision(self):
         with tempfile.TemporaryDirectory() as directory:
             feed = Feed(directory)
