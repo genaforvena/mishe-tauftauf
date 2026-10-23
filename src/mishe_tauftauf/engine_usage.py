@@ -18,7 +18,7 @@ sample as `last_good`, labelled with its own age; it is never presented as curre
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import contextlib
 import json
 import os
@@ -37,7 +37,7 @@ RANK = {'UNKNOWN': 3, 'UNATTRIBUTED': 2, 'STALE': 1, 'FRESH': 0}
 def _iso(ms):
     if ms is None:
         return None
-    return datetime.fromtimestamp(ms / 1000, UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
+    return datetime.fromtimestamp(ms / 1000, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
 def _pct(remaining):
