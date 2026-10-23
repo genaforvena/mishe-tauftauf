@@ -25,10 +25,11 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
-
 REPO = Path(__file__).resolve().parents[1]
 CHECK = REPO / "checks" / "pub-devto-watch-timer.py"
 
@@ -71,6 +72,25 @@ STATE_INACTIVE = ("ActiveState=inactive\n"
                   "NextElapseUSecRealtime=\n"
                   "NextElapseUSecMonotonic=infinity\n")
 
+# Measured on the plant at 2026-10-22T12:50:10Z, while the watch service was
+# executing: the timer had fired, and systemd had not computed the next
+# elapse yet.  This is the healthy mid-scan state, not the dead one.
+STATE_FIRING = ("ActiveState=active\n"
+                "SubState=running\n"
+                "NextElapseUSecRealtime=\n"
+                "NextElapseUSecMonotonic=infinity\n")
+
+# A timer whose only anchor is relative to its own activation elapses once
+# and is then done -- the same "alive with nothing scheduled" shape.
+UNIT_ONE_SHOT = """[Unit]
+Description=Observe Mishe Pub DEV threads once
+
+[Timer]
+OnActiveSec=5min
+AccuracySec=10s
+Unit=mishe-self-development-current-pub-devto-watch.service
+"""
+
 
 def load():
     """The detector module, loaded from the checks lane."""
@@ -89,7 +109,9 @@ def home_with(tmp_path: Path, unit: str | None = UNIT_CALENDAR, frame: str = "")
     if frame:
         path = tmp_path / "dashboards" / "pub.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"version": 1, "slug": "pub", "frame": frame}))
+        path.write_text(json.dumps({"version": 1, "slug": "pub",
+                                    "created": datetime.now(timezone.utc).isoformat(),
+                                    "frame": frame}))
     return tmp_path
 
 
@@ -165,3 +187,97 @@ def test_the_exit_status_carries_the_verdict(tmp_path):
     empty = tmp_path / "empty"
     empty.mkdir()
     assert run(empty, STATE_SCHEDULED).returncode == 3
+
+
+def test_a_timer_that_is_firing_now_is_not_a_dead_timer(tmp_path):
+    """The controlled failure of the false RED: mid-scan is healthy.
+
+    Measured on the plant while the watch service was executing: the timer
+    had fired, so systemd had not computed the next elapse yet.  Reading that
+    empty ``NextElapse`` as "nothing scheduled" reported RED on a working
+    timer once per scan.
+    """
+    check = load()
+    state, reason = check.verdict(check.parse_timer_unit(UNIT_CALENDAR),
+                                  check.parse_show(STATE_FIRING))
+    assert state == "GREEN"
+    assert "firing" in reason
+
+
+def test_a_frame_that_claims_red_over_a_working_timer_is_red(tmp_path):
+    """A false RED is a fault of its own kind, not a clean observation.
+
+    The pane published ``DEV WATCH TIMER: RED`` every five minutes while the
+    timer was firing.  A detector that only ever catches false GREENs lets
+    that through, and a reader learns to ignore it.
+    """
+    check = load()
+    frame = "DEV WATCH TIMER: RED — active but nothing scheduled; it will not fire again\n"
+    state, reason = check.verdict(check.parse_timer_unit(UNIT_CALENDAR),
+                                  check.parse_show(STATE_SCHEDULED), frame)
+    assert state == "RED"
+    assert "contradicts" in reason
+
+
+def test_narrative_mentions_do_not_count_as_dashboard_verdicts():
+    check = load()
+    frame = "The old line was DEV WATCH TIMER: RED, but it has recovered."
+    assert check.verdict(check.parse_timer_unit(UNIT_CALENDAR),
+                         check.parse_show(STATE_SCHEDULED), frame)[0] == "GREEN"
+
+
+def test_timer_failure_precedes_a_contradictory_dashboard_frame():
+    check = load()
+    frame = "DEV WATCH TIMER: RED — stale display\n"
+    state, reason = check.verdict(check.parse_timer_unit(UNIT_CALENDAR),
+                                  check.parse_show(STATE_DEAD), frame)
+    assert state == "RED"
+    assert "no scheduled elapse" in reason
+
+
+def test_stale_frame_is_not_used_as_a_timer_verdict(tmp_path):
+    check = load()
+    home = home_with(tmp_path, frame="DEV WATCH TIMER: RED — stale")
+    path = home / "dashboards" / "pub.json"
+    path.write_text(json.dumps({"created": "2020-01-01T00:00:00+00:00",
+                                "frame": "DEV WATCH TIMER: RED — stale"}))
+    assert check.read_frame(home) == ""
+
+
+def test_missing_home_environment_is_unknown(tmp_path):
+    env = dict(os.environ)
+    env.pop("MISHE_SEED_HOME", None)
+    env.pop("MISHE_TAUFTAUF_HOME", None)
+    result = subprocess.run(
+        [sys.executable, str(CHECK), "--timer-state", str(tmp_path / "state")],
+        capture_output=True, text=True, env=env)
+    assert result.returncode == 3
+    assert "VERDICT: UNKNOWN" in result.stdout
+
+
+def test_a_one_shot_anchor_is_not_a_reboot_proof_anchor(tmp_path):
+    """``OnActiveSec`` elapses once and is then done: the same dead shape."""
+    check = load()
+    state, reason = check.verdict(check.parse_timer_unit(UNIT_ONE_SHOT),
+                                  check.parse_show(STATE_SCHEDULED))
+    assert state == "RED"
+    assert "OnActiveSec" in reason
+
+
+def test_the_default_home_is_the_plant_home_not_the_checkout(tmp_path):
+    """The check must find the installed unit without being told where it is.
+
+    The checkout is not the plant home: the unit, the frame and the state
+    live under the site home the plant exports.  A check that resolves its
+    home to the checkout it sits in answers UNKNOWN about a plant it can see.
+    """
+    check = load()
+    site = home_with(tmp_path, UNIT_CALENDAR)
+    env = dict(os.environ)
+    env["MISHE_SEED_HOME"] = str(site)
+    env.pop("MISHE_TAUFTAUF_HOME", None)
+    args = [sys.executable, str(CHECK), "--timer-state", str(site / "timer-state.txt")]
+    (site / "timer-state.txt").write_text(STATE_SCHEDULED)
+    result = subprocess.run(args, capture_output=True, text=True, env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "VERDICT: GREEN" in result.stdout

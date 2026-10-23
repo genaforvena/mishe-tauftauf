@@ -41,21 +41,34 @@ site-local, so this check is the durable part. It reads
   claim the pane makes about the watch.
 
 and it refuses to call the watch healthy unless the unit declares an anchor
-that always has a future elapse *and* the running timer has one scheduled.
+that always has a future elapse *and* the running timer will fire again.
+
+**Two states that look the same, and are not.** While the watch service is
+executing, the timer reads ``SubState=running`` with an empty ``NextElapse``:
+systemd has not computed the next elapse yet. That is the healthy mid-scan
+state, and reading it as "nothing scheduled" reports RED on a working timer
+once per scan. The dead state is ``SubState=elapsed``, and the two are told
+apart by ``SubState``, not by the emptiness of ``NextElapse``. For the same
+reason the published frame is compared with the independently decided verdict
+in both directions: a frame that says RED over a timer that will fire again
+is a fault of its own kind, and a detector that cries wolf is not believed
+when it is right.
 
 Exit status:
-  0  the unit declares a reboot-proof anchor and the running timer has a
-     scheduled elapse
+  0  the unit declares a reboot-proof anchor and the running timer will fire
+     again, and the published frame does not contradict that
   2  the unit can enter a state with no future elapse, or the running timer is
-     in one, or the published dashboard reports the watch as GREEN while the
-     timer cannot fire again
+     in one, or the published frame contradicts the timer
   3  the question cannot be decided: no installed unit, and no captured or
      live timer state
 """
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
+import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -63,10 +76,14 @@ from pathlib import Path
 TIMER = "mishe-self-development-current-pub-devto-watch.timer"
 
 # An anchor whose elapse is always in the future, whatever happened to the
-# boot or to the target unit's last activation.
-FUTURE_ANCHORS = ("OnCalendar", "OnActiveSec")
+# boot or to the target unit's last activation.  A calendar expression is
+# recurring, so it always has a next occurrence.  ``OnActiveSec`` is *not*
+# here: it is relative to the timer's own activation, so it elapses once and
+# then the timer is done -- the same "alive with nothing scheduled" shape.
+FUTURE_ANCHORS = ("OnCalendar",)
 # Anchors that are relative to something that may already be in the past.
-PAST_ANCHORS = ("OnBootSec", "OnUnitActiveSec", "OnUnitInactiveSec")
+PAST_ANCHORS = ("OnBootSec", "OnUnitActiveSec", "OnUnitInactiveSec",
+                "OnActiveSec")
 
 GREEN = "GREEN"
 RED = "RED"
@@ -110,17 +127,65 @@ def parse_show(text: str) -> dict[str, str]:
 
 
 def has_scheduled_elapse(props: dict[str, str]) -> bool:
-    """Whether the timer has an elapse scheduled after now."""
+    """Whether the timer has an elapse scheduled after now.
+
+    ``NextElapseUSecMonotonic=0`` is systemd's "not applicable" marker for a
+    timer whose next elapse is wall-clock based, so it is not an elapse.
+    ``infinity`` means "never".
+    """
     realtime = props.get("NextElapseUSecRealtime", "")
-    monotonic = props.get("NextElapseUSecMonotonic", "")
     if realtime and realtime != "infinity":
         return True
-    return bool(monotonic) and monotonic != "infinity"
+    monotonic = props.get("NextElapseUSecMonotonic", "")
+    if not monotonic or monotonic in ("infinity", "0"):
+        return False
+    return True
+
+
+def is_firing(props: dict[str, str]) -> bool:
+    """Whether the timer is executing its service right now.
+
+    While the service runs, systemd has not computed the next elapse yet, so
+    ``NextElapse`` is empty.  That is the timer's normal mid-scan state, not
+    the dead state: the timer fired, and a recurring anchor re-arms it when
+    the service exits.  Reading an empty ``NextElapse`` here as "nothing
+    scheduled" reports RED on a healthy timer once per scan.
+    """
+    return props.get("SubState") == "running"
 
 
 def dashboard_claims_green(frame: str) -> bool:
-    """Whether the published pane reports the watch timer as GREEN."""
-    return "DEV WATCH TIMER: GREEN" in frame
+    """Whether a dedicated dashboard line reports the watch as GREEN."""
+    return re.search(r"^DEV WATCH TIMER: GREEN(?:\s|$)", frame, re.MULTILINE) is not None
+
+
+def dashboard_claims_red(frame: str) -> bool:
+    """Whether a dedicated dashboard line reports the watch as RED."""
+    return re.search(r"^DEV WATCH TIMER: RED(?:\s|$)", frame, re.MULTILINE) is not None
+
+
+def timer_verdict(props: dict[str, str]) -> tuple[str, str]:
+    """Whether the running timer will fire again, and why.
+
+    ``SubState`` is what distinguishes the dead state from the healthy one.
+    ``elapsed`` is the dead state: the unit is active and has nothing left to
+    wait for.  ``running`` means the timer is executing its service right now,
+    so systemd has not computed the next elapse yet -- that is the healthy
+    mid-scan state, and reading its empty ``NextElapse`` as "nothing
+    scheduled" reports RED on a working timer once per scan.
+    """
+    if props.get("ActiveState") != "active":
+        return RED, f"the timer is {props.get('ActiveState') or 'absent'}, not active"
+    if props.get("SubState") == "elapsed":
+        return RED, ("the timer is active and elapsed with no scheduled elapse; "
+                     "it will not fire again")
+    if is_firing(props):
+        return GREEN, ("the timer is firing its service now, and the unit's "
+                       "recurring anchor re-arms it when the service exits")
+    if not has_scheduled_elapse(props):
+        return RED, ("the timer is active with no scheduled elapse; it will not "
+                     "fire again")
+    return GREEN, "the timer is active with a scheduled elapse"
 
 
 def verdict(directives: dict[str, str] | None,
@@ -135,14 +200,21 @@ def verdict(directives: dict[str, str] | None,
                      + "); it can be active with nothing scheduled")
     if props is None:
         return UNKNOWN, "no timer state: the running timer could not be read"
-    if props.get("ActiveState") != "active":
-        return RED, f"the timer is {props.get('ActiveState') or 'absent'}, not active"
-    if props.get("SubState") == "elapsed" or not has_scheduled_elapse(props):
-        return RED, ("the timer is active with no scheduled elapse; it will not "
-                     "fire again")
-    if frame and dashboard_claims_green(frame) and not has_scheduled_elapse(props):
-        return RED, "the published dashboard reports the watch as GREEN while the timer cannot fire"
-    return GREEN, "the unit declares a reboot-proof anchor and the timer has a scheduled elapse"
+    state, reason = timer_verdict(props)
+    # The published frame is compared with the independently decided verdict,
+    # in both directions.  A frame that says GREEN over a timer that cannot
+    # fire is a fault of its own kind -- and so is a frame that says RED over
+    # a timer that will fire again, which is how a detector that cries wolf
+    # gets to look like a fault in the thing it watches.
+    if frame and dashboard_claims_red(frame) and state == GREEN:
+        return RED, ("the published dashboard reports the watch as RED while the "
+                     "timer will fire again; the frame contradicts the timer")
+    if frame and dashboard_claims_green(frame) and state == RED:
+        return RED, ("the published dashboard reports the watch as GREEN while "
+                     "the timer cannot fire")
+    if state == RED:
+        return RED, reason
+    return GREEN, reason
 
 
 def read_unit(home: Path) -> dict[str, str] | None:
@@ -170,24 +242,43 @@ def live_timer_state() -> dict[str, str] | None:
 
 
 def read_frame(home: Path) -> str:
-    """The published Pub dashboard frame, or an empty string."""
+    """A fresh published Pub dashboard frame, or empty when absent/stale."""
     try:
         payload = json.loads((home / "dashboards" / "pub.json").read_text())
     except (OSError, ValueError):
         return ""
     frame = payload.get("frame")
-    return frame if isinstance(frame, str) else ""
+    created = payload.get("created")
+    if not isinstance(frame, str) or not isinstance(created, str):
+        return ""
+    try:
+        timestamp = datetime.fromisoformat(created.replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    if timestamp.tzinfo is None:
+        return ""
+    age = (datetime.now(timezone.utc) - timestamp).total_seconds()
+    return frame if 0 <= age <= 300 else ""
+
+
+def default_home() -> Path | None:
+    """The plant home, only when the plant explicitly provides it."""
+    for name in ("MISHE_SEED_HOME", "MISHE_TAUFTAUF_HOME"):
+        value = os.environ.get(name)
+        if value:
+            return Path(value)
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--home", default="", help="the plant home (default: $MISHE_SEED_HOME)")
+    parser.add_argument("--home", default="",
+                        help="the plant home (default: $MISHE_SEED_HOME)")
     parser.add_argument("--timer-state", default="",
                         help="a captured `systemctl --user show` output to read instead of asking systemd")
     args = parser.parse_args(argv)
-
-    home = Path(args.home) if args.home else Path(__file__).resolve().parents[1]
-    directives = read_unit(home)
+    home = Path(args.home) if args.home else default_home()
+    directives = read_unit(home) if home is not None else None
     if args.timer_state:
         try:
             props = parse_show(Path(args.timer_state).read_text())
@@ -195,7 +286,7 @@ def main(argv: list[str] | None = None) -> int:
             props = None
     else:
         props = live_timer_state()
-    frame = read_frame(home)
+    frame = read_frame(home) if home is not None else ""
 
     state, reason = verdict(directives, props, frame)
     print(f"VERDICT: {state} — {reason}")
