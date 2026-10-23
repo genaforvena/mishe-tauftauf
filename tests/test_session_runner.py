@@ -208,3 +208,30 @@ def test_seed_custom_adapter_success_waits_for_actual_session(monkeypatch, tmp_p
     monkeypatch.setattr(seed, "_await_session", lambda *a, **k: False)
     with pytest.raises(TmuxError, match="UNKNOWN.*deadline"):
         seed._new_session(tmp_path, "owned", "health", "/workspace")
+
+
+def test_new_keeper_inherits_explicit_workload_slice(tmp_path, monkeypatch):
+    state = backend(monkeypatch)
+    monkeypatch.setenv("MISHE_WORKLOAD_SLICE", "mishe-plants.slice")
+    monkeypatch.setattr(runner, "_server_in_slice", lambda *a: True, raising=False)
+    runner.raise_session("owned", "health", str(tmp_path), tmp_path)
+    argv = next(a for a in state["raises"] if "systemd-run" in a[0])
+    assert argv[argv.index("--slice") + 1] == "mishe-plants.slice"
+
+
+def test_existing_server_outside_budget_is_refused(tmp_path, monkeypatch):
+    state = backend(monkeypatch, available=True)
+    monkeypatch.setenv("MISHE_WORKLOAD_SLICE", "mishe-plants.slice")
+    monkeypatch.setattr(runner, "_server_in_slice", lambda *a: False, raising=False)
+    with pytest.raises(RuntimeError, match="outside.*slice"):
+        runner.raise_session("owned", "health", str(tmp_path), tmp_path)
+    assert not state["raises"]
+
+
+@pytest.mark.parametrize("value", ["../other.slice", "bad name.slice", "app.service"])
+def test_invalid_workload_slice_is_rejected(tmp_path, monkeypatch, value):
+    state = backend(monkeypatch)
+    monkeypatch.setenv("MISHE_WORKLOAD_SLICE", value)
+    with pytest.raises(ValueError, match="slice"):
+        runner.raise_session("owned", "health", str(tmp_path), tmp_path)
+    assert not state["raises"]

@@ -23,6 +23,20 @@ from pathlib import Path
 from . import proc_table
 
 
+def _server_in_slice(session, environment, slice_name):
+    try:
+        result = subprocess.run(["tmux", "display-message", "-p", "-t", "=" + session, "#{pid}"],
+                                capture_output=True, text=True, timeout=5, env=environment)
+        pids = proc_table.pane_pids(result.stdout or "") if not result.returncode else []
+        if len(pids) != 1:
+            return False
+        text = Path("/proc", str(pids[0]), "cgroup").read_text()
+        return any(row.startswith("0::/") and slice_name in row[3:].split("/")
+                   for row in text.splitlines())
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return False
+
+
 def _server_owner_unit(session: str, environment: dict[str, str] | None) -> str:
     """The unit whose cgroup currently holds this session's tmux server, or "".
 
@@ -102,6 +116,9 @@ def raise_session(session: str, window: str, workspace: str, lock_dir: Path,
         raise ValueError("invalid session window, workspace or timeout")
     lock_dir.mkdir(parents=True, exist_ok=True)
     environment = os.environ.copy()
+    workload_slice = environment.get("MISHE_WORKLOAD_SLICE")
+    if workload_slice and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*\.slice", workload_slice):
+        raise ValueError("invalid workload slice")
     # An explicit per-site socket directory wins over the inherited one: a
     # supervisor launched without the unit's TMUX_TMPDIR must still raise on
     # its own site's socket, never the default one (duplicate-session fork).
@@ -123,6 +140,8 @@ def raise_session(session: str, window: str, workspace: str, lock_dir: Path,
                     raise RuntimeError("UNKNOWN session startup lock deadline exceeded")
                 time.sleep(.1)
         if exists():
+            if workload_slice and not _server_in_slice(session, environment, workload_slice):
+                raise RuntimeError("UNKNOWN existing tmux server outside workload slice; reconcile before startup")
             return
         unit = session + "-session-" + uuid.uuid4().hex + ".service"
         command = ["tmux", "new-session", "-d", "-s", session,
@@ -131,7 +150,8 @@ def raise_session(session: str, window: str, workspace: str, lock_dir: Path,
             # Transient services do not inherit their caller's environment.
             command = ["env", "-u", "TMUX", "TMUX_TMPDIR=" + private_dir, *command]
         leader = shlex.join(command) + " && exec sleep infinity"
-        result = subprocess.run([systemd_runner, "--user", "--collect",
+        resource_args = ["--slice", workload_slice] if workload_slice else []
+        result = subprocess.run([systemd_runner, "--user", "--collect", *resource_args,
                                  "--unit", unit, "--description", "Mishe resident session " + session,
                                  "sh", "-c", leader], timeout=15)
         if result.returncode:
@@ -140,6 +160,8 @@ def raise_session(session: str, window: str, workspace: str, lock_dir: Path,
             if time.monotonic() >= deadline:
                 raise RuntimeError("UNKNOWN session unavailable after startup deadline; inspect " + unit)
             time.sleep(.1)
+        if workload_slice and not _server_in_slice(session, environment, workload_slice):
+            raise RuntimeError("UNKNOWN tmux server outside workload slice after startup")
         _stop_superseded_units(session, unit, _server_owner_unit(session, environment))
         print("session ready " + session + " keeper=" + unit, flush=True)
 

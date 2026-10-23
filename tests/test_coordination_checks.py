@@ -1,3 +1,4 @@
+import pytest
 import json
 from dataclasses import asdict
 from mishe_tauftauf.feed import FeedEntry
@@ -189,3 +190,33 @@ def test_shared_payload_map_equals_unshared_projection_on_a_mixed_tape(tmp_path)
     entries = feed.entries(payloads=sink)
     assert sink == {1: {'checked': True}}
     assert project(entries, payloads=sink) == project(entries)
+
+
+def test_compact_anomaly_payloads_discard_large_snapshots_without_rereads(tmp_path, monkeypatch):
+    from mishe_tauftauf.feed import Feed
+    from mishe_tauftauf.coordination_checks import AnomalyPayloads
+    import mishe_tauftauf.coordination_checks as checks
+    feed = Feed(tmp_path)
+    for n in range(8):
+        feed.append_record("sensor/test", "Checked snapshot " + str(n),
+                           {"snapshot": "x" * 100000, "private_unused": n})
+    sink = AnomalyPayloads()
+    entries = feed.entries(payloads=sink)
+    assert len(sink) == len(entries)
+    assert all(data == {} for data in sink.values())
+    expected = anomalies(entries)
+    monkeypatch.setattr(checks, "_data", lambda e: pytest.fail("verified unrelated record must not be reread"))
+    assert anomalies(entries, payloads=sink) == expected
+
+
+def test_compact_projection_fallback_after_feed_cache_hit(tmp_path):
+    from mishe_tauftauf.feed import Feed
+    from mishe_tauftauf.coordination_checks import AnomalyPayloads
+    feed = Feed(tmp_path)
+    feed.append_record("sensor/test", "Checked snapshot", {"snapshot": "large" * 10000})
+    feed.entries()
+    sink = AnomalyPayloads()
+    entries = feed.entries(payloads=sink)
+    assert not sink
+    assert anomalies(entries, payloads=sink) == anomalies(entries)
+    assert sink == {1: {}}
