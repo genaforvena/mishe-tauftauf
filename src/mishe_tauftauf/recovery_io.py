@@ -349,7 +349,18 @@ def deliver(home, *, limit=1):
             return read_json(root / "attempts" / path.name)["at"]
         except (ValueError, KeyError):
             return 0
-    for path in sorted((root / "outbox").glob("*.json"), key=last_attempt)[:limit]:
+    def priority(path):
+        attempt = last_attempt(path)
+        if attempt:
+            return (1, attempt, 0)
+        payload = read_json(path)["payload"]
+        capacity = payload.get("host_capacity", {})
+        urgent = (capacity.get("state") == "CRITICAL" or capacity.get("resource_state") == "CRITICAL"
+                  or capacity.get("oom_delta", 0) > 0 or bool(capacity.get("action_error")))
+        # New host emergencies get one immediate attempt. Failure then rejoins
+        # oldest-attempt order, so an undeliverable alert cannot starve others.
+        return (0, 0 if urgent else 1, -capacity.get("checked_at", 0) if urgent else 0)
+    for path in sorted((root / "outbox").glob("*.json"), key=priority)[:limit]:
         item = read_json(path)
         payload = item["payload"]
         if "function" in payload:
@@ -362,6 +373,10 @@ def deliver(home, *, limit=1):
             detail = f"Evaluation {report['verdict']}; monitoring {report['monitoring']}. Read the full comparison at {payload['artifact']}."
         elif "guard" in payload:
             detail = f"Independent recovery guard reports {payload['guard']['state']}. Inspect producer freshness and its service; missing observation stays UNKNOWN."
+        elif "host_capacity" in payload:
+            capacity = payload["host_capacity"]
+            detail = (f"Combined host capacity is {capacity['state']}; new cgroup OOM kills {capacity.get('oom_delta', 0)}; "
+                      f"action issue {capacity.get('action_error', 'none')}. Resolver Health; backup Genome; disposition within 300 seconds.")
         else:
             detail = "Inspect the retained recovery event and its exact action or acceptance evidence."
         text = (f"[dm] to={item['recipient']}\nRecovery event {item['event']}. {detail}\n"

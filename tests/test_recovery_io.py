@@ -306,3 +306,19 @@ def test_probe_cannot_notify_its_parent_services_watchdog(monkeypatch):
     monkeypatch.setenv("WATCHDOG_USEC", "100000")
     row = recovery.run_probe([sys.executable, "-c", "import os;print([k for k in ('NOTIFY_SOCKET','WATCHDOG_PID','WATCHDOG_USEC') if k in os.environ])"], timeout=2)
     assert row["ok"] is True and row["stdout"].strip() == "[]"
+
+
+def test_fresh_host_emergency_precedes_unattempted_historical_outbox(tmp_path, monkeypatch):
+    root = tmp_path / "recovery"
+    for name, payload in [("0" * 64, {"host_capacity": {"state": "UNKNOWN", "action_error": "historical failure", "checked_at": 50}}), ("f" * 64, {"host_capacity": {"state": "CRITICAL", "oom_delta": 1, "checked_at": 100}})]:
+        recovery.save(root / "outbox" / (name + "-health.json"), {"event": name, "recipient": "health", "payload": payload})
+    called = []
+    def fail(argv, **kwargs):
+        called.append(argv[-1])
+        return {"ok": None, "code": None, "stdout": "", "stderr": "controlled failure"}
+    monkeypatch.setattr(recovery, "run_probe", fail)
+    recovery.deliver(tmp_path)
+    assert "f" * 64 in called[0]
+    # A failed urgent item returns to ordinary oldest-attempt fairness.
+    recovery.deliver(tmp_path)
+    assert "0" * 64 in called[1]
