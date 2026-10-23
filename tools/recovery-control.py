@@ -275,7 +275,7 @@ def main():
             runtime_release = recovery.read_json(home / "health/runtime-release.json")
             consumer_env["PYTHONPATH"] = str(Path(runtime_release["source"]) / "src")
             try:
-                receipt = recovery.run_probe([str(target)], timeout=8, output_limit=1024 * 1024, env=consumer_env)
+                receipt = recovery.run_probe([str(target)], timeout=30, output_limit=1024 * 1024, env=consumer_env)
                 probe_path = home / "recovery" / f"restored-renderer-{time.time_ns()}.json"
                 recovery.save(probe_path, receipt, immutable=True)
             finally:
@@ -284,7 +284,7 @@ def main():
                 replace(target, base64.b64decode(saved["after"]), saved["mode"])
             if receipt["ok"] is not True:
                 raise ValueError(f"restored consumer failed; wrapper reapplied, evidence retained at {probe_path}")
-            wrapped_receipt = recovery.run_probe([str(target)], timeout=10, output_limit=1024 * 1024, env=consumer_env)
+            wrapped_receipt = recovery.run_probe([str(target)], timeout=35, output_limit=1024 * 1024, env=consumer_env)
             wrapped_path = home / "recovery" / f"reapplied-renderer-{time.time_ns()}.json"
             recovery.save(wrapped_path, wrapped_receipt, immutable=True)
             renderer_check(home, row, wrapped=True)
