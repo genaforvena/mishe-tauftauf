@@ -16,6 +16,14 @@ renderer/filter input, CLI arguments, the human operator view and the durable
 effect ledger. The site window manifest and the wall-clear journals described
 below are approved adapters too.
 
+The feed boundary decodes UTF-8 in chunks and assembles each line once, avoiding
+whole-tape Unicode and split-line copies during cold reads. Full-feed consumers
+still retain the returned entries; their total memory is not constant. Feed
+tests enforce a cold-parse memory bound, linear scanning of long lines and
+absolute UTF-8 error offsets. Malformed framing or encoding fails closed without
+altering the tape; a tape with multiple faults can report the first encountered
+fault before a later encoding error.
+
 Model replacement adds two literal adapters: `model_boundary.py` decodes the
 supported shell-launcher subset, provider catalog/completion JSON, operation
 receipts and procfs identities; `model_cli.py` decodes CLI arguments. The
