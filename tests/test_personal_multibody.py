@@ -105,7 +105,8 @@ def _queue(directory: Path, node: str, rows: list[tuple[int, int, str]],
 
 
 def _lane(directory: Path, node: str, rows: list[tuple[int, int, int]],
-          posts: list[tuple[float, int]]) -> None:
+          posts: list[tuple[float, int]],
+          extra_lines: list[str] | None = None) -> None:
     """Write a delivered lane that carries the phone's own uptime readings.
 
     ``rows`` are ``(sequence, device epoch, uptime in ms)``.  The uptime
@@ -122,6 +123,7 @@ def _lane(directory: Path, node: str, rows: list[tuple[int, int, int]],
         else:
             lines.append(f"{sequence} {epoch} light lux=1.0 accuracy=3 "
                          f"age_ms=10 phone_elapsed_ms={elapsed}")
+    lines += extra_lines or []
     (queues / f"{node}.observations.log").write_text(
         "\n".join(lines) + "\n", encoding="utf-8")
     _journal(directory, node, posts)
@@ -403,6 +405,254 @@ class ContinuityAttributionTests(unittest.TestCase):
                        {"redmi10": _history(now)})
         report = personal_multibody.build_report(space, 300.0, now)
         return report["nodes"][0]
+
+    def _two_gap_lane(self, root: Path) -> None:
+        """A lane with one delivery outage and one body-side pause.
+
+        The first gap is a delivery outage: the host received nothing for
+        400 s while the body kept producing, so the backlog it withheld was
+        delivered afterwards.  The second gap is a body-side pause: the host
+        received nothing for 3000 s and the body produced nothing either.
+        The lane is its own control - the first gap shows what a delivery
+        outage leaves behind here.
+        """
+        rows = [(index + 1, 1000 + index * 5, "light") for index in range(201)]
+        rows += [(index + 202, 5000 + index * 5, "light") for index in range(21)]
+        _queue(root, "redmi10", rows)
+        _journal(root, "redmi10", [(float(moment), 4) for moment in
+                                   (1000, 1100, 1200, 1300, 1700, 1800, 1900,
+                                    2000, 5000, 5100)])
+
+    def test_a_gap_with_no_backlog_is_body_side_when_the_lane_shows_what_an_outage_leaves(self) -> None:
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._two_gap_lane(root)
+            continuity = self._reading(root, now)["continuity"]
+            control = continuity["backlog_control"]
+            self.assertEqual(control["status"], "ok")
+            self.assertEqual(control["gaps"], 1)
+            self.assertGreater(control["min_ratio"], 0.5)
+            holes = {hole["attribution"]: hole for hole in continuity["link_holes"]}
+            self.assertIn("link-side", holes)
+            self.assertIn("body-side", holes)
+            outage = holes["link-side"]
+            body_side = holes["body-side"]
+            self.assertGreater(outage["backlog_ratio"], 0.5)
+            self.assertLess(body_side["backlog_ratio"], 0.05)
+            self.assertIn("body-side", body_side["cause"])
+            body_holes = continuity["body_holes"]
+            self.assertEqual(len(body_holes), 1)
+            self.assertEqual(body_holes[0]["attribution"], "body-side")
+            self.assertIn("body-side", body_holes[0]["cause"])
+            self.assertIn("does not establish that the app dropped nothing",
+                          body_holes[0]["cause"])
+
+    def test_the_apps_own_spool_overflow_record_is_carried_against_the_verdict(self) -> None:
+        """The app's own record that it dropped rows is evidence, not noise.
+
+        The row is written the way the app writes it: the delivered row is
+        ``SEQ <epoch> spool overflow dropped=N policy=oldest``, so the word
+        ``spool`` is the row's *kind*, not part of its trailing fields.
+        """
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rows = [(index + 1, 1000 + index * 5, "light") for index in range(201)]
+            rows += [(index + 202, 5000 + index * 5, "light") for index in range(21)]
+            _queue(root, "redmi10", rows,
+                   extra_lines=["223 3000 spool overflow dropped=5 policy=oldest"])
+            _journal(root, "redmi10", [(float(moment), 4) for moment in
+                                       (1000, 1100, 1200, 1300, 1700, 1800, 1900,
+                                        2000, 5000, 5100)])
+            continuity = self._reading(root, now)["continuity"]
+            self.assertEqual(continuity["queue"]["spool_overflow_rows"], 1)
+            notices = continuity["queue"]["spool_overflow_notices"]
+            self.assertEqual(len(notices), 1)
+            self.assertEqual(notices[0]["dropped"], 5)
+            self.assertEqual(notices[0]["epoch"], 3000)
+            body_holes = continuity["body_holes"]
+            self.assertEqual(len(body_holes), 1)
+            # The notice is dated inside the body hole, so it contradicts the
+            # body-side reading and the hole stays open.
+            self.assertEqual(body_holes[0]["attribution"], "not-separable")
+            self.assertEqual(len(body_holes[0]["spool_drops_inside"]), 1)
+            self.assertIn("spool-overflow", body_holes[0]["cause"])
+
+    def test_a_drop_notice_outside_the_interval_does_not_refute_that_interval(self) -> None:
+        """A drop the app recorded elsewhere says nothing about this hole."""
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rows = [(index + 1, 1000 + index * 5, "light") for index in range(201)]
+            rows += [(index + 202, 5000 + index * 5, "light") for index in range(21)]
+            _queue(root, "redmi10", rows,
+                   extra_lines=["223 1500 spool overflow dropped=5 policy=oldest"])
+            _journal(root, "redmi10", [(float(moment), 4) for moment in
+                                       (1000, 1100, 1200, 1300, 1700, 1800, 1900,
+                                        2000, 5000, 5100)])
+            continuity = self._reading(root, now)["continuity"]
+            self.assertEqual(continuity["queue"]["spool_overflow_rows"], 1)
+            body_holes = continuity["body_holes"]
+            self.assertEqual(len(body_holes), 1)
+            self.assertEqual(body_holes[0]["spool_drops_inside"], [])
+            self.assertEqual(body_holes[0]["attribution"], "body-side")
+
+    def test_the_absent_overflow_record_does_not_establish_that_nothing_was_dropped(self) -> None:
+        """The notice reaches the host only if the app uploads after dropping.
+
+        Its absence therefore bounds what the delivered lane shows; it does not
+        establish that the app dropped nothing.
+        """
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rows = [(index + 1, 1000 + index * 5, "light") for index in range(201)]
+            rows += [(index + 202, 5000 + index * 5, "light") for index in range(21)]
+            _queue(root, "redmi10", rows)
+            _journal(root, "redmi10", [(float(moment), 4) for moment in
+                                       (1000, 1100, 1200, 1300, 1700, 1800, 1900,
+                                        2000, 5000, 5100)])
+            continuity = self._reading(root, now)["continuity"]
+            self.assertEqual(continuity["queue"]["spool_overflow_rows"], 0)
+            body_holes = continuity["body_holes"]
+            self.assertEqual(len(body_holes), 1)
+            self.assertEqual(body_holes[0]["attribution"], "body-side")
+            self.assertNotIn("nothing the app produced was withheld",
+                             body_holes[0]["cause"])
+            self.assertIn("does not establish that the app dropped nothing",
+                          body_holes[0]["cause"])
+
+    def test_a_gap_is_not_body_side_while_the_lane_holds_no_control(self) -> None:
+        """Without another gap to compare against, the lane cannot separate."""
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rows = [(index + 1, 1000 + index * 5, "light") for index in range(201)]
+            rows += [(index + 202, 5000 + index * 5, "light") for index in range(21)]
+            _queue(root, "redmi10", rows)
+            _journal(root, "redmi10", [(float(moment), 4) for moment in
+                                       (1000, 1100, 1200, 1300, 1400, 1500, 1600,
+                                        1700, 1800, 1900, 2000, 5000, 5100)])
+            continuity = self._reading(root, now)["continuity"]
+            self.assertEqual(continuity["backlog_control"]["status"], "unavailable")
+            body_holes = continuity["body_holes"]
+            self.assertEqual(len(body_holes), 1)
+            self.assertEqual(body_holes[0]["attribution"], "not-separable")
+            self.assertIn("not separable", body_holes[0]["cause"])
+
+    def test_the_device_reboot_across_a_session_boundary_is_named(self) -> None:
+        """The phone's own monotonic counter says the device restarted."""
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _lane(root, "redmi10",
+                  [(1, 1000, 500_000), (2, 1005, 500_005), (3, 1100, None),
+                   (4, 1105, 60_000), (5, 1110, 60_005)],
+                  [(1110.1, 5)])
+            continuity = self._reading(root, now)["continuity"]
+            boots = continuity["device_boots"]
+            self.assertEqual(boots["status"], "ok")
+            self.assertEqual(len(boots["reboots"]), 1)
+            boot = boots["reboots"][0]
+            self.assertAlmostEqual(boot["counter_fall_s"], 440.005, places=3)
+            self.assertAlmostEqual(boot["uptime_at_first_row_s"], 60.0, places=3)
+            self.assertTrue(boot["boot_estimate"])
+
+    def test_a_counter_that_does_not_advance_is_not_called_a_reboot(self) -> None:
+        """A delivery batch in reverse device-time order is not a restart."""
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _lane(root, "redmi10",
+                  [(1, 1000, 500_000), (2, 1005, 500_005), (3, 900, None),
+                   (4, 905, 60_000)],
+                  [(1005.1, 4)])
+            continuity = self._reading(root, now)["continuity"]
+            self.assertEqual(continuity["device_boots"]["reboots"], [])
+
+    def test_the_gap_and_the_body_hole_agree_about_the_same_interval(self) -> None:
+        """One interval carries one verdict.
+
+        The app's own drop notice dated inside the gap contradicts a
+        body-side reading, and the withdrawal has to reach both verdicts of
+        that interval: a reading that calls the gap body-side and the body
+        hole not separable says two things about the same bytes.
+        """
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rows = [(index + 1, 1000 + index * 5, "light") for index in range(201)]
+            rows += [(index + 202, 5000 + index * 5, "light") for index in range(21)]
+            _queue(root, "redmi10", rows,
+                   extra_lines=["223 3000 spool overflow dropped=5 policy=oldest"])
+            _journal(root, "redmi10", [(float(moment), 4) for moment in
+                                       (1000, 1100, 1200, 1300, 1700, 1800, 1900,
+                                        2000, 5000, 5100)])
+            continuity = self._reading(root, now)["continuity"]
+            gaps = [hole for hole in continuity["link_holes"]
+                    if hole["attribution"] == "not-separable"]
+            self.assertEqual(len(gaps), 1)
+            self.assertEqual(len(gaps[0]["spool_drops_inside"]), 1)
+            self.assertNotIn("body-side", gaps[0]["attribution"])
+            body_holes = continuity["body_holes"]
+            self.assertEqual(len(body_holes), 1)
+            self.assertEqual(body_holes[0]["attribution"], "not-separable")
+            # No gap of this lane may still claim the body produced nothing
+            # while the body hole says the app held production it could not
+            # deliver.
+            self.assertEqual(
+                [hole["attribution"] for hole in continuity["link_holes"]
+                 if hole["attribution"] == "body-side"], [])
+
+    def test_the_boot_instant_names_its_clock_frame_and_its_host_bracket(self) -> None:
+        """The instant is the device's, and the host bracket is the host's.
+
+        A correction of the device's wall clock moves the estimate, so the
+        reading says which clock the estimate is in and publishes the window
+        on the host's timeline that the correction cannot move.
+        """
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _lane(root, "redmi10",
+                  [(1, 1000, 500_000), (2, 1005, 500_005), (3, 1100, None),
+                   (4, 1105, 60_000), (5, 1110, 60_005)],
+                  [(1110.1, 5)])
+            continuity = self._reading(root, now)["continuity"]
+            boot = continuity["device_boots"]["reboots"][0]
+            self.assertIn("device's own clock", boot["boot_estimate_frame"])
+            self.assertIn("host bracket", boot["instant_limit"])
+            bracket = boot["host_bracket_utc"]
+            self.assertEqual(len(bracket), 2)
+            self.assertLessEqual(bracket[0], bracket[1])
+            self.assertIn("device's own clock",
+                          continuity["device_boots"]["note"])
+
+    def test_the_reboot_is_published_with_a_verdict_it_does_not_support(self) -> None:
+        """The reboot is evidence, and it is published either way.
+
+        When the app's own drop notice keeps an interval open, the reboot
+        inside it is still named: it is the device's own counter, and it does
+        not depend on the verdict.
+        """
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _lane(root, "redmi10",
+                  [(1, 1000, 500_000), (2, 1005, 500_005), (3, 5000, None),
+                   (4, 5005, 60_000), (5, 5010, 60_005)],
+                  [(1005.1, 2), (5010.1, 3)],
+                  extra_lines=["6 3000 spool overflow dropped=7 policy=oldest"])
+            continuity = self._reading(root, now)["continuity"]
+            boots = continuity["device_boots"]["reboots"]
+            self.assertEqual(len(boots), 1)
+            body_holes = continuity["body_holes"]
+            self.assertEqual(len(body_holes), 1)
+            hole = body_holes[0]
+            self.assertEqual(hole["attribution"], "not-separable")
+            self.assertIn("monotonic counter fell", hole["cause"])
+            self.assertIsNotNone(hole["reboot_inside"])
 
     def test_body_silence_under_a_live_link_is_body_side(self) -> None:
         now = 1_800_000_000.0
