@@ -64,13 +64,32 @@ through the site's credential store and shows each account-bound window with its
 remaining fraction, reset time and provider fetch age. Exit status `3` means a
 pool is unconfigured, stale, unattributed or UNKNOWN. Neither command changes a
 launcher, credential or routing decision.
+The installed launcher predates the `engine` subcommand. Until a reviewed snapshot
+carries it, run it from the source tree:
+`PYTHONPATH=src .venv/bin/python -m mishe_tauftauf --home <site home> engine status`.
 
-Each alias binds to an OMP credential row by id; keys and identity fields are
-never read into output. Go reports carry no credential identity, so a provider
-report is attributed only when that provider has exactly one configured account;
-several accounts on one provider stay UNATTRIBUTED. A report older than 180 seconds
-is STALE even when OMP's aggregate timestamp is fresh. Credential stores whose
-auth schema differs from the observed version 8 are refused rather than guessed.
-Provider failures append to `engine/usage-errors.jsonl` (mode 0600).
+Each alias binds to an OMP credential row by id within its `store`, an OMP agent
+directory relative to the site home. The default is `omp-recovery/agent`; a second
+subscription on the same provider needs its own store, because OMP's usage report
+carries no credential identity. Accounts are read per store, and a store that holds
+several configured accounts for one provider stays UNATTRIBUTED. Two accounts whose
+quota windows reset at identical instants are treated as one entitlement under two
+credentials and both stay UNATTRIBUTED. Keys and identity fields are never read
+into output. A report older than 180 seconds is STALE even when OMP's aggregate
+timestamp is fresh. A store whose auth schema differs from the observed version 8
+is refused rather than guessed, and its usage is not read. Provider failures append
+to `engine/usage-errors.jsonl` (mode 0600).
+
+Last-good retention: each successful FRESH or STALE sample is kept in
+`engine/last-good.json` (mode 0600). A later failed read shows the account UNKNOWN
+with that sample under `last_good`, labelled with its own age. A malformed
+last-good file is reported and not overwritten.
+
+Provisioning Go B: its store `engine/go-b-store` exists but holds no credential.
+Provisioning is a human step; the key is entered in the terminal and never in chat
+or a file. The flow for an API-key provider in OMP is not verified here: start
+`omp` with `PI_CODING_AGENT_DIR` set to that store and use `/login` for
+`opencode-go`. Then set the `go-b` registry entry to `configured` with its
+`credential_id`, and confirm the store's usage with `mishe engine status`.
 
 Routing, reserves and automatic rotation are not part of this surface.
