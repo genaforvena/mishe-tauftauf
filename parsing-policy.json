@@ -1,6 +1,7 @@
 {
   "boundaries": [
     "src/mishe_tauftauf/model_boundary.py",
+    "src/mishe_tauftauf/engine_boundary.py",
     "src/mishe_tauftauf/model_cli.py",
     "src/mishe_tauftauf/body_perception.py",
     "src/mishe_tauftauf/chat_protocol.py",
