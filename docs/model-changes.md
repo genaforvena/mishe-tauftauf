@@ -54,3 +54,23 @@ environment values and executing OMP directly, with either model flag spelling.
 Arbitrary wrappers, inline credentials, resumed sessions and native runners with
 their own provider packages require separate adapters; they remain explicit
 UNKNOWN or fail preflight. The command does not change accounts or other plants.
+
+## Engine account inventory (read-only)
+
+`mishe engine accounts` lists the registered subscription pools from
+`engine/accounts.json` in the site home, with credential-store health from OMP's
+read-only metadata. `mishe engine status [--json]` also reads `omp usage --json`
+through the site's credential store and shows each account-bound window with its
+remaining fraction, reset time and provider fetch age. Exit status `3` means a
+pool is unconfigured, stale, unattributed or UNKNOWN. Neither command changes a
+launcher, credential or routing decision.
+
+Each alias binds to an OMP credential row by id; keys and identity fields are
+never read into output. Go reports carry no credential identity, so a provider
+report is attributed only when that provider has exactly one configured account;
+several accounts on one provider stay UNATTRIBUTED. A report older than 180 seconds
+is STALE even when OMP's aggregate timestamp is fresh. Credential stores whose
+auth schema differs from the observed version 8 are refused rather than guessed.
+Provider failures append to `engine/usage-errors.jsonl` (mode 0600).
+
+Routing, reserves and automatic rotation are not part of this surface.

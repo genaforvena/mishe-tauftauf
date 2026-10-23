@@ -970,6 +970,8 @@ def parser() -> argparse.ArgumentParser:
     c = task.add_parser("coordination-report"); c.add_argument("--task"); c.add_argument("--cutoff", type=int); c.set_defaults(func=cmd_task)
     from .model_cli import register
     register(sub)
+    from .engine_usage import register as register_engine
+    register_engine(sub)
     return root
 
 
