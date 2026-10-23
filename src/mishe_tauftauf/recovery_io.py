@@ -92,6 +92,9 @@ def validate_config(cfg):
 
 def run_probe(argv, *, timeout=5, cwd=None, env=None, output_limit=65536, pass_fds=()):
     started = time.monotonic()
+    child_env = dict(os.environ if env is None else env)
+    for name in ("NOTIFY_SOCKET", "WATCHDOG_PID", "WATCHDOG_USEC"):
+        child_env.pop(name, None)
     try:
         # The watchdog has its own process lifetime: an outer renderer killing
         # this wrapper cannot leave its original renderer running indefinitely.
@@ -100,7 +103,7 @@ def run_probe(argv, *, timeout=5, cwd=None, env=None, output_limit=65536, pass_f
         for descriptor in pass_fds:
             supervised.extend(["--hold-fd", str(descriptor)])
         supervised.extend(["--", *argv])
-        process = subprocess.Popen(supervised, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+        process = subprocess.Popen(supervised, cwd=cwd, env=child_env, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
                                    pass_fds=pass_fds)
     except OSError as exc:
