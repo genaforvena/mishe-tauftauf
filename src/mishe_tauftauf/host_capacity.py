@@ -186,6 +186,7 @@ def reconcile(root, row, config):
 
 def tick(root, config, *, now=None):
     root = Path(root)
+    realtime = now is None
     now = time.time() if now is None else now
     root.mkdir(parents=True, exist_ok=True)
     with (root / "host-capacity.lock").open("a+") as handle:
@@ -202,12 +203,15 @@ def tick(root, config, *, now=None):
             row["action_error"] = str(exc)
         try:
             guard_row = recovery.read_json(root / "host-capacity-guard.json")
+            # A guard may update after acquisition began but before this read.
+            # Compare with the read time, not the older sample-start timestamp.
+            observed_at = time.time() if realtime else now
             guard_fresh = (isinstance(guard_row, dict)
                            and guard_row.get("state") in {"FRESH", "UNKNOWN"}
                            and guard_row.get("capacity") in {"NORMAL", "LIMITED", "CRITICAL", "UNKNOWN"}
                            and guard_row.get("scope") == "capacity producer freshness; not restoration"
                            and type(guard_row.get("checked_at")) in (int, float)
-                           and 0 <= now - guard_row["checked_at"] <= 20)
+                           and 0 <= observed_at - guard_row["checked_at"] <= 20)
         except (ValueError, TypeError, KeyError):
             guard_fresh = False
         row["guard_fresh"] = guard_fresh

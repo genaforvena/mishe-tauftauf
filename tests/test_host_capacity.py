@@ -144,3 +144,15 @@ def test_incomplete_guard_is_not_coverage(tmp_path, monkeypatch):
     monkeypatch.setattr(host, "observe", lambda _: sample())
     row = host.tick(tmp_path, {"slice_path": "unused", "optional_units": []}, now=100)
     assert row["state"] == "UNKNOWN" and not row["guard_fresh"]
+
+
+def test_guard_update_during_resource_sample_is_not_future(tmp_path, monkeypatch):
+    stamps = iter([100., 101.])
+    monkeypatch.setattr(host.time, "time", lambda: next(stamps))
+    monkeypatch.setattr(host, "observe", lambda _: sample())
+    def reconcile(root, row, config):
+        recovery.save(root / "host-capacity-guard.json", {"checked_at": 100.5, "state": "FRESH", "capacity": "NORMAL", "scope": "capacity producer freshness; not restoration"})
+        return row
+    monkeypatch.setattr(host, "reconcile", reconcile)
+    row = host.tick(tmp_path, {"slice_path": "unused", "optional_units": []})
+    assert row["state"] == "NORMAL" and row["guard_fresh"]

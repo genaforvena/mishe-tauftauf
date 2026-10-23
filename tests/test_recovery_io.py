@@ -298,3 +298,11 @@ def test_wrapper_death_cannot_leave_a_detached_pipe_descendant(tmp_path):
         if marker.exists():
             try:os.kill(int(marker.read_text()), signal.SIGKILL)
             except ProcessLookupError:pass
+
+
+def test_probe_cannot_notify_its_parent_services_watchdog(monkeypatch):
+    monkeypatch.setenv("NOTIFY_SOCKET", "/tmp/parent-notification-socket")
+    monkeypatch.setenv("WATCHDOG_PID", "42")
+    monkeypatch.setenv("WATCHDOG_USEC", "100000")
+    row = recovery.run_probe([sys.executable, "-c", "import os;print([k for k in ('NOTIFY_SOCKET','WATCHDOG_PID','WATCHDOG_USEC') if k in os.environ])"], timeout=2)
+    assert row["ok"] is True and row["stdout"].strip() == "[]"
