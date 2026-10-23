@@ -140,3 +140,19 @@ def test_renderer_no_retry_by_default(tmp_path: Path, monkeypatch) -> None:
     assert not result.ok
     assert result.reason == "timeout-after-0.5s"
     assert marker.read_text().strip() == "1"
+
+
+def test_shared_admission_outer_deadline_covers_child_without_timeout_retry(tmp_path, monkeypatch):
+    import json
+    from mishe_tauftauf.observations import RenderedPain
+    (tmp_path / "recovery").mkdir()
+    (tmp_path / "recovery/config.json").write_text(json.dumps({"host_root": str(tmp_path / "shared")}))
+    captured = []
+    def render(home, slug, timeout, **kwargs):
+        captured.append((timeout, kwargs["retries"]))
+        return RenderedPain(slug, "Observed fixture.\n", True)
+    monkeypatch.setattr("mishe_tauftauf.observations.run_renderer", render)
+    compose_frame(tmp_path, "health")
+    assert captured[-1] == (35., 0)
+    compose_frame(tmp_path, "witness", timeout=2.)
+    assert captured[-1][0] == 2.

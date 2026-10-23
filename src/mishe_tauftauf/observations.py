@@ -320,10 +320,21 @@ _RENDERER_RETRY_BACKOFF = 2.0
 
 
 def compose_frame(home: Path, slug: str, timeout: float | None = None) -> RenderedPain:
+    shared_admission = False
+    try:
+        config = json.loads((home / "recovery/config.json").read_text())
+        shared_admission = (isinstance(config, dict) and isinstance(config.get("host_root"), str)
+                            and Path(config["host_root"]).is_absolute())
+    except (OSError, ValueError, TypeError):
+        pass
     if timeout is None:
-        timeout = _RENDERER_TIMEOUTS.get(slug, _DEFAULT_RENDERER_TIMEOUT)
+        # The shared supervisor bounds child work at 30 seconds and owns its
+        # cleanup. Killing it earlier both loses valid cold reads and duplicates
+        # them through the legacy timeout retry. Keep explicit caller bounds.
+        timeout = 35.0 if shared_admission else _RENDERER_TIMEOUTS.get(slug, _DEFAULT_RENDERER_TIMEOUT)
     rendered = run_renderer(home, slug, timeout,
-                            retries=_RENDERER_RETRIES, retry_backoff=_RENDERER_RETRY_BACKOFF)
+                            retries=0 if shared_admission else _RENDERER_RETRIES,
+                            retry_backoff=_RENDERER_RETRY_BACKOFF)
     from . import wall
     wall.settings(home)
     failure = f"\nRENDERER: RED {rendered.reason or 'command failed'}\n" if not rendered.ok else ""
