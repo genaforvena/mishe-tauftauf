@@ -613,6 +613,11 @@ def restore(config, evidence):
         atomic(STATE / ("restore-" + request["id"] + "-request.json"), request)
         # Refusals before restoration starts leave the existing latch untouched.
         rearm_when_lock_free(config, request, expected=evidence["clears"])
+        def _heartbeat(extra: dict | None = None):
+            payload = dict(request, at=time.time())
+            if extra:
+                payload.update(extra)
+            atomic(STATE / "restoring", payload)
         try:
             deadline = time.monotonic() + MAX_AGE + 3
             while read(RUN / "status.json")["state"] != "READY":
@@ -624,7 +629,7 @@ def restore(config, evidence):
                     continue
                 if not sentinel_healthy():
                     raise RuntimeError("host safety boundary closed during staged restoration")
-                atomic(STATE / "restoring", dict(request, at=time.time(), next_unit=unit))
+                _heartbeat({"next_unit": unit})
                 atomic(STATE / ("restore-" + request["id"] + "-" + str(index) + "-intent.json"), dict(unit=unit, at=time.time()))
                 try:
                     result = user_command(config, "start", "--no-block", unit)
@@ -649,6 +654,7 @@ def restore(config, evidence):
                 obs = status_row.get("observation") or {}
                 if obs.get("host_io_available") is False or obs.get("ssh_available") is False:
                     raise RuntimeError("staged restoration did not converge: functional probe failed")
+                _heartbeat()
                 time.sleep(1)
             (STATE / "restoring").unlink()
             atomic(STATE / ("restore-" + request["id"] + "-complete.json"), dict(request, completed_at=time.time(),
