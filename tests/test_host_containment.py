@@ -104,6 +104,7 @@ def test_trip_waiting_during_rearm_is_retained_after_rearm(tmp_path, monkeypatch
     guard.atomic(config, dict(user="test", uid=1000, cgroup=str(tmp_path / "cg"), units=[], limits={str(tmp_path / "cg"): {"memory.max": 1}}))
     for name, value in (("STATE", state), ("RUN", run), ("CONFIG", config)):
         monkeypatch.setattr(guard, name, value)
+    monkeypatch.setattr(guard, "caller_inside_mishe", lambda *a, **kw: False)
     monkeypatch.setattr("sys.argv", ["guard", "rearm"])
     attempting, acquired = threading.Event(), threading.Event()
     def concurrent_trip():
@@ -140,6 +141,7 @@ def test_stale_checker_stops_workload_even_with_a_wedged_transition_lock(tmp_pat
     assert (state / "emergency").exists()
     guard.atomic(run / "status.json", {"state": "READY", "at": guard.time.time()})
     assert not guard.admitted(state, run)
+    monkeypatch.setattr(guard, "caller_inside_mishe", lambda *a, **kw: False)
     monkeypatch.setattr("sys.argv", ["guard", "rearm"])
     monkeypatch.setattr(guard, "observe", lambda config: sample())
     with pytest.raises(SystemExit, match="emergency latch"):
@@ -306,7 +308,6 @@ def test_life_support_requires_exact_kernel_budget_even_when_normal_is_latched(t
     assert guard.lifeline_safe(config)
     (life / "memory.max").write_text("max")
     assert not guard.lifeline_safe(config)
-
 
 def test_restore_refuses_unstable_or_missing_evidence(tmp_path, monkeypatch):
     monkeypatch.setattr(guard, "STATE", tmp_path)

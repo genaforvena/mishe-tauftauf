@@ -203,11 +203,18 @@ def filesystem_probe(directory="/var/tmp"):
     payload = b"mishe host filesystem probe\n"
     try:
         with tempfile.TemporaryFile(dir=directory) as stream:
+            print("phase=write", file=sys.stderr, flush=True)
             stream.write(payload)
+            print("phase=flush", file=sys.stderr, flush=True)
             stream.flush()
+            print("phase=fsync", file=sys.stderr, flush=True)
             os.fsync(stream.fileno())
+            print("phase=seek", file=sys.stderr, flush=True)
             stream.seek(0)
-            return stream.read() == payload
+            print("phase=read", file=sys.stderr, flush=True)
+            ok = stream.read() == payload
+            print(f"phase=done ok={ok}", file=sys.stderr, flush=True)
+            return ok
     except OSError as exc:
         print("UNKNOWN host filesystem probe: " + str(exc), file=sys.stderr, flush=True)
         return False
@@ -582,7 +589,12 @@ def restore(config, evidence):
                     raise RuntimeError("host safety boundary closed during staged restoration")
                 atomic(STATE / "restoring", dict(request, at=time.time(), next_unit=unit))
                 atomic(STATE / ("restore-" + request["id"] + "-" + str(index) + "-intent.json"), dict(unit=unit, at=time.time()))
-                result = user_command(config, "start", "--no-block", unit)
+                try:
+                    result = user_command(config, "start", "--no-block", unit)
+                except subprocess.TimeoutExpired as exc:
+                    atomic(STATE / ("restore-" + request["id"] + "-" + str(index) + "-result.json"),
+                           dict(unit=unit, at=time.time(), error="user_command timeout", stderr=str(exc)[-2048:]))
+                    raise RuntimeError("unit start request timed out: " + unit) from exc
                 atomic(STATE / ("restore-" + request["id"] + "-" + str(index) + "-result.json"),
                        dict(unit=unit, at=time.time(), code=result.returncode, stderr=result.stderr[-2048:]))
                 if result.returncode:
@@ -590,15 +602,25 @@ def restore(config, evidence):
                 time.sleep(1)
             if not sentinel_healthy():
                 raise RuntimeError("host safety boundary closed at restoration completion")
+            window_end = time.monotonic() + 30
+            while time.monotonic() < window_end:
+                if (STATE / "tripped").exists() or (STATE / "emergency").exists():
+                    raise RuntimeError("staged restoration did not converge under admitted load")
+                if not sentinel_healthy():
+                    raise RuntimeError("host safety boundary closed during convergence window")
+                status_row = read(RUN / "status.json")
+                obs = status_row.get("observation") or {}
+                if obs.get("host_io_available") is False or obs.get("ssh_available") is False:
+                    raise RuntimeError("staged restoration did not converge: functional probe failed")
+                time.sleep(1)
             (STATE / "restoring").unlink()
             atomic(STATE / ("restore-" + request["id"] + "-complete.json"), dict(request, completed_at=time.time(),
-                   scope="start requests accepted for every admitted unit; per-unit activation not verified by this controller; not causal incident closure"))
+                   scope="start requests accepted for every admitted unit; per-unit activation not verified by this controller; convergence window 30s observed; not causal incident closure"))
         except BaseException:
             stop(config)
             latch(STATE, "staged restoration failed or interrupted", None)
             (STATE / "restoring").unlink(missing_ok=True)
             raise
-
 
 def notify(message):
     address = os.environ.get("NOTIFY_SOCKET")

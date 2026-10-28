@@ -357,7 +357,7 @@ def cmd_pain_watch(args) -> int:
             try:
                 rendered = compose_frame(args.home, args.slug, args.timeout)
                 ok = rendered.ok
-                entries = feed.entries()
+                entries = feed.role_entries(args.slug)
                 from .seed import _state
                 _, pending, settled, cleared, *_ = _state(args.home, args.slug, entries=entries)
                 status = f"pending={pending or 'none'} yield={settled or 'none'} clear={cleared or 'none'}"
