@@ -49,6 +49,17 @@ def test_supervise_builds_a_worker_without_an_attribute_error(tmp_path, monkeypa
     assert worker.notes_file == tmp_path / "notes.md"
 
 
+def test_supervisor_key_reads_pending_canonical_wake(tmp_path):
+    from mishe_tauftauf.feed import Feed
+
+    wake = Feed(tmp_path).append("seed", "seed wake genome observation=1\nInvestigate.")
+    args = parse("supervise", "--notes", str(tmp_path / "notes.md"),
+                 "--command", "/usr/bin/true")
+    args.home = tmp_path
+    args.role = "genome"
+    assert core_cli._pending_wake(args) == wake.sequence
+
+
 def test_reconcile_requires_a_detail():
     args = parse("reconcile", "--detail", "the wall showed no effect")
     assert args.detail == "the wall showed no effect"

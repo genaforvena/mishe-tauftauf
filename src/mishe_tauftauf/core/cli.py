@@ -96,9 +96,8 @@ def _pending_wake(args) -> int:
     The number is the plant's own identity for the turn, so it names the
     work rather than the moment it was noticed.
     """
-    from . import seed
     try:
-        pending = seed._state(args.home, args.role)[1]
+        pending = _canonical_worker(args)._pending_wake()
     except (OSError, ValueError):
         return 0
     return pending if pending is not None else 0

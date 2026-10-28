@@ -1,7 +1,7 @@
 # Mishe core
 
-The minimal life-support core: a supervisor that keeps one mind working at a
-time, on the plant's existing canonical lifecycle.
+The minimal life-support core is a candidate supervisor for the plant's
+canonical lifecycle. Live wake and settlement acceptance remains open.
 
 It lives inside this repository, on `main`, next to the code it serves. There
 is no second repository and no second branch.
@@ -34,6 +34,11 @@ The vocabulary is the plant's, not this package's. A wake is created by the
 canonical tick, a turn is settled by the canonical settlement, and a turn is
 cleared by the canonical clear. This package adds no second protocol and no
 second record of what a wake was.
+The resident loop selects its dispatch key before the worker calls the tick.
+When no wake is pending, that key is not yet the identity of a wake created
+by the tick. Do not rely on this path for live migration until wake identity
+and replay handling have been corrected and independently verified.
+
 
 Every import of the plant's machinery happens inside a function in
 `adapters.py`, so importing `mishe_tauftauf.core` does not load the tape
