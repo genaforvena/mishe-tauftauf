@@ -52,12 +52,39 @@ def test_supervise_builds_a_worker_without_an_attribute_error(tmp_path, monkeypa
 def test_supervisor_key_reads_pending_canonical_wake(tmp_path):
     from mishe_tauftauf.feed import Feed
 
-    wake = Feed(tmp_path).append("seed", "seed wake genome observation=1\nInvestigate.")
     args = parse("supervise", "--notes", str(tmp_path / "notes.md"),
                  "--command", "/usr/bin/true")
     args.home = tmp_path
     args.role = "genome"
+    assert core_cli._pending_wake(args) is None
+    wake = Feed(tmp_path).append("seed", "seed wake genome observation=1\nInvestigate.")
     assert core_cli._pending_wake(args) == wake.sequence
+
+
+def test_supervisor_holds_without_a_canonical_wake(tmp_path, monkeypatch, capsys):
+    from mishe_tauftauf.core.interfaces import Observation
+    import time
+
+    class Supervisor:
+        def open_dispatch(self):
+            return None
+
+        def observe(self):
+            return Observation(fresh=True, healthy=True, detail="fixture")
+
+        def dispatch(self, *args, **kwargs):
+            pytest.fail("dispatched without a canonical wake")
+
+    args = parse("supervise", "--notes", str(tmp_path / "notes.md"),
+                 "--command", "/usr/bin/true")
+    args.home = tmp_path
+    monkeypatch.setattr(core_cli, "_supervisor", lambda args: Supervisor())
+    def stop(_):
+        raise StopIteration
+    monkeypatch.setattr(time, "sleep", stop)
+    with pytest.raises(StopIteration):
+        core_cli.cmd_supervise(args)
+    assert "no canonical wake" in capsys.readouterr().out
 
 
 def test_reconcile_requires_a_detail():

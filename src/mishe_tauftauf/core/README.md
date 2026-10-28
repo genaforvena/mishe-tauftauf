@@ -34,10 +34,11 @@ The vocabulary is the plant's, not this package's. A wake is created by the
 canonical tick, a turn is settled by the canonical settlement, and a turn is
 cleared by the canonical clear. This package adds no second protocol and no
 second record of what a wake was.
-The resident loop selects its dispatch key before the worker calls the tick.
-When no wake is pending, that key is not yet the identity of a wake created
-by the tick. Do not rely on this path for live migration until wake identity
-and replay handling have been corrected and independently verified.
+
+The resident loop holds when no wake is pending rather than dispatching with
+a fabricated identity. Because its worker calls the tick only after dispatch,
+this also means it cannot create its own first wake. Do not use this path for
+live migration until wake creation and replay handling are independently verified.
 
 
 Every import of the plant's machinery happens inside a function in

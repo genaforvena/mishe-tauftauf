@@ -90,17 +90,9 @@ def cmd_reconcile(args) -> int:
     return 0
 
 
-def _pending_wake(args) -> int:
-    """The wake this role currently owes, or 0 when none is owed.
-
-    The number is the plant's own identity for the turn, so it names the
-    work rather than the moment it was noticed.
-    """
-    try:
-        pending = _canonical_worker(args)._pending_wake()
-    except (OSError, ValueError):
-        return 0
-    return pending if pending is not None else 0
+def _pending_wake(args) -> int | None:
+    """Read the pending canonical wake; unreadable state is not an empty queue."""
+    return _canonical_worker(args)._pending_wake()
 
 
 def cmd_supervise(args) -> int:
@@ -144,7 +136,13 @@ def cmd_supervise(args) -> int:
             # number for the turn.  A wall-clock second would collide
             # between two pieces of work in the same second and miss the
             # same work dispatched in two different seconds.
-            key = args.key_prefix + str(_pending_wake(args))
+            wake = _pending_wake(args)
+            if wake is None:
+                print(f"held core {args.role}: no canonical wake to identify dispatch",
+                      flush=True)
+                time.sleep(args.interval)
+                continue
+            key = args.key_prefix + str(wake)
             record = supervisor.dispatch(args.role, key,
                                          payload={
                                              "command": args.command,
