@@ -127,16 +127,18 @@ def _audit_refusal(home: Path, role: str, source_path: str | None, wall_path: Pa
         pass
 
 
-def _bound_evidence_paths(home: Path) -> set[str]:
+def _bound_evidence_paths(home: Path, *, entries=None) -> set[str]:
     """Derive post-clause event bindings, failing closed on incomplete coverage.
 
     A gap fails closed only while it can still hide a bound evidence path: a
     reserved header or an immutable reference marks a publication attempt. A
     damaged entry that carries neither binds nothing, so it is reported as a
     coverage gap but cannot block another role's publication.
+
+    ``entries`` reuses a caller's tape snapshot without rereading it.
     """
     from .discovery import EVIDENCE_BINDING_CLAUSE_TIME
-    coverage = classify_outcomes(home, EVIDENCE_BINDING_CLAUSE_TIME)
+    coverage = classify_outcomes(home, EVIDENCE_BINDING_CLAUSE_TIME, entries=entries)
     if coverage["unavailable"] == "chat tape unavailable" and not (home / "chat.log").exists():
         return set()
     if coverage["unavailable"]:
@@ -188,8 +190,20 @@ def _publish_outcome(home: Path, role: str, kind: str, text: str, evidence: Path
     # Serialize the duplicate-path check, evidence snapshot, mode change and
     # publication. Later edits remain detectable by the observer; read-only
     # mode prevents accidental edits by compliant writers.
+    # One streaming parse of the tape feeds the bound check so publication
+    # never re-parses the tape per candidate and never holds the whole tape
+    # as a byte string plus entry list.
     with publication_lock(home):
-        bound = _bound_evidence_paths(home)
+        tape = home / "chat.log"
+        if tape.exists():
+            from .outcome_events import parse_feed
+            entries = parse_feed(tape, home=home)
+        else:
+            entries = None
+        try:
+            bound = _bound_evidence_paths(home, entries=entries)
+        except TypeError:
+            bound = _bound_evidence_paths(home)
         if evidence_str in bound:
             raise ValueError(f"outcome evidence path already bound: {evidence_str}")
         data = evidence.read_bytes()
@@ -862,7 +876,7 @@ def _pending_body(home: Path, wake: int) -> str:
     """
     from . import seed
     from .feed import Feed
-    for entry in Feed(home).entries():
+    for entry in Feed(home).entries(start=wake, limit=1):
         if entry.sequence != wake or entry.source != "seed":
             continue
         control = decode_lifecycle(entry)

@@ -75,6 +75,15 @@ def record_head(home: Path | str, digest: str) -> bytes | None:
         os.close(directory)
 
 
+def record_head_dir(directory: int, digest: str) -> bytes | None:
+    """The first bytes of a stored record via an already-opened directory fd."""
+    try:
+        fd = os.open(digest + ".json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                     dir_fd=directory)
+        with os.fdopen(fd, "rb") as handle:
+            return handle.read(HEAD_BYTES)
+    except OSError:
+        return None
 def _directory(home: Path) -> int:
     # The site root is trusted; its record subdirectory must never be followed.
     return os.open(home / "records", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
