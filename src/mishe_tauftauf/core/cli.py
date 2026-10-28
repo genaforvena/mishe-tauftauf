@@ -90,6 +90,20 @@ def cmd_reconcile(args) -> int:
     return 0
 
 
+def _pending_wake(args) -> int:
+    """The wake this role currently owes, or 0 when none is owed.
+
+    The number is the plant's own identity for the turn, so it names the
+    work rather than the moment it was noticed.
+    """
+    from . import seed
+    try:
+        pending = seed._state(args.home, args.role)[1]
+    except (OSError, ValueError):
+        return 0
+    return pending if pending is not None else 0
+
+
 def cmd_supervise(args) -> int:
     """Run the supervisor as a resident: one turn at a time, forever.
 
@@ -118,8 +132,21 @@ def cmd_supervise(args) -> int:
             print(f"UNKNOWN core {args.role}: {receipt.detail}", flush=True)
             time.sleep(args.interval)
             continue
+        if not receipt.healthy:
+            # The plant's own sensors report a problem.  A turn driven now
+            # would settle a wake while the plant says something is wrong.
+            print(f"held core {args.role}: the observation reports a problem: "
+                  f"{receipt.detail}", flush=True)
+            time.sleep(args.interval)
+            continue
         try:
-            record = supervisor.dispatch(args.role, args.key_prefix + str(int(time.time())),
+            # The key names the work, so it is derived from the work.  The
+            # canonical wake is that identity: the plant's own sequence
+            # number for the turn.  A wall-clock second would collide
+            # between two pieces of work in the same second and miss the
+            # same work dispatched in two different seconds.
+            key = args.key_prefix + str(_pending_wake(args))
+            record = supervisor.dispatch(args.role, key,
                                          payload={
                                              "command": args.command,
                                              "self_pick_seconds": args.self_pick_seconds,

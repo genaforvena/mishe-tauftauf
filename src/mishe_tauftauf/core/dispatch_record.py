@@ -143,17 +143,19 @@ def entry_age_seconds(timestamp: Any, *, now: float | None = None) -> float | No
 def snapshot_is_unhealthy(text: Any) -> bool:
     """Whether a sensor's own words report a problem.
 
-    The plant's frames name their state in the first line.  A frame that
-    says RED, UNKNOWN or FAIL is a problem, whatever else it says, and an
-    empty frame says nothing at all.
+    The plant's frames put their verdict in the body, not in the first line:
+    the headline reads GREEN whenever the silence watcher is live, whatever
+    the renderer below it says.  So every line is scanned, with the plant's
+    own pattern.  A frame whose body says RED, UNKNOWN or FAIL is a
+    problem, and an empty frame says nothing at all.
     """
     if not isinstance(text, str) or not text:
         return True
     lines = text.splitlines()
     if not lines:
         return True
-    first = lines[0]
-    return any(marker in first for marker in ("RED", "UNKNOWN", "FAIL"))
+    return any(re.match(r"^(?:HEADLINE:|STATE:|CI:|SERVICE |UNKNOWN\b|FAIL\b).*\b(?:RED|UNKNOWN|FAIL)\b",
+                        line) for line in lines)
 
 
 def receipt_is_unknown(receipt: Any) -> bool:
@@ -250,6 +252,23 @@ def build_parser(description: str, cmd_status, cmd_dispatch, cmd_reconcile,
 def decode_arguments(parser, argv):
     """Decode the core's own arguments."""
     return parser.parse_args(argv)
+
+
+def process_alive(pid: Any) -> bool:
+    """Whether a process is still running.
+
+    A zombie is not running work, so it does not count.  A pid that cannot
+    be read at all is not evidence that the process is alive, so the answer
+    is ``False`` rather than a guess.
+    """
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return False
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as handle:
+            fields = handle.read().rsplit(")", 1)[1].split()
+    except (OSError, UnicodeError, IndexError):
+        return False
+    return bool(fields) and fields[0] != "Z"
 
 
 def process_group_members(pgid: int) -> list[int]:

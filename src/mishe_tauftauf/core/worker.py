@@ -69,6 +69,14 @@ class SubprocessWorker:
         except OSError as exc:
             # The command never started, so it never had an effect.
             return WorkerResult(outcome="failed", detail=f"worker could not start: {exc}")
+        # The pid is published as soon as the worker exists, so a successor
+        # that reads the record while the worker runs can find it.
+        publish = dispatch.payload.get("publish_pid")
+        if callable(publish):
+            try:
+                publish(process.pid)
+            except Exception:
+                pass
         try:
             output, _ = process.communicate(timeout=self.timeout)
         except subprocess.TimeoutExpired:
@@ -90,8 +98,9 @@ class SubprocessWorker:
             # had an effect is not established, so the outcome is unknown.
             return WorkerResult(
                 outcome="unknown",
-                detail=tail or f"worker exited {code}")
-        return WorkerResult(outcome="completed", detail=tail)
+                detail=tail or f"worker exited {code}",
+                pid=process.pid)
+        return WorkerResult(outcome="completed", detail=tail, pid=process.pid)
 
     @staticmethod
     def _stop_group(process: subprocess.Popen, grace: float = 2.0) -> None:

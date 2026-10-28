@@ -34,6 +34,11 @@ def state(tmp_path, keys):
     (root / rb.TRUST_DIR).mkdir(parents=True)
     (root / rb.INBOX_DIR).mkdir(parents=True)
     (root / rb.SEEN_DIR).mkdir(parents=True)
+    # The boundary's contract: the privileged directories are root's alone.
+    # The fixture is owned by this user, so the same rules are met with
+    # this user's uid and the modes the contract names.
+    for name in (rb.TRUST_DIR, rb.INBOX_DIR, rb.SEEN_DIR):
+        os.chmod(root / name, 0o755)
     rb.register_requester(root, "operator", keys[1])
     return root
 
@@ -248,3 +253,17 @@ def test_a_request_is_refused_when_the_trust_anchor_is_unsound(state, keys, evid
         rb.accept_request(state, request, signature=signature, root_uid=os.getuid(),
                           expected_clears=request["clears"],
                           expected_evidence_sha256=digest)
+
+
+def test_a_group_writable_trust_anchor_directory_is_reported(state):
+    """A group member can unlink and recreate a key inside such a directory."""
+    os.chmod(state / rb.TRUST_DIR, 0o775)
+    problems = rb.check_layout(state, root_uid=os.getuid())
+    assert any("trust anchor" in problem and "group" in problem for problem in problems), problems
+
+
+def test_a_group_writable_replay_ledger_directory_is_reported(state):
+    """A group member can erase a consumed nonce inside such a directory."""
+    os.chmod(state / rb.SEEN_DIR, 0o775)
+    problems = rb.check_layout(state, root_uid=os.getuid())
+    assert any("replay ledger" in problem and "group" in problem for problem in problems), problems

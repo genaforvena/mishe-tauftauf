@@ -444,3 +444,71 @@ def test_the_stop_grace_is_honoured(tmp_path):
     patient_elapsed = time.monotonic() - started
     assert patient_elapsed > quick_elapsed + 0.5, \
         f"the configured grace was ignored: {quick_elapsed:.2f}s then {patient_elapsed:.2f}s"
+
+
+def test_an_orphaned_worker_blocks_a_second_dispatch(tmp_path):
+    """A worker that outlived its supervisor must not run beside another.
+
+    The record carries the worker's pid, so a successor can tell that the
+    worker is still running.  Reconciling such a record is refused, because
+    closing it would let the next dispatch start a second worker.
+    """
+    import os
+    import signal
+    from mishe_tauftauf.core import SubprocessWorker
+    marker = tmp_path / "orphan-pid"
+    # The worker records its own pid and then sleeps.
+    script = (
+        "import os, time\n"
+        f"open({str(marker)!r}, 'w').write(str(os.getpid()))\n"
+        "time.sleep(30)\n"
+    )
+    store = DispatchStore(tmp_path / "dispatch")
+    supervisor = Supervisor(store=store, registry=StaticRoleRegistry(["genome"]),
+                            worker=SubprocessWorker(timeout=60, cwd=tmp_path))
+    # The supervisor is killed while its worker runs, so the record keeps
+    # the started state and the worker keeps running.
+    import threading
+    result = {}
+
+    def run_turn():
+        result["record"] = supervisor.dispatch("genome", "orphan-1", payload={
+            "command": [sys.executable, "-c", script]})
+
+    thread = threading.Thread(target=run_turn)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 15
+        while (not marker.exists() or not marker.read_text().strip()) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert marker.is_file() and marker.read_text().strip(), "the worker never started"
+        pid = int(marker.read_text().strip())
+        # The record names the worker, so a successor can find it.
+        record = store.read("genome")
+        assert record is not None
+        assert record.pid == pid, f"the record names {record.pid}, not the worker {pid}"
+        # The reconciliation must be refused while the worker is alive.
+        refused = False
+        try:
+            supervisor.reconcile("genome", detail="checking the orphan")
+        except SupervisorError:
+            refused = True
+        assert refused, "a live worker's record was reconciled away"
+        assert _alive(pid)
+    finally:
+        try:
+            os.kill(int(marker.read_text().strip()), signal.SIGKILL)
+        except (OSError, ValueError):
+            pass
+        thread.join(timeout=30)
+
+
+def _ignore(value):
+    return value
+
+
+def _dispatch(supervisor, role, key):
+    try:
+        supervisor.dispatch(role, key, payload={"command": [sys.executable, "-c", "print('x')"]})
+    except Exception:
+        pass

@@ -68,3 +68,25 @@ def test_the_record_is_written_atomically(tmp_path):
     # No temporary file survives the write, and the visible record is whole.
     assert sorted(path.name for path in (tmp_path / "dispatch").iterdir()) == ["genome.json"]
     assert store.read("genome").state.name == "started"
+
+
+def test_clearing_a_record_keeps_the_key_history(tmp_path):
+    """The key history is what stops a finished key from running again."""
+    from mishe_tauftauf.core import DispatchStoreError
+    store = DispatchStore(tmp_path / "dispatch")
+    store.write(DispatchRecord(role="genome", key="k1",
+                               state=DispatchState("completed")))
+    assert store.used_keys("genome") == {"k1"}
+    store.clear("genome")
+    assert store.used_keys("genome") == {"k1"}, \
+        "clearing the record erased the key history"
+
+
+def test_clearing_an_open_record_is_refused(tmp_path):
+    """An open record is not provably finished, so it is not cleared."""
+    from mishe_tauftauf.core import DispatchStoreError
+    store = DispatchStore(tmp_path / "dispatch")
+    store.write(DispatchRecord(role="genome", key="k1", state=DispatchState("started")))
+    with pytest.raises(DispatchStoreError):
+        store.clear("genome")
+    assert store.read("genome") is not None

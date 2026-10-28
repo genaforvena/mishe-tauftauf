@@ -121,6 +121,12 @@ def check_layout(state: Path, *, root_uid: int = 0) -> list[str]:
         info = path.stat()
         if info.st_mode & stat.S_IWOTH:
             problems.append(f"{label} {path} is world-writable")
+        # A group-writable directory lets a group member unlink and recreate
+        # a file inside it, whatever mode the file itself carries.  For the
+        # trust anchor that is replacing the key; for the replay ledger it
+        # is erasing a consumed nonce.
+        if info.st_mode & stat.S_IWGRP:
+            problems.append(f"{label} {path} is writable by its group")
         if info.st_uid != root_uid:
             problems.append(f"{label} {path} is not owned by uid {root_uid}")
 

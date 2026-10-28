@@ -169,11 +169,30 @@ class DispatchStore:
         return [record for record in self.records() if record.state in OPEN_STATES]
 
     def clear(self, role: str) -> None:
-        """Remove one role's record.  Only for state that is provably finished."""
-        try:
-            self.path_for(role).unlink()
-        except FileNotFoundError:
-            pass
+        """Remove one role's record.  Only for state that is provably finished.
+
+        The key history is kept.  It is what stops a finished key from being
+        dispatched again, so removing it with the record would undo the
+        guard that makes a key name one piece of work.
+        """
+        record = self.read(role)
+        if record is not None and record.state in OPEN_STATES:
+            raise DispatchStoreError(
+                f"dispatch {record.key!r} for role {role!r} is {record.state.name}; "
+                "reconcile it before clearing")
+        path = self.path_for(role)
+        if not path.exists():
+            return
+        keys = self.used_keys(role)
+        last = record.key if record is not None else ""
+        path.unlink()
+        if keys:
+            # The history survives the record it belonged to.  The last key
+            # stays as the record's own, so the file is still a record.
+            write_record_fields(path, {"role": role, "key": last,
+                                       "state": "reconciled", "detail": "",
+                                       "pid": None, "attempt": 1,
+                                       "used_keys": sorted(keys)})
 
 
 __all__ = ["DispatchRecord", "DispatchStore", "DispatchStoreError",

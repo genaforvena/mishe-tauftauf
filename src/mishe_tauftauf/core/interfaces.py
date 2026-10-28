@@ -79,14 +79,21 @@ class WorkerResult:
 
     ``detail`` is a short human-readable tail.  It never carries the evidence
     itself: evidence belongs in the durable record the adapter writes.
+
+    ``pid`` is the operating-system pid of the worker, when it ran one.
+    It is what a successor reads to find a worker that outlived its
+    supervisor.
     """
 
     outcome: str
     detail: str = ""
+    pid: int | None = None
 
     def __post_init__(self) -> None:
         if self.outcome not in {"completed", "failed", "skipped", "unknown"}:
             raise ValueError(f"unknown worker outcome {self.outcome!r}")
+        if self.pid is not None and (isinstance(self.pid, bool) or not isinstance(self.pid, int)):
+            raise ValueError("pid must be an integer or absent")
 
     @property
     def ok(self) -> bool:

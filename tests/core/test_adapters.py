@@ -370,3 +370,25 @@ def test_a_stale_observation_is_not_healthy(site, monkeypatch):
     assert reading.fresh is False
     assert reading.healthy is False
     assert "stale" in reading.detail
+
+
+def test_a_red_in_the_frame_body_is_not_healthy(site, monkeypatch):
+    """The plant's verdict is in the body, not in the headline.
+
+    The headline reads GREEN whenever the silence watcher is live, whatever
+    the renderer below it says.  A frame whose body reports RED is a
+    problem, and the plant's own pattern decides it.
+    """
+    from mishe_tauftauf import seed
+    stub_pane(monkeypatch, site)
+    seed.Feed(site).append_record("seed", "seed observation genome",
+                                  {"digest": "e" * 64, "role": "genome",
+                                   "snapshot": "HEADLINE: GREEN — mind ok; watcher live\n"
+                                               "SERVICE mishe-self-development-current-coordination.service: RED inactive/dead restarts=0\n"
+                                               "STATE: RED — service failure or empty manifest\n",
+                                   "command_ok": True, "notify": True},
+                                  kind="observation")
+    reading = CanonicalObservation(home=site, role="genome")()
+    assert reading.fresh is True
+    assert reading.healthy is False
+    assert "reports a problem" in reading.detail

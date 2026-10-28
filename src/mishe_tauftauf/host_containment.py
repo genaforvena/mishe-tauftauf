@@ -32,7 +32,14 @@ STABLE_SECONDS = 120
 #: The commands a protected session's mind pane may be running.  A shell
 #: placeholder is not a mind: it renders nothing and answers nothing, so a
 #: pane running one is not a live mind.
-LIFE_SUPPORT_ENGINES = frozenset({"omp", "codex", "opencode", "claude"})
+#:
+#: The native internal loop runs under the site's python names, so those
+#: count as a mind as well.  The plant's own readiness gate recognises the
+#: same set (native_gate.ENGINE_NAMES and ENGINE_PREFIXES); a mind that the
+#: gate would accept must not read as absent here.
+LIFE_SUPPORT_ENGINES = frozenset({"omp", "codex", "opencode"})
+LIFE_SUPPORT_PYTHON_NAMES = ("python", "python3")
+LIFE_SUPPORT_PYTHON_PREFIXES = ("python3.",)
 
 
 @contextmanager
@@ -362,6 +369,18 @@ def lifeline_safe(config):
         return False
 
 
+def _is_mind_engine(command):
+    """Whether a pane's foreground command is a mind.
+
+    The site runs two kinds of mind: an external engine under its own name,
+    and the native internal loop under the site's python names.  A shell
+    placeholder is neither.
+    """
+    if command in LIFE_SUPPORT_ENGINES:
+        return True
+    return command in LIFE_SUPPORT_PYTHON_NAMES or command.startswith(LIFE_SUPPORT_PYTHON_PREFIXES)
+
+
 def life_observation(config):
     life = config["life_support"]
     result = bounded_command(["/usr/sbin/runuser", "-u", config["user"], "--", "/usr/bin/tmux", "-S", life["socket"], "list-panes", "-s", "-t", life["session"],
@@ -380,7 +399,7 @@ def life_observation(config):
                 # placeholder is not a mind: reporting it as live made the
                 # protected session look healthy while no mind existed, which
                 # is the exact false reading this observation must not give.
-                engine = command in LIFE_SUPPORT_ENGINES
+                engine = _is_mind_engine(command)
                 found[name + "." + index] = dict(
                     pid=int(pid), live=dead == "0" and owner == life["home"] and contained,
                     command=command, engine=engine)

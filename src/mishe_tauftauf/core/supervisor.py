@@ -21,6 +21,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Sequence
 
+from .dispatch_record import process_alive as _process_alive
 from .interfaces import (COMPLETED, FAILED, RECONCILED, SKIPPED, STARTED,
                          UNKNOWN, Dispatch, Observation, RoleRegistry, Worker)
 from .registry import check_registry
@@ -140,19 +141,35 @@ class Supervisor:
             record = DispatchRecord(role=role, key=key, state=STARTED, attempt=attempt)
             self.store.write(record)
             request = Dispatch(role=role, key=key, payload=dict(payload or {}))
+            # The worker's pid is written into the record as soon as the
+            # worker exists, so a successor that reads the record while the
+            # worker runs can find it and refuse to sit beside it.
+            def publish(pid: int) -> None:
+                current = self.store.read(role)
+                if current is None or current.state != STARTED:
+                    return
+                self.store.write(DispatchRecord(role=role, key=key, state=STARTED,
+                                                detail=current.detail, pid=pid,
+                                                attempt=attempt))
+            request = Dispatch(role=role, key=key,
+                               payload=dict(payload or {}, publish_pid=publish))
             try:
                 result = self.worker.run(request)
             except BaseException as exc:
                 # The worker raised.  Its effect is unknown, not absent: the
                 # record stays open so a successor reconciles instead of replaying.
+                current = self.store.read(role)
                 record = DispatchRecord(role=role, key=key, state=UNKNOWN,
-                                        detail=f"worker raised: {exc}", attempt=attempt)
+                                        detail=f"worker raised: {exc}",
+                                        pid=current.pid if current is not None else None,
+                                        attempt=attempt)
                 self.store.write(record)
                 raise
             state = {"completed": COMPLETED, "failed": FAILED, "skipped": SKIPPED,
                      "unknown": UNKNOWN}[result.outcome]
             record = DispatchRecord(role=role, key=key, state=state,
-                                    detail=result.detail, attempt=attempt)
+                                    detail=result.detail, pid=result.pid,
+                                    attempt=attempt)
             self.store.write(record)
             return record
 
@@ -179,6 +196,12 @@ class Supervisor:
             if key is not None and key != record.key:
                 raise SupervisorError(
                     f"dispatch {record.key!r} is not the dispatch named {key!r}")
+            if record.pid is not None and _process_alive(record.pid):
+                # The worker is still running.  Closing the record now would
+                # let the next dispatch start a second worker beside it.
+                raise SupervisorError(
+                    f"dispatch {record.key!r} still has a live worker "
+                    f"(pid {record.pid}); stop it before reconciling")
             closed = DispatchRecord(role=record.role, key=record.key, state=RECONCILED,
                                     detail=detail, pid=record.pid, attempt=record.attempt)
             self.store.write(closed)
