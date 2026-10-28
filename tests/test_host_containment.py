@@ -1,5 +1,7 @@
 """The host safety boundary must fail closed independently of plant history."""
 import threading
+import time
+import sys
 
 import pytest
 
@@ -9,7 +11,7 @@ from mishe_tauftauf import host_containment as guard
 def sample(**changes):
     row = dict(oom_kill=0, memory=100, maximum=1000, tasks=1, task_max=100,
                available=8 * guard.GIB, disk_free=30 * guard.GIB,
-               memory_pressure=0, io_pressure=0, limits_ok=True)
+               memory_pressure=0, io_pressure=0, limits_ok=True, ssh_available=True, host_io_available=True)
     row.update(changes)
     return row
 
@@ -20,7 +22,7 @@ def test_oom_trips_immediately_and_counter_reset_is_not_an_oom():
 
 
 def test_sustained_pressure_trips_but_a_clear_sample_breaks_interval():
-    bad = sample(memory_pressure=20)
+    bad = sample(memory_pressure=20, available=3 * guard.GIB)
     assert guard.reason(bad, sample(), None, 10) == (None, 10)
     assert guard.reason(bad, bad, 10, 20)[0] == "sustained resource pressure"
     assert guard.reason(sample(), bad, 10, 19) == (None, None)
@@ -124,7 +126,7 @@ def test_stale_checker_stops_workload_even_with_a_wedged_transition_lock(tmp_pat
     monkeypatch.setattr(guard, "stop", lambda config: stopped.append(True))
     with guard.transition(state):
         assert guard.main() == 1
-    assert stopped == [True]
+    assert stopped == [True, True]
     assert (state / "emergency").exists()
     guard.atomic(run / "status.json", {"state": "READY", "at": guard.time.time()})
     assert not guard.admitted(state, run)
@@ -206,3 +208,44 @@ def test_kernel_stop_does_not_depend_on_well_formed_inventory(tmp_path):
     receipts = guard.stop(dict(cgroup=str(tmp_path), units=None))
     assert kill.read_text() == "1"
     assert receipts[0] == {"kill": "requested"}
+
+
+def test_throttled_workload_pressure_is_retained_without_claiming_ssh_failure():
+    row = sample(memory_pressure=90, io_pressure=90)
+    assert guard.reason(row, sample(), None, 10) == (None, None)
+    assert row["memory_pressure"] == row["io_pressure"] == 90
+
+
+def test_ssh_failure_is_an_independent_immediate_stop():
+    assert guard.reason(sample(ssh_available=False), sample(), None, 10)[0] == "SSH listener unavailable"
+    assert not guard.clear_to_rearm(sample(ssh_available=False))
+
+
+def test_host_filesystem_probe_writes_reads_and_syncs(tmp_path):
+    assert guard.filesystem_probe(tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_bounded_functional_probe_kills_a_stalled_process():
+    started = time.monotonic()
+    assert guard.bounded_command([sys.executable, "-c", "import time;time.sleep(60)"], timeout=.05) is None
+    assert time.monotonic() - started < 1
+
+
+def test_host_io_failure_is_independent_of_listener_and_headroom():
+    assert guard.reason(sample(host_io_available=False), sample(), None, 10)[0] == "host filesystem probe unavailable"
+    assert not guard.clear_to_rearm(sample(host_io_available=False))
+
+
+def test_pressure_warning_transition_is_durable_and_names_bounded_resolver(tmp_path):
+    row = sample(io_pressure=60)
+    guard.record_pressure(tmp_path, row, True)
+    files = list(tmp_path.glob("pressure-*.json")); assert len(files) == 1
+    original = files[0].read_bytes()
+    guard.record_pressure(tmp_path, sample(), False)
+    assert files[0].read_bytes() == original
+    assert len(list(tmp_path.glob("pressure-*.json"))) == 2
+    event = guard.read(files[0])
+    assert event["resolver"] == "host-sentinel"
+    assert event["next_probe_seconds"] <= 5
+    assert event["observation"]["io_pressure"] == 60

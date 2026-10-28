@@ -13,10 +13,12 @@ import math
 import os
 from pathlib import Path
 import re
+import signal
 import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 
 GIB = 1024 ** 3
@@ -105,6 +107,7 @@ def latch(state, why, observation):
 
 def emergency(config, why):
     """Independent sticky marker: ordinary rearm can never remove this latch."""
+    receipts = stop(config)
     try:
         with (STATE / "emergency").open("x") as stream:
             json.dump(dict(at=time.time(), reason=why), stream)
@@ -114,13 +117,65 @@ def emergency(config, why):
         pass
     except OSError as exc:
         print("EMERGENCY latch persistence failed: " + str(exc), file=sys.stderr, flush=True)
-    return stop(config)
+    return receipts
 
 
 def pressure(name):
     rows = Path("/proc/pressure", name).read_text().splitlines()
     row = next(row for row in rows if row.startswith("full "))
     return float(dict(part.split("=", 1) for part in row.split()[1:])["avg10"])
+
+
+def bounded_command(command, *, timeout=1):
+    """Bound fork/exec and all output drain; a timed-out probe owns its group."""
+    try:
+        proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                start_new_session=True)
+    except OSError:
+        return None
+    try:
+        output, _ = proc.communicate(timeout=timeout)
+        return proc.returncode, output
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            proc.communicate(timeout=.2)
+        except subprocess.TimeoutExpired:
+            proc.stdout.close()
+        return None
+
+
+def filesystem_probe(directory="/var/tmp"):
+    payload = b"mishe host filesystem probe\n"
+    try:
+        with tempfile.TemporaryFile(dir=directory) as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+            stream.seek(0)
+            return stream.read() == payload
+    except OSError:
+        return False
+
+
+def functional_probes(config):
+    # Key exchange reaches beyond the banner. The separate user process checks
+    # fork/exec, root-filesystem writes/fsync/read and user identity separately.
+    kex = bounded_command(["/usr/bin/ssh-keyscan", "-T", "1", "-t", "ed25519", "127.0.0.1"])
+    io = bounded_command(["/usr/sbin/runuser", "-u", config["user"], "--", "/usr/bin/python3",
+                          str(Path(__file__).resolve()), "io-probe"])
+    return bool(kex and kex[0] == 0 and b" ssh-ed25519 " in kex[1]), bool(io and io[0] == 0)
+
+
+def record_pressure(state, row, warning):
+    atomic(state / ("pressure-" + str(time.time_ns()) + ".json"),
+           dict(at=time.time(), warning=warning, observation=row, resolver="host-sentinel",
+                next_probe_seconds=5,
+                action="repeat production SSH key exchange and user fork/exec/fsync/read; stop on any failure",
+                disposition="bounded functional probes recorded; pressure cause remains open"))
 
 
 def observe(config):
@@ -140,6 +195,7 @@ def observe(config):
                    disk_free=shutil.disk_usage("/").free,
                    memory_pressure=pressure("memory"), io_pressure=pressure("io"),
                    limits_ok=limits_ok)
+        row["ssh_available"], row["host_io_available"] = functional_probes(config)
         if (row["maximum"] <= 0 or row["task_max"] <= 0
                 or any(not math.isfinite(row[key]) or not 0 <= row[key] <= 100
                        for key in ("memory_pressure", "io_pressure"))):
@@ -161,12 +217,18 @@ def reason(row, previous, pressured_since, now):
         return "resource observation unavailable", None
     if not row["limits_ok"]:
         return "resource limits changed", None
+    if row.get("ssh_available") is not True:
+        return "SSH listener unavailable", None
+    if row.get("host_io_available") is not True:
+        return "host filesystem probe unavailable", None
     if row["oom_kill"] > (previous or row)["oom_kill"]:
         return "cgroup OOM", None
     if row["disk_free"] < 10 * GIB:
         return "root disk reserve low", None
-    pressured = (row["available"] < 4 * GIB or row["memory_pressure"] >= 10
-                 or row["io_pressure"] >= 25 or row["memory"] >= row["maximum"] * .95
+    # Global PSI includes tasks deliberately throttled by our cgroup limits.
+    # Preserve those observations; use actual host headroom/listener failure
+    # to distinguish them from a threatened host. Never relax kernel ceilings.
+    pressured = (row["available"] < 4 * GIB or row["memory"] >= row["maximum"] * .95
                  or row["tasks"] >= row["task_max"] * .95)
     since = (now if pressured_since is None else pressured_since) if pressured else None
     if since is not None and now - since >= 10:
@@ -175,7 +237,9 @@ def reason(row, previous, pressured_since, now):
 
 
 def clear_to_rearm(row):
-    return bool(row and row["limits_ok"] and row["memory"] < row["maximum"] * .7
+    return bool(row and row["limits_ok"] and row.get("ssh_available") is True
+                and row.get("host_io_available") is True
+                and row["memory"] < row["maximum"] * .7
                 and row["tasks"] < row["task_max"] * .7 and row["available"] >= 6 * GIB
                 and row["disk_free"] >= 12 * GIB and row["memory_pressure"] < 1
                 and row["io_pressure"] < 10)
@@ -224,32 +288,34 @@ def notify(message):
 
 
 def watch(config):
+    stop(config)
     STATE.mkdir(parents=True, exist_ok=True)
     RUN.mkdir(parents=True, exist_ok=True)
     # Any supervisor interruption requires explicit rearm. A restart cannot
     # erase a pressure interval or turn an observation gap into recovery.
     with transition(STATE):
-        try:
-            latch(STATE, "sentinel started/restarted: explicit rearm required", None)
-        except OSError:
-            stop(config)
-            raise
+        latch(STATE, "sentinel started/restarted: explicit rearm required", None)
     previous = None
     since = None
+    old_warning = False
+    last_pressure_record = 0
     notify("READY=1")
     while True:
         with transition(STATE):
             row = observe(config)
             why, since = reason(row, previous, since, time.monotonic())
             if why:
-                try:
-                    latch(STATE, why, row)
-                except OSError:
-                    stop(config)
-                    raise
+                stop(config)
+                latch(STATE, why, row)
             tripped = (STATE / "tripped").exists() or (STATE / "emergency").exists()
             status = dict(at=time.time(), state="TRIPPED" if tripped else "READY",
-                          observation=row, pressured_since=since)
+                          observation=row, pressured_since=since,
+                          pressure_warning=bool(row and (row["memory_pressure"] >= 10 or row["io_pressure"] >= 25)))
+            warning = status["pressure_warning"]
+            if warning != old_warning or (warning and time.monotonic() - last_pressure_record >= 60):
+                record_pressure(STATE, row, warning)
+                last_pressure_record = time.monotonic()
+            old_warning = warning
             if tripped:
                 status["stop"] = stop(config)
             atomic(RUN / "status.json", status)
@@ -263,9 +329,11 @@ def main():
     parser.add_argument("--cgroup", help="root unit's independent emergency target")
     parser.add_argument("--user", default="mesh-home")
     parser.add_argument("--uid", type=int, default=1000)
-    parser.add_argument("action", choices=("prepare", "watch", "check", "trip", "rearm", "admit", "status"))
+    parser.add_argument("action", choices=("io-probe", "prepare", "watch", "check", "trip", "rearm", "admit", "status"))
     parser.add_argument("unit", nargs="?", default="")
     args = parser.parse_args()
+    if args.action == "io-probe":
+        return 0 if filesystem_probe() else 1
     if args.action == "admit":
         return 0 if admitted() else 1
     if args.action == "status":
@@ -307,12 +375,11 @@ def main():
             healthy = False
         if args.action == "trip" or not healthy:
             why = "external sentinel missing/stale/failed" if args.action == "check" else "explicit stop"
+            receipts = stop(config)
             try:
                 with transition(STATE, timeout=.1):
-                    try:
-                        latch(STATE, why, None)
-                    finally:
-                        print(json.dumps(stop(config)))
+                    latch(STATE, why, None)
+                    print(json.dumps(receipts))
             except (TimeoutError, OSError):
                 print(json.dumps(emergency(config, why + "; transition lock wedged")))
             return 1
