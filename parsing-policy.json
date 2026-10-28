@@ -12,6 +12,7 @@
     "src/mishe_tauftauf/follow_through.py",
     "src/mishe_tauftauf/host_boot.py",
     "src/mishe_tauftauf/host_capacity.py",
+    "src/mishe_tauftauf/host_containment.py",
     "src/mishe_tauftauf/host_radio.py",
     "src/mishe_tauftauf/inference_effects.py",
     "src/mishe_tauftauf/inference_optiona.py",
