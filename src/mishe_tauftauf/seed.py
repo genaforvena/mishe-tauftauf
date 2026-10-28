@@ -198,27 +198,13 @@ RENEWAL_SLUGS = frozenset({"discover", "senses"})
 
 OBS_RE = re.compile(r"seed observation ([a-z0-9-]+)(?: sha256=([0-9a-f]{64}))?\Z")
 from .chat_protocol import decode_lifecycle
-# OMP's idle status can include a token after INSERT, e.g. "INSERT y >".
-# Observed 2026-10-28: idle footer carries spinner+timing, e.g. "⠇ 28m > INSERT > ⬢ Muse Spark … ▶─"
-# Busy is Working… spinner; a bare spinner+INSERT without the footer bar is the overlay and stays busy.
-_OMP_INSERT_PROMPT_RE = re.compile(r"\s*π > INSERT(?: +[A-Za-z0-9!?-]+)* >")
-_OMP_NORMAL_PROMPT_RE = re.compile(r"\s*π > NORMAL >")
-_OMP_SPINNER_IDLE_RE = re.compile(r"\s*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s*\d+\s*[msh]\s*>\s*INSERT(?: +[A-Za-z0-9!?-]+)*\s*>.*[▶┃]")
 
 
 def _omp_idle_mode(pane: str) -> str | None:
-    mode = None
-    for line in pane.splitlines():
-        status = line.lstrip()
-        if status.startswith(tuple("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")) and "Working..." in status:
-            return None
-        if _OMP_INSERT_PROMPT_RE.match(line) or _OMP_SPINNER_IDLE_RE.match(line):
-            mode = "insert"
-        elif _OMP_NORMAL_PROMPT_RE.match(line):
-            mode = "normal"
-        elif status.startswith(tuple("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")) and ("> INSERT " in line or "> NORMAL " in line):
-            return None
-    return mode
+    from .omp_pane import omp_idle_mode
+
+    return omp_idle_mode(pane)
+
 
 
 def _opencode_idle(pane: str) -> bool:
@@ -297,6 +283,7 @@ def _receipt_line(body: str) -> str:
 def _state(home: Path, slug: str, *, entries=None) -> tuple[str | None, int | None, int | None, int | None, int | None, int | None, datetime | None, int | None]:
     if entries is None:
         entries = Feed(home).role_entries(slug)
+    digest = None
     unresolved_observation = None
     last_observation = None
     last_woken_observation = None

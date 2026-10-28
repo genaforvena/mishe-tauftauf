@@ -420,8 +420,26 @@ def launcher_model(text: str) -> str | None:
         return candidates[0]
     return None
 
-_SPINNER_GLYPHS = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-"""Braille spinner frames the omp/opencode TUI advances without new content."""
+_OMP_INSERT_PROMPT_RE = re.compile(r"\s*π > INSERT(?: +[A-Za-z0-9!?-]+)* >")
+_OMP_NORMAL_PROMPT_RE = re.compile(r"\s*π > NORMAL >")
+_OMP_SPINNER_IDLE_RE = re.compile(r"\s*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s*\d+\s*[msh]\s*>\s*INSERT(?: +[A-Za-z0-9!?-]+)*\s*>.*[▶┃]")
+
+
+def omp_idle_mode(pane: str) -> str | None:
+    mode = None
+    for line in pane.splitlines():
+        status = line.lstrip()
+        if status.startswith(tuple("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")) and "Working..." in status:
+            return None
+        if _OMP_INSERT_PROMPT_RE.match(line) or _OMP_SPINNER_IDLE_RE.match(line):
+            mode = "insert"
+        elif _OMP_NORMAL_PROMPT_RE.match(line):
+            mode = "normal"
+        elif status.startswith(tuple("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")) and ("> INSERT " in line or "> NORMAL " in line):
+            return None
+    return mode
+
+
 
 _FRAME_CLOCK_RE = re.compile("·\\s*\\d+[smh]\\d*s?")
 """An elapsed timer (``· 2m8s``) the frame advances while a tool waits."""
