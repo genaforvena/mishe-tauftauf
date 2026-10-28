@@ -170,7 +170,11 @@ def test_a_failed_command_through_the_supervisor_blocks_the_next_dispatch(site, 
 
 
 def test_an_unreadable_canonical_state_is_unknown_not_skipped(site, monkeypatch):
-    """A state that cannot be read is not a state that says nothing is owed."""
+    """A state that cannot be read is not a state that says nothing is owed.
+
+    The canonical tick turns an unreadable state into an UNKNOWN receipt,
+    and the adapter keeps that reading: the turn is not known to be undone.
+    """
     stub_pane(monkeypatch, site)
     from mishe_tauftauf import seed
     monkeypatch.setattr(seed, "_state", lambda *a, **k: (_ for _ in ()).throw(OSError("tape unreadable")))
@@ -178,9 +182,10 @@ def test_an_unreadable_canonical_state_is_unknown_not_skipped(site, monkeypatch)
     notes.write_text("The state could not be read.\n", encoding="utf-8")
     worker = CanonicalWorker(home=site, session="mishe-trial", role="genome",
                              notes_file=notes, timeout=30)
-    with pytest.raises(OSError):
-        worker.run(Dispatch(role="genome", key="trial-1", payload={
-            "command": [sys.executable, "-c", "print('must not run')"]}))
+    result = worker.run(Dispatch(role="genome", key="trial-1", payload={
+        "command": [sys.executable, "-c", "print('must not run')"]}))
+    assert result.outcome == "unknown"
+    assert not (site / "walls" / "genome.md").exists()
 
 
 def test_the_observation_reads_the_canonical_state(site, monkeypatch):
@@ -324,3 +329,44 @@ def test_the_observation_is_not_healthy_for_a_red_sensor(site, monkeypatch):
     reading = CanonicalObservation(home=site, role="genome")()
     assert reading.fresh is True
     assert reading.healthy is False
+
+
+def test_an_unknown_receipt_with_a_pending_wake_does_not_run_the_turn(site, monkeypatch):
+    """A stale observation stops the turn even when a wake is owed.
+
+    The plant's tick reports UNKNOWN when the observation it needed could
+    not be trusted.  Running and settling the turn on that reading would
+    settle a turn the plant could not confirm.
+    """
+    from mishe_tauftauf import seed
+    stub_pane(monkeypatch, site)
+    seed.Feed(site).append("seed", "seed wake genome observation=1\nA pending turn.")
+
+    def unknown_tick(*args, **kwargs):
+        return "UNKNOWN seed genome transport/observation: dashboard stale or future"
+
+    monkeypatch.setattr(seed, "tick", unknown_tick)
+    notes = site / "notes.md"
+    notes.write_text("The observation was stale.\n", encoding="utf-8")
+    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome",
+                             notes_file=notes, timeout=30)
+    result = worker.run(Dispatch(role="genome", key="trial-1", payload={
+        "command": [sys.executable, "-c", "print('must not run')"]}))
+    assert result.outcome == "unknown"
+    assert not (site / "walls" / "genome.md").exists()
+    assert seed._state(site, "genome")[1] is not None, "the wake was settled anyway"
+
+
+def test_a_stale_observation_is_not_healthy(site, monkeypatch):
+    """An observation from an hour ago is not evidence about now."""
+    from mishe_tauftauf import seed
+    stub_pane(monkeypatch, site)
+    seed.Feed(site).append_record("seed", "seed observation genome",
+                                  {"digest": "d" * 64, "role": "genome",
+                                   "snapshot": "STATE: GREEN\nAll good.",
+                                   "command_ok": True, "notify": True},
+                                  kind="observation")
+    reading = CanonicalObservation(home=site, role="genome", max_age_seconds=0.0)()
+    assert reading.fresh is False
+    assert reading.healthy is False
+    assert "stale" in reading.detail

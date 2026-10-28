@@ -108,21 +108,26 @@ class CanonicalWorker:
         # crash the supervisor, and it must not read as a pass.
         receipt = seed.tick(self.home, self.session, self.role,
                             float(dispatch.payload.get("self_pick_seconds", 0)))
-        # The wake number is read from the canonical decoded state, not from
-        # the receipt's text: the receipt is a human-readable line, and the
-        # plant's own state is what both the wake and the settlement check.
-        wake = self._pending_wake()
-        if wake is None:
-            if receipt_is_unknown(receipt):
-                # The observation was stale or unreadable.  The turn is not
-                # known to be undone; the reading is UNKNOWN, not a pass.
-                return WorkerResult(outcome="unknown", detail=receipt)
-            return WorkerResult(outcome="skipped", detail=f"no canonical wake was owed: {receipt}")
+        # A receipt that says the reading could not be trusted, or that the
+        # plant is holding the wake, stops the turn whether or not a wake
+        # is pending.  Acting on an unreadable observation would settle a
+        # turn the plant could not confirm, and settling a held wake would
+        # override a hold the plant itself raised.
+        if receipt_is_unknown(receipt):
+            # The observation was stale or unreadable.  The turn is not
+            # known to be undone; the reading is UNKNOWN, not a pass.
+            return WorkerResult(outcome="unknown", detail=receipt)
         if receipt_is_held(receipt):
             # The plant is holding this wake for reconciliation.  Settling it
             # would override a hold the plant itself raised, so the turn is
             # left alone and the record stays open.
             return WorkerResult(outcome="unknown", detail=receipt)
+        # The wake number is read from the canonical decoded state, not from
+        # the receipt's text: the receipt is a human-readable line, and the
+        # plant's own state is what both the wake and the settlement check.
+        wake = self._pending_wake()
+        if wake is None:
+            return WorkerResult(outcome="skipped", detail=f"no canonical wake was owed: {receipt}")
         payload = dict(dispatch.payload)
         payload["wake"] = wake
         from .worker import SubprocessWorker
@@ -198,38 +203,61 @@ class CanonicalObservation:
             # There is no evidence here, so this is not a pass.
             return Observation(fresh=False, healthy=False,
                                detail=f"no observation for role {self.role}; " + detail)
-        record = self._record(observation)
+        record, age = self._record(observation)
         if record is None:
             return Observation(fresh=False, healthy=False,
                                detail=f"the observation record for {self.role} is unreadable; " + detail)
+        if age is None:
+            return Observation(fresh=False, healthy=False,
+                               detail=f"the observation for {self.role} has no readable age; " + detail)
+        if age < 0 or age > self.max_age_seconds:
+            # An observation that is stale or dated in the future is not
+            # evidence about now.  The plant's own dashboard reader refuses
+            # the same readings.
+            return Observation(fresh=False, healthy=False, age_seconds=age,
+                               detail=f"the observation for {self.role} is stale "
+                                      f"({age:.0f}s old); " + detail)
         snapshot = record.get("snapshot")
         command_ok = record.get("command_ok")
         text = snapshot if isinstance(snapshot, str) else ""
         if command_ok is not True:
             # The plant's own record says the sensor command did not succeed.
             # A record that exists is not a record that says all is well.
-            return Observation(fresh=False, healthy=False,
+            return Observation(fresh=False, healthy=False, age_seconds=age,
                                detail=f"the observation for {self.role} did not succeed: {text[:200]}")
         if snapshot_is_unhealthy(text):
-            return Observation(fresh=True, healthy=False,
+            return Observation(fresh=True, healthy=False, age_seconds=age,
                                detail=f"the observation for {self.role} reports a problem: {text[:200]}")
-        return Observation(fresh=True, healthy=True, detail=detail)
+        return Observation(fresh=True, healthy=True, age_seconds=age, detail=detail)
 
-    def _record(self, sequence: int) -> dict | None:
-        """The observation record's own payload, or ``None``."""
+    def _record(self, sequence: int) -> tuple[dict | None, float | None]:
+        """The observation record's own payload and its age in seconds.
+
+        The age comes from the feed entry's timestamp, which is when the
+        record was published.  A record whose age cannot be read is not
+        evidence about now.
+        """
         from ..feed import Feed
         from ..records import payload
         try:
             entries = Feed(self.home).entries(start=sequence, limit=1)
         except (OSError, ValueError):
-            return None
+            return None, None
         for entry in entries:
             if entry.sequence != sequence:
                 continue
             try:
                 data = payload(entry)
             except (OSError, ValueError, KeyError, TypeError):
-                return None
-            return data if isinstance(data, dict) else None
-        return None
+                return None, None
+            if not isinstance(data, dict):
+                return None, None
+            return data, self._age(entry.timestamp)
+        return None, None
+
+    @staticmethod
+    def _age(timestamp: str) -> float | None:
+        """How old a published entry is, in seconds."""
+        from .dispatch_record import entry_age_seconds
+        return entry_age_seconds(timestamp)
 

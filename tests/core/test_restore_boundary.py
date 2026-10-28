@@ -61,7 +61,7 @@ def signed_request(keys, evidence, *, nonce="nonce-1", requester="operator",
 
 def test_a_registered_requester_is_accepted_once(state, keys, evidence):
     request, signature, digest = signed_request(keys, evidence)
-    accepted = rb.accept_request(state, request, signature=signature,
+    accepted = rb.accept_request(state, request, signature=signature, root_uid=os.getuid(),
                                  expected_clears=request["clears"],
                                  expected_evidence_sha256=digest)
     assert accepted["requester"] == "operator"
@@ -70,17 +70,17 @@ def test_a_registered_requester_is_accepted_once(state, keys, evidence):
 
 def test_the_same_request_is_refused_the_second_time(state, keys, evidence):
     request, signature, digest = signed_request(keys, evidence)
-    rb.accept_request(state, request, signature=signature,
+    rb.accept_request(state, request, signature=signature, root_uid=os.getuid(),
                       expected_clears=request["clears"], expected_evidence_sha256=digest)
     with pytest.raises(rb.BoundaryError, match="already used"):
-        rb.accept_request(state, request, signature=signature,
+        rb.accept_request(state, request, signature=signature, root_uid=os.getuid(),
                           expected_clears=request["clears"], expected_evidence_sha256=digest)
 
 
 def test_an_unregistered_requester_is_refused(state, keys, evidence):
     request, signature, digest = signed_request(keys, evidence, requester="intruder")
     with pytest.raises(rb.BoundaryError, match="no registered public key"):
-        rb.accept_request(state, request, signature=signature,
+        rb.accept_request(state, request, signature=signature, root_uid=os.getuid(),
                           expected_clears=request["clears"], expected_evidence_sha256=digest)
 
 
@@ -89,17 +89,17 @@ def test_a_forged_signature_is_refused_and_the_nonce_stays_unused(state, keys, e
     request, signature, digest = signed_request(keys, evidence)
     forged = bytes(64)
     with pytest.raises(rb.BoundaryError, match="does not verify"):
-        rb.accept_request(state, request, signature=forged,
+        rb.accept_request(state, request, signature=forged, root_uid=os.getuid(),
                           expected_clears=request["clears"], expected_evidence_sha256=digest)
     # The nonce was not consumed, so the genuine request still works.
-    rb.accept_request(state, request, signature=signature,
+    rb.accept_request(state, request, signature=signature, root_uid=os.getuid(),
                       expected_clears=request["clears"], expected_evidence_sha256=digest)
 
 
 def test_a_request_citing_different_latches_is_refused(state, keys, evidence):
     request, signature, digest = signed_request(keys, evidence)
     with pytest.raises(rb.BoundaryError, match="different latches"):
-        rb.accept_request(state, request, signature=signature,
+        rb.accept_request(state, request, signature=signature, root_uid=os.getuid(),
                           expected_clears={"tripped": {"reason": "other"}},
                           expected_evidence_sha256=digest)
 
@@ -107,7 +107,7 @@ def test_a_request_citing_different_latches_is_refused(state, keys, evidence):
 def test_a_stale_request_is_refused(state, keys, evidence):
     request, signature, digest = signed_request(keys, evidence, issued_at=time.time() - 4000)
     with pytest.raises(rb.BoundaryError, match="stale"):
-        rb.accept_request(state, request, signature=signature,
+        rb.accept_request(state, request, signature=signature, root_uid=os.getuid(),
                           expected_clears=request["clears"], expected_evidence_sha256=digest)
 
 
@@ -217,3 +217,34 @@ def test_writing_a_request_does_not_narrow_an_unrelated_directory(state, tmp_pat
     rb.write_request(unrelated / "request.json", {"requester": "operator", "nonce": "n"})
     mode = os.stat(unrelated).st_mode & 0o777
     assert mode == 0o777, f"an unrelated directory was narrowed to {oct(mode)}"
+
+
+def test_a_request_is_refused_when_the_trust_anchor_is_unsound(state, keys, evidence):
+    """A boundary that is wrong on disk is not a boundary.
+
+    The trust anchor is the root of the authentication.  A key others may
+    write is a key the authentication can be moved onto, so the request is
+    refused before its signature is read.
+    """
+    import hashlib
+    private, _ = keys
+    digest = hashlib.sha256(evidence.read_bytes()).hexdigest()
+    request = rr.build_request(requester="operator", operation_id="restore-op-1",
+                               evidence_path=evidence, evidence_sha256=digest,
+                               clears={"tripped": {}}, issued_at=time.time(), nonce="n")
+    signature = rr.sign(request, key_path=private)
+    # Replace the registered key with one an attacker controls, and make the
+    # anchor writable so the replacement is possible.
+    attacker = tmp_path_key = evidence.parent / "attacker.pub"
+    subprocess.run(["openssl", "genpkey", "-algorithm", "ed25519",
+                    "-out", str(evidence.parent / "attacker.key")],
+                   check=True, capture_output=True)
+    subprocess.run(["openssl", "pkey", "-in", str(evidence.parent / "attacker.key"),
+                    "-pubout", "-out", str(attacker)], check=True, capture_output=True)
+    key = rb.trusted_key_for(state, "operator")
+    os.chmod(key, 0o666)
+    os.replace(attacker, key)
+    with pytest.raises(rb.BoundaryError, match="layout is not sound"):
+        rb.accept_request(state, request, signature=signature, root_uid=os.getuid(),
+                          expected_clears=request["clears"],
+                          expected_evidence_sha256=digest)

@@ -170,6 +170,9 @@ def register_requester(state: Path, requester: str, public_key: Path | str) -> P
     temporary.write_bytes(data)
     os.chmod(temporary, KEY_MODE)
     os.replace(temporary, target)
+    # The directory that holds the anchor is root's alone: nobody but root
+    # may add or replace a key in it.
+    os.chmod(target.parent, 0o755)
     return target
 
 
@@ -177,14 +180,24 @@ def accept_request(state: Path, request: Mapping[str, Any], *,
                    signature: bytes,
                    expected_clears: Mapping[str, Any],
                    expected_evidence_sha256: str | None = None,
-                   now: float | None = None) -> dict:
+                   now: float | None = None,
+                   root_uid: int = 0) -> dict:
     """Verify a request and consume its nonce.
+
+    The layout is checked first.  A boundary that is correct in code and
+    wrong on disk is not a boundary: a trust anchor others may write is an
+    authentication that can be moved onto another key, so the request is
+    refused before the signature is even read.
 
     Returns the verified request when every check passes.  Raises when one
     does not, and a refusal leaves the nonce unconsumed so the same request
     can be corrected and retried.
     """
     state = Path(state)
+    problems = check_layout(state, root_uid=root_uid)
+    if problems:
+        raise BoundaryError(
+            "the boundary's layout is not sound: " + "; ".join(problems))
     requester = request.get("requester")
     if not isinstance(requester, str) or not requester:
         raise BoundaryError("the request names no requester")

@@ -121,6 +121,25 @@ def write_record_fields(path, fields: dict) -> None:
         raise
 
 
+def entry_age_seconds(timestamp: Any, *, now: float | None = None) -> float | None:
+    """How old a published entry is, in seconds.
+
+    The plant's clock domain is UTC.  A timestamp that cannot be read is
+    not evidence about now, so the answer is ``None`` rather than a guess.
+    """
+    from datetime import datetime, timezone
+    if not isinstance(timestamp, str):
+        return None
+    try:
+        stamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    moment = now if now is not None else datetime.now(timezone.utc).timestamp()
+    return moment - stamp.timestamp()
+
+
 def snapshot_is_unhealthy(text: Any) -> bool:
     """Whether a sensor's own words report a problem.
 
