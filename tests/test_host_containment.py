@@ -389,12 +389,42 @@ def test_failed_restoration_intent_write_never_opens_admission(tmp_path, monkeyp
 
 def test_life_observation_requires_both_roles_and_their_actual_cgroup(tmp_path, monkeypatch):
     group = next(line[3:] for line in pathlib.Path("/proc/self/cgroup").read_text().splitlines() if line.startswith("0::"))
-    lines = "".join(f"{role}\t{index}\t0\t{os.getpid()}\t{tmp_path}\n" for role in ("health", "genome") for index in (0, 1))
+    lines = "".join(f"{role}\t{index}\t0\t{os.getpid()}\t{tmp_path}\tomp\n" for role in ("health", "genome") for index in (0, 1))
     monkeypatch.setattr(guard, "bounded_command", lambda *args, **kwargs: (0, lines.encode()))
     config = dict(user="test", life_support=dict(socket="unused", session="life", home=str(tmp_path), cgroup=group, roles=["health", "genome"]))
     assert guard.life_observation(config)["state"] == "PANES_LIVE"
     config["life_support"]["cgroup"] = "/not-this-process"
     assert guard.life_observation(config)["state"] == "RED"
+
+
+def test_a_shell_placeholder_is_not_a_live_mind(tmp_path, monkeypatch):
+    """The protected session must not read as healthy when no mind runs.
+
+    A pane running a shell renders nothing and answers nothing.  Reporting
+    it as live made the session look healthy while it held only
+    placeholders, which is the false reading this observation must not give.
+    """
+    group = next(line[3:] for line in pathlib.Path("/proc/self/cgroup").read_text().splitlines() if line.startswith("0::"))
+    lines = "".join(f"{role}\t{index}\t0\t{os.getpid()}\t{tmp_path}\tsh\n" for role in ("health", "genome") for index in (0, 1))
+    monkeypatch.setattr(guard, "bounded_command", lambda *args, **kwargs: (0, lines.encode()))
+    config = dict(user="test", life_support=dict(socket="unused", session="life", home=str(tmp_path), cgroup=group, roles=["health", "genome"]))
+    row = guard.life_observation(config)
+    assert row["state"] == "RED"
+    assert row["minds_running"] is False
+
+
+def test_a_live_mind_with_a_shell_renderer_is_still_live(tmp_path, monkeypatch):
+    """The renderer pane may be a shell between frames; the mind may not."""
+    group = next(line[3:] for line in pathlib.Path("/proc/self/cgroup").read_text().splitlines() if line.startswith("0::"))
+    rows = []
+    for role in ("health", "genome"):
+        rows.append(f"{role}\t0\t0\t{os.getpid()}\t{tmp_path}\tsh")
+        rows.append(f"{role}\t1\t0\t{os.getpid()}\t{tmp_path}\tomp")
+    monkeypatch.setattr(guard, "bounded_command", lambda *args, **kwargs: (0, ("\n".join(rows) + "\n").encode()))
+    config = dict(user="test", life_support=dict(socket="unused", session="life", home=str(tmp_path), cgroup=group, roles=["health", "genome"]))
+    row = guard.life_observation(config)
+    assert row["state"] == "PANES_LIVE"
+    assert row["minds_running"] is True
 
 
 def test_ssh_probe_tolerates_a_slow_successful_handshake(monkeypatch):

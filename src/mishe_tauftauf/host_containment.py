@@ -29,6 +29,11 @@ CONFIG = Path("/etc/mishe-containment.json")
 MAX_AGE = 20
 STABLE_SECONDS = 120
 
+#: The commands a protected session's mind pane may be running.  A shell
+#: placeholder is not a mind: it renders nothing and answers nothing, so a
+#: pane running one is not a live mind.
+LIFE_SUPPORT_ENGINES = frozenset({"omp", "codex", "opencode", "claude"})
+
 
 @contextmanager
 def transition(state, timeout=None):
@@ -360,21 +365,34 @@ def lifeline_safe(config):
 def life_observation(config):
     life = config["life_support"]
     result = bounded_command(["/usr/sbin/runuser", "-u", config["user"], "--", "/usr/bin/tmux", "-S", life["socket"], "list-panes", "-s", "-t", life["session"],
-                              "-F", "#{window_name}\t#{pane_index}\t#{pane_dead}\t#{pane_pid}\t#{@mishe-tauftauf-home}"], timeout=2)
+                              "-F", "#{window_name}\t#{pane_index}\t#{pane_dead}\t#{pane_pid}\t#{@mishe-tauftauf-home}\t#{pane_current_command}"], timeout=2)
     if not result or result[0] != 0:
         return dict(state="UNKNOWN", reason="protected session observation unavailable")
     found = {}
     try:
         for raw in result[1].decode("utf-8").splitlines():
-            name, index, dead, pid, owner = raw.split("\t")
+            name, index, dead, pid, owner, command = raw.split("\t")
             if index in {"0", "1"} and name in life["roles"]:
                 cgroup = Path("/proc", str(int(pid)), "cgroup").read_text()
                 expected = "0::" + life["cgroup"].removeprefix("/sys/fs/cgroup")
                 contained = any(line == expected or line.startswith(expected + "/") for line in cgroup.splitlines())
-                found[name + "." + index] = dict(pid=int(pid), live=dead == "0" and owner == life["home"] and contained)
+                # A pane is live only when a mind is running in it.  A shell
+                # placeholder is not a mind: reporting it as live made the
+                # protected session look healthy while no mind existed, which
+                # is the exact false reading this observation must not give.
+                engine = command in LIFE_SUPPORT_ENGINES
+                found[name + "." + index] = dict(
+                    pid=int(pid), live=dead == "0" and owner == life["home"] and contained,
+                    command=command, engine=engine)
         live = all(found.get(role + "." + index, {}).get("live") for role in life["roles"] for index in ("0", "1"))
-        return dict(state="PANES_LIVE" if live else "RED", panes=found,
-                    activity="pane liveness only; useful work requires tool/wall evidence")
+        # The mind pane of every protected role must be running an engine.
+        # The renderer pane may legitimately be a shell between frames, so
+        # only the mind pane is required to carry one.
+        minds = all(found.get(role + ".1", {}).get("engine")
+                    for role in life["roles"])
+        return dict(state="PANES_LIVE" if live and minds else "RED", panes=found,
+                    activity="pane liveness only; useful work requires tool/wall evidence",
+                    minds_running=minds)
     except (OSError, UnicodeError, ValueError):
         return dict(state="UNKNOWN", reason="malformed protected session observation", raw=result[1][-2048:].decode("utf-8", "replace"))
 
