@@ -144,6 +144,8 @@ def build_parser(description: str, cmd_status, cmd_dispatch, cmd_reconcile,
                                help="the command each turn runs")
         supervise.add_argument("--result", choices=("changed", "verified", "blocked"),
                                default="verified")
+        supervise.add_argument("--continue", dest="continue_task", action="store_true",
+                               help="ask for another turn after the settlement")
         supervise.add_argument("--key-prefix", default="core-",
                                help="the prefix of each turn's durable key")
         supervise.add_argument("--interval", type=float, default=15.0)
