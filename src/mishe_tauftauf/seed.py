@@ -206,6 +206,9 @@ def _omp_idle_mode(pane: str) -> str | None:
     return omp_idle_mode(pane)
 
 
+_OPENCODE_SPNR = tuple("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+
+
 
 def _opencode_idle(pane: str) -> bool:
     """True only at OpenCode's idle input box.
@@ -441,13 +444,14 @@ def _send(target: str, message: str) -> None:
         if engine.returncode == 0 and engine.stdout.decode().strip() == "omp":
             # OMP first turns a long bracketed paste into an attachment card.
             # The first Enter can finish that conversion without submitting it.
-            # Only send another Enter while the card still sits at an idle prompt.
             time.sleep(1.0)
             pane = _tmux("capture-pane", "-p", "-t", target, check=False)
             if pane.returncode == 0:
+                from .omp_pane import is_omp_insert_prompt
+
                 lines = pane.stdout.decode("utf-8", "replace").splitlines()
                 prompt = next((index for index in range(len(lines) - 1, -1, -1)
-                               if _OMP_INSERT_PROMPT_RE.match(lines[index])), None)
+                               if is_omp_insert_prompt(lines[index])), None)
                 before_prompt = ([line for line in lines[max(0, prompt - 12):prompt] if line.strip()]
                                  if prompt is not None else [])
                 card_open = any(line.startswith("╭── 📄 #") for line in before_prompt)

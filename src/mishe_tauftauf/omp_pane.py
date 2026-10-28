@@ -438,7 +438,12 @@ def omp_idle_mode(pane: str) -> str | None:
         elif status.startswith(tuple("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")) and ("> INSERT " in line or "> NORMAL " in line):
             return None
     return mode
+def is_omp_insert_prompt(line: str) -> bool:
+    return _OMP_INSERT_PROMPT_RE.match(line) is not None
 
+
+_SPINNER_GLYPHS = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+"""Braille spinner frames the omp/opencode TUI advances without new content."""
 
 
 _FRAME_CLOCK_RE = re.compile("·\\s*\\d+[smh]\\d*s?")
