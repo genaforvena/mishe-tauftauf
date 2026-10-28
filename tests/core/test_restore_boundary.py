@@ -267,3 +267,25 @@ def test_a_group_writable_replay_ledger_directory_is_reported(state):
     os.chmod(state / rb.SEEN_DIR, 0o775)
     problems = rb.check_layout(state, root_uid=os.getuid())
     assert any("replay ledger" in problem and "group" in problem for problem in problems), problems
+
+
+def test_evidence_that_changed_after_signing_is_refused(state, keys, evidence):
+    """The signature proves who asked; it says nothing about the evidence.
+
+    The evidence is re-read at acceptance, so a request signed over the old
+    bytes cannot pass over new ones.
+    """
+    import hashlib
+    private, _ = keys
+    digest = hashlib.sha256(evidence.read_bytes()).hexdigest()
+    request = rr.build_request(requester="operator", operation_id="restore-op-1",
+                               evidence_path=evidence, evidence_sha256=digest,
+                               clears={"tripped": {}}, issued_at=time.time(), nonce="n1")
+    signature = rr.sign(request, key_path=private)
+    # The evidence changes after the request was signed.
+    evidence.write_text('{"clears": {"tripped": {"reason": "swapped"}}}\n', encoding="utf-8")
+    with pytest.raises(rb.BoundaryError, match="no longer has the digest"):
+        rb.accept_request(state, request, signature=signature,
+                          expected_clears=request["clears"],
+                          expected_evidence_sha256=digest,
+                          root_uid=os.getuid())

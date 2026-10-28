@@ -210,6 +210,20 @@ def accept_request(state: Path, request: Mapping[str, Any], *,
     key = trusted_key_for(state, requester)
     if not key.is_file():
         raise BoundaryError(f"requester {requester!r} has no registered public key")
+    # The evidence is re-read here, not only when the request was signed.
+    # The signature proves who asked; it says nothing about whether the
+    # evidence still says what the request cites.
+    evidence = request.get("evidence_path")
+    cited = request.get("evidence_sha256")
+    if isinstance(evidence, str) and isinstance(cited, str):
+        try:
+            observed = hashlib.sha256(Path(evidence).read_bytes()).hexdigest()
+        except OSError as exc:
+            raise BoundaryError(f"the cited evidence is unreadable: {exc}") from exc
+        if observed != cited:
+            raise BoundaryError(
+                "the cited evidence no longer has the digest the request names: "
+                f"recorded {cited}, observed {observed}")
     # The signature travels with the request.  The check reads it from the
     # request, so it is placed there before the check runs — never after.
     checked = dict(request)
