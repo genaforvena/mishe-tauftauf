@@ -672,6 +672,30 @@ def watch(config):
         time.sleep(2)
 
 
+def caller_inside_mishe(proc_root=None):
+    """True when the calling process chain sits in Mishe's cgroup, or cannot be read.
+
+    Rearm and restore are human decisions taken from a shell outside Mishe. A
+    resident mind can reach ``sudo``, so the caller's own process ancestry is
+    the check; an unreadable chain counts as inside.
+    """
+    proc_root = Path("/proc") if proc_root is None else Path(proc_root)
+    pid = os.getpid()
+    for _ in range(64):
+        try:
+            cgroup = (proc_root / str(pid) / "cgroup").read_text()
+            status = (proc_root / str(pid) / "status").read_text()
+            parent = next(int(line.split()[1]) for line in status.splitlines() if line.startswith("PPid:"))
+        except (OSError, StopIteration, ValueError, IndexError):
+            return True
+        if any("/mishe.slice" in line for line in cgroup.splitlines()):
+            return True
+        if parent <= 1:
+            return False
+        pid = parent
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cgroup", help="root unit's independent emergency target")
@@ -737,11 +761,15 @@ def main():
                 print(json.dumps(emergency(config, why + "; transition lock wedged")))
             return 1
     elif args.action == "rearm":
+        if caller_inside_mishe():
+            raise SystemExit("rearm is a human decision: run it from a shell outside Mishe")
         if "life_support" in config:
             raise SystemExit("use restore --evidence with life support enabled")
         rearm(config)
         print("Rearmed. Start residents explicitly; interrupted wakes remain unreconciled.")
     elif args.action == "restore":
+        if caller_inside_mishe():
+            raise SystemExit("restore is a human decision: run it from a shell outside Mishe")
         restore(config, args.evidence)
     return 0
 

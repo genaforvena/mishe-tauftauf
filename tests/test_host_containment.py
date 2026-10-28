@@ -702,3 +702,34 @@ def test_failed_write_leaves_no_truncated_latch(tmp_path, monkeypatch):
     monkeypatch.setattr(guard.os, "fsync", lambda fd: (_ for _ in ()).throw(OSError("disk gone")))
     with pytest.raises(OSError): guard.write_exclusive(target, b'{"reason": "partial"}')
     assert not target.exists()
+
+
+def _proc(root, pid, parent, cgroup):
+    directory = root / str(pid)
+    directory.mkdir(parents=True)
+    (directory / "cgroup").write_text(f"0::{cgroup}\n")
+    (directory / "status").write_text(f"Name: x\nPPid: {parent}\n")
+
+
+def test_caller_in_mishe_slice_is_refused_through_any_ancestor(tmp_path, monkeypatch):
+    root = tmp_path / "proc"
+    _proc(root, 1, 0, "/init.scope")
+    _proc(root, 100, 1, "/user.slice/app.slice/operator-rescue.scope")
+    _proc(root, 200, 100, "/user.slice/mishe.slice/mishe-lifeline.slice/tmux-spawn-x.scope")
+    _proc(root, 300, 200, "/user.slice/mishe.slice/mishe-lifeline.slice/tmux-spawn-x.scope")
+    monkeypatch.setattr(guard.os, "getpid", lambda: 300)
+    assert guard.caller_inside_mishe(root)
+
+
+def test_human_shell_outside_mishe_is_allowed(tmp_path, monkeypatch):
+    root = tmp_path / "proc"
+    _proc(root, 1, 0, "/init.scope")
+    _proc(root, 100, 1, "/user.slice/app.slice/operator-rescue.scope")
+    _proc(root, 300, 100, "/user.slice/app.slice/operator-rescue.scope")
+    monkeypatch.setattr(guard.os, "getpid", lambda: 300)
+    assert not guard.caller_inside_mishe(root)
+
+
+def test_unreadable_process_chain_is_treated_as_inside(tmp_path, monkeypatch):
+    monkeypatch.setattr(guard.os, "getpid", lambda: 4242)
+    assert guard.caller_inside_mishe(tmp_path / "missing")
