@@ -296,8 +296,7 @@ def _receipt_line(body: str) -> str:
 
 def _state(home: Path, slug: str, *, entries=None) -> tuple[str | None, int | None, int | None, int | None, int | None, int | None, datetime | None, int | None]:
     if entries is None:
-        entries = Feed(home).entries()
-    digest = None
+        entries = Feed(home).role_entries(slug)
     unresolved_observation = None
     last_observation = None
     last_woken_observation = None
