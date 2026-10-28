@@ -461,7 +461,7 @@ def context(home: Path, role: str) -> str:
         if path.is_file():
             sections.append(f"PEER WALL {name} — reference only; never copy into your own wall\n"
                             f"{path.read_text()}")
-    entries = Feed(home).entries()
+    entries = Feed(home).role_entries(role)
     inbox = [e for e in entries if addressed(e, role)][-12:]
     sections.append("ADDRESSED MESSAGES (shared tape, not private)\n" + "\n".join(
         f"{e.sequence} {e.source}: {e.body}" for e in inbox))
@@ -473,7 +473,7 @@ def context(home: Path, role: str) -> str:
 def pane(home: Path, role: str) -> str:
     path = home / "walls" / f"{role}.md"
     text = path.read_text() if path.exists() else "(empty; mind may plan here)\n"
-    shared = Feed(home).entries()
+    shared = Feed(home).role_entries(role)
     entries = [e for e in shared if addressed(e, role)][-3:]
     recent = [e for e in shared if e.source != "seed"][-8:]
     chat = "\nCHAT.LOG — shared conversation previews; full tape: " + str(home / "chat.log") + "\n"
@@ -965,7 +965,7 @@ def tick(home: Path, session: str, role: str, self_pick_seconds: float = 300) ->
             # never mute an addressed escalation. The silence watcher's ENDED
             # notice, a peer message and an operator DM stay deliverable, so a
             # stranded plant can still decide to re-arm, escalate or report.
-            entries = Feed(home).entries()
+            entries = Feed(home).role_entries(role)
             last_wake = next((e.sequence for e in reversed(entries)
                               if (control := decode_lifecycle(e)) and control.kind == "wake"
                               and control.role == role), 0)
@@ -1009,7 +1009,7 @@ def tick(home: Path, session: str, role: str, self_pick_seconds: float = 300) ->
         meaningful = observation_text(role, sensor)
         digest = hashlib.sha256(json.dumps({"sensor": meaningful, "command_ok": ok}, sort_keys=True).encode()).hexdigest()
         previous, pending, settled, cleared, observation, woken_observation, last_at, continuation = seed._state(home, role)
-        entries = Feed(home).entries()
+        entries = Feed(home).role_entries(role)
         prior = next((e for e in reversed(entries) if e.sequence == observation), None)
         from .records import payload
         previous_text = payload(prior).get("snapshot", "") if prior and "[record] " in prior.body else ""
