@@ -236,3 +236,91 @@ def test_the_observation_reports_an_unreadable_state_as_unknown(site, monkeypatc
     reading = CanonicalObservation(home=site, role="genome")()
     assert reading.fresh is False
     assert reading.healthy is False
+
+
+def test_a_dispatch_for_another_role_is_refused(site, monkeypatch):
+    """The record must name the role the effect belongs to."""
+    stub_pane(monkeypatch, site)
+    notes = site / "notes.md"
+    notes.write_text("The dispatch named another role.\n", encoding="utf-8")
+    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome",
+                             notes_file=notes, timeout=30)
+    result = worker.run(Dispatch(role="health", key="trial-1", payload={
+        "command": [sys.executable, "-c", "print('must not run')"]}))
+    assert result.outcome == "failed"
+    assert "not 'health'" in result.detail
+    assert not (site / "walls" / "genome.md").exists()
+    assert not (site / "walls" / "health.md").exists()
+
+
+def test_a_missing_notes_file_after_the_turn_ran_is_unknown(site, monkeypatch):
+    """The command already ran, so its effect is not established."""
+    stub_pane(monkeypatch, site)
+    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome",
+                             notes_file=site / "absent.md", timeout=30)
+    result = worker.run(Dispatch(role="genome", key="trial-1", payload={
+        "command": [sys.executable, "-c", "print('the turn ran')"]}))
+    assert result.outcome == "unknown"
+    assert "notes missing" in result.detail
+
+
+def test_a_refused_settlement_after_the_turn_ran_is_unknown(site, monkeypatch):
+    """An empty notes file is refused by the settlement, so the effect is unknown."""
+    stub_pane(monkeypatch, site)
+    notes = site / "notes.md"
+    notes.write_text("   \n", encoding="utf-8")
+    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome",
+                             notes_file=notes, timeout=30)
+    result = worker.run(Dispatch(role="genome", key="trial-1", payload={
+        "command": [sys.executable, "-c", "print('the turn ran')"]}))
+    assert result.outcome == "unknown"
+    assert "settlement refused" in result.detail
+
+
+def test_a_wake_the_plant_holds_is_not_settled(site, monkeypatch):
+    """A held wake is one the plant wants reconciled, not settled."""
+    stub_pane(monkeypatch, site)
+    from mishe_tauftauf import seed
+    seed.Feed(site).append("seed", "seed wake genome observation=1\nA held turn.")
+    notes = site / "notes.md"
+    notes.write_text("The wake was held.\n", encoding="utf-8")
+
+    def held_tick(home, session, role, self_pick_seconds=0, *args, **kwargs):
+        return "held seed genome wake 1 unsettled; reconcile wall before retry"
+
+    monkeypatch.setattr(seed, "tick", held_tick)
+    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome",
+                             notes_file=notes, timeout=30)
+    result = worker.run(Dispatch(role="genome", key="trial-1", payload={
+        "command": [sys.executable, "-c", "print('must not run')"]}))
+    assert result.outcome == "unknown"
+    assert "held seed" in result.detail
+    assert not (site / "walls" / "genome.md").exists()
+
+
+def test_the_observation_is_not_healthy_for_the_plants_no_sensor_record(site, monkeypatch):
+    """The plant's own no-evidence record is not a pass."""
+    from mishe_tauftauf import seed
+    stub_pane(monkeypatch, site)
+    seed.Feed(site).append_record("seed", "seed observation genome",
+                                  {"digest": "b" * 64, "role": "genome",
+                                   "snapshot": "UNKNOWN - no sensor observation; "
+                                               "addressed escalation only.",
+                                   "command_ok": False, "notify": True},
+                                  kind="observation")
+    reading = CanonicalObservation(home=site, role="genome")()
+    assert reading.healthy is False
+
+
+def test_the_observation_is_not_healthy_for_a_red_sensor(site, monkeypatch):
+    """A sensor that reports RED is not a pass."""
+    from mishe_tauftauf import seed
+    stub_pane(monkeypatch, site)
+    seed.Feed(site).append_record("seed", "seed observation genome",
+                                  {"digest": "c" * 64, "role": "genome",
+                                   "snapshot": "STATE: RED - the sensor is failing",
+                                   "command_ok": True, "notify": True},
+                                  kind="observation")
+    reading = CanonicalObservation(home=site, role="genome")()
+    assert reading.fresh is True
+    assert reading.healthy is False

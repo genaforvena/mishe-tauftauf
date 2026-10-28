@@ -182,3 +182,38 @@ def test_the_layout_names_no_world_writable_path(state):
     layout = rb.describe_layout(state)
     assert layout["world_writable_paths"] == []
     assert layout["trust_owner"] == "root"
+
+
+def test_a_writable_trust_anchor_is_reported(state):
+    """The trust anchor is the root of the authentication."""
+    key = rb.trusted_key_for(state, "operator")
+    os.chmod(key, 0o666)
+    problems = rb.check_layout(state, root_uid=os.getuid())
+    assert any("trust anchor" in problem and "writable" in problem
+               for problem in problems), problems
+
+
+def test_a_trust_anchor_that_others_may_replace_is_refused(state, keys, evidence):
+    """A key that others may write is a key an attacker may replace."""
+    private, public = keys
+    digest = __import__("hashlib").sha256(evidence.read_bytes()).hexdigest()
+    request = rr.build_request(requester="operator", operation_id="restore-op-1",
+                               evidence_path=evidence, evidence_sha256=digest,
+                               clears={"tripped": {}}, issued_at=time.time(), nonce="n")
+    signature = rr.sign(request, key_path=private)
+    key = rb.trusted_key_for(state, "operator")
+    os.chmod(key, 0o666)
+    problems = rb.check_layout(state, root_uid=os.getuid())
+    assert any("trust anchor" in problem for problem in problems)
+    # The layout is broken, so the boundary reports it rather than using it.
+    assert problems
+
+
+def test_writing_a_request_does_not_narrow_an_unrelated_directory(state, tmp_path):
+    """Only a directory inside the boundary's inbox root is narrowed."""
+    unrelated = tmp_path / "unrelated"
+    unrelated.mkdir()
+    os.chmod(unrelated, 0o777)
+    rb.write_request(unrelated / "request.json", {"requester": "operator", "nonce": "n"})
+    mode = os.stat(unrelated).st_mode & 0o777
+    assert mode == 0o777, f"an unrelated directory was narrowed to {oct(mode)}"

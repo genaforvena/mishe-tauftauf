@@ -10,6 +10,7 @@ by the supervisor, not by keeping them in one place.
 """
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from dataclasses import dataclass
@@ -18,7 +19,9 @@ from typing import Any
 
 from .dispatch_record import decode_record
 from .dispatch_record import encode_record
+from .dispatch_record import read_record_fields
 from .dispatch_record import valid_role
+from .dispatch_record import write_record_fields
 from .interfaces import (COMPLETED, FAILED, OPEN_STATES, PENDING, RECONCILED,
                           SKIPPED, STARTED, UNKNOWN, DispatchState)
 
@@ -90,6 +93,10 @@ class DispatchStore:
         """Replace the record atomically."""
         path = self.path_for(record.role)
         payload = encode_record(record.to_json())
+        # The key history is kept beside the record: a key that has been
+        # used stays used, whichever key came after it.
+        used = self.used_keys(record.role) | {record.key}
+        payload = encode_record(dict(record.to_json(), used_keys=sorted(used)))
         handle = tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8", dir=self.root,
             prefix=f".{path.name}.", delete=False)
@@ -121,6 +128,41 @@ class DispatchStore:
                 raise DispatchStoreError(f"dispatch record {path.name} unreadable: {exc}") from exc
             found.append(DispatchRecord.from_json(raw))
         return found
+
+    def used_keys(self, role: str) -> set[str]:
+        """Every durable key this role has dispatched under.
+
+        A key names one piece of work.  The role's current record holds only
+        its most recent key, so the earlier ones are kept beside it: a key
+        that has been used stays used, whichever key came after it.
+        """
+        path = self.path_for(role)
+        if not path.exists():
+            return set()
+        try:
+            data = read_record_fields(path)
+        except ValueError as exc:
+            raise DispatchStoreError(str(exc)) from exc
+        keys = data.get("used_keys") or []
+        found = {key for key in keys if isinstance(key, str) and key}
+        current = data.get("key")
+        if isinstance(current, str) and current:
+            found.add(current)
+        return found
+
+    def record_use(self, role: str, key: str) -> None:
+        """Remember that ``role`` dispatched under ``key``."""
+        path = self.path_for(role)
+        try:
+            data = read_record_fields(path)
+        except ValueError:
+            data = {}
+        keys = [value for value in (data.get("used_keys") or [])
+                if isinstance(value, str) and value]
+        if key not in keys:
+            keys.append(key)
+        data["used_keys"] = keys
+        write_record_fields(path, data)
 
     def open_records(self) -> list[DispatchRecord]:
         """Every record that still holds an unresolved effect."""

@@ -122,16 +122,28 @@ except Exception as exc:
 
 
 def test_two_processes_racing_inside_the_claim_window_run_one_turn(tmp_path):
-    """Both processes decide at once; only one may run the worker.
+    """Two different turns must not run at once, even with different keys.
 
-    The two processes are released together and both try to claim the turn
-    at the same moment.  Without a lock that spans the check and the claim,
-    both would see "nothing open" and both would start a worker.
+    The race window is the gap between reading the records and writing the
+    STARTED record.  The test injects a pause inside that window, in both
+    processes, and holds them at a barrier first, so both really are inside
+    the window together.  Without a lock that spans the check and the
+    claim, both would see "nothing open" and both would start a worker.
+
+    The two processes use *different* keys on purpose: the rule is one mind
+    at a time across the plant, not one key at a time.  A repeated key is
+    refused by the key history, which would mask the race this test is
+    about.
+
+    The pause is injected rather than raced for, so the test is
+    deterministic: it fails every time the lock is absent, not about half
+    the time.
     """
     store = tmp_path / "dispatch"
     source = str(__import__("pathlib").Path(__file__).resolve().parents[2] / "src")
+    barrier = tmp_path / "barrier"
     script = f"""
-import sys, time
+import os, sys, time
 sys.path.insert(0, {source!r})
 from pathlib import Path
 from mishe_tauftauf.core import DispatchStore, StaticRoleRegistry, Supervisor, WorkerResult
@@ -142,29 +154,49 @@ class Marker:
     def run(self, dispatch):
         with open(self.path, "a") as handle:
             handle.write("ran\\n")
-        time.sleep(2)
         return WorkerResult(outcome="completed", detail="done")
 
+class SlowStore(DispatchStore):
+    \"\"\"A store whose record read pauses inside the claim window.\"\"\"
+    def records(self):
+        time.sleep(1.5)
+        return super().records()
+
+barrier = Path({str(barrier)!r})
+ready = barrier.with_suffix(".ready")
+barrier.parent.mkdir(parents=True, exist_ok=True)
+with open(ready, "a") as handle:
+    handle.write(str(os.getpid()) + " ")
+    handle.flush()
+deadline = time.monotonic() + 30
+while time.monotonic() < deadline:
+    try:
+        if len(ready.read_text().split()) >= 2:
+            break
+    except OSError:
+        pass
+    time.sleep(0.01)
+
 marker = Path({str(tmp_path / "ran")!r})
-supervisor = Supervisor(store=DispatchStore(Path({str(store)!r})),
+supervisor = Supervisor(store=SlowStore(Path({str(store)!r})),
                         registry=StaticRoleRegistry(["genome"]),
-                        worker=Marker(marker))
+                        worker=Marker(marker), lock_timeout=0.4)
 try:
-    supervisor.dispatch("genome", "race")
+    supervisor.dispatch("genome", sys.argv[1])
     print("DISPATCHED")
 except Exception as exc:
     print(type(exc).__name__)
 """
-    first = subprocess.Popen([sys.executable, "-c", textwrap.dedent(script)],
+    first = subprocess.Popen([sys.executable, "-c", textwrap.dedent(script), "race-a"],
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    second = subprocess.Popen([sys.executable, "-c", textwrap.dedent(script)],
+    second = subprocess.Popen([sys.executable, "-c", textwrap.dedent(script), "race-b"],
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    first_out = first.communicate(timeout=60)
-    second_out = second.communicate(timeout=60)
+    first_out = first.communicate(timeout=90)
+    second_out = second.communicate(timeout=90)
     ran = (tmp_path / "ran").read_text().splitlines() if (tmp_path / "ran").is_file() else []
     dispatched = ("DISPATCHED" in first_out[0]) + ("DISPATCHED" in second_out[0])
     assert dispatched == 1, \
-        f"both processes dispatched the same turn: {first_out[0]!r} {second_out[0]!r}"
+        f"both processes dispatched a turn: {first_out[0]!r} {second_out[0]!r}"
     assert len(ran) == 1, f"the worker ran {len(ran)} times"
 
 
@@ -236,10 +268,27 @@ def test_the_same_durable_key_cannot_be_dispatched_twice(tmp_path):
     supervisor.dispatch("genome", "wake-41")
     with pytest.raises(SupervisorError) as caught:
         supervisor.dispatch("genome", "wake-41")
-    assert "already finished" in str(caught.value)
+    assert "already been dispatched" in str(caught.value)
     # A different key is a different piece of work, and is allowed.
     record = supervisor.dispatch("genome", "wake-42")
     assert record.state.name == "completed"
+
+
+def test_an_older_key_cannot_be_dispatched_again(tmp_path):
+    """A key stays used for the whole history of the role.
+
+    The role's record holds only its most recent key, so the earlier ones
+    are kept beside it.  Without that, dispatching an older key would run
+    that work a second time.
+    """
+    worker = SlowWorker(0)
+    supervisor = make_supervisor(tmp_path, worker)
+    supervisor.dispatch("genome", "wake-1")
+    supervisor.dispatch("genome", "wake-2")
+    with pytest.raises(SupervisorError) as caught:
+        supervisor.dispatch("genome", "wake-1")
+    assert "already been dispatched" in str(caught.value)
+    assert worker.calls == 2
 
 
 def test_the_lock_is_released_when_a_dispatch_raises(tmp_path):
@@ -340,3 +389,58 @@ def _alive(pid: int) -> bool:
     except OSError:
         return False
     return fields[0] != "Z"
+
+
+def test_the_lock_timeout_is_honoured(tmp_path):
+    """A caller that cannot get the lock waits for its own bound."""
+    import threading
+    supervisor = make_supervisor(tmp_path, SlowWorker(0))
+    supervisor.lock_timeout = 0.4
+    holding = tmp_path / "holding"
+    holder = threading.Thread(target=lambda: holding.write_text("held"))
+    holder.start()
+    holder.join()
+    # Take the lock in another thread and hold it, so the second attempt
+    # must wait for its own bound and then be refused.
+    lock_path = supervisor.store.lock_path
+    import fcntl
+    with lock_path.open("a+") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        started = time.monotonic()
+        with pytest.raises(DispatchBusy):
+            supervisor.dispatch("genome", "first")
+        waited = time.monotonic() - started
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    assert waited >= 0.35, f"the refusal came after {waited:.2f}s, not the configured bound"
+
+
+def test_the_stop_grace_is_honoured(tmp_path):
+    """A stopped worker waits for the grace it was given.
+
+    The descendant ignores SIGTERM, so the group does not empty on the
+    first signal and the grace is the interval the worker actually waits
+    before escalating to SIGKILL.
+    """
+    from mishe_tauftauf.core import SubprocessWorker
+    child_code = (
+        "import signal, time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "time.sleep(120)\n"
+    )
+    script = (
+        "import subprocess, sys, time\n"
+        f"child = subprocess.Popen([sys.executable, '-c', {child_code!r}])\n"
+        "time.sleep(120)\n"
+    )
+    quick = SubprocessWorker(timeout=0.3, cwd=tmp_path, stop_grace_seconds=0.3)
+    started = time.monotonic()
+    quick.run(Dispatch(role="genome", key="k", payload={
+        "command": [sys.executable, "-c", script]}))
+    quick_elapsed = time.monotonic() - started
+    patient = SubprocessWorker(timeout=0.3, cwd=tmp_path, stop_grace_seconds=2.0)
+    started = time.monotonic()
+    patient.run(Dispatch(role="genome", key="k2", payload={
+        "command": [sys.executable, "-c", script]}))
+    patient_elapsed = time.monotonic() - started
+    assert patient_elapsed > quick_elapsed + 0.5, \
+        f"the configured grace was ignored: {quick_elapsed:.2f}s then {patient_elapsed:.2f}s"

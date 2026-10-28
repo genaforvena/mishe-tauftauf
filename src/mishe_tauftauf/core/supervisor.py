@@ -129,13 +129,13 @@ class Supervisor:
                         f"dispatch {record.key!r} for role {record.role!r} is {record.state.name}; "
                         "reconcile it before dispatching")
             existing = self.store.read(role)
-            if existing is not None and existing.key == key and existing.state not in {STARTED, UNKNOWN}:
-                # The same durable key names the same work.  A finished
-                # record with that key means the work already happened, so
-                # dispatching it again would run it twice.
+            # A key names one piece of work, for the whole history of the
+            # role and not only for its latest record.  Dispatching a key
+            # that was used before would run that work again.
+            if key in self.store.used_keys(role):
                 raise SupervisorError(
-                    f"dispatch {key!r} for role {role!r} already finished as "
-                    f"{existing.state.name}; a new dispatch needs a new key")
+                    f"dispatch {key!r} for role {role!r} has already been "
+                    "dispatched; a new dispatch needs a new key")
             attempt = (existing.attempt + 1) if existing is not None else 1
             record = DispatchRecord(role=role, key=key, state=STARTED, attempt=attempt)
             self.store.write(record)

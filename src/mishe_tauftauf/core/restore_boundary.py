@@ -48,7 +48,9 @@ SEEN_DIR = "seen-nonces"
 INBOX_MODE = 0o700
 
 #: The mode a trusted key carries: root reads it, nobody else needs it.
-KEY_MODE = 0o644
+#: It is read-only for its owner too, because a key that the owner may
+#: rewrite is a key that authentication can be moved onto.
+KEY_MODE = 0o444
 
 
 class BoundaryError(RuntimeError):
@@ -134,6 +136,20 @@ def check_layout(state: Path, *, root_uid: int = 0) -> list[str]:
                 problems.append(f"inbox {entry} is readable by other users")
             if root_uid == 0 and info.st_uid == 0:
                 problems.append(f"inbox {entry} is owned by root, so the requester cannot write it")
+    if trust_root.exists():
+        for entry in sorted(trust_root.iterdir()):
+            if not entry.is_file():
+                problems.append(f"trust anchor {entry} is not a regular file")
+                continue
+            info = entry.stat()
+            # The trust anchor is the root of the authentication: a key that
+            # others may write is a key an attacker may replace.
+            if info.st_mode & stat.S_IWOTH:
+                problems.append(f"trust anchor {entry} is world-writable")
+            if info.st_mode & stat.S_IWGRP:
+                problems.append(f"trust anchor {entry} is writable by its group")
+            if info.st_mode & stat.S_IWUSR:
+                problems.append(f"trust anchor {entry} is writable by its owner")
     return problems
 
 
@@ -252,10 +268,15 @@ def write_request(inbox: Path, request: Mapping[str, Any]) -> Path:
     # nonce.  It belongs to the requester alone: the contracted mode is
     # applied after the creation, because mkdir's mode is masked by the
     # caller's umask.
-    try:
-        os.chmod(path.parent, INBOX_MODE)
-    except OSError as exc:
-        raise BoundaryError(f"the inbox's mode could not be set: {exc}") from exc
+    #
+    # Only a directory inside this boundary's inbox root is narrowed.  A
+    # caller that passes an unrelated path must not have its mode changed
+    # as a side effect.
+    if path.parent.parent.name == INBOX_DIR:
+        try:
+            os.chmod(path.parent, INBOX_MODE)
+        except OSError as exc:
+            raise BoundaryError(f"the inbox's mode could not be set: {exc}") from exc
     payload = rr.encode_request(request)
     try:
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

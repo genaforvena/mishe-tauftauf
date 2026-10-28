@@ -23,6 +23,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Sequence
 
+from .dispatch_record import receipt_is_held
+from .dispatch_record import snapshot_is_unhealthy
 from .dispatch_record import receipt_is_unknown
 from .interfaces import Dispatch, Observation, WorkerResult
 from .registry import StaticRoleRegistry
@@ -85,6 +87,14 @@ class CanonicalWorker:
         from .. import seed
         from ..observations import validate_slug
         validate_slug(self.role)
+        if dispatch.role != self.role:
+            # The record would name one role while the effect belongs to
+            # another.  That is worse than a refusal: the durable state
+            # would claim a turn finished that never happened.
+            return WorkerResult(
+                outcome="failed",
+                detail=f"this worker acts for role {self.role!r}, "
+                       f"not {dispatch.role!r}")
         command = dispatch.payload.get("command")
         if not isinstance(command, (list, tuple)) or not command:
             raise ValueError("dispatch payload must carry a nonempty command list")
@@ -108,6 +118,11 @@ class CanonicalWorker:
                 # known to be undone; the reading is UNKNOWN, not a pass.
                 return WorkerResult(outcome="unknown", detail=receipt)
             return WorkerResult(outcome="skipped", detail=f"no canonical wake was owed: {receipt}")
+        if receipt_is_held(receipt):
+            # The plant is holding this wake for reconciliation.  Settling it
+            # would override a hold the plant itself raised, so the turn is
+            # left alone and the record stays open.
+            return WorkerResult(outcome="unknown", detail=receipt)
         payload = dict(dispatch.payload)
         payload["wake"] = wake
         from .worker import SubprocessWorker
@@ -123,14 +138,21 @@ class CanonicalWorker:
             # settlement is written: the wake stays pending and a successor
             # reconciles it rather than settling a failed turn.
             return WorkerResult(outcome="failed", detail=outcome.detail)
+        # From here the command has already run.  A missing notes file or a
+        # refused settlement is therefore an unknown effect, not an
+        # established absence of one: the turn may have done its work, and
+        # the wake stays pending.  Reporting "failed" would let the next
+        # dispatch drive the same wake again.
         notes = self.notes_file
         if not notes.is_file():
-            return WorkerResult(outcome="failed", detail=f"settlement notes missing: {notes}")
+            return WorkerResult(outcome="unknown",
+                                detail=f"settlement notes missing after the turn ran: {notes}")
         try:
             settled = seed.yield_wake(self.home, self.role, wake, notes,
                                       self.continue_task, self.result)
         except (OSError, ValueError) as exc:
-            return WorkerResult(outcome="failed", detail=f"settlement refused: {exc}")
+            return WorkerResult(outcome="unknown",
+                                detail=f"settlement refused after the turn ran: {exc}")
         return WorkerResult(outcome="completed", detail=settled)
 
     def _pending_wake(self) -> int | None:
@@ -149,27 +171,65 @@ class CanonicalObservation:
 
     A missing or unreadable reading is UNKNOWN, never healthy: the point of
     the reading is to distinguish "there is no evidence" from "the evidence
-    says all is well".
+    says all is well".  A record that exists but carries no evidence of
+    health — the plant's own "no sensor observation" record, or a sensor
+    that reported RED — is not a pass either.
     """
 
-    def __init__(self, *, home: str | Path, role: str):
+    def __init__(self, *, home: str | Path, role: str, max_age_seconds: float = 30.0):
         self.home = Path(home)
         self.role = role
+        self.max_age_seconds = max_age_seconds
 
     def __call__(self) -> Observation:
         from .. import seed
         try:
-            digest, pending, last_yield, last_clear, _, _, _, _ = seed._state(self.home, self.role)
+            digest, pending, last_yield, last_clear, observation, _, _, _ = \
+                seed._state(self.home, self.role)
         except (OSError, ValueError) as exc:
             return Observation(fresh=False, healthy=False,
                                detail=f"canonical state unreadable: {exc}")
         detail = (f"pending={pending if pending is not None else 'none'} "
                   f"yield={last_yield if last_yield is not None else 'none'} "
                   f"clear={last_clear if last_clear is not None else 'none'}")
-        if digest is None:
+        if digest is None or observation is None:
             # The role has no observation record.  The plant's own convention
             # writes "UNKNOWN -- no sensor observation" in the same case.
             # There is no evidence here, so this is not a pass.
             return Observation(fresh=False, healthy=False,
                                detail=f"no observation for role {self.role}; " + detail)
+        record = self._record(observation)
+        if record is None:
+            return Observation(fresh=False, healthy=False,
+                               detail=f"the observation record for {self.role} is unreadable; " + detail)
+        snapshot = record.get("snapshot")
+        command_ok = record.get("command_ok")
+        text = snapshot if isinstance(snapshot, str) else ""
+        if command_ok is not True:
+            # The plant's own record says the sensor command did not succeed.
+            # A record that exists is not a record that says all is well.
+            return Observation(fresh=False, healthy=False,
+                               detail=f"the observation for {self.role} did not succeed: {text[:200]}")
+        if snapshot_is_unhealthy(text):
+            return Observation(fresh=True, healthy=False,
+                               detail=f"the observation for {self.role} reports a problem: {text[:200]}")
         return Observation(fresh=True, healthy=True, detail=detail)
+
+    def _record(self, sequence: int) -> dict | None:
+        """The observation record's own payload, or ``None``."""
+        from ..feed import Feed
+        from ..records import payload
+        try:
+            entries = Feed(self.home).entries(start=sequence, limit=1)
+        except (OSError, ValueError):
+            return None
+        for entry in entries:
+            if entry.sequence != sequence:
+                continue
+            try:
+                data = payload(entry)
+            except (OSError, ValueError, KeyError, TypeError):
+                return None
+            return data if isinstance(data, dict) else None
+        return None
+

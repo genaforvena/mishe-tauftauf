@@ -58,6 +58,7 @@ def decode_record(raw: Any) -> dict:
     detail = data.get("detail", "")
     pid = data.get("pid")
     attempt = data.get("attempt", 1)
+    used = data.get("used_keys", [])
     if not valid_role(role):
         raise DispatchRecordError("dispatch record role is not a plain role name")
     if not isinstance(key, str) or not key:
@@ -70,13 +71,70 @@ def decode_record(raw: Any) -> dict:
         raise DispatchRecordError("dispatch record pid must be an integer or absent")
     if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
         raise DispatchRecordError("dispatch record attempt must be a positive integer")
+    if not isinstance(used, list) or any(not isinstance(item, str) or not item for item in used):
+        raise DispatchRecordError("dispatch record used_keys must be a list of nonempty strings")
     return {"role": role, "key": key, "state": state, "detail": detail,
-            "pid": pid, "attempt": attempt}
+            "pid": pid, "attempt": attempt, "used_keys": used}
 
 
 def encode_record(record: dict) -> str:
     """Encode a record's fields as its canonical text."""
     return json.dumps(record, sort_keys=True, ensure_ascii=False) + "\n"
+
+
+def read_record_fields(path) -> dict:
+    """Read a record file's fields.
+
+    The file is the store's own, so its text is decoded here rather than
+    in the store.  A file that cannot be read or parsed is an error, not
+    an absent record.
+    """
+    from pathlib import Path
+    target = Path(path)
+    try:
+        raw = target.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise DispatchRecordError(f"dispatch record unreadable: {exc}") from exc
+    return decode_record(raw)
+
+
+def write_record_fields(path, fields: dict) -> None:
+    """Write a record file's fields atomically."""
+    import os
+    import tempfile
+    from pathlib import Path
+    target = Path(path)
+    payload = encode_record(fields)
+    handle = tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=target.parent,
+                                         prefix=f".{target.name}.", delete=False)
+    try:
+        with handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(handle.name, target)
+    except BaseException:
+        try:
+            os.unlink(handle.name)
+        except OSError:
+            pass
+        raise
+
+
+def snapshot_is_unhealthy(text: Any) -> bool:
+    """Whether a sensor's own words report a problem.
+
+    The plant's frames name their state in the first line.  A frame that
+    says RED, UNKNOWN or FAIL is a problem, whatever else it says, and an
+    empty frame says nothing at all.
+    """
+    if not isinstance(text, str) or not text:
+        return True
+    lines = text.splitlines()
+    if not lines:
+        return True
+    first = lines[0]
+    return any(marker in first for marker in ("RED", "UNKNOWN", "FAIL"))
 
 
 def receipt_is_unknown(receipt: Any) -> bool:
@@ -90,6 +148,21 @@ def receipt_is_unknown(receipt: Any) -> bool:
     if not isinstance(receipt, str):
         return False
     return receipt.startswith("UNKNOWN ")
+
+
+def receipt_is_held(receipt: Any) -> bool:
+    """Whether a canonical tick receipt holds the wake for reconciliation.
+
+    The plant holds a wake when its own delivery could not be confirmed:
+    ``held seed <role> wake <n> unsettled; reconcile wall before retry``,
+    ``held seed <role> wake <n> delivery retry exhausted; ...`` and
+    ``held seed <role> awaiting idle rotation``.  A held wake is one the
+    plant wants reconciled, not settled.  Acting on it anyway would override
+    a hold the plant itself raised.
+    """
+    if not isinstance(receipt, str):
+        return False
+    return receipt.startswith("held seed ") or receipt.startswith("held seed")
 
 
 def build_parser(description: str, cmd_status, cmd_dispatch, cmd_reconcile,
