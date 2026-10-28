@@ -38,10 +38,15 @@ def read_config(path: str | Path) -> dict:
     return data
 
 
+def encode_config(data: dict) -> bytes:
+    """Serialize config fields in the format used by registration."""
+    return (json.dumps(data, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
 def write_config(path: str | Path, data: dict) -> bytes:
     """Write the config's fields, and return the bytes written."""
     target = Path(path)
-    payload = (json.dumps(data, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    payload = encode_config(data)
     temporary = target.with_name(target.name + ".new")
     temporary.write_bytes(payload)
     os.chmod(temporary, 0o644)

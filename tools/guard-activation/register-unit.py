@@ -64,6 +64,14 @@ def main() -> int:
             print("refusing: there is no saved config to restore", file=sys.stderr)
             return 1
         saved = point.read_bytes()
+        original = config_boundary.read_config(point)
+        if UNIT in config_boundary.life_support_units(original):
+            print("refusing: saved config already contains the core unit", file=sys.stderr)
+            return 1
+        expected = config_boundary.encode_config(config_boundary.with_unit(original, UNIT))
+        if current != expected:
+            print("refusing: installed config differs from the registered bytes", file=sys.stderr)
+            return 1
         CONFIG.write_bytes(saved)
         print("restored", CONFIG)
         print("sha256:", hashlib.sha256(saved).hexdigest())
