@@ -40,7 +40,6 @@
     "src/mishe_tauftauf/site_uninstall.py",
     "src/mishe_tauftauf/space_text.py",
     "src/mishe_tauftauf/spawn_dialect.py",
-    "src/mishe_tauftauf/stats_boundary.py",
     "src/mishe_tauftauf/substrate_watch.py",
     "src/mishe_tauftauf/timestamp_text.py",
     "src/mishe_tauftauf/unit_properties.py",

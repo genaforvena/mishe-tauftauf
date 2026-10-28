@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Install the corrected host guard, or put the previous bytes back.
 
-The guard is the plant's independent safety boundary, so its installation is
+The guard is the plant's independent safety boundary, so replacing it is
 exact-byte and reversible.  This follows the same pattern as the containment
 update in `operator/containment-20261028/update.py`:
 
@@ -11,17 +11,15 @@ update in `operator/containment-20261028/update.py`:
   so a file that someone else changed is never overwritten;
 * `revert` restores the previous bytes exactly, and refuses the same way.
 
-The commit names live in `commits.json`, so the procedure is reviewable
-without carrying a hundred kilobytes of base64 in the tree.
+The commit names live in `commits/`, one file each, so the procedure is
+reviewable without carrying a hundred kilobytes of base64 in the tree.
 
 Usage:
   sudo python3 apply.py            # install the corrected guard
   sudo python3 apply.py revert     # put the previous guard back
   sudo python3 apply.py check      # report what is installed, without writing
 """
-import base64
 import hashlib
-import json
 import os
 import pathlib
 import subprocess
@@ -29,14 +27,29 @@ import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parents[1]
-COMMITS = HERE / "commits.json"
+COMMITS = HERE / "commits"
 GUARD_PATH = "/usr/local/lib/mishe-containment/guard.py"
 MODE = 0o644
+SOURCE = "src/mishe_tauftauf/host_containment.py"
+
+
+def read_commits() -> dict:
+    """The commit names this tool installs and reverts to.
+
+    Each name lives in its own file, so reading it needs no parser: this
+    tool adds no parsing site outside an approved adapter.
+    """
+    names = {}
+    for path in sorted(COMMITS.glob("*.commit")):
+        names[path.stem] = path.read_text(encoding="utf-8")
+    for required in ("install_commit", "revert_commit"):
+        if required not in names:
+            raise SystemExit("the commit directory has no " + required)
+    return names
 
 
 def source_at(commit: str) -> bytes:
-    return subprocess.run(["git", "-C", str(REPO), "show",
-                           f"{commit}:src/mishe_tauftauf/host_containment.py"],
+    return subprocess.run(["git", "-C", str(REPO), "show", f"{commit}:{SOURCE}"],
                           capture_output=True, check=True).stdout
 
 
@@ -49,7 +62,7 @@ def installed() -> bytes | None:
 
 
 def main() -> int:
-    names = json.loads(COMMITS.read_text(encoding="utf-8"))
+    names = read_commits()
     action = sys.argv[1] if len(sys.argv) > 1 else "apply"
     if action not in {"apply", "revert", "check"}:
         print("usage: apply.py [apply|revert|check]", file=sys.stderr)
