@@ -401,6 +401,20 @@ def test_reconcile_refuses_a_busy_or_unobservable_mind(site, monkeypatch):
     with pytest.raises(ValueError, match="not observably idle"):
         supervisor.reconcile("genome", detail="checked the wake")
     assert supervisor.status("genome").state.name == "unknown"
+def test_mind_busy_before_wake_does_not_open_dispatch(site, monkeypatch):
+    from mishe_tauftauf import seed
+
+    stub_pane(monkeypatch, site)
+    monkeypatch.setattr(seed, "_mind_ready", lambda *args: False)
+    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome", timeout=1)
+    supervisor = Supervisor(store=DispatchStore(site / "core-dispatch"),
+                            registry=StaticRoleRegistry(["genome"]), worker=worker)
+    result = supervisor.dispatch("genome", "busy-probe", discard_skipped_poll=True)
+    assert result.state.name == "skipped"
+    assert "mind busy" in result.detail
+    assert not supervisor.store.open_records()
+
+
 
 
 def test_reconcile_refuses_settlement_without_idle_clear(site, monkeypatch):
@@ -419,6 +433,16 @@ def test_reconcile_refuses_settlement_without_idle_clear(site, monkeypatch):
     with pytest.raises(ValueError, match="not cleared"):
         supervisor.reconcile("genome", detail="checked the wake")
     assert supervisor.status("genome").state.name == "unknown"
+
+
+def test_recorded_stale_snapshot_is_unhealthy(site, monkeypatch):
+    from mishe_tauftauf import dashboard, seed
+
+    stub_pane(monkeypatch, site)
+    dashboard.publish(site, "genome", "STATE: GREEN\nSTALE — check report old\n", True)
+    seed.tick(site, "mishe-trial", "genome")
+    reading = CanonicalObservation(home=site, role="genome")()
+    assert not reading.healthy
 
 
 def test_the_observation_reads_the_canonical_state(site, monkeypatch):

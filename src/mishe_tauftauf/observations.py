@@ -372,16 +372,25 @@ def sensor_from_frame(frame: str) -> str:
     return strip_owned_chrome(frame).split("\nMIND WALL —", 1)[0]
 
 
+def _is_stale_failure(line: str) -> bool:
+    """Whether ``STALE`` on this line reports stale evidence."""
+    if not line.startswith("STALE"):
+        return False
+    if line.startswith("STALE PEND: GREEN"):
+        return False
+    return True
+
+
 def sensor_failed(meaningful: str, ok: bool) -> bool:
     return (not ok or not meaningful.strip() or any(
-        re.match(r"^(?:UNKNOWN|FAIL|STALE)\b", line) or
+        _is_stale_failure(line) or re.match(r"^(?:UNKNOWN|FAIL)\b", line) or
         re.match(r"^(?:HEADLINE:|STATE:|CI:|SERVICE ).*\b(?:RED|UNKNOWN|FAIL|STALE)\b", line)
         for line in meaningful.splitlines()))
 
 
 def sensor_unknown(meaningful: str) -> bool:
     return not meaningful.strip() or any(
-        re.match(r"^(?:UNKNOWN|STALE)\b", line) or
+        _is_stale_failure(line) or re.match(r"^(?:UNKNOWN)\b", line) or
         re.match(r"^(?:HEADLINE:|STATE:|CI:|SERVICE ).*\b(?:UNKNOWN|STALE)\b", line)
         for line in meaningful.splitlines())
 

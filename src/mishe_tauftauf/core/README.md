@@ -49,7 +49,10 @@ feed observation: missing, stale, failed, RED and UNKNOWN evidence still hold.
 The tick checks the sensor again before creating a wake. An effect-free idle
 poll restores the prior dispatch record, so idle polls do not grow key history;
 a crash before restoration retains the open claim. Actual work keys remain
-durable and cannot be replayed. The source change has not established a live
+
+`STALE PEND: GREEN` is the healthy witness label; other `STALE` lines are failing
+or stale evidence. A busy probe before any wake is a skippable poll, not an
+open dispatch needing reconciliation.
 useful wake, settlement or tested backout; do not use it for live migration on
 that basis alone.
 

@@ -146,14 +146,20 @@ def snapshot_is_unhealthy(text: Any) -> bool:
     The plant's frames put their verdict in the body, not in the first line:
     the headline reads GREEN whenever the silence watcher is live, whatever
     the renderer below it says.  So every line is scanned, with the plant's
-    own pattern.  A frame whose body says RED, UNKNOWN or FAIL is a
-    problem, and an empty frame says nothing at all.
+    own pattern.  A frame whose body says RED, UNKNOWN, FAIL or STALE is a
+    problem, and an empty frame says nothing at all.  STALE PEND: GREEN is
+    the one healthy stale label and is not treated as unknown.
     """
     if not isinstance(text, str) or not text.strip():
         return True
-    return any(re.match(r"^(?:UNKNOWN|FAIL)\b", line) or
-               re.match(r"^(?:HEADLINE:|STATE:|CI:|SERVICE ).*\b(?:RED|UNKNOWN|FAIL)\b", line)
-               for line in text.splitlines())
+    for line in text.splitlines():
+        if line.startswith("STALE PEND: GREEN"):
+            continue
+        if line.startswith("STALE") or re.match(r"^(?:UNKNOWN|FAIL)\b", line):
+            return True
+        if re.match(r"^(?:HEADLINE:|STATE:|CI:|SERVICE ).*\b(?:RED|UNKNOWN|FAIL|STALE)\b", line):
+            return True
+    return False
 
 
 def decode_tick_receipt(receipt: Any, role: str) -> tuple[str, int | None]:
@@ -166,7 +172,9 @@ def decode_tick_receipt(receipt: Any, role: str) -> tuple[str, int | None]:
     if (receipt == f"waiting seed {role} wall stable"
             or receipt == "wake window paused; sensor panes remain live; no new model delivery"
             or receipt == "wake window ended; no new wakes; in-flight work and sensors preserved"
-            or receipt == f"UNKNOWN seed {role} live sensor reports a problem; no wake created"):
+            or receipt == f"UNKNOWN seed {role} live sensor reports a problem; no wake created"
+            or receipt == f"held seed {role} mind busy"
+            or receipt == f"held seed {role} mind busy; addressed message preserved while the window is ended"):
         return "skipped", None
     return "unknown", None
 
