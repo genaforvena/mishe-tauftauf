@@ -23,9 +23,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Sequence
 
-from .dispatch_record import receipt_is_held
+from .dispatch_record import decode_tick_receipt
 from .dispatch_record import snapshot_is_unhealthy
-from .dispatch_record import receipt_is_unknown
 from .interfaces import Dispatch, Observation, WorkerResult
 from .registry import StaticRoleRegistry
 
@@ -53,122 +52,129 @@ class CanonicalRoleRegistry:
 
 
 class CanonicalWorker:
-    """Run one canonical turn for one role and settle it.
+    """Ask the canonical tick to deliver a new wake and observe its settlement.
 
-    The worker owns the whole canonical round trip for a single wake:
-
-    1. ask the canonical tick for a wake (it creates one only when the site
-       owes this role a turn, and it refuses when the mind is busy);
-    2. run the turn's command with its own bound;
-    3. settle the exact wake with the canonical settlement, which writes the
-       wall, the handoff and the tape receipt.
-
-    The wake number is the durable key.  When the site owes this role no
-    turn, the worker reports ``skipped`` and no wake exists: nothing was
-    due, so nothing is claimed.
+    The role's resident mind does the work and settles its own wake.  The
+    dispatch lock and STARTED record span tick, delivery and settlement.  An
+    uncertain delivery or missing settlement stays open for reconciliation.
     """
 
     def __init__(self, *, home: str | Path, session: str, role: str,
-                 notes_file: str | Path, result: str = "verified",
-                 continue_task: bool = False, timeout: float = 900.0,
-                 cwd: str | Path | None = None):
+                 timeout: float = 900.0):
+        import math
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("timeout must be finite and positive")
         self.home = Path(home)
         self.session = session
         self.role = role
-        self.notes_file = Path(notes_file)
-        if result not in {"changed", "verified", "blocked", "unspecified"}:
-            raise ValueError("result must be changed, verified, blocked or unspecified")
-        self.result = result
-        self.continue_task = continue_task
         self.timeout = timeout
-        self.cwd = Path(cwd) if cwd is not None else self.home.parent
+
+    def reconcile_check(self, record) -> None:
+        """Do not close an unknown while its resident mind may still run."""
+        from .. import seed
+        from ..tmux import owns_session
+        if record.role != self.role:
+            raise ValueError("reconciliation worker does not match the dispatch role")
+        if not owns_session(self.home, self.session) or not seed._mind_idle(self.session, self.role):
+            raise ValueError("canonical mind is not observably idle; do not reconcile")
+        _, pending, settled, cleared, *_ = seed._state(self.home, self.role)
+        if pending is None and settled is not None and settled != cleared:
+            raise ValueError("settled wake is not cleared; reconcile its canonical idle rotation first")
 
     def run(self, dispatch: Dispatch) -> WorkerResult:
+        import time
         from .. import seed
+        from ..chat_protocol import decode_lifecycle
+        from ..feed import Feed
         from ..observations import validate_slug
+
         validate_slug(self.role)
         if dispatch.role != self.role:
-            # The record would name one role while the effect belongs to
-            # another.  That is worse than a refusal: the durable state
-            # would claim a turn finished that never happened.
-            return WorkerResult(
-                outcome="failed",
-                detail=f"this worker acts for role {self.role!r}, "
-                       f"not {dispatch.role!r}")
-        command = dispatch.payload.get("command")
-        if not isinstance(command, (list, tuple)) or not command:
-            raise ValueError("dispatch payload must carry a nonempty command list")
-        # The canonical tick decides whether a wake is owed.  It refuses when
-        # the mind is busy or the pane is not observable, and it never creates
-        # a second wake for a turn that is already pending.
-        #
-        # ``seed.tick`` is the canonical entry point, not ``wall.tick``: it is
-        # the one that turns a stale or unreadable observation into an
-        # UNKNOWN receipt instead of raising.  A stale dashboard must not
-        # crash the supervisor, and it must not read as a pass.
+            return WorkerResult(outcome="failed",
+                                detail=f"this worker acts for role {self.role!r}, "
+                                       f"not {dispatch.role!r}")
+        feed = Feed(self.home)
+        entries = feed.role_entries(self.role)
+        if seed._state(self.home, self.role, entries=entries)[1] is not None:
+            return WorkerResult(outcome="unknown",
+                                detail="an existing canonical wake requires reconciliation")
+        before = max((entry.sequence for entry in entries), default=0)
         receipt = seed.tick(self.home, self.session, self.role,
-                            float(dispatch.payload.get("self_pick_seconds", 0)))
-        # A receipt that says the reading could not be trusted, or that the
-        # plant is holding the wake, stops the turn whether or not a wake
-        # is pending.  Acting on an unreadable observation would settle a
-        # turn the plant could not confirm, and settling a held wake would
-        # override a hold the plant itself raised.
-        if receipt_is_unknown(receipt):
-            # The observation was stale or unreadable.  The turn is not
-            # known to be undone; the reading is UNKNOWN, not a pass.
-            return WorkerResult(outcome="unknown", detail=receipt)
-        if receipt_is_held(receipt):
-            # The plant is holding this wake for reconciliation.  Settling it
-            # would override a hold the plant itself raised, so the turn is
-            # left alone and the record stays open.
-            return WorkerResult(outcome="unknown", detail=receipt)
-        # The wake number is read from the canonical decoded state, not from
-        # the receipt's text: the receipt is a human-readable line, and the
-        # plant's own state is what both the wake and the settlement check.
-        wake = self._pending_wake()
-        if wake is None:
-            return WorkerResult(outcome="skipped", detail=f"no canonical wake was owed: {receipt}")
-        payload = dict(dispatch.payload)
-        payload["wake"] = wake
-        from .worker import SubprocessWorker
-        worker = SubprocessWorker(timeout=self.timeout, cwd=self.cwd)
-        outcome = worker.run(Dispatch(role=self.role, key=dispatch.key, payload=payload))
-        if outcome.outcome == "unknown":
-            # The worker's effect is not established.  That outcome is kept:
-            # a "failed" record is not open, so it would let the next
-            # dispatch run the same work again on the same wake.
-            return outcome
-        if not outcome.ok:
-            # The turn's command failed outright and had no effect, so no
-            # settlement is written: the wake stays pending and a successor
-            # reconciles it rather than settling a failed turn.
-            return WorkerResult(outcome="failed", detail=outcome.detail)
-        # From here the command has already run.  A missing notes file or a
-        # refused settlement is therefore an unknown effect, not an
-        # established absence of one: the turn may have done its work, and
-        # the wake stays pending.  Reporting "failed" would let the next
-        # dispatch drive the same wake again.
-        notes = self.notes_file
-        if not notes.is_file():
-            return WorkerResult(outcome="unknown",
-                                detail=f"settlement notes missing after the turn ran: {notes}")
+                            float(dispatch.payload.get("self_pick_seconds", 0)),
+                            new_only=True)
+        status, wake = decode_tick_receipt(receipt, self.role)
+        if status == "unknown":
+            return WorkerResult(outcome="unknown", detail=f"tick not confirmed: {receipt}")
+        if status == "skipped":
+            return WorkerResult(outcome="skipped", detail=receipt)
+        if wake is None or wake <= before:
+            return WorkerResult(outcome="unknown", detail=f"tick named an earlier wake: {receipt}")
+
+        # Persist the canonical identity before waiting.  A crash before this
+        # write still leaves STARTED, which blocks every subsequent dispatch.
+        detail = f"canonical wake {wake}"
+        publish = dispatch.payload.get("publish_detail")
+        if callable(publish):
+            publish(detail)
+        deadline = time.monotonic() + self.timeout
+        while True:
+            entries = feed.role_entries(self.role)
+            events = [(entry.sequence, decode_lifecycle(entry)) for entry in entries
+                      if entry.sequence > before]
+            wakes = [sequence for sequence, event in events
+                     if event is not None and event.role == self.role and event.kind == "wake"]
+            if wakes != [wake]:
+                return WorkerResult(outcome="unknown",
+                                    detail=f"{detail}: canonical wake history is ambiguous")
+            if any(event is not None and event.role == self.role and event.kind == "yield"
+                   and event.wake == wake for _, event in events):
+                _, pending, settled, cleared, *_ = seed._state(self.home, self.role, entries=entries)
+                if pending is not None or settled != wake:
+                    return WorkerResult(outcome="unknown",
+                                        detail=f"{detail}: settlement state changed; reconcile")
+                if cleared == wake:
+                    return WorkerResult(outcome="completed",
+                                        detail=f"{detail}: canonical settlement and idle clear observed")
+                if seed._clear_due(self.home, self.role, 15):
+                    receipt = seed.clear(self.home, self.session, self.role, expected_wake=wake)
+                    _, pending, settled, cleared, *_ = seed._state(self.home, self.role)
+                    if pending is None and settled == wake and cleared == wake:
+                        return WorkerResult(outcome="completed",
+                                            detail=f"{detail}: canonical settlement and idle clear observed")
+                    if receipt != f"held seed {self.role} mind busy":
+                        return WorkerResult(outcome="unknown",
+                                            detail=f"{detail}: idle clear unconfirmed: {receipt}")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return WorkerResult(outcome="unknown",
+                                    detail=f"{detail}: settlement or idle clear not observed before timeout")
+            time.sleep(min(1.0, remaining))
+
+
+
+class CanonicalLiveObservation:
+    """Read the current live renderer without manufacturing a feed event."""
+
+    def __init__(self, *, home: str | Path, session: str, role: str):
+        self.home = Path(home)
+        self.session = session
+        self.role = role
+
+    def __call__(self) -> Observation:
+        from .. import seed, wall
+        from ..tmux import TmuxError
         try:
-            settled = seed.yield_wake(self.home, self.role, wake, notes,
-                                      self.continue_task, self.result)
-        except (OSError, ValueError) as exc:
-            return WorkerResult(outcome="unknown",
-                                detail=f"settlement refused after the turn ran: {exc}")
-        return WorkerResult(outcome="completed", detail=settled)
-
-    def _pending_wake(self) -> int | None:
-        """The wake this role currently owes, read from the canonical state.
-
-        A state that cannot be read is not the same as a state that says
-        there is nothing owed.  The first is unknown; the second is a
-        skipped turn.
-        """
-        from .. import seed
-        return seed._state(self.home, self.role)[1]
+            with seed._lock(self.home):
+                sensor, ok = wall._live_sensor(self.home, self.session, self.role)
+                meaningful = wall.observation_text(self.role, sensor)
+        except (OSError, ValueError, TmuxError) as exc:
+            return Observation(fresh=False, healthy=False, detail=f"live sensor unreadable: {exc}")
+        if not ok or wall._sensor_unknown(meaningful):
+            return Observation(fresh=False, healthy=False,
+                               detail=f"live sensor is UNKNOWN: {meaningful[:200]}")
+        if wall._sensor_failed(meaningful, ok):
+            return Observation(fresh=True, healthy=False, detail=f"live sensor reports a problem: {meaningful[:200]}")
+        return Observation(fresh=True, healthy=True, detail="live sensor is healthy")
 
 
 class CanonicalObservation:

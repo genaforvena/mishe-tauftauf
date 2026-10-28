@@ -149,41 +149,26 @@ def snapshot_is_unhealthy(text: Any) -> bool:
     own pattern.  A frame whose body says RED, UNKNOWN or FAIL is a
     problem, and an empty frame says nothing at all.
     """
-    if not isinstance(text, str) or not text:
+    if not isinstance(text, str) or not text.strip():
         return True
-    lines = text.splitlines()
-    if not lines:
-        return True
-    return any(re.match(r"^(?:HEADLINE:|STATE:|CI:|SERVICE |UNKNOWN\b|FAIL\b).*\b(?:RED|UNKNOWN|FAIL)\b",
-                        line) for line in lines)
+    return any(re.match(r"^(?:UNKNOWN|FAIL)\b", line) or
+               re.match(r"^(?:HEADLINE:|STATE:|CI:|SERVICE ).*\b(?:RED|UNKNOWN|FAIL)\b", line)
+               for line in text.splitlines())
 
 
-def receipt_is_unknown(receipt: Any) -> bool:
-    """Whether a canonical tick receipt reports an unknown observation.
-
-    The canonical tick writes ``UNKNOWN seed <role> ...`` when the
-    observation it needed was stale, missing or unreadable.  That is the
-    difference between "nothing was due" and "the reading could not be
-    trusted", and the worker must not treat them the same way.
-    """
+def decode_tick_receipt(receipt: Any, role: str) -> tuple[str, int | None]:
+    """Decode the canonical tick's bounded control receipts, failing closed."""
     if not isinstance(receipt, str):
-        return False
-    return receipt.startswith("UNKNOWN ")
-
-
-def receipt_is_held(receipt: Any) -> bool:
-    """Whether a canonical tick receipt holds the wake for reconciliation.
-
-    The plant holds a wake when its own delivery could not be confirmed:
-    ``held seed <role> wake <n> unsettled; reconcile wall before retry``,
-    ``held seed <role> wake <n> delivery retry exhausted; ...`` and
-    ``held seed <role> awaiting idle rotation``.  A held wake is one the
-    plant wants reconciled, not settled.  Acting on it anyway would override
-    a hold the plant itself raised.
-    """
-    if not isinstance(receipt, str):
-        return False
-    return receipt.startswith("held seed ") or receipt.startswith("held seed")
+        return "unknown", None
+    match = re.fullmatch(r"wake seed ([a-zA-Z0-9_-]+) ([1-9][0-9]*)", receipt)
+    if match and match.group(1) == role:
+        return "wake", int(match.group(2))
+    if (receipt == f"waiting seed {role} wall stable"
+            or receipt == "wake window paused; sensor panes remain live; no new model delivery"
+            or receipt == "wake window ended; no new wakes; in-flight work and sensors preserved"
+            or receipt == f"UNKNOWN seed {role} live sensor reports a problem; no wake created"):
+        return "skipped", None
+    return "unknown", None
 
 
 def build_parser(description: str, cmd_status, cmd_dispatch, cmd_reconcile,
@@ -211,13 +196,6 @@ def build_parser(description: str, cmd_status, cmd_dispatch, cmd_reconcile,
     dispatch = sub.add_parser("dispatch", help="run one turn for the role")
     dispatch.add_argument("--key", required=True,
                           help="the durable identity of this work")
-    dispatch.add_argument("--notes", required=True,
-                          help="the settlement notes the turn ends with")
-    dispatch.add_argument("--command", nargs="+", required=True,
-                          help="the command the turn runs")
-    dispatch.add_argument("--result", choices=("changed", "verified", "blocked"),
-                          default="verified")
-    dispatch.add_argument("--continue", dest="continue_task", action="store_true")
     dispatch.add_argument("--timeout", type=float, default=900.0)
     dispatch.add_argument("--self-pick-seconds", type=float, default=0)
     dispatch.set_defaults(func=cmd_dispatch)
@@ -232,14 +210,6 @@ def build_parser(description: str, cmd_status, cmd_dispatch, cmd_reconcile,
     if cmd_supervise is not None:
         supervise = sub.add_parser("supervise",
                                     help="run the supervisor as a resident")
-        supervise.add_argument("--notes", required=True,
-                               help="the settlement notes each turn ends with")
-        supervise.add_argument("--command", nargs="+", required=True,
-                               help="the command each turn runs")
-        supervise.add_argument("--result", choices=("changed", "verified", "blocked"),
-                               default="verified")
-        supervise.add_argument("--continue", dest="continue_task", action="store_true",
-                               help="ask for another turn after the settlement")
         supervise.add_argument("--key-prefix", default="core-",
                                help="the prefix of each turn's durable key")
         supervise.add_argument("--interval", type=float, default=15.0)

@@ -360,6 +360,32 @@ def strip_owned_chrome(text: str, *, strip_expectations: bool = False) -> str:
     return "\n".join(output).rstrip("\n") + "\n"
 
 
+def pane_lease_age(lease: str) -> float:
+    """Decode the live pane footer's timestamp as an age in seconds."""
+    stamp = lease.removeprefix("-- pane live ").split(" ·", 1)[0]
+    return (datetime.now(timezone.utc) - datetime.fromisoformat(
+        stamp.replace("Z", "+00:00"))).total_seconds()
+
+
+def sensor_from_frame(frame: str) -> str:
+    """Exclude owned chrome and the wall from a rendered sensor frame."""
+    return strip_owned_chrome(frame).split("\nMIND WALL —", 1)[0]
+
+
+def sensor_failed(meaningful: str, ok: bool) -> bool:
+    return (not ok or not meaningful.strip() or any(
+        re.match(r"^(?:UNKNOWN|FAIL|STALE)\b", line) or
+        re.match(r"^(?:HEADLINE:|STATE:|CI:|SERVICE ).*\b(?:RED|UNKNOWN|FAIL|STALE)\b", line)
+        for line in meaningful.splitlines()))
+
+
+def sensor_unknown(meaningful: str) -> bool:
+    return not meaningful.strip() or any(
+        re.match(r"^(?:UNKNOWN|STALE)\b", line) or
+        re.match(r"^(?:HEADLINE:|STATE:|CI:|SERVICE ).*\b(?:UNKNOWN|STALE)\b", line)
+        for line in meaningful.splitlines())
+
+
 @dataclass(frozen=True)
 class FilterResult:
     passed: bool

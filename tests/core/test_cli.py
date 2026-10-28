@@ -14,77 +14,39 @@ def test_status_needs_no_turn_arguments():
     assert args.home.name == "site"
 
 
-def test_dispatch_carries_everything_the_worker_needs():
-    args = parse("dispatch", "--key", "wake-1", "--notes", "/tmp/notes.md",
-                 "--command", "/usr/bin/true", "--result", "changed",
-                 "--continue")
-    assert args.key == "wake-1"
-    assert args.notes == "/tmp/notes.md"
-    assert args.command == ["/usr/bin/true"]
-    assert args.result == "changed"
-    assert args.continue_task is True
-    assert args.timeout > 0
 
-
-def test_supervise_carries_everything_the_worker_needs():
-    """The resident loop builds the same worker as a single dispatch."""
-    args = parse("supervise", "--notes", "/tmp/notes.md",
-                 "--command", "/usr/bin/true", "--result", "verified",
-                 "--continue", "--interval", "5")
-    assert args.notes == "/tmp/notes.md"
-    assert args.command == ["/usr/bin/true"]
-    assert args.result == "verified"
-    assert args.continue_task is True
-    assert args.interval == 5
-    assert args.timeout > 0
-
-
-def test_supervise_builds_a_worker_without_an_attribute_error(tmp_path, monkeypatch):
-    """The resident loop must be able to build its worker."""
-    args = parse("supervise", "--notes", str(tmp_path / "notes.md"),
-                 "--command", "/usr/bin/true")
-    args.home = tmp_path
-    worker = core_cli._canonical_worker(args)
-    assert worker.role == args.role
-    assert worker.notes_file == tmp_path / "notes.md"
-
-
-def test_supervisor_key_reads_pending_canonical_wake(tmp_path):
-    from mishe_tauftauf.feed import Feed
-
-    args = parse("supervise", "--notes", str(tmp_path / "notes.md"),
-                 "--command", "/usr/bin/true")
-    args.home = tmp_path
-    args.role = "genome"
-    assert core_cli._pending_wake(args) is None
-    wake = Feed(tmp_path).append("seed", "seed wake genome observation=1\nInvestigate.")
-    assert core_cli._pending_wake(args) == wake.sequence
-
-
-def test_supervisor_holds_without_a_canonical_wake(tmp_path, monkeypatch, capsys):
+def test_supervisor_dispatches_without_preexisting_wake(tmp_path, monkeypatch):
     from mishe_tauftauf.core.interfaces import Observation
     import time
+
+    calls = []
 
     class Supervisor:
         def open_dispatch(self):
             return None
 
-        def observe(self):
-            return Observation(fresh=True, healthy=True, detail="fixture")
+        def dispatch(self, role, key, payload, *, discard_skipped_poll):
+            calls.append((role, key))
+            raise StopIteration
 
-        def dispatch(self, *args, **kwargs):
-            pytest.fail("dispatched without a canonical wake")
-
-    args = parse("supervise", "--notes", str(tmp_path / "notes.md"),
-                 "--command", "/usr/bin/true")
+    args = parse("supervise")
+    from mishe_tauftauf.core import adapters
+    monkeypatch.setattr(adapters, "CanonicalLiveObservation",
+                        lambda **kwargs: lambda: Observation(fresh=True, healthy=True, detail="fixture"))
     args.home = tmp_path
     monkeypatch.setattr(core_cli, "_supervisor", lambda args: Supervisor())
-    def stop(_):
-        raise StopIteration
-    monkeypatch.setattr(time, "sleep", stop)
+    monkeypatch.setattr(time, "sleep", lambda seconds: (_ for _ in ()).throw(StopIteration))
     with pytest.raises(StopIteration):
         core_cli.cmd_supervise(args)
-    assert "no canonical wake" in capsys.readouterr().out
+    assert len(calls) == 1
+    assert calls[0][0] == "genome"
+
+
+def test_command_and_synthetic_notes_are_not_accepted():
+    with pytest.raises(SystemExit):
+        parse("dispatch", "--key", "attempt", "--command", "/usr/bin/true")
+    with pytest.raises(SystemExit):
+        parse("supervise", "--notes", "/tmp/notes")
 
 
 def test_reconcile_requires_a_detail():

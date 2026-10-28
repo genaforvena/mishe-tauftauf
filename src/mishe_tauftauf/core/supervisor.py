@@ -102,7 +102,8 @@ class Supervisor:
             finally:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
-    def dispatch(self, role: str, key: str, payload: dict | None = None) -> DispatchRecord:
+    def dispatch(self, role: str, key: str, payload: dict | None = None, *,
+                 discard_skipped_poll: bool = False) -> DispatchRecord:
         """Run one dispatch for ``role``.
 
         Refuses when the role is not declared, when an earlier dispatch
@@ -138,9 +139,10 @@ class Supervisor:
                     f"dispatch {key!r} for role {role!r} has already been "
                     "dispatched; a new dispatch needs a new key")
             attempt = (existing.attempt + 1) if existing is not None else 1
+            path = self.store.path_for(role)
+            previous = path.read_bytes() if discard_skipped_poll and path.exists() else None
             record = DispatchRecord(role=role, key=key, state=STARTED, attempt=attempt)
             self.store.write(record)
-            request = Dispatch(role=role, key=key, payload=dict(payload or {}))
             # The worker's pid is written into the record as soon as the
             # worker exists, so a successor that reads the record while the
             # worker runs can find it and refuse to sit beside it.
@@ -151,8 +153,16 @@ class Supervisor:
                 self.store.write(DispatchRecord(role=role, key=key, state=STARTED,
                                                 detail=current.detail, pid=pid,
                                                 attempt=attempt))
+            def publish_detail(detail: str) -> None:
+                current = self.store.read(role)
+                if current is None or current.state != STARTED or current.key != key:
+                    raise SupervisorError("dispatch claim changed while publishing its wake")
+                self.store.write(DispatchRecord(role=role, key=key, state=STARTED,
+                                                detail=detail, pid=current.pid,
+                                                attempt=attempt))
             request = Dispatch(role=role, key=key,
-                               payload=dict(payload or {}, publish_pid=publish))
+                               payload=dict(payload or {}, publish_pid=publish,
+                                            publish_detail=publish_detail))
             try:
                 result = self.worker.run(request)
             except BaseException as exc:
@@ -160,13 +170,22 @@ class Supervisor:
                 # record stays open so a successor reconciles instead of replaying.
                 current = self.store.read(role)
                 record = DispatchRecord(role=role, key=key, state=UNKNOWN,
-                                        detail=f"worker raised: {exc}",
+                                        detail=(f"{current.detail}; " if current and current.detail else "")
+                                               + f"worker raised: {exc}",
                                         pid=current.pid if current is not None else None,
                                         attempt=attempt)
                 self.store.write(record)
                 raise
             state = {"completed": COMPLETED, "failed": FAILED, "skipped": SKIPPED,
                      "unknown": UNKNOWN}[result.outcome]
+            if state == SKIPPED and discard_skipped_poll:
+                # Only the resident's canonical tick uses this: SKIPPED means
+                # no wake was created or delivered. A crash before restoration
+                # leaves STARTED, not a replayable claim.
+                self.store.restore_after_skipped_poll(role, previous)
+                return DispatchRecord(role=role, key=key, state=state,
+                                      detail=result.detail, pid=result.pid,
+                                      attempt=attempt)
             record = DispatchRecord(role=role, key=key, state=state,
                                     detail=result.detail, pid=result.pid,
                                     attempt=attempt)
@@ -202,6 +221,9 @@ class Supervisor:
                 raise SupervisorError(
                     f"dispatch {record.key!r} still has a live worker "
                     f"(pid {record.pid}); stop it before reconciling")
+            reconcile_check = getattr(self.worker, "reconcile_check", None)
+            if callable(reconcile_check):
+                reconcile_check(record)
             closed = DispatchRecord(role=record.role, key=record.key, state=RECONCILED,
                                     detail=detail, pid=record.pid, attempt=record.attempt)
             self.store.write(closed)

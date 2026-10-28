@@ -87,6 +87,48 @@ def test_a_skipped_turn_is_not_a_failure(tmp_path):
     assert record.state.name != "failed"
 
 
+def test_effect_free_resident_polls_do_not_accumulate_keys_or_erase_work(tmp_path):
+    worker = RecordingWorker()
+    supervisor = make_supervisor(tmp_path, worker)
+    supervisor.dispatch("genome", "actual-work")
+    before = supervisor.store.path_for("genome").read_bytes()
+    worker.outcome = "skipped"
+    for number in range(50):
+        result = supervisor.dispatch("genome", f"idle-{number}", discard_skipped_poll=True)
+        assert result.state.name == "skipped"
+    assert supervisor.store.path_for("genome").read_bytes() == before
+    assert supervisor.store.used_keys("genome") == {"actual-work"}
+    empty = make_supervisor(tmp_path / "empty", RecordingWorker(outcome="skipped"))
+    for number in range(10):
+        empty.dispatch("genome", f"idle-{number}", discard_skipped_poll=True)
+    assert empty.status("genome") is None
+    assert empty.store.used_keys("genome") == set()
+    with pytest.raises(SupervisorError):
+        supervisor.dispatch("genome", "actual-work")
+
+
+def test_uncertain_resident_poll_remains_open(tmp_path):
+    worker = RecordingWorker(outcome="unknown", detail="delivery uncertain")
+    supervisor = make_supervisor(tmp_path, worker)
+    result = supervisor.dispatch("genome", "poll", discard_skipped_poll=True)
+    assert result.state.name == "unknown"
+    assert supervisor.status("genome").key == "poll"
+    with pytest.raises(SupervisorError):
+        supervisor.dispatch("genome", "next", discard_skipped_poll=True)
+
+
+def test_poll_restore_failure_keeps_claim_open(tmp_path, monkeypatch):
+    supervisor = make_supervisor(tmp_path, RecordingWorker(outcome="skipped"))
+    def fail_restore(*args):
+        raise OSError("restore interrupted")
+    monkeypatch.setattr(supervisor.store, "restore_after_skipped_poll", fail_restore)
+    with pytest.raises(OSError):
+        supervisor.dispatch("genome", "poll", discard_skipped_poll=True)
+    assert supervisor.status("genome").state.name == "started"
+    with pytest.raises(SupervisorError):
+        supervisor.dispatch("genome", "next", discard_skipped_poll=True)
+
+
 def test_an_unknown_dispatch_reconciles_once_and_only_once(tmp_path):
     class Blocking(RecordingWorker):
         def run(self, dispatch):

@@ -30,7 +30,6 @@ def _site_home(raw: str) -> Path:
 
 def _supervisor(args, worker=None):
     from .adapters import CanonicalObservation, CanonicalRoleRegistry
-    from .registry import StaticRoleRegistry
     from .state import DispatchStore
     from .supervisor import Supervisor
 
@@ -46,8 +45,7 @@ def _supervisor(args, worker=None):
 def _canonical_worker(args):
     from .adapters import CanonicalWorker
     return CanonicalWorker(home=args.home, session=args.session, role=args.role,
-                           notes_file=Path(args.notes), result=args.result,
-                           continue_task=args.continue_task, timeout=args.timeout)
+                           timeout=getattr(args, "timeout", 900.0))
 
 
 def cmd_status(args) -> int:
@@ -76,7 +74,6 @@ def _observation(args):
 def cmd_dispatch(args) -> int:
     supervisor = _supervisor(args)
     record = supervisor.dispatch(args.role, args.key, payload={
-        "command": args.command,
         "self_pick_seconds": args.self_pick_seconds,
     })
     print(json.dumps(record.to_json(), indent=2, sort_keys=True))
@@ -90,10 +87,10 @@ def cmd_reconcile(args) -> int:
     return 0
 
 
-def _pending_wake(args) -> int | None:
-    """Read the pending canonical wake; unreadable state is not an empty queue."""
-    return _canonical_worker(args)._pending_wake()
-
+def _attempt_key(prefix: str) -> str:
+    """An attempt is claimed before tick can create its canonical wake."""
+    from uuid import uuid4
+    return prefix + uuid4().hex
 
 def cmd_supervise(args) -> int:
     """Run the supervisor as a resident: one turn at a time, forever.
@@ -109,6 +106,9 @@ def cmd_supervise(args) -> int:
     """
     import time
     supervisor = _supervisor(args)
+    from .adapters import CanonicalLiveObservation
+    live_observation = CanonicalLiveObservation(home=args.home, session=args.session,
+                                                role=args.role)
     last = None
     while True:
         open_dispatch = supervisor.open_dispatch()
@@ -118,7 +118,7 @@ def cmd_supervise(args) -> int:
                   flush=True)
             time.sleep(args.interval)
             continue
-        receipt = supervisor.observe()
+        receipt = live_observation()
         if not receipt.fresh:
             print(f"UNKNOWN core {args.role}: {receipt.detail}", flush=True)
             time.sleep(args.interval)
@@ -131,30 +131,19 @@ def cmd_supervise(args) -> int:
             time.sleep(args.interval)
             continue
         try:
-            # The key names the work, so it is derived from the work.  The
-            # canonical wake is that identity: the plant's own sequence
-            # number for the turn.  A wall-clock second would collide
-            # between two pieces of work in the same second and miss the
-            # same work dispatched in two different seconds.
-            wake = _pending_wake(args)
-            if wake is None:
-                print(f"held core {args.role}: no canonical wake to identify dispatch",
-                      flush=True)
-                time.sleep(args.interval)
-                continue
-            key = args.key_prefix + str(wake)
-            record = supervisor.dispatch(args.role, key,
-                                         payload={
-                                             "command": args.command,
-                                             "self_pick_seconds": args.self_pick_seconds,
-                                         })
+            record = supervisor.dispatch(
+                args.role, _attempt_key(args.key_prefix),
+                payload={"self_pick_seconds": args.self_pick_seconds},
+                discard_skipped_poll=True)
         except Exception as exc:
             print(f"held core {args.role}: {exc}", flush=True)
             time.sleep(args.interval)
             continue
-        if record.to_json() != last:
-            print(json.dumps(record.to_json(), sort_keys=True), flush=True)
-            last = record.to_json()
+        message = record.to_json()
+        identity = (record.state.name, record.detail) if record.state.name == "skipped" else message
+        if identity != last:
+            print(json.dumps(message, sort_keys=True), flush=True)
+            last = identity
         time.sleep(args.interval)
 
 

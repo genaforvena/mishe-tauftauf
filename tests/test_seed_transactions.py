@@ -64,6 +64,16 @@ def test_clear_busy_mind_does_not_rotate(tmp_path, monkeypatch):
     assert Feed(tmp_path).read_bytes() == before
 
 
+def test_clear_refuses_a_different_settled_wake_under_lock(tmp_path, monkeypatch):
+    attempt, _ = settled(tmp_path)
+    state = clear_fixture(tmp_path, monkeypatch)
+    before = Feed(tmp_path).read_bytes()
+    with pytest.raises(ValueError, match="settled wake changed"):
+        seed.clear(tmp_path, "session", "witness", expected_wake=attempt + 1)
+    assert state["rotations"] == 0
+    assert Feed(tmp_path).read_bytes() == before
+
+
 def test_clear_requires_observed_pid_change(tmp_path, monkeypatch):
     settled(tmp_path)
     state = clear_fixture(tmp_path, monkeypatch)

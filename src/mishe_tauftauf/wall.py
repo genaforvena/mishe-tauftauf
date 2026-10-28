@@ -14,6 +14,7 @@ from .feed import Feed, publication_lock
 from .chat_protocol import decode_lifecycle
 from .outcome_events import blocking_gaps, classify_outcomes, eligible_evidence_path
 from .outcome_publication import OUTCOME_KINDS, decode_supersedes
+from .observations import sensor_failed as _sensor_failed, sensor_unknown as _sensor_unknown
 
 WALL_MAX_BYTES = 16384
 """Hard byte bound for one edited wall; walls are bounded prose, unlike chat.log."""
@@ -749,7 +750,7 @@ def _rotated_by_resurrection(session: str, role: str, journal: dict) -> str | No
     return pid or None
 
 
-def clear(home: Path, session: str, role: str) -> str:
+def clear(home: Path, session: str, role: str, *, expected_wake: int | None = None) -> str:
     from . import seed
     from .post_check import _save
     from .proc_table import launch_argv, pane_field
@@ -761,6 +762,8 @@ def clear(home: Path, session: str, role: str) -> str:
         raise ValueError("session is not owned")
     with seed._lock(home):
         _, pending, settled, cleared, *_ = seed._state(home, role)
+        if expected_wake is not None and settled != expected_wake:
+            raise ValueError("settled wake changed before clear; reconcile")
         if pending or not settled:
             return f"held seed {role} no settled turn to clear"
         path = home / "checks" / f"wall-clear-{role}-{settled}.json"
@@ -950,7 +953,30 @@ def deliver(home: Path, session: str, role: str, wake: int, observation: int | N
     return f"wake seed {role} {wake}"
 
 
-def tick(home: Path, session: str, role: str, self_pick_seconds: float = 300) -> str:
+def _live_sensor(home: Path, session: str, role: str) -> tuple[str, bool]:
+    """Read the owned, live renderer and its current dashboard."""
+    from .dashboard import read
+    from .observations import pane_lease_age, sensor_from_frame
+    from .tmux import owns_session, capture_raw, lease_value, _pane_stopped_or_dead
+
+    if not owns_session(home, session):
+        raise ValueError("session is not owned")
+    raw = capture_raw(session, role)
+    lease = lease_value(raw)
+    if _pane_stopped_or_dead(session, role) or lease is None:
+        raise ValueError(f"seed {role} pane unavailable")
+    age = pane_lease_age(lease)
+    if not 0 <= age <= 30:
+        raise ValueError(f"seed {role} pane lease stale")
+    frame, ok = read(home, role)
+    sensor = sensor_from_frame(frame)
+    return sensor, ok
+
+
+
+
+def tick(home: Path, session: str, role: str, self_pick_seconds: float = 300, *,
+         new_only: bool = False) -> str:
     from . import seed
     from .dashboard import read
     from .observations import strip_owned_chrome, run_filter
@@ -969,12 +995,16 @@ def tick(home: Path, session: str, role: str, self_pick_seconds: float = 300) ->
         return "wake window paused; sensor panes remain live; no new model delivery"
     if cfg.get("until") and datetime.now(timezone.utc) >= datetime.fromisoformat(cfg["until"].replace("Z", "+00:00")):
         with seed._lock(home):
-            _, pending, _, _, observation, *_ = seed._state(home, role)
+            _, pending, settled, cleared, observation, *_ = seed._state(home, role)
             if pending is not None:
+                if new_only:
+                    return f"held seed {role} wake {pending} already pending; reconcile before dispatch"
                 if not owns_session(home, session):
                     raise ValueError("session is not owned")
                 return deliver(home, session, role, pending, observation,
                     "The wake window ended. Reconcile and finish this already pending turn; no new wake is created.")
+            if new_only and settled and settled != cleared:
+                return f"held seed {role} awaiting idle rotation"
             # A bounded stop suppresses autonomous wake selection, but it must
             # never mute an addressed escalation. The silence watcher's ENDED
             # notice, a peer message and an operator DM stay deliverable, so a
@@ -985,6 +1015,17 @@ def tick(home: Path, session: str, role: str, self_pick_seconds: float = 300) ->
                               and control.role == role), 0)
             inbox = [e for e in entries if addressed(e, role) and e.sequence > last_wake]
             if inbox:
+                if new_only:
+                    sensor, ok = _live_sensor(home, session, role)
+                    meaningful = observation_text(role, sensor)
+                    if _sensor_failed(meaningful, ok):
+                        return f"UNKNOWN seed {role} live sensor reports a problem; no wake created"
+                    digest = hashlib.sha256(json.dumps(
+                        {"sensor": meaningful, "command_ok": ok}, sort_keys=True).encode()).hexdigest()
+                    observation = Feed(home).append_record(
+                        "seed", f"seed observation {role}",
+                        {"digest": digest, "role": role, "snapshot": meaningful,
+                         "command_ok": ok, "notify": True}, kind="observation").sequence
                 if not seed._mind_ready(session, role):
                     return f"held seed {role} mind busy; addressed message preserved while the window is ended"
                 if not owns_session(home, session):
@@ -1037,6 +1078,10 @@ def tick(home: Path, session: str, role: str, self_pick_seconds: float = 300) ->
             observed = Feed(home).append_record("seed", f"seed observation {role}",
                 {"digest": digest, "role": role, "snapshot": meaningful, "command_ok": ok, "notify": notify}, kind="observation")
             observation = observed.sequence
+        if new_only and pending is not None:
+            return f"held seed {role} wake {pending} already pending; reconcile before dispatch"
+        if new_only and _sensor_failed(meaningful, ok):
+            return f"UNKNOWN seed {role} live sensor reports a problem; no wake created"
         if pending is not None:
             return deliver(home, session, role, pending, observation,
                 "Existing unsettled turn. Edited wall notes preserve the earlier obligations; read them before continuing.")

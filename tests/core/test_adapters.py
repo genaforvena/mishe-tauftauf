@@ -4,14 +4,13 @@ These tests use the real tape, the real wall writer and the real settlement.
 Only the tmux layer is replaced, because a turn needs a live pane to be
 delivered to.
 """
-import subprocess
-import sys
 
 import pytest
 
 from mishe_tauftauf.core import (Dispatch, DispatchStore, Supervisor,
                                  SupervisorError)
-from mishe_tauftauf.core.adapters import (CanonicalObservation,
+from mishe_tauftauf.core.adapters import (CanonicalLiveObservation,
+                                          CanonicalObservation,
                                           CanonicalRoleRegistry,
                                           CanonicalWorker)
 from mishe_tauftauf.core.registry import StaticRoleRegistry
@@ -47,15 +46,21 @@ def stub_pane(monkeypatch, site, *, ready=True):
     stamp = datetime.now(timezone.utc).isoformat()
     lease = f"-- pane live {stamp} · refresh 0.1s · ticks every frame --"
     frame = "STATE: GREEN\nThe site is healthy.\n"
+    pid = ["4242"]
 
     def fake_tmux(*args, **kwargs):
         argv = [str(part) for part in args]
+        if "respawn-pane" in argv:
+            pid[0] = "4243" if pid[0] == "4242" else "4244"
+            return CompletedProcess(argv, 0, b"", b"")
         if "capture-pane" in argv:
             return CompletedProcess(argv, 0, (lease + "\n" + frame).encode("utf-8"), b"")
         if "display-message" in argv and "pane_current_command" in argv:
             return CompletedProcess(argv, 0, b"omp\n", b"")
-        if "display-message" in argv and "pane_dead" in argv:
-            return CompletedProcess(argv, 0, b"0 4242\n", b"")
+        if "display-message" in argv and "#{pane_dead}" in argv:
+            return CompletedProcess(argv, 0, b"0\n", b"")
+        if "display-message" in argv and "#{pane_pid}" in argv:
+            return CompletedProcess(argv, 0, (pid[0] + "\n").encode(), b"")
         if "display-message" in argv:
             return CompletedProcess(argv, 0, b"4242\n", b"")
         if "show-option" in argv:
@@ -93,99 +98,327 @@ def test_the_role_registry_reads_the_sites_declared_roles(site):
     assert not registry.knows("no-such-role")
 
 
-def test_a_canonical_turn_wakes_runs_and_settles(site, monkeypatch):
-    """One dispatch produces a real wake, a real wall and a real settlement."""
+def test_live_observation_bootstraps_and_does_not_hide_sensor_failures(site, monkeypatch):
+    from mishe_tauftauf import dashboard, seed, tmux
     stub_pane(monkeypatch, site)
-    notes = site / "notes.md"
-    notes.write_text("Read the lifecycle source; the wake settled through the "
-                     "canonical path.\n", encoding="utf-8")
-    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome",
-                             notes_file=notes, timeout=30)
+    live = CanonicalLiveObservation(home=site, session="mishe-trial", role="genome")
+    assert seed._state(site, "genome")[4] is None
+    assert live().fresh and live().healthy
+    assert seed._state(site, "genome")[4] is None
+
+    for frame in ("STATE: RED\n", "UNKNOWN sensor offline\n", "FAIL detector unavailable\n",
+                  "STATE: GREEN\nSTALE — check report old\n"):
+        monkeypatch.setattr(dashboard, "read", lambda *args, frame=frame: (frame, True))
+        reading = live()
+        assert not reading.healthy
+    monkeypatch.setattr(dashboard, "read", lambda *args: ("STATE: GREEN\n", False))
+    assert not live().fresh
+    monkeypatch.setattr(tmux, "lease_value", lambda *args: None)
+    assert not live().fresh
+
+
+def test_new_only_rechecks_live_health_before_creating_wake(site, monkeypatch):
+    from mishe_tauftauf import dashboard, seed
+    stub_pane(monkeypatch, site)
+    live = CanonicalLiveObservation(home=site, session="mishe-trial", role="genome")
+    assert live().healthy
+    monkeypatch.setattr(dashboard, "read", lambda *args: ("UNKNOWN detector unavailable\n", True))
+    sent = []
+    monkeypatch.setattr(seed, "_send", lambda *args: sent.append(args))
+    receipt = seed.tick(site, "mishe-trial", "genome", new_only=True)
+    assert receipt.startswith("UNKNOWN")
+    assert seed._state(site, "genome")[1] is None
+    assert not sent
+    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome", timeout=1)
     supervisor = Supervisor(store=DispatchStore(site / "core-dispatch"),
-                             registry=StaticRoleRegistry(["genome"]), worker=worker)
-    record = supervisor.dispatch("genome", "trial-1", payload={
-        "command": [sys.executable, "-c", "print('a useful reading')"],
-        "self_pick_seconds": 0,
-    })
+                            registry=StaticRoleRegistry(["genome"]), worker=worker)
+    result = supervisor.dispatch("genome", "sensor-race", discard_skipped_poll=True)
+    assert result.state.name == "skipped"
+    assert "UNKNOWN" in result.detail
+    assert not supervisor.store.open_records()
+    assert not sent
+
+
+def test_stale_record_does_not_block_a_fresh_live_reading(site, monkeypatch):
+    from mishe_tauftauf import seed
+    stub_pane(monkeypatch, site)
+    seed.Feed(site).append_record(
+        "seed", "seed observation genome",
+        {"role": "genome", "digest": "old", "snapshot": "STATE: GREEN",
+         "command_ok": True, "notify": True}, kind="observation")
+    monkeypatch.setattr(CanonicalObservation, "_age", staticmethod(lambda timestamp: 3600))
+    assert not CanonicalObservation(home=site, role="genome")().fresh
+    assert CanonicalLiveObservation(home=site, session="mishe-trial", role="genome")().healthy
+
+def test_mind_settles_exact_delivered_wake(site, monkeypatch):
+    """The real tick delivers; the receiving mind settles through seed."""
+    import threading
+    from mishe_tauftauf import seed, wall
+
+    stub_pane(monkeypatch, site)
+    monkeypatch.setattr(wall, "restore", lambda *args: "restore")
+    clear_due = seed._clear_due
+    monkeypatch.setattr(seed, "_clear_due", lambda home, role, grace: clear_due(home, role, 0))
+    notes = site / "mind-notes"
+    notes.write_text("The mind investigated the live evidence.\n", encoding="utf-8")
+    threads = []
+    failures = []
+
+    def send(target, text):
+        def mind():
+            try:
+                wake = seed._state(site, "genome")[1]
+                seed.yield_wake(site, "genome", wake, notes, result="verified")
+            except Exception as exc:
+                failures.append(exc)
+        thread = threading.Thread(target=mind)
+        threads.append(thread)
+        thread.start()
+
+    monkeypatch.setattr(seed, "_send", send)
+    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome", timeout=5)
+    supervisor = Supervisor(store=DispatchStore(site / "core-dispatch"),
+                            registry=StaticRoleRegistry(["genome"]), worker=worker)
+    record = supervisor.dispatch("genome", "attempt-1")
+    for thread in threads:
+        thread.join(timeout=5)
+    assert not failures
     assert record.state.name == "completed", record.detail
-    # The wall carries the settlement notes, and the tape records the yield.
-    assert (site / "walls" / "genome.md").read_text(encoding="utf-8") == notes.read_text(encoding="utf-8")
-    from mishe_tauftauf import seed
-    _, pending, last_yield, _, _, _, _, _ = seed._state(site, "genome")
+    _, pending, last_yield, last_clear, *_ = seed._state(site, "genome")
     assert pending is None
-    assert last_yield is not None
+    assert last_clear == last_yield
+    assert record.detail == f"canonical wake {last_yield}: canonical settlement and idle clear observed"
+    assert (site / "walls" / "genome.md").read_text() == notes.read_text()
+    seed.Feed(site).append("operator", "[dm] to=genome\nAnother turn is needed.")
+    second = supervisor.dispatch("genome", "attempt-2")
+    for thread in threads:
+        thread.join(timeout=5)
+    assert not failures
+    assert second.state.name == "completed", second.detail
+    _, pending, second_yield, second_clear, *_ = seed._state(site, "genome")
+    assert pending is None
+    assert second_yield != last_yield
+    assert second_clear == second_yield
 
 
-def test_a_turn_that_owes_nothing_reports_skipped_and_claims_no_wake(site, monkeypatch):
-    """A role with no owed turn produces no wake and no settlement."""
-    from mishe_tauftauf import seed
+def test_settlement_does_not_complete_while_mind_is_busy(site, monkeypatch):
+    import threading
+    from mishe_tauftauf import seed, wall
     stub_pane(monkeypatch, site)
-    # The tick refuses to create a wake: the wall is stable and no inbox
-    # message is addressed to the role.
-    monkeypatch.setattr(seed, "_state", lambda *a, **k: (None, None, None, None, None, None, None, None))
-    notes = site / "notes.md"
-    notes.write_text("Nothing was due.\n", encoding="utf-8")
-    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome",
-                             notes_file=notes, timeout=30)
-    result = worker.run(Dispatch(role="genome", key="trial-1", payload={
-        "command": [sys.executable, "-c", "print('nothing due')"]}))
-    assert result.outcome == "skipped"
-    assert not (site / "walls" / "genome.md").exists()
+    monkeypatch.setattr(wall, "restore", lambda *args: "restore")
+    monkeypatch.setattr(seed, "_mind_idle", lambda *args: False)
+    clear_due = seed._clear_due
+    monkeypatch.setattr(seed, "_clear_due", lambda home, role, grace: clear_due(home, role, 0))
+    notes = site / "mind-notes"
+    notes.write_text("The mind recorded its actual handoff.\n", encoding="utf-8")
+    threads = []
 
+    def send(target, text):
+        def settle():
+            wake = seed._state(site, "genome")[1]
+            seed.yield_wake(site, "genome", wake, notes, result="verified")
+        thread = threading.Thread(target=settle)
+        threads.append(thread)
+        thread.start()
 
-def test_a_turn_whose_command_fails_leaves_the_wake_pending(site, monkeypatch):
-    """A failed command settles nothing: the wake stays owed."""
-    stub_pane(monkeypatch, site)
-    notes = site / "notes.md"
-    notes.write_text("The command failed; the wake is still pending.\n", encoding="utf-8")
-    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome",
-                             notes_file=notes, timeout=30)
-    result = worker.run(Dispatch(role="genome", key="trial-1", payload={
-        "command": [sys.executable, "-c", "raise SystemExit(4)"]}))
-    # A non-zero exit does not establish that the turn had no effect, so it
-    # stays unknown and blocks the next dispatch.
-    assert result.outcome == "unknown"
-    from mishe_tauftauf import seed
-    pending = seed._state(site, "genome")[1]
-    assert pending is not None, "a failed turn must leave its wake owed"
-    assert not (site / "walls" / "genome.md").exists()
-
-
-def test_a_failed_command_through_the_supervisor_blocks_the_next_dispatch(site, monkeypatch):
-    """The whole chain: an unknown effect must not be replayed."""
-    stub_pane(monkeypatch, site)
-    notes = site / "notes.md"
-    notes.write_text("The command failed; the wake is still pending.\n", encoding="utf-8")
-    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome",
-                             notes_file=notes, timeout=30)
+    monkeypatch.setattr(seed, "_send", send)
+    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome", timeout=2)
     supervisor = Supervisor(store=DispatchStore(site / "core-dispatch"),
-                             registry=StaticRoleRegistry(["genome"]), worker=worker)
-    record = supervisor.dispatch("genome", "trial-1", payload={
-        "command": [sys.executable, "-c", "raise SystemExit(4)"]})
+                            registry=StaticRoleRegistry(["genome"]), worker=worker)
+    record = supervisor.dispatch("genome", "busy-attempt")
+    for thread in threads:
+        thread.join(timeout=5)
+    _, pending, settled, cleared, *_ = seed._state(site, "genome")
+    assert pending is None
+    assert settled is not None and cleared != settled
     assert record.state.name == "unknown"
-    with pytest.raises(SupervisorError) as caught:
-        supervisor.dispatch("genome", "trial-2", payload={
-            "command": [sys.executable, "-c", "raise SystemExit(4)"]})
-    assert "reconcile" in str(caught.value)
+    with pytest.raises(SupervisorError):
+        supervisor.dispatch("genome", "another-attempt")
 
 
-def test_an_unreadable_canonical_state_is_unknown_not_skipped(site, monkeypatch):
-    """A state that cannot be read is not a state that says nothing is owed.
-
-    The canonical tick turns an unreadable state into an UNKNOWN receipt,
-    and the adapter keeps that reading: the turn is not known to be undone.
-    """
+def test_unsettled_delivery_blocks_new_dispatch(site, monkeypatch):
+    from mishe_tauftauf import seed, wall
     stub_pane(monkeypatch, site)
+    monkeypatch.setattr(wall, "restore", lambda *args: "restore")
+    monkeypatch.setattr(seed, "_send", lambda *args: None)
+    store = DispatchStore(site / "core-dispatch")
+    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome", timeout=0.01)
+    supervisor = Supervisor(store=store, registry=StaticRoleRegistry(["genome"]), worker=worker)
+    record = supervisor.dispatch("genome", "attempt-1")
+    pending = seed._state(site, "genome")[1]
+    assert record.state.name == "unknown"
+    assert f"canonical wake {pending}" in record.detail
+    with pytest.raises(SupervisorError):
+        supervisor.dispatch("genome", "attempt-2")
+    assert seed._state(site, "genome")[1] == pending
+
+
+def test_tick_race_with_existing_wake_does_not_redeliver(site, monkeypatch):
+    """The final pending check is inside the canonical tick's seed lock."""
     from mishe_tauftauf import seed
-    monkeypatch.setattr(seed, "_state", lambda *a, **k: (_ for _ in ()).throw(OSError("tape unreadable")))
-    notes = site / "notes.md"
-    notes.write_text("The state could not be read.\n", encoding="utf-8")
-    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome",
-                             notes_file=notes, timeout=30)
-    result = worker.run(Dispatch(role="genome", key="trial-1", payload={
-        "command": [sys.executable, "-c", "print('must not run')"]}))
+    stub_pane(monkeypatch, site)
+    real_tick = seed.tick
+    sent = []
+    monkeypatch.setattr(seed, "_send", lambda *args: sent.append(args))
+
+    def racing_tick(home, session, role, interval, *, new_only):
+        seed.Feed(home).append("seed", "seed wake genome observation=1\nAnother dispatcher.")
+        return real_tick(home, session, role, interval, new_only=new_only)
+
+    monkeypatch.setattr(seed, "tick", racing_tick)
+    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome", timeout=1)
+    result = worker.run(Dispatch(role="genome", key="attempt-1", payload={}))
     assert result.outcome == "unknown"
-    assert not (site / "walls" / "genome.md").exists()
+    assert "already pending" in result.detail
+    assert sent == []
+
+
+def test_uncertain_tick_effect_remains_open(site, monkeypatch):
+    from mishe_tauftauf import seed
+    def uncertain_tick(home, session, role, interval, *, new_only):
+        seed.Feed(home).append("seed", "seed wake genome observation=1\nPossibly delivered.")
+        raise RuntimeError("delivery outcome lost")
+    monkeypatch.setattr(seed, "tick", uncertain_tick)
+    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome", timeout=1)
+    supervisor = Supervisor(store=DispatchStore(site / "core-dispatch"),
+                            registry=StaticRoleRegistry(["genome"]), worker=worker)
+    with pytest.raises(RuntimeError):
+        supervisor.dispatch("genome", "attempt-1")
+    assert supervisor.status("genome").state.name == "unknown"
+    with pytest.raises(SupervisorError):
+        supervisor.dispatch("genome", "attempt-2")
+
+
+def test_process_crash_after_wake_leaves_started_and_blocks_replay(site):
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    script = """
+import os, sys
+sys.path.insert(0, sys.argv[2])
+from pathlib import Path
+from mishe_tauftauf import seed
+from mishe_tauftauf.core import DispatchStore, Supervisor, StaticRoleRegistry
+from mishe_tauftauf.core.adapters import CanonicalWorker
+home = Path(sys.argv[1])
+def tick(home, session, role, interval, *, new_only):
+    seed.Feed(home).append("seed", "seed wake genome observation=1\\nDelivery outcome unknown.")
+    os._exit(23)
+seed.tick = tick
+worker = CanonicalWorker(home=home, session="mishe-trial", role="genome", timeout=1)
+supervisor = Supervisor(store=DispatchStore(home / "core-dispatch"),
+                        registry=StaticRoleRegistry(["genome"]), worker=worker)
+supervisor.dispatch("genome", "crashed-attempt")
+"""
+    source = Path(__file__).resolve().parents[2] / "src"
+    result = subprocess.run([sys.executable, "-c", script, str(site), str(source)], timeout=10)
+    assert result.returncode == 23
+    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome", timeout=1)
+    supervisor = Supervisor(store=DispatchStore(site / "core-dispatch"),
+                            registry=StaticRoleRegistry(["genome"]), worker=worker)
+    assert supervisor.status("genome").state.name == "started"
+    with pytest.raises(SupervisorError):
+        supervisor.dispatch("genome", "next-attempt")
+
+
+def test_existing_wake_is_never_retried(site, monkeypatch):
+    from mishe_tauftauf import seed
+    seed.Feed(site).append("seed", "seed wake genome observation=1\nExisting.")
+    monkeypatch.setattr(seed, "tick", lambda *args, **kwargs: pytest.fail("redelivery"))
+    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome", timeout=1)
+    assert worker.run(Dispatch(role="genome", key="attempt-1", payload={})).outcome == "unknown"
+
+
+def test_unknown_tick_is_not_skipped(site, monkeypatch):
+    from mishe_tauftauf import seed
+    monkeypatch.setattr(seed, "tick", lambda *args, **kwargs: "UNKNOWN seed genome pane unavailable")
+    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome", timeout=1)
+    assert worker.run(Dispatch(role="genome", key="attempt-1", payload={})).outcome == "unknown"
+
+
+def test_waiting_tick_is_skipped_without_wake(site, monkeypatch):
+    from mishe_tauftauf import seed
+    monkeypatch.setattr(seed, "tick", lambda *args, **kwargs: "waiting seed genome wall stable")
+    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome", timeout=1)
+    assert worker.run(Dispatch(role="genome", key="attempt-1", payload={})).outcome == "skipped"
+
+
+def test_unmatched_settlement_does_not_complete_dispatch(site, monkeypatch):
+    from mishe_tauftauf import seed
+    def tick(home, session, role, interval, *, new_only):
+        feed = seed.Feed(home)
+        wake = feed.append("seed", "seed wake genome observation=1\nActual wake.")
+        feed.append("seed", f"seed yield genome wake={wake.sequence + 1}")
+        return f"wake seed genome {wake.sequence}"
+    monkeypatch.setattr(seed, "tick", tick)
+    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome", timeout=0.01)
+    result = worker.run(Dispatch(role="genome", key="attempt", payload={}))
+    assert result.outcome == "unknown"
+    assert "settlement or idle clear not observed" in result.detail
+
+
+
+def test_competing_ticks_create_only_one_delivery(site, monkeypatch):
+    import threading
+    from mishe_tauftauf import seed, wall
+    stub_pane(monkeypatch, site)
+    monkeypatch.setattr(wall, "restore", lambda *args: "restore")
+    sent = []
+    monkeypatch.setattr(seed, "_send", lambda *args: sent.append(args))
+    real_tick = seed.tick
+    barrier = threading.Barrier(2)
+
+    def simultaneous_tick(*args, **kwargs):
+        barrier.wait(timeout=5)
+        return real_tick(*args, **kwargs)
+
+    monkeypatch.setattr(seed, "tick", simultaneous_tick)
+    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome", timeout=0.01)
+    results = []
+    def run(key):
+        results.append(worker.run(Dispatch(role="genome", key=key, payload={})))
+    threads = [threading.Thread(target=run, args=(str(i),)) for i in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+    assert all(not thread.is_alive() for thread in threads)
+    assert len(results) == 2
+    assert all(result.outcome == "unknown" for result in results)
+    assert len(sent) == 1
+
+
+def test_reconcile_refuses_a_busy_or_unobservable_mind(site, monkeypatch):
+    from mishe_tauftauf import seed, tmux
+    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome", timeout=1)
+    supervisor = Supervisor(store=DispatchStore(site / "core-dispatch"),
+                            registry=StaticRoleRegistry(["genome"]), worker=worker)
+    monkeypatch.setattr(seed, "tick", lambda *args, **kwargs: "UNKNOWN seed genome transport")
+    assert supervisor.dispatch("genome", "attempt").state.name == "unknown"
+    monkeypatch.setattr(tmux, "owns_session", lambda *args: True)
+    monkeypatch.setattr(seed, "_mind_idle", lambda *args: False)
+    with pytest.raises(ValueError, match="not observably idle"):
+        supervisor.reconcile("genome", detail="checked the wake")
+    assert supervisor.status("genome").state.name == "unknown"
+
+
+def test_reconcile_refuses_settlement_without_idle_clear(site, monkeypatch):
+    from mishe_tauftauf import seed, tmux
+
+    wake = seed.Feed(site).append("seed", "seed wake genome observation=1\nInvestigate.")
+    notes = site / "notes.md"
+    notes.write_text("Checked the retained issue.", encoding="utf-8")
+    seed.yield_wake(site, "genome", wake.sequence, notes, result="verified")
+    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome", timeout=1)
+    supervisor = Supervisor(store=DispatchStore(site / "core-dispatch"),
+                            registry=StaticRoleRegistry(["genome"]), worker=worker)
+    assert supervisor.dispatch("genome", "attempt").state.name == "unknown"
+    monkeypatch.setattr(tmux, "owns_session", lambda *args: True)
+    monkeypatch.setattr(seed, "_mind_idle", lambda *args: True)
+    with pytest.raises(ValueError, match="not cleared"):
+        supervisor.reconcile("genome", detail="checked the wake")
+    assert supervisor.status("genome").state.name == "unknown"
 
 
 def test_the_observation_reads_the_canonical_state(site, monkeypatch):
@@ -212,27 +445,6 @@ def test_the_observation_is_healthy_when_the_role_has_an_observation(site, monke
     assert "pending=none" in reading.detail
 
 
-def test_a_stale_observation_makes_the_turn_unknown_and_creates_no_wake(site, monkeypatch):
-    """A stale dashboard must not read as a pass, and must not create a wake."""
-    import json
-    from datetime import datetime, timezone
-    stub_pane(monkeypatch, site)
-    stale = datetime.fromtimestamp(0, timezone.utc).isoformat()
-    (site / "dashboards" / "genome.json").write_text(json.dumps({
-        "version": 1, "slug": "genome", "home": str(site.resolve()),
-        "created": stale, "frame": "STATE: GREEN\n", "ok": True,
-        "sha256": "0" * 64,
-    }), encoding="utf-8")
-    notes = site / "notes.md"
-    notes.write_text("The observation was stale, so the turn is unknown.\n", encoding="utf-8")
-    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome",
-                             notes_file=notes, timeout=30)
-    result = worker.run(Dispatch(role="genome", key="trial-1", payload={
-        "command": [sys.executable, "-c", "print('must not run')"]}))
-    assert result.outcome == "unknown"
-    from mishe_tauftauf import seed
-    assert seed._state(site, "genome")[1] is None, "a stale observation created a wake"
-    assert not (site / "walls" / "genome.md").exists()
 
 
 def test_the_observation_reports_an_unreadable_state_as_unknown(site, monkeypatch):
@@ -243,64 +455,6 @@ def test_the_observation_reports_an_unreadable_state_as_unknown(site, monkeypatc
     assert reading.healthy is False
 
 
-def test_a_dispatch_for_another_role_is_refused(site, monkeypatch):
-    """The record must name the role the effect belongs to."""
-    stub_pane(monkeypatch, site)
-    notes = site / "notes.md"
-    notes.write_text("The dispatch named another role.\n", encoding="utf-8")
-    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome",
-                             notes_file=notes, timeout=30)
-    result = worker.run(Dispatch(role="health", key="trial-1", payload={
-        "command": [sys.executable, "-c", "print('must not run')"]}))
-    assert result.outcome == "failed"
-    assert "not 'health'" in result.detail
-    assert not (site / "walls" / "genome.md").exists()
-    assert not (site / "walls" / "health.md").exists()
-
-
-def test_a_missing_notes_file_after_the_turn_ran_is_unknown(site, monkeypatch):
-    """The command already ran, so its effect is not established."""
-    stub_pane(monkeypatch, site)
-    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome",
-                             notes_file=site / "absent.md", timeout=30)
-    result = worker.run(Dispatch(role="genome", key="trial-1", payload={
-        "command": [sys.executable, "-c", "print('the turn ran')"]}))
-    assert result.outcome == "unknown"
-    assert "notes missing" in result.detail
-
-
-def test_a_refused_settlement_after_the_turn_ran_is_unknown(site, monkeypatch):
-    """An empty notes file is refused by the settlement, so the effect is unknown."""
-    stub_pane(monkeypatch, site)
-    notes = site / "notes.md"
-    notes.write_text("   \n", encoding="utf-8")
-    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome",
-                             notes_file=notes, timeout=30)
-    result = worker.run(Dispatch(role="genome", key="trial-1", payload={
-        "command": [sys.executable, "-c", "print('the turn ran')"]}))
-    assert result.outcome == "unknown"
-    assert "settlement refused" in result.detail
-
-
-def test_a_wake_the_plant_holds_is_not_settled(site, monkeypatch):
-    """A held wake is one the plant wants reconciled, not settled."""
-    stub_pane(monkeypatch, site)
-    from mishe_tauftauf import seed
-    seed.Feed(site).append("seed", "seed wake genome observation=1\nA held turn.")
-    notes = site / "notes.md"
-    notes.write_text("The wake was held.\n", encoding="utf-8")
-
-    def held_tick(home, session, role, self_pick_seconds=0, *args, **kwargs):
-        return "held seed genome wake 1 unsettled; reconcile wall before retry"
-
-    monkeypatch.setattr(seed, "tick", held_tick)
-    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome",
-                             notes_file=notes, timeout=30)
-    result = worker.run(Dispatch(role="genome", key="trial-1", payload={
-        "command": [sys.executable, "-c", "print('must not run')"]}))
-    assert result.outcome == "unknown"
-    assert "held seed" in result.detail
-    assert not (site / "walls" / "genome.md").exists()
 
 
 def test_the_observation_is_not_healthy_for_the_plants_no_sensor_record(site, monkeypatch):
@@ -331,30 +485,6 @@ def test_the_observation_is_not_healthy_for_a_red_sensor(site, monkeypatch):
     assert reading.healthy is False
 
 
-def test_an_unknown_receipt_with_a_pending_wake_does_not_run_the_turn(site, monkeypatch):
-    """A stale observation stops the turn even when a wake is owed.
-
-    The plant's tick reports UNKNOWN when the observation it needed could
-    not be trusted.  Running and settling the turn on that reading would
-    settle a turn the plant could not confirm.
-    """
-    from mishe_tauftauf import seed
-    stub_pane(monkeypatch, site)
-    seed.Feed(site).append("seed", "seed wake genome observation=1\nA pending turn.")
-
-    def unknown_tick(*args, **kwargs):
-        return "UNKNOWN seed genome transport/observation: dashboard stale or future"
-
-    monkeypatch.setattr(seed, "tick", unknown_tick)
-    notes = site / "notes.md"
-    notes.write_text("The observation was stale.\n", encoding="utf-8")
-    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome",
-                             notes_file=notes, timeout=30)
-    result = worker.run(Dispatch(role="genome", key="trial-1", payload={
-        "command": [sys.executable, "-c", "print('must not run')"]}))
-    assert result.outcome == "unknown"
-    assert not (site / "walls" / "genome.md").exists()
-    assert seed._state(site, "genome")[1] is not None, "the wake was settled anyway"
 
 
 def test_a_stale_observation_is_not_healthy(site, monkeypatch):

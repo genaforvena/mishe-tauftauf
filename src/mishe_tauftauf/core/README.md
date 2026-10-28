@@ -19,26 +19,39 @@ is no second repository and no second branch.
 
 ## The boundary
 
-The core contains no Mishe protocol. It does not parse the tape, does not
-write a wall, does not speak to tmux and does not touch the host guard.
-
-Those live behind the adapters in `adapters.py`, and each adapter is the only
-caller of the plant's own code:
+The generic core does not parse the tape, write a wall, speak to tmux or touch
+the host guard. Those operations live behind `adapters.py`; tick receipts are
+decoded at the core's text boundary in `dispatch_record.py`.
 
 - `CanonicalRoleRegistry` reads the site's declared roles from `activity.roles`.
-- `CanonicalWorker` asks `wall.tick` for a wake, runs the turn, and settles it
-  with `seed.yield_wake`.
-- `CanonicalObservation` reads the canonical pending/yield/clear state.
+- `CanonicalWorker` asks `seed.tick` to create and deliver a new wake, then
+  watches for that exact wake's settlement and safe idle clear.
+- `CanonicalObservation` reads recorded state; `CanonicalLiveObservation`
+  checks the owned renderer's live lease and current sensor.
 
 The vocabulary is the plant's, not this package's. A wake is created by the
 canonical tick, a turn is settled by the canonical settlement, and a turn is
 cleared by the canonical clear. This package adds no second protocol and no
 second record of what a wake was.
 
-The resident loop holds when no wake is pending rather than dispatching with
-a fabricated identity. Because its worker calls the tick only after dispatch,
-this also means it cannot create its own first wake. Do not use this path for
-live migration until wake creation and replay handling are independently verified.
+The resident claims a unique attempt under the dispatch lock before asking the
+canonical tick for a wake. The tick refuses an existing pending wake under the
+seed lock rather than redelivering it. A successful delivery binds the actual
+wake number to the open dispatch. Completion requires the matching canonical
+yield and idle clear; after the normal 15-second grace, clear checks the exact
+settled wake under the seed lock and rotates only an observably idle mind.
+A crash, ambiguous receipt, missing settlement or clear, or timeout remains
+open for reconciliation. A crash before the wake number is bound still leaves
+`started`. Reconciliation requires the canonical mind to be observably idle.
+
+The resident checks the live sensor rather than requiring a recently changed
+feed observation: missing, stale, failed, RED and UNKNOWN evidence still hold.
+The tick checks the sensor again before creating a wake. An effect-free idle
+poll restores the prior dispatch record, so idle polls do not grow key history;
+a crash before restoration retains the open claim. Actual work keys remain
+durable and cannot be replayed. The source change has not established a live
+useful wake, settlement or tested backout; do not use it for live migration on
+that basis alone.
 
 
 Every import of the plant's machinery happens inside a function in
@@ -50,9 +63,9 @@ test_boundaries.py` enforces both halves of that rule.
 
 1. **Only a declared role is dispatched.** The site decides what "declared"
    means; the core reads that decision and refuses everything else.
-2. **One dispatch at a time, across all roles.** Two workers never share a
-   wake. The check and the claim are under one file lock, so two
-   *processes* cannot both see "nothing open" and each start a turn.
+2. **One core dispatch at a time, across all roles.** The check and claim are
+   under one file lock, so two core processes cannot both start a turn.
+   Other plant dispatchers do not acquire this lock.
 3. **An unresolved effect blocks the next dispatch.** A worker that started
    and produced no outcome may already have had its effect, so the record
    stays open and the next attempt is refused.

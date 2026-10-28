@@ -118,6 +118,37 @@ class DispatchStore:
         finally:
             os.close(directory)
 
+    def restore_after_skipped_poll(self, role: str, previous: bytes | None) -> None:
+        """Restore the pre-claim record after a provably effect-free poll.
+
+        A crash before this replacement leaves STARTED and therefore blocks
+        replay; the previous bytes retain every earlier durable work key.
+        Caller holds the dispatch lock.
+        """
+        path = self.path_for(role)
+        if previous is None:
+            path.unlink()
+        else:
+            handle = tempfile.NamedTemporaryFile(
+                mode="wb", dir=self.root, prefix=f".{path.name}.", delete=False)
+            try:
+                with handle:
+                    handle.write(previous)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(handle.name, path)
+            except BaseException:
+                try:
+                    os.unlink(handle.name)
+                except OSError:
+                    pass
+                raise
+        directory = os.open(self.root, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+
     def records(self) -> list[DispatchRecord]:
         """Every readable record, ordered by role."""
         found = []

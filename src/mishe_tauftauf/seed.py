@@ -888,12 +888,13 @@ def stop(home: Path, session: str) -> str:
     return f"seed session {session} stopped"
 
 
-def tick(home: Path, session: str, slug: str, self_pick_seconds: float = 0) -> str:
+def tick(home: Path, session: str, slug: str, self_pick_seconds: float = 0, *,
+         new_only: bool = False) -> str:
     slug = validate_slug(slug)
     from . import wall
     from .tmux import TmuxError
     try:
-        return wall.tick(home, session, slug, self_pick_seconds)
+        return wall.tick(home, session, slug, self_pick_seconds, new_only=new_only)
     except (OSError, ValueError, TmuxError) as exc:
         return f"UNKNOWN seed {slug} transport/observation: {exc}"
 
@@ -938,9 +939,12 @@ def yield_wake(home: Path, slug: str, wake: int, handoff_file: Path, continue_ta
                        source_path=handoff_source, source_is_anchor=source_is_anchor)
 
 
-def clear(home: Path, session: str, slug: str) -> str:
+def clear(home: Path, session: str, slug: str, *, expected_wake: int | None = None) -> str:
     from . import wall
-    return wall.clear(home, session, validate_slug(slug))
+    role = validate_slug(slug)
+    if expected_wake is None:
+        return wall.clear(home, session, role)
+    return wall.clear(home, session, role, expected_wake=expected_wake)
 
 
 def status(home: Path, slug: str) -> str:
