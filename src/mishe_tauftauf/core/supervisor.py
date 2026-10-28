@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import fcntl
 import os
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Sequence
@@ -57,7 +58,12 @@ class Supervisor:
         return self.store.read(role)
 
     def open_dispatch(self, role: str | None = None) -> DispatchRecord | None:
-        """The record that still holds an unresolved effect, if any."""
+        """The record that still holds an unresolved effect, if any.
+
+        A record in ``started`` state whose worker is still running is
+        open: it names work that may have had an effect, so it blocks the
+        next dispatch until somebody checks it.
+        """
         if role is not None:
             record = self.store.read(role)
             return record if record is not None and record.state in {STARTED, UNKNOWN} else None
@@ -71,16 +77,25 @@ class Supervisor:
         The lock is a file lock, so it is held across processes and not only
         within one.  It is released when the block ends, including when the
         block raises.
+
+        The wait is bounded by ``lock_timeout``: a caller that cannot get the
+        lock is refused rather than waiting forever, because a supervisor
+        that blocks here is a supervisor that stops observing.
         """
         path = self.store.lock_path
         path.parent.mkdir(parents=True, exist_ok=True)
+        deadline = time.monotonic() + self.lock_timeout
         with path.open("a+") as handle:
-            try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except OSError as exc:
-                raise DispatchBusy(
-                    "another process holds the dispatch lock; one mind runs at a time"
-                ) from exc
+            while True:
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError as exc:
+                    if time.monotonic() >= deadline:
+                        raise DispatchBusy(
+                            "another process holds the dispatch lock; one mind runs at a time"
+                        ) from exc
+                    time.sleep(0.02)
             try:
                 yield
             finally:
@@ -92,6 +107,11 @@ class Supervisor:
         Refuses when the role is not declared, when an earlier dispatch
         anywhere is still open, or when the durable record cannot be read.
         The refusal is explicit: the caller must reconcile, not retry.
+
+        The lock is held for the whole dispatch, including the worker's
+        run.  One mind at a time means one *running* mind at a time: if the
+        lock were released while the worker ran, a second role could start
+        a turn beside it.
         """
         if not self.registry.knows(role):
             raise SupervisorError(f"role {role!r} is not declared for this supervisor")
@@ -109,46 +129,59 @@ class Supervisor:
                         f"dispatch {record.key!r} for role {record.role!r} is {record.state.name}; "
                         "reconcile it before dispatching")
             existing = self.store.read(role)
+            if existing is not None and existing.key == key and existing.state not in {STARTED, UNKNOWN}:
+                # The same durable key names the same work.  A finished
+                # record with that key means the work already happened, so
+                # dispatching it again would run it twice.
+                raise SupervisorError(
+                    f"dispatch {key!r} for role {role!r} already finished as "
+                    f"{existing.state.name}; a new dispatch needs a new key")
             attempt = (existing.attempt + 1) if existing is not None else 1
             record = DispatchRecord(role=role, key=key, state=STARTED, attempt=attempt)
             self.store.write(record)
-        request = Dispatch(role=role, key=key, payload=dict(payload or {}))
-        try:
-            result = self.worker.run(request)
-        except BaseException as exc:
-            # The worker raised.  Its effect is unknown, not absent: the
-            # record stays open so a successor reconciles instead of replaying.
-            record = DispatchRecord(role=role, key=key, state=UNKNOWN,
-                                    detail=f"worker raised: {exc}", attempt=attempt)
+            request = Dispatch(role=role, key=key, payload=dict(payload or {}))
+            try:
+                result = self.worker.run(request)
+            except BaseException as exc:
+                # The worker raised.  Its effect is unknown, not absent: the
+                # record stays open so a successor reconciles instead of replaying.
+                record = DispatchRecord(role=role, key=key, state=UNKNOWN,
+                                        detail=f"worker raised: {exc}", attempt=attempt)
+                self.store.write(record)
+                raise
+            state = {"completed": COMPLETED, "failed": FAILED, "skipped": SKIPPED,
+                     "unknown": UNKNOWN}[result.outcome]
+            record = DispatchRecord(role=role, key=key, state=state,
+                                    detail=result.detail, attempt=attempt)
             self.store.write(record)
-            raise
-        state = {"completed": COMPLETED, "failed": FAILED, "skipped": SKIPPED,
-                 "unknown": UNKNOWN}[result.outcome]
-        record = DispatchRecord(role=role, key=key, state=state,
-                                detail=result.detail, attempt=attempt)
-        self.store.write(record)
-        return record
+            return record
 
     def reconcile(self, role: str, *, detail: str, key: str | None = None) -> DispatchRecord:
         """Close an open dispatch after a human or an adapter checked it.
 
         This is the only way out of ``started`` or ``unknown``.  It records
         what was found; it never re-runs the work.
+
+        The reconciliation is under the dispatch lock.  Without it, an
+        operator could close a dispatch whose worker was still running, and
+        the next role would start a turn beside it — two minds on the plant
+        at once, which is the rule the lock exists to hold.
         """
-        record = self.store.read(role)
-        if record is None:
-            raise SupervisorError(f"there is no dispatch to reconcile for role {role!r}")
-        if record.state not in {STARTED, UNKNOWN}:
-            raise SupervisorError(
-                f"dispatch {record.key!r} is {record.state.name}; only an open dispatch reconciles")
-        if key is not None and key != record.key:
-            raise SupervisorError(
-                f"dispatch {record.key!r} is not the dispatch named {key!r}")
         if not detail:
             raise SupervisorError("a reconciliation must say what was checked")
-        closed = DispatchRecord(role=record.role, key=record.key, state=RECONCILED,
-                                detail=detail, pid=record.pid, attempt=record.attempt)
-        self.store.write(closed)
+        with self._claim():
+            record = self.store.read(role)
+            if record is None:
+                raise SupervisorError(f"there is no dispatch to reconcile for role {role!r}")
+            if record.state not in {STARTED, UNKNOWN}:
+                raise SupervisorError(
+                    f"dispatch {record.key!r} is {record.state.name}; only an open dispatch reconciles")
+            if key is not None and key != record.key:
+                raise SupervisorError(
+                    f"dispatch {record.key!r} is not the dispatch named {key!r}")
+            closed = DispatchRecord(role=record.role, key=record.key, state=RECONCILED,
+                                    detail=detail, pid=record.pid, attempt=record.attempt)
+            self.store.write(closed)
         return closed
 
     def observe(self) -> Observation:

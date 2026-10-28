@@ -165,6 +165,19 @@ def test_a_request_cannot_overwrite_a_waiting_request(state):
         rb.write_request(inbox, {"requester": "operator", "nonce": "m"})
 
 
+def test_writing_a_request_gives_the_inbox_its_contracted_mode(state):
+    """The inbox holds a signed request; it must not be readable by others."""
+    import stat
+    inbox = rb.inbox_for(state, "operator") / "request.json"
+    rb.write_request(inbox, {"requester": "operator", "nonce": "n"})
+    mode = stat.S_IMODE(inbox.parent.stat().st_mode)
+    assert mode == rb.INBOX_MODE, f"the inbox's mode is {oct(mode)}, not {oct(rb.INBOX_MODE)}"
+    # The boundary's own checker must accept what the writer produced.
+    problems = [problem for problem in rb.check_layout(state, root_uid=os.getuid())
+                if "inbox " in problem]
+    assert problems == []
+
+
 def test_the_layout_names_no_world_writable_path(state):
     layout = rb.describe_layout(state)
     assert layout["world_writable_paths"] == []

@@ -248,6 +248,14 @@ def write_request(inbox: Path, request: Mapping[str, Any]) -> Path:
     """
     path = Path(inbox)
     path.parent.mkdir(parents=True, exist_ok=True)
+    # The inbox carries a signed request, its evidence digest and its
+    # nonce.  It belongs to the requester alone: the contracted mode is
+    # applied after the creation, because mkdir's mode is masked by the
+    # caller's umask.
+    try:
+        os.chmod(path.parent, INBOX_MODE)
+    except OSError as exc:
+        raise BoundaryError(f"the inbox's mode could not be set: {exc}") from exc
     payload = rr.encode_request(request)
     try:
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

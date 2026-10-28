@@ -72,7 +72,7 @@ class SubprocessWorker:
         try:
             output, _ = process.communicate(timeout=self.timeout)
         except subprocess.TimeoutExpired:
-            self._stop_group(process)
+            self._stop_group(process, self.stop_grace_seconds)
             try:
                 output, _ = process.communicate(timeout=2)
             except subprocess.TimeoutExpired:
@@ -94,7 +94,7 @@ class SubprocessWorker:
         return WorkerResult(outcome="completed", detail=tail)
 
     @staticmethod
-    def _stop_group(process: subprocess.Popen) -> None:
+    def _stop_group(process: subprocess.Popen, grace: float = 2.0) -> None:
         """Signal the worker's whole group, then insist that it is gone.
 
         The group leader exiting does not mean the group is empty: a worker
@@ -102,7 +102,7 @@ class SubprocessWorker:
         then checked until nothing in it is running, so a stopped worker
         leaves no live descendant.
         """
-        for number, pause in ((signal.SIGTERM, 2.0), (signal.SIGKILL, 1.0)):
+        for number, pause in ((signal.SIGTERM, grace), (signal.SIGKILL, max(grace / 2, 0.5))):
             try:
                 os.killpg(process.pid, number)
             except (ProcessLookupError, PermissionError):

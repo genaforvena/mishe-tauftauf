@@ -55,20 +55,28 @@ def test_a_worker_that_overruns_its_bound_reports_an_unknown_effect(tmp_path):
 
 def test_a_timed_out_worker_leaves_no_descendant_behind(tmp_path):
     marker = tmp_path / "child-pid"
-    # The parent spawns a child that would outlive it, then sleeps.
+    # The child ignores SIGTERM, so it survives the pre-fix behaviour that
+    # stopped the group and returned as soon as the leader exited.  Only a
+    # child that outlives SIGTERM shows whether the whole group was dealt
+    # with.
+    child_code = (
+        "import signal, time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "time.sleep(120)\n"
+    )
     script = (
         "import subprocess, sys, time\n"
-        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        f"child = subprocess.Popen([sys.executable, '-c', {child_code!r}])\n"
         f"open({str(marker)!r}, 'w').write(str(child.pid))\n"
-        "time.sleep(60)\n"
+        "time.sleep(120)\n"
     )
-    worker = SubprocessWorker(timeout=0.6, cwd=tmp_path)
+    worker = SubprocessWorker(timeout=0.6, cwd=tmp_path, stop_grace_seconds=1.0)
     result = worker.run(Dispatch(role="genome", key="wake-1",
                                   payload={"command": [sys.executable, "-c", script]}))
     assert result.outcome == "unknown"
     assert marker.is_file()
     child = int(marker.read_text().strip())
-    deadline = time.monotonic() + 3
+    deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
         if not _alive(child):
             break

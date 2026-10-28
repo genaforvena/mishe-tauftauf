@@ -113,10 +113,15 @@ class CanonicalWorker:
         from .worker import SubprocessWorker
         worker = SubprocessWorker(timeout=self.timeout, cwd=self.cwd)
         outcome = worker.run(Dispatch(role=self.role, key=dispatch.key, payload=payload))
+        if outcome.outcome == "unknown":
+            # The worker's effect is not established.  That outcome is kept:
+            # a "failed" record is not open, so it would let the next
+            # dispatch run the same work again on the same wake.
+            return outcome
         if not outcome.ok:
-            # The turn's command failed.  Its effect on the plant is not
-            # known, so no settlement is written: the wake stays pending and
-            # a successor reconciles it rather than settling a failed turn.
+            # The turn's command failed outright and had no effect, so no
+            # settlement is written: the wake stays pending and a successor
+            # reconciles it rather than settling a failed turn.
             return WorkerResult(outcome="failed", detail=outcome.detail)
         notes = self.notes_file
         if not notes.is_file():
@@ -129,13 +134,14 @@ class CanonicalWorker:
         return WorkerResult(outcome="completed", detail=settled)
 
     def _pending_wake(self) -> int | None:
-        """The wake this role currently owes, read from the canonical state."""
+        """The wake this role currently owes, read from the canonical state.
+
+        A state that cannot be read is not the same as a state that says
+        there is nothing owed.  The first is unknown; the second is a
+        skipped turn.
+        """
         from .. import seed
-        try:
-            pending = seed._state(self.home, self.role)[1]
-        except (OSError, ValueError):
-            return None
-        return pending
+        return seed._state(self.home, self.role)[1]
 
 
 class CanonicalObservation:
@@ -153,11 +159,17 @@ class CanonicalObservation:
     def __call__(self) -> Observation:
         from .. import seed
         try:
-            _, pending, last_yield, last_clear, _, _, _, _ = seed._state(self.home, self.role)
+            digest, pending, last_yield, last_clear, _, _, _, _ = seed._state(self.home, self.role)
         except (OSError, ValueError) as exc:
             return Observation(fresh=False, healthy=False,
                                detail=f"canonical state unreadable: {exc}")
         detail = (f"pending={pending if pending is not None else 'none'} "
                   f"yield={last_yield if last_yield is not None else 'none'} "
                   f"clear={last_clear if last_clear is not None else 'none'}")
+        if digest is None:
+            # The role has no observation record.  The plant's own convention
+            # writes "UNKNOWN -- no sensor observation" in the same case.
+            # There is no evidence here, so this is not a pass.
+            return Observation(fresh=False, healthy=False,
+                               detail=f"no observation for role {self.role}; " + detail)
         return Observation(fresh=True, healthy=True, detail=detail)

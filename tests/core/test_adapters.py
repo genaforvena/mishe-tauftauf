@@ -9,7 +9,8 @@ import sys
 
 import pytest
 
-from mishe_tauftauf.core import Dispatch, DispatchStore, Supervisor
+from mishe_tauftauf.core import (Dispatch, DispatchStore, Supervisor,
+                                 SupervisorError)
 from mishe_tauftauf.core.adapters import (CanonicalObservation,
                                           CanonicalRoleRegistry,
                                           CanonicalWorker)
@@ -141,18 +142,68 @@ def test_a_turn_whose_command_fails_leaves_the_wake_pending(site, monkeypatch):
                              notes_file=notes, timeout=30)
     result = worker.run(Dispatch(role="genome", key="trial-1", payload={
         "command": [sys.executable, "-c", "raise SystemExit(4)"]}))
-    assert result.outcome == "failed"
+    # A non-zero exit does not establish that the turn had no effect, so it
+    # stays unknown and blocks the next dispatch.
+    assert result.outcome == "unknown"
     from mishe_tauftauf import seed
     pending = seed._state(site, "genome")[1]
     assert pending is not None, "a failed turn must leave its wake owed"
     assert not (site / "walls" / "genome.md").exists()
 
 
+def test_a_failed_command_through_the_supervisor_blocks_the_next_dispatch(site, monkeypatch):
+    """The whole chain: an unknown effect must not be replayed."""
+    stub_pane(monkeypatch, site)
+    notes = site / "notes.md"
+    notes.write_text("The command failed; the wake is still pending.\n", encoding="utf-8")
+    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome",
+                             notes_file=notes, timeout=30)
+    supervisor = Supervisor(store=DispatchStore(site / "core-dispatch"),
+                             registry=StaticRoleRegistry(["genome"]), worker=worker)
+    record = supervisor.dispatch("genome", "trial-1", payload={
+        "command": [sys.executable, "-c", "raise SystemExit(4)"]})
+    assert record.state.name == "unknown"
+    with pytest.raises(SupervisorError) as caught:
+        supervisor.dispatch("genome", "trial-2", payload={
+            "command": [sys.executable, "-c", "raise SystemExit(4)"]})
+    assert "reconcile" in str(caught.value)
+
+
+def test_an_unreadable_canonical_state_is_unknown_not_skipped(site, monkeypatch):
+    """A state that cannot be read is not a state that says nothing is owed."""
+    stub_pane(monkeypatch, site)
+    from mishe_tauftauf import seed
+    monkeypatch.setattr(seed, "_state", lambda *a, **k: (_ for _ in ()).throw(OSError("tape unreadable")))
+    notes = site / "notes.md"
+    notes.write_text("The state could not be read.\n", encoding="utf-8")
+    worker = CanonicalWorker(home=site, session="mishe-trial", role="genome",
+                             notes_file=notes, timeout=30)
+    with pytest.raises(OSError):
+        worker.run(Dispatch(role="genome", key="trial-1", payload={
+            "command": [sys.executable, "-c", "print('must not run')"]}))
+
+
 def test_the_observation_reads_the_canonical_state(site, monkeypatch):
     stub_pane(monkeypatch, site)
-    observation = CanonicalObservation(home=site, role="genome")
-    reading = observation()
+    # A role with no observation record has no evidence, so the reading is
+    # UNKNOWN rather than healthy.
+    reading = CanonicalObservation(home=site, role="genome")()
+    assert reading.fresh is False
+    assert reading.healthy is False
+    assert "no observation" in reading.detail
+
+
+def test_the_observation_is_healthy_when_the_role_has_an_observation(site, monkeypatch):
+    from mishe_tauftauf import seed
+    stub_pane(monkeypatch, site)
+    # A real observation record for the role.
+    seed.Feed(site).append_record("seed", "seed observation genome",
+                                  {"digest": "a" * 64, "role": "genome",
+                                   "snapshot": "STATE: GREEN", "command_ok": True,
+                                   "notify": True}, kind="observation")
+    reading = CanonicalObservation(home=site, role="genome")()
     assert reading.fresh is True
+    assert reading.healthy is True
     assert "pending=none" in reading.detail
 
 
