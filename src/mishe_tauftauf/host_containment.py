@@ -401,13 +401,17 @@ def restoration_expired(now=None):
         return True
 
 
-def rearm(config, *, restoration=False, request=None):
+def rearm(config, *, restoration=False, request=None, expected=None):
+    if restoration and not (isinstance(expected, dict) and expected):
+        raise SystemExit("restoration requires the latches its evidence names")
     with transition(STATE, timeout=.5):
         status = read(RUN / "status.json")
         if status["state"] not in {"READY", "TRIPPED"} or not 0 <= time.time() - status["at"] <= MAX_AGE:
             raise SystemExit("sentinel is stale or unknown; rearm refused")
         if (STATE / "emergency").exists() and not restoration:
             raise SystemExit("emergency latch requires explicit host investigation; rearm refused")
+        if (STATE / "restoring").exists() and not restoration:
+            raise SystemExit("a staged restoration is in progress or was interrupted; rearm refused")
         # Reuse the sentinel's fresh functional result; do not serialize a
         # second long probe interval behind the running sentinel's lock.
         row = observe(config, functional=False)
@@ -427,20 +431,122 @@ def rearm(config, *, restoration=False, request=None):
             # A killed caller must always leave either a closed latch or an
             # observable restoration heartbeat. Publish it before admission.
             atomic(STATE / "restoring", request)
-        for name in ("tripped", "emergency") if restoration else ("tripped",):
-            if (STATE / name).exists():
-                os.replace(STATE / name, STATE / (name + "-" + str(time.time_ns()) + ".json"))
+            try:
+                clear_expected_latches(expected)
+            except SystemExit:
+                (STATE / "restoring").unlink(missing_ok=True)
+                raise
+        elif (STATE / "tripped").exists():
+            os.replace(STATE / "tripped", STATE / ("tripped-" + str(time.time_ns()) + ".json"))
 
 
-def rearm_when_lock_free(config, request, attempts=10):
+def rearm_when_lock_free(config, request, attempts=10, expected=None):
     """Transition-lock contention during a slow probe is retried, not treated as a refusal."""
     for attempt in range(attempts):
         try:
-            return rearm(config, restoration=True, request=request)
+            return rearm(config, restoration=True, request=request, expected=expected)
         except TimeoutError:
             if attempt == attempts - 1:
                 raise
             time.sleep(.5)
+
+
+def latch_identity(path):
+    """A latch is identified by its reason and time; anything else is malformed."""
+    try:
+        row = read(path)
+        at = row["at"]
+        if not isinstance(row["reason"], str) or isinstance(at, bool) or not isinstance(at, (int, float)) or not math.isfinite(at):
+            raise ValueError("latch reason or time malformed")
+        return dict(reason=row["reason"], at=at)
+    except (OSError, ValueError, KeyError, TypeError, RecursionError) as exc:
+        raise SystemExit("latch unreadable or malformed; restore refused, operator must inspect " + str(path) + ": " + str(exc))
+
+
+def latches_present(state=None):
+    state = STATE if state is None else state
+    return {name: latch_identity(state / name) for name in ("tripped", "emergency") if (state / name).exists()}
+
+
+def write_exclusive(path, data):
+    path = Path(path)
+    stream = path.open("xb")
+    try:
+        with stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+
+
+def put_back_tripped(archive):
+    """Restore the original tripped latch without overwriting anything present.
+
+    If the name cannot be restored, a new latch records where the original is kept.
+    Either a latch remains, or RuntimeError is raised and the restore marker stays.
+    """
+    try:
+        os.link(archive, STATE / "tripped")
+        return
+    except FileExistsError:
+        return
+    except OSError:
+        pass
+    try:
+        write_exclusive(STATE / "tripped", archive.read_bytes())
+        return
+    except FileExistsError:
+        return
+    except OSError:
+        pass
+    try:
+        latch(STATE, "latch clearing failed; original tripped latch kept at " + str(archive), None)
+    except OSError:
+        pass
+    if not (STATE / "tripped").exists():
+        raise RuntimeError("tripped latch could not be restored; original kept at " + str(archive))
+
+
+def clear_expected_latches(expected):
+    """Move away only the tripped latch the evidence names, verifying it as it moves.
+
+    ``emergency`` is never cleared by restoration: it needs explicit host-side
+    disposition. ``emergency()`` does not take the transition lock, so a latch
+    can appear during clearing; any mismatch puts the original back and refuses.
+    """
+    present = latches_present()
+    if set(expected) != {"tripped"} or present != expected:
+        raise SystemExit("latches changed since evidence was validated, or emergency is latched; restore refused")
+    archive = STATE / ("tripped-" + str(time.time_ns()) + ".json")
+    os.replace(STATE / "tripped", archive)
+    try:
+        if latch_identity(archive) != expected["tripped"]:
+            raise SystemExit("tripped latch changed during clearing; restore refused; original kept at " + str(archive))
+        if latches_present():
+            raise SystemExit("another latch appeared during clearing; restore refused; original kept at " + str(archive))
+    except BaseException:
+        put_back_tripped(archive)
+        raise
+
+
+def parse_evidence(raw, state=None):
+    """Restore may clear only the tripped latch that its structured evidence names."""
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError, RecursionError) as exc:
+        raise SystemExit("restore evidence must be a JSON artifact: " + str(exc))
+    latches = latches_present(state)
+    if "emergency" in latches:
+        raise SystemExit("emergency latch requires explicit host-side disposition; restore refused")
+    if not latches:
+        raise SystemExit("no latch to clear; restore refused")
+    if not isinstance(data, dict) or data.get("clears") != latches:
+        raise SystemExit("restore evidence must name exactly the latches it clears")
+    if not isinstance(data.get("verification"), list) or not data["verification"]:
+        raise SystemExit("restore evidence has no verification record")
+    return data
 
 
 def restore(config, evidence):
@@ -449,7 +555,12 @@ def restore(config, evidence):
     path = Path(evidence).resolve()
     if not path.is_relative_to(Path(config["evidence_root"]).resolve()) or not path.is_file():
         raise SystemExit("restore evidence must be inside the configured artifact directory")
-    request = dict(id=str(time.time_ns()), evidence=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest(), at=time.time())
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise SystemExit("restore evidence unreadable: " + str(exc))
+    evidence = parse_evidence(raw)
+    request = dict(id=str(time.time_ns()), evidence=str(path), sha256=hashlib.sha256(raw).hexdigest(), at=time.time())
     with (STATE / "restore.lock").open("a") as handle:
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -457,7 +568,7 @@ def restore(config, evidence):
             raise SystemExit("another restoration is in progress")
         atomic(STATE / ("restore-" + request["id"] + "-request.json"), request)
         # Refusals before restoration starts leave the existing latch untouched.
-        rearm_when_lock_free(config, request)
+        rearm_when_lock_free(config, request, expected=evidence["clears"])
         try:
             deadline = time.monotonic() + MAX_AGE + 3
             while read(RUN / "status.json")["state"] != "READY":
@@ -485,6 +596,7 @@ def restore(config, evidence):
         except BaseException:
             stop(config)
             latch(STATE, "staged restoration failed or interrupted", None)
+            (STATE / "restoring").unlink(missing_ok=True)
             raise
 
 

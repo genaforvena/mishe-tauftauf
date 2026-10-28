@@ -10,6 +10,14 @@ import pytest
 from mishe_tauftauf import host_containment as guard
 
 
+def evidence_naming(state, path, verification=("controlled verification",)):
+    """Write structured restore evidence that names the exact latches present."""
+    import json as _json
+    latches = guard.latches_present(state)
+    path.write_text(_json.dumps(dict(clears=latches, verification=list(verification))))
+    return path
+
+
 def sample(**changes):
     row = dict(oom_kill=0, memory=100, maximum=1000, tasks=1, task_max=100,
                available=8 * guard.GIB, disk_free=30 * guard.GIB,
@@ -332,10 +340,11 @@ def test_rearm_uses_fresh_functional_result_and_only_refreshes_cheap_resources(t
 def test_failed_staged_restore_returns_to_life_support_and_retains_step_evidence(tmp_path, monkeypatch):
     state, run, evidence = tmp_path / "state", tmp_path / "run", tmp_path / "artifacts"
     state.mkdir(); run.mkdir(); evidence.mkdir()
-    diagnosis = evidence / "diagnosis.json"; diagnosis.write_text('{"verified": true}')
+    guard.latch(state, "original failure", None)
+    diagnosis = evidence_naming(state, evidence / "diagnosis.json")
     monkeypatch.setattr(guard, "STATE", state); monkeypatch.setattr(guard, "RUN", run)
     guard.atomic(run / "status.json", dict(at=guard.time.time(), state="READY"))
-    monkeypatch.setattr(guard, "rearm", lambda config, **kwargs: None)
+    monkeypatch.setattr(guard, "rearm", lambda config, **kwargs: (state / "tripped").unlink())
     monkeypatch.setattr(guard.time, "sleep", lambda duration: None)
     stopped = []
     monkeypatch.setattr(guard, "stop", lambda config: stopped.append(config["stop_cgroups"]))
@@ -350,6 +359,7 @@ def test_failed_staged_restore_returns_to_life_support_and_retains_step_evidence
     assert stopped == [["normal", "repair"]]
     assert guard.read(state / "tripped")["reason"] == "controlled failure during first stage"
     assert len(list(state.glob("restore-*-intent.json"))) == 1
+    assert not (state / "restoring").exists()
 
 
 def test_interrupted_restore_is_detected_without_discarding_intent(tmp_path, monkeypatch):
@@ -371,7 +381,7 @@ def test_failed_restoration_intent_write_never_opens_admission(tmp_path, monkeyp
         if path.name == "restoring": raise OSError("controlled failed intent write")
         real_atomic(path, value)
     monkeypatch.setattr(guard, "atomic", fail)
-    with pytest.raises(OSError): guard.rearm({}, restoration=True, request=dict(at=guard.time.time()))
+    with pytest.raises(OSError): guard.rearm({}, restoration=True, request=dict(at=guard.time.time()), expected=guard.latches_present(state))
     assert guard.read(state / "tripped")["reason"] == "original failure"
     assert not guard.admitted(state, run)
 
@@ -408,9 +418,9 @@ def test_protected_session_observation_allows_a_loaded_tmux_reply(monkeypatch):
 def test_restore_refusal_leaves_existing_latch_and_workload_untouched(tmp_path, monkeypatch):
     state, run, evidence = tmp_path / "state", tmp_path / "run", tmp_path / "artifacts"
     state.mkdir(); run.mkdir(); evidence.mkdir()
-    diagnosis = evidence / "diagnosis.json"; diagnosis.write_text('{"verified": true}')
-    monkeypatch.setattr(guard, "STATE", state); monkeypatch.setattr(guard, "RUN", run)
     guard.latch(state, "original failure", None)
+    diagnosis = evidence_naming(state, evidence / "diagnosis.json")
+    monkeypatch.setattr(guard, "STATE", state); monkeypatch.setattr(guard, "RUN", run)
     stopped = []
     monkeypatch.setattr(guard, "stop", lambda config: stopped.append(config))
     monkeypatch.setattr(guard, "observe", lambda config, **kwargs: sample())
@@ -473,3 +483,222 @@ def test_restore_refuses_after_exhausting_lock_retries_without_latching(tmp_path
     monkeypatch.setattr(guard.time, "sleep", lambda duration: None)
     with pytest.raises(TimeoutError):
         guard.rearm_when_lock_free({}, dict(at=0), attempts=3)
+
+
+def test_restore_evidence_must_name_exactly_the_latches_it_clears(tmp_path, monkeypatch):
+    state = tmp_path / "state"; state.mkdir()
+    monkeypatch.setattr(guard, "STATE", state)
+    guard.latch(state, "host pressure", None)
+    good = evidence_naming(state, tmp_path / "good.json")
+    assert guard.parse_evidence(good.read_bytes(), state)["verification"]
+    wrong = tmp_path / "wrong.json"
+    wrong.write_text('{"clears": {"tripped": {"reason": "other", "at": 1}}, "verification": ["x"]}')
+    with pytest.raises(SystemExit): guard.parse_evidence(wrong.read_bytes(), state)
+    unverified = tmp_path / "unverified.json"
+    unverified.write_text(good.read_text().replace('"verification": ["controlled verification"]', '"verification": []'))
+    with pytest.raises(SystemExit): guard.parse_evidence(unverified.read_bytes(), state)
+    prose = tmp_path / "prose.md"; prose.write_text("# notes")
+    with pytest.raises(SystemExit): guard.parse_evidence(prose.read_bytes(), state)
+
+
+
+
+def test_restore_refuses_when_no_latch_exists(tmp_path):
+    state = tmp_path / "state"; state.mkdir()
+    artifact = tmp_path / "artifact.json"
+    artifact.write_text('{"clears": {}, "verification": ["x"]}')
+    with pytest.raises(SystemExit): guard.parse_evidence(artifact.read_bytes(), state)
+
+
+def _fresh_restore_state(tmp_path, monkeypatch):
+    state, run, evidence = tmp_path / "state", tmp_path / "run", tmp_path / "artifacts"
+    state.mkdir(); run.mkdir(); evidence.mkdir()
+    monkeypatch.setattr(guard, "STATE", state); monkeypatch.setattr(guard, "RUN", run)
+    guard.atomic(run / "status.json", dict(at=guard.time.time(), state="TRIPPED", observation=sample(),
+                 clear_since=guard.time.monotonic() - 121, life_support=dict(state="PANES_LIVE")))
+    monkeypatch.setattr(guard, "observe", lambda config, **kwargs: sample())
+    return state, evidence
+
+
+def test_emergency_created_after_validation_is_never_cleared(tmp_path, monkeypatch):
+    state, evidence = _fresh_restore_state(tmp_path, monkeypatch)
+    guard.latch(state, "host pressure", None)
+    artifact = evidence_naming(state, evidence / "named.json")
+    expected = guard.parse_evidence(artifact.read_bytes(), state)["clears"]
+    (state / "emergency").write_text('{"at": 9.0, "reason": "unnamed emergency"}')
+    with pytest.raises(SystemExit): guard.rearm({}, restoration=True, request=dict(at=guard.time.time()), expected=expected)
+    assert (state / "emergency").exists()
+    assert guard.read(state / "tripped")["reason"] == "host pressure"
+    assert not (state / "restoring").exists()
+
+
+def test_recreated_latch_with_same_reason_is_not_the_validated_latch(tmp_path, monkeypatch):
+    state, evidence = _fresh_restore_state(tmp_path, monkeypatch)
+    guard.latch(state, "host pressure", None)
+    artifact = evidence_naming(state, evidence / "named.json")
+    expected = guard.parse_evidence(artifact.read_bytes(), state)["clears"]
+    (state / "tripped").unlink()
+    guard.latch(state, "host pressure", None)
+    with pytest.raises(SystemExit): guard.rearm({}, restoration=True, request=dict(at=guard.time.time()), expected=expected)
+    assert (state / "tripped").exists()
+
+
+def test_latch_content_changed_during_clearing_is_put_back(tmp_path, monkeypatch):
+    state, evidence = _fresh_restore_state(tmp_path, monkeypatch)
+    guard.latch(state, "host pressure", None)
+    expected = guard.latches_present(state)
+    real_replace = guard.os.replace
+    def swap(src, dst):
+        if pathlib.Path(src) == state / "tripped":
+            (state / "tripped").write_text('{"at": 1.0, "reason": "swapped"}')
+        real_replace(src, dst)
+    monkeypatch.setattr(guard.os, "replace", swap)
+    with pytest.raises(SystemExit): guard.clear_expected_latches(expected)
+    assert guard.read(state / "tripped")["reason"] == "swapped"
+
+
+@pytest.mark.parametrize("content", ["", "[]", "null", '{"reason": "missing time"}', '{"reason": "x", "at": NaN}'])
+def test_malformed_latch_refuses_with_systemexit_and_changes_nothing(tmp_path, monkeypatch, content):
+    state, evidence = _fresh_restore_state(tmp_path, monkeypatch)
+    (state / "tripped").write_text(content)
+    artifact = tmp_path / "artifact.json"
+    artifact.write_text('{"clears": {}, "verification": ["x"]}')
+    with pytest.raises(SystemExit): guard.parse_evidence(artifact.read_bytes(), state)
+    with pytest.raises(SystemExit): guard.clear_expected_latches({"tripped": dict(reason="x", at=1)})
+    assert (state / "tripped").read_text() == content
+    assert not (state / "restoring").exists()
+
+
+def test_restore_refuses_evidence_outside_root_and_through_symlink(tmp_path, monkeypatch):
+    state, evidence = _fresh_restore_state(tmp_path, monkeypatch)
+    guard.latch(state, "host pressure", None)
+    outside = tmp_path / "outside.json"
+    outside.write_text(evidence_naming(state, tmp_path / "scratch.json").read_text())
+    config = dict(evidence_root=str(evidence), life_support=dict(units=[]), resume_units=[], stop_cgroups=["a"])
+    with pytest.raises(SystemExit): guard.restore(config, outside)
+    link = evidence / "link.json"
+    link.symlink_to(outside)
+    with pytest.raises(SystemExit): guard.restore(config, link)
+    assert guard.read(state / "tripped")["reason"] == "host pressure"
+
+
+
+
+def test_empty_expected_latches_refused_before_any_change(tmp_path, monkeypatch):
+    state, evidence = _fresh_restore_state(tmp_path, monkeypatch)
+    guard.latch(state, "host pressure", None)
+    with pytest.raises(SystemExit):
+        guard.rearm({}, restoration=True, request=dict(at=guard.time.time()), expected={})
+    assert guard.read(state / "tripped")["reason"] == "host pressure"
+    assert not (state / "restoring").exists()
+
+
+def test_emergency_latch_blocks_restoration_and_is_never_touched(tmp_path, monkeypatch):
+    state = tmp_path / "state"; state.mkdir()
+    monkeypatch.setattr(guard, "STATE", state)
+    guard.latch(state, "host pressure", None)
+    (state / "emergency").write_text('{"at": 2.0, "reason": "sentinel missing"}')
+    named = evidence_naming(state, tmp_path / "both.json")
+    with pytest.raises(SystemExit): guard.parse_evidence(named.read_bytes(), state)
+    assert guard.read(state / "emergency")["reason"] == "sentinel missing"
+
+
+def test_failed_put_back_falls_back_to_exclusive_write(tmp_path, monkeypatch):
+    state, evidence = _fresh_restore_state(tmp_path, monkeypatch)
+    guard.latch(state, "host pressure", None)
+    expected = guard.latches_present(state)
+    real = guard.latch_identity
+    def mismatch(path):
+        if pathlib.Path(path).name.startswith("tripped-"):
+            raise SystemExit("controlled mismatch")
+        return real(path)
+    monkeypatch.setattr(guard, "latch_identity", mismatch)
+    monkeypatch.setattr(guard.os, "link", lambda *a, **k: (_ for _ in ()).throw(OSError("link refused")))
+    with pytest.raises(SystemExit): guard.clear_expected_latches(expected)
+    assert guard.read(state / "tripped")["reason"] == "host pressure"
+
+
+def test_double_failure_latches_with_the_original_location_and_admission_closed(tmp_path, monkeypatch):
+    state, evidence = _fresh_restore_state(tmp_path, monkeypatch)
+    run = tmp_path / "run"
+    guard.latch(state, "host pressure", None)
+    expected = guard.latches_present(state)
+    real = guard.latch_identity
+    def mismatch(path):
+        if pathlib.Path(path).name.startswith("tripped-"):
+            raise SystemExit("controlled mismatch")
+        return real(path)
+    monkeypatch.setattr(guard, "latch_identity", mismatch)
+    monkeypatch.setattr(guard.os, "link", lambda *a, **k: (_ for _ in ()).throw(OSError("link refused")))
+    monkeypatch.setattr(guard, "write_exclusive", lambda *a, **k: (_ for _ in ()).throw(OSError("write refused")))
+    with pytest.raises(SystemExit):
+        guard.rearm({}, restoration=True, request=dict(at=guard.time.time()), expected=expected)
+    assert not (state / "restoring").exists()
+    assert guard.read(state / "tripped")["reason"].startswith("latch clearing failed")
+    assert not guard.admitted(state, run, now=guard.time.time(), unit="android-body-genome.service")
+
+
+def test_total_put_back_failure_keeps_restore_marker_and_admission_closed(tmp_path, monkeypatch):
+    state, evidence = _fresh_restore_state(tmp_path, monkeypatch)
+    run = tmp_path / "run"
+    guard.latch(state, "host pressure", None)
+    expected = guard.latches_present(state)
+    real = guard.latch_identity
+    def mismatch(path):
+        if pathlib.Path(path).name.startswith("tripped-"):
+            raise SystemExit("controlled mismatch")
+        return real(path)
+    monkeypatch.setattr(guard, "latch_identity", mismatch)
+    monkeypatch.setattr(guard.os, "link", lambda *a, **k: (_ for _ in ()).throw(OSError("link refused")))
+    monkeypatch.setattr(guard, "write_exclusive", lambda *a, **k: (_ for _ in ()).throw(OSError("write refused")))
+    monkeypatch.setattr(guard, "latch", lambda *a, **k: (_ for _ in ()).throw(OSError("latch refused")))
+    with pytest.raises(RuntimeError):
+        guard.rearm({}, restoration=True, request=dict(at=guard.time.time()), expected=expected)
+    assert (state / "restoring").exists()
+    assert not guard.admitted(state, run, now=guard.time.time(), unit="android-body-genome.service")
+
+
+def test_ordinary_rearm_refuses_while_a_restoration_marker_exists(tmp_path, monkeypatch):
+    state, evidence = _fresh_restore_state(tmp_path, monkeypatch)
+    guard.latch(state, "host pressure", None)
+    guard.atomic(state / "restoring", dict(at=guard.time.time(), next_unit="android-body-genome.service"))
+    with pytest.raises(SystemExit): guard.rearm({})
+    assert guard.read(state / "tripped")["reason"] == "host pressure"
+
+
+def test_emergency_appearing_mid_clear_is_never_cleared(tmp_path, monkeypatch):
+    state, evidence = _fresh_restore_state(tmp_path, monkeypatch)
+    guard.latch(state, "host pressure", None)
+    expected = guard.latches_present(state)
+    real = guard.latch_identity
+    def appear(path):
+        if pathlib.Path(path).name.startswith("tripped-"):
+            (state / "emergency").write_text('{"at": 9.0, "reason": "unnamed emergency"}')
+        return real(path)
+    monkeypatch.setattr(guard, "latch_identity", appear)
+    with pytest.raises(SystemExit): guard.clear_expected_latches(expected)
+    assert guard.read(state / "emergency")["reason"] == "unnamed emergency"
+    assert guard.read(state / "tripped")["reason"] == "host pressure"
+
+
+def test_put_back_never_overwrites_a_different_tripped_latch(tmp_path, monkeypatch):
+    state, evidence = _fresh_restore_state(tmp_path, monkeypatch)
+    guard.latch(state, "host pressure", None)
+    expected = guard.latches_present(state)
+    real = guard.latch_identity
+    def interloper(path):
+        if pathlib.Path(path).name.startswith("tripped-"):
+            (state / "tripped").write_text('{"at": 9.0, "reason": "interloper"}')
+            raise SystemExit("controlled mismatch")
+        return real(path)
+    monkeypatch.setattr(guard, "latch_identity", interloper)
+    with pytest.raises(SystemExit): guard.clear_expected_latches(expected)
+    assert guard.read(state / "tripped")["reason"] == "interloper"
+    assert list(state.glob("tripped-*.json"))
+
+
+def test_failed_write_leaves_no_truncated_latch(tmp_path, monkeypatch):
+    target = tmp_path / "tripped"
+    monkeypatch.setattr(guard.os, "fsync", lambda fd: (_ for _ in ()).throw(OSError("disk gone")))
+    with pytest.raises(OSError): guard.write_exclusive(target, b'{"reason": "partial"}')
+    assert not target.exists()
