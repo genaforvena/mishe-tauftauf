@@ -1,0 +1,6 @@
+{
+  "install_commit": "19c18f9f8c85c23d8759a51f4dd64e399cf09e63",
+  "revert_commit": "caeb30a^",
+  "guard_path": "/usr/local/lib/mishe-containment/guard.py",
+  "note": "install_commit is the reviewed source of the guard as installed; revert_commit is the source of the guard as it was before the life-support observation fix, so a revert restores the previous bytes exactly."
+}
