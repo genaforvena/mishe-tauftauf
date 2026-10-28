@@ -966,7 +966,7 @@ def _clear_due(home: Path, slug: str, grace_seconds: float) -> bool:
     _, pending, last_yield, last_clear, _, _, _, _ = _state(home, slug)
     if pending is not None or last_yield is None or last_yield == last_clear:
         return False
-    for entry in reversed(Feed(home).entries()):
+    for entry in reversed(Feed(home).role_entries(slug)):
         control = decode_lifecycle(entry)
         if control and control.kind == "yield" and control.role == slug and control.wake == last_yield:
             age = (datetime.now(timezone.utc) - datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))).total_seconds()
