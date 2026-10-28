@@ -4624,6 +4624,69 @@ def _repo_git_index_lock(home: Path, now: float | None = None,
             "validity_s": GIT_INDEX_LOCK_VALIDITY_S}
 
 
+PUSH_LAG_S = 6 * 3600
+"""Age of the oldest unpushed commit beyond which the checkout reads drift. A
+commit that waits longer than this is not being delivered, whatever its
+author intends; six hours is short enough to catch a paused publisher within a
+working day."""
+
+PUSH_FRESHNESS_VALIDITY_S = 900
+"""The remote head is fetched each cycle, so the reading answers "is main
+reaching origin?" for one producer cycle only."""
+
+
+def _repo_push_freshness(home: Path, now: float | None = None) -> dict[str, object]:
+    """Report whether the checkout's commits reach origin's ``main`` promptly.
+
+    The shared checkout's commits only matter once they reach ``origin/main``,
+    and nothing else reads that gap: a publisher that stops leaves local
+    commits waiting while every other reading stays green. On 2026-10-28
+    origin's ``main`` was five days behind the local checkout with three
+    commits unpushed, and no reading named it.
+
+    The reading fetches ``origin main`` so the remote-tracking ref cannot be
+    stale, then counts numerically: commits ahead of origin, and how many of
+    them were committed before the lag bound. It is ``drift`` when any unpushed
+    commit is older than ``PUSH_LAG_S``, ``verified`` otherwise (including when
+    nothing is unpushed), and ``unknown`` when origin cannot be fetched or has
+    no ``main``, because a remote the checkout cannot reach is not a healthy one.
+    """
+    if now is None:
+        now = time.time()
+    checkout = Path(home).resolve().parent
+    if not (checkout / ".git").is_dir():
+        return {"id": "sense.repo.push-freshness", "state": "unknown", "kind": "read",
+                "sample": "push-freshness=unknown reason=no-gitdir", "unpushed": None, "lagging": None}
+
+    def git(*args: str) -> str | None:
+        try:
+            result = subprocess.run(["git", "-C", str(checkout), *args], capture_output=True,
+                                    text=True, timeout=30)
+        except (OSError, _TimeoutExpired):
+            return None
+        return result.stdout if result.returncode == 0 else None
+
+    reason = None
+    if git("fetch", "--quiet", "--no-tags", "origin", "main") is None:
+        reason = "origin-unreadable"
+    elif git("rev-parse", "--verify", "--quiet", "origin/main^{commit}") is None:
+        reason = "origin-main-missing"
+    else:
+        unpushed = git("rev-list", "--count", "origin/main..HEAD")
+        lagging = git("rev-list", "--count", f"--before={int(now - PUSH_LAG_S)}", "origin/main..HEAD")
+        if unpushed is None or lagging is None:
+            reason = "local-history-unreadable"
+    if reason is not None:
+        return {"id": "sense.repo.push-freshness", "state": "unknown", "kind": "read",
+                "sample": f"push-freshness=unknown reason={reason}", "unpushed": None, "lagging": None}
+    ahead, behind_bound = int(unpushed), int(lagging)
+    state = "drift" if behind_bound > 0 else "verified"
+    word = "lagging" if state == "drift" else "current"
+    return {"id": "sense.repo.push-freshness", "state": state, "kind": "read",
+            "sample": f"push-freshness={word} unpushed={ahead} lagging={behind_bound}",
+            "unpushed": ahead, "lagging": behind_bound, "validity_s": PUSH_FRESHNESS_VALIDITY_S}
+
+
 GHOST_FILE_LIMIT = 10_000
 """Enumeration bound across ghost-home trees: an exact count to the limit, then
 a lower bound with ``files_at_least`` set, so a scan stays bounded while a
@@ -7579,6 +7642,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_repo_branch_inventory(home))
     observed.append(_repo_release_retention(home))
     observed.append(_repo_git_index_lock(home))
+    observed.append(_repo_push_freshness(home))
     observed.append(_ghost_site_homes(home))
     observed.append(_coord_dm_disposition_age(home))
     observed.append(_coord_authorship_fog(home))
