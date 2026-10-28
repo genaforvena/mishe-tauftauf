@@ -9,6 +9,7 @@ import re
 import sqlite3
 import tempfile
 import threading
+from collections import OrderedDict, deque
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -34,6 +35,7 @@ _PUBLICATION_DEPTH = threading.local()
 # external rewrite changes inode/size/mtime/ctime and invalidates the entry.
 _ENTRIES_CACHE: dict[str, tuple[tuple, list]] = {}
 _ENTRIES_CACHE_LOCK = threading.Lock()
+_ROLE_ENTRIES_CACHE = OrderedDict()
 
 
 @contextmanager
@@ -129,6 +131,10 @@ def entry_timestamp(entry: object) -> datetime | None:
 
 
 def parse_feed(data: bytes, *, start_sequence: int = 1, home: Path | str | None = None) -> list[FeedEntry]:
+    return list(_iter_parsed_feed(data, start_sequence=start_sequence, home=home))
+
+
+def _iter_parsed_feed(data: bytes, *, start_sequence: int = 1, home=None):
     # A single astral character widens an entire decoded tape to four bytes
     # per character. Decoding and splitlines over the whole tape kept both
     # copies alive alongside every parsed entry in each resident supervisor.
@@ -150,8 +156,8 @@ def parse_feed(data: bytes, *, start_sequence: int = 1, home: Path | str | None 
                                      base + exc.end, exc.reason) from exc
 
     try:
-        return list(iter_feed_entries(_iter_text_lines(chunks()),
-                                      start_sequence=start_sequence, home=home))
+        yield from iter_feed_entries(_iter_text_lines(chunks()),
+                                    start_sequence=start_sequence, home=home)
     except UnicodeDecodeError as exc:
         raise FeedError(f"feed is not UTF-8: {exc}") from exc
 
@@ -306,6 +312,55 @@ def _iter_text_lines(chunks):
         parts.append("\r")
     if parts:
         yield "".join(parts)
+
+
+def _role_fold(previous, entries, role):
+    from . import seed, wall
+    from .chat_protocol import decode_lifecycle
+    old = previous or {}
+    row = {"control": list(old.get("control", [])), "inbox": deque(old.get("inbox", ()), maxlen=12),
+           "recent": deque(old.get("recent", ()), maxlen=12),
+           "sources": dict(old.get("sources", {})), "yield": old.get("yield")}
+    for entry in entries:
+        if entry.source == "seed":
+            try:
+                match = seed.OBS_RE.fullmatch(seed._receipt_line(entry.body))
+                control = None if match else decode_lifecycle(entry)
+                keep = match.group(1) == role if match else control.role == role if control else True
+            except (ValueError, IndexError):
+                keep, control = True, None  # preserve original malformed-control behavior
+            if keep:
+                row["control"].append(entry)
+            if control and control.kind == "yield":
+                stamp = entry_timestamp(entry)
+                if stamp is None:
+                    row["control"].append(entry)
+                else:
+                    candidate = (stamp, f"chat.log {entry.sequence} {entry.source}", entry)
+                    if row["yield"] is None or candidate[:2] > row["yield"][:2]:
+                        row["yield"] = candidate
+        else:
+            row["recent"].append(entry)
+            stamp = entry_timestamp(entry)
+            if stamp is None:
+                row["control"].append(entry)
+            else:
+                candidate = (stamp, f"chat.log {entry.sequence} {entry.source}", entry)
+                previous_source = row["sources"].get(entry.source)
+                if previous_source is None or candidate[:2] > previous_source[:2]:
+                    row["sources"][entry.source] = candidate
+        if wall.addressed(entry, role):
+            row["inbox"].append(entry)
+    return row
+
+
+def _role_view(row):
+    selected = {e.sequence: e for e in (*row["control"], *row["inbox"], *row["recent"])}
+    for item in row["sources"].values():
+        selected[item[2].sequence] = item[2]
+    if row["yield"]:
+        selected[row["yield"][2].sequence] = row["yield"][2]
+    return [selected[n] for n in sorted(selected)]
 
 
 class Feed:
@@ -608,6 +663,74 @@ class Feed:
         end_offset = next((offset for seq, offset in checkpoints if seq > target), metadata[1])
         handle.seek(first_offset)
         return ("range", handle.read(end_offset - first_offset), (first_seq, target))
+
+    def role_entries(self, role: str, *, _force_full=False):
+        """Verified role control/view projection, without retaining the whole tape.
+
+        Every captured record is verified before pruning. Keep the role's full
+        lifecycle, unknown seed evidence, twelve addressed/recent messages and
+        global activity witnesses. Full history remains available via entries().
+        """
+        from .observations import validate_slug
+        validate_slug(role)
+        key = (str(self.path), role)
+        if not self.path.exists():
+            return _role_view(_role_fold(None, self.entries(), role))
+        with self.path.open("rb") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
+            self._assert_locked_path(handle)
+            checkpoint = self._read_checkpoint()
+            metadata = tuple(self._metadata(handle))
+            valid = checkpoint is not None and tuple(checkpoint["metadata"]) == metadata
+            with _ENTRIES_CACHE_LOCK:
+                cached = _ROLE_ENTRIES_CACHE.get(key) if not _force_full else None
+                if cached is not None and valid and cached["metadata"] == metadata:
+                    _ROLE_ENTRIES_CACHE.move_to_end(key)
+                    full = _ENTRIES_CACHE.get(str(self.path))
+                    if full and tuple(full[0]) == metadata:
+                        _ENTRIES_CACHE.pop(str(self.path), None)
+                    return list(cached["view"])
+            extending = (cached is not None and valid and cached["metadata"][0] == metadata[0]
+                         and cached["metadata"][1] < metadata[1])
+            handle.seek(cached["metadata"][1] if extending else 0)
+            data = handle.read()
+        start = cached["tail"] + 1 if extending else 1
+        tail = start - 1
+
+        def verified():
+            nonlocal tail
+            for entry in _iter_parsed_feed(data, start_sequence=start, home=self.home):
+                self._verify_records((entry,))
+                tail = entry.sequence
+                yield entry
+        try:
+            projection = _role_fold(cached["projection"] if extending else None, verified(), role)
+        except FeedError:
+            if extending:
+                return self.role_entries(role, _force_full=True)
+            raise
+        if valid and tail != checkpoint["sequence"]:
+            raise FeedError("role view disagrees with canonical checkpoint")
+        if not valid:
+            offsets = [match.start() for match in FRAME_START_RE.finditer(data)]
+            if len(offsets) != tail:
+                raise FeedError("role view frame index disagrees with canonical parser")
+            index = {"version": 1, "sequence": tail, "tail_offset": offsets[-1] if offsets else 0,
+                     "checkpoints": [[n + 1, offsets[n]] for n in range(0, tail, INDEX_STRIDE)]}
+            self._publish_checkpoint(index, list(metadata))
+        view = tuple(_role_view(projection))
+        with _ENTRIES_CACHE_LOCK:
+            current = _ROLE_ENTRIES_CACHE.get(key)
+            if not (current and current["metadata"][0] == metadata[0] and current["metadata"][1] > metadata[1]):
+                _ROLE_ENTRIES_CACHE[key] = {"metadata": metadata, "tail": tail,
+                                            "projection": projection, "view": view}
+                _ROLE_ENTRIES_CACHE.move_to_end(key)
+                while len(_ROLE_ENTRIES_CACHE) > 8:
+                    _ROLE_ENTRIES_CACHE.popitem(last=False)
+            full = _ENTRIES_CACHE.get(str(self.path))
+            if full and tuple(full[0]) == metadata:
+                _ENTRIES_CACHE.pop(str(self.path), None)
+        return list(view)
 
     def entries(self, *, start: int = 1, limit: int | None = None,
                 payloads: dict | None = None) -> list[FeedEntry]:

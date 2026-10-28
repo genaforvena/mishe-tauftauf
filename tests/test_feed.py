@@ -87,6 +87,84 @@ class FeedTests(unittest.TestCase):
             parse_feed(data)
         self.assertIn("position " + str(len(data) - 1), str(error.exception))
 
+    def test_role_view_preserves_state_messages_recent_chat_and_global_activity(self):
+        from mishe_tauftauf import seed, wall, activity
+        from datetime import datetime, timezone
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            bodies = [("seed", "seed observation health sha256=" + "a" * 64),
+                      ("health", "An older real mind action."),
+                      ("seed", "seed wake health observation=1"),
+                      ("operator", "[dm] to=health\nReconcile the pending wake.")]
+            bodies += [("sensor/noise", "unrelated " + "x" * 4096) for _ in range(80)]
+            bodies += [("seed", "seed observation docs sha256=" + "b" * 64),
+                       ("seed", "seed yield docs wake=1"),
+                       ("seed", "unknown seed evidence retained")]
+            home.joinpath("chat.log").write_bytes(b"".join(
+                feed_module._encode_entry(n, "2026-10-23T18:00:00Z", source, body)
+                for n, (source, body) in enumerate(bodies, 1)))
+            full = Feed(home).entries()
+            selected = Feed(home).role_entries("health")
+            self.assertEqual(seed._state(home, "health", entries=full), seed._state(home, "health", entries=selected))
+            self.assertEqual([e for e in full if wall.addressed(e, "health")][-12:], [e for e in selected if wall.addressed(e, "health")][-12:])
+            self.assertEqual([e for e in full if e.source != "seed"][-12:], [e for e in selected if e.source != "seed"][-12:])
+            now = datetime(2026, 10, 23, 18, 10, tzinfo=timezone.utc)
+            self.assertEqual(activity.observe(home, entries=full, now=now), activity.observe(home, entries=selected, now=now))
+            self.assertLess(len(selected), len(full) // 2)
+            self.assertNotIn(str(Feed(home).path), feed_module._ENTRIES_CACHE)
+
+    def test_role_cache_extends_from_canonical_tail_not_last_selected_entry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            feed.append("seed", "seed observation health sha256=" + "a" * 64)
+            for n in range(59):
+                feed.append("sensor/noise", "irrelevant " + str(n))
+            feed.append("seed", "seed observation docs sha256=" + "b" * 64)
+            first = feed.role_entries("health")
+            self.assertEqual(first[-1].sequence, 60)
+            feed.append("operator", "[dm] to=health\nNew evidence")
+            parsed = []
+            original = feed_module._iter_parsed_feed
+            def measured(data, **kwargs):
+                parsed.append(len(data))
+                return original(data, **kwargs)
+            with patch.object(feed_module, "_iter_parsed_feed", measured):
+                second = feed.role_entries("health")
+            self.assertEqual(second[-1].sequence, 62)
+            self.assertEqual(first[0], second[0])
+            self.assertLess(max(parsed), 1000)
+            self.assertNotIn(str(feed.path), feed_module._ENTRIES_CACHE)
+
+    def test_role_view_verifies_discarded_records_and_refuses_corruption(self):
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            entry = feed.append_record("sensor/unrelated", "Unrelated checked snapshot", {"value": "old"})
+            record = next((Path(directory) / "records").glob("*.json"))
+            record.unlink()
+            with self.assertRaises(ValueError):
+                feed.role_entries("health")
+
+    def test_role_view_rejects_a_bad_appended_unrelated_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            feed.append("seed", "seed observation health sha256=" + "a" * 64)
+            feed.role_entries("health")
+            feed.append_record("sensor/unrelated", "New unrelated evidence", {"ok": True})
+            next((Path(directory) / "records").glob("*.json")).unlink()
+            with self.assertRaises(ValueError):
+                feed.role_entries("health")
+
+    def test_role_view_rewrite_and_corrupt_index_cannot_reuse_old_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            feed.append("operator", "[dm] to=health\nOld message")
+            feed.role_entries("health")
+            feed.path.write_bytes(feed_module._encode_entry(1, "2026-10-23T18:00:00Z", "operator", "[dm] to=health\nNew message"))
+            self.assertEqual(feed.role_entries("health")[0].body, "[dm] to=health\nNew message")
+            feed.index_path.write_text('{"version":99}')
+            with self.assertRaises(FeedError):
+                feed.role_entries("health")
+
     def test_unchanged_full_read_reuses_the_parsed_revision(self):
         with tempfile.TemporaryDirectory() as directory:
             feed = Feed(directory)
