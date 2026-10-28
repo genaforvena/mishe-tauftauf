@@ -65,6 +65,11 @@ class DispatchStore:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
 
+    @property
+    def lock_path(self) -> Path:
+        """The lock that serializes dispatch across processes."""
+        return self.root / ".dispatch.lock"
+
     def path_for(self, role: str) -> Path:
         if not valid_role(role):
             raise DispatchStoreError(f"role {role!r} cannot name a dispatch record")

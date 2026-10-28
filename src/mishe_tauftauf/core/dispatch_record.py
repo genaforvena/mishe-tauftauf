@@ -92,7 +92,8 @@ def receipt_is_unknown(receipt: Any) -> bool:
     return receipt.startswith("UNKNOWN ")
 
 
-def build_parser(description: str, cmd_status, cmd_dispatch, cmd_reconcile):
+def build_parser(description: str, cmd_status, cmd_dispatch, cmd_reconcile,
+                 cmd_supervise=None):
     """The core's own argument grammar.
 
     The core's command line is a small dialect of its own, so it is decoded
@@ -133,9 +134,58 @@ def build_parser(description: str, cmd_status, cmd_dispatch, cmd_reconcile):
     reconcile.add_argument("--key", default=None,
                             help="the dispatch this reconciliation names")
     reconcile.set_defaults(func=cmd_reconcile)
+
+    if cmd_supervise is not None:
+        supervise = sub.add_parser("supervise",
+                                    help="run the supervisor as a resident")
+        supervise.add_argument("--notes", required=True,
+                               help="the settlement notes each turn ends with")
+        supervise.add_argument("--command", nargs="+", required=True,
+                               help="the command each turn runs")
+        supervise.add_argument("--result", choices=("changed", "verified", "blocked"),
+                               default="verified")
+        supervise.add_argument("--key-prefix", default="core-",
+                               help="the prefix of each turn's durable key")
+        supervise.add_argument("--interval", type=float, default=15.0)
+        supervise.add_argument("--timeout", type=float, default=900.0)
+        supervise.add_argument("--self-pick-seconds", type=float, default=0)
+        supervise.set_defaults(func=cmd_supervise)
     return root
 
 
 def decode_arguments(parser, argv):
     """Decode the core's own arguments."""
     return parser.parse_args(argv)
+
+
+def process_group_members(pgid: int) -> list[int]:
+    """The live pids in one process group.
+
+    The kernel's own procfs table is the only authority on which processes
+    are still running: the group leader may have exited and its pid may be
+    gone, while its children are still alive.  A zombie is not running
+    work, so it is not a member.
+    """
+    import os
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return []
+    members = []
+    for name in entries:
+        if not name.isdigit():
+            continue
+        try:
+            with open(f"/proc/{name}/stat", encoding="utf-8") as handle:
+                fields = handle.read().rsplit(")", 1)[1].split()
+        except (OSError, UnicodeError):
+            continue
+        # After the comm field: state, ppid, pgrp, ...
+        if len(fields) < 3:
+            continue
+        if fields[2] != str(pgid):
+            continue
+        if fields[0] == "Z":
+            continue
+        members.append(int(name))
+    return members

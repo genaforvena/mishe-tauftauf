@@ -16,12 +16,13 @@ def test_a_finished_command_reports_its_output(tmp_path):
     assert "useful result" in result.detail
 
 
-def test_a_failing_command_is_a_failure_not_an_unknown(tmp_path):
+def test_a_failing_command_is_unknown_because_its_effect_is_not_established(tmp_path):
+    """A non-zero exit does not prove the command had no effect."""
     worker = SubprocessWorker(timeout=10, cwd=tmp_path)
     result = worker.run(Dispatch(role="genome", key="wake-1",
                                   payload={"command": [sys.executable, "-c",
                                                       "raise SystemExit(3)"]}))
-    assert result.outcome == "failed"
+    assert result.outcome == "unknown"
 
 
 def test_a_command_that_cannot_start_is_a_failure(tmp_path):

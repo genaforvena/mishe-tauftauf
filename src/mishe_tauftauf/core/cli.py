@@ -90,10 +90,55 @@ def cmd_reconcile(args) -> int:
     return 0
 
 
+def cmd_supervise(args) -> int:
+    """Run the supervisor as a resident: one turn at a time, forever.
+
+    The loop is the plant's own cadence, not a new one.  Each pass asks the
+    canonical tick whether a turn is owed, and stops there: the tick owns
+    the wake, the delivery and the refusal, and the core owns the ordering
+    and the durable record.
+
+    An open dispatch — a turn whose effect was not recorded — stops the
+    loop rather than being retried.  The loop says so and waits; a human
+    reconciles it with ``reconcile``.
+    """
+    import time
+    supervisor = _supervisor(args)
+    last = None
+    while True:
+        open_dispatch = supervisor.open_dispatch()
+        if open_dispatch is not None:
+            print(f"held core {args.role}: dispatch {open_dispatch.key!r} is "
+                  f"{open_dispatch.state.name}; reconcile it before dispatching again",
+                  flush=True)
+            time.sleep(args.interval)
+            continue
+        receipt = supervisor.observe()
+        if not receipt.fresh:
+            print(f"UNKNOWN core {args.role}: {receipt.detail}", flush=True)
+            time.sleep(args.interval)
+            continue
+        try:
+            record = supervisor.dispatch(args.role, args.key_prefix + str(int(time.time())),
+                                         payload={
+                                             "command": args.command,
+                                             "self_pick_seconds": args.self_pick_seconds,
+                                         })
+        except Exception as exc:
+            print(f"held core {args.role}: {exc}", flush=True)
+            time.sleep(args.interval)
+            continue
+        if record.to_json() != last:
+            print(json.dumps(record.to_json(), sort_keys=True), flush=True)
+            last = record.to_json()
+        time.sleep(args.interval)
+
+
 def parser() -> argparse.ArgumentParser:
     """The core's own argument grammar."""
     from .dispatch_record import build_parser
-    return build_parser(__doc__, cmd_status, cmd_dispatch, cmd_reconcile)
+    return build_parser(__doc__, cmd_status, cmd_dispatch, cmd_reconcile,
+                         cmd_supervise)
 
 
 def main(argv: list[str] | None = None) -> int:

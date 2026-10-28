@@ -45,7 +45,8 @@ test_boundaries.py` enforces both halves of that rule.
 1. **Only a declared role is dispatched.** The site decides what "declared"
    means; the core reads that decision and refuses everything else.
 2. **One dispatch at a time, across all roles.** Two workers never share a
-   wake.
+   wake. The check and the claim are under one file lock, so two
+   *processes* cannot both see "nothing open" and each start a turn.
 3. **An unresolved effect blocks the next dispatch.** A worker that started
    and produced no outcome may already have had its effect, so the record
    stays open and the next attempt is refused.
@@ -55,6 +56,20 @@ test_boundaries.py` enforces both halves of that rule.
 Point 3 and point 4 are what keep a restarted supervisor from turning one
 effect into two.
 
+### What counts as an unresolved effect
+
+A worker that exits non-zero has an **unknown** effect, not a failed one. A
+non-zero exit says the command did not finish successfully; it says nothing
+about whether the command already did its work before it stopped. Recording
+it as a clean failure would let a successor replay work that had already
+happened.
+
+The one exception is a command that never started: there was no process, so
+there was no effect, and that is a plain failure.
+
+A missing observation source reads **UNKNOWN**, never healthy. There is no
+detector, so there is no evidence, and no evidence is not a pass.
+
 ## States
 
 | State | Meaning |
@@ -62,7 +77,7 @@ effect into two.
 | `pending` | Reserved; not yet started. |
 | `started` | The worker began and no outcome was recorded. |
 | `completed` | The work finished. |
-| `failed` | The work ran and did not finish. |
+| `failed` | The work never started, or the site owed no turn. |
 | `skipped` | The site owed no turn, so no work was due. |
 | `unknown` | The work started and no outcome survived; the effect is not known. |
 | `reconciled` | An open dispatch was checked and closed by hand. |
