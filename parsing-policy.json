@@ -5,6 +5,7 @@
     "src/mishe_tauftauf/clear_journal.py",
     "src/mishe_tauftauf/cli.py",
     "src/mishe_tauftauf/coord_tape.py",
+    "src/mishe_tauftauf/core/containment_config.py",
     "src/mishe_tauftauf/core/dispatch_record.py",
     "src/mishe_tauftauf/core/restore_request.py",
     "src/mishe_tauftauf/declared_roots.py",
