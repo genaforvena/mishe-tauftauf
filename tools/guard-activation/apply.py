@@ -14,6 +14,11 @@ update in `operator/containment-20261028/update.py`:
 The commit names live in `commits/`, one file each, so the procedure is
 reviewable without carrying a hundred kilobytes of base64 in the tree.
 
+Installing is not activating.  The sentinel is a long-running process that
+loaded its code once, at exec time, so a replaced file does not change the
+running boundary.  ``apply.py`` therefore reports the activation state after
+every write, and ``check-activation.py`` answers the same question on its own.
+
 Usage:
   sudo python3 apply.py            # install the corrected guard
   sudo python3 apply.py revert     # put the previous guard back
@@ -90,6 +95,14 @@ def main() -> int:
     subprocess.run(["sudo", "-n", "chown", "0:0", str(path)], check=True)
     print("reverted" if revert else "applied", GUARD_PATH)
     print("sha256:", hashlib.sha256(replacement).hexdigest())
+    # A replaced file is not a running process.  Report the activation state
+    # so the install cannot be read as a live change.
+    activation = subprocess.run([sys.executable, str(HERE / "check-activation.py")],
+                                capture_output=True, text=True)
+    sys.stdout.write(activation.stdout)
+    sys.stderr.write(activation.stderr)
+    if activation.returncode:
+        print("the running sentinel has not loaded these bytes; restart it to activate them")
     return 0
 
 

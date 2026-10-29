@@ -50,6 +50,7 @@
     "tools/check_leaf_invocation_coverage.py",
     "tools/check_parsing.py",
     "tools/check_session_watch_routing.py",
+    "tools/guard-activation/check-activation.py",
     "tools/recovery-control.py",
     "tools/refresh-observer-bundle.py"
   ],
