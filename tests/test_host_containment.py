@@ -764,3 +764,58 @@ def test_human_shell_outside_mishe_is_allowed(tmp_path, monkeypatch):
 def test_unreadable_process_chain_is_treated_as_inside(tmp_path, monkeypatch):
     monkeypatch.setattr(guard.os, "getpid", lambda: 4242)
     assert guard.caller_inside_mishe(tmp_path / "missing")
+
+
+POLICY_IO_MAX = "252:0 rbps=64000000 wbps=16000000 riops=max wiops=max"
+
+
+def test_io_max_with_an_extra_device_line_still_enforces_the_policy():
+    live = POLICY_IO_MAX + "\n259:1 rbps=64000000 wbps=16000000 riops=max wiops=max"
+    assert guard.io_max_ok(POLICY_IO_MAX, live)
+
+
+def test_io_max_with_an_extra_device_above_the_ceiling_is_not_accepted():
+    live = POLICY_IO_MAX + "\n259:1 rbps=max wbps=max riops=max wiops=max"
+    assert not guard.io_max_ok(POLICY_IO_MAX, live)
+
+
+def test_io_max_with_a_weakened_named_device_is_not_accepted():
+    live = "252:0 rbps=128000000 wbps=16000000 riops=max wiops=max"
+    assert not guard.io_max_ok(POLICY_IO_MAX, live)
+
+
+def test_io_max_missing_the_named_device_is_not_accepted():
+    live = "259:1 rbps=64000000 wbps=16000000 riops=max wiops=max"
+    assert not guard.io_max_ok(POLICY_IO_MAX, live)
+
+
+def test_io_max_with_a_tighter_extra_device_is_accepted():
+    live = POLICY_IO_MAX + "\n259:1 rbps=32000000 wbps=8000000 riops=max wiops=max"
+    assert guard.io_max_ok(POLICY_IO_MAX, live)
+
+
+def test_a_changed_non_io_limit_is_still_tripped(tmp_path):
+    (tmp_path / "memory.max").write_text("23622320128")
+    assert guard.limits_match(tmp_path, {"memory.max": "23622320128"})
+    assert not guard.limits_match(tmp_path, {"memory.max": "1"})
+
+
+def test_prepare_writes_each_io_device_on_its_own(tmp_path, monkeypatch):
+    """The io controller rejects several device lines in one write."""
+    base = tmp_path / "mishe.slice"
+    base.mkdir()
+    (base / "cgroup.subtree_control").write_text("")
+    written = []
+    real_write_text = pathlib.Path.write_text
+
+    def record(self, data, *args, **kwargs):
+        if self.name == "io.max":
+            written.append(data)
+            return len(data)
+        return real_write_text(self, data, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "write_text", record)
+    config = dict(cgroup=str(base), limits={str(base): {"io.max": "252:0 rbps=64000000 wbps=16000000 riops=max wiops=max\n259:1 rbps=64000000 wbps=16000000 riops=max wiops=max"}})
+    guard.prepare(config)
+    assert written == ["252:0 rbps=64000000 wbps=16000000 riops=max wiops=max\n",
+                       "259:1 rbps=64000000 wbps=16000000 riops=max wiops=max\n"]

@@ -250,14 +250,93 @@ def record_pressure(state, row, warning):
                 disposition="bounded functional probes recorded; pressure cause remains open"))
 
 
+def io_max_rows(text):
+    """Read an io.max file into {device: {setting: value}}.
+
+    The io controller renders one line per device it tracks, so a limit that
+    names one device is still in force when another device line exists.
+    """
+    rows = {}
+    for line in text.splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        settings = {}
+        for item in parts[1:]:
+            key, _, value = item.partition("=")
+            settings[key] = value
+        rows[parts[0]] = settings
+    return rows
+
+
+def io_limit(value):
+    """A numeric limit, or infinity for the loosest value the interface allows."""
+    if value is None:
+        return None
+    if value == "max":
+        return math.inf
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def io_max_ok(policy_text, live_text):
+    """Whether the live io.max still enforces the policy's ceiling.
+
+    The policy names the devices it constrains; the live file may name more,
+    because the kernel and systemd track several devices for one slice.  A
+    live device is accepted only while its ceiling is no looser than the
+    policy's, so an extra device line never hides a weakened limit and never
+    trips on an identical one.
+    """
+    policy = io_max_rows(policy_text)
+    live = io_max_rows(live_text)
+    if not policy:
+        return False
+    ceiling = {}
+    for settings in policy.values():
+        for key, value in settings.items():
+            limit = io_limit(value)
+            if limit is None:
+                return False
+            ceiling[key] = min(ceiling.get(key, math.inf), limit)
+    for device, settings in policy.items():
+        if device not in live:
+            return False
+        for key, value in settings.items():
+            observed = io_limit(live[device].get(key))
+            if observed is None or observed > io_limit(value):
+                return False
+    for device, settings in live.items():
+        if device in policy:
+            continue
+        for key in ceiling:
+            observed = io_limit(settings.get(key))
+            if observed is None or observed > ceiling[key]:
+                return False
+    return True
+
+
+def limits_match(path, limits):
+    """Whether every named limit of one cgroup still reads as the policy."""
+    for name, value in limits.items():
+        live = (Path(path) / name).read_text().strip()
+        if name == "io.max":
+            if not io_max_ok(str(value), live):
+                return False
+        elif live != str(value):
+            return False
+    return True
+
+
 def observe(config, *, functional=True):
     try:
         base = Path(config["cgroup"])
         events = dict(line.split() for line in (base / "memory.events").read_text().splitlines())
         meminfo = dict(line.split(":", 1) for line in Path("/proc/meminfo").read_text().splitlines())
-        limits_ok = all((Path(path) / name).read_text().strip() == str(value)
-                        for path, limits in config["limits"].items()
-                        for name, value in limits.items())
+        limits_ok = all(limits_match(path, limits)
+                        for path, limits in config["limits"].items())
         row = dict(oom_kill=int(events["oom_kill"]),
                    memory=int((base / "memory.current").read_text()),
                    maximum=int((base / "memory.max").read_text()),
@@ -279,10 +358,19 @@ def observe(config, *, functional=True):
 
 
 def prepare(config):
-    """The already-running user manager may not enable newly delegated I/O."""
+    """The already-running user manager may not enable newly delegated I/O.
+
+    The io controller accepts one device per write.  Writing several device
+    lines in a single call fails with EINVAL, and the resulting restart loop
+    took the sentinel down, so each device line is written on its own.
+    """
     base = Path(config["cgroup"])
     (base.parent / "cgroup.subtree_control").write_text("+io")
-    (base / "io.max").write_text(config["limits"][str(base)]["io.max"])
+    policy = config["limits"][str(base)]["io.max"]
+    for line in policy.splitlines():
+        line = line.strip()
+        if line:
+            (base / "io.max").write_text(line + "\n")
 
 
 def reason(row, previous, pressured_since, now):
