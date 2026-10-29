@@ -3,6 +3,16 @@
 The minimal life-support core is a candidate supervisor for the plant's
 canonical lifecycle. Live wake and settlement acceptance remains open.
 
+Mishe's continuity is an ongoing loop: keep an intention, observe the world,
+choose and take an action, examine its effects, and carry unfinished work
+forward. A mind contributes judgment; durable records, bounded execution and
+independent observation let that work continue across interruptions. Recovery
+must distinguish a problem that calls for investigation from an uncertain
+effect that must be reconciled before repeating an action. The aim is to
+recover autonomously from demonstrated failures, within the limits of the host,
+storage, access and inference services on which the plant depends. This is a
+design goal, not a claim that the candidate core can yet revive itself.
+
 It lives inside this repository, on `main`, next to the code it serves. There
 is no second repository and no second branch.
 
