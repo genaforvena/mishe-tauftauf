@@ -30,24 +30,65 @@ is a candidate at all. A reference is one line naming a content-addressed
 record. Everything the dialect cannot decode stays undecoded: the adapter
 returns ``None`` rather than guessing, so an unreadable publication reaches the
 consumer as a gap it must report.
+
+Provenance vocabulary (C2PA Content Credentials 2.2, 2025-05-01) — additive:
+typed, pure, verdict-free facts beside the wall-outcome decoder so a published
+artifact can name its ingredients, disclosure level and validation state without
+changing any ``Feed.append``, ``seed yield`` or DEV publish behaviour.
+``Ch. 1 Guiding Principles box p.2 SHOULD NOT provide value judgments``;
+``Ch. 2 Glossary pp.6-8 / Ch. 6 Assertions pp.23-26 / Ch. 10 Claims pp.36-45
+/ Ch. 11 Manifests pp.47-56 / Sec. 18.15 Ingredient pp.186-197`` define
+``Manifest / Claim / Assertion / ingredient``; ``Ch. 9 pp.34-35 / Sec. 18.5
+Data Hash pp.130-132`` define hard bindings (``c2pa.hash.data`` sha256) and
+``Sec. 18.10 Soft Binding pp.162-166`` the perceptual alternative;
+``Ch. 10.3-10.4 pp.39-45 / Fig. 13 p.73`` define claim creation with
+``c2pa.actions`` (``created|edited|published``); ``Ch. 14 Trust Model
+pp.63-72 / Ch. 15 Validation pp.73-105 esp. Sec. 15.2 pp.74-78`` define
+``Well-Formed / Valid / Trusted`` and status codes
+``claimSignature.validated / assertion.dataHash.match / signingCredential.trusted``;
+``Sec. 14.4-14.5 p.72`` define the trust list and OCSP ``rVals`` that make
+``Trusted`` checkable; ``Ch. 16.3 Disclosure Levels p.111 / Sec. 6.8 p.25
+redactedAssertions`` define ``minimal / standard / full``; ``Ch. 17
+pp.113-114 / Sec. 14.2 p.63`` list harms/misuse and the open-problem boundary.
+For UTF-8 tape text the hard binding is ``sha256(bytes)`` — already the
+``[record]`` hex64 but now labeled ``c2pa.hash.data``; no soft binding for
+prose; embedding is external manifest per ``Ch. 11.4-11.5 pp.55-56`` not JUMBF
+in markdown. No X.509/COSE signing, JUMBF, watermark, trust-list fetch or
+assertion redaction is implemented here; the vocabulary only makes
+“published = authentic” checkable from bytes.
 """
 from __future__ import annotations
 
+import hashlib
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-import re
+from typing import Final
 
 from .records import REFERENCE_RE
 
-OUTCOME_KINDS = ('accepted', 'blocker-resolved', 'blocker-retired', 'hypothesis-changed')
+OUTCOME_KINDS: Final[tuple[str, ...]] = ('accepted', 'blocker-resolved', 'blocker-retired', 'hypothesis-changed')
 """The publication kinds the reserved header may name."""
 
 _HEADER = re.compile(r'Wall outcome (' + '|'.join(OUTCOME_KINDS) + r') by ([a-z0-9-]+)\Z')
 _DIGEST = re.compile(r'[0-9a-f]{64}\Z')
-OUTCOME_PREFIX = 'Wall outcome '
-WORK_CHANNEL_PREFIX = '[work] channel=witness '
-HANDOFF_MARKER = 'HANDOFF:\n'
+OUTCOME_PREFIX: Final[str] = 'Wall outcome '
+WORK_CHANNEL_PREFIX: Final[str] = '[work] channel=witness '
+HANDOFF_MARKER: Final[str] = 'HANDOFF:\n'
+
+# --- Provenance vocabulary (C2PA 2.2) — Ch.1 box p.2 SHOULD NOT; Ch.2/6/10/11/18.15; Ch.9/18.5 hard; 18.10 soft; 15.2 status; 14.3-14.5 states; 16.3 disclosure; 17 harms ---
+DISCLOSURE_LEVELS: Final[tuple[str, ...]] = ("minimal", "standard", "full")
+"""Disclosure levels per C2PA Ch.16.3 p.111 (minimal/standard/full) — creator control, cf. Ch.1 p.2 privacy control and Sec.6.8 redactedAssertions analogue. No assertion is redacted by this vocab."""
+
+MANIFEST_STATES: Final[tuple[str, ...]] = ("well-formed", "valid", "trusted")
+"""Manifest validation states per C2PA Sec.14.3/15.3 pp.64,84-85 (Well-Formed -> Valid (hash+signature) -> Trusted (signer in trust list)). C2PA SHOULD NOT provide value judgments (Ch.1 box p.2) — trusted binding is not truth."""
+
+PROVENANCE_ALG: Final[str] = "sha256"
+"""Hash alg for hard binding per C2PA Sec.13.1 p.58 / Sec.18.5 p.130 (c2pa.hash.data alg set sha256|sha384|sha512); this plant uses sha256 for tape/markdown hard bindings."""
+
+TRUSTED_SIGNERS: Final[tuple[str, ...]] = ()
+"""Placeholder trust list per C2PA Sec.14.4 p.63 — future Trusted anchor; empty means no signer is Trusted yet, so Valid is the ceiling. No network fetch here."""
 
 EVIDENCE_REMEDY_SUFFIX = re.compile(r'^(?P<stem>.+?)-(?P<sfx>v\d+|final|final-v\d+)$')
 """The clause's own remedy-naming convention, read as an artifact's name.
@@ -368,3 +409,93 @@ def decode_excerpt(body: str) -> str:
     """
     return '\n'.join(line for line in body_lines(body)
                      if not line.startswith('{'))
+
+def provenance_data_hash(data: bytes) -> str:
+    """Hard binding for tape/markdown bytes — c2pa.hash.data (C2PA Sec.18.5 p.130, alg sha256).
+
+    Pure ``hashlib.sha256(data).hexdigest()`` with no I/O; the bound is the
+    64-hex sha256 already carried as ``[record] ... sha256=<hex>`` on the final
+    reference line, now labeled as ``c2pa.hash.data`` so a reader can check
+    ``assertion.dataHash.match`` without re-deriving the hash. Soft binding
+    (C2PA Sec.18.10 watermark) does not apply to prose — there is no perceptual
+    hash for UTF-8 tape text (App.A lists JPEG/PNG/MP4/PDF containers only).
+    """
+    return hashlib.sha256(data).hexdigest()
+
+
+def provenance_ingredient(path: str, sha256: str, *, state: str = "valid") -> dict | None:
+    """Typed ingredient record mirroring C2PA Sec.18.15 c2pa.ingredient.
+
+    Returns ``{"path": ..., "sha256": ..., "alg": "sha256", "validationState": state}``
+    when ``sha256`` is a 64-hex ``_DIGEST`` and ``state`` is in ``MANIFEST_STATES``
+    (``well-formed``/``valid``/``trusted`` per Sec.14.3/15.3), else ``None``.
+    ``None``-on-mismatch is the vocabulary's denier — no invented verdict.
+    ``path`` is caller-held (e.g. ``SITE/artifacts/...``); no filesystem read.
+    """
+    if not isinstance(path, str) or not path:
+        return None
+    if not isinstance(sha256, str) or _DIGEST.fullmatch(sha256) is None:
+        return None
+    if state not in MANIFEST_STATES:
+        return None
+    return {"path": path, "sha256": sha256, "alg": PROVENANCE_ALG, "validationState": state}
+
+
+def provenance_manifest_summary(ingredients: list[dict], *, disclosure: str = "standard") -> dict | None:
+    """Typed manifest summary over ingredients — c2pa Manifest/Claim shape (C2PA Ch.11/10).
+
+    Returns ``{"alg": "sha256", "disclosureLevel": ..., "ingredients": [...], "ingredientCount": n}``
+    when ``disclosure`` is in ``DISCLOSURE_LEVELS`` (minimal/standard/full per
+    Ch.16.3 p.111) and each ingredient is a ``provenance_ingredient``-shaped
+    dict whose ``sha256`` is hex64 and ``validationState`` is in
+    ``MANIFEST_STATES``; else ``None``. No signing, no JUMBF, no network.
+    ``minimal`` carries only ``claimSignature.validated + dataHash`` per
+    Ch.16.3, ``full`` all ingredient digests — the privacy choice the header
+    documents (Ch.1 p.2 SHOULD NOT; Sec.6.8 redactedAssertions analogue).
+    """
+    if disclosure not in DISCLOSURE_LEVELS:
+        return None
+    if not isinstance(ingredients, list):
+        return None
+    for ing in ingredients:
+        if not isinstance(ing, dict):
+            return None
+        sha = ing.get("sha256")
+        st = ing.get("validationState")
+        if not isinstance(sha, str) or _DIGEST.fullmatch(sha) is None:
+            return None
+        if not isinstance(st, str) or st not in MANIFEST_STATES:
+            return None
+    return {"alg": PROVENANCE_ALG, "disclosureLevel": disclosure, "ingredients": list(ingredients), "ingredientCount": len(ingredients)}
+
+
+def provenance_validation_state(status_codes: list[str]) -> str | None:
+    """Map C2PA status codes to ManifestValidationState — Sec.15.2 pp.74-78, Sec.14.3/15.3.
+
+    Codes: ``claimSignature.validated``, ``assertion.dataHash.match``,
+    ``signingCredential.trusted`` (success) plus ``ingredient.unknownProvenance``
+    (informational) — all from Sec.15.2. ``Valid`` requires
+    ``claimSignature.validated`` and ``assertion.dataHash.match``; ``Trusted``
+    additionally requires ``signingCredential.trusted`` (whose anchor is
+    ``TRUSTED_SIGNERS`` per Sec.14.4 — empty here, so ``Valid`` is the ceiling
+    until a trust list is configured). Non-list or malformed element -> ``None``;
+    empty list -> ``None``; no success pair -> ``None`` (unknown).
+    """
+    if not isinstance(status_codes, list) or not status_codes:
+        return None
+    for code in status_codes:
+        if not isinstance(code, str) or not code:
+            return None
+    has_sig = "claimSignature.validated" in status_codes
+    has_hash = "assertion.dataHash.match" in status_codes
+    has_trusted = "signingCredential.trusted" in status_codes
+    if has_sig and has_hash and has_trusted:
+        return "trusted"
+    if has_sig and has_hash:
+        return "valid"
+    return None
+
+
+def provenance_disclosure_is_valid(level: object) -> bool:
+    """Whether the disclosure level is a C2PA Ch.16.3 value — minimal|standard|full."""
+    return isinstance(level, str) and level in DISCLOSURE_LEVELS
