@@ -8112,14 +8112,50 @@ def scan_window_aoi(home: Path, *, now=None, window: int = 100) -> dict | None:
     ``created`` pass it so a second reader can recompute from published fields
     alone (ledger-band idiom). ``None`` on warmup (<2 stamps) — same
     ``unknown`` vocabulary as ``classify_age``.
+
+    Ledger-band note: ``read_scan_created_stamps`` returns the on-disk series
+    including the receipt whose ``created`` the caller passes as ``now``. The
+    published ``scan_window_aoi`` was built from *prior* stamps only
+    (``scan()`` reads before writing the new receipt), so a faithful
+    recomputation must exclude ``now`` when it is already the newest stamp.
+    Otherwise the helper would report ``current=0`` and an extra peak that the
+    publisher never counted. When ``now`` matches the newest on-disk stamp,
+    the helper reads ``window+1`` stamps and drops that newest, still
+    returning a window of at most ``window`` priors.
     """
     from datetime import datetime, timezone
 
-    stamps = read_scan_created_stamps(home, window=window)
+    if now is None:
+        stamps = read_scan_created_stamps(home, window=window)
+        if len(stamps) < 2:
+            return None
+        now = datetime.now(timezone.utc)
+        return aoi_summary(stamps, now=now)
+    # ``now`` supplied (ledger-band second reader). Read one extra so we
+    # can exclude ``now`` without shrinking the window.
+    stamps = read_scan_created_stamps(home, window=window + 1)
     if len(stamps) < 2:
         return None
-    if now is None:
-        now = datetime.now(timezone.utc)
+    try:
+        now_utc = now.astimezone(timezone.utc) if isinstance(now, datetime) and now.tzinfo is not None else None
+    except Exception:
+        now_utc = None
+    if now_utc is not None and stamps:
+        try:
+            last_utc = stamps[-1].astimezone(timezone.utc)
+            if last_utc == now_utc:
+                stamps = stamps[:-1]
+                if len(stamps) < 2:
+                    return None
+                # Keep at most ``window`` priors, earliest-first.
+                if len(stamps) > window:
+                    stamps = stamps[-window:]
+        except Exception:
+            pass
+    else:
+        # No comparable ``now``; cap to requested window.
+        if len(stamps) > window:
+            stamps = stamps[-window:]
     return aoi_summary(stamps, now=now)
 
 
