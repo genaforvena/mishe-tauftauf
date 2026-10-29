@@ -9,6 +9,14 @@ transmission principle is a privacy-boundary change reviewed under
 docs/protocol-boundaries.md and the 2026-10-15 personal-multibody mandate.
 Device evidence (battery/light/acceleration incl. gravity) is not a human
 movement/presence claim; carrying context remains contextual, not sensor-certified.
+Hardening: Diamantis, "The Danger of Contextual Integrity," BEQ 2025
+§§3.2–3.6 — value indeterminacy (pp.9–11), context indeterminacy (pp.11–13),
+complexity favouring producer (pp.14–15), heads-wins/tails-lose (p.15),
+frog-in-hot-water and conservatism (pp.16–17). Tables below are closed-world:
+any (context, info_type) or (context, principle, recipient) not listed is
+denied; general-value balancing ("democracy, freedom, wealth, efficiency,
+other social values" BEQ p.9) is excluded; the mandate's "including new
+not-yet-developed ones" does not auto-extend the vocabularies.
 """
 
 from datetime import datetime, timezone
@@ -27,9 +35,13 @@ MAX_STATE_BYTES = 1048576
 MAX_SEQUENCE = 9007199254740991
 
 #: Contextual-integrity vocabulary — Nissenbaum 2004 §§III–III.B (Walzer
-#: Spheres of Justice) + Barth et al. 2006 §2. Five parameters: context,
-#: subject/sender/recipient, information type, transmission principle.
-#: Either appropriateness *or* flow violation is a breach.
+#: Spheres of Justice) + Barth et al. 2006 §2; hardened per Diamantis BEQ
+#: 2025 §§3.2–3.6 ("The Danger of Contextual Integrity"). Five parameters:
+#: context, subject/sender/recipient, information type, transmission
+#: principle. Either appropriateness *or* flow violation is a breach.
+#: Closed-world: any (context, info_type) or (context, principle,
+#: recipient) not listed is denied; no "arenas not governed by norms"
+#: licence to add norms by assertion.
 PERSONAL_CONTEXTS: Final[frozenset[str]] = frozenset({
     "personal-carrying",
     "health-diagnosis",
@@ -37,6 +49,13 @@ PERSONAL_CONTEXTS: Final[frozenset[str]] = frozenset({
     "host-network",
     "publication",
 })
+#: BODY_INFORMATION_TYPES is closed-world. The 2026-10-15 mandate's
+#: "including new not-yet-developed ones" does not auto-extend this set:
+#: adding a new type (e.g., microphone, geolocation, csi_presence) requires
+#: an explicit entry here *and* a revisited per-type human consent record —
+#: not a table edit alone. Unlisted types are denied (frog-in-hot-water
+#: detector, Diamantis BEQ p.16–17); without per-type consent the type
+#: remains outside the CI tables.
 BODY_INFORMATION_TYPES: Final[frozenset[str]] = frozenset({
     "battery",
     "light",
@@ -44,6 +63,11 @@ BODY_INFORMATION_TYPES: Final[frozenset[str]] = frozenset({
     "wifi_link_rssi_dbm",
     "ble_scan",
 })
+#: TRANSMISSION_PRINCIPLES is exhaustive (four entries). General-value
+#: balancing ("democracy, freedom, wealth, efficiency, other social values"
+#: Diamantis BEQ p.9, §3.2) is excluded; any new principle requires an
+#: explicit entry here *and* a revisited consent record. Unlisted
+#: principles are denied — value-indeterminacy vector typed as deny.
 TRANSMISSION_PRINCIPLES: Final[frozenset[str]] = frozenset({
     "human-consented-personal-analysis",
     "confidential-to-operator",
@@ -55,6 +79,12 @@ TRANSMISSION_PRINCIPLES: Final[frozenset[str]] = frozenset({
 #: body channels; publication carries none by default — per-item disclosure
 #: is a distribution question, not an appropriateness one. Host contexts carry
 #: no body information types (they govern adapter state, not person evidence).
+#: Context is fixed by the authorising collection consent (2026-10-15
+#: personal-multibody mandate: personal-carrying for Redmi body channels,
+#: host-radio/host-network for adapter state), not by information type shape —
+#: ble_scan collected as personal-carrying does not become host-radio because
+#: it mentions a radio; post-hoc relabelling is a privacy-boundary change
+#: reviewed under docs/protocol-boundaries.md (Diamantis BEQ §3.3).
 _APPROPRIATENESS: Final[dict[str, frozenset[str]]] = {
     "personal-carrying": BODY_INFORMATION_TYPES,
     "health-diagnosis": BODY_INFORMATION_TYPES,
@@ -66,7 +96,10 @@ _APPROPRIATENESS: Final[dict[str, frozenset[str]]] = {
 #: recipients. The 2026-10-15 human consent is the principle
 #: "human-consented-personal-analysis" confined to non-public recipients;
 #: "public-by-explicit-disclosure" is the only principle that allows the
-#: publication context. Any pair not listed denies the flow.
+#: publication context. Any pair not listed denies the flow. Frog
+#: detector: each new information type without per-type consent would become
+#: the new benchmark CI cements (Diamantis BEQ pp.16–17); the blanket clause
+#: is therefore non-self-executing.
 _CI_FLOWS: Final[dict[tuple[str, str], frozenset[str]]] = {
     ("personal-carrying", "human-consented-personal-analysis"): frozenset({
         "senses", "health", "body-research", "inference-research",
@@ -98,7 +131,11 @@ def is_body_info_appropriate_for_context(context: str, info_type: str) -> bool:
 
     Nissenbaum 2004 §III.A: norms of appropriateness dictate what information
     about persons is fitting in a given context; no context is norm-free.
-    Pure view over :data:`_APPROPRIATENESS`; no I/O, no ``sense.*`` verdict.
+    Diamantis BEQ 2025 §3.3: context is fixed by the authorising consent
+    (personal-carrying for Redmi body channels per 2026-10-15 mandate), not
+    by information type shape; ble_scan stays personal-carrying, not
+    host-radio; post-hoc relabelling is a privacy-boundary change. Pure view
+    over :data:`_APPROPRIATENESS`; no I/O, no ``sense.*`` verdict.
     """
     allowed = _APPROPRIATENESS.get(context)
     if allowed is None:
@@ -119,12 +156,17 @@ def contextual_integrity_allows(
 
     Nissenbaum 2004 §§III–III.B via Walzer; Barth et al. 2006 §2 five
     parameters (context, sender/recipient/subject, information type,
-    transmission principle). Either norm violated is a breach. Pure view
-    over :data:`_APPROPRIATENESS` and :data:`_CI_FLOWS`; no I/O, no verdict.
-    ``sender``/``subject`` are carried for the five-parameter shape and for
-    future subject-scoped policy; the current table enforces context +
-    information type (appropriateness) and context + principle + recipient
-    (distribution).
+    transmission principle). Either norm violated is a breach. Hardened per
+    Diamantis BEQ 2025 §§3.2–3.6: closed-world (unlisted info_type,
+    principle, or recipient denies), context fixed by authorising consent,
+    no post-hoc relabelling; frog/value vectors typed as deny.
+    Pure view over :data:`_APPROPRIATENESS` and :data:`_CI_FLOWS`; no I/O,
+    no verdict. ``sender``/``subject`` are carried for the five-parameter
+    shape and for future subject-scoped policy; the current table enforces
+    context + information type (appropriateness) and context + principle +
+    recipient (distribution). A flow claiming a different context for the
+    same bytes is a privacy-boundary change reviewed under
+    docs/protocol-boundaries.md.
     """
     if not is_body_info_appropriate_for_context(context, info_type):
         return False
