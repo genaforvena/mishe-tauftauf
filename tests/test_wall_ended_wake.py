@@ -1,5 +1,6 @@
 from datetime import datetime, timezone, timedelta
 import json
+import pytest
 from mishe_tauftauf import seed
 from mishe_tauftauf.feed import Feed
 
@@ -38,3 +39,15 @@ def test_expired_trial_without_a_message_creates_no_wake(tmp_path, monkeypatch):
     monkeypatch.setattr(seed, "_send", lambda target, text: None)
     assert "ended" in wall.tick(tmp_path, "session", "health", 300)
     assert not [e for e in Feed(tmp_path).entries() if e.body.startswith("seed wake ")]
+
+
+def test_new_only_refuses_pending_wake_after_window_ends(tmp_path, monkeypatch):
+    from mishe_tauftauf import wall
+    (tmp_path / "coordination-mode.json").write_text(json.dumps({
+        "mode": "wall",
+        "until": (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
+    }))
+    wake = Feed(tmp_path).append("seed", "seed wake health observation=1\nPending.")
+    monkeypatch.setattr(wall, "deliver", lambda *args: pytest.fail("redelivery"))
+    receipt = wall.tick(tmp_path, "session", "health", 300, new_only=True)
+    assert f"wake {wake.sequence} already pending" in receipt

@@ -833,6 +833,25 @@ def _prog_name() -> str:
     name = Path(sys.argv[0]).name
     return name if name in ("mishe", "mishe-tauftauf") else "mishe-tauftauf"
 
+def cmd_view(args) -> int:
+    from .view import attach_view
+    res = attach_view(home=args.home, session=args.session, create_view=not args.no_create)
+    msg = res.get("message", "")
+    if res.get("action") == "exec-attach":
+        print(msg)
+        if res.get("alt") and res.get("alt") != msg:
+            print(res["alt"])
+        if not args.no_create and sys.stdout.isatty() and sys.stdin.isatty() and res.get("socket"):
+            try:
+                env = {k: v for k, v in os.environ.items() if k != "TMUX"}
+                os.execve("/usr/bin/tmux", ["tmux", "-S", res["socket"], "attach", "-t", res["session"]], env)
+            except Exception:
+                pass
+        return 0 if res.get("ok") else 1
+    print(msg)
+    if res.get("window_id"):
+        print(res["window_id"])
+    return 0 if res.get("ok") else 1
 
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog=_prog_name())
@@ -968,10 +987,16 @@ def parser() -> argparse.ArgumentParser:
     c = p.add_parser("status"); c.set_defaults(func=cmd_publication)
     c = p.add_parser("check"); c.add_argument("--source", required=True); c.add_argument("--file", type=Path, required=True); c.add_argument("--stage", choices=("post", "selection", "handoff"), default="post"); c.add_argument("--task"); c.set_defaults(func=cmd_publication)
     c = task.add_parser("coordination-report"); c.add_argument("--task"); c.add_argument("--cutoff", type=int); c.set_defaults(func=cmd_task)
+    p = sub.add_parser("view", aliases=["attach"], help="Attach to the plant's isolated tmux session")
+    p.add_argument("--session", default=None, help="tmux session name (default: recorded session or mishe-tauftauf)")
+    p.add_argument("--no-create", action="store_true", help="do not create outer view window when inside tmux")
+    p.set_defaults(func=cmd_view)
     from .model_cli import register
     register(sub)
     from .engine_usage import register as register_engine
     register_engine(sub)
+    from .token_usage import register as register_stats
+    register_stats(sub)
     return root
 
 

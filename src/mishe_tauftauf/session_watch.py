@@ -10,6 +10,15 @@ import time
 from pathlib import Path
 from .observations import validate_home
 
+# The freshness bound is the unit's WatchdogSec, not a cadence guess. The loop
+# writes the next row only after the sleep (5s), the observation budget (20s)
+# and the tape append of a routed alert, so a bound tighter than that turns a
+# slow but live loop into a false "monitor evidence stale" UNKNOWN (the
+# 2026-10-21T03:15Z and 03:16Z episodes: a 30.6s/32.0s gap after a tmux
+# timeout, while panes and dashboard stayed live). A row older than the
+# watchdog interval is a seed from an instance systemd killed, which is the
+# honest stall case.
+FRESHNESS_LIMIT = 90.0
 
 def assess(current: dict, previous: dict | None, now: float) -> dict:
     changes = []
@@ -18,7 +27,7 @@ def assess(current: dict, previous: dict | None, now: float) -> dict:
         stamp = previous.get("observed_at")
         history = previous.get("changes")
         if (isinstance(stamp, (int, float)) and not isinstance(stamp, bool)
-                and 0 <= now - stamp <= 20 and isinstance(history, list)
+                and 0 <= now - stamp <= FRESHNESS_LIMIT and isinstance(history, list)
                 and all(isinstance(x, (int, float)) and not isinstance(x, bool)
                         and 0 <= x <= now for x in history)):
             monitoring_ok = True

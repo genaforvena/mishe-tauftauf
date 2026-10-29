@@ -20,10 +20,12 @@ from .post_check import _save
 def lines(home: Path, *, now=None) -> list[str]:
     from .initiative import snapshot_lines as initiative_lines
     from .substrate_watch import snapshot_lines as substrate_lines
+    from .initiative_watch import snapshot_lines as watch_lines
 
     return [*_outcome_refusal_lines(home, now=now),
             *substrate_lines(home, now=now, max_age=120),
-            *initiative_lines(home, now=now, max_age=180)]
+            *initiative_lines(home, now=now, max_age=180),
+            *watch_lines(home, now=now, max_age=180)]
 
 
 REFUSAL_AUDIT_MAX_BYTES = 262144
@@ -86,8 +88,6 @@ def _outcome_refusal_lines(home: Path, *, now=None) -> list[str]:
             f"({len(denials)} coverage denials); last={last.get('role')}/{last.get('kind')}: {reason}{detail}"]
 
 
-
-
 def _load(path: Path, maximum: int) -> dict:
     with path.open("rb") as stream:
         data = stream.read(maximum + 1)
@@ -99,11 +99,12 @@ def _load(path: Path, maximum: int) -> dict:
     return value
 
 
-def health(home: Path, *, now=None) -> dict:
+def health(home: Path, *, now=None, require_initiative_watch=False) -> dict:
     """Route one alert per freshness-failure episode, retaining bad guard state."""
     from .wall import message
     from .initiative import read_snapshot
     from .substrate_watch import _read_state
+    from .initiative_watch import read_snapshot as read_watch
 
     home = Path(home).resolve()
     now = now or datetime.now(timezone.utc)
@@ -134,13 +135,20 @@ def health(home: Path, *, now=None) -> dict:
             except (OSError, ValueError, TypeError):
                 previous = {}
     producers = {}
-    for name, stamp, state_key, maximum_age in (
+    sources = [
         ("substrate-watch", "checked_at", "status", 120),
         ("initiative", "generated_at", "state", 180),
-    ):
+    ]
+    if require_initiative_watch:
+        sources.append(("initiative-watch", "generated_at", "state", 180))
+    for name, stamp, state_key, maximum_age in sources:
         try:
-            report = (_read_state(home / "checks/substrate-watch.json") if name == "substrate-watch"
-                      else read_snapshot(home, now=now, max_age=maximum_age))
+            if name == "substrate-watch":
+                report = _read_state(home / "checks/substrate-watch.json")
+            elif name == "initiative-watch":
+                report = read_watch(home, now=now, max_age=maximum_age)
+            else:
+                report = read_snapshot(home, now=now, max_age=maximum_age)
             at = datetime.fromisoformat(report[stamp].replace("Z", "+00:00"))
             age = (now - at).total_seconds()
             if not 0 <= age <= maximum_age:
@@ -150,21 +158,28 @@ def health(home: Path, *, now=None) -> dict:
             producers[name] = {"fresh": False}
             problems.append(f"{name}: missing, stale, broken or invalid snapshot")
     state = "UNKNOWN" if problems else "GREEN"
-    key = hashlib.sha256(json.dumps(problems, sort_keys=True).encode()).hexdigest()
+    key = hashlib.sha256(json.dumps([problems, require_initiative_watch], sort_keys=True).encode()).hexdigest()
     row = {"version": 1, "checked_at": now.isoformat(), "state": state,
            "producers": producers, "problems": problems,
            "scope": "Producer snapshot freshness only; not successful repairs or runtime health."}
     if problems and previous.get("alert_key") != key:
-        event = message(home, "follow-through-watch", "health",
-            "Follow-through observation UNKNOWN: " + "; ".join(problems) + ". "
-            f"Evidence {save_path.relative_to(home)}. Resolver Health: inspect the owned "
-            "substrate/initiative services and retained snapshot errors within 120 seconds; "
-            "restore observation, preserving original failure evidence. Do not call missing monitoring success.")
-        row["alert_sequence"] = event.sequence
+        text = ("Follow-through observation UNKNOWN: " + "; ".join(problems) + ". "
+                f"Evidence {save_path.relative_to(home)}. Resolver Health: inspect the owned "
+                "source/initiative/assurance observers and retained snapshot errors within 120 seconds; "
+                "restore observation, preserving original failure evidence. Genome and Witness "
+                "take over if Health cannot act; no human polling or permission wait. "
+                "Do not call missing monitoring success.")
+        recipients = ("health", "genome", "witness") if require_initiative_watch else ("health",)
+        row["alert_sequences"] = {
+            recipient: message(home, "follow-through-watch", recipient, text).sequence
+            for recipient in recipients
+        }
+        row["alert_sequence"] = row["alert_sequences"]["health"]
     if problems:
         row["alert_key"] = key
         if "alert_sequence" not in row and previous.get("alert_key") == key:
             row["alert_sequence"] = previous.get("alert_sequence")
+            row["alert_sequences"] = previous.get("alert_sequences", {})
     _save(save_path, row)
     return row
 
@@ -175,6 +190,8 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="Check producer freshness once")
     parser.add_argument("--watch", action="store_true", help="Independently guard producer freshness")
     parser.add_argument("--interval", type=float, default=30)
+    parser.add_argument("--require-initiative-watch", action="store_true",
+                        help="Also supervise initiative review/alert delivery; fail closed if unavailable")
     args = parser.parse_args()
     if not math.isfinite(args.interval) or args.interval <= 0:
         parser.error("interval must be finite and positive")
@@ -185,7 +202,7 @@ def main() -> int:
     from .session_watch import notify
     notify("READY=1")
     while True:
-        row = health(args.home)
+        row = health(args.home, require_initiative_watch=args.require_initiative_watch)
         print(json.dumps(row, sort_keys=True), flush=True)
         notify("WATCHDOG=1\nSTATUS=" + row["state"] + " producer freshness only")
         if not args.watch:

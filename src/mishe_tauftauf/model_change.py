@@ -5,6 +5,8 @@ or replay interrupted work. Fresh starts are explicit abandonment, not success.
 """
 from __future__ import annotations
 
+import fcntl
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import math
 import os
@@ -32,6 +34,43 @@ def site_home(home):
     if (home / 'model-changes').is_symlink():
         raise ValueError('model change store cannot be a symlink')
     return home
+
+
+class LockBusy(RuntimeError):
+    """A bounded seed-lock acquisition gave up while another holder kept it."""
+
+
+@contextmanager
+def _seed_lock(home, wait=None):
+    """Hold the plant-wide seed lock, optionally giving up at a deadline.
+
+    ``wait=None`` reuses the shared blocking primitive, which is what the
+    interactive commands want. A finite ``wait`` polls instead and raises
+    ``LockBusy``. Every resident supervisor holds this lock across slow steps
+    (wall.tick scans, captures a pane, renders and reads the chat tape under
+    it), so the supervised watcher cannot afford an unbounded wait: it would
+    outlive its own watchdog, be killed mid-cycle and publish nothing. The
+    bound lives here rather than in seed._lock because the live watcher runs
+    from a snapshot tree whose seed.py is the pinned release's copy.
+    """
+    if wait is None:
+        with seed._lock(home):
+            yield
+        return
+    if not (wait >= 0):
+        raise ValueError('lock wait must be nonnegative')
+    validate_home(home)
+    with (home / '.seed.lock').open('a+') as handle:
+        deadline = time.monotonic() + wait
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise LockBusy(f'seed lock held elsewhere for {wait:g}s')
+                time.sleep(0.2)
+        yield
 
 
 def inventory(home, selected=None):
@@ -247,9 +286,9 @@ def _activate(home, change, root, receipt, role, row):
     row['reason'] = 'new process observed; waiting for resident provider completion'
 
 
-def advance(home, change):
+def advance(home, change, lock_wait=None):
     home = site_home(home)
-    with seed._lock(home):
+    with _seed_lock(home, wait=lock_wait):
         root, receipt = boundary.receipt(home, change)
         for role, row in receipt['roles'].items():
             try:
@@ -349,20 +388,37 @@ def revert(home, change):
     return advance(home, change)
 
 
-def watch_once(home):
+LOCK_WAIT_SECONDS = 20
+
+
+def watch_once(home, lock_wait=LOCK_WAIT_SECONDS, notify=None):
+    """Advance every recorded change once and publish one fresh observation.
+
+    Each change's seed-lock acquisition is bounded. Resident supervisors hold
+    that lock across slow steps, so an unbounded wait outlives this unit's
+    watchdog, gets the watcher killed mid-cycle and leaves the freshness check
+    reading a stale snapshot. A cycle that cannot observe says so and stays
+    alive to retry.
+    """
     home = site_home(home)
     reports = []
     root = home / 'model-changes'
     for path in sorted(root.iterdir()) if root.exists() else []:
         if not path.is_dir():
             continue
+        if notify:
+            notify()
         try:
-            report = advance(home, path.name)
+            report = advance(home, path.name, lock_wait=lock_wait)
+        except LockBusy as exc:
+            report = {'id': path.name, 'state': 'unknown', 'roles': {}, 'checked': now(),
+                      'reason': f'observation deferred: {exc}'}
         except (OSError, ValueError, TypeError, KeyError) as exc:
             report = {'id': path.name, 'state': 'unknown', 'reason': str(exc), 'roles': {}, 'checked': now()}
         reports.append(report)
         if report['state'] == 'unknown' or (report['state'] == 'pending' and now() - report['created'] > 120):
-            Feed(home).append_runtime_once('model-change', f'[dm] to=health\nModel change {path.name} {report["state"]}; interval={int(now() // 120)}. Inspect model status and retained evidence. Resolver=health; action=inspect exact role/process/provider failure; disposition within 120s.')
+            reason = str(report.get('reason') or 'no named reason')[:200]
+            Feed(home).append_runtime_once('model-change', f'[dm] to=health\nModel change {path.name} {report["state"]}: {reason}; interval={int(now() // 120)}. Inspect model status and retained evidence. Resolver=health; action=inspect exact role/process/provider failure; disposition within 120s.')
     snapshot = {'checked': now(), 'reports': reports, 'state': 'unknown' if any(
         r['state'] == 'unknown' or (r['state'] == 'pending' and now() - r['created'] > 120)
         for r in reports) else 'ok'}
@@ -381,11 +437,17 @@ def check_watch(home):
         return {'state': 'unknown', 'reason': str(exc)}
 
 
+def _watchdog():
+    if os.environ.get('NOTIFY_SOCKET'):
+        subprocess.run(['systemd-notify', 'WATCHDOG=1'], check=True, timeout=5)
+
+
 def watch(home, interval=30):
     if not math.isfinite(interval) or not 1 <= interval <= 60:
         raise ValueError('watch interval must be 1..60 seconds')
     while True:
-        watch_once(home)
-        if os.environ.get('NOTIFY_SOCKET'):
-            subprocess.run(['systemd-notify', 'WATCHDOG=1'], check=True, timeout=5)
+        # The heartbeat brackets every bounded lock wait, so this unit's
+        # liveness never depends on how long a supervisor keeps the plant lock.
+        watch_once(home, notify=_watchdog)
+        _watchdog()
         time.sleep(interval)

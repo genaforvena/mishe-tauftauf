@@ -265,3 +265,56 @@ def test_nonfinite_receipt_cannot_disable_overdue_detection(site, monkeypatch):
     p=site/'model-changes'/result['id']/'receipt.json'
     data=json.loads(p.read_text());data['created']=float('nan');p.write_text(json.dumps(data))
     assert m.status(site,result['id'])['state']=='unknown'
+
+
+def hold_seed_lock(home):
+    """Take the plant lock from this process, as a busy supervisor would."""
+    import fcntl
+    handle = (home / '.seed.lock').open('a+')
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    return handle
+
+
+def test_bounded_lock_wait_gives_up_and_a_free_lock_still_acquires(site):
+    m = service()
+    holder = hold_seed_lock(site)
+    try:
+        started = time.monotonic()
+        with pytest.raises(m.LockBusy):
+            with m._seed_lock(site, wait=0.3):
+                raise AssertionError('a held seed lock must not be acquired')
+        assert time.monotonic() - started < 30
+    finally:
+        import fcntl
+        fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+        holder.close()
+    with m._seed_lock(site, wait=0.3):
+        pass
+    with m._seed_lock(site):
+        pass
+
+
+def test_busy_seed_lock_defers_observation_instead_of_dying(site, monkeypatch):
+    """A contended cycle publishes a fresh, named deferral and changes nothing."""
+    m = configure(monkeypatch)
+    result = m.replace(site, 'old/Model', 'new/Model', effort='compatible')
+    receipt = site / 'model-changes' / result['id'] / 'receipt.json'
+    before = receipt.read_bytes()
+    holder = hold_seed_lock(site)
+    try:
+        started = time.monotonic()
+        snapshot = m.watch_once(site, lock_wait=0.3)
+        assert time.monotonic() - started < 30
+    finally:
+        import fcntl
+        fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+        holder.close()
+    assert snapshot['state'] == 'unknown'
+    report = snapshot['reports'][0]
+    assert report['state'] == 'unknown'
+    assert 'observation deferred' in report['reason']
+    assert 'seed lock held elsewhere' in report['reason']
+    assert receipt.read_bytes() == before
+    assert m.check_watch(site)['state'] == 'unknown'
+    from mishe_tauftauf.feed import Feed
+    assert any('observation deferred' in entry.body for entry in Feed(site).entries())

@@ -5,7 +5,7 @@ import json
 import pytest
 
 from mishe_tauftauf import initiative, outcome_events, records
-from mishe_tauftauf.feed import FeedEntry
+from mishe_tauftauf.feed import FeedEntry, _encode_entry, parse_feed
 
 
 NOW = datetime(2026, 10, 20, 12, tzinfo=timezone.utc)
@@ -400,3 +400,54 @@ def test_validated_snapshot_reader_never_rescans_live_evidence(home, monkeypatch
     assert report["patches"]["items"][0]["age_seconds"] == 172800
     with pytest.raises(ValueError):
         initiative.read_snapshot(home, now=NOW.replace(tzinfo=None))
+
+
+def write_tape(home, *lines):
+    """Write a tape whose entries carry the given (source, body) pairs."""
+    tape = home / "chat.log"
+    tape.write_bytes(b"")
+    with tape.open("ab") as stream:
+        for index, (source, body) in enumerate(lines, start=1):
+            moment = datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+            stream.write(_encode_entry(index, moment, source, body))
+    return tape
+
+
+def test_an_entry_appended_while_the_producer_reads_the_tape_is_not_a_future_event(home, monkeypatch):
+    """The tape grows while the producer reads it, and a producer that judges
+    the tape against the clock it took before the read calls that growth a
+    future event. The entry is real, so the producer must read it.
+
+    The live producer does not pin its clock, so this test does not either:
+    the clock is the wall clock, and the entry carries a stamp the wall clock
+    reaches during the read.
+    """
+    write_tape(home, ("seed", "seed wake discover observation=1"))
+    original = initiative._read
+
+    def appending_read(path, maximum):
+        if path.name == "chat.log":
+            # Another writer appends after the producer took its clock and
+            # before the producer reads the tape. The stamp is the wall clock,
+            # which is what the live producer reads.
+            parsed = parse_feed(path.read_bytes(), home=home)
+            moment = datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+            with path.open("ab") as stream:
+                stream.write(_encode_entry(len(parsed) + 1, moment, "seed", "seed observation discover"))
+        return original(path, maximum)
+
+    monkeypatch.setattr(initiative, "_read", appending_read)
+    report = initiative.collect(home)
+    assert report["history"]["state"] == "OBSERVED", report["history"]
+    assert not report["history"].get("gaps")
+    assert all(row["outcome_coverage"] == "OBSERVED" for row in report["roles"].values())
+
+
+def test_a_pinned_clock_still_judges_the_tape_against_that_instant(home):
+    """A caller that pins the instant pins the whole cycle: the producer must
+    not silently move the reference clock it was given."""
+    write_tape(home, ("seed", "seed wake discover observation=1"))
+    pinned = datetime.now(timezone.utc) - timedelta(seconds=1)
+    report = initiative.collect(home, now=pinned)
+    assert report["history"]["state"] == "PARTIAL", report["history"]
+    assert report["history"]["reason"] == "invalid/future event times"

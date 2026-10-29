@@ -35,13 +35,35 @@ def _rows(entries: list[tuple[int, int, str]]) -> str:
     return "".join(f"{seq} {epoch} {body}\n" for seq, epoch, body in entries)
 
 
-def _receipts(entries: list[tuple[float, int]]) -> str:
+def _receipts(entries: list[tuple[float, int]], rows: list | None = None) -> str:
+    """The host's journal lines for a delivered history.
+
+    ``byte_count`` is the host's own statement of how many bytes the POST body
+    carried (``server.py``: ``len(body)``), so it has to be the **real** size
+    of the rows the receipt delivered.  A receipt that claims a size its rows
+    do not have is a damaged journal, and the instrument must say so rather
+    than quietly pairing by count.
+
+    The receipts are walked **backward from the live tail**, the same way the
+    instrument pairs: the last receipt owns the last ``records`` rows, the one
+    before it owns the rows before those, and any rows left over at the head
+    belong to no receipt.  The byte count of each receipt is computed from
+    the rows it owns under exactly that rule, using the instrument's own
+    formula, so the fixture and the tool cannot drift apart.
+    """
     lines = []
-    for moment, records in entries:
+    remaining = list(rows) if rows is not None else None
+    for moment, records in reversed(entries):
         stamp = datetime.fromtimestamp(moment, timezone.utc).isoformat()
+        byte_count = 10
+        if remaining is not None:
+            owned = remaining[-records:] if records else []
+            remaining = remaining[:-records] if records else remaining
+            byte_count = sum(clock_bound.post_body_bytes(row) for row in owned)
         lines.append(json.dumps({"ts": stamp, "node": "redmi10",
                                  "kind": "observations", "records": records,
-                                 "byte_count": 10}))
+                                 "byte_count": byte_count}))
+    lines.reverse()
     return "\n".join(lines) + "\n"
 
 
@@ -61,7 +83,7 @@ class ClockBoundTests(unittest.TestCase):
             (3, 1005, _light(3, 1005, 5000)[2]),
             (4, 1010, _light(4, 1010, 10000)[2]),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1005.2, 2)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.2, 2)], rows))
         pairs, unpaired = clock_bound.pair_rows(rows, receipts)
         self.assertEqual(unpaired, 2)
         self.assertEqual([pair.seq for pair in pairs], [3, 4])
@@ -73,7 +95,7 @@ class ClockBoundTests(unittest.TestCase):
             _light(2, 1005, 5000),
             _light(3, 1010, 10000),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1005.05, 1), (1010.5, 1)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.05, 1), (1010.5, 1)], rows))
         measurement = clock_bound.measure(rows, receipts)
         current = measurement["sessions"][-1]
         self.assertAlmostEqual(current["behind_upper_s"], 0.05)
@@ -90,7 +112,7 @@ class ClockBoundTests(unittest.TestCase):
             _light(2, 1005, 5000),
             _light(3, 1011, 10000),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1005.5, 1), (1011.05, 1)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.5, 1), (1011.05, 1)], rows))
         measurement = clock_bound.measure(rows, receipts)
         current = measurement["sessions"][-1]
         self.assertAlmostEqual(current["observed_min_s"], 0.05)
@@ -104,7 +126,7 @@ class ClockBoundTests(unittest.TestCase):
             _hello(3, 900000, "dddd-eeee-ffff"),
             _light(4, 900005, 47000),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 2), (900005.1, 2)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 2), (900005.1, 2)], rows))
         measurement = clock_bound.measure(rows, receipts)
         sessions = measurement["sessions"]
         self.assertEqual(len(sessions), 2)
@@ -119,7 +141,7 @@ class ClockBoundTests(unittest.TestCase):
             _light(2, 1005, 5000),
             _light(3, 1065, 6000),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 1), (1065.1, 1)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 1), (1065.1, 1)], rows))
         measurement = clock_bound.measure(rows, receipts)
         self.assertTrue(measurement["sessions"][-1]["clock_step"])
 
@@ -129,7 +151,7 @@ class ClockBoundTests(unittest.TestCase):
             _light(2, 1005, 5000),
             _light(3, 1010, 10000),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 1), (1010.1, 1)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 1), (1010.1, 1)], rows))
         measurement = clock_bound.measure(rows, receipts)
         self.assertFalse(measurement["sessions"][-1]["clock_step"])
 
@@ -142,7 +164,7 @@ class ClockBoundTests(unittest.TestCase):
             _light(2, 1010, 10000),
             _light(3, 1005, 5000),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1010.1, 3)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1010.1, 3)], rows))
         measurement = clock_bound.measure(rows, receipts)
         current = measurement["sessions"][-1]
         self.assertEqual(current["reboots"], [])
@@ -158,7 +180,7 @@ class ClockBoundTests(unittest.TestCase):
             _light(2, 1010, 800_000),
             _light(3, 1005, 795_000),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1010.05, 3)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1010.05, 3)], rows))
         measurement = clock_bound.measure(rows, receipts)
         current = measurement["sessions"][-1]
         self.assertEqual(current["ambiguous_resets"], [])
@@ -179,7 +201,7 @@ class ClockBoundTests(unittest.TestCase):
             _light(2, 1005, 500_000),
             _light(3, 1010, 5_000),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1010.1, 3)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1010.1, 3)], rows))
         measurement = clock_bound.measure(rows, receipts)
         current = measurement["sessions"][-1]
         self.assertTrue(current["ambiguous_resets"])
@@ -202,7 +224,7 @@ class ClockBoundTests(unittest.TestCase):
             _light(3, 905, 5_000),
             _light(4, 1005, 105_000),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 4)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 4)], rows))
         measurement = clock_bound.measure(rows, receipts)
         current = measurement["sessions"][-1]
         self.assertIsNone(current["behind_upper_s"])
@@ -222,7 +244,7 @@ class ClockBoundTests(unittest.TestCase):
             _light(3, 1010, 50_000),
             _light(4, 1015, 55_000),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1015.1, 4)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1015.1, 4)], rows))
         measurement = clock_bound.measure(rows, receipts)
         current = measurement["sessions"][-1]
         self.assertIsNone(current["behind_upper_s"])
@@ -239,7 +261,7 @@ class ClockBoundTests(unittest.TestCase):
             _light(2, 1005, 5000),
             _light(3, 1065, 6000),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 1), (1065.1, 1)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 1), (1065.1, 1)], rows))
         measurement = clock_bound.measure(rows, receipts)
         current = measurement["sessions"][-1]
         # The wall clock moved 60 s while the monotonic clock moved 1 s, so
@@ -259,7 +281,7 @@ class ClockBoundTests(unittest.TestCase):
             _light(2, 1005, 5000),
             _light(3, 1010, 10000),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 1), (1510.1, 1)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 1), (1510.1, 1)], rows))
         measurement = clock_bound.measure(rows, receipts)
         current = measurement["sessions"][-1]
         self.assertAlmostEqual(current["observed_min_s"], 0.1)
@@ -275,7 +297,7 @@ class ClockBoundTests(unittest.TestCase):
             _light(2, 1005, 5000),
             _light(3, 1010, 10000),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 2), (1010.1, 1)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 2), (1010.1, 1)], rows))
         measurement = clock_bound.measure(rows, receipts)
         lateness = measurement["sessions"][-1]["lateness"]
         self.assertEqual(lateness["rows"], 2)
@@ -294,7 +316,7 @@ class ClockBoundTests(unittest.TestCase):
             _light(2, 1005, 5000),
             _light(3, 1010, 10000),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 1), (1510.1, 1)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 1), (1510.1, 1)], rows))
         measurement = clock_bound.measure(rows, receipts)
         lateness = measurement["sessions"][-1]["lateness"]
         self.assertEqual(lateness["rows"], 2)
@@ -313,7 +335,7 @@ class ClockBoundTests(unittest.TestCase):
             _hello(1, 1000, "aaaa-bbbb-cccc"),
             _light(2, 1005, 5000),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1005.02, 2)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.02, 2)], rows))
         measurement = clock_bound.measure(rows, receipts)
         document = clock_bound.clock_bound_document("redmi10", measurement, 1006.0)
         self.assertNotIn("host-device <=", document["reason"])
@@ -332,7 +354,7 @@ class ClockBoundTests(unittest.TestCase):
             _light(2, 1005, 800_000),
             _light(3, 1010, 805_000),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 2), (1510.1, 1)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 2), (1510.1, 1)], rows))
         measurement = clock_bound.measure(rows, receipts)
         document = clock_bound.clock_bound_document("redmi10", measurement, 1511.0)
         reason = document["reason"]
@@ -355,7 +377,7 @@ class ClockBoundTests(unittest.TestCase):
             _light(2, 1005, 800_000),
             _light(3, 1010, 805_000),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 2), (1510.1, 1)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 2), (1510.1, 1)], rows))
         measurement = clock_bound.measure(rows, receipts)
         document = clock_bound.clock_bound_document("redmi10", measurement, 1511.0)
         field = document["clock_bound"]
@@ -383,7 +405,7 @@ class ClockBoundTests(unittest.TestCase):
             _light(2, 1005, 800_000),
             _light(3, 1010, 805_000),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 2), (1510.1, 1)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 2), (1510.1, 1)], rows))
         measurement = clock_bound.measure(rows, receipts)
         document = clock_bound.clock_bound_document("redmi10", measurement, 1511.0)
         field = document["clock_bound"]
@@ -400,7 +422,7 @@ class ClockBoundTests(unittest.TestCase):
             _light(3, 905, 5_000),
             _light(4, 1005, 105_000),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 4)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.1, 4)], rows))
         measurement = clock_bound.measure(rows, receipts)
         document = clock_bound.clock_bound_document("redmi10", measurement, 1006.0)
         field = document["clock_bound"]
@@ -418,7 +440,7 @@ class ClockBoundTests(unittest.TestCase):
             _light(2, 1005, 500_000),
             _light(3, 1010, 5_000),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1010.1, 3)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1010.1, 3)], rows))
         measurement = clock_bound.measure(rows, receipts)
         document = clock_bound.clock_bound_document("redmi10", measurement, 1011.0)
         field = document["clock_bound"]
@@ -437,7 +459,7 @@ class ClockBoundTests(unittest.TestCase):
             _light(2, 1005, 500_000),
             _light(3, 1010, 5_000),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1010.1, 3)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1010.1, 3)], rows))
         measurement = clock_bound.measure(rows, receipts)
         document = clock_bound.clock_bound_document("redmi10", measurement, 1011.0)
         reason = document["reason"]
@@ -461,7 +483,7 @@ class ClockBoundTests(unittest.TestCase):
             _light(2, 1005, 500_000),
             _light(3, 1010, 5_000),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1010.1, 3)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1010.1, 3)], rows))
         measurement = clock_bound.measure(rows, receipts)
         document = clock_bound.clock_bound_document("redmi10", measurement, 1011.0)
         self.assertIn("at the row that produced it", document["reason"])
@@ -471,7 +493,7 @@ class ClockBoundTests(unittest.TestCase):
             _hello(1, 1000, "aaaa-bbbb-cccc"),
             _light(2, 1005, 5000),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1005.02, 2)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.02, 2)], rows))
         measurement = clock_bound.measure(rows, receipts)
         document = clock_bound.clock_bound_document("redmi10", measurement, 1006.0)
         self.assertEqual(document["status"], "unavailable")
@@ -494,7 +516,7 @@ class ClockBoundTests(unittest.TestCase):
             _hello(1, 1000, "aaaa-bbbb-cccc"),
             _light(2, 1005, 5000),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1005.02, 2)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.02, 2)], rows))
         measurement = clock_bound.measure(rows, receipts)
         document = clock_bound.clock_bound_document("redmi10", measurement, 1006.0)
         with tempfile.TemporaryDirectory() as tmp:
@@ -515,7 +537,7 @@ class RowAgeTests(unittest.TestCase):
             _light(2, 1005, 5000),
             _light(3, 1010, 10000),
         ]))
-        receipts = clock_bound.parse_receipts(_receipts([(1005.05, 2), (1510.1, 1)]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.05, 2), (1510.1, 1)], rows))
         return rows, receipts
 
     def test_every_delivered_row_carries_its_own_age(self):
@@ -585,6 +607,272 @@ class RowAgeTests(unittest.TestCase):
             self.assertAlmostEqual(json.loads(lines[1])["delivery_age_s"],
                                    2000.0 - 1510.1)
             self.assertEqual(oct(path.stat().st_mode)[-3:], "600")
+
+
+class ByteWitnessTests(unittest.TestCase):
+    """The host's byte witness, and what it repairs.
+
+    The host writes two numbers about every POST: how many rows it appended,
+    and how many bytes the body carried (``server.py``: ``len(body)``).  They
+    come from two different measurements, so a receipt whose rows do not add
+    up to its byte count is pointing at the wrong rows.
+
+    These tests pin the behaviour that matters: a lost receipt's rows are
+    found and left unpaired rather than absorbed by their neighbour, the
+    repair is published, and a witness that cannot place a receipt does not
+    guess.
+    """
+
+    @staticmethod
+    def _lane() -> tuple[list, list]:
+        """Four receipts and the rows they delivered, plus one lost receipt.
+
+        The rows are sized so that their byte sums differ, so a byte witness
+        can tell one window from another.  Rows 5-8 belong to a receipt whose
+        journal line was destroyed; receipt 4 then has to skip over them.
+        """
+        entries = [
+            (seq, 1000, "x" * seq) for seq in range(1, 13)
+        ]
+        rows = clock_bound.parse_rows(_rows(entries))
+        # The last receipt owns the last four rows, the one before it the
+        # four before those, and so on.  The receipt that owned rows 5-8 is
+        # the one that was lost.
+        receipts = clock_bound.parse_receipts(_receipts([
+            (1005.1, 4), (1005.2, 4), (1005.4, 4),
+        ], rows))
+        return rows, receipts
+
+    def test_the_byte_witness_reproduces_the_hosts_own_byte_count(self):
+        # The formula the host uses to state a POST's size: the row's epoch,
+        # a space, the row's body, and the newline that ends it.
+        rows = clock_bound.parse_rows(_rows([(1, 1000, "hello node=redmi10")]))
+        self.assertEqual(clock_bound.post_body_bytes(rows[0]),
+                         len("1000 hello node=redmi10\n".encode("utf-8")))
+
+    def test_a_clean_lane_needs_no_repair(self):
+        rows, receipts = self._lane()
+        pairing = clock_bound.pair_lane(rows, receipts)
+        self.assertEqual(pairing.repairs, ())
+        self.assertEqual(pairing.unpaired_rows, 0)
+        self.assertEqual(clock_bound.verify_pairing(pairing.chunks)["status"],
+                         "verified")
+
+    def test_a_lost_receipt_leaves_its_rows_unpaired_rather_than_absorbed(self):
+        # The receipt that owned rows 5-8 is gone from the journal.  Its rows
+        # stay in the queue, and the receipt behind it must not claim them.
+        rows = clock_bound.parse_rows(_rows([
+            (seq, 1000, "x" * seq) for seq in range(1, 10)
+        ]))
+        # One receipt, claiming four rows.  Its count alone would give it the
+        # last four rows (6-9), but the bytes it states belong to rows 5-8,
+        # because that is what it actually delivered.
+        receipt = clock_bound.Receipt(1005.1, 4, "redmi10", "observations",
+                                      sum(clock_bound.post_body_bytes(row)
+                                          for row in rows[4:8]))
+        pairing = clock_bound.pair_lane(rows, [receipt])
+        self.assertEqual([row.seq for row in pairing.chunks[0].rows],
+                         [5, 6, 7, 8])
+        # Rows 1-4 (before the first receipt) and row 9 (after the last) own
+        # no receipt, and are counted rather than absorbed.
+        self.assertEqual(pairing.unpaired_rows, 5)
+        self.assertEqual(pairing.paired_rows + pairing.unpaired_rows,
+                         len(rows))
+
+    def test_the_repair_is_published_with_the_reading(self):
+        rows = clock_bound.parse_rows(_rows([
+            (seq, 1000, "x" * seq) for seq in range(1, 10)
+        ]))
+        receipt = clock_bound.Receipt(1005.1, 4, "redmi10", "observations",
+                                      sum(clock_bound.post_body_bytes(row)
+                                          for row in rows[4:8]))
+        pairing = clock_bound.pair_lane(rows, [receipt])
+        self.assertEqual(len(pairing.repairs), 1)
+        repair = pairing.repairs[0]
+        self.assertEqual(repair["resolution"], "realigned")
+        self.assertEqual(repair["first_seq"], 5)
+        self.assertEqual(repair["last_seq"], 8)
+        self.assertEqual(repair["unpaired_rows"], 1)
+        self.assertEqual(repair["records"], 4)
+        self.assertEqual(repair["byte_count"],
+                         sum(clock_bound.post_body_bytes(row) for row in rows[4:8]))
+
+    def test_a_witness_that_cannot_place_a_receipt_does_not_guess(self):
+        # The receipt claims a byte count no window of rows has.  The count
+        # stands, the contradiction is reported, and no row is moved.
+        rows = clock_bound.parse_rows(_rows([
+            (1, 1000, "row-one-aaaa"),
+            (2, 1000, "row-two-bbbb"),
+            (3, 1000, "row-three-cccc"),
+        ]))
+        receipt = clock_bound.Receipt(1005.1, 3, "redmi10", "observations", 999999)
+        pairing = clock_bound.pair_lane(rows, [receipt])
+        self.assertEqual(len(pairing.repairs), 1)
+        self.assertEqual(pairing.repairs[0]["resolution"], "unplaceable")
+        # The rows keep the receipt they had: nothing was moved.
+        self.assertEqual([row.seq for row in pairing.chunks[0].rows], [1, 2, 3])
+
+    def test_an_ambiguous_witness_is_reported_rather_than_resolved(self):
+        # Three windows of rows have the byte sum this receipt claims, and
+        # nothing in the journal says which one it was.  The witness alone
+        # cannot place it, so the receipt keeps its count, no row is moved,
+        # and the ambiguity is published rather than resolved by a guess.
+        rows = clock_bound.parse_rows(_rows([
+            (1, 1000, "aaa"),
+            (2, 1000, "bbb"),
+            (3, 1000, "ccc"),
+            (4, 1000, "ddd"),
+            (5, 1000, "ee"),
+            (6, 1000, "f"),
+        ]))
+        size = sum(clock_bound.post_body_bytes(row) for row in rows[0:2])
+        receipt = clock_bound.Receipt(1005.1, 2, "redmi10", "observations", size)
+        pairing = clock_bound.pair_lane(rows, [receipt])
+        self.assertEqual(len(pairing.repairs), 1)
+        self.assertEqual(pairing.repairs[0]["resolution"], "ambiguous")
+        self.assertEqual(pairing.repairs[0]["candidates"], 3)
+        # The count stands: the rows keep the receipt they had.
+        self.assertEqual([row.seq for row in pairing.chunks[0].rows], [5, 6])
+        self.assertEqual(pairing.paired_rows + pairing.unpaired_rows,
+                         len(rows))
+
+    def test_a_journal_line_padded_with_nul_is_recovered_and_counted(self):
+        # A damaged line can arrive with its beginning overwritten by NULs
+        # and the JSON object behind it still intact.  The object is the
+        # record the host wrote, so it is used - and the damage is counted,
+        # because a reader must see that the journal was damaged.
+        entries = [
+            (1, 1000, "row-one-aaaa"),
+            (2, 1000, "row-two-bbbb"),
+        ]
+        rows = clock_bound.parse_rows(_rows(entries))
+        line = json.dumps({"ts": "2026-10-15T10:00:00+00:00",
+                           "node": "redmi10", "kind": "observations",
+                           "records": 2,
+                           "byte_count": sum(clock_bound.post_body_bytes(row)
+                                             for row in rows)})
+        damaged = "\x00" * 40 + line
+        receipts = clock_bound.parse_receipts(damaged + "\n")
+        self.assertEqual(len(receipts), 1)
+        self.assertEqual(receipts[0].records, 2)
+        self.assertEqual(clock_bound.count_padded_receipt_lines(damaged + "\n"), 1)
+        # An undamaged line is not counted as damaged.
+        self.assertEqual(clock_bound.count_padded_receipt_lines(line + "\n"), 0)
+
+    def test_the_byte_count_is_read_only_when_it_is_an_integer(self):
+        # A journal that carries something else in the field carries no
+        # witness, and the instrument must not treat it as one.
+        for value in (True, "120", 1.5, -1, None):
+            line = json.dumps({"ts": "2026-10-15T10:00:00+00:00",
+                               "node": "redmi10", "kind": "observations",
+                               "records": 1, "byte_count": value})
+            receipts = clock_bound.parse_receipts(line + "\n")
+            self.assertIsNone(receipts[0].byte_count, value)
+
+    def test_a_receipt_without_a_witness_still_pairs_by_count(self):
+        # Not every host writes a byte count.  The count is then all there
+        # is, and the pairing must work exactly as it did before.
+        rows = clock_bound.parse_rows(_rows([
+            (1, 1000, "probe identity uid=1"),
+            (2, 1000, "probe identity uid=1"),
+            (3, 1005, _light(3, 1005, 5000)[2]),
+        ]))
+        line = json.dumps({"ts": "2026-10-15T10:00:00+00:00",
+                           "node": "redmi10", "kind": "observations",
+                           "records": 1})
+        receipts = clock_bound.parse_receipts(line + "\n")
+        self.assertIsNone(receipts[0].byte_count)
+        pairing = clock_bound.pair_lane(rows, receipts)
+        self.assertEqual(pairing.repairs, ())
+        self.assertEqual([row.seq for row in pairing.chunks[0].rows], [3])
+
+    def test_the_witness_verdict_reaches_the_published_reading(self):
+        # A repair that is computed and thrown away is a repair nobody can
+        # see: the reader would publish ages derived from a corrected pairing
+        # without knowing the pairing had been corrected.  The verdict and
+        # every repair therefore travel with the measurement.
+        rows = clock_bound.parse_rows(_rows([
+            (seq, 1000, "x" * seq) for seq in range(1, 10)
+        ]))
+        receipt = clock_bound.Receipt(1005.1, 4, "redmi10", "observations",
+                                      sum(clock_bound.post_body_bytes(row)
+                                          for row in rows[4:8]))
+        pairing = clock_bound.pair_lane(rows, [receipt])
+        witness = clock_bound.pairing_witness(pairing)
+        self.assertEqual(witness["status"], "verified")
+        self.assertTrue(witness["repaired"])
+        self.assertEqual(witness["unpaired_rows"], 5)
+        self.assertEqual(len(witness["repairs"]), 1)
+        self.assertEqual(witness["repairs"][0]["resolution"], "realigned")
+
+    def test_the_measurement_publishes_the_witness_and_its_repairs(self):
+        rows = clock_bound.parse_rows(_rows([
+            (seq, 1000, "x" * seq) for seq in range(1, 10)
+        ]))
+        receipt = clock_bound.Receipt(1005.1, 4, "redmi10", "observations",
+                                      sum(clock_bound.post_body_bytes(row)
+                                          for row in rows[4:8]))
+        measurement = clock_bound.measure(rows, [receipt])
+        witness = measurement["pairing_witness"]
+        self.assertEqual(witness["status"], "verified")
+        self.assertTrue(witness["repaired"])
+        self.assertEqual(len(witness["repairs"]), 1)
+        self.assertEqual(witness["repairs"][0]["first_seq"], 5)
+        self.assertEqual(witness["repairs"][0]["last_seq"], 8)
+        # The repair is published, so a reader can tell a repaired history
+        # from a clean one.
+        summary = clock_bound.render_summary("redmi10", measurement)
+        self.assertIn("pairing witness: verified", summary)
+        self.assertIn("repair: realigned", summary)
+
+    def test_a_measurement_with_no_pairing_says_it_was_unchecked(self):
+        # A reading that nobody checked must not look like a reading that
+        # was checked and found sound.
+        rows = clock_bound.parse_rows(_rows([
+            (1, 1000, "probe identity uid=1"),
+            (2, 1005, _light(2, 1005, 5000)[2]),
+        ]))
+        receipts = clock_bound.parse_receipts(_receipts([(1005.2, 1)], rows))
+        chunks, unpaired = clock_bound.pair_chunks(rows, receipts)
+        measurement = clock_bound.measure_chunks(chunks, unpaired)
+        self.assertEqual(measurement["pairing_witness"]["status"], "unchecked")
+        self.assertFalse(measurement["pairing_witness"]["repaired"])
+        self.assertEqual(measurement["pairing_witness"]["repairs"], [])
+
+    def test_the_history_profile_carries_the_witness_too(self):
+        # The history profile is what the reader publishes about the delivered
+        # history, and its ages descend from the pairing, so the pairing's
+        # state has to travel with it.
+        rows = clock_bound.parse_rows(_rows([
+            (seq, 1000, "x" * seq) for seq in range(1, 10)
+        ]))
+        receipt = clock_bound.Receipt(1005.1, 4, "redmi10", "observations",
+                                      sum(clock_bound.post_body_bytes(row)
+                                          for row in rows[4:8]))
+        pairing = clock_bound.pair_lane(rows, [receipt])
+        profile = clock_bound.age_profile(pairing.chunks, 2000.0,
+                                          pairing.unpaired_rows,
+                                          pairing=pairing)
+        self.assertEqual(profile["pairing_witness"]["status"], "verified")
+        self.assertTrue(profile["pairing_witness"]["repaired"])
+        self.assertEqual(len(profile["pairing_witness"]["repairs"]), 1)
+
+    def test_a_contradiction_is_published_rather_than_hidden(self):
+        # A receipt whose rows do not add up to the bytes it claims cannot be
+        # placed.  The reading says so; it does not quietly keep a pairing it
+        # has already proved wrong.
+        rows = clock_bound.parse_rows(_rows([
+            (1, 1000, "row-one-aaaa"),
+            (2, 1000, "row-two-bbbb"),
+            (3, 1000, "row-three-cccc"),
+        ]))
+        receipt = clock_bound.Receipt(1005.1, 3, "redmi10", "observations", 999999)
+        measurement = clock_bound.measure(rows, [receipt])
+        witness = measurement["pairing_witness"]
+        self.assertEqual(witness["repairs"][0]["resolution"], "unplaceable")
+        self.assertTrue(witness["repaired"])
+        summary = clock_bound.render_summary("redmi10", measurement)
+        self.assertIn("repair: unplaceable", summary)
 
 
 if __name__ == "__main__":

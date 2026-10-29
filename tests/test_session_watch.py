@@ -27,6 +27,18 @@ def test_missing_stale_broken_or_future_monitoring_is_unknown(previous):
 def test_healthy_fresh_observation_is_green():
     assert watch.assess(current(),{"observed_at":100,"identity":"owned-id","changes":[]},105)["state"]=="GREEN"
 
+def test_a_slow_but_live_loop_is_not_a_stale_monitor():
+    """The old 20s bound turned a legitimate slow loop into a false UNKNOWN:
+    the loop writes the next row only after the sleep (5s), the observation
+    budget (20s) and the tape append of a routed alert, so a previous row 30s
+    old is healthy. The excluded case must be healthy (panes and dashboard
+    live) and a real failure — a row older than the watchdog interval — must
+    still surface as UNKNOWN."""
+    slow={"observed_at":75,"identity":"owned-id","changes":[]}
+    row=watch.assess(current(),slow,105)
+    assert row["state"]=="GREEN" and "invalid_previous" not in row
+    assert watch.assess(current(),{"observed_at":5,"identity":"owned-id","changes":[]},105)["state"]=="UNKNOWN"
+
 
 def test_dead_pane_is_red():
     row=current(); row["panes_live"]=False

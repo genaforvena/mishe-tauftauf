@@ -1081,6 +1081,11 @@ class RowAgeReadingTests(unittest.TestCase):
         report = personal_multibody.build_report(space, 300.0, now)
         return report["nodes"][0]
 
+    def _report(self, root: Path, now: float) -> dict:
+        space = _space(root, [_node("redmi10", "pass", 2.0, "absent")],
+                       {"redmi10": _history(now)})
+        return personal_multibody.build_report(space, 300.0, now)
+
     def test_every_window_row_carries_its_own_age(self) -> None:
         now = 1_800_000_000.0
         with tempfile.TemporaryDirectory() as tmp:
@@ -1128,6 +1133,57 @@ class RowAgeReadingTests(unittest.TestCase):
                                    now - 1000, places=3)
             self.assertEqual(history["index_posts"], 2)
             self.assertEqual(len(history["index_tail"]), 2)
+
+    def test_the_reading_publishes_the_pairing_witness(self) -> None:
+        # The delivered history's ages descend from the row-to-POST pairing,
+        # so the reading has to say how that pairing was established.  A
+        # journal that carries no byte witness cannot be checked, and the
+        # reading must say that rather than imply a sound pairing.
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _lane(root, "redmi10",
+                  [(1, 1000, None), (2, 1005, 5000), (3, 1010, 10000)],
+                  [(1005.05, 2), (1510.1, 1)])
+            reading = self._reading(root, now)
+            witness = reading["row_ages"]["history"]["pairing_witness"]
+            # These fixtures write no byte_count, so no witness exists and
+            # the pairing rests on the row counts alone.
+            self.assertEqual(witness["status"], "unverified")
+            self.assertEqual(witness["checked"], 0)
+            self.assertFalse(witness["repaired"])
+            self.assertEqual(witness["repairs"], [])
+
+    def test_a_damaged_journal_is_visible_in_the_reading(self) -> None:
+        # When the host's journal is damaged, the pairing is repaired and the
+        # repair is published: a reader must be able to tell a repaired
+        # history from a clean one, because every age descends from the
+        # pairing.
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _lane(root, "redmi10",
+                  [(1, 1000, None), (2, 1005, 5000), (3, 1010, 10000)],
+                  [(1005.05, 2), (1510.1, 1)])
+            # The host's own byte count for the first POST says it carried
+            # 4 rows, while its row count says 2.  The witness contradicts
+            # the count, and the instrument must report that rather than
+            # quietly keep the count-based pairing.
+            journal = root / "body" / "queues" / "writes.jsonl"
+            entries = [json.loads(line) for line in
+                       journal.read_text(encoding="utf-8").splitlines() if line]
+            entries[0]["byte_count"] = 999999
+            journal.write_text(
+                "".join(json.dumps(entry) + "\n" for entry in entries),
+                encoding="utf-8")
+            reading = self._reading(root, now)
+            witness = reading["row_ages"]["history"]["pairing_witness"]
+            self.assertTrue(witness["repaired"])
+            self.assertTrue(witness["repairs"])
+            self.assertIn(witness["repairs"][0]["resolution"],
+                          ("unplaceable", "ambiguous", "realigned"))
+            rendered = personal_multibody.render(self._report(root, now))
+            self.assertIn("pairing witness:", rendered)
 
     def test_the_reading_names_the_limit_of_a_rows_age(self) -> None:
         now = 1_800_000_000.0

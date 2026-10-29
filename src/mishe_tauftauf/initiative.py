@@ -89,12 +89,22 @@ def _age(value, now):
 
 
 def _entries(home, supplied):
+    """Return the tape entries, their coverage, and the instant the bytes were read.
+
+    The instant is taken after the tape bytes were read, never before. The tape
+    grows while it is read, so an entry another writer appends during the read
+    carries a stamp later than a clock taken before the read; judged against
+    that earlier clock such an entry reads as an event from the future.
+    """
     try:
         if supplied is None:
             if not (home / "chat.log").is_file():
                 raise ValueError("chat tape unavailable")
-            entries = parse_feed(_read(home / "chat.log", MAX_TAPE_BYTES), home=home)
+            raw = _read(home / "chat.log", MAX_TAPE_BYTES)
+            snapshot = datetime.now(timezone.utc)
+            entries = parse_feed(raw, home=home)
         else:
+            snapshot = datetime.now(timezone.utc)
             entries = list(islice(iter(supplied), MAX_ENTRIES + 1))
         if len(entries) > MAX_ENTRIES:
             raise ValueError(f"history exceeds {MAX_ENTRIES} entry bound")
@@ -105,9 +115,9 @@ def _entries(home, supplied):
         if entries and (entries[0].sequence != 1 or any(
                 right.sequence != left.sequence + 1 for left, right in zip(entries, entries[1:]))):
             coverage.update(state="PARTIAL", reason="available history is not contiguous from sequence one; earlier gaps UNKNOWN")
-        return entries, coverage
+        return entries, coverage, snapshot
     except (OSError, ValueError) as exc:
-        return [], _unknown(exc)
+        return [], _unknown(exc), datetime.now(timezone.utc)
 
 
 def _patches(home, now):
@@ -178,9 +188,14 @@ def collect(home, *, now=None, entries=None):
     Exceeding a bound is explicitly UNKNOWN, never an empty successful sample.
     """
     home = Path(home).resolve()
-    now = _time(now or datetime.now(timezone.utc))
+    tape, tape_state, snapshot = _entries(home, entries)
+    # A caller that pins the instant pins the whole cycle: the pinned instant
+    # still judges the tape. An unpinned clock is the instant the tape bytes
+    # were read, so an entry another writer appended during the read carries a
+    # stamp that is not later than the clock and is read as the real entry it
+    # is, not as an event from the future.
+    now = _time(now if now is not None else snapshot)
     start = now - timedelta(seconds=WINDOW_SECONDS)
-    tape, tape_state = _entries(home, entries)
     valid, invalid = [], []
     for entry in tape:
         try:

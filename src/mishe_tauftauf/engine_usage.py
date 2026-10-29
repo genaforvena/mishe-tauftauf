@@ -16,8 +16,6 @@ Last-good retention: a successful FRESH or STALE sample is kept in
 engine/last-good.json. When a later read fails the row is UNKNOWN and carries that
 sample as `last_good`, labelled with its own age; it is never presented as current.
 """
-from __future__ import annotations
-
 from datetime import datetime, timezone
 import contextlib
 import json
@@ -26,6 +24,7 @@ import tempfile
 import time
 
 from . import engine_boundary as boundary
+from . import engine_policy as policy
 
 REPORT_TTL_MS = 180_000
 FUTURE_SKEW_MS = 5_000
@@ -330,9 +329,61 @@ def cmd_engine(args) -> int:
     return 0 if report['state'] == 'FRESH' else 3
 
 
+def cmd_explain(args) -> int:
+    """Shadow policy decision for a role. No launcher or runtime change."""
+    from pathlib import Path
+    from . import model_boundary as _mb
+    live = status(args.home)
+    allowlist = {}
+    policy_path = Path(args.home) / 'engine' / 'policy.json'
+    if policy_path.is_file() and not policy_path.is_symlink():
+        try:
+            raw = _mb.load(policy_path)
+            if isinstance(raw, dict):
+                for role, routes in raw.items():
+                    if isinstance(role, str) and isinstance(routes, list):
+                        clean = []
+                        for r in routes:
+                            if isinstance(r, dict) and isinstance(r.get('provider'), str) and isinstance(r.get('alias'), str):
+                                clean.append({
+                                    'provider': r['provider'],
+                                    'alias': r['alias'],
+                                    'model': r.get('model', f"{r['provider']}/auto"),
+                                    'effort': r.get('effort', 'high'),
+                                    'runner': r.get('runner', 'omp'),
+                                })
+                        if clean:
+                            allowlist[role] = clean
+        except Exception:
+            pass
+        # fallback: every configured account in registry order
+        _, registry = boundary.load_registry(args.home)
+        default_routes = []
+        for alias, entry in registry.items():
+            if entry['state'] == 'configured':
+                default_routes.append({'provider': entry['provider'], 'alias': alias, 'model': f"{entry['provider']}/auto", 'effort': 'high', 'runner': 'omp'})
+        if default_routes:
+            allowlist = {args.role: default_routes, 'default': default_routes}
+    target_role = args.role if args.role in allowlist else ('default' if 'default' in allowlist else next(iter(allowlist), args.role))
+    effective_allowlist = {target_role: allowlist.get(target_role, allowlist.get('default', []))}
+    result = policy.decide(role=target_role, status=live, allowlist=effective_allowlist, current_route=None, now_ms=None, reservations=None)
+    if args.json:
+        print(json.dumps({'role': target_role, 'status_state': live.get('state'), 'decision': result, 'live': live}, indent=2, sort_keys=True))
+    else:
+        print(policy.explain(role=target_role, status=live, allowlist=effective_allowlist, current_route=None))
+        # Also show per-account shadow health for quick diagnosis
+        print('\n-- live status --')
+        print(render(live))
+    # explain never claims delivery; 0 is shadow ok, 3 when queue/hold
+    return 0 if result.get('decision') in ('stay', 'select') else 3
+
+
 def register(sub):
     engine = sub.add_parser('engine', help='Read-only subscription account inventory and quota dashboard').add_subparsers(dest='engine_command', required=True)
     p = engine.add_parser('accounts', help='Registered accounts and credential state (no provider reads)')
     p.add_argument('--json', action='store_true'); p.set_defaults(func=cmd_engine)
     p = engine.add_parser('status', help='Per-account quota windows with provider freshness')
     p.add_argument('--json', action='store_true'); p.set_defaults(func=cmd_engine)
+    p = engine.add_parser('explain', help='Shadow admission decision for a role (no launcher change)')
+    p.add_argument('role', nargs='?', default='default', help='role whose allowlist to evaluate')
+    p.add_argument('--json', action='store_true'); p.set_defaults(func=cmd_explain)

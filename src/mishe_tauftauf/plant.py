@@ -489,6 +489,11 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
             top.chmod(0o755)
     for slug in ROLES:
         seed.init(home, slug, engine_command)
+    (home / "health").mkdir(exist_ok=True)
+    (home / "health/uninstall.json").write_text(json.dumps({
+        "version": 1, "home": str(home), "session": session, "uid": os.getuid()
+    }) + "\n", encoding="utf-8")
+    write_service_manifest(home, session, persist)
     for slug in ROLES:
         print(seed.start(home, session, slug, 5), flush=True)
     if not owns_session(home, session):

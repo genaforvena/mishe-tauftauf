@@ -5,6 +5,10 @@ Verifies that:
 1. A cross-plant DM with a known linked site source is accepted.
 2. A cross-plant DM with an unknown site source is refused.
 3. A wall write against a foreign home still exits 2 (binding guard).
+4. The documented unbound caller can still write a foreign wall. Health
+   (DM 59828) kept validate_home_binding as-is and documented the unbind
+   workaround, so rc=0 is the accepted behavior today; pin it so any
+   tightening of the unbound route is a visible, deliberate decision.
 """
 from __future__ import annotations
 
@@ -77,6 +81,16 @@ def main() -> int:
         )
         if write_result.returncode != 2:
             print(f"FAIL: wall write against foreign home should exit 2, got {write_result.returncode}")
+            return 1
+
+        # 4. Unbound caller (documented workaround, docs/wall-coordination.md:78)
+        #    can still write a foreign wall: the binding guard covers only the
+        #    bound path. See docstring.
+        unbound_write = run_cli(foreign, "wall", "write", "--owner", "genome",
+                                "--file", "/dev/null")
+        if unbound_write.returncode != 0:
+            print(f"FAIL: unbound foreign wall write should currently succeed, "
+                  f"got rc={unbound_write.returncode}: {unbound_write.stderr}")
             return 1
 
         print("PASS: cross-plant DM channel detector")

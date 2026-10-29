@@ -317,13 +317,60 @@ def is_ancestor(pid):
     return False
 
 
-def instrument(config, change, directory):
+def account_store_for_role(home, role):
+    """Return the credential-store hint a role's launcher currently selects, or None.
+
+    Reads the launcher env ``PI_CODING_AGENT_DIR`` (and ``MISHE_ENGINE_ALIAS`` as
+    fallback alias) without touching credential data. Returns a store path string
+    or ``None`` when unavailable or unreadable. Never raises for valid homes.
+    """
+    try:
+        from pathlib import Path as _P
+        text = _P(home).joinpath('minds', role).read_text(encoding='utf-8')
+        cfg = launcher(text)
+        store = cfg.environment.get('PI_CODING_AGENT_DIR')
+        if store is not None:
+            return store
+        alias = cfg.environment.get('MISHE_ENGINE_ALIAS')
+        if alias is None:
+            return None
+        # Resolve alias to store via registry when possible
+        try:
+            from . import engine_boundary as _eb
+            _, reg = _eb.load_registry(_P(home))
+            ent = reg.get(alias)
+            if ent is not None:
+                return ent['store']
+            return alias
+        except Exception:
+            return alias
+    except Exception:
+        return None
+
+
+def _instrument_alias(alias):
+    if alias is None:
+        return None
+    if not isinstance(alias, str) or not alias:
+        raise ValueError('alias must be non-empty string')
+    return alias
+
+
+def instrument(config, change, directory, alias=None):
     if config.kind != 'omp':
         raise ValueError('native process evidence adapter unavailable')
     lines = config.text.splitlines()
     argv = change_option(config.argv, '--session-dir', str(directory / 'sessions'))
     lines[config.command_line] = 'exec ' + shlex.join(argv)
     lines.insert(config.command_line, 'export MISHE_MODEL_CHANGE=' + shlex.quote(change))
+    # Carry account alias for attribution without changing credential material.
+    # ``MISHE_ENGINE_ALIAS`` is a non-secret hint for observe(); the durable
+    # account switch remains the PI_CODING_AGENT_DIR launcher env (see
+    # engine_rotation doc). When alias is given, export it alongside the
+    # change marker.
+    if alias is not None:
+        alias = _instrument_alias(alias)
+        lines.insert(config.command_line + 1, 'export MISHE_ENGINE_ALIAS=' + shlex.quote(alias))
     return '\n'.join(lines) + '\n'
 
 

@@ -183,6 +183,23 @@ def source_check(manifest):
             raise ValueError("reviewed recovery snapshot changed")
 
 
+def coverage_units(coverage, enabled):
+    """The dashboard's resident-service inventory, ``.service`` names only.
+
+    Every reader of ``health/services.json`` — ``wall_view._service_block``,
+    ``substrate_watch`` and the health pane's own ``seed_culture_views`` check —
+    rejects the whole file unless every entry ends in ``.service``. One ``.timer``
+    entry therefore leaves the health pane's service block and the substrate
+    runtime UNKNOWN for every mind. Timers are scheduled units, not residents, so
+    they stay out of the inventory; entries already present that are not services
+    are dropped, so a manifest poisoned by an earlier activation heals instead of
+    persisting across replants.
+    """
+    names = {name for name in coverage if isinstance(name, str) and name.endswith(".service")}
+    names.update(name for name in enabled if name.endswith(".service"))
+    return sorted(names)
+
+
 def activate(home, manifest):
     source_check(manifest)
     config_dir = Path.home() / ".config/systemd/user"
@@ -208,10 +225,7 @@ def activate(home, manifest):
         command(["systemctl", "--user", "restart", f"{manifest['session']}-recovery.service"])
     coverage_path = home / "health/services.json"
     coverage = recovery.read_json(coverage_path)
-    for name in enabled:
-        if name not in coverage:
-            coverage.append(name)
-    recovery.save(coverage_path, sorted(coverage))
+    recovery.save(coverage_path, coverage_units(coverage, enabled))
     manifest.update(phase="active", activated_at=time.time())
     recovery.save(home / "recovery/deployment.json", manifest)
 

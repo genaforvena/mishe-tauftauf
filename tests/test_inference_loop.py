@@ -1,13 +1,11 @@
-import io
 import hashlib
 import json
-import os
 from pathlib import Path
 
 import pytest
 
 from mishe_tauftauf.inference_loop import (
-    NativeJournal, NativeJournalError, drive_native, read_native_journal, read_pane_prompt,
+    NativeJournal, NativeJournalError, drive_native, read_native_journal,
     recover_native,
 )
 from mishe_tauftauf.inference_transport import NativeTurn
@@ -1406,73 +1404,6 @@ def test_reconcile_reports_revoked_authority_before_receipt_drift(
 
     assert result == {"status": "authority_denied", "reconciled": []}
     assert path.read_bytes() == case["journal"]
-
-
-class _Burst:
-    """A stdin stand-in whose writer emits one paste burst then goes quiet."""
-
-    def __init__(self, text, *, trailing_cr=True):
-        self.reader, self.writer = os.pipe()
-        self.child = None
-        self._text = text
-        self._trailing_cr = trailing_cr
-
-    def __enter__(self):
-        import threading
-
-        def deliver():
-            # A pane's tty applies ICRNL, so the submitting CR reaches the
-            # reader as the final newline; model the bytes the reader sees.
-            payload = self._text + "\n"
-            with os.fdopen(self.writer, "w", encoding="utf-8", newline="") as handle:
-                handle.write(payload)
-                handle.flush()
-
-        self.child = threading.Thread(target=deliver, daemon=True)
-        self.child.start()
-        return io.open(self.reader, "r", encoding="utf-8", newline="")
-
-    def __exit__(self, *exc):
-        if self.child is not None:
-            self.child.join(timeout=5)
-        os.close(self.reader)
-        return False
-
-
-def test_read_pane_prompt_drains_whole_paste_burst():
-    message = ("Handoff line\nWAKE 42 for health; sensor record 7. Read the current dashboard.\n"
-               "OBLIGATION\nfinish the bounded check\nCHAT TRIGGER\n3123 docs: observation")
-    with _Burst(message) as stream:
-        prompt = read_pane_prompt(stream, idle=0.05)
-    assert prompt == message + "\n"
-
-
-def test_read_pane_prompt_returns_delivered_bytes_verbatim():
-    # Marker bytes, if a paste ever carries them, are returned untouched:
-    # interpreting the pane input protocol is a boundary module's job.
-    message = "\x1b[200~WAKE 43 for health; sensor record 8.\x1b[201~"
-    with _Burst(message) as stream:
-        prompt = read_pane_prompt(stream, idle=0.05)
-    assert prompt == message + "\n"
-
-
-def test_read_pane_prompt_reports_eof_as_empty_string():
-    reader, writer = os.pipe()
-    os.close(writer)
-    with io.open(reader, "r", encoding="utf-8", newline="") as stream:
-        assert read_pane_prompt(stream, idle=0.05) == ""
-
-
-def test_read_pane_prompt_blank_submit_differs_from_eof():
-    with _Burst("") as stream:
-        prompt = read_pane_prompt(stream, idle=0.05)
-    assert prompt == "\n"
-
-
-def test_read_pane_prompt_rejects_oversized_burst():
-    with _Burst("x" * 64) as stream:
-        with pytest.raises(ValueError):
-            read_pane_prompt(stream, idle=0.05, limit=16)
 
 
 def test_wire_usage_none_means_unknown_not_zero(tmp_path):

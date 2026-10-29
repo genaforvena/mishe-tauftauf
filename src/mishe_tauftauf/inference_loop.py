@@ -9,50 +9,27 @@ from __future__ import annotations
 
 import json
 import os
-import select
 from dataclasses import asdict
 from typing import Callable
 from pathlib import Path
 
 from .inference_worker import WorkerError
+from .native_pane import read_prompt
 
 
-def read_pane_prompt(stream, *, idle: float = 0.25, limit: int = 1 << 20) -> str:
-    """Read one tmux-delivered wake prompt from a pane's stdin stream.
+def read_pane_prompt(stream, *, limit: int = 1 << 20, on_ready=None) -> str:
+    """Read one submitted prompt using the explicit native pane boundary.
 
-    A wake arrives as a paste burst plus a submitting Enter: the entire message
-    lands in the tty input queue at once and the final CR ends the last line.
-    readline() alone would return only the first line and leave the remainder
-    queued, where the caller's next read would mistake it for a fresh prompt;
-    drain the burst until it goes quiet instead. A plainly typed line still
-    resolves once the quiet window passes. Returns '' only at EOF; a blank
-    submitted line returns '\\n' so the caller can distinguish the two. The
-    bytes are returned exactly as delivered: interpreting the pane's input
-    protocol belongs to the named boundary modules, not here.
+    TTY pastes are bracketed and wait for Enter regardless of delivery delay;
+    pipes use the same frames for multiline input or one plain line per prompt.
+    EOF returns ''; a blank submission returns '\\n'. ``limit`` bounds encoded
+    payload bytes, including the submitting newline and excluding frame markers.
+    A malformed/oversize frame raises; its stream must not be reused.
+    ``on_ready`` publishes readiness only after input framing is prepared.
     """
-    if not isinstance(idle, (int, float)) or isinstance(idle, bool) or idle <= 0:
-        raise ValueError('positive idle window required')
     if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
         raise ValueError('positive integer byte limit required')
-    first = stream.readline()
-    if not first:
-        return ''
-    lines = [first]
-    size = len(first)
-    if size > limit:
-        raise ValueError(f'pane prompt exceeded {limit} bytes')
-    while True:
-        ready, _, _ = select.select([stream], [], [], idle)
-        if not ready:
-            break
-        line = stream.readline()
-        if not line:
-            break
-        size += len(line)
-        if size > limit:
-            raise ValueError(f'pane prompt exceeded {limit} bytes')
-        lines.append(line)
-    return ''.join(lines)
+    return read_prompt(stream, limit=limit, on_ready=on_ready)
 
 
 def snapshot(value):
