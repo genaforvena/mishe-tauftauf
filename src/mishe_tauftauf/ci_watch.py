@@ -1,6 +1,24 @@
-"""Read the current GitHub Actions result into the local observation tape."""
+"""Read the current GitHub Actions result into the local observation tape.
 
-from __future__ import annotations
+SLSA vocabulary (SLSA Specification v1.0, 2023-04 — https://slsa.dev/spec/v1.0/):
+Build track L0–L3 (levels p.1–2, Source removed in v1.0), Build Platform
+Provenance generation Exists/Authentic/Unforgeable with
+Completeness/Authenticity/Accuracy and Hosted/Isolated isolation strength
+(requirements: Provenance generation, Isolation strength — L2 Hosted
+``shared/dedicated not workstation e.g. GitHub Actions/Cloud Build/Travis CI``,
+L3 Isolated ``MUST NOT cross-run influence even within project`` and
+``secret material MUST NOT be accessible to user steps``), in-toto Statement
+predicateType ``https://slsa.dev/provenance/v1`` with
+buildDefinition {buildType, externalParameters, internalParameters,
+resolvedDependencies[]} + runDetails {builder {id, version},
+metadata {invocationId, startedOn, finishedOn}} + subject digest
+(provenance; verifying-artifacts), Producer MUSTs (choose capable builder,
+consistent build, distribute provenance). L1 ``trivial to bypass or forge``
+caveat (levels p.2) kept. Pure vocabulary beside read/tick/latest — no
+signature fetch, I/O, feed or wall mutation.
+"""
+
+from typing import Final
 
 import argparse
 import json
@@ -10,6 +28,169 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .feed import Feed, utc_now
+
+
+# --- SLSA vocabulary (SLSA v1.0 Build track) — levels p.1–2; requirements: Provenance generation / Isolation strength; provenance predicate ---
+SLSA_BUILD_LEVELS: Final[tuple[str, ...]] = ("L0", "L1", "L2", "L3")
+"""Build Levels L0–L3 — SLSA v1.0 levels p.1–2 (Source removed), requirements Levels table: L0 none, L1 Provenance Exists, L2 Authentic+Hosted+signed, L3 Unforgeable+Isolated. L1 trivial-to-bypass caveat."""
+
+SLSA_PROVENANCE_STATES: Final[tuple[str, ...]] = ("none", "exists", "authentic", "unforgeable")
+"""Provenance generation states — requirements Build Platform > Provenance generation: Exists (L1 MUST generate digest-identifying provenance, Completeness best-effort) → Authentic (L2 signature) → Unforgeable (L3 Accuracy: signing material build-service-only)."""
+
+SLSA_ISOLATION_LEVELS: Final[tuple[str, ...]] = ("none", "hosted", "isolated")
+"""Isolation strength — requirements Isolation strength: none, Hosted (L2: shared/dedicated not workstation) vs Isolated (L3: no cross-run influence, dedicated). Examples GitHub Actions, Cloud Build, Travis CI (requirements)."""
+
+SLSA_PREDICATE_TYPE: Final[str] = "https://slsa.dev/provenance/v1"
+"""SLSA Provenance predicateType — in-toto Statement predicateType for SLSA Provenance v1 (provenance p.1)."""
+
+SLSA_BUILDER_ID_NOTE: Final[str] = "transitive closure of trusted build platform"
+"""Builder.id definition — provenance builder.id is transitive closure of trusted build platform (SHOULD define security model)."""
+
+
+def _is_hex(value: object, length: int) -> bool:
+    if not isinstance(value, str) or len(value) != length:
+        return False
+    for ch in value:
+        if ch not in "0123456789abcdefABCDEF":
+            return False
+    return True
+
+
+def slsa_build_level_is_valid(level: object) -> bool:
+    """Whether level is an SLSA_BUILD_LEVELS member — levels p.1–2."""
+    return isinstance(level, str) and level in SLSA_BUILD_LEVELS
+
+
+def slsa_provenance_state_is_valid(state: object) -> bool:
+    """Whether state is an SLSA_PROVENANCE_STATES member — Provenance generation ladder."""
+    return isinstance(state, str) and state in SLSA_PROVENANCE_STATES
+
+
+def slsa_isolation_level_is_valid(level: object) -> bool:
+    """Whether level is an SLSA_ISOLATION_LEVELS member — Isolation strength."""
+    return isinstance(level, str) and level in SLSA_ISOLATION_LEVELS
+
+
+def slsa_builder_id_is_valid(builder_id: object) -> bool:
+    """Whether builder_id is non-empty non-whitespace string — builder.id syntax check (transitive closure identifier, no fetch)."""
+    if not isinstance(builder_id, str) or len(builder_id) == 0:
+        return False
+    for ch in builder_id:
+        if ch not in " \t\n\r\x0c\x0b":
+            return True
+    return False
+
+
+def slsa_subject_is_valid(subject: object) -> bool:
+    """Whether subject has digest sha256 hex64 or gitCommit hex40 and uri/name — provenance subject."""
+    if not isinstance(subject, dict):
+        return False
+    digest = subject.get("digest")
+    if not isinstance(digest, dict):
+        return False
+    sha256 = digest.get("sha256")
+    sha512 = digest.get("sha512")
+    git_commit = digest.get("gitCommit")
+    has_digest = False
+    if isinstance(sha256, str) and _is_hex(sha256, 64):
+        has_digest = True
+    if isinstance(sha512, str) and _is_hex(sha512, 128):
+        has_digest = True
+    if isinstance(git_commit, str) and _is_hex(git_commit, 40):
+        has_digest = True
+    if not has_digest:
+        return False
+    has_name = isinstance(subject.get("name"), str) and len(subject.get("name")) > 0  # type: ignore[arg-type]
+    has_uri = isinstance(subject.get("uri"), str) and len(subject.get("uri")) > 0  # type: ignore[arg-type]
+    return bool(has_name or has_uri)
+
+
+def slsa_provenance_is_valid(provenance: object) -> bool:
+    """Whether provenance has predicateType, subject digest, buildType and builder.id — pure shape (no crypto)."""
+    if not isinstance(provenance, dict):
+        return False
+    if provenance.get("predicateType") != SLSA_PREDICATE_TYPE:
+        return False
+    subject = provenance.get("subject")
+    if not isinstance(subject, list) or len(subject) == 0:
+        return False
+    has_valid_subject = False
+    for item in subject:
+        if slsa_subject_is_valid(item):
+            has_valid_subject = True
+            break
+    if not has_valid_subject:
+        return False
+    predicate = provenance.get("predicate")
+    if not isinstance(predicate, dict):
+        return False
+    build_def = predicate.get("buildDefinition")
+    if not isinstance(build_def, dict):
+        return False
+    build_type = build_def.get("buildType")
+    if not isinstance(build_type, str) or len(build_type) == 0:
+        return False
+    run_details = predicate.get("runDetails")
+    if not isinstance(run_details, dict):
+        return False
+    builder = run_details.get("builder")
+    if not isinstance(builder, dict):
+        return False
+    builder_id = builder.get("id")
+    if not slsa_builder_id_is_valid(builder_id):
+        return False
+    return True
+
+
+def slsa_level_for(provenance_state: str, *, hosted: bool, isolated: bool, builder_id: str | None) -> str:
+    """Deterministic L0–L3 mapping from generation+isolation+builder — levels p.2.
+
+    L0 no provenance, L1 exists (trivial-to-bypass), L2 authentic+hosted+builder_id,
+    L3 unforgeable+hosted+isolated+builder_id, else nearest lower.
+    """
+    if not slsa_provenance_state_is_valid(provenance_state) or provenance_state == "none":
+        return "L0"
+    if provenance_state == "exists":
+        return "L1"
+    has_builder = slsa_builder_id_is_valid(builder_id) if builder_id is not None else False
+    if provenance_state == "authentic":
+        if hosted and has_builder:
+            return "L2"
+        return "L1"
+    if provenance_state == "unforgeable":
+        if hosted and isolated and has_builder:
+            return "L3"
+        if hosted and has_builder:
+            return "L2"
+        return "L1"
+    return "L0"
+
+
+def slsa_provenance_summary(provenance: dict, *, level: str = "L1") -> dict:
+    """Typed predicate skeleton from provenance — pure dict construction (future distribution shape before signing)."""
+    base = provenance if isinstance(provenance, dict) else {}
+    predicate = base.get("predicate") if isinstance(base.get("predicate"), dict) else {}
+    build_def = predicate.get("buildDefinition") if isinstance(predicate.get("buildDefinition"), dict) else {}  # type: ignore[union-attr]
+    run_details = predicate.get("runDetails") if isinstance(predicate.get("runDetails"), dict) else {}  # type: ignore[union-attr]
+    builder = run_details.get("builder") if isinstance(run_details.get("builder"), dict) else {}  # type: ignore[union-attr]
+    subject = base.get("subject") if isinstance(base.get("subject"), list) else []
+    chosen_level = level if slsa_build_level_is_valid(level) else "L1"
+    return {
+        "predicateType": base.get("predicateType", SLSA_PREDICATE_TYPE),
+        "subject": subject,
+        "predicate": {
+            "buildDefinition": {
+                "buildType": build_def.get("buildType", ""),  # type: ignore[union-attr]
+                "externalParameters": build_def.get("externalParameters", {}),  # type: ignore[union-attr]
+                "resolvedDependencies": build_def.get("resolvedDependencies", []),  # type: ignore[union-attr]
+            },
+            "runDetails": {
+                "builder": {"id": builder.get("id", "")},  # type: ignore[union-attr]
+                "metadata": run_details.get("metadata", {}),  # type: ignore[union-attr]
+            },
+        },
+        "level": chosen_level,
+    }
 
 
 _COMMAND_ATTEMPTS = 5
