@@ -6,6 +6,8 @@ prose, equates a changed settlement with a fixed bug, or creates obligations.
 """
 from __future__ import annotations
 
+from typing import Final
+
 import argparse
 from collections import Counter
 from dataclasses import replace
@@ -40,6 +42,113 @@ MAX_EVIDENCE_BYTES = 4 * 1024 * 1024
 MAX_TOTAL_EVIDENCE_BYTES = 128 * 1024 * 1024
 SNAPSHOT_MAX_AGE = 900
 
+INITIATIVE_ARCHIVE_VERSION: Final[int] = 1
+"""DGM archive version — array of all prior generated plant-version snapshots (Zhang et al. 2025 arXiv:2505.22954v2 §3/§4.3), distinct from the rolling 24 h collect() window."""
+
+DGM_EMPIRICAL_VALIDATION: Final[str] = "empirical-benchmark, not proof"
+"""Schmidhuber 2007 → DGM §3: provably-beneficial proof replaced by empirical benchmark trial."""
+
+ARCHIVE_MAX_VERSIONS: Final[int] = 512
+"""Mirrors MAX_PATCHES; bounded archive of plant-version snapshots."""
+
+STAGED_SUBSETS: Final[tuple[int, ...]] = (10, 50, 200)
+"""Staged evaluation subsets from DGM §4.2/Appendix E."""
+
+STAGED_TRIGGER: Final[float] = 0.40
+"""Staged trigger 0.40 from DGM §4.2/Appendix E."""
+
+
+def stepping_stone_score(version: dict) -> float:
+    """DGM parent-selection weight: score × (1+children_editing), 0 when not editing-capable.
+
+    Appendix C.2: selection roughly proportional to performance score and number
+    of children retaining codebase-editing functionality. Only compiling,
+    editing-capable versions branch (§3 "only agents that retain ability to edit
+    a codebase are added").
+    """
+    if version.get("editing_capability") is False:
+        return 0.0
+    score = version.get("score")
+    if score is None:
+        score = version.get("performance_score", 0.0)
+    try:
+        s = float(score)
+    except Exception:
+        return 0.0
+    children = version.get("children_editing")
+    if children is None:
+        children = version.get("children_with_editing_capability")
+    if children is None:
+        children = version.get("children", 0)
+    try:
+        c = int(children)
+    except Exception:
+        c = 0
+    if c < 0:
+        c = 0
+    return s * (1 + c)
+
+
+def is_stepping_stone(candidate: dict, archive: list[dict]) -> bool:
+    """Fig. 3 lineage predicate: dip-then-jump stepping stone.
+
+    True when candidate's immediate score is below its parent/best reference
+    yet some later descendant in the archive exceeds the archive best that was
+    present at the candidate's creation. Distinguishes "interesting yet
+    suboptimal" from "best so far" (Hughes et al. 2024 cited p. 2).
+    """
+    cand_score = candidate.get("score")
+    if cand_score is None:
+        cand_score = candidate.get("performance_score")
+    best = candidate.get("best_at_creation")
+    if best is None:
+        parent_id = candidate.get("parent")
+        if parent_id is not None:
+            for entry in archive:
+                if entry.get("id") == parent_id:
+                    best = entry.get("score", entry.get("performance_score"))
+                    break
+    try:
+        cs = float(cand_score) if cand_score is not None else None
+        bs = float(best) if best is not None else None
+    except Exception:
+        return False
+    if cs is None or bs is None:
+        return False
+    is_dip = cs < bs
+    if not is_dip:
+        return False
+    cand_id = candidate.get("id")
+    parent_map: dict[str, str] = {}
+    score_map: dict[str, float] = {}
+    for entry in archive:
+        eid = entry.get("id")
+        if eid is None:
+            continue
+        parent_map[str(eid)] = str(entry.get("parent")) if entry.get("parent") is not None else ""
+        sc = entry.get("score", entry.get("performance_score"))
+        try:
+            score_map[str(eid)] = float(sc) if sc is not None else float("nan")
+        except Exception:
+            continue
+    for eid, sc in score_map.items():
+        if sc <= bs:
+            continue
+        cur = eid
+        seen: set[str] = set()
+        while cur and cur not in seen:
+            if cand_id is not None and cur == str(cand_id):
+                break
+            parent = parent_map.get(cur, "")
+            if parent == (str(cand_id) if cand_id is not None else ""):
+                return True
+            if not parent:
+                break
+            seen.add(cur)
+            cur = parent
+        if cand_id is None and sc > bs:
+            return True
+    return False
 LIMITS = [
     "Counts describe recorded evidence, not initiative, courage, productivity or bugs fixed.",
     "Settlements are reported turn results; changed and verified are not independent acceptance.",
