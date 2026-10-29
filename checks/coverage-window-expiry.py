@@ -137,8 +137,15 @@ def _fresh(path: Path, max_age: float, now: datetime) -> dict:
     return payload
 
 
-def _ledger_reading(home: Path, max_age: float, now: datetime) -> dict:
-    """The published ledger reading, preferring the current scan snapshot."""
+def _ledger_reading(home: Path, max_age: float, now: datetime) -> tuple[dict, dict]:
+    """The published ledger reading and its source snapshot, preferring scan corpus.
+
+    Returns (observation, snapshot_payload) where observation is the
+    ``sense.ledger.evidence-binding`` dict and the snapshot is the scan
+    JSON (or latest.json fallback) that produced it — so callers can read
+    the receipt's top-level ``scan_window_aoi`` without re-scanning the
+    corpus.
+    """
     candidates = [home / LEDGER_NAME]
     scans = sorted((home / "discovery").glob("scan-*.json"))
     if scans:
@@ -154,7 +161,7 @@ def _ledger_reading(home: Path, max_age: float, now: datetime) -> dict:
             continue
         for observation in payload.get("observations") or []:
             if isinstance(observation, dict) and observation.get("id") == "sense.ledger.evidence-binding":
-                return observation
+                return observation, payload
         errors.append("%s publishes no sense.ledger.evidence-binding" % candidate.name)
     raise Undecidable("; ".join(errors) or "no published ledger reading")
 
@@ -225,22 +232,24 @@ def _report(home: Path, max_age: float, horizon_hours: float, now: datetime) -> 
     if start is None or not isinstance(seconds, int) or seconds <= 0:
         raise Undecidable("the coverage report publishes no usable window")
 
-    observation = _ledger_reading(home, max_age, now)
+    observation, _ledger_snapshot = _ledger_reading(home, max_age, now)
     standing, unparsed = _standing_rows(observation)
     gate = _gate(observation)
 
     published = _published_rows(report)
     # Windowed AoI (Yates Eq.2-3 / §II-B) beside the point _fresh check:
-    # scan receipt publishes scan_window_aoi (prior created stamps as
-    # the sawtooth, now = that receipt's created). Emit it beside the
-    # threshold lines; warmup (<2 priors) stays UNKNOWN — same unknown
-    # vocabulary as _fresh's Undecidable.
+    # scan receipt publishes scan_window_aoi at top level (prior created
+    # stamps as the sawtooth, now = that receipt's created). Emit it
+    # beside the threshold lines; warmup (<2 priors) stays UNKNOWN — same
+    # unknown vocabulary as _fresh's Undecidable.
     try:
         _aoi = None
-        if isinstance(observation, dict) and isinstance(observation.get("scan_window_aoi"), dict):
-            _aoi = observation.get("scan_window_aoi")
+        if isinstance(_ledger_snapshot, dict) and isinstance(_ledger_snapshot.get("scan_window_aoi"), dict):
+            _aoi = _ledger_snapshot.get("scan_window_aoi")
         elif isinstance(report, dict) and isinstance(report.get("scan_window_aoi"), dict):
             _aoi = report.get("scan_window_aoi")
+        elif isinstance(observation, dict) and isinstance(observation.get("scan_window_aoi"), dict):
+            _aoi = observation.get("scan_window_aoi")
         if isinstance(_aoi, dict):
             print(
                 "aoi       : current=%.1fs mean_age=%.1fs mean_peak=%.1fs p95=%.1fs max=%.1fs min=%.1fs n=%d window=%ds"
