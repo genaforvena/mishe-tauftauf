@@ -478,13 +478,26 @@ def test_an_orphaned_worker_blocks_a_second_dispatch(tmp_path):
     thread = threading.Thread(target=run_turn)
     thread.start()
     try:
+        # The worker's pid is published by the supervisor after Popen,
+        # while the marker is written by the child after exec. Both
+        # happen after the same fork, so the marker can appear before
+        # the supervisor's second atomic replace is visible. Poll for
+        # the pid rather than assuming one read sees it.
         deadline = time.monotonic() + 15
         while (not marker.exists() or not marker.read_text().strip()) and time.monotonic() < deadline:
             time.sleep(0.02)
         assert marker.is_file() and marker.read_text().strip(), "the worker never started"
         pid = int(marker.read_text().strip())
         # The record names the worker, so a successor can find it.
-        record = store.read("genome")
+        # Publish is a second atomic replace after the initial STARTED
+        # write; a single read can race it under load, so poll.
+        pid_deadline = time.monotonic() + 5
+        record = None
+        while time.monotonic() < pid_deadline:
+            record = store.read("genome")
+            if record is not None and record.pid == pid:
+                break
+            time.sleep(0.02)
         assert record is not None
         assert record.pid == pid, f"the record names {record.pid}, not the worker {pid}"
         # The reconciliation must be refused while the worker is alive.
@@ -501,7 +514,6 @@ def test_an_orphaned_worker_blocks_a_second_dispatch(tmp_path):
         except (OSError, ValueError):
             pass
         thread.join(timeout=30)
-
 
 def _ignore(value):
     return value
