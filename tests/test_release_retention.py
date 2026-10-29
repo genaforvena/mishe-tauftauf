@@ -88,6 +88,35 @@ def test_a_registered_site_pin_protects_its_release(tmp_path: Path) -> None:
         home, registry_rows=rows, **_sources(tmp_path, units))
 
 
+def test_a_pin_naming_its_release_by_directory_protects_that_release(tmp_path: Path) -> None:
+    """A pin whose release directory is not a bare SHA is still protected.
+
+    The operator's core activation pins ``releases/core-20261028-bb04f44``:
+    the directory name carries a date and a short SHA, so the text scan that
+    matches ``releases/<40-hex>`` finds nothing and the pruner removed the
+    very release the pin named. On 2026-10-29 the coordinator logged
+    "pruned 1 release worktrees" and the pinned tree vanished; every resident
+    unit then failed with "runtime pin invalid: runtime source unavailable".
+    """
+    home, shas = _store(tmp_path)
+    units = tmp_path / "units"
+    units.mkdir()
+    named = "core-20261028-bb04f44"
+    release = home / "releases" / named
+    subprocess.run(["git", "-C", str(home.parent), "worktree", "add", "--detach",
+                    str(release), shas[0]], check=True, capture_output=True)
+    (home / "health/runtime-release.json").write_text(json.dumps(
+        {"version": 1, "source": str(release), "sha": shas[0]}))
+
+    sources = _sources(tmp_path, units)
+    assert named in release_retention.live_release_names(home, **sources)
+    assert named not in [p.name for p in release_retention.reclaimable_releases(home, **sources)]
+
+    # Controlled failure: a release no pin names is still reclaimable, so the
+    # protection above is a tested positive and not a blanket exemption.
+    assert shas[1] in [p.name for p in release_retention.reclaimable_releases(home, **sources)]
+
+
 def test_a_live_process_environment_protects_its_release(tmp_path: Path) -> None:
     home, shas = _store(tmp_path)
     units = tmp_path / "units"

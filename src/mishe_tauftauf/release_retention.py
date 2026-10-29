@@ -24,6 +24,7 @@ history preserves provenance.
 """
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Iterable, Mapping
@@ -60,8 +61,29 @@ def _unit_names(roots: Iterable[Path]) -> set[str]:
 
 
 def _pin_names(home: Path) -> set[str]:
-    """Release names the site's own pin file text carries."""
-    return set(release_names(_text(home / "health" / "runtime-release.json")))
+    """Release names the site's own pin file text carries.
+
+    The pin's own ``source`` names its release by DIRECTORY, and that
+    directory is not always a bare SHA: the operator's core activation
+    (operator/lean-runtime-20261028) pins ``releases/core-20261028-bb04f44``.
+    The text scan in ``release_names`` only matches ``releases/<40-hex>``, so
+    such a pin contributed nothing to the protected set and the pruner
+    removed the very release the pin named. On 2026-10-29 the coordinator
+    logged "pruned 1 release worktrees" at 13:33:24 and removed the pinned
+    tree within a minute of it being restored; every resident unit then
+    failed with "runtime pin invalid: runtime source unavailable".
+    The pinned directory name is therefore read from the pin's ``source``
+    and protected by that name.
+    """
+    names = set(release_names(_text(home / "health" / "runtime-release.json")))
+    try:
+        pin = json.loads((home / "health" / "runtime-release.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return names
+    source = pin.get("source") if isinstance(pin, dict) else None
+    if isinstance(source, str) and source:
+        names.add(Path(source).name)
+    return names
 
 
 def live_release_names(home: Path, *, registry_rows: Iterable[Mapping[str, object]] = (),
