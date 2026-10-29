@@ -22,12 +22,15 @@ import time
 from .activity import roles as registered_roles
 from .chat_protocol import ProtocolError, decode_lifecycle
 from .feed import parse_feed
-from .outcome_events import classify_outcomes
+from .outcome_events import blocking_gaps, classify_outcomes
 from .outcome_publication import eligible_evidence_path, remedy_successor
 from .post_check import _save
 from .predictions import PLAN_RE, STATUS_RE, replay_predictions
 from .records import MAX_BYTES
 from .wall_patch import verified_delivery
+
+EVIDENCE_BINDING_CLAUSE_TIME = datetime(2026, 10, 6, 16, 22, 11, tzinfo=timezone.utc)
+"""The write-once outcome clause landed in 3c22087; earlier rows are not bound."""
 
 WINDOW_SECONDS = 86400
 MAX_TAPE_BYTES = 128 * 1024 * 1024
@@ -395,6 +398,19 @@ def collect(home, *, now=None, entries=None):
     except (OSError, ValueError) as exc:
         prediction_gaps.append(_unknown(exc))
     patches = _patches(home, now)
+    # Whole-tape blocked-instrument projection: a single binding-relevant gap
+    # anywhere on the tape hides the bound evidence set, so the writer must
+    # refuse every role. Uses the clause-time window so an old gap still blocks,
+    # and only the whole-tape check can see it.
+    try:
+        whole = classify_outcomes(home, EVIDENCE_BINDING_CLAUSE_TIME, entries=[e for e, _ in valid])
+    except (OSError, ValueError) as exc:
+        whole = {"unavailable": str(exc), "incomplete": [], "events": []}
+    if whole.get("unavailable"):
+        outcome_block = {"state": "UNKNOWN", "reason": whole["unavailable"], "gaps": []}
+    else:
+        blocked = blocking_gaps(whole)
+        outcome_block = {"state": "BLOCKED" if blocked else "CLEAR", "reason": None, "gaps": blocked}
     for name in sorted(role_names):
         row = role(name)
         observed = bool(row["wakes"] or row["settlements"] or row["open_wakes"] or row["outcomes"]
@@ -422,6 +438,7 @@ def collect(home, *, now=None, entries=None):
             "lifecycle_gaps": lifecycle_gaps,
             "outcomes": {"state": "UNKNOWN" if outcomes["unavailable"] else "PARTIAL" if outcomes["incomplete"] or tape_state["state"] != "OBSERVED" or any(item["state"] == "UNKNOWN" for item in outcome_refs) else "OBSERVED",
                          "reason": outcomes["unavailable"], "items": outcome_refs, "gaps": outcomes["incomplete"]},
+            "outcome_block": outcome_block,
             "predictions": {"state": "UNKNOWN" if tape_state["state"] == "UNKNOWN" else "PARTIAL" if prediction_gaps or tape_state["state"] != "OBSERVED" else "OBSERVED",
                             "items": predictions, "gaps": prediction_gaps,
                             "scope": "current canonical replay of available history; role/channel attribution only"},
@@ -473,6 +490,14 @@ def _lines(report):
         result.append(f"  {item['ref']} phase={item['phase'] or 'UNKNOWN'} age={age} verification={item.get('verification', 'UNKNOWN')}")
     if len(patch_items) > 8:
         result.append(f"  {len(patch_items) - 8} more patch records in checks/initiative.json")
+    instrument = report.get("outcome_block", {})
+    if instrument.get("state") == "BLOCKED":
+        for gap in instrument.get("gaps", [])[:8]:
+            result.append(f"OUTCOME INSTRUMENT BLOCKED — binding gap at chat.log#{gap['sequence']}: {gap.get('reason','damaged publication')} (outcome-block=chat.log#{gap['sequence']})")
+        if len(instrument.get("gaps", [])) > 8:
+            result.append(f"  {len(instrument['gaps']) - 8} more blocked gaps in whole-tape projection")
+    elif instrument.get("state") == "UNKNOWN":
+        result.append("OUTCOME INSTRUMENT UNKNOWN — whole-tape assessment unavailable: " + (instrument.get("reason") or "unavailable"))
     if report["outcomes"]["state"] != "OBSERVED":
         result.append("Outcome coverage: " + report["outcomes"]["state"] + " — "
                       + (report["outcomes"]["reason"] or "missing, changed or invalid evidence; inspect snapshot gaps"))

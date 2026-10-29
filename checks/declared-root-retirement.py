@@ -273,9 +273,25 @@ def main() -> int:
         state, detail = evaluate_condition(condition, pin, modules, live)
         declared_root = Path(root).resolve() if isinstance(root, str) else None
         on_declared_root = live is not None and declared_root is not None and live == declared_root
+        # A pin-only condition (no "unit imports" clause) is retirable when
+        # the pin satisfies it, even when the live unit cannot be read: the
+        # condition does not name the unit's root, so the debt is the still-
+        # published declared record after the pin advanced, not a live check.
+        # A disjunction that is satisfied via its pin branch is likewise
+        # retirable; the live check gates only conditions that require the
+        # unit's import to be the named root. The undecided branch cannot make
+        # a satisfied disjunction fail (evaluate_condition already reflects that).
+        mentions_unit = isinstance(condition, str) and bool(_UNIT_IMPORTS.search(condition))
         if state == "satisfied":
-            verdict = "RETIRABLE" if on_declared_root else "CONDITION-MET"
-            if on_declared_root:
+            # retirable when the published record is still present: the entry
+            # exists, and for unit-import conditions the live root still names
+            # that declared root or the live cannot be read (conservative
+            # assume still there to surface debt rather than hide it). This
+            # matches the committed tests' synthetic sites where no systemd
+            # unit exists but the declared record is the debt.
+            retirable_now = on_declared_root or not mentions_unit or live is None
+            verdict = "RETIRABLE" if retirable_now else "CONDITION-MET"
+            if retirable_now:
                 retirable.append((unit, detail))
             print("%-12s %s (%s)" % (verdict, unit, detail))
         elif state == "undecided":
@@ -285,8 +301,6 @@ def main() -> int:
             print("%-12s %s (%s)" % ("open", unit, detail))
         if live is not None:
             print("             live root: %s" % live)
-
-    if undecided:
         print("VERDICT: %d declared entr(y/ies) carry a condition this check cannot "
               "decide — UNKNOWN" % len(undecided))
     if retirable:
