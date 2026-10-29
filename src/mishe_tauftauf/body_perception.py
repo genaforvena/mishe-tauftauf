@@ -1,12 +1,22 @@
-"""Read the linked Android Body consumer's retained Redmi10 observations."""
+"""Read the linked Android Body consumer's retained Redmi10 observations.
 
-from __future__ import annotations
+Privacy lens: Nissenbaum, "Privacy as Contextual Integrity," Wash. L. Rev. 79:119
+(2004) §§III–III.B (via Walzer, Spheres of Justice) and Barth et al. 2006 §2 —
+appropriateness + flow/distribution (context, subject/sender/recipient,
+information type, transmission principle); either norm violated is a breach.
+Any redistribution of sense.body.redmi10 beyond its originating context's
+transmission principle is a privacy-boundary change reviewed under
+docs/protocol-boundaries.md and the 2026-10-15 personal-multibody mandate.
+Device evidence (battery/light/acceleration incl. gravity) is not a human
+movement/presence claim; carrying context remains contextual, not sensor-certified.
+"""
 
 from datetime import datetime, timezone
 import json
 import math
 import time
 from pathlib import Path
+from typing import Final
 
 SENSE_ID = "sense.body.redmi10"
 ANDROID_SESSION = "android-body"
@@ -15,6 +25,137 @@ FRESH_SECONDS = 30.0
 MAX_REGISTRY_BYTES = 65536
 MAX_STATE_BYTES = 1048576
 MAX_SEQUENCE = 9007199254740991
+
+#: Contextual-integrity vocabulary — Nissenbaum 2004 §§III–III.B (Walzer
+#: Spheres of Justice) + Barth et al. 2006 §2. Five parameters: context,
+#: subject/sender/recipient, information type, transmission principle.
+#: Either appropriateness *or* flow violation is a breach.
+PERSONAL_CONTEXTS: Final[frozenset[str]] = frozenset({
+    "personal-carrying",
+    "health-diagnosis",
+    "host-radio",
+    "host-network",
+    "publication",
+})
+BODY_INFORMATION_TYPES: Final[frozenset[str]] = frozenset({
+    "battery",
+    "light",
+    "acceleration",
+    "wifi_link_rssi_dbm",
+    "ble_scan",
+})
+TRANSMISSION_PRINCIPLES: Final[frozenset[str]] = frozenset({
+    "human-consented-personal-analysis",
+    "confidential-to-operator",
+    "need-for-health-diagnosis",
+    "public-by-explicit-disclosure",
+})
+#: Appropriateness table: which information types are fitting to reveal in
+#: each context. Personal-carrying and health-diagnosis may carry personal
+#: body channels; publication carries none by default — per-item disclosure
+#: is a distribution question, not an appropriateness one. Host contexts carry
+#: no body information types (they govern adapter state, not person evidence).
+_APPROPRIATENESS: Final[dict[str, frozenset[str]]] = {
+    "personal-carrying": BODY_INFORMATION_TYPES,
+    "health-diagnosis": BODY_INFORMATION_TYPES,
+    "host-radio": frozenset(),
+    "host-network": frozenset(),
+    "publication": frozenset(),
+}
+#: Flow table: which (context, transmission principle) pairs allow which
+#: recipients. The 2026-10-15 human consent is the principle
+#: "human-consented-personal-analysis" confined to non-public recipients;
+#: "public-by-explicit-disclosure" is the only principle that allows the
+#: publication context. Any pair not listed denies the flow.
+_CI_FLOWS: Final[dict[tuple[str, str], frozenset[str]]] = {
+    ("personal-carrying", "human-consented-personal-analysis"): frozenset({
+        "senses", "health", "body-research", "inference-research",
+    }),
+    ("personal-carrying", "confidential-to-operator"): frozenset({
+        "senses", "operator",
+    }),
+    ("personal-carrying", "need-for-health-diagnosis"): frozenset({
+        "health", "senses",
+    }),
+    ("health-diagnosis", "need-for-health-diagnosis"): frozenset({
+        "health", "senses",
+    }),
+    ("health-diagnosis", "human-consented-personal-analysis"): frozenset({
+        "senses", "health", "body-research", "inference-research",
+    }),
+    ("publication", "public-by-explicit-disclosure"): frozenset({
+        "pub", "docs", "witness", "genome", "health", "senses",
+        "body-research", "inference-research", "operator",
+    }),
+    ("host-radio", "need-for-health-diagnosis"): frozenset({
+        "health", "senses", "genome",
+    }),
+}
+
+
+def is_body_info_appropriate_for_context(context: str, info_type: str) -> bool:
+    """Whether ``info_type`` is appropriate to reveal in ``context``.
+
+    Nissenbaum 2004 §III.A: norms of appropriateness dictate what information
+    about persons is fitting in a given context; no context is norm-free.
+    Pure view over :data:`_APPROPRIATENESS`; no I/O, no ``sense.*`` verdict.
+    """
+    allowed = _APPROPRIATENESS.get(context)
+    if allowed is None:
+        return False
+    return info_type in allowed
+
+
+def contextual_integrity_allows(
+    *,
+    context: str,
+    sender: str,
+    recipient: str,
+    subject: str,
+    info_type: str,
+    transmission_principle: str,
+) -> bool:
+    """Whether a flow respects contextual integrity (appropriateness + flow).
+
+    Nissenbaum 2004 §§III–III.B via Walzer; Barth et al. 2006 §2 five
+    parameters (context, sender/recipient/subject, information type,
+    transmission principle). Either norm violated is a breach. Pure view
+    over :data:`_APPROPRIATENESS` and :data:`_CI_FLOWS`; no I/O, no verdict.
+    ``sender``/``subject`` are carried for the five-parameter shape and for
+    future subject-scoped policy; the current table enforces context +
+    information type (appropriateness) and context + principle + recipient
+    (distribution).
+    """
+    if not is_body_info_appropriate_for_context(context, info_type):
+        return False
+    allowed = _CI_FLOWS.get((context, transmission_principle))
+    if allowed is None:
+        return False
+    return recipient in allowed
+
+
+def personal_body_flow_allows(
+    info_type: str,
+    recipient: str,
+    transmission_principle: str,
+) -> bool:
+    """Specialised CI check for the Redmi personal-carrying context.
+
+    Decodes the 2026-10-15 human consent as the principle
+    ``human-consented-personal-analysis`` confined to non-public recipients.
+    Shorthand for ``contextual_integrity_allows(context='personal-carrying',
+    sender='redmi10', recipient=recipient, subject='human',
+    info_type=info_type, transmission_principle=transmission_principle)``.
+    Pure, no I/O.
+    """
+    return contextual_integrity_allows(
+        context="personal-carrying",
+        sender="redmi10",
+        recipient=recipient,
+        subject="human",
+        info_type=info_type,
+        transmission_principle=transmission_principle,
+    )
 
 
 def _unknown(reason: str) -> dict[str, object]:
