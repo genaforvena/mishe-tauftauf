@@ -238,7 +238,31 @@ def run_renderer(home: Path, slug: str, timeout: float = 10.0,
             return _unknown(slug, f"launch-failed: {exc}")
     if result.returncode != 0:
         detail = result.stderr.decode("utf-8", "replace").strip()
-        return _unknown(slug, f"exit-{result.returncode}" + (f": {detail}" if detail else ""))
+        reason = f"exit-{result.returncode}" + (f": {detail}" if detail else "")
+        # Deferred renders are controller decisions, not renderer failures.
+        # Preserve the cached observation as historical evidence without
+        # trusting the failing process's stdout. The cache is written only
+        # on ok receipts and bounded by render_admission to 1 MiB; the slug
+        # is validated and the cache path is role-scoped.
+        if detail.startswith("UNKNOWN \u2014 render deferred:"):
+            try:
+                cache_path = home / "recovery" / "render-cache" / f"{slug}.json"
+                if cache_path.is_symlink() or not cache_path.is_file() or cache_path.stat().st_size > 4 * 1024 * 1024:
+                    return _unknown(slug, reason)
+                raw = cache_path.read_text(encoding="utf-8")
+                cache = json.loads(raw)
+                receipt = cache.get("receipt") if isinstance(cache, dict) else None
+                if isinstance(receipt, dict) and receipt.get("ok") and isinstance(receipt.get("stdout"), str):
+                    historical = receipt["stdout"]
+                    if len(historical) > 1024 * 1024:
+                        historical = historical[: 1024 * 1024]
+                    body = f"UNKNOWN \u2014 top-pain {slug} renderer {reason}\n" + historical
+                    if not body.endswith("\n"):
+                        body += "\n"
+                    return RenderedPain(slug, body, False, reason)
+            except (OSError, ValueError, UnicodeError):
+                pass
+        return _unknown(slug, reason)
     try:
         text = result.stdout.decode("utf-8")
     except UnicodeDecodeError as exc:
