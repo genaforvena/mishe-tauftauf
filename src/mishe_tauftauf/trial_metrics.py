@@ -1,4 +1,14 @@
-"""Rough event and service measurements; no claim that counts equal productivity."""
+"""Rough event and service measurements; no claim that counts equal productivity.
+
+TOP verifiability measurement (Grant et al. 2026 Research Integrity and Peer Review 11:40 Table 1 / Fig.1 / pp.2-3 retired factor / p.6 verifiability≠rigor;
+Nosek et al. 2015 TOP Guidelines Version 1.0.1 pp.1-5 / Table p.12 eight×three; COS TOP Guidelines https://www.cos.io/initiatives/top-guidelines 80,226 B 2026-10-29):
+  Seven Research Practices — study-registration, study-protocol, analysis-plan, reporting-transparency, materials-transparency, data-transparency, code-transparency (Grant Table 1)
+  Levels — not-disclosed / disclosed / shared-and-cited / certified (Grant Table 1; not-disclosed is explicit absence)
+  Two Verification Practices — computational-reproducibility, results-transparency
+  TOP_FACTOR_RETIRED = "2025-discontinued" — COS discontinued TOP Factor cum score for cause (Grant pp.2-3,6: simplistic cumulative score, reliability/validity limits); profile is metric, sum is retired projection.
+Material/data/code availability is per publication, not per repository; Certification requires independent party; verifiability is not rigor (Grant p.6: certified yet false remains false).
+This vocabulary does not change collect() return shape beyond additive transparency fields; quoting window without per-practice levels or quoting TOP Factor sum without 2025-discontinued note is visibly retired metric.
+"""
 from __future__ import annotations
 import argparse
 from collections import Counter
@@ -20,6 +30,21 @@ from .wall_patch import verified_delivery
 
 PREFIXES = {"redeliveries": "seed redeliver ", "observations": "seed observation ",
     "addressed_messages": "[dm]", "legacy_task_transitions": "[task-"}
+
+
+from typing import Final
+
+TOP_RESEARCH_PRACTICES: Final[tuple[str, ...]] = ("study-registration", "study-protocol", "analysis-plan", "reporting-transparency", "materials-transparency", "data-transparency", "code-transparency")
+"""Seven Research Practices per Grant 2026 Table 1 (seven of Nosek eight×three; TOP 2025 reorg)."""
+
+TOP_LEVELS: Final[tuple[str, ...]] = ("not-disclosed", "disclosed", "shared-and-cited", "certified")
+"""TOP implementation levels per Grant 2026 Table 1: Disclosed / Shared and Cited / Certified plus not-disclosed absence (TOP 2015 no standard row)."""
+
+TOP_VERIFICATION_PRACTICES: Final[tuple[str, ...]] = ("computational-reproducibility", "results-transparency")
+"""Two Verification Practices per Grant 2026 Fig.1/Table 1."""
+
+TOP_FACTOR_RETIRED: Final[str] = "2025-discontinued"
+"""Retired cumulative TOP Factor — COS discontinued TOP Factor (Grant pp.2-3,6 simplistic cumulative score). Any sum must carry this note; profile is the metric."""
 
 
 def collect(home: Path, start: datetime, *, end=None) -> dict:
@@ -89,6 +114,83 @@ def collect(home: Path, start: datetime, *, end=None) -> dict:
         "deliveries": {"verified_in_window": verified, "applied_without_verification": incomplete, "latency_seconds": latency},
         "model_cost": {"state": "UNKNOWN", "reason": "No complete attributed model usage/cost source is wired; service CPU is not model cost."},
         "limits": "Report mtimes proxy check times. Service counters need start/end deltas and may reset. Supervisor CPU excludes tmux minds and model compute. Settlements and messages are not productivity or verified deliveries. Outcomes are author reports with digest-checked evidence references, not independent semantic acceptance. Patch verification covers the saved scoped delivery exercise, not permanent health. Trial has an added docs role; compare per role and elapsed time."}
+
+
+
+def top_level_for(*, disclosed: bool, cited: bool, certified: bool) -> str | None:
+    """Map disclosed/cited/certified to TOP level — ladder Disclosed / Shared and Cited / Certified.
+
+    Returns one of TOP_LEVELS; non-monotone (cited without disclosed, certified without cited) returns None — not named a level.
+    Grant 2026 Table 1 documentation.
+    """
+    if certified:
+        if not cited or not disclosed:
+            return None
+        return "certified"
+    if cited:
+        if not disclosed:
+            return None
+        return "shared-and-cited"
+    if disclosed:
+        return "disclosed"
+    return "not-disclosed"
+
+
+def top_profile_for(publication: dict) -> dict | None:
+    """Grade publication into per-practice TOP profile — pure, no I/O.
+
+    Expects publication dict with optional keys evidence/body/independent_digest; returns dict with practices levels.
+    Pure helper beside collect() — no Path/clock/json/net I/O.
+    """
+    if not isinstance(publication, dict):
+        return None
+    evidence = publication.get("evidence") if isinstance(publication.get("evidence"), dict) else {}
+    body = publication.get("body") if isinstance(publication.get("body"), str) else ""
+    independent = publication.get("independent_digest")
+    has_evidence = isinstance(evidence.get("path"), str) and isinstance(evidence.get("sha256"), str) and len(evidence.get("sha256")) == 64  # type: ignore[union-attr]
+    # Check citation: body contains sha256 or record reference
+    cited = has_evidence and evidence.get("sha256") in body  # type: ignore[union-attr]
+    certified = cited and isinstance(independent, str) and len(independent) == 64 and independent != evidence.get("sha256")  # independent party digest different
+    # Build per-practice profile: for now data/materials/code share same level; others default disclosed/not-disclosed
+    # Use has_evidence/cited/certified to set data/materials levels; protocol/registration use body presence
+    disclosed_map: dict[str, bool] = {}
+    cited_map: dict[str, bool] = {}
+    certified_map: dict[str, bool] = {}
+    for practice in TOP_RESEARCH_PRACTICES:
+        if practice in ("data-transparency", "materials-transparency", "code-transparency"):
+            disclosed_map[practice] = has_evidence
+            cited_map[practice] = bool(cited)
+            certified_map[practice] = bool(certified)
+        elif practice in ("study-registration", "study-protocol", "analysis-plan"):
+            # Consider disclosed if body has content
+            has_text = isinstance(body, str) and len(body) > 0 and body != ""
+            disclosed_map[practice] = has_text
+            cited_map[practice] = False
+            certified_map[practice] = False
+        else:  # reporting-transparency
+            has_text = isinstance(body, str) and len(body) > 0 and body != ""
+            disclosed_map[practice] = has_text
+            cited_map[practice] = False
+            certified_map[practice] = False
+    practices: dict[str, str] = {}
+    for practice in TOP_RESEARCH_PRACTICES:
+        level = top_level_for(disclosed=disclosed_map[practice], cited=cited_map[practice], certified=certified_map[practice])
+        if level is None:
+            level = "not-disclosed"
+        practices[practice] = level
+    verification: dict[str, str] = {}
+    for practice in TOP_VERIFICATION_PRACTICES:
+        verification[practice] = "not-disclosed"
+    return {"practices": practices, "verification": verification, "independent": bool(certified)}
+
+
+def top_factor_score(profile: dict) -> dict:
+    """Derived TOP Factor-style cumulative score — retired metric, never primary.
+
+    Returns {"score": int | None, "valid": False, "note": TOP_FACTOR_RETIRED}.
+    Grant 2026 pp.2-3 retired for cause: simplistic cumulative score across standards.
+    """
+    return {"score": None, "valid": False, "note": TOP_FACTOR_RETIRED}
 
 
 def report(home, directory, sample, initial):
