@@ -43,6 +43,129 @@ MAX_REMINDER_SECONDS = 14400
 MAX_DETAIL_ROWS = 12
 STAGES = ("initial", "changed", "escalation", "reminder")
 
+# Governing variables — the thresholds evaluate()/check() treat as given (Argyris 1976
+# p.367-368). Model I keeps them implicit; Model II (p.368: valid information, free
+# and informed choice, internal commitment) requires they be scrutable so repetition
+# under the same variable can be named as a candidate for double-loop inquiry.
+# No threshold is changed here and no new verdict word is introduced; this dict only
+# makes the variable explicit as data (p.369: "would be open to scrutiny").
+GOVERNING_VARIABLES: dict[str, dict[str, object]] = {
+    "AGED_SECONDS": {
+        "value": AGED_SECONDS,
+        "unit": "seconds",
+        "provenance": "src/mishe_tauftauf/initiative_watch.py:37",
+        "role": "open wake is aged",
+        "site": "initiative_watch.py:361",
+        "description": "Current exact open wake is at least 3600s old",
+    },
+    "CONTINUATION_SECONDS": {
+        "value": CONTINUATION_SECONDS,
+        "unit": "seconds",
+        "provenance": "src/mishe_tauftauf/initiative_watch.py:38",
+        "role": "continuation-review window",
+        "site": "initiative_watch.py:357",
+        "description": "At least six matching yield continuations in window lack checked outcome",
+    },
+    "PRODUCER_MAX_AGE": {
+        "value": PRODUCER_MAX_AGE,
+        "unit": "seconds",
+        "provenance": "src/mishe_tauftauf/initiative_watch.py:41",
+        "role": "stale producer",
+        "site": "initiative_watch.py:528",
+        "description": "Producer snapshot is stale when older than this",
+    },
+    "ESCALATE_SECONDS": {
+        "value": ESCALATE_SECONDS,
+        "unit": "seconds",
+        "provenance": "src/mishe_tauftauf/initiative_watch.py:39",
+        "role": "routing cadence — escalation",
+        "site": "initiative_watch.py:470",
+        "description": "Unrouted condition escalates after this interval",
+    },
+    "REMINDER_SECONDS": {
+        "value": REMINDER_SECONDS,
+        "unit": "seconds",
+        "provenance": "src/mishe_tauftauf/initiative_watch.py:40",
+        "role": "routing cadence — reminder",
+        "site": "initiative_watch.py:274",
+        "description": "Initial reminder interval after escalation",
+    },
+}
+
+_KIND_TO_GOVERNING: dict[str, str] = {
+    "aged-wake": "AGED_SECONDS",
+    "continuation-review": "CONTINUATION_SECONDS",
+    "unknown": "PRODUCER_MAX_AGE",
+    "prediction": "PRODUCER_MAX_AGE",
+}
+
+
+def governing_variables() -> dict[str, dict[str, object]]:
+    """JSON-safe copy of the governing variables evaluate()/check() treat as given.
+
+    Returns a shallow-deep copy so callers can cite the exact threshold that
+    produced a finding without mutating the module constants (Argyris 1976 p.369).
+    """
+    return {key: dict(value) for key, value in GOVERNING_VARIABLES.items()}
+
+
+def is_single_loop_trap(findings: list[dict], history: list[object]) -> dict | None:
+    """Name repetition under the same governing variable as a double-loop candidate.
+
+    Pure, deterministic, no I/O. True when the same kind+role pair appears in at
+    least three successive evaluate() outputs (history tail including the current
+    findings). The plant's observable analogue of Argyris's "error persists because
+    the governing variable is unchanged" (p.366). Roles are not conflated; different
+    roles never form a trap. Returns None when no trap, otherwise a dict with
+    trap=True, kind, role, governing_variable, repetitions.
+    """
+    if not findings or not history:
+        return None
+    # Current kind+role pairs.
+    current_pairs: set[tuple[object, object]] = set()
+    for item in findings:
+        if isinstance(item, dict) and "kind" in item:
+            current_pairs.add((item.get("kind"), item.get("role")))
+    if not current_pairs:
+        return None
+    # Normalize history as sequence of outputs each being a set of pairs.
+    history_sets: list[set[tuple[object, object]]] = []
+    for entry in history:  # type: ignore[assignment]
+        pairs: set[tuple[object, object]] = set()
+        if isinstance(entry, dict) and "kind" in entry:
+            pairs.add((entry.get("kind"), entry.get("role")))
+        elif isinstance(entry, list):
+            for sub in entry:
+                if isinstance(sub, dict) and "kind" in sub:
+                    pairs.add((sub.get("kind"), sub.get("role")))
+        # empty or unrecognised entry -> empty set (breaks continuity)
+        history_sets.append(pairs)
+    best: tuple[object, object] | None = None
+    best_count = 0
+    for pair in current_pairs:
+        count = 0
+        for s in reversed(history_sets):
+            if pair in s:
+                count += 1
+            else:
+                break
+        if count >= 3 and count > best_count:
+            best = pair
+            best_count = count
+    if best is None:
+        return None
+    kind, role = best
+    governing_variable = _KIND_TO_GOVERNING.get(str(kind), "AGED_SECONDS")
+    # unknown kind carries role None; still map via kind.
+    return {
+        "trap": True,
+        "kind": kind,
+        "role": role,
+        "governing_variable": governing_variable,
+        "repetitions": best_count,
+        "history_length": len(history_sets),
+    }
+
 
 def _time(value=None):
     value = datetime.now(timezone.utc) if value is None else value
