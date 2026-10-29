@@ -18,6 +18,14 @@ jobs:
       - run: python -m pip install -e . pytest
       - run: python tools/check_parsing.py
       - run: python checks/parsing-legacy-freeze.py
+      # A promoted release tree is cut from committed bytes.  A committed module
+      # that imports a sibling which was never committed imports cleanly in the
+      # checkout and raises ModuleNotFoundError in every promoted runtime, so the
+      # closure of the committed tree is a promotion gate, not a lint.  Measured
+      # on this plant: the pinned release 401807ac carried seed.py:627 ->
+      # from .mind_loop import select while mind_loop.py was never committed, and
+      # the tree was promoted because CI never ran this detector.
+      - run: python checks/promotion-import-closure.py --home . --repo .
       - run: python -m pytest -q
 
   tmux:

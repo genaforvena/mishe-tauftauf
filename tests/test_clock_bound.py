@@ -857,6 +857,60 @@ class ByteWitnessTests(unittest.TestCase):
         self.assertTrue(profile["pairing_witness"]["repaired"])
         self.assertEqual(len(profile["pairing_witness"]["repairs"]), 1)
 
+    def test_a_repair_never_double_owns_a_row(self):
+        # A repair may not reach back over rows the receipt behind it already
+        # owns.  A window that did would claim those rows twice, and the
+        # orphan count would come out negative - the repair appearing to give
+        # back more rows than the lost receipt took - so the history would be
+        # longer than the queue and the reader would count rows twice.
+        rows = clock_bound.parse_rows(_rows([
+            (seq, 1000, "x" * seq) for seq in range(1, 10)
+        ]))
+        receipt = clock_bound.Receipt(1005.1, 2, "redmi10", "observations",
+                                      sum(clock_bound.post_body_bytes(row)
+                                          for row in rows[1:3]))
+        pairing = clock_bound.pair_lane(rows, [receipt])
+        owned = [row.seq for chunk in pairing.chunks for row in chunk.rows]
+        self.assertEqual(len(owned), len(set(owned)))
+        self.assertGreaterEqual(pairing.unpaired_rows, 0)
+        self.assertEqual(pairing.paired_rows + pairing.unpaired_rows, len(rows))
+
+    def test_the_history_length_is_the_queue_length_whatever_the_damage(self):
+        # The rows a receipt owns and the rows no receipt owns must always add
+        # up to the rows the queue holds.  A repair that moved rows without
+        # counting them would leave the history short by exactly those rows,
+        # with nothing in the reading to show for it.
+        # A witness no window of rows has: the receipt cannot be placed.
+        rows = clock_bound.parse_rows(_rows([
+            (1, 1000, "aaaa"),
+            (2, 1000, "bbbb"),
+            (3, 1000, "cccc"),
+        ]))
+        cases = [(clock_bound.Receipt(1005.1, 2, "redmi10", "observations", 999999),
+                  "unplaceable")]
+        # A witness that belongs to rows the count-based walk did not pick:
+        # the pairing is realigned and the rows in between are counted as
+        # unowned.  The rows carry different lengths, so the witness names
+        # one window rather than any of several.
+        sized = clock_bound.parse_rows(_rows([
+            (1, 1000, "aaa"),
+            (2, 1000, "bbbb"),
+            (3, 1000, "ccccc"),
+        ]))
+        cases.append((clock_bound.Receipt(
+            1005.1, 2, "redmi10", "observations",
+            sum(clock_bound.post_body_bytes(row) for row in sized[0:2])),
+            "realigned"))
+        for receipt, expected in cases:
+            rows = sized if expected == "realigned" else rows
+            pairing = clock_bound.pair_lane(rows, [receipt])
+            self.assertEqual(pairing.paired_rows + pairing.unpaired_rows,
+                             len(rows))
+            self.assertGreaterEqual(pairing.unpaired_rows, 0)
+            owned = [row.seq for chunk in pairing.chunks for row in chunk.rows]
+            self.assertEqual(len(owned), len(set(owned)))
+            self.assertEqual(pairing.repairs[0]["resolution"], expected)
+
     def test_a_contradiction_is_published_rather_than_hidden(self):
         # A receipt whose rows do not add up to the bytes it claims cannot be
         # placed.  The reading says so; it does not quietly keep a pairing it
