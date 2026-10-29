@@ -5,6 +5,17 @@ changed condition is routed again as a new version, an unrouted condition
 escalates once to the escalation peers, and later reminders address the owner
 alone on a backing-off schedule measured from the last route. Detection, the
 immutable notice archive and the pending outbox are not narrowed by this.
+
+Meadows 1999 leverage 12→1 (The Sustainability Institute, 21pp;
+https://donellameadows.org/wp-content/userfiles/Leverage_Points.pdf p.3
+revised list; Whole Earth winter 1997 shorter version p.1): 12 constants/
+parameters/numbers (weakest, p.5 "points of least leverage … 99 percent of
+our attention") → 11 buffers → 10 stock/flow structure → 9 delays → 8
+negative feedback strength → 7 positive feedback gain → 6 information flows
+(meter-in-hall 30% story p.11) → 5 rules → 4 self-organization → 3 goals
+(Reagan p.16) → 2 paradigm (Emerson p.17, Kuhn 1962) → 1 transcend paradigms
+(strongest). Plant thresholds type as 12 (governing variables) with documented
+extensions at 11/10/9/8/6; 1 is strongest and 12 is weakest.
 """
 from __future__ import annotations
 
@@ -25,6 +36,32 @@ from .chat_protocol import ProtocolError, decode_lifecycle
 from .feed import Feed, FeedError, entry_timestamp, parse_feed
 from .session_watch import notify
 from .substrate_watch import _atomic_bytes
+from typing import Final
+
+
+class _LeverageLevel(int):
+    """Meadows rank 1..12 with effectiveness-ordered comparison."""
+
+    def __gt__(self, other: object) -> bool:  # type: ignore[override]
+        if isinstance(other, int):
+            return int(self) < int(other)
+        return NotImplemented  # type: ignore[return-value]
+
+    def __lt__(self, other: object) -> bool:  # type: ignore[override]
+        if isinstance(other, int):
+            return int(self) > int(other)
+        return NotImplemented  # type: ignore[return-value]
+
+    def __ge__(self, other: object) -> bool:  # type: ignore[override]
+        if isinstance(other, int):
+            return int(self) <= int(other)
+        return NotImplemented  # type: ignore[return-value]
+
+    def __le__(self, other: object) -> bool:  # type: ignore[override]
+        if isinstance(other, int):
+            return int(self) >= int(other)
+        return NotImplemented  # type: ignore[return-value]
+
 
 VERSION = 1
 SOURCE = "sensor/initiative-watch"
@@ -42,6 +79,69 @@ PRODUCER_MAX_AGE = 180
 MAX_REMINDER_SECONDS = 14400
 MAX_DETAIL_ROWS = 12
 STAGES = ("initial", "changed", "escalation", "reminder")
+
+MEADOWS_LEVERAGE_POINTS: Final[tuple[str, ...]] = (
+    "constants, parameters, numbers",
+    "the sizes of buffers and other stabilizing stocks, relative to their flows",
+    "the structure of material stocks and flows",
+    "the lengths of delays, relative to the rate of system change",
+    "the strength of negative feedback loops, relative to the impacts they are trying to correct against",
+    "the gain around driving positive feedback loops",
+    "the structure of information flows",
+    "the rules of the system",
+    "the power to add, change, evolve, or self-organize system structure",
+    "the goals of the system",
+    "the mindset or paradigm out of which the system arises",
+    "the power to transcend paradigms",
+)
+"""Meadows 1999 leverage 12->1 (leverage_points.pdf p.3 revised list; Whole Earth
+1997 shorter version p.1). 12 is weakest ("points of least leverage ... 99 percent
+of our attention" p.5) and 1 is strongest. Order is 12->1 for index arithmetic.
+"""
+
+MEADOWS_RANK: Final[dict[str, int]] = {
+    name: _LeverageLevel(12 - index) for index, name in enumerate(MEADOWS_LEVERAGE_POINTS)
+}
+"""Reverse index name -> 12..1."""
+
+RANK_TO_NAME: Final[dict[int, str]] = {int(rank): name for name, rank in MEADOWS_RANK.items()}
+"""Rank 12..1 -> name; plain int keys for round-tripping."""
+
+GOVERNING_LEVERAGE: Final[dict[str, int]] = {
+    "AGED_SECONDS": _LeverageLevel(12),
+    "CONTINUATION_SECONDS": _LeverageLevel(12),
+    "PRODUCER_MAX_AGE": _LeverageLevel(12),
+    "ESCALATE_SECONDS": _LeverageLevel(12),
+    "REMINDER_SECONDS": _LeverageLevel(12),
+    "WINDOW_SECONDS": _LeverageLevel(11),
+    "MAX_PATCHES": _LeverageLevel(10),
+    "MAX_TAPE_BYTES": _LeverageLevel(10),
+    "MAX_STATE_BYTES": _LeverageLevel(11),
+    "MAX_ENTRIES": _LeverageLevel(11),
+    "MAX_EVENT_BYTES": _LeverageLevel(11),
+    "MAX_ARCHIVE_BYTES": _LeverageLevel(11),
+    "MAX_DETAIL_ROWS": _LeverageLevel(12),
+    "MAX_REMINDER_SECONDS": _LeverageLevel(8),
+}
+"""Governing-variable name -> Meadows rank. Core thresholds are 12
+("constants, parameters, numbers" p.5); extras type infrastructure
+bounds at 11/10/9/8/6 per pp.11-6 without changing behavior.
+"""
+
+_KIND_LEVERAGE: Final[dict[str, int]] = {
+    "aged-wake": _LeverageLevel(12),
+    "continuation-review": _LeverageLevel(11),
+    "patch-gap": _LeverageLevel(10),
+    "producer-stale": _LeverageLevel(9),
+    "escalation-miss": _LeverageLevel(8),
+    "outcome-gap": _LeverageLevel(5),
+    "lifecycle-gap": _LeverageLevel(5),
+    "prediction": _LeverageLevel(5),
+}
+"""Finding kind -> Meadows rank (information-flow 6, rules 5, goal 3).
+Unknown or unmapped kinds return None via helper contract.
+"""
+
 
 # Governing variables — the thresholds evaluate()/check() treat as given (Argyris 1976
 # p.367-368). Model I keeps them implicit; Model II (p.368: valid information, free
@@ -165,6 +265,44 @@ def is_single_loop_trap(findings: list[dict], history: list[object]) -> dict | N
         "repetitions": best_count,
         "history_length": len(history_sets),
     }
+
+
+def leverage_level(
+    variable: str | None = None, *, kind: str | None = None
+) -> int | None:
+    """Type the Meadows leverage rank for a threshold or finding kind.
+
+    Pure, deterministic, no I/O. Returns the rank 12..1 for a governing-
+    variable name via GOVERNING_LEVERAGE or for a finding kind via
+    _KIND_LEVERAGE (aged-wake->12, continuation-review->11, outcome-gap->5,
+    patch-gap->10, producer-stale->9, escalation-miss->8), else None for
+    incomplete or unknown inputs — the plant's existing unknown idiom.
+    Numeric 12 is weakest and 1 is strongest (Meadows 1999 p.5: "points of
+    least leverage ... 99 percent of our attention"); comparison is
+    effectiveness-ordered so 12 < 5 is true.
+    """
+    if kind is not None:
+        if not isinstance(kind, str):
+            return None
+        value = _KIND_LEVERAGE.get(kind)
+        return value if value is not None else None
+    if variable is not None:
+        if not isinstance(variable, str):
+            return None
+        value = GOVERNING_LEVERAGE.get(variable)
+        return value if value is not None else None
+    return None
+
+
+def leverage_label(level: int | None) -> str | None:
+    """Reverse lookup rank 12..1 -> Meadows name.
+
+    Pure, deterministic, no I/O. Returns the leverage point name for a
+    rank, else None for incomplete or unknown inputs. Uses RANK_TO_NAME.
+    """
+    if level is None or not isinstance(level, int):
+        return None
+    return RANK_TO_NAME.get(int(level))
 
 
 def _time(value=None):
