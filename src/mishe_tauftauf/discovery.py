@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from . import host_boot, omp_pane, proc_table, space_text
+from . import host_boot, omp_pane, proc_table, space_text, tmux
 from .body_perception import (read_redmi10, read_redmi10_dense_baseline,
                              read_redmi10_delivery_gaps, read_redmi10_light,
                              read_redmi10_peer_delivery)
@@ -636,6 +636,48 @@ def _plant_session(home: Path) -> str | None:
         return (Path(home) / ".seed-raised").read_text(encoding="utf-8").split()[0]
     except (OSError, IndexError):
         return None
+
+
+def _owned_sessions(home: Path) -> set[str]:
+    """The names of every session this home owns, across every socket.
+
+    A home owns one session when it is the only site on the host, and two
+    when a life-support session runs beside the core session. A reader that
+    asks "is my session missing?" must answer for the session it was told
+    about, not for the one a shared receipt happens to name, so the home's
+    own sessions are enumerated rather than trusted from one file.
+    """
+    try:
+        return {name for name, _socket in tmux.home_sessions(Path(home))}
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return set()
+
+
+def _owned_session_window_source(home: Path) -> tuple[str | None, str | None]:
+    """A session this home owns and the socket that holds it.
+
+    A site home can own two sessions at once — the core session and the
+    life-support session — and both record the same owning home. The shared
+    ``.seed-raised`` receipt is written by whichever supervisor wrote last,
+    so the session it names is only one of the home's, and a reader that
+    trusts it asks the wrong socket for the wrong session. Enumerating the
+    home's own sessions answers the question the receipt cannot: which
+    session is live, and where.
+
+    The environment override wins, because a caller that was told which
+    session it serves knows better than an enumeration.
+    """
+    session = os.environ.get("MISHE_SEED_SESSION")
+    if session:
+        return session, None
+    try:
+        owned = tmux.home_sessions(Path(home))
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None, None
+    if not owned:
+        return None, None
+    name, socket = owned[0]
+    return name, socket
 
 
 def _is_plant_unit(name: str, session: str) -> bool:
@@ -3839,6 +3881,11 @@ def _host_session_stability(home: Path) -> dict[str, object]:
         live = sorted(proc_table.window_names(listed.stdout))
         plant_servers = ({str(pid) for pid in proc_table.pane_pids(owners.stdout)}
                          if owners.returncode == 0 else None)
+    # The receipt names one session, but this home owns more than one and the
+    # receipt is whichever supervisor wrote last. A session this home owns on
+    # another socket is not missing: it is live, on its own server. Only a
+    # session this home owns nowhere is missing.
+    owned = _owned_sessions(home)
     shields: dict[str, str] = {}
     # The server's comm is "tmux: server", so pgrep -x misses it; match the
     # full command line and keep only the new-session server processes.
@@ -3856,7 +3903,7 @@ def _host_session_stability(home: Path) -> dict[str, object]:
             shields[str(pid_text)] = adj
     unshielded = sorted(pid for pid, adj in shields.items()
                         if adj != "-900" and (plant_servers is None or pid in plant_servers))
-    if session is not None and session not in live:
+    if session is not None and session not in live and session not in owned:
         return {"id": "sense.host.session-stability", "state": "drift",
                 "sample": f"live=[{','.join(live)}] session-missing={session} unshielded=[{','.join(unshielded)}]",
                 "live": live, "session": session, "unshielded": unshielded, "kind": "read"}
@@ -3896,9 +3943,18 @@ def _host_server_keeper(home: Path) -> dict[str, object]:
     if not session:
         return {"id": "sense.host.server-keeper", "state": "unknown",
                 "sample": "declared session unreadable", "kind": "read"}
+    # The server that holds a session is on the socket that holds it. The
+    # ambient socket is this reader's own site's socket, and the session the
+    # receipt names may live on another socket entirely, so tmux answered
+    # with the *ambient* server and the reading then called this plant's own
+    # keeper a foreign one. Ask the socket that owns the session.
+    socket = tmux.owned_socket(Path(home), session)
+    argv = ["tmux"]
+    if socket:
+        argv.extend(["-S", socket])
+    argv.extend(["display-message", "-p", "-t", "=" + session, "#{pid}"])
     try:
-        result = subprocess.run(["tmux", "display-message", "-p", "-t", "=" + session, "#{pid}"],
-                                capture_output=True, timeout=2)
+        result = subprocess.run(argv, capture_output=True, timeout=2)
     except (OSError, subprocess.TimeoutExpired):
         return {"id": "sense.host.server-keeper", "state": "unknown",
                 "sample": "server attribution unavailable", "kind": "read"}
@@ -7629,6 +7685,23 @@ def sample(home: Path) -> dict[str, object]:
             names = []
     else:
         names = []
+    if not names:
+        # The receipt names one session, but this home owns more than one and
+        # the receipt is whichever supervisor wrote last, so the named session
+        # is often absent from the socket this reader is talking to. That made
+        # a live plant read "session unavailable". Ask which sessions this
+        # home actually owns, and read the windows of one that is live here.
+        session, socket = _owned_session_window_source(home)
+        if session is not None:
+            try:
+                argv = ["tmux"]
+                if socket:
+                    argv.extend(["-S", socket])
+                argv.extend(["list-windows", "-t", session, "-F", "#{window_name}"])
+                result = subprocess.run(argv, capture_output=True, text=True, timeout=2)
+                names = sorted(proc_table.window_names(result.stdout)) if result.returncode == 0 else []
+            except (OSError, subprocess.TimeoutExpired):
+                names = []
     observed.append({"id": "sense.tmux.windows", "state": "verified" if names else "unknown",
                      "sample": names or "session unavailable", "kind": "read"})
     observed.append(_host_session_stability(home))

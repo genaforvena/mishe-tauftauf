@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from .observations import FOOTER_LEASE_RE, discover, strip_owned_chrome
-from .proc_table import children_by_parent, pane_pids
+from .proc_table import children_by_parent, owned_session_records, pane_pids
 
 OWNED_OPTION = "@mishe-tauftauf-home"
 _LAST_REPAIR: dict[tuple[str, str], float] = {}
@@ -51,8 +51,26 @@ def _site_socket(home: Path) -> str:
 
 
 def _socket_candidates(home: Path) -> tuple[str, ...]:
-    """Every socket that may host a home's session, the caller's own first."""
-    return tuple(dict.fromkeys((_socket_for_home(home), _default_socket(), _site_socket(home))))
+    """Every socket that may host a home's session, the caller's own first.
+
+    A home's sessions are not all on one socket: the core session is raised on
+    the site-root socket, while a life-support session raised under its own
+    session name lives on a socket named after that session. Both record the
+    same owning home, so the home's sessions are spread over the site-root
+    socket and every session-named socket beside it. Only sockets that exist
+    are probed, so an absent one costs a stat rather than a tmux call.
+    """
+    candidates = [_socket_for_home(home), _default_socket(), _site_socket(home)]
+    tmux_root = Path("/tmp") / f"tmux-{os.getuid()}"
+    try:
+        entries = sorted(tmux_root.iterdir())
+    except OSError:
+        entries = []
+    for entry in entries:
+        if not entry.is_dir() or entry.name == "default":
+            continue
+        candidates.append(str(entry / f"tmux-{os.getuid()}" / "default"))
+    return tuple(dict.fromkeys(candidates))
 
 
 def _recorded_owner(result: subprocess.CompletedProcess[bytes]) -> str | None:
@@ -112,6 +130,49 @@ def session_owner(session: str, home: Path | None = None) -> str | None:
 
 def owns_session(home: Path, session: str) -> bool:
     return session_owner(session, home=home) == str(home.resolve())
+
+
+def home_sessions(home: Path) -> list[tuple[str, str]]:
+    """The (session, socket) pairs whose ownership option names ``home``.
+
+    One site home can own more than one session: a core session and a
+    life-support session both record the same home. A reader that asks for
+    "the session of this home" therefore cannot read one name out of a single
+    receipt — the receipt is written by whichever supervisor wrote last, so
+    it names whichever session that was. This enumerates instead: every
+    socket that may host the home's sessions is asked which of its sessions
+    record this home, and the sessions are returned with the socket that
+    holds them, so a caller that writes acts on the socket that owns the
+    session it asked about.
+
+    The home's own site socket is probed first, then the caller's ambient
+    socket, then the legacy default: the site-root contract and the test
+    harness are unchanged, and a home raised before per-site sockets existed
+    stays reachable.
+    """
+    wanted = str(home.resolve())
+    found: list[tuple[str, str]] = []
+    for socket in _socket_candidates(home):
+        result = _tmux("list-sessions", "-F",
+                       "#{session_name}|#{pid}|#{@mishe-tauftauf-home}",
+                       check=False, socket=socket)
+        if result.returncode != 0:
+            continue
+        for session, _pid, owner in owned_session_records(result.stdout):
+            if owner == wanted and (session, socket) not in found:
+                found.append((session, socket))
+    return found
+
+
+def home_session(home: Path) -> tuple[str, str] | None:
+    """One (session, socket) this home owns, or None when it owns none.
+
+    A home that owns several sessions has no single answer; the first one
+    enumerated is returned and the caller that needs a specific session asks
+    for it by name through :func:`owned_socket` instead.
+    """
+    sessions = home_sessions(home)
+    return sessions[0] if sessions else None
 
 def _python_command(home: Path, *args: str) -> list[str]:
     """Carry the byte-set ``home`` pins into panes owned by an older tmux server."""

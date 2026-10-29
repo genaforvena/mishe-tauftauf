@@ -48,6 +48,34 @@ def window_names(raw: bytes | str) -> list[str]:
     return [line for line in text.splitlines() if line.strip()]
 
 
+def owned_session_records(raw: bytes | str) -> list[tuple[str, str, str]]:
+    """(session, server pid, owning home) from ``tmux list-sessions`` output.
+
+    A fourth dialect: one session per line, three pipe-separated fields —
+    the session name, the pid of the server hosting it, and the home recorded
+    on the session's ownership option. Two sessions of the same plant can
+    share one site home (a core session and a life-support session), so a
+    consumer that needs *this home's* session cannot ask for a single name:
+    it has to read which sessions name this home and pick among them.
+
+    A malformed line yields no record rather than a guess, and a line whose
+    owning home is empty is still returned with an empty home, because the
+    session itself is the fact a reader may need even when its ownership
+    option was never set.
+    """
+    text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
+    records: list[tuple[str, str, str]] = []
+    for line in text.splitlines():
+        fields = line.split("|")
+        if len(fields) != 3:
+            continue
+        session, pid_text, owner = fields
+        if not session.strip() or not pid_text.isdigit():
+            continue
+        records.append((session, pid_text, owner.strip()))
+    return records
+
+
 def pane_records(raw: str) -> list[tuple[str, str, int]]:
     """(session, window, pid) from ``tmux list-panes -a -F`` three-field output.
 

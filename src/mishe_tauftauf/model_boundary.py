@@ -268,6 +268,12 @@ def process(home, role):
     socket = owned_socket(home, session) if session else None
     if not socket:
         raise ValueError('owned live session unavailable')
+    # Gate the display-message: it silently falls back to the session's first
+    # window for a missing window, so a wrong-but-live PID would pass the
+    # dead==0 check and misattribute the model. has-session errors instead.
+    gate = seed._tmux('has-session', '-t', f'{session}:{role}', check=False, socket=socket)
+    if gate.returncode != 0:
+        raise ValueError('mind window missing')
     result = seed._tmux('display-message', '-p', '-t', f'{session}:{role}.1', '#{pane_pid} #{pane_dead}', socket=socket)
     fields = result.stdout.decode().split()
     if len(fields) != 2 or not fields[0].isdigit() or fields[1] != '0':
@@ -283,7 +289,6 @@ def process(home, role):
     if not argv or start() != born:
         raise ValueError('process identity changed')
     return session, {'pid': pid, 'start': born, 'started': started, 'model': omp_pane.model(argv), 'marker': env.get('MISHE_MODEL_CHANGE')}
-
 
 def owned_socket(home, session):
     from .tmux import owned_socket as find
