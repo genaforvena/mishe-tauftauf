@@ -178,7 +178,7 @@ def reconcile(root, row, config):
                     pending[name]["phase"] = "UNKNOWN"
         else:
             # A queued job is not evidence that a service actually started.
-            managed.difference_update(n for n in targets if after[n] == "active")
+            managed.difference_update([n for n in targets if after[n] == "active"])
             for name in targets:
                 if after[name] == "active":
                     starts.pop(name, None)
