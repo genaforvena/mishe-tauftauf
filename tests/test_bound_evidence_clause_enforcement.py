@@ -159,7 +159,10 @@ def test_probe_shows_clause_defeated_by_replace(tmp_path):
     assert result["read_only_survived"] is False
     assert result["bytes_survived"] is False
     assert oct(result["mode_after_publish"]) == "0o444"
-    assert oct(result["mode_after_replace"]) == "0o664"
+    # Replacement creates a fresh inode with the writer's default mode
+    # (umask-dependent: 0o644 with 022, 0o664 with 002). The invariant
+    # is that the read-only mode does not survive, not the exact bits.
+    assert result["mode_after_replace"] & 0o222 != 0, oct(result["mode_after_replace"])
 
 
 def test_absent_root_is_a_failure(tmp_path):
