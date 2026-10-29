@@ -147,6 +147,91 @@ def classify_age(bounds: tuple[int, int] | None, max_age_seconds: float) -> str:
         return "stale"
     return "unknown"
 
+def aoi_summary(stamps: list, *, now) -> dict | None:
+    """Windowed Age-of-Information summary for a stamp sequence.
+
+    Yates et al. 2020 §II: monitor age ``Δ(t)=t−u(t)`` sawtooth with
+    time-average ``⟨Δ⟩=E[Q]/E[Y]`` (Eq. 2-3) and average peak ``Δ^{(p)}=E[A]``
+    (§II-B). This module already owns the point decision ``classify_age``
+    (recent/stale/unknown) at one ``now``; this summary is the additive
+    interval measurement over a window of prior publish instants.
+
+    * ``stamps`` — ordered window of prior publish instants, earliest first
+      (pane footer ``-- pane live <utc>``, scan ``created``, report
+      ``generated_at``). Caller chooses ``WS`` (``100`` ~ 8 min at 5 s/frame
+      for peaks, ``1000`` ~ 83 min for ϕ validation per review).
+    * ``now`` — current time for ``Δ(t)=now−stamps[-1]``.
+
+    Returns ``None`` (unknown) on warmup (<2 stamps), incompatible or
+    invalid stamps, or ``now`` preceding the window. Otherwise returns a
+    dict with ``current``, ``mean_peak`` (``E[A]≈E[D]``), ``mean_age``
+    (``E[Q]/E[D]`` with ``Q=D²/2`` when ``T`` folded, Eq. 2), ``p95``,
+    ``max``, ``min``, ``n``, ``window_seconds`` — all in seconds as float.
+    ``None`` uses the same unknown vocabulary as ``classify_age`` and
+    ``coverage-window-expiry._fresh`` (``Undecidable``): warmup does not
+    become ``recent``/``stale``.
+    """
+    from datetime import datetime, timezone
+
+    if not isinstance(stamps, list) or len(stamps) < 2:
+        return None
+    if not isinstance(now, datetime) or now.tzinfo is None:
+        return None
+    # Validate each stamp is an aware datetime; normalize to UTC for deltas.
+    normalized: list[datetime] = []
+    for s in stamps:
+        if not isinstance(s, datetime) or s.tzinfo is None:
+            return None
+        try:
+            normalized.append(s.astimezone(timezone.utc))
+        except Exception:
+            return None
+    try:
+        now_utc = now.astimezone(timezone.utc)
+    except Exception:
+        return None
+    # Strictly increasing stamps; non-monotonic or duplicate is incompatible.
+    for i in range(1, len(normalized)):
+        if normalized[i] <= normalized[i - 1]:
+            return None
+    if now_utc < normalized[-1]:
+        return None
+    # Inter-stamp peaks A_n ≈ D_n (Eq. II-B with T folded).
+    peaks: list[float] = []
+    for i in range(1, len(normalized)):
+        delta = (normalized[i] - normalized[i - 1]).total_seconds()
+        # Finite, non-negative by monotonicity check; defend against NaN/inf.
+        if not math.isfinite(delta) or delta < 0:
+            return None
+        peaks.append(float(delta))
+    current = (now_utc - normalized[-1]).total_seconds()
+    if not math.isfinite(current) or current < 0:
+        return None
+    n = len(peaks)
+    window_seconds = (normalized[-1] - normalized[0]).total_seconds()
+    # Means via exact sums then float; Eq.2 Q = D²/2, ⟨Δ⟩ = ΣQ/ΣD.
+    sum_d = float(sum(peaks))
+    if sum_d == 0:
+        return None
+    sum_d2 = float(sum(d * d for d in peaks))
+    mean_peak = sum_d / n
+    mean_age = sum_d2 / (2.0 * sum_d)
+    sorted_peaks = sorted(peaks)
+    # p95 as smallest value with at least 95% of samples ≤ it (ceil).
+    p95_index = math.ceil(0.95 * n) - 1
+    p95_index = max(0, min(p95_index, n - 1))
+    p95 = float(sorted_peaks[p95_index])
+    return {
+        "current": float(current),
+        "mean_peak": float(mean_peak),
+        "mean_age": float(mean_age),
+        "p95": float(p95),
+        "max": float(max(peaks)),
+        "min": float(min(peaks)),
+        "n": int(n),
+        "window_seconds": float(window_seconds),
+    }
+
 
 def utc_consistency(snapshot: dict) -> str:
     """Compare endpoint UTC delta to elapsed bounds, not clock continuity."""
