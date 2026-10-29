@@ -35,7 +35,9 @@ def test_supervisor_dispatches_without_preexisting_wake(tmp_path, monkeypatch):
                         lambda **kwargs: lambda: Observation(fresh=True, healthy=True, detail="fixture"))
     args.home = tmp_path
     monkeypatch.setattr(core_cli, "_supervisor", lambda args: Supervisor())
-    monkeypatch.setattr(time, "sleep", lambda seconds: (_ for _ in ()).throw(StopIteration))
+    def sleep(seconds):
+        raise StopIteration
+    monkeypatch.setattr(time, "sleep", sleep)
     with pytest.raises(StopIteration):
         core_cli.cmd_supervise(args)
     assert len(calls) == 1

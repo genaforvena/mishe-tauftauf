@@ -216,7 +216,22 @@ def retire(home: Path, identity: str) -> dict:
                 if remote:
                     # Push by URL: Git must not implicitly overwrite an origin
                     # tracking ref that advances while the remote lease is checked.
-                    delivery._git(workspace, "push", record["origin"], ":refs/heads/" + branch,
+                    # On Git ≥2.56 a plain local path now auto-prunes the
+                    # remote-tracking ref when the remote branch is deleted,
+                    # which would erase the evidence of that race. A file://
+                    # URL never updates remote-tracking refs, preserving the
+                    # check on all versions (plain-path leaves evidence on
+                    # 2.54, file:// preserves it on 2.56; both delete the
+                    # remote branch).
+                    push_url = record["origin"]
+                    if "://" not in push_url:
+                        try:
+                            p = Path(push_url)
+                            if p.exists():
+                                push_url = p.resolve().as_uri()
+                        except (OSError, ValueError):
+                            pass
+                    delivery._git(workspace, "push", push_url, ":refs/heads/" + branch,
                                   "--force-with-lease=refs/heads/" + branch + ":" + head)
                 latest_tracking = delivery._git(workspace, "for-each-ref", "--format=%(objectname)", tracking_ref)
                 if latest_tracking:
