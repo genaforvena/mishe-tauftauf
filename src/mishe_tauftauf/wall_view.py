@@ -122,14 +122,16 @@ def _live_import_roots(pid: int) -> list[str] | None:
     return [pane_root(component) for component in pane_environ_pythonpath(raw)]
 
 
-def _renderer_pids(session: str) -> dict[str, int] | None:
+def _renderer_pids(session: str, *, socket: str | None = None) -> dict[str, int] | None:
     """Upper-pane pid per window, or ``None`` when the session cannot be read."""
     from .proc_table import pane_windows
+    argv = ["tmux"]
+    if socket:
+        argv.extend(["-S", socket])
+    argv.extend(["list-panes", "-s", "-t", session, "-F",
+                 "#{window_name} #{pane_index} #{pane_dead} #{pane_pid}"])
     try:
-        result = subprocess.run(
-            ["tmux", "list-panes", "-s", "-t", session, "-F",
-             "#{window_name} #{pane_index} #{pane_dead} #{pane_pid}"],
-            capture_output=True, text=True, timeout=2)
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=2)
     except (OSError, subprocess.TimeoutExpired):
         return None
     if result.returncode:
@@ -138,21 +140,31 @@ def _renderer_pids(session: str) -> dict[str, int] | None:
             if index == "0"}
 
 
-def renderer_bytes_lines(home: Path) -> tuple[list[str], str]:
-    """Name top-pane renderers whose live import root is not the pin.
+def _all_renderer_pids(home: Path) -> dict[str, int] | None:
+    """Merged 0-pane pids from every session that records ``home`` as owner."""
+    try:
+        from .tmux import home_sessions as _home_sessions
+        owned = _home_sessions(home)
+    except Exception:
+        return None
+    if not owned:
+        return None
+    merged: dict[str, int] = {}
+    any_ok = False
+    for sess, sock in owned:
+        part = _renderer_pids(sess, socket=sock)
+        if part is None:
+            continue
+        if part:
+            any_ok = True
+        merged.update(part)
+    return merged if any_ok or merged else None
 
-    ``top-pains/<window>`` documents that its renderer runs the release the pin
-    names, but nothing read the running process: the RUNTIME line reads
-    systemd's configured ``Environment`` (units only), and the pane lease proves
-    only that the renderer is advancing. A window the plant's refresh loop does
-    not cover therefore kept a superseded release while every reading stayed
-    GREEN (measured on ``ledger``: pin 1543b3a, live d7bf4e4). This reads each
-    renderer's own ``/proc/<pid>/environ``. An unreadable session, pin or
-    process is UNKNOWN, never silently GREEN.
-    """
-    session = os.environ.get("MISHE_SEED_SESSION", "")
-    if not session:
-        return [], "UNKNOWN"
+
+
+
+def renderer_bytes_lines(home: Path) -> tuple[list[str], str]:
+    """Name top-pane renderers whose live import root is not the pin."""
     from .window_manifest import read as read_window_manifest
     try:
         expected = read_window_manifest(home)
@@ -167,9 +179,23 @@ def renderer_bytes_lines(home: Path) -> tuple[list[str], str]:
         pinned = str(source_for(home, Path(__file__).resolve().parents[2]).resolve())
     except (OSError, TypeError, ValueError) as exc:
         return [f"RENDERER BYTES: UNKNOWN — {exc}"], "UNKNOWN"
-    pids = _renderer_pids(session)
+    # Merge every owned session so a site that spans plant + life-support
+    # sees all 15 windows.  Fall back to the single MISHE_SEED_SESSION
+    # when the home owns nothing (tests / legacy).
+    merged = _all_renderer_pids(home)
+    if merged is not None:
+        pids: dict[str, int] | None = merged
+        unreadable_session = "merged"
+    else:
+        session = os.environ.get("MISHE_SEED_SESSION", "")
+        if not session:
+            return [], "UNKNOWN"
+        pids = _renderer_pids(session)
+        unreadable_session = session
+        if pids is None:
+            return [f"RENDERER BYTES: UNKNOWN — session {unreadable_session} unreadable"], "UNKNOWN"
     if pids is None:
-        return [f"RENDERER BYTES: UNKNOWN — session {session} unreadable"], "UNKNOWN"
+        return [f"RENDERER BYTES: UNKNOWN — session {unreadable_session} unreadable"], "UNKNOWN"
     stale: list[str] = []
     unreadable: list[str] = []
     for window in renderers:

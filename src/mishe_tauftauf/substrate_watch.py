@@ -334,11 +334,46 @@ def _runtime(home):
             problems.append("no declared renderer window has a top-pane script")
         result["renderer_states"] = dict.fromkeys(renderers, "UNKNOWN")
         if renderers:
-            from .seed import recorded_session
-            session = recorded_session(home)
-            pids = wall_view._renderer_pids(session) if session else None
-            if pids is None:
-                problems.append("renderer session observation unavailable")
+            # One home can own two sessions (plant + life-support) on
+            # different sockets.  The single .seed-raised receipt records
+            # only the last writer, so reading one session misses the
+            # windows raised on the other.  Merge every session that
+            # records this home as owner, falling back to the legacy
+            # recorded_session path for test homes that own no session.
+            merged_pids: dict[str, int] | None = None
+            try:
+                from .tmux import home_sessions as _home_sessions
+                _sessions = _home_sessions(home)
+            except Exception:
+                _sessions = []
+            if _sessions:
+                merged: dict[str, int] = {}
+                any_ok = False
+                for _sess, _sock in _sessions:
+                    try:
+                        result_run = subprocess.run(
+                            ["tmux", "-S", _sock, "list-panes", "-s", "-t", _sess, "-F",
+                             "#{window_name} #{pane_index} #{pane_dead} #{pane_pid}"],
+                            capture_output=True, text=True, timeout=2)
+                    except (OSError, subprocess.TimeoutExpired):
+                        continue
+                    if result_run.returncode:
+                        continue
+                    from .proc_table import pane_windows as _pane_windows
+                    part = {w: int(pid) for w, idx, _dead, pid in _pane_windows(result_run.stdout) if idx == "0"}
+                    if part:
+                        any_ok = True
+                    merged.update(part)
+                merged_pids = merged if any_ok else None
+                if merged_pids is None:
+                    problems.append("renderer session observation unavailable")
+                pids = merged_pids
+            else:
+                from .seed import recorded_session
+                session = recorded_session(home)
+                pids = wall_view._renderer_pids(session) if session else None
+                if pids is None:
+                    problems.append("renderer session observation unavailable")
             for role in renderers:
                 pid = pids.get(role) if pids is not None else None
                 if pid is None:
