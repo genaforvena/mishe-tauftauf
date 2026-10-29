@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import math
+import os
 import shlex
 import sys
 import time
@@ -12,6 +13,55 @@ from pathlib import Path
 from .observations import validate_slug
 from .runtime_source import package_for
 from .tmux import _pane_stopped_or_dead, _tmux, await_owned
+
+# A publisher that is still alive and still young may simply not have finished
+# its first frame yet. The 2026-10-29 livelock measured a cold operator frame
+# at 12.1s-23.9s on a single vCPU under load while the supervisor's interval
+# was 5s: the supervisor killed the publisher before it could publish, the
+# publication stayed stale, and the next tick killed the next publisher. The
+# livelock kept the operator dashboard stale for six days and held both
+# session-watch and boot-watch at UNKNOWN.
+#
+# The grace period is therefore longer than the supervisor's own interval and
+# than a measured cold frame. A pane older than this is genuinely stuck and is
+# respawned as before; the detector keeps its coverage because the respawn path
+# and the stale-publication path are both retained.
+PUBLISHER_GRACE_SECONDS = 90.0
+
+
+def _pane_age_seconds(session: str, window: str) -> float | None:
+    """Age of the dashboard pane's process, or None when it cannot be read."""
+    result = _tmux("display-message", "-p", "-t", f"{session}:{window}.0",
+                   "#{pane_dead} #{pane_pid}", check=False)
+    if result.returncode:
+        return None
+    fields = result.stdout.decode("ascii", "replace").split()
+    if len(fields) < 2:
+        return None
+    try:
+        pid = int(fields[1])
+    except ValueError:
+        return None
+    try:
+        status = Path(f"/proc/{pid}/stat").read_text(encoding="ascii", errors="replace")
+    except OSError:
+        return None
+    # The comm field may contain spaces and parentheses; the fields after the
+    # final ')' are positional and start at state (field 3), so starttime is
+    # the 20th of them.
+    try:
+        fields = status[status.rindex(")") + 2:].split()
+        started_ticks = int(fields[19])
+    except (ValueError, IndexError):
+        return None
+    try:
+        uptime = float(Path("/proc/uptime").read_text(encoding="ascii").split()[0])
+        ticks = os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError, IndexError):
+        return None
+    if ticks <= 0:
+        return None
+    return max(0.0, uptime - started_ticks / ticks)
 
 
 def render(home: Path) -> tuple[str, bool]:
@@ -151,6 +201,19 @@ def _ensure(home: Path, session: str, window: str, *, package_root: Path | None,
                     # respawned here. Naming the check that fired separates "the renderer
                     # died" from "the supervisor killed a live renderer", which the shared
                     # tape otherwise cannot tell apart.
+                    #
+                    # A young live publisher is not respawned: it may still be
+                    # composing its first frame, and killing it before it publishes
+                    # is what turned a slow cold frame into a livelock (see
+                    # PUBLISHER_GRACE_SECONDS). The condition stays observable: the
+                    # stale publication is still reported, the pane is still
+                    # watched, and a publisher that is old enough to have finished
+                    # its frame is respawned exactly as before.
+                    age = _pane_age_seconds(session, window)
+                    if age is not None and age < PUBLISHER_GRACE_SECONDS:
+                        detail = f" (trigger: {trigger})" if trigger else ""
+                        return (f"operator publisher still starting in {target}"
+                                f"{detail}; publication pending: {exc}")
                     trigger = trigger or f"publication: {exc}"
     elif len(panes) != 1:
         raise ValueError("operator window must contain a shell or a dashboard above a shell")

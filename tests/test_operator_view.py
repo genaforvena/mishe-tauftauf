@@ -1,5 +1,6 @@
 from pathlib import Path
 from subprocess import CompletedProcess
+import os
 
 import pytest
 
@@ -393,3 +394,81 @@ def test_ensure_preserves_operator_customized_shell(tmp_path, monkeypatch):
     monkeypatch.setattr(operator_view, "_tmux", tmux)
     operator_view.ensure(tmp_path, "owned", "operator")
     assert shell.read_text(encoding="utf-8") == custom
+
+
+def _livelock_tmux(calls):
+    """A tmux stub with a healthy two-pane operator window."""
+    panes = ["%top", "%shell"]
+    def tmux(*args, **kwargs):
+        calls.append(args)
+        if args[0] == "list-windows":
+            return CompletedProcess(args, 0, b"operator\n")
+        if args[0] == "list-panes":
+            return CompletedProcess(args, 0, ("\n".join(panes) + "\n").encode())
+        if args[0] == "show-option":
+            return CompletedProcess(args, 0, b"%top\n")
+        return CompletedProcess(args, 0, b"")
+    return tmux
+
+
+def test_young_live_publisher_is_not_respawned_while_it_is_still_starting(tmp_path, monkeypatch):
+    """A publisher that is alive but still young must not be killed mid-frame.
+
+    The 2026-10-29 livelock: a cold operator frame took 12-24s to compose on a
+    loaded single-vCPU host while the supervisor ticked every 5s. The supervisor
+    read the still-stale publication, judged the publisher broken and respawned
+    it, so no publisher ever lived long enough to publish and the operator
+    dashboard stayed stale for six days, holding session-watch and boot-watch
+    at UNKNOWN. A young live publisher is left alone so it can finish.
+    """
+    from mishe_tauftauf import operator_view
+    calls = []
+    monkeypatch.setattr(operator_view, "await_owned", lambda *a: True)
+    monkeypatch.setattr(operator_view, "_tmux", _livelock_tmux(calls))
+    monkeypatch.setattr(operator_view, "_pane_stopped_or_dead", lambda *a: False)
+    monkeypatch.setattr(operator_view, "_pane_age_seconds", lambda *a: 12.0)
+    def read(*a, **kw):
+        raise ValueError("dashboard stale or future")
+    monkeypatch.setattr("mishe_tauftauf.dashboard.read", read)
+    status = operator_view.ensure(tmp_path, "owned", "operator", refresh=False)
+    assert "still starting" in status
+    assert "dashboard stale or future" in status
+    assert not [a for a in calls if a[0] == "respawn-pane"]
+
+
+def test_older_publisher_with_a_stale_publication_is_still_respawned(tmp_path, monkeypatch):
+    """The livelock fix must not disable the recovery it replaced.
+
+    A publisher that has lived past the grace period and still has no fresh
+    publication is genuinely stuck, so it is respawned exactly as before and
+    the check that fired is still named on the tape.
+    """
+    from mishe_tauftauf import operator_view
+    calls = []
+    monkeypatch.setattr(operator_view, "await_owned", lambda *a: True)
+    monkeypatch.setattr(operator_view, "_tmux", _livelock_tmux(calls))
+    monkeypatch.setattr(operator_view, "_pane_stopped_or_dead", lambda *a: False)
+    monkeypatch.setattr(operator_view, "_pane_age_seconds", lambda *a: 600.0)
+    def read(*a, **kw):
+        raise ValueError("dashboard stale or future")
+    monkeypatch.setattr("mishe_tauftauf.dashboard.read", read)
+    status = operator_view.ensure(tmp_path, "owned", "operator", refresh=False)
+    assert "publication: dashboard stale or future" in status
+    assert [a for a in calls if a[0] == "respawn-pane"]
+
+
+def test_pane_age_reads_the_process_start_time(tmp_path, monkeypatch):
+    """The grace decision rests on a real measurement, not a guess."""
+    from mishe_tauftauf import operator_view
+    monkeypatch.setattr(operator_view, "_tmux",
+                        lambda *a, **k: CompletedProcess(a, 0, f"0 {os.getpid()}\n".encode()))
+    age = operator_view._pane_age_seconds("owned", "operator")
+    assert age is not None and age < 3600
+
+
+def test_pane_age_is_unknown_when_the_pane_cannot_be_read(tmp_path, monkeypatch):
+    """An unreadable pane must not be mistaken for a young publisher."""
+    from mishe_tauftauf import operator_view
+    monkeypatch.setattr(operator_view, "_tmux",
+                        lambda *a, **k: CompletedProcess(a, 1, b""))
+    assert operator_view._pane_age_seconds("owned", "operator") is None
