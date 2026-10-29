@@ -19,6 +19,12 @@ _SETTLED = re.compile(r"Turn settled \(([a-z]+)\);")
 _SITE_SYNC_HEADER = "[site-sync] "
 _CORE_SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
 _KERNEL_SYNC_TASK_RE = re.compile(r"kernel-sync-[0-9a-f]{12}-(.+)\Z")
+_MARKET_TOKEN = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z")
+_MARKET_LEGACY = {
+    "announce": re.compile(r"announce:(?P<identity>[A-Za-z0-9._:-]{1,128}):requires=(?P<qual>[A-Za-z0-9._:-]{1,64})\Z"),
+    "bid": re.compile(r"bid:(?P<identity>[A-Za-z0-9._:-]{1,128}):qual=(?P<qual>[A-Za-z0-9._:-]{1,64}):available=(?P<number>\d+)\Z"),
+    "award": re.compile(r"award:(?P<identity>[A-Za-z0-9._:-]{1,128}):winner=(?P<winner>[A-Za-z0-9._/-]{1,64}):bids=(?P<number>\d+)\Z"),
+}
 
 
 class ProtocolError(FeedError):
@@ -42,6 +48,54 @@ class LifecycleEvent:
 class SiteSyncCompletion:
     target: str
     core_sha: str
+
+
+@dataclass(frozen=True)
+class MarketEvent:
+    kind: str
+    identity: str
+    actor: str = ""
+    qual: str = ""
+    number: int = 0
+
+
+def decode_market(entry: FeedEntry) -> MarketEvent | None:
+    """Decode reserved market records; malformed records remain visible errors."""
+    lines = entry.body.splitlines()
+    header = lines[0].strip() if lines else ""
+    for kind, pattern in _MARKET_LEGACY.items():
+        if header.startswith(kind + ":"):
+            match = pattern.fullmatch(header)
+            if not match:
+                raise ProtocolError(f"entry {entry.sequence}: malformed market {kind}")
+            values = match.groupdict()
+            return MarketEvent(kind, values["identity"], values.get("winner") or entry.source,
+                               values.get("qual") or "", int(values.get("number") or 0))
+        marker = f"[task-{kind}] "
+        if header.startswith(marker):
+            try:
+                identity = header[len(marker):]
+                data = json.loads(lines[1])
+                if not _MARKET_TOKEN.fullmatch(identity) or not isinstance(data, dict) or data.get("identity") != identity:
+                    raise ValueError("invalid identity")
+                actor = data.get("bidder", entry.source) if kind == "bid" else data.get("winner", "")
+                qual = data.get("qual", "") if kind == "bid" else data.get("requires", "") if kind == "announce" else ""
+                number = data.get("available_wake", 0) if kind == "bid" else data.get("bids", 0)
+                if not isinstance(actor, str) or not isinstance(qual, str) or type(number) is not int or number < 0:
+                    raise ValueError("invalid market fields")
+                if (kind == "bid" and (not actor or not qual)) or (kind == "award" and not actor) or (kind == "announce" and not qual):
+                    raise ValueError("missing market fields")
+                return MarketEvent(kind, identity, actor, qual, number)
+            except (ValueError, TypeError, IndexError) as exc:
+                raise ProtocolError(f"entry {entry.sequence}: malformed market {kind}") from exc
+        if header == f"[task-{kind}]":
+            raise ProtocolError(f"entry {entry.sequence}: malformed market {kind}")
+    return None
+
+
+def has_task_opportunity(entry: FeedEntry, header: str) -> bool:
+    """Check the canonical opportunity marker, leaving other prose opaque."""
+    return header in entry.body.splitlines()
 
 
 @lru_cache(maxsize=8192)

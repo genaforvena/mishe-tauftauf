@@ -569,65 +569,23 @@ def select_task(entries: list[FeedEntry], owner: str, now: datetime | None = Non
 
 # --- Market helpers (Smith & Davis announcement → bid → award) ---
 
-_ANNOUNCE_RE = re.compile(r"announce:(?P<identity>[A-Za-z0-9._:-]{1,128}):requires=(?P<qual>[A-Za-z0-9._:-]{1,64})\Z")
-_BID_RE = re.compile(r"bid:(?P<identity>[A-Za-z0-9._:-]{1,128}):qual=(?P<qual>[A-Za-z0-9._:-]{1,64}):available=(?P<wake>\d+)\Z")
-_AWARD_RE = re.compile(r"award:(?P<identity>[A-Za-z0-9._:-]{1,128}):winner=(?P<winner>[A-Za-z0-9._/-]{1,64}):bids=(?P<bids>\d+)\Z")
-
-
 def _parse_announce_bid_award(entries: list[FeedEntry]) -> tuple[dict[str, FeedEntry], dict[str, list[Bid]], dict[str, Award]]:
+    from .chat_protocol import decode_market
     announces: dict[str, FeedEntry] = {}
     bids_by: dict[str, list[Bid]] = {}
     awards: dict[str, Award] = {}
     for entry in entries:
-        body = entry.body.splitlines()[0].strip() if entry.body else ""
-        if body.startswith("[task-announce] ") or body.startswith("announce:"):
-            if body.startswith("[task-announce] "):
-                try:
-                    _, payload = entry.body.split("\n", 1)
-                    data = __import__("json").loads(payload.splitlines()[0])
-                    ident = data.get("identity", "")
-                    if ident and ident not in announces:
-                        announces[ident] = entry
-                except Exception:
-                    continue
-            else:
-                m = _ANNOUNCE_RE.match(body)
-                if m and m.group("identity") not in announces:
-                    announces[m.group("identity")] = entry
-        elif body.startswith("[task-bid] ") or body.startswith("bid:"):
-            if body.startswith("[task-bid] "):
-                try:
-                    _, payload = entry.body.split("\n", 1)
-                    data = __import__("json").loads(payload.splitlines()[0])
-                    ident = data.get("identity", "")
-                    bidder = data.get("bidder", entry.source)
-                    qual = data.get("qual", "")
-                    avail = int(data.get("available_wake", 0))
-                    bids_by.setdefault(ident, []).append(Bid(ident, bidder, qual, avail, entry.sequence))
-                except Exception:
-                    continue
-            else:
-                m = _BID_RE.match(body)
-                if m:
-                    bids_by.setdefault(m.group("identity"), []).append(Bid(m.group("identity"), entry.source, m.group("qual"), int(m.group("wake")), entry.sequence))
-        elif body.startswith("[task-award] ") or body.startswith("award:"):
-            if body.startswith("[task-award] "):
-                try:
-                    _, payload = entry.body.split("\n", 1)
-                    data = __import__("json").loads(payload.splitlines()[0])
-                    ident = data.get("identity", "")
-                    winner = data.get("winner", "")
-                    bids = int(data.get("bids", 0))
-                    if ident not in awards:
-                        awards[ident] = Award(ident, winner, bids, entry.sequence)
-                except Exception:
-                    continue
-            else:
-                m = _AWARD_RE.match(body)
-                if m and m.group("identity") not in awards:
-                    awards[m.group("identity")] = Award(m.group("identity"), m.group("winner"), int(m.group("bids")), entry.sequence)
+        event = decode_market(entry)
+        if event is None:
+            continue
+        if event.kind == "announce":
+            announces.setdefault(event.identity, entry)
+        elif event.kind == "bid":
+            bids_by.setdefault(event.identity, []).append(Bid(event.identity, event.actor, event.qual, event.number, entry.sequence))
+        elif event.kind == "award":
+            awards.setdefault(event.identity, Award(event.identity, event.actor, event.number, entry.sequence))
     for ident in bids_by:
-        bids_by[ident] = sorted(bids_by[ident], key=lambda b: b.sequence)
+        bids_by[ident].sort(key=lambda bid: bid.sequence)
     return announces, bids_by, awards
 
 
@@ -672,8 +630,9 @@ def independent_opportunity(entries: list[FeedEntry], owner: str) -> str | None:
                     for s in waiting)
     digest = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
     first = f"[task-opportunity] owner={owner} waiting={digest}"
+    from .chat_protocol import has_task_opportunity
     if any((control := decode_lifecycle(entry)) and control.kind == "wake" and control.role == owner
-           and first in entry.body.splitlines() for entry in entries):
+           and has_task_opportunity(entry, first) for entry in entries):
         return None
     return digest
 
