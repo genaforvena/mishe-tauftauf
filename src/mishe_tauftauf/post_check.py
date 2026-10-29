@@ -1,4 +1,21 @@
-"""Private fail-closed publication preflight. Never modifies feed or task state."""
+"""Private fail-closed publication preflight. Never modifies feed or task state.
+
+Merton 1942 CUDOS vocabulary (Robert K. Merton "The Normative Structure of Science" 1942,
+Panarchy transcription https://www.panarchy.org/merton/science.html — ~9,600 words, 22 footnotes):
+  universalism → impersonal criteria (not role) — "truth-claims ... subjected to preestablished
+    impersonal criteria: consonant with observation and with previously confirmed knowledge ...
+    not to depend on personal or social attributes" (Universalism, paras. 1–3; Objectivity precludes particularism)
+  communism → communal evidence (not private hash) — "findings ... assigned to the community ... Secrecy
+    is the antithesis ... full and open communication its enactment" (Communism, paras. 1–4; CUDOS mnemonic is later, not Merton's heading)
+  disinterestedness → policing by compeers (not sincerity) — "not altruism ... distinctive pattern of
+    institutional control ... on pain of sanctions ... accountability ... to ... compeers ... rigorous policing"
+    (Disinterestedness, paras. 1–4)
+  organized skepticism → suspension until verification (not prose readability) — "temporary suspension of
+    judgment and detached scrutiny ... methodological and institutional mandate" (Organized skepticism, paras. 1–3)
+C2PA Ch.1 box p.2 SHOULD NOT provide value judgments still bounds provenance: cleared binding is not truth.
+This vocabulary does not gate seed yield/wall.write in this commit; it makes communism/universalism/
+disinterestedness/organized-skepticism checkable per publication.
+"""
 from __future__ import annotations
 import hashlib
 import json
@@ -13,11 +30,21 @@ import time
 import tempfile
 import shutil
 import importlib.util
+from typing import Final
 from .pitfall_questions import VERSION, questions
 
 MAX_BYTES = 2_000_000
 WORKER_STDERR_TAIL = 600
 """Bytes of a failed worker's stderr kept in the raised error message."""
+
+MERTON_NORMS: Final[tuple[str, ...]] = ("universalism", "communism", "disinterestedness", "organized-skepticism")
+"""Four institutional norms per Merton 1942 sections Universalism/Communism/Disinterestedness/Organized skepticism (CUDOS is later mnemonic). SHOULD NOT provide value judgments (C2PA Ch.1 box p.2) still bounds."""
+
+SKEPTICISM_STATES: Final[tuple[str, ...]] = ("suspended", "cleared", "refused", "unknown")
+"""Organized-skepticism lifecycle: suspended = temporary suspension until compeer verification, cleared/refused = verdict, unknown = no compeer check ran (Merton temporary suspension + docs/publication-checks.md:17-19 bootstrap unknown)."""
+
+COMMUNAL_BOUNDARY_DOC: Final[str] = "outcome_publication._contained_parts / eligible_evidence_path; gitignored SITE (.mishe-tauftauf/) is private — Secrecy is the antithesis; full and open communication its enactment (Merton Communism)"
+"""Communism boundary doc: communal = reader can fetch from public repo or stable https URL; private-site = under .mishe-tauftauf/ (gitignored)."""
 
 
 class CorrectionRequired(ValueError):
@@ -291,3 +318,61 @@ def require_prose(home, source, body):
               "status":"suspicious", "required_correction":"Keep structured state in referenced evidence and explain the event in prose."}
     _save(path, report)
     raise CorrectionRequired(report)
+
+
+def merton_norm_is_valid(norm: object) -> bool:
+    """Whether norm is a Merton 1942 norm — membership in MERTON_NORMS (universalism/communism/disinterestedness/organized-skepticism)."""
+    return isinstance(norm, str) and norm in MERTON_NORMS
+
+
+def skepticism_state_is_valid(state: object) -> bool:
+    """Whether state is an organized-skepticism lifecycle member — membership in SKEPTICISM_STATES (suspended/cleared/refused/unknown)."""
+    return isinstance(state, str) and state in SKEPTICISM_STATES
+
+
+def publication_skepticism_state(*, has_checker: bool, deterministic_failures: list[dict], semantic_results: list[dict] | None) -> str:
+    """Map deterministic + semantic verdicts to skepticism state — Merton temporary suspension + bootstrap unknown.
+
+    D01/D02 suspensions → "suspended", configured clear → "cleared", suspicious → "refused",
+    no/semantic-unknown/unavailable → "unknown" per docs/publication-checks.md:17-19.
+    """
+    if deterministic_failures:
+        return "suspended"
+    if not has_checker:
+        return "unknown"
+    if semantic_results is None:
+        return "unknown"
+    has_suspicious = any(isinstance(r, dict) and r.get("verdict") == "suspicious" for r in semantic_results)
+    if has_suspicious:
+        return "refused"
+    has_unknown = any(isinstance(r, dict) and r.get("verdict") == "unknown" for r in semantic_results)
+    if has_unknown:
+        return "unknown"
+    if semantic_results and all(isinstance(r, dict) and r.get("verdict") == "clear" for r in semantic_results):
+        return "cleared"
+    return "unknown"
+
+
+def is_communal_evidence_path(path: str) -> bool:
+    """Whether path is communal (public) vs private-site — pure analogue of eligible_evidence_path.
+
+    True for public repo paths like "docs/mesh.md"; False for private SITE paths like ".mishe-tauftauf/artifacts/private.md".
+    Merton communism: "Secrecy is the antithesis; full and open communication its enactment."
+    """
+    if not isinstance(path, str) or not path:
+        return False
+    if ".mishe-tauftauf" in path:
+        return False
+    if path[:7] == "http://" or path[:8] == "https://":
+        return True
+    return True
+
+
+def disinterestedness_is_effectual(*, has_independent_checker: bool, verdict_source_is_author: bool) -> bool:
+    """Whether disinterestedness is effectual — Merton 1942 Disinterestedness: institutional control via compeers.
+
+    Effectual only when a compeer-class checker independent of the author produced the verdict
+    ("accountability ... to ... compeers" + "rigorous policing ... on pain of sanctions").
+    Author sincerity alone is not evidence.
+    """
+    return bool(has_independent_checker and not verdict_source_is_author)
