@@ -28,7 +28,7 @@ from .body_perception import (read_redmi10, read_redmi10_dense_baseline,
 from .multibody import read_multibody_coverage
 from .activity import roles as seated_roles
 from .feed import (Feed, FeedEntry, entry_timestamp as _feed_entry_timestamp,
-                  iter_feed_file, publication_lock, read_scan_series)
+                  iter_feed_file, publication_lock, read_scan_created_stamps, read_scan_series)
 from .chat_protocol import decode_lifecycle, ProtocolError
 from .host_radio import (BLUETOOTH_ROOT, COMMAND_TIMEOUT_SECONDS, NET_ROOT,
                          RFKILL_ROOT, admin_up, bluetooth_controllers, carrier_state,
@@ -57,7 +57,7 @@ from .verdict_coverage import (EVIDENCE_BOUND_ASSUMPTION, EVIDENCE_BOUND_DELTAS,
                                coverage_pair)
 from . import store_census
 from .runtime_source import source_for
-from .scan_freshness import age_bounds, classify_age, endpoint
+from .scan_freshness import age_bounds, aoi_summary, classify_age, endpoint
 from .spawn_dialect import (script_spawns_site_package,
                             spawns_site_package)
 from .timestamp_text import decode_iso_datetime
@@ -7814,6 +7814,16 @@ def scan(home: Path) -> Path:
     try:
         start = endpoint()
         snapshot = dict(sample(home))
+        # Windowed AoI beside age_bounds: prior created stamps as the sawtooth,
+        # now = this receipt's created. Additive, warmup -> None (unknown)
+        # same vocabulary as classify_age. Parsing via feed.py boundary.
+        try:
+            _prior = read_scan_created_stamps(home, window=100)
+            _now = decode_iso_datetime(snapshot.get("created"))
+            _aoi = aoi_summary(_prior, now=_now) if _now is not None and len(_prior) >= 2 else None
+            snapshot["scan_window_aoi"] = _aoi
+        except Exception:
+            snapshot["scan_window_aoi"] = None
         snapshot["acquisition"] = {"start": start, "end": endpoint()}
         snapshot["scan_id"] = scan_id
         snapshot["producer"] = _producer()
@@ -8091,6 +8101,26 @@ def latest(home: Path) -> dict[str, object] | None:
 
 RENEWAL_MAX_AGE_SECONDS = 600.0
 """Renew before the panes' 900-second freshness gate, leaving 300 seconds of margin."""
+
+
+def scan_window_aoi(home: Path, *, now=None, window: int = 100) -> dict | None:
+    """Windowed AoI over prior scan ``created`` stamps, additive beside ``age_bounds``.
+
+    ``scan()`` publishes one ``created`` per receipt; the prior ``created``
+    series is ``stamps`` for ``aoi_summary`` (Yates Eq. 2-3, peak ``Δ^{(p)}``
+    §II-B). ``now`` defaults to ``now``; callers that already have a snapshot
+    ``created`` pass it so a second reader can recompute from published fields
+    alone (ledger-band idiom). ``None`` on warmup (<2 stamps) — same
+    ``unknown`` vocabulary as ``classify_age``.
+    """
+    from datetime import datetime, timezone
+
+    stamps = read_scan_created_stamps(home, window=window)
+    if len(stamps) < 2:
+        return None
+    if now is None:
+        now = datetime.now(timezone.utc)
+    return aoi_summary(stamps, now=now)
 
 
 def scan_age(home: Path) -> float | None:

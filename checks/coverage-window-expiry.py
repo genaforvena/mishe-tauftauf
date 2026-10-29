@@ -230,6 +230,35 @@ def _report(home: Path, max_age: float, horizon_hours: float, now: datetime) -> 
     gate = _gate(observation)
 
     published = _published_rows(report)
+    # Windowed AoI (Yates Eq.2-3 / §II-B) beside the point _fresh check:
+    # scan receipt publishes scan_window_aoi (prior created stamps as
+    # the sawtooth, now = that receipt's created). Emit it beside the
+    # threshold lines; warmup (<2 priors) stays UNKNOWN — same unknown
+    # vocabulary as _fresh's Undecidable.
+    try:
+        _aoi = None
+        if isinstance(observation, dict) and isinstance(observation.get("scan_window_aoi"), dict):
+            _aoi = observation.get("scan_window_aoi")
+        elif isinstance(report, dict) and isinstance(report.get("scan_window_aoi"), dict):
+            _aoi = report.get("scan_window_aoi")
+        if isinstance(_aoi, dict):
+            print(
+                "aoi       : current=%.1fs mean_age=%.1fs mean_peak=%.1fs p95=%.1fs max=%.1fs min=%.1fs n=%d window=%ds"
+                % (
+                    float(_aoi.get("current", 0)),
+                    float(_aoi.get("mean_age", 0)),
+                    float(_aoi.get("mean_peak", 0)),
+                    float(_aoi.get("p95", 0)),
+                    float(_aoi.get("max", 0)),
+                    float(_aoi.get("min", 0)),
+                    int(_aoi.get("n", 0)),
+                    int(float(_aoi.get("window_seconds", 0))),
+                )
+            )
+        else:
+            print("aoi       : UNKNOWN — warmup (<2 prior scans) or unpublished window")
+    except Exception as _aoi_exc:
+        print("aoi       : UNKNOWN — %s" % _aoi_exc)
     print("report    : %s" % (home / REPORT_NAME))
     print("window    : %s .. %s (%ds)" % (window.get("start"), window.get("end"), seconds))
     print("published : %d broken row(s) the routed reading names" % len(published))

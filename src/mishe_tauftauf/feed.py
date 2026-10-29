@@ -991,6 +991,34 @@ class Feed:
         )
 
 
+def read_scan_created_stamps(home: Path, *, window: int = 100) -> list[datetime]:
+    """Ordered ``created`` stamps for windowed AoI (boundary: scan JSON -> datetime).
+
+    Yates et al. §II: monitor age ``Δ(t)=t−u(t)`` with ``stamps`` earliest-first.
+    Returns last ``window`` aware datetimes from ``discovery/scan-*.json`` sorted
+    by filename (iso ``created``), skipping unreadable entries. Empty on first
+    scan (warmup → ``None`` via ``aoi_summary``). Kept in ``feed.py`` because
+    it is the boundary adapter for scan JSON parsing (``json.loads`` /
+    ``fromisoformat``); callers keep ``discovery.py`` parsing-free.
+    """
+    discovery = home / "discovery"
+    if not discovery.is_dir():
+        return []
+    created: list[datetime] = []
+    for name in sorted(discovery.glob("scan-*.json")):
+        try:
+            doc = json.loads(name.read_text(encoding="utf-8"))
+            when = datetime.fromisoformat(str(doc["created"]).replace("Z", "+00:00"))
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+            continue
+        if when.tzinfo is None:
+            continue
+        created.append(when)
+    if window is not None and window > 0 and len(created) > window:
+        created = created[-window:]
+    return created
+
+
 def read_scan_series(home: Path, sense_id: str) -> list[tuple[datetime, int]]:
     """Read a sense's verified samples from the retained discovery scan corpus.
 
