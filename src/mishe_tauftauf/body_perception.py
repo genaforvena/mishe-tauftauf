@@ -17,6 +17,14 @@ any (context, info_type) or (context, principle, recipient) not listed is
 denied; general-value balancing ("democracy, freedom, wealth, efficiency,
 other social values" BEQ p.9) is excluded; the mandate's "including new
 not-yet-developed ones" does not auto-extend the vocabularies.
+Consent receipts: Kaye et al., "Dynamic consent: a patient interface for
+twenty-first century research networks," EJHG 23, 141-146 (2015) Boxes 1-3 —
+sticky policies that travel with samples/information (p.143), per-type
+revisability in real time without replacing broad consent, one record of all
+transactions. Each BODY_INFORMATION_TYPES member carries a dated, per-type
+receipt (origin, principle, recipients, scope) — preferences travel with the
+reading; a new type needs a receipt. Redistribution reviewed under
+docs/protocol-boundaries.md and the per-type receipt store.
 """
 
 from datetime import datetime, timezone
@@ -124,6 +132,67 @@ _CI_FLOWS: Final[dict[tuple[str, str], frozenset[str]]] = {
         "health", "senses", "genome",
     }),
 }
+#: Consent receipts — Kaye et al., "Dynamic consent: a patient interface for
+#: twenty-first century research networks," EJHG 23, 141-146 (2015) Boxes 1-3.
+#: "machine-readable disclosure policies or 'sticky policies' that attach to
+#: data. This package of 'wrapped information', which contains specific consent
+#: provisions, travels with a participant or donor's data and samples as these
+#: are shared or accessed" (p.143). Boxes 2-3: one record of all transactions
+#: in one place; consent preferences can be modified over time; participants
+#: "consent to new projects … or alter their consent preferences in real time."
+#: Per-type revisability without replacing broad consent (p.143 fatigue answer):
+#: the 2026-10-15 blanket stays valid for the five listed types, but each type
+#: carries its own dated receipt (origin, principle, recipients, scope_note)
+#: that can be revoked or narrowed without editing _APPROPRIATENESS/_CI_FLOWS.
+#: Adding microphone/geolocation/csi_presence does not inherit the blanket — it
+#: needs a new receipt. This makes Diamantis BEQ pp.16-17 non-self-executing
+#: blanket typed: a new BODY_INFORMATION_TYPES entry without a receipt remains
+#: denied. Homomorphic encryption, web/SMS interface, LIMS not transferred —
+#: only typed receipts that travel as metadata beside the reading.
+#: Pure data, no I/O, no SENSE_ID/verdict, no mandate file change.
+CONSENT_RECEIPT_VERSION: Final[str] = "1"
+#: Per-type dated consent receipts — the sticky policy that travels with the
+#: reading (Kaye EJHG p.143). Each BODY_INFORMATION_TYPES member maps to
+#: {principle, origin, date, recipients, scope_note}. "Preferences travel with
+#: samples/information." One record of all transactions, revisable per type.
+PERSONAL_CONSENT_RECEIPTS: Final[dict[str, dict[str, object]]] = {
+    "battery": {
+        "principle": "human-consented-personal-analysis",
+        "origin": ".mishe-tauftauf/research/shared/personal-multibody-analysis-20261015.md",
+        "date": "2026-10-15",
+        "recipients": frozenset({"senses", "health", "body-research", "inference-research"}),
+        "scope_note": "personal-carrying battery; device evidence, not person claim; sticky-policy scope for redistribution",
+    },
+    "light": {
+        "principle": "human-consented-personal-analysis",
+        "origin": ".mishe-tauftauf/research/shared/personal-multibody-analysis-20261015.md",
+        "date": "2026-10-15",
+        "recipients": frozenset({"senses", "health", "body-research", "inference-research"}),
+        "scope_note": "personal-carrying light (lux); device evidence, not person claim; sticky-policy scope for redistribution",
+    },
+    "acceleration": {
+        "principle": "human-consented-personal-analysis",
+        "origin": ".mishe-tauftauf/research/shared/personal-multibody-analysis-20261015.md",
+        "date": "2026-10-15",
+        "recipients": frozenset({"senses", "health", "body-research", "inference-research"}),
+        "scope_note": "personal-carrying acceleration incl. gravity; device evidence, not person claim; sticky-policy scope",
+    },
+    "wifi_link_rssi_dbm": {
+        "principle": "human-consented-personal-analysis",
+        "origin": ".mishe-tauftauf/research/shared/personal-multibody-analysis-20261015.md",
+        "date": "2026-10-15",
+        "recipients": frozenset({"senses", "health", "body-research", "inference-research"}),
+        "scope_note": "personal-carrying wifi_link_rssi_dbm (auxiliary radio context); device evidence, sticky-policy scope",
+    },
+    "ble_scan": {
+        "principle": "human-consented-personal-analysis",
+        "origin": ".mishe-tauftauf/research/shared/personal-multibody-analysis-20261015.md",
+        "date": "2026-10-15",
+        "recipients": frozenset({"senses", "health", "body-research", "inference-research"}),
+        "scope_note": "personal-carrying ble_scan; auxiliary, collected as personal-carrying not host-radio; sticky-policy scope",
+    },
+}
+
 
 
 def is_body_info_appropriate_for_context(context: str, info_type: str) -> bool:
@@ -190,6 +259,57 @@ def personal_body_flow_allows(
     info_type=info_type, transmission_principle=transmission_principle)``.
     Pure, no I/O.
     """
+    return contextual_integrity_allows(
+        context="personal-carrying",
+        sender="redmi10",
+        recipient=recipient,
+        subject="human",
+        info_type=info_type,
+        transmission_principle=transmission_principle,
+    )
+
+
+def has_personal_consent_receipt(info_type: str) -> bool:
+    """Whether a dated per-type consent receipt exists for ``info_type``.
+
+    Kaye et al. EJHG 2015 Boxes 2-3: one record of all transactions;
+    preferences are revisable per type. A new BODY_INFORMATION_TYPES entry
+    without a receipt is denied (typed frog-in-hot-water detector;
+    Diamantis BEQ pp.16-17 non-self-executing blanket, now typed).
+    Pure view over :data:`PERSONAL_CONSENT_RECEIPTS`; no I/O, no verdict.
+    """
+    return info_type in PERSONAL_CONSENT_RECEIPTS
+
+
+def personal_consent_allows(
+    *,
+    info_type: str,
+    recipient: str,
+    transmission_principle: str,
+) -> bool:
+    """Whether ``info_type`` may flow to ``recipient`` under the receipt.
+
+    Kaye EJHG p.143: "machine-readable disclosure policies or 'sticky
+    policies' that attach to data" — the wrapper travels with the
+    reading. This predicate is the typed wrapper check: conjunction of
+    (1) a dated per-type receipt exists, (2) receipt principle equals the
+    requested principle, (3) recipient is in receipt recipients, and
+    (4) contextual integrity would also allow the flow (appropriateness +
+    distribution). New types without receipts are denied even if added to
+    BODY_INFORMATION_TYPES. Blanket non-self-executing, now typed.
+    Pure, no I/O, no SENSE_ID/verdict; redistribution still a
+    privacy-boundary change reviewed under docs/protocol-boundaries.md.
+    """
+    receipt = PERSONAL_CONSENT_RECEIPTS.get(info_type)
+    if receipt is None:
+        return False
+    if receipt.get("principle") != transmission_principle:
+        return False
+    recipients = receipt.get("recipients")
+    if not isinstance(recipients, frozenset):
+        return False
+    if recipient not in recipients:
+        return False
     return contextual_integrity_allows(
         context="personal-carrying",
         sender="redmi10",
