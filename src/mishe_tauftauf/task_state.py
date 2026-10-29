@@ -14,6 +14,22 @@ from .feed import Feed, FeedEntry
 from .observations import validate_slug
 from .seed_board import TASK_RE, STATE_RE, CLAIM_RE
 from .records import payload as record_payload
+from typing import NamedTuple
+
+DEPENDENCIES = frozenset({"shared-resource", "prerequisite", "transfer", "usability", "simultaneity", "task-subtask", "other"})
+
+class Bid(NamedTuple):
+    identity: str
+    bidder: str
+    qual: str
+    available_wake: int
+    sequence: int
+
+class Award(NamedTuple):
+    identity: str
+    winner: str
+    bids: int
+    sequence: int
 
 EVENT_RE = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z")
 from .chat_protocol import decode_lifecycle
@@ -46,6 +62,8 @@ class TaskState:
     retry_task: str | None = None
     delivery: str = ""
     delivery_token: str = ""
+    dependency: str = "other"
+    depends_on: str | None = None
 
 
 def _deadline(value: str) -> datetime:
@@ -94,6 +112,21 @@ def validate_control(source: str, body: str) -> None:
             if not data.get("reason") or not data.get("evidence"):
                 raise ValueError("event requires reason and evidence")
             digest = data.get("evidence_sha256", "")
+        elif tag in {"[task-announce]", "[task-bid]", "[task-award]"}:
+            if data.get("identity") != identity:
+                raise ValueError("market entry identity mismatch")
+            if tag == "[task-announce]":
+                if not data.get("requires"):
+                    raise ValueError("announce requires qualification")
+            elif tag == "[task-bid]":
+                if not data.get("bidder") or not data.get("qual"):
+                    raise ValueError("bid requires bidder and qual")
+                validate_slug(data["bidder"])
+            elif tag == "[task-award]":
+                if not data.get("winner"):
+                    raise ValueError("award requires winner")
+                validate_slug(data["winner"])
+            digest = data.get("evidence_sha256", "") if isinstance(data.get("evidence_sha256"), str) else ""
         elif tag in {"[task-state]", "[task-add]", "[task-close]", "[task-reopen]", "[task-claim]"}:
             if tag == "[task-claim]":
                 validate_slug(data.pop("previous_owner"))
@@ -194,6 +227,20 @@ def registry(entries: list[FeedEntry]) -> dict[str, TaskState]:
             state = TaskState(**data)
             if state.identity != identity or state.status not in {"ready", "waiting", "done", "dropped"}:
                 raise ValueError("invalid identity or status")
+            if state.dependency not in DEPENDENCIES:
+                raise ValueError(f"invalid dependency: {state.dependency}")
+            if state.depends_on is not None:
+                if state.depends_on == state.identity:
+                    raise ValueError("depends_on cannot be self")
+                _event(state.depends_on)
+                if state.dependency not in {"prerequisite", "transfer"}:
+                    raise ValueError("depends_on requires prerequisite or transfer dependency")
+                if state.depends_on not in result:
+                    raise ValueError(f"depends_on target {state.depends_on} does not exist")
+            if state.parent is not None:
+                _event(state.parent)
+                if state.dependency not in {"task-subtask", "other"}:
+                    raise ValueError("parent requires task-subtask dependency")
             if state.retry_event is not None:
                 _event(state.retry_event)
             if state.retry_at is not None:
@@ -253,6 +300,10 @@ def _signals(entries: list[FeedEntry]) -> dict[str, int]:
 
 
 def eligible(state: TaskState, entries: list[FeedEntry], now: datetime | None = None) -> bool:
+    if state.depends_on is not None:
+        producer = registry(entries).get(state.depends_on)
+        if producer is None or producer.status not in {"done", "dropped"}:
+            return False
     if state.status == "ready":
         return True
     now = now or datetime.now(timezone.utc)
@@ -291,11 +342,13 @@ def active_wakes(entries: list[FeedEntry]) -> dict[str, int]:
     return active
 
 
-def candidates(entries: list[FeedEntry], now: datetime | None = None) -> list[TaskState]:
+def candidates(entries: list[FeedEntry], now: datetime | None = None, *, dependency: str | None = None) -> list[TaskState]:
     """Advisory shared work; a role is a responsibility, not an eligibility partition."""
+    if dependency is not None and dependency not in DEPENDENCIES:
+        raise ValueError(f"invalid dependency filter: {dependency}")
     reserved = set(pending_tasks(entries).values())
     return sorted((s for s in states(entries).values()
-                   if s.identity not in reserved and eligible(s, entries, now)), key=lambda s: s.sequence)
+                   if s.identity not in reserved and eligible(s, entries, now) and (dependency is None or s.dependency == dependency)), key=lambda s: s.sequence)
 
 
 DeliveryIndex = dict[str, tuple[str, str, int, str]]
@@ -500,9 +553,11 @@ def _claim_evidence_guard(path, digest):
         raise ValueError("claim evidence changed during final publication admission; reconcile and resubmit")
 
 
-def select_task(entries: list[FeedEntry], owner: str, now: datetime | None = None) -> TaskState | None:
+def select_task(entries: list[FeedEntry], owner: str, now: datetime | None = None, *, dependency: str | None = None) -> TaskState | None:
+    if dependency is not None and dependency not in DEPENDENCIES:
+        raise ValueError(f"invalid dependency filter: {dependency}")
     reserved = set(pending_tasks(entries).values())
-    plans = sorted((state for state in states(entries).values() if state.identity not in reserved),
+    plans = sorted((state for state in states(entries).values() if state.identity not in reserved and (dependency is None or state.dependency == dependency)),
                    key=lambda state: state.sequence)
     own = [state for state in plans if state.owner == owner and eligible(state, entries, now)]
     offered = [state for state in plans if owner in state.helpers and eligible(state, entries, now)]
@@ -510,6 +565,101 @@ def select_task(entries: list[FeedEntry], owner: str, now: datetime | None = Non
     if integrations:
         return integrations[0]
     return next(iter(own or offered), None)
+
+
+# --- Market helpers (Smith & Davis announcement → bid → award) ---
+
+_ANNOUNCE_RE = re.compile(r"announce:(?P<identity>[A-Za-z0-9._:-]{1,128}):requires=(?P<qual>[A-Za-z0-9._:-]{1,64})\Z")
+_BID_RE = re.compile(r"bid:(?P<identity>[A-Za-z0-9._:-]{1,128}):qual=(?P<qual>[A-Za-z0-9._:-]{1,64}):available=(?P<wake>\d+)\Z")
+_AWARD_RE = re.compile(r"award:(?P<identity>[A-Za-z0-9._:-]{1,128}):winner=(?P<winner>[A-Za-z0-9._/-]{1,64}):bids=(?P<bids>\d+)\Z")
+
+
+def _parse_announce_bid_award(entries: list[FeedEntry]) -> tuple[dict[str, FeedEntry], dict[str, list[Bid]], dict[str, Award]]:
+    announces: dict[str, FeedEntry] = {}
+    bids_by: dict[str, list[Bid]] = {}
+    awards: dict[str, Award] = {}
+    for entry in entries:
+        body = entry.body.splitlines()[0].strip() if entry.body else ""
+        if body.startswith("[task-announce] ") or body.startswith("announce:"):
+            if body.startswith("[task-announce] "):
+                try:
+                    _, payload = entry.body.split("\n", 1)
+                    data = __import__("json").loads(payload.splitlines()[0])
+                    ident = data.get("identity", "")
+                    if ident and ident not in announces:
+                        announces[ident] = entry
+                except Exception:
+                    continue
+            else:
+                m = _ANNOUNCE_RE.match(body)
+                if m and m.group("identity") not in announces:
+                    announces[m.group("identity")] = entry
+        elif body.startswith("[task-bid] ") or body.startswith("bid:"):
+            if body.startswith("[task-bid] "):
+                try:
+                    _, payload = entry.body.split("\n", 1)
+                    data = __import__("json").loads(payload.splitlines()[0])
+                    ident = data.get("identity", "")
+                    bidder = data.get("bidder", entry.source)
+                    qual = data.get("qual", "")
+                    avail = int(data.get("available_wake", 0))
+                    bids_by.setdefault(ident, []).append(Bid(ident, bidder, qual, avail, entry.sequence))
+                except Exception:
+                    continue
+            else:
+                m = _BID_RE.match(body)
+                if m:
+                    bids_by.setdefault(m.group("identity"), []).append(Bid(m.group("identity"), entry.source, m.group("qual"), int(m.group("wake")), entry.sequence))
+        elif body.startswith("[task-award] ") or body.startswith("award:"):
+            if body.startswith("[task-award] "):
+                try:
+                    _, payload = entry.body.split("\n", 1)
+                    data = __import__("json").loads(payload.splitlines()[0])
+                    ident = data.get("identity", "")
+                    winner = data.get("winner", "")
+                    bids = int(data.get("bids", 0))
+                    if ident not in awards:
+                        awards[ident] = Award(ident, winner, bids, entry.sequence)
+                except Exception:
+                    continue
+            else:
+                m = _AWARD_RE.match(body)
+                if m and m.group("identity") not in awards:
+                    awards[m.group("identity")] = Award(m.group("identity"), m.group("winner"), int(m.group("bids")), entry.sequence)
+    for ident in bids_by:
+        bids_by[ident] = sorted(bids_by[ident], key=lambda b: b.sequence)
+    return announces, bids_by, awards
+
+
+def task_announcements(entries: list[FeedEntry]) -> dict[str, FeedEntry]:
+    announces, _, _ = _parse_announce_bid_award(entries)
+    return announces
+
+
+def task_bids(entries: list[FeedEntry], identity: str) -> list[Bid]:
+    _, bids_by, _ = _parse_announce_bid_award(entries)
+    return list(bids_by.get(identity, []))
+
+
+def award_task(entries: list[FeedEntry], identity: str) -> Award | None:
+    _, _, awards = _parse_announce_bid_award(entries)
+    return awards.get(identity)
+
+
+def bid_cost(bid: Bid) -> int:
+    penalty = 0 if bid.qual == "qualified" else 1
+    return penalty * 1000000 + bid.available_wake
+
+
+def announcement_cost(entries: list[FeedEntry], identity: str) -> dict[str, int]:
+    announces = task_announcements(entries)
+    ann = announces.get(identity)
+    aw = award_task(entries, identity)
+    bids = task_bids(entries, identity)
+    if ann is None or aw is None:
+        return {"coordination": len(bids), "production": sum(1 for b in bids if b.qual != "qualified"), "vulnerability": 0, "latency": 0}
+    production = sum(1 for b in bids if b.qual != "qualified")
+    return {"coordination": len(bids), "production": production, "vulnerability": 0, "latency": aw.sequence - ann.sequence}
 
 
 def independent_opportunity(entries: list[FeedEntry], owner: str) -> str | None:
@@ -691,7 +841,7 @@ def lines(entries: list[FeedEntry], owner: str | None = None, home: Path | None 
 
 
 def add_task(home: Path, identity: str, owner: str, next_step: str, reason: str, evidence: Path,
-             *, parent: str | None = None, commit_guard=None) -> FeedEntry:
+             *, parent: str | None = None, dependency: str = "other", depends_on: str | None = None, commit_guard=None) -> FeedEntry:
     from .seed import _lock
 
     _event(identity)
@@ -705,7 +855,20 @@ def add_task(home: Path, identity: str, owner: str, next_step: str, reason: str,
             raise ValueError("task already exists; use task reopen for a terminal task")
         if parent and (parent not in plans or plans[parent].status in {"done", "dropped"}):
             raise ValueError("parent task is not open")
+        if dependency not in DEPENDENCIES:
+            raise ValueError(f"invalid dependency: {dependency}")
+        if depends_on is not None:
+            if depends_on == identity:
+                raise ValueError("depends_on cannot be self")
+            _event(depends_on)
+            if dependency not in {"prerequisite", "transfer"}:
+                raise ValueError("depends_on requires prerequisite or transfer dependency")
+        if parent is not None:
+            _event(parent)
+            if dependency not in {"task-subtask", "other"}:
+                raise ValueError("parent requires task-subtask dependency")
         return _append(home, owner, TaskState(identity, owner, 0, managed=True, parent=parent,
+                       dependency=dependency, depends_on=depends_on,
                        next_step=next_step.strip(), progress=reason.strip(), evidence=path,
                        evidence_sha256=digest), "task-add", commit_guard=commit_guard)
 
