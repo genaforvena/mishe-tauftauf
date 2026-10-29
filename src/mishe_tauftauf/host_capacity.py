@@ -134,7 +134,11 @@ def reconcile(root, row, config):
         elif row["checked_at"] - action["at"] > 30:
             row["action_error"] = "stop not observed within 30s: " + name
     if not row["limited"]:
-        managed.difference_update(n for n in managed if states[n] == "active")
+        # difference_update removes from the set while the generator walks it;
+        # that raises "Set changed size during iteration" and took the
+        # controller down on every tick that followed a load-shed.  Collect
+        # the names first.
+        managed.difference_update([n for n in managed if states[n] == "active"])
         for name, stamp in list(starts.items()):
             if states[name] == "active":
                 del starts[name]

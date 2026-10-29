@@ -156,3 +156,26 @@ def test_guard_update_during_resource_sample_is_not_future(tmp_path, monkeypatch
     monkeypatch.setattr(host, "reconcile", reconcile)
     row = host.tick(tmp_path, {"slice_path": "unused", "optional_units": []})
     assert row["state"] == "NORMAL" and row["guard_fresh"]
+
+
+def test_reconciliation_drops_managed_units_without_mutating_the_set_it_walks(tmp_path, monkeypatch):
+    """The controller must survive a tick where the units it manages came back.
+
+    ``managed.difference_update(n for n in managed if ...)`` removes from the
+    set while the generator walks it.  When the first element the generator
+    visits is one it removes, the set shrinks before the generator advances
+    and Python raises "Set changed size during iteration", which took the
+    capacity controller down and left the plant's load-shed state stale.
+    """
+    names = ["optional.service", "second.service", "third.service", "fourth.service"]
+    # The plant's restore brought the units back while the controller still
+    # listed them as ones it had stopped.
+    live = {n: "active" for n in names}
+    monkeypatch.setattr(host, "unit_states", lambda ns: dict(live))
+    monkeypatch.setattr(host, "unit_action",
+                        lambda *a: pytest.fail("nothing to start: every unit is already active"))
+    row = host.decide(None, sample(), now=100, stable_seconds=0)
+    row["managed_units"] = sorted(names)
+    row["limited"] = False
+    result = host.reconcile(tmp_path, row, {"optional_units": names})
+    assert result["managed_units"] == []
