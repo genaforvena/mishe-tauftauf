@@ -74,6 +74,8 @@ DISPOSITIONS: dict[str, str] = {
     "pain render": "headless frame compose for a renderer probe; readers use `pain read`",
     "seed init": "lower-level site bootstrap; a reader plants with `python3 -m coordination.launcher`",
     "seed start": "raises one resident pane for a manual setup; durable residents run `seed run` under generated services",
+    "seed loop": "internal seed loop for launcher management; readers use `seed run`/`seed yield`",
+    "engine explain": "shadow admission decision for a role; readers use `engine status`/`engine accounts`",
     "tmux stop": "teardown of an owned session, the paired inverse of `tmux start`; not a repair step",
     "dispatch-receipt": "bare top; an external dispatcher's delivery receipt with no live producer path in this plant",
 }
