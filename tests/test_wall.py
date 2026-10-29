@@ -952,7 +952,7 @@ def test_tmux_send_failure_stays_visible_without_killing_supervisor(tmp_path, mo
     from mishe_tauftauf import wall
     from mishe_tauftauf.tmux import TmuxError
     setup_wall(tmp_path)
-    def fail(*a):
+    def fail(*a, **kwargs):
         raise TmuxError("pane disappeared during send")
     monkeypatch.setattr(wall, "tick", fail)
     assert "UNKNOWN" in seed.tick(tmp_path, "session", "genome")
