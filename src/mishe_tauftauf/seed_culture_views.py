@@ -614,8 +614,16 @@ def _clear_journal_stalls(home: Path) -> tuple[str, list[str]]:
     A journal that cannot be read is monitoring damage and stays UNKNOWN rather
     than silently passing; a healthy journal is simply absent from the concern
     set, so an empty directory reads PASS.
+
+    Boundedness: the checks directory can accumulate tens of thousands of
+    wall-clear journals (13553 measured 2026-10-29). Reading every body and
+    parsing the feed per committed file exceeds the pane's 30s probe budget
+    (doctor 7s + full scan 12s per role). Filter by mtime first (stat only),
+    pre-load the feed once, and only judge committed journals whose settled
+    equals the role's current last_yield.
     """
     from . import seed
+    from .feed import Feed
     stuck: list[str] = []
     collisions: list[str] = []
     unknown = ""
@@ -624,15 +632,10 @@ def _clear_journal_stalls(home: Path) -> tuple[str, list[str]]:
         rows = clear_journal.paths(home)
     except OSError:
         return "CLEAR JOURNAL: UNKNOWN — checks directory unreadable", []
-    turn_by_role: dict[str, tuple[object, object]] = {}
+    # Stat-filter before any JSON decode: mtime read is ~0.04s for 13k files
+    # versus 4.7s for full read+stat.
+    old_paths: list[Path] = []
     for path in rows:
-        journal = clear_journal.read(path)
-        if journal is None:
-            unknown = unknown or "journal unreadable"
-            continue
-        phase = journal.get("phase")
-        if phase not in {"rotating", "rotated", "committed"}:
-            continue
         try:
             age = max(0.0, now - path.stat().st_mtime)
         except OSError:
@@ -640,19 +643,60 @@ def _clear_journal_stalls(home: Path) -> tuple[str, list[str]]:
             continue
         if age < CLEAR_JOURNAL_STALL_S:
             continue
+        old_paths.append(path)
+    if not old_paths:
+        return "CLEAR JOURNAL: PASS", []
+    # One feed parse for all roles; reuse entries across _state calls.
+    turn_by_role: dict[str, tuple[object, object]] = {}
+    try:
+        entries = Feed(home).entries()
+    except Exception:
+        entries = None
+    # Distinct roles from filenames avoid decoding every body just to learn role.
+    seen_roles: set[str] = set()
+    for path in old_paths:
+        name = path.name
+        if not name.startswith("wall-clear-") or not name.endswith(".json"):
+            continue
+        rest = name[len("wall-clear-"):-len(".json")]
+        if "-" not in rest:
+            continue
+        role = rest.rsplit("-", 1)[0]
+        if role not in seen_roles:
+            seen_roles.add(role)
+            if role not in turn_by_role:
+                try:
+                    _, _, last_yield, last_clear, *_ = seed._state(home, role, entries=entries)
+                    turn_by_role[role] = (last_yield, last_clear)
+                except Exception:
+                    turn_by_role[role] = (None, None)
+    for path in old_paths:
+        journal = clear_journal.read(path)
+        if journal is None:
+            unknown = unknown or "journal unreadable"
+            continue
+        phase = journal.get("phase")
+        if phase not in {"rotating", "rotated", "committed"}:
+            continue
         role = journal.get("role")
         settled = journal.get("settled")
         if phase in {"rotating", "rotated"}:
+            # Recompute age already known, but keep bounded formatting
+            try:
+                age = max(0.0, now - path.stat().st_mtime)
+            except OSError:
+                age = 0.0
             stuck.append(f"{role}/{settled}:{phase}:{age:.0f}s")
             continue
         if (not isinstance(role, str) or not isinstance(settled, int)
                 or isinstance(settled, bool)):
             continue
-        if role not in turn_by_role:
-            _, _, last_yield, last_clear, *_ = seed._state(home, role)
-            turn_by_role[role] = (last_yield, last_clear)
-        last_yield, last_clear = turn_by_role[role]
+        last_yield, last_clear = turn_by_role.get(role, (None, None))
         if settled == last_yield and last_clear != settled:
+            try:
+                age = max(0.0, now - path.stat().st_mtime)
+            except OSError:
+                age = 0.0
             collisions.append(f"{role}/{settled}:committed-collision:{age:.0f}s")
     if stuck or collisions:
         line = (f"CLEAR JOURNAL: RED stuck={','.join(stuck + collisions)} "
