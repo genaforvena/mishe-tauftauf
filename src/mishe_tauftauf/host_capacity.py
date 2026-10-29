@@ -189,46 +189,64 @@ def tick(root, config, *, now=None):
     realtime = now is None
     now = time.time() if now is None else now
     root.mkdir(parents=True, exist_ok=True)
-    with (root / "host-capacity.lock").open("a+") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        path = root / "host-capacity.json"
-        previous = recovery.read_json(path) if path.exists() else None
-        if previous is not None and (not isinstance(previous, dict) or previous.get("version") != 1):
-            raise ValueError("corrupt capacity state retained; reconcile before reset")
-        row = decide(previous, observe(config["slice_path"]), now=now,
-                     stable_seconds=config.get("stable_seconds", 120))
-        try:
-            row = reconcile(root, row, config)
-        except (OSError, ValueError) as exc:
-            row["action_error"] = str(exc)
-        try:
-            guard_row = recovery.read_json(root / "host-capacity-guard.json")
-            # A guard may update after acquisition began but before this read.
-            # Compare with the read time, not the older sample-start timestamp.
-            observed_at = time.time() if realtime else now
-            guard_fresh = (isinstance(guard_row, dict)
-                           and guard_row.get("state") in {"FRESH", "UNKNOWN"}
-                           and guard_row.get("capacity") in {"NORMAL", "LIMITED", "CRITICAL", "UNKNOWN"}
-                           and guard_row.get("scope") == "capacity producer freshness; not restoration"
-                           and type(guard_row.get("checked_at")) in (int, float)
-                           and 0 <= observed_at - guard_row["checked_at"] <= 20)
-        except (ValueError, TypeError, KeyError):
-            guard_fresh = False
-        row["guard_fresh"] = guard_fresh
-        if not guard_fresh:
-            row["action_error"] = row.get("action_error", "independent host guard missing or stale")
-        if row.get("action_error"):
-            row.update(resource_state=row["state"], state="UNKNOWN", limited=True,
-                       slots=min(row["slots"], 1), cooldown=30)
-        recovery.save(path, row)
-        with (root / "host-samples.jsonl").open("a") as log:
-            import json
-            log.write(json.dumps(row, allow_nan=False) + "\n")
-        if (not previous or previous["state"] != row["state"] or row["oom_delta"]
-                or previous.get("action_error") != row.get("action_error")):
-            recovery.event(root, {"host_capacity": row, "resolver": "health", "backup": "genome",
-                                  "deadline_seconds": 300}, recipients=["health", "genome"])
-        return row
+    try:
+        with (root / "host-capacity.lock").open("a+") as handle:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                # Another tick holds the lock; busy is not a failure.
+                # Return the last observed row if fresh, otherwise UNKNOWN
+                # without crashing the systemd unit into a restart loop.
+                path = root / "host-capacity.json"
+                if path.exists():
+                    try:
+                        row = recovery.read_json(path)
+                        if isinstance(row, dict) and row.get("version") == 1 and 0 <= now - row.get("checked_at", now) <= row.get("max_age", 20):
+                            return row
+                    except (ValueError, OSError):
+                        pass
+                return {"version": 1, "checked_at": now, "max_age": 20, "state": "UNKNOWN", "limited": True, "slots": 1, "cooldown": 30, "render_timeout": 30, "reason": "capacity controller busy; retry"}
+            path = root / "host-capacity.json"
+            previous = recovery.read_json(path) if path.exists() else None
+            if previous is not None and (not isinstance(previous, dict) or previous.get("version") != 1):
+                raise ValueError("corrupt capacity state retained; reconcile before reset")
+            row = decide(previous, observe(config["slice_path"]), now=now,
+                         stable_seconds=config.get("stable_seconds", 120))
+            try:
+                row = reconcile(root, row, config)
+            except (OSError, ValueError) as exc:
+                row["action_error"] = str(exc)
+            try:
+                guard_row = recovery.read_json(root / "host-capacity-guard.json")
+                # A guard may update after acquisition began but before this read.
+                # Compare with the read time, not the older sample-start timestamp.
+                observed_at = time.time() if realtime else now
+                guard_fresh = (isinstance(guard_row, dict)
+                               and guard_row.get("state") in {"FRESH", "UNKNOWN"}
+                               and guard_row.get("capacity") in {"NORMAL", "LIMITED", "CRITICAL", "UNKNOWN"}
+                               and guard_row.get("scope") == "capacity producer freshness; not restoration"
+                               and type(guard_row.get("checked_at")) in (int, float)
+                               and 0 <= observed_at - guard_row["checked_at"] <= 20)
+            except (ValueError, TypeError, KeyError):
+                guard_fresh = False
+            row["guard_fresh"] = guard_fresh
+            if not guard_fresh:
+                row["action_error"] = row.get("action_error", "independent host guard missing or stale")
+            if row.get("action_error"):
+                row.update(resource_state=row["state"], state="UNKNOWN", limited=True,
+                           slots=min(row["slots"], 1), cooldown=30)
+            recovery.save(path, row)
+            with (root / "host-samples.jsonl").open("a") as log:
+                import json
+                log.write(json.dumps(row, allow_nan=False) + "\n")
+            if (not previous or previous["state"] != row["state"] or row["oom_delta"]
+                    or previous.get("action_error") != row.get("action_error")):
+                recovery.event(root, {"host_capacity": row, "resolver": "health", "backup": "genome",
+                                      "deadline_seconds": 300}, recipients=["health", "genome"])
+            return row
+    except BlockingIOError:
+        # Fallback if lock file itself contended at open; treat as busy not failure
+        return {"version": 1, "checked_at": now, "max_age": 20, "state": "UNKNOWN", "limited": True, "slots": 1, "cooldown": 30, "render_timeout": 30, "reason": "capacity controller busy; retry"}
 
 
 def guard(root, *, now=None):
