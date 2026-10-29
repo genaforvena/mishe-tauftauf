@@ -28,6 +28,12 @@ RUN = Path("/run/mishe-containment")
 CONFIG = Path("/etc/mishe-containment.json")
 MAX_AGE = 20
 STABLE_SECONDS = 120
+#: How long the protected session must read as missing before the plant is
+#: stopped.  The observation reads tmux and then /proc for each pane's pid, so
+#: a process that exits between those reads makes one sample unusable while
+#: the session is in fact live.  A single such sample must not latch the whole
+#: plant off; a session that stays missing does.
+LIFE_MISSING_SECONDS = 20
 
 #: The commands a protected session's mind pane may be running.  A shell
 #: placeholder is not a mind: it renders nothing and answers nothing, so a
@@ -777,6 +783,7 @@ def watch(config):
     clear_since = None
     last_tick = time.monotonic()
     last_life_start = -100
+    life_missing_since = None
     notify("READY=1")
     while True:
         with transition(STATE):
@@ -813,12 +820,29 @@ def watch(config):
             status["life_support"] = ensure_life_support(config, start=now - last_life_start >= 30)
             if status["life_support"] and "start_request" in status["life_support"]:
                 last_life_start = now
-            if status["life_support"] and status["life_support"]["state"] != "PANES_LIVE":
-                if stopped is None:
-                    status["stop"] = stop(config)
-                latch(STATE, "protected recovery session missing, dead or unobservable", row)
-                status.update(state="TRIPPED", mode="LIFE_SUPPORT", clear_since=None)
-                clear_since = None
+            life_state = (status["life_support"] or {}).get("state")
+            if life_state == "PANES_LIVE":
+                life_missing_since = None
+            elif life_state is not None:
+                # One unusable sample is not a dead session.  The probe reads
+                # tmux and then /proc for each pane's pid; a process that exits
+                # between those two reads makes the observation UNKNOWN while
+                # the session is in fact live.  Latching the whole plant off on
+                # that single sample turns a read failure into a shutdown, so
+                # the protected session must be missing for a continuous
+                # interval before the plant is stopped.
+                if life_missing_since is None:
+                    life_missing_since = now
+                life_missing_for = now - life_missing_since
+                status["life_support"]["missing_for_seconds"] = life_missing_for
+                if life_missing_for >= LIFE_MISSING_SECONDS:
+                    if stopped is None:
+                        status["stop"] = stop(config)
+                    latch(STATE, "protected recovery session missing, dead or unobservable", row)
+                    status.update(state="TRIPPED", mode="LIFE_SUPPORT", clear_since=None)
+                    clear_since = None
+            else:
+                life_missing_since = None
             atomic(RUN / "status.json", status)
         previous = row
         notify("WATCHDOG=1")

@@ -819,3 +819,79 @@ def test_prepare_writes_each_io_device_on_its_own(tmp_path, monkeypatch):
     guard.prepare(config)
     assert written == ["252:0 rbps=64000000 wbps=16000000 riops=max wiops=max\n",
                        "259:1 rbps=64000000 wbps=16000000 riops=max wiops=max\n"]
+
+
+def _life_support_watch(tmp_path, monkeypatch, life_state, *, ticks):
+    """Run the watch loop for a fixed number of ticks with a given session state.
+
+    The startup latch keeps its own reason, so the session latch is read from
+    the reasons the loop offers, not from the ``tripped`` file's contents.
+    """
+    state, run = tmp_path / "state", tmp_path / "run"
+    state.mkdir(); run.mkdir()
+    monkeypatch.setattr(guard, "STATE", state)
+    monkeypatch.setattr(guard, "RUN", run)
+    monkeypatch.setattr(guard, "observe", lambda config: sample())
+    monkeypatch.setattr(guard, "stop", lambda config: [])
+    monkeypatch.setattr(guard, "notify", lambda message: None)
+    offered = []
+    real_latch = guard.latch
+    def record(target, why, observation):
+        offered.append(why)
+        real_latch(target, why, observation)
+    monkeypatch.setattr(guard, "latch", record)
+    monkeypatch.setattr(guard, "ensure_life_support",
+                        lambda config, start=False: dict(state=life_state))
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(guard.time, "monotonic", lambda: clock["now"])
+    remaining = {"n": ticks}
+    def tick(_):
+        remaining["n"] -= 1
+        clock["now"] += 5
+        if remaining["n"] <= 0:
+            raise InterruptedError
+    monkeypatch.setattr(guard.time, "sleep", tick)
+    with pytest.raises(InterruptedError):
+        guard.watch({})
+    return state, run, offered
+
+
+def test_one_unusable_session_sample_does_not_latch_the_plant_off(tmp_path, monkeypatch):
+    """A pane that exits between the tmux listing and the /proc read is not a dead session."""
+    state, run, offered = _life_support_watch(tmp_path, monkeypatch, "UNKNOWN", ticks=2)
+    assert "protected recovery session missing, dead or unobservable" not in offered
+    row = guard.read(run / "status.json")
+    assert row["life_support"]["missing_for_seconds"] < guard.LIFE_MISSING_SECONDS
+
+
+def test_a_session_that_stays_missing_still_latches_the_plant_off(tmp_path, monkeypatch):
+    """The tolerance must not disarm the detector for a session that is really gone."""
+    state, run, offered = _life_support_watch(tmp_path, monkeypatch, "RED", ticks=8)
+    assert "protected recovery session missing, dead or unobservable" in offered
+
+
+def test_a_recovered_session_clears_the_missing_interval(tmp_path, monkeypatch):
+    """A session that reads live again must not carry an old gap into a later failure."""
+    state, run = tmp_path / "state", tmp_path / "run"
+    state.mkdir(); run.mkdir()
+    monkeypatch.setattr(guard, "STATE", state)
+    monkeypatch.setattr(guard, "RUN", run)
+    monkeypatch.setattr(guard, "observe", lambda config: sample())
+    monkeypatch.setattr(guard, "stop", lambda config: [])
+    monkeypatch.setattr(guard, "notify", lambda message: None)
+    life = {"state": "UNKNOWN"}
+    monkeypatch.setattr(guard, "ensure_life_support", lambda config, start=False: dict(life))
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(guard.time, "monotonic", lambda: clock["now"])
+    ticks = {"n": 0}
+    def tick(_):
+        ticks["n"] += 1
+        clock["now"] += 5
+        # One bad sample, then the session reads live again.
+        life["state"] = "UNKNOWN" if ticks["n"] == 1 else "PANES_LIVE"
+        if ticks["n"] >= 3:
+            raise InterruptedError
+    monkeypatch.setattr(guard.time, "sleep", tick)
+    with pytest.raises(InterruptedError):
+        guard.watch({})
+    assert "protected recovery session missing, dead or unobservable" not in guard.read(state / "tripped")["reason"]
