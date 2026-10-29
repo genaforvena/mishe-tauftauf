@@ -77,7 +77,7 @@ def _process_started(pid: int) -> datetime.datetime | None:
         ticks = os.sysconf("SC_CLK_TCK")
     except (OSError, ValueError, IndexError, StopIteration):
         return None
-    return datetime.datetime.fromtimestamp(boot_time + start_ticks / ticks, datetime.UTC)
+    return datetime.datetime.fromtimestamp(boot_time + start_ticks / ticks, datetime.timezone.utc)
 
 
 def _exec_start_path() -> str | None:
@@ -96,7 +96,7 @@ def report() -> dict:
     installed_digest = _sha256(GUARD_PATH)
     try:
         installed_mtime = datetime.datetime.fromtimestamp(
-            pathlib.Path(GUARD_PATH).stat().st_mtime, datetime.UTC)
+            pathlib.Path(GUARD_PATH).stat().st_mtime, datetime.timezone.utc)
     except OSError:
         installed_mtime = None
     pid = _main_pid()

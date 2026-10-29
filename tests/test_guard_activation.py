@@ -29,7 +29,7 @@ def test_a_sentinel_that_started_before_the_bytes_was_written_is_not_activated(t
     monkeypatch.setattr(tool, "GUARD_PATH", guard)
     monkeypatch.setattr(tool, "_main_pid", lambda: 4242)
     monkeypatch.setattr(tool, "_process_started",
-                        lambda pid: datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=60))
+                        lambda pid: datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=60))
     row = tool.report()
     assert row["activated"] is not True
     assert "before" in row["reason"]
@@ -42,7 +42,7 @@ def test_a_sentinel_that_started_after_the_bytes_was_written_is_activated(tmp_pa
     monkeypatch.setattr(tool, "GUARD_PATH", guard)
     monkeypatch.setattr(tool, "_main_pid", lambda: 4242)
     monkeypatch.setattr(tool, "_process_started",
-                        lambda pid: datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=60))
+                        lambda pid: datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=60))
     row = tool.report()
     assert row["activated"] is True
 
@@ -87,7 +87,7 @@ def test_the_exit_code_is_zero_only_when_activated(tmp_path, monkeypatch, capsys
     monkeypatch.setattr(tool, "GUARD_PATH", guard)
     monkeypatch.setattr(tool, "_main_pid", lambda: 4242)
     monkeypatch.setattr(tool, "_process_started",
-                        lambda pid: datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=60))
+                        lambda pid: datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=60))
     assert tool.main([]) == 1
     assert "activated" in capsys.readouterr().out
 
