@@ -3,6 +3,14 @@
 Rendering never scans Git or chat. Put this projection after the MIND WALL
 boundary: changing diagnostic counts must not recursively create another wake.
 The guard checks producer freshness, not whether the reported work is healthy.
+
+Lawrence 2005 politics-of-4I (AMR 30:1, DOI 10.5465/amr.2005.15281431) —
+Crossan et al. 1999 4I: intuiting → interpreting → integrating → institutionalizing;
+Lawrence maps discipline→intuiting, influence→interpreting, force→integrating,
+domination→institutionalizing (Fig.1/Table1 pp.182-183); modes episodic (influence,
+force) vs systemic (domination, discipline). Routing stages type as influence
+(initial/changed), force (escalation), domination (reminder). Vocabulary is a
+detector, not a causal claim; any form may appear in any process (p.184).
 """
 from __future__ import annotations
 
@@ -13,8 +21,83 @@ import json
 import math
 from pathlib import Path
 import time
+from typing import Final
 
 from .post_check import _save
+
+
+LEARNING_PROCESSES: Final[tuple[str, ...]] = (
+    "intuiting",
+    "interpreting",
+    "integrating",
+    "institutionalizing",
+)
+"""Crossan et al. 1999 4I processes (Lawrence 2005 p.181)."""
+
+POWER_MODES: Final[tuple[str, ...]] = ("episodic", "systemic")
+"""Lawrence 2005 p.182-183: episodic vs systemic power."""
+
+POWER_FORMS: Final[tuple[str, ...]] = (
+    "influence",
+    "force",
+    "domination",
+    "discipline",
+)
+"""Four power forms (Hardy 1996 via Lawrence p.182-183)."""
+
+PROCESS_POWER_MAP: Final[dict[str, str]] = {
+    "interpreting": "influence",
+    "integrating": "force",
+    "institutionalizing": "domination",
+    "intuiting": "discipline",
+}
+"""Most-effective mapping process→form (Fig.1/Table1 p.183); not exclusive (p.184)."""
+
+ROUTING_POWER: Final[dict[str, str]] = {
+    "initial": "influence",
+    "changed": "influence",
+    "escalation": "force",
+    "reminder": "domination",
+}
+"""Routing stage→power form: influence/force/domination; None for unknown."""
+
+
+def follow_through_power_form(
+    *,
+    stage: str | None = None,
+    process: str | None = None,
+    kind: str | None = None,
+) -> str | None:
+    """Type the power form for a routing stage or learning process.
+
+    Pure, deterministic, no I/O. Returns the form for a routing stage
+    (initial/changed→influence, escalation→force, reminder→domination) or
+    for a learning process (via PROCESS_POWER_MAP), else None for incomplete
+    or unknown inputs. The mapping is the detector (Lawrence p.184 fluidity
+    caveat kept as None), not a causal assignment.
+    """
+    if stage is not None:
+        return ROUTING_POWER.get(stage)
+    # process is the primary name for a 4I process; kind is kept as alias
+    # for callers that pass a finding kind that happens to name a process.
+    if process is not None:
+        return PROCESS_POWER_MAP.get(process)
+    if kind is not None:
+        return PROCESS_POWER_MAP.get(kind)
+    return None
+
+
+def follow_through_mode_for_form(form: str | None) -> str | None:
+    """Map a power form to its mode: episodic vs systemic.
+
+    Pure, deterministic, no I/O. influence/force→episodic, domination/
+    discipline→systemic, else None. Mirrors Lawrence p.182-183.
+    """
+    if form in ("influence", "force"):
+        return "episodic"
+    if form in ("domination", "discipline"):
+        return "systemic"
+    return None
 
 
 def lines(home: Path, *, now=None) -> list[str]:
