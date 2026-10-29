@@ -25,6 +25,16 @@ transactions. Each BODY_INFORMATION_TYPES member carries a dated, per-type
 receipt (origin, principle, recipients, scope) — preferences travel with the
 reading; a new type needs a receipt. Redistribution reviewed under
 docs/protocol-boundaries.md and the per-type receipt store.
+Disclosure metric: Samarati & Sweeney, "Protecting Privacy when Disclosing
+Information: k-Anonymity and Its Enforcement through Generalization and
+Suppression," SRI-CSL 1998 / IEEE S&P 1998 — quasi-identifier QI (Def. 2.1
+p.3), k-anonymity Def. 2.3 p.4, Assumption 2.1 QI correctness p.4 fn.1,
+distance vector Def. 3.2 p.7, minimal generalisation Def. 3.3 p.8-9, MaxSup
+Defs. 4.1-4.3 pp.10-12, preference costs §5 p.12-13, precision/completeness
+§7 pp.15-17 Fig. 11, multiple-release open problem §8 p.18. This module stays
+exact — the k symbols below are the typed metric so that any future
+generalisation/suppression proposal is reviewable; citing QI per Def. 2.1 is
+required for a release, not inferred.
 """
 
 from datetime import datetime, timezone
@@ -811,6 +821,152 @@ DENSE_TAIL_BYTES = 262144
 DENSE_WINDOW_ROWS = 2000
 #: Freshness gate for the dense-baseline verdict; matches ``FRESH_SECONDS``.
 DENSE_FRESH_SECONDS = 30.0
+# --- k-anonymity disclosure metric (Samarati & Sweeney 1998) ---
+# Quasi-identifier QI: set of attributes whose release must be controlled
+# (Def. 2.1 p.3); k-anonymity Def. 2.3 p.4: T satisfies k iff each sequence in
+# T[QI] appears >=k times; Assumption 2.1 p.4 correctness of QI is a policy
+# choice handled by contract, not by the metric; MaxSup Def. 4.3 p.11 is the
+# suppression budget; distance vector Def. 3.2 p.7 and minimal generalisation
+# Def. 3.3 p.8-9 not implemented here — this module stays exact. Precision =
+# 1 - level/height and completeness = 1 - suppressed/|PT| (§7 pp.15-17).
+QI_DEFAULT_KEYS: Final[tuple[str, ...]] = ("light_class",)
+K_ANONYMITY_DEFAULT_K: Final[int] = 2
+K_ANONYMITY_MAX_SUP: Final[int | None] = None
+
+
+def qi_histogram(
+    rows: list[dict], qi_keys: tuple[str, ...] | list[str]
+) -> dict[tuple, int]:
+    """Projection histogram T[QI] -> count (Samarati & Sweeney Def. 2.3 p.4).
+
+    Projects each row onto the quasi-identifier ``qi_keys``; missing QI fields
+    become ``None`` so counting is strict per Def. 2.3. Empty input returns
+    empty dict — the UNKNOWN-style denier is ``None`` in the ``k`` wrapper.
+    No Path/clock/json I/O; caller supplies already-held rows.
+    """
+    try:
+        keys = tuple(qi_keys)  # type: ignore[arg-type]
+    except Exception:
+        return {}
+    if not keys:
+        return {}
+    hist: dict[tuple, int] = {}
+    try:
+        iterable = list(rows)  # type: ignore[arg-type]
+    except Exception:
+        return {}
+    for row in iterable:
+        if not isinstance(row, dict):
+            continue
+        key = tuple(row.get(k) for k in keys)
+        hist[key] = hist.get(key, 0) + 1
+    return hist
+
+
+def k_anonymity_k(
+    rows: list[dict], qi_keys: tuple[str, ...] | list[str]
+) -> int | None:
+    """k = min |QI class| over T[QI] (Def. 2.3 p.4, Thm 6.3 p.15 |T|>=k).
+
+    Returns ``min(hist.values())`` when hist nonempty else ``None``.
+    Assumption 2.1 p.4 fn.1: correctness of the chosen QI is a modelling
+    assumption — if the QI omits a linkable attribute the measured k
+    understates risk; see [18] §2.2 p.4. No generalisation/suppression here.
+    """
+    hist = qi_histogram(rows, qi_keys)
+    if not hist:
+        return None
+    return min(hist.values())
+
+
+def k_anonymity_is_k_anonymous(
+    rows: list[dict], qi_keys: tuple[str, ...] | list[str], k: int
+) -> bool | None:
+    """Whether T satisfies k-anonymity for the given QI and k (Def. 2.3 p.4).
+
+    Returns ``None`` on empty table (no histogram) or bad ``k`` (non-int or
+    ``k<1``); otherwise ``True`` iff ``min(hist.values()) >= k``.
+    Sufficiency per Def. 2.3: when Assumption 2.1 holds and each identity
+    contributes at most one tuple.
+    """
+    try:
+        kk = int(k)  # type: ignore[arg-type]
+    except Exception:
+        return None
+    if kk < 1:
+        return None
+    hist = qi_histogram(rows, qi_keys)
+    if not hist:
+        return None
+    return min(hist.values()) >= kk
+
+
+def k_anonymity_suppressed_count(
+    rows: list[dict], qi_keys: tuple[str, ...] | list[str], k: int
+) -> int | None:
+    """Rows that would be suppressed at DV=[0,...,0] (Defs. 4.1-4.2 p.10).
+
+    ``Σ_{c: |c|<k} |c|`` — minimal-required-suppression count at no
+    generalisation (distance vector all-zero). Returns ``None`` on bad ``k``.
+    ``MaxSup`` Def. 4.3 p.11 is the budget against which this count is
+    compared; this helper does not enforce it.
+    """
+    try:
+        kk = int(k)  # type: ignore[arg-type]
+    except Exception:
+        return None
+    if kk < 1:
+        return None
+    hist = qi_histogram(rows, qi_keys)
+    suppressed = 0
+    for count in hist.values():
+        if count < kk:
+            suppressed += count
+    return suppressed
+
+
+def k_anonymity_completeness(
+    rows: list[dict], qi_keys: tuple[str, ...] | list[str], k: int
+) -> float | None:
+    """Completeness = 1 - suppressed/|rows| (§7 pp.15-17, Fig. 11).
+
+    Returns ``None`` when rows empty or ``k`` invalid. Compare with
+    precision = 1 - level/height when DGH levels are introduced (§7).
+    Larger k trades precision for privacy; at MaxSup=10% completeness ≥0.90
+    on the paper's 265-patient table (Fig. 11 p.17).
+    """
+    try:
+        iterable = list(rows)  # type: ignore[arg-type]
+    except Exception:
+        return None
+    if not iterable:
+        return None
+    try:
+        kk = int(k)  # type: ignore[arg-type]
+    except Exception:
+        return None
+    if kk < 1:
+        return None
+    suppressed = k_anonymity_suppressed_count(iterable, qi_keys, kk)
+    if suppressed is None:
+        return None
+    total = len(iterable)
+    if total == 0:
+        return None
+    return 1.0 - suppressed / total
+
+
+def k_anonymity_distinct_tuples(
+    rows: list[dict], qi_keys: tuple[str, ...] | list[str]
+) -> int:
+    """|hist| — distinct QI tuples in T[QI] (§5 p.12 maximum distribution).
+
+    Preference cost for incomparable minimal generalisations; larger
+    distinct count means more disclosure granularity retained.
+    """
+    hist = qi_histogram(rows, qi_keys)
+    return len(hist)
+
 
 
 def _read_tail(path: Path, limit: int) -> tuple[str | None, str | None]:
