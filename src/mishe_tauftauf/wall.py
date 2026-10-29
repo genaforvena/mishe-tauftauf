@@ -58,13 +58,113 @@ def _audit_outcome_refusal(home: Path, role: str, kind: str, reason: str, gaps) 
         pass
 
 
+def _extract_move_id(text: str | None) -> int | None:
+    """Parse explicit handoff token ``move:<digest>:from=<role>:id=<lamport>``."""
+    if not isinstance(text, str) or not text:
+        return None
+    # Slicing only so discovery/wall stay outside parsing boundary
+    needle = "move:"
+    idx = text.find(needle)
+    while idx >= 0:
+        # expect move:<64 hex>:from=<role>:id=<digits>
+        hex_start = idx + len(needle)
+        hex_end = hex_start + 64
+        if hex_end <= len(text) and all(c in "0123456789abcdef" for c in text[hex_start:hex_end]):
+            rest = text[hex_end:]
+            if rest[0:6] == ":from=":
+                from_end = rest.find(":id=")
+                if from_end >= 0:
+                    digits = rest[from_end + 4:]
+                    num = ""
+                    for ch in digits:
+                        if ch.isdigit():
+                            num += ch
+                        else:
+                            break
+                    if num:
+                        try:
+                            return int(num)
+                        except ValueError:
+                            pass
+        idx = text.find(needle, idx + 1)
+    return None
 
-def _audit_log(home: Path, role: str, source_path: str | None, wall_path: Path, digest: str) -> None:
+
+def move_winner(entries: list[dict]) -> dict[str, int]:
+    """Per-digest winner map (Alg. 1:5, Alg. 2:4) — largest Lamport ID wins."""
+    winners: dict[str, int] = {}
+    for idx, entry in enumerate(entries):
+        digest = entry.get("digest")
+        if not isinstance(digest, str) or not digest:
+            continue
+        seq = entry.get("move_id")
+        if not isinstance(seq, int):
+            seq = entry.get("seq")
+        if not isinstance(seq, int):
+            seq = entry.get("sequence")
+        if not isinstance(seq, int):
+            seq = idx
+        cur = winners.get(digest)
+        if cur is None or seq > cur:
+            winners[digest] = seq
+    return winners
+
+
+def is_ancestor(tree: dict, ancestor: object, descendant: object) -> bool:
+    """Walk ``tree[child]=parent`` to decide ancestor ancestor-of descendant (Alg. 1:30)."""
+    if ancestor is None or descendant is None or ancestor == descendant:
+        return False
+    cur = tree.get(descendant) if isinstance(tree, dict) else None
+    seen: set[object] = set()
+    for _ in range(10000):
+        if cur is None:
+            return False
+        if cur == ancestor:
+            return True
+        if cur in seen:
+            return False
+        seen.add(cur)
+        cur = tree.get(cur) if isinstance(tree, dict) else None
+    return False
+
+
+def lifecycle_lists(entries: list[dict]) -> dict[str, dict[str, list[int]]]:
+    """Per-digest PresentList/TrashList (§3.3.2) for lifecycle bypass."""
+    present: dict[str, list[int]] = {}
+    last_by_role: dict[str, tuple[str, int]] = {}
+    trash: dict[str, list[int]] = {}
+    for idx, entry in enumerate(entries):
+        role = entry.get("role")
+        digest = entry.get("digest")
+        if not isinstance(role, str) or not isinstance(digest, str) or not digest:
+            continue
+        seq = entry.get("move_id")
+        if not isinstance(seq, int):
+            seq = entry.get("seq")
+        if not isinstance(seq, int):
+            seq = entry.get("sequence")
+        if not isinstance(seq, int):
+            seq = idx
+        present.setdefault(digest, []).append(seq)
+        prev = last_by_role.get(role)
+        if prev is not None and prev[0] != digest:
+            trash.setdefault(prev[0], []).append(seq)
+        last_by_role[role] = (digest, seq)
+    all_digests = set(present) | set(trash)
+    result: dict[str, dict[str, list[int]]] = {}
+    for d in all_digests:
+        result[d] = {"present": sorted(present.get(d, [])), "trash": sorted(trash.get(d, []))}
+    return result
+
+
+def _audit_log(home: Path, role: str, source_path: str | None, wall_path: Path, digest: str, text: str | None = None) -> None:
     """Append a wall-write audit entry so clobbers are diagnosable after the fact.
 
     Logs: timestamp, role, source notes path (if known), destination wall path,
-    post-write mtime, and the written document's digest (trailing newlines
-    normalized, matching ``wall_text.is_peer_copy``). The digest lets the
+    post-write mtime, the written document's digest (trailing newlines
+    normalized, matching ``wall_text.is_peer_copy``), and per-write ``parents``
+    (object\u2192old parent for RAR suffix recompute, Alg. 2:9) plus explicit
+    ``move_id`` when the write carries a handoff token. The digest lets the
     peer-copy guard refuse a paste of another role's *superseded* wall, which
     no current wall file can show. Writes to ``logs/wall-write-audit.jsonl``
     under the ignored site. Never raises — audit logging must not break wall
@@ -80,6 +180,8 @@ def _audit_log(home: Path, role: str, source_path: str | None, wall_path: Path, 
             "wall": str(wall_path),
             "mtime": datetime.fromtimestamp(wall_path.stat().st_mtime, tz=timezone.utc).isoformat(),
             "digest": digest,
+            "move_id": _extract_move_id(text),
+            "parents": {},
             "pid": os.getpid(),
             "ppid": os.getppid(),
             "uid": os.geteuid(),
@@ -343,7 +445,7 @@ def write(home: Path, role: str, text: str, source_path: str | None = None) -> N
     # artifacts/body-wake8405-handoff-desync-repro.json). Project it here so the
     # two files cannot diverge; _write_handoff skips an identical rewrite.
     _write_handoff(home / "handoffs" / f"{role}.md", text)
-    _audit_log(home, role, source_path, wall_path, digest)
+    _audit_log(home, role, source_path, wall_path, digest, text)
 
 
 def _reject_peer_wall_copy(home: Path, role: str, text: str, digest: str,
@@ -384,7 +486,7 @@ def _reject_peer_wall_copy(home: Path, role: str, text: str, digest: str,
                 "own wall section only, or rewrite your current plan from your own evidence. "
                 f"If {name} needs this content, {name} writes it."
             )
-    _reject_peer_history_copy(home, role, digest, source_path)
+    _reject_peer_history_copy(home, role, digest, source_path, text)
 
 
 _AUDIT_HISTORY_LIMIT = 4000
@@ -406,7 +508,7 @@ def _recent_audit_entries(home: Path) -> list[dict]:
 
 
 def _reject_peer_history_copy(home: Path, role: str, digest: str,
-                              source_path: str | None = None) -> None:
+                              source_path: str | None = None, text: str | None = None) -> None:
     """Refuse notes whose digest matches a document another role wrote earlier.
 
     The live-wall guard cannot see a peer wall that has since been replaced, so
@@ -415,11 +517,69 @@ def _reject_peer_history_copy(home: Path, role: str, digest: str,
     unaffected; blank notes carry no document to confuse and are skipped.
     A refusal here is recorded through ``_audit_refusal``, so a recurrence of
     the superseded-wall paste is countable rather than pane-only.
+
+    Lifecycle bypass (Alg. 2:26 / \u00a73.3.2): scalar-like write (digest not present
+    for any peer) needs no scan. Same-digest concurrent moves ranked by Lamport
+    ID (largest wins); RAR parents preserved in audit for suffix recompute.
+    Cycle guard via IsAncestor.
     """
-    for entry in reversed(_recent_audit_entries(home)):
+    entries = _recent_audit_entries(home)
+    if not digest:
+        return
+    peer_entries = [e for e in entries if e.get("role") != role and isinstance(e.get("digest"), str) and e.get("digest")]
+    if not peer_entries:
+        return
+    _ll = lifecycle_lists(peer_entries)
+    _present = _ll.get(digest, {}).get("present")
+    if not _present:
+        return
+    cur_id = _extract_move_id(text)
+    if cur_id is None:
+        cur_id = len(entries)
+    winner_map = move_winner(entries)
+    winner_id = winner_map.get(digest)
+    if winner_id is not None and cur_id is not None and winner_id > cur_id:
+        _audit_refusal(home, role, source_path, home / "walls" / f"{role}.md", "peer-copy-history")
+        raise ValueError(
+            f"refusing to write wall {role}: notes are identical to a document another role wrote \u2014 concurrent same-digest move, winner has larger Lamport ID ({winner_id} > {cur_id}). "
+            "The restore document and every peer wall share one undelimited text — "
+            "copy from your own wall section only, or rewrite your current plan from "
+            "your own evidence."
+        )
+    try:
+        tree: dict = {}
+        last_by_role: dict[str, str] = {}
+        for e in entries:
+            r, d = e.get("role"), e.get("digest")
+            if isinstance(r, str) and isinstance(d, str) and d:
+                if r in last_by_role:
+                    tree[d] = last_by_role[r]
+                last_by_role[r] = d
+        if is_ancestor(tree, digest, digest):
+            _audit_refusal(home, role, source_path, home / "walls" / f"{role}.md", "peer-copy-cycle")
+            raise ValueError(
+                f"refusing to write wall {role}: move would create a cycle (IsAncestor)."
+            )
+    except ValueError:
+        raise
+    except Exception:
+        pass
+    for entry in reversed(entries):
         if entry.get("role") == role or not entry.get("digest"):
             continue
         if entry["digest"] == digest:
+            is_move = _extract_move_id(text) is not None or any(isinstance(e.get("move_id"), int) for e in entries if e.get("digest") == digest)
+            if not is_move:
+                _audit_refusal(home, role, source_path, home / "walls" / f"{role}.md", "peer-copy-history")
+                raise ValueError(
+                    f"refusing to write wall {role}: notes are identical to a document "
+                    f"{entry['role']} wrote at {entry.get('ts', 'an unrecorded time')}. "
+                    "The restore document and every peer wall share one undelimited text — "
+                    "copy from your own wall section only, or rewrite your current plan from "
+                    "your own evidence. If that role needs this content, it writes it."
+                )
+            if winner_id is not None and cur_id is not None and cur_id >= winner_id:
+                return
             _audit_refusal(home, role, source_path, home / "walls" / f"{role}.md", "peer-copy-history")
             raise ValueError(
                 f"refusing to write wall {role}: notes are identical to a document "
