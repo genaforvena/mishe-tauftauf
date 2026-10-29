@@ -1,4 +1,15 @@
-"""Author-owned committed candidates; genome performs only ready integration."""
+"""Author-owned committed candidates; genome performs only ready integration.
+
+Reproduction vocabulary (Walter Benjamin, "The Work of Art in the Age of
+Mechanical Reproduction," 1935 — Zohn translation, marxists.org HTML 59,270
+bytes, 19 sections I–XIX): presence vs mechanical reproduction (II),
+aura withers with plurality (II–III), cult vs exhibition value (VI–VII),
+ritual→politics and the senseless authentic print (IV, VIII).
+Any 40-hex commit SHA names a mechanical reproduction, never an original
+presence; asking for the authentic print of a reproduction makes no sense.
+Venue dev/commit/wall-outcome is exhibition/politics, not cult/ritual.
+No hash restores aura; plurality is the withering, not lack of hash.
+"""
 from __future__ import annotations
 
 import fcntl
@@ -9,11 +20,24 @@ import subprocess
 from contextlib import contextmanager, ExitStack
 from dataclasses import replace
 from pathlib import Path
+from typing import Final
 
 from . import task_state
 from .records import payload as record_payload
 from .feed import Feed
 from .observations import validate_home, validate_slug
+
+REPRODUCTION_KINDS: Final[tuple[str, ...]] = ("original-presence", "mechanical-reproduction")
+"""Reproduction kinds per Benjamin 1935 II — presence vs mechanical reproduction."""
+
+CULT_EXHIBITION_VALUES: Final[tuple[str, ...]] = ("cult", "exhibition")
+"""Cult vs exhibition values per Benjamin 1935 VI–VII — polar reception planes."""
+
+REPRODUCTION_FUNCTIONS: Final[tuple[str, ...]] = ("ritual", "politics")
+"""Reproduction functions per Benjamin 1935 IV — ritual (cult) vs politics (exhibition)."""
+
+BENJAMIN_AURA_WITHERS: Final[bool] = True
+"""Whether aura withers in mechanical reproduction — Benjamin 1935 II–III, always True."""
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -144,6 +168,48 @@ def read_ci(repo: Path, sha: str, branch: str) -> dict:
 
 def _integration_id(record: dict) -> str:
     return "integrate-" + hashlib.sha256((record["identity"] + record["head"]).encode()).hexdigest()[:24]
+
+
+def is_mechanical_reproduction(candidate_head: str) -> bool:
+    """Whether a 40-hex commit SHA names a mechanical reproduction — Benjamin 1935 II.
+
+    A 40-hex commit SHA is a reproduction, never an original-presence
+    (``presence in time and space`` is outside reproducibility). Non-hex or
+    wrong-length strings are not mechanical reproductions.
+    """
+    if not isinstance(candidate_head, str) or len(candidate_head) != 40:
+        return False
+    return all(c in "0123456789abcdef" for c in candidate_head)
+
+def cult_or_exhibition(*, venue: str) -> str:
+    """Cult vs exhibition for a venue — Benjamin 1935 VI–VII polar values.
+
+    ``dev`` / ``commit`` / ``wall-outcome`` -> ``exhibition`` (designed for
+    reproducibility, fitness to be seen); other ritual venues -> ``cult``.
+    Pure string table, no I/O.
+    """
+    if not isinstance(venue, str):
+        return "exhibition"
+    return "exhibition" if venue in ("dev", "commit", "wall-outcome") else "cult"
+
+
+def reproduction_function(*, venue: str) -> str:
+    """Ritual vs politics for a venue — Benjamin 1935 IV emancipated function.
+
+    Exhibition venues (``dev``/``commit``/``wall-outcome``) map to
+    ``politics``; cult venues map to ``ritual``. Pure predicate, no I/O.
+    """
+    return "politics" if cult_or_exhibition(venue=venue) == "exhibition" else "ritual"
+
+
+def authentic_print_makes_sense(sha: str) -> bool:
+    """Whether asking for the authentic print makes sense — Benjamin 1935 VIII.
+
+    Always ``False`` for any 40/64-hex reproduction: ``From a photographic
+    negative ... to ask for the 'authentic' print makes no sense.`` The bound
+    is the withering itself, not a missing hash.
+    """
+    return False
 
 
 def _push(record: dict) -> None:

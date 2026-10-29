@@ -90,6 +90,15 @@ PROVENANCE_ALG: Final[str] = "sha256"
 TRUSTED_SIGNERS: Final[tuple[str, ...]] = ()
 """Placeholder trust list per C2PA Sec.14.4 p.63 — future Trusted anchor; empty means no signer is Trusted yet, so Valid is the ceiling. No network fetch here."""
 
+# --- Golaszewski critique vocabulary (arXiv:2604.24890v1 + IACR 2026/804 + AFIP 2026-04-20) — 5 goals vs 2 claimed, revocation, timestamp binding, strong vs weak, validator consistency, stripping ---
+PROVENANCE_SECURITY_GOALS: Final[tuple[str, ...]] = ("claim-integrity", "weak-file-integrity", "timestamp-agreement", "validator-consistency", "strong-file-integrity")
+"""Five security goals per Golaszewski 2026 p.2 — two C2PA-claimed (claim-integrity, weak-file-integrity) + three essential (timestamp-agreement, validator-consistency, strong-file-integrity). weak vs strong kept distinct."""
+
+PROVENANCE_REVOCATION_STATES: Final[tuple[str, ...]] = ("revoked", "not-revoked", "unchecked")
+"""Revocation trichotomy per Golaszewski p.3-4 Fig.2 — revoked / not-revoked / unchecked (unchecked is the spec-legal default that defeats all goals)."""
+
+PROVENANCE_FILE_INTEGRITY_LEVELS: Final[tuple[str, ...]] = ("weak", "strong")
+"""File-integrity levels per Golaszewski p.4 Fig.3 — weak (excluded bytes ignored) vs strong (every byte protected)."""
 EVIDENCE_REMEDY_SUFFIX = re.compile(r'^(?P<stem>.+?)-(?P<sfx>v\d+|final|final-v\d+)$')
 """The clause's own remedy-naming convention, read as an artifact's name.
 
@@ -494,6 +503,86 @@ def provenance_validation_state(status_codes: list[str]) -> str | None:
     if has_sig and has_hash:
         return "valid"
     return None
+
+
+def provenance_revocation_status(status_codes: list[str]) -> str:
+    """Map C2PA status codes to revocation trichotomy — Golaszewski p.3-4 Fig.2 / Sec.15.6.
+
+    ``signingCredential.revoked`` -> ``"revoked"``;
+    ``signingCredential.notRevoked`` or ``signingCredential.trusted``+``ocspGood`` -> ``"not-revoked"``;
+    else -> ``"unchecked"`` (spec-legal default that defeats all goals). Non-list -> ``"unchecked"``.
+    The word is the detector, not a fetch.
+    """
+    if not isinstance(status_codes, list):
+        return "unchecked"
+    for code in status_codes:
+        if not isinstance(code, str) or not code:
+            return "unchecked"
+    if "signingCredential.revoked" in status_codes:
+        return "revoked"
+    if "signingCredential.notRevoked" in status_codes or "signingCredential.trusted" in status_codes and "ocsp.good" in status_codes:
+        return "not-revoked"
+    return "unchecked"
+
+
+def provenance_timestamp_binding_holds(status_codes: list[str]) -> bool:
+    """Whether timestamp is bound to claim — Golaszewski p.3 Fig.1 / Sec.15.2.
+
+    True only when a ``timestamp.boundToClaim`` / ``timestampAgreement.validated`` /
+    ``claimSignature covers timestamp`` code is present — Fig.1 binding, not mere
+    ``timeStamp.trusted``. Non-list or malformed -> ``False``.
+    """
+    if not isinstance(status_codes, list):
+        return False
+    for code in status_codes:
+        if not isinstance(code, str) or not code:
+            return False
+    return "timestamp.boundToClaim" in status_codes or "timestampAgreement.validated" in status_codes or "claimSignature.coversTimestamp" in status_codes
+
+
+def provenance_strong_integrity_holds(status_codes: list[str], *, has_exclusion: bool = False) -> bool:
+    """Whether strong file integrity holds — Golaszewski p.4 Fig.3 / Sec.18.5.
+
+    True only when ``assertion.dataHash.match`` is present and no exclusion
+    range hides mutable bytes. ``has_exclusion=True`` means an exclusion
+    range exists (e.g. GPS/front-matter) so binding is at most ``weak``.
+    Non-list or malformed -> ``False``.
+    """
+    if not isinstance(status_codes, list):
+        return False
+    for code in status_codes:
+        if not isinstance(code, str) or not code:
+            return False
+    if "assertion.dataHash.match" not in status_codes:
+        return False
+    return not has_exclusion
+
+
+def provenance_validators_agree(codes_a: list[str], codes_b: list[str]) -> bool:
+    """Whether two validators agree — Golaszewski p.4 Finding 3 / p.6.
+
+    Agree when they map to the same ``manifestState`` and same
+    revocation/timestamp/strong-integrity trichotomies; otherwise
+    ``validator-disagreement``. Non-list inputs -> ``False``.
+    """
+    if not isinstance(codes_a, list) or not isinstance(codes_b, list):
+        return False
+    for code in codes_a + codes_b:
+        if not isinstance(code, str) or not code:
+            return False
+    return (provenance_validation_state(codes_a) == provenance_validation_state(codes_b)
+            and provenance_revocation_status(codes_a) == provenance_revocation_status(codes_b)
+            and provenance_timestamp_binding_holds(codes_a) == provenance_timestamp_binding_holds(codes_b)
+            and provenance_strong_integrity_holds(codes_a, has_exclusion=False) == provenance_strong_integrity_holds(codes_b, has_exclusion=False))
+
+
+def provenance_is_stripped(manifest_bytes: bytes | None) -> bool:
+    """Whether manifest is stripped — AFIP/NIST table: no credential found.
+
+    ``None`` or empty bytes means stripped (``no credential`` != ``invalid``).
+    ``"no credential"`` must be distinguished from ``not AI`` / ``not published``.
+    """
+    return manifest_bytes is None or len(manifest_bytes) == 0
 
 
 def provenance_disclosure_is_valid(level: object) -> bool:
