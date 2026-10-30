@@ -66,6 +66,44 @@ def installed() -> bytes | None:
                           capture_output=True).stdout or None
 
 
+def pointer_verdict(current: bytes | None, before: bytes, after: bytes) -> str:
+    """What the installed bytes mean for the two pointers.
+
+    The tool's refusal rule is exact-byte, so the relationship between the
+    installed file and the two named commits decides whether an install can
+    proceed at all.  Reporting that relationship in words keeps the drift
+    observable after the install as well as before it: a host whose guard
+    matches neither pointer is a host every write will refuse, and that is
+    a different situation from a host carrying the fix.
+    """
+    if current is None:
+        return "no guard is installed on this host"
+    if current == before:
+        return "the installed guard is the revert target; the install target can be applied"
+    if current == after:
+        return "the installed guard is the install target; the fix is in place"
+    return "the installed guard matches neither pointer; every write will be refused"
+
+
+def write_plan(action: str, current: bytes | None, before: bytes, after: bytes):
+    """What a write would do, decided without touching the host.
+
+    ``apply`` writes the install target and therefore requires the revert
+    target's bytes to be installed; ``revert`` writes the revert target and
+    requires the install target's bytes to be installed.  Naming the
+    expected and replacement bytes separately keeps the backout path
+    checkable: the pair has to be a round trip, and only the exact bytes
+    the tool wrote may be replaced.
+
+    Returns the expected bytes, the replacement bytes, or ``None`` when the
+    installed file is not the bytes this action expects, which is the
+    refusal the tool reports.
+    """
+    if action == "revert":
+        return after, before
+    return before, after
+
+
 def main() -> int:
     names = read_commits()
     action = sys.argv[1] if len(sys.argv) > 1 else "apply"
@@ -80,10 +118,10 @@ def main() -> int:
         print("installed:", current_digest)
         print("revert to:", hashlib.sha256(before).hexdigest())
         print("install   :", hashlib.sha256(after).hexdigest())
+        print("verdict   :", pointer_verdict(current, before, after))
         return 0
     revert = action == "revert"
-    expected = after if revert else before
-    replacement = before if revert else after
+    expected, replacement = write_plan(action, current, before, after)
     if current != expected:
         print("refusing changed peer file: " + GUARD_PATH, file=sys.stderr)
         print("installed sha256:", current_digest, file=sys.stderr)

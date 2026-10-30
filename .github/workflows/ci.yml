@@ -11,7 +11,13 @@ jobs:
       matrix:
         python-version: ["3.10", "3.12"]
     steps:
+      # The guard-activation tests compare the committed bytes of two named
+      # commits and check that one descends from the other.  A default
+      # checkout is depth 1, where those commits are absent, so the checks
+      # would skip and the drift they exist to catch would go unnoticed.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
