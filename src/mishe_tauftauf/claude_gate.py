@@ -39,7 +39,8 @@ ENGINE = "claude"
 STALE_BUSY = 45 * 60      # a turn this long with no Stop is a stuck or interrupted turn
 STALE_BLOCKED = 120       # a permission dialog nobody answered
 TMUX_TIMEOUT = 2
-SUFFIXES = ("alive", "busy", "blocked", "failure", "hook-errors")
+ALLOW = ("Bash", "Read", "Edit", "Write", "NotebookEdit", "Glob", "Grep", "WebFetch", "WebSearch", "Agent")
+SUFFIXES =("alive", "busy", "blocked", "failure", "hook-errors")
 
 
 def journal(home: Path, role: str, suffix: str) -> Path:
@@ -206,7 +207,10 @@ def check(home: Path, now: float | None = None) -> tuple[int, list[str]]:
 def settings(home: Path, role: str, gate: Path) -> dict:
     cmd = lambda event: {"type": "command", "command": f"/usr/bin/python3 {gate} hook {event}", "timeout": 10}
     one = lambda event, matcher=None: [dict(({"matcher": matcher} if matcher else {}), hooks=[cmd(event)])]
-    return {"hooks": {
+    # Broad explicit allow plus dontAsk: anything unlisted is denied silently,
+    # never a dialog. bypassPermissions instead re-asks for its warning on every
+    # start, which an unattended resident cannot answer.
+    return {"permissions": {"defaultMode": "dontAsk", "allow": list(ALLOW)}, "hooks": {
         "SessionStart": one("SessionStart"), "SessionEnd": one("SessionEnd"),
         "UserPromptSubmit": one("UserPromptSubmit"), "Stop": one("Stop"),
         "StopFailure": one("StopFailure"),
@@ -236,7 +240,7 @@ def install(home: Path, role: str, model: str, repo: Path) -> dict:
         f"#!/bin/sh\n# mishe-engine: {ENGINE}\n# model: {model}\n"
         f"export MISHE_GATE_HOME={home}\nexport MISHE_GATE_ROLE={role}\n"
         f"cd {repo}\n"
-        f"exec claude --model {model} --permission-mode bypassPermissions "
+        f"exec claude --model {model} --permission-mode dontAsk "
         f"--setting-sources project,local --settings {config} "
         f"--append-system-prompt 'You are the {role} mind of the Mishe plant. Follow {repo}/AGENTS.md.'\n")
     launcher.chmod(0o755)

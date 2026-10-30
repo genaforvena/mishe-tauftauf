@@ -104,7 +104,10 @@ def test_install_writes_gate_probe_settings_launcher_and_backup(tmp_path):
     launcher = (tmp_path / "minds" / ROLE).read_text()
     assert "claude-haiku-5-5" in launcher and "--setting-sources project,local" in launcher
     assert (tmp_path / "backups" / f"launcher-{ROLE}-pre-claude").read_text().endswith("exec omp\n")
-    hooks = json.loads((tmp_path / "claude-gate" / f"{ROLE}.settings.json").read_text())["hooks"]
+    config = json.loads((tmp_path / "claude-gate" / f"{ROLE}.settings.json").read_text())
+    assert config["permissions"]["defaultMode"] == "dontAsk" and "Bash" in config["permissions"]["allow"]
+    assert "bypassPermissions" not in launcher and "--permission-mode dontAsk" in launcher
+    hooks = config["hooks"]
     assert set(hooks) == {"SessionStart", "SessionEnd", "UserPromptSubmit", "Stop", "StopFailure", "Notification"}
     assert os.access(out["probe"], os.X_OK) and os.access(out["gate"], os.X_OK)
     gate.install(tmp_path, ROLE, "claude-haiku-5-5", tmp_path)   # re-install keeps the original backup
