@@ -155,7 +155,7 @@ def test_the_install_target_is_a_descendant_of_the_revert_target():
         "otherwise replace the host's guard with unrelated bytes")
 
 
-def test_the_install_target_tolerates_one_unusable_protected_session_sample(tmp_path):
+def test_the_install_target_tolerates_one_unusable_protected_session_sample(tmp_path, monkeypatch):
     """The install target must require a continuous gap before it latches the plant off.
 
     A single unusable protected-session sample latched the whole plant off
@@ -184,6 +184,12 @@ def test_the_install_target_tolerates_one_unusable_protected_session_sample(tmp_
     guard = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(guard)
 
+    # The guard module patches the shared ``time`` module.  The clock is
+    # replaced through ``monkeypatch`` so it is restored afterwards; a direct
+    # assignment would leave a frozen clock behind for every later test.
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(guard.time, "monotonic", lambda: clock["now"])
+
     def offered(life_state, ticks):
         """The latch reasons the watch loop offers for one session reading."""
         import tempfile
@@ -209,8 +215,6 @@ def test_the_install_target_tolerates_one_unusable_protected_session_sample(tmp_
 
             guard.latch = record
             guard.ensure_life_support = lambda config, start=False: dict(state=life_state)
-            clock = {"now": 1000.0}
-            guard.time.monotonic = lambda: clock["now"]
             remaining = {"n": ticks}
 
             def tick(_):
@@ -219,7 +223,7 @@ def test_the_install_target_tolerates_one_unusable_protected_session_sample(tmp_
                 if remaining["n"] <= 0:
                     raise InterruptedError
 
-            guard.time.sleep = tick
+            monkeypatch.setattr(guard.time, "sleep", tick)
             with pytest.raises(InterruptedError):
                 guard.watch({})
         return reasons
