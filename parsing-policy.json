@@ -22,6 +22,7 @@
     "src/mishe_tauftauf/inference_optiona.py",
     "src/mishe_tauftauf/initiative.py",
     "src/mishe_tauftauf/initiative_watch.py",
+    "src/mishe_tauftauf/claude_gate.py",
     "src/mishe_tauftauf/mind_loop.py",
     "src/mishe_tauftauf/model_boundary.py",
     "src/mishe_tauftauf/model_cli.py",
