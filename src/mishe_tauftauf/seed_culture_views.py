@@ -635,6 +635,7 @@ def _clear_journal_stalls(home: Path) -> tuple[str, list[str]]:
     # Stat-filter before any JSON decode: mtime read is ~0.04s for 13k files
     # versus 4.7s for full read+stat.
     old_paths: list[Path] = []
+    old_set: set[Path] = set()
     for path in rows:
         try:
             age = max(0.0, now - path.stat().st_mtime)
@@ -644,7 +645,25 @@ def _clear_journal_stalls(home: Path) -> tuple[str, list[str]]:
         if age < CLEAR_JOURNAL_STALL_S:
             continue
         old_paths.append(path)
+        old_set.add(path)
+    # FAST-PASS sentinel: only when no old journal exists we can avoid
+    # reading any body, but monitoring damage (unreadable JSON) in a fresh
+    # file must still turn the line UNKNOWN, not PASS. Detect that case
+    # before returning, and likewise surface a fresh corrupt neighbour next
+    # to a RED stuck journal (test_clear_journal_stall_detector_names_stuck_rotation).
     if not old_paths:
+        # No candidate for stuck/collision — PASS only if every journal
+        # (including fresh) is readable. Scan fresh set for damage.
+        has_unreadable = False
+        for path in rows:
+            # rows already known not old; reading is bounded to the live set.
+            journal = clear_journal.read(path)
+            if journal is None:
+                has_unreadable = True
+                unknown = unknown or "journal unreadable"
+                break
+        if has_unreadable or unknown:
+            return f"CLEAR JOURNAL: UNKNOWN — {unknown or 'journal unreadable'}", []
         return "CLEAR JOURNAL: PASS", []
     # One feed parse for all roles; reuse entries across _state calls.
     turn_by_role: dict[str, tuple[object, object]] = {}
@@ -697,6 +716,16 @@ def _clear_journal_stalls(home: Path) -> tuple[str, list[str]]:
                 age = 0.0
             collisions.append(f"{role}/{settled}:committed-collision:{age:.0f}s")
     if stuck or collisions:
+        # Stuck names the cause; a fresh corrupt neighbour is still
+        # monitoring damage and must be surfaced alongside the RED.
+        if not unknown:
+            for path in rows:
+                if path in old_set:
+                    continue
+                journal = clear_journal.read(path)
+                if journal is None:
+                    unknown = "journal unreadable"
+                    break
         line = (f"CLEAR JOURNAL: RED stuck={','.join(stuck + collisions)} "
                 f"budget={CLEAR_JOURNAL_STALL_S:.0f}s")
         if unknown:
@@ -710,6 +739,14 @@ def _clear_journal_stalls(home: Path) -> tuple[str, list[str]]:
         return line, causes
     if unknown:
         return f"CLEAR JOURNAL: UNKNOWN — {unknown}", []
+    # No stuck/collision and no damage among old journals — a fresh
+    # unreadable file is still damage, not PASS.
+    for path in rows:
+        if path in old_set:
+            continue
+        journal = clear_journal.read(path)
+        if journal is None:
+            return "CLEAR JOURNAL: UNKNOWN — journal unreadable", []
     return "CLEAR JOURNAL: PASS", []
 
 
@@ -800,11 +837,18 @@ def health(home: Path) -> str:
     lines = ["GOAL: keep this plant's panes, feed, and resident services working",
              "PURSUIT: repair internal failures from the live check; own reusable code delivery through ready integration",
              "NEXT: investigate the first RED or UNKNOWN internal check and verify its live recovery"]
-    doctor = subprocess.run([sys.executable, "-m", "mishe_tauftauf", "--home", str(home), "doctor"],
-                            capture_output=True, text=True, timeout=15)
-    lines.append("DOCTOR: " + ("PASS" if doctor.returncode == 0 else "RED"))
-    if doctor.returncode:
-        lines.extend(doctor.stdout.splitlines()[-8:])
+    try:
+        doctor = subprocess.run([sys.executable, "-m", "mishe_tauftauf", "--home", str(home), "doctor"],
+                                capture_output=True, text=True, timeout=25)
+    except subprocess.TimeoutExpired:
+        # Doctor hung past the probe budget — report as UNKNOWN timeout rather
+        # than crashing the whole health view (a47e7a4 class, doctor 8-15s).
+        lines.append("DOCTOR: UNKNOWN — probe timeout 25s")
+        doctor = None
+    else:
+        lines.append("DOCTOR: " + ("PASS" if doctor.returncode == 0 else "RED"))
+        if doctor.returncode:
+            lines.extend(doctor.stdout.splitlines()[-8:])
     session = os.environ.get("MISHE_SEED_SESSION", "") or recorded_session(home) or ""
     expected_path = home / "health" / "windows.json"
     try:
