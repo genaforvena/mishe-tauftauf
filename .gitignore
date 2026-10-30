@@ -19,3 +19,19 @@ htmlcov/
 NOTES
 node_modules/
 artifacts/
+
+# Local operating records and site-specific experiments stay out of Git.
+AGENTS.md
+research/
+coordination/OPERATOR-TOPOLOGY-*.md
+checks/exit-node-egress.py
+tests/test_exit_node_egress.py
+tools/note3-egress-ip.go
+docs/agent-step-experiments.md
+docs/decision-models.md
+docs/how-it-works.md
+docs/operating.md
+docs/protocol-boundaries.md
+docs/recovery.md
+docs/wall-coordination.md
+docs/superpowers/
