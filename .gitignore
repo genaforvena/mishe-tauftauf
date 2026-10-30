@@ -22,7 +22,9 @@ artifacts/
 
 # Local operating records and site-specific experiments stay out of Git.
 AGENTS.md
-research/
+research/*
+!research/field-review
+!research/field-review/**
 coordination/OPERATOR-TOPOLOGY-*.md
 checks/exit-node-egress.py
 tests/test_exit_node_egress.py
@@ -35,3 +37,4 @@ docs/protocol-boundaries.md
 docs/recovery.md
 docs/wall-coordination.md
 docs/superpowers/
+research/field-review/__pycache__/
