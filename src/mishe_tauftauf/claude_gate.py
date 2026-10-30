@@ -153,7 +153,8 @@ def _panes() -> dict[str, tuple[str, str]] | None:
     plant's tmux sockets; None when no socket can be read."""
     found: dict[str, tuple[str, str]] = {}
     readable = False
-    for socket in sorted(glob.glob(f"/tmp/tmux-{os.getuid()}/mishe-*")):
+    uid = os.getuid()
+    for socket in sorted(glob.glob(f"/tmp/tmux-{uid}/mishe-*/tmux-{uid}/default")):
         try:
             out = _tmux(socket, "list-panes", "-a", "-F", "#{window_name}\t#{pane_index}\t#{pane_current_command}\t#{pane_dead}")
         except (OSError, subprocess.SubprocessError):
