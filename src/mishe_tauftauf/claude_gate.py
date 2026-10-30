@@ -62,6 +62,9 @@ def hook(event: str, home: Path, role: str) -> int:
     SessionStart output would be injected into the model's context); a failure
     is written down, never swallowed."""
     try:
+        if os.environ.get("MISHE_GATE_TRACE"):
+            with open(os.environ["MISHE_GATE_TRACE"], "a") as trace:
+                trace.write(f"{time.time():.3f} {event}\n")
         if event == "SessionStart":
             for suffix in ("busy", "blocked", "failure"):
                 _remove(journal(home, role, suffix))
