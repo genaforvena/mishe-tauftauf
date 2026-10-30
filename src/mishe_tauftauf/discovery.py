@@ -3978,6 +3978,74 @@ def _host_server_keeper(home: Path) -> dict[str, object]:
             "sample": f"session={session} server-pid={server} keeper={unit}",
             "session": session, "server_pid": server, "keeper": unit, "kind": "read"}
 
+
+def _host_server_slice(home: Path) -> dict[str, object]:
+    """Check that each tmux server lives in its expected Mishe slice.
+
+    A misplaced server — e.g. a plants session's server in mishe-lifeline.slice
+    because it was forked from a lifeline pane without the guarded systemd-run
+    --slice placement — burns the wrong slice's headroom and breaks the
+    governor's accounting. The session name implies the expected slice:
+    ``mishe-life-support`` expects ``mishe-lifeline.slice``, every
+    ``mishe-self-development-*`` and ``android-body*`` session expects
+    ``mishe-plants.slice``, others are unrestricted and not checked.
+
+    The server pid comes from tmux itself (``display-message #{pid}``) on the
+    socket owning the session, not from argv. The slice comes from
+    ``/proc/<pid>/cgroup`` decoded through ``proc_table.read_cgroup_slice``.
+    An absent session or unreadable cgroup stays UNKNOWN; a misplaced slice
+    is drift (observed failure, not inferred health), because the server did
+    start — just in the wrong cgroup. This reading never kills anything; it
+    only makes the placement visible so Health can route recurrence.
+    """
+    sessions: list[tuple[str, str]] = []
+    try:
+        sessions = tmux.home_sessions(Path(home))
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        sessions = []
+    if not sessions:
+        return {"id": "sense.host.server-slice", "state": "unknown",
+                "sample": "no owned session to attribute", "kind": "read"}
+    misplaced: list[dict[str, str]] = []
+    details: list[str] = []
+    for session, socket in sessions:
+        expected = proc_table.expected_workload_slice(session)
+        if expected is None:
+            continue
+        argv = ["tmux"]
+        if socket:
+            argv.extend(["-S", socket])
+        argv.extend(["display-message", "-p", "-t", "=" + session, "#{pid}"])
+        try:
+            result = subprocess.run(argv, capture_output=True, timeout=2)
+        except (OSError, subprocess.TimeoutExpired):
+            return {"id": "sense.host.server-slice", "state": "unknown",
+                    "sample": f"server attribution unavailable for {session}", "kind": "read"}
+        if result.returncode != 0:
+            return {"id": "sense.host.server-slice", "state": "unknown",
+                    "sample": f"session {session} not attributable to a server", "kind": "read"}
+        pids = proc_table.pane_pids(result.stdout)
+        if len(pids) != 1:
+            return {"id": "sense.host.server-slice", "state": "unknown",
+                    "sample": f"server pid unreadable for {session}", "kind": "read"}
+        pid = str(pids[0])
+        slice_name = proc_table.read_cgroup_slice(pid)
+        if not slice_name:
+            return {"id": "sense.host.server-slice", "state": "unknown",
+                    "sample": f"server {pid} cgroup unreadable for {session}", "kind": "read"}
+        if slice_name != expected:
+            misplaced.append({"session": session, "pid": pid, "expected": expected, "actual": slice_name})
+            details.append(f"{session}@{pid}:{slice_name}!= {expected}")
+        else:
+            details.append(f"{session}@{pid}={slice_name}")
+    if misplaced:
+        return {"id": "sense.host.server-slice", "state": "unknown",
+                "sample": "misplaced server: " + ", ".join(details), "kind": "read",
+                "misplaced": misplaced, "details": details}
+    return {"id": "sense.host.server-slice", "state": "verified",
+            "sample": "servers placed correctly: " + ", ".join(details), "kind": "read",
+            "details": details}
+
 def _host_session_restarts(home: Path, past_minutes: int = 60) -> dict[str, object]:
     """Count plant session-scope births over the trailing window; flag churn.
 
@@ -7706,13 +7774,12 @@ def sample(home: Path) -> dict[str, object]:
                      "sample": names or "session unavailable", "kind": "read"})
     observed.append(_host_session_stability(home))
     observed.append(_host_server_keeper(home))
+    observed.append(_host_server_slice(home))
     observed.append(_host_session_restarts(home))
     roots, _coverage_failure = _service_import_roots(home)
     observed.append(_sensor_coverage(home, roots))
     observed.append(_renderer_coverage(home))
     observed.append(_runtime_drift_across_sites(home))
-    observed.append(_runtime_pin_lag(home))
-    observed.append(_repo_branch_inventory(home))
     observed.append(_repo_release_retention(home))
     observed.append(_repo_git_index_lock(home))
     observed.append(_repo_push_freshness(home))

@@ -653,15 +653,13 @@ def _clear_journal_stalls(home: Path) -> tuple[str, list[str]]:
     except Exception:
         entries = None
     # Distinct roles from filenames avoid decoding every body just to learn role.
+    # Decoding lives in the adapter: clear_journal.role_from_filename is the
+    # boundary for this filename grammar (parsing-policy.json).
     seen_roles: set[str] = set()
     for path in old_paths:
-        name = path.name
-        if not name.startswith("wall-clear-") or not name.endswith(".json"):
+        role = clear_journal.role_from_filename(path.name)
+        if role is None:
             continue
-        rest = name[len("wall-clear-"):-len(".json")]
-        if "-" not in rest:
-            continue
-        role = rest.rsplit("-", 1)[0]
         if role not in seen_roles:
             seen_roles.add(role)
             if role not in turn_by_role:

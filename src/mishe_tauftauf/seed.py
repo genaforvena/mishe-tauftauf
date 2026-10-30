@@ -693,6 +693,68 @@ def _await_session(session: str, timeout: float = 15.0, socket: str | None = Non
     return True
 
 
+def _expected_workload_slice(session: str) -> str | None:
+    from .proc_table import expected_workload_slice
+
+    return expected_workload_slice(session)
+
+
+def _current_cgroup_slice() -> str | None:
+    from .proc_table import current_cgroup_slice
+
+    return current_cgroup_slice()
+
+
+def _genome_singleton_violation(home: Path, session: str) -> str | None:
+    """Return a reason if another Genome pane is already live elsewhere.
+
+    The plant owns two resident sessions (life-support and the workload
+    ``mishe-self-development-*`` family) sharing one site home. Only one
+    Genome mind must be dispatched at a time; a second pane burns the same
+    model budget and, when its server is misplaced, burns lifeline headroom.
+    This check is read-only and never kills anything — it makes the
+    duplication visible so the second supervisor can HOLD instead of forking
+    a duplicate. An unreadable table stays UNKNOWN and does not block a
+    healthy start.
+    """
+    from .proc_table import expected_workload_slice
+
+    # Any workload or life-support session is compared against its peer
+    # so only one Genome runs at a time across the home.
+    if expected_workload_slice(session) is None:
+        return None
+    try:
+        from .tmux import _tmux as _raw
+        from .tmux import home_sessions
+        owned = home_sessions(home)
+    except (OSError, ValueError):
+        return None
+    other_sessions = [name for name, _sock in owned if name != session]
+    if not other_sessions:
+        return None
+    for other in other_sessions:
+        try:
+            from .tmux import owned_socket
+            from .proc_table import decode_genome_pane_table
+            sock = owned_socket(home, other)
+            raw = _raw("list-panes", "-t", f"{other}:genome", "-F", "#{pane_index}:#{pane_dead}:#{pane_pid}", check=False, socket=sock)
+        except (OSError, ValueError):
+            continue
+        if raw.returncode != 0:
+            continue
+        try:
+            records = decode_genome_pane_table(raw.stdout)
+        except ValueError:
+            continue
+        for idx, dead, pid in records:
+            if idx != "1":
+                continue
+            if dead == "1" or not pid or pid == "0":
+                continue
+            return f"another Genome pane is live in session {other!r} (pid {pid}); one Genome at a time — HOLD"
+    return None
+
+
 def _new_session(home: Path, session: str, first_window: str, workspace: str) -> None:
     """Raise outside seed cgroups and wait for the actual session, not a unit.
 
@@ -713,7 +775,57 @@ def _new_session(home: Path, session: str, first_window: str, workspace: str) ->
         Path(tmux_tmpdir).mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         raise TmuxError(f"UNKNOWN tmux socket dir {tmux_tmpdir} cannot be created: {exc}") from exc
+    # Enforce private socket directory: never inherit a foreign TMUX value
+    # into the child. The child must see only the site's own socket, not the
+    # caller's (life-support vs plants). The pop is done here and again in
+    # session_runner so a direct -S socket invocation cannot be tricked.
     argv = ["new-session", "-d", "-s", session, "-n", first_window, "-c", workspace, "sh"]
+    expected_slice = _expected_workload_slice(session)
+    caller_slice = os.environ.get("MISHE_WORKLOAD_SLICE")
+    # If this session has a declared placement, the caller must not be
+    # inside the wrong slice without going through the guarded raise.
+    # A direct tmux fork inherits the caller's cgroup, so a lifeline
+    # process forking a plants session would silently place it in
+    # lifeline and burn lifeline headroom.
+    if expected_slice is not None:
+        if caller_slice and caller_slice != expected_slice:
+            raise TmuxError(
+                f"UNKNOWN session {session!r} expects {expected_slice} but caller slice is {caller_slice!r}; "
+                f"refusing direct raise — use systemd-run --slice {expected_slice}"
+            )
+        # Also check the live cgroup when the environment is stale or missing
+        live_slice = _current_cgroup_slice()
+        if live_slice and live_slice != expected_slice:
+            from .proc_table import is_mishe_slice as _is_mishe_slice
+
+            # Only enforce when we are actually inside a Mishe slice; tests
+            # and ad-hoc shells outside any slice remain unrestricted.
+            if _is_mishe_slice(live_slice):
+                raise TmuxError(
+                    f"UNKNOWN session {session!r} expects {expected_slice} but current cgroup slice is {live_slice!r}; "
+                    f"refusing direct raise — use systemd-run --slice {expected_slice}"
+                )
+        # with slice verification; never fall back to direct tmux.
+        runner = os.environ.get("MISHE_SESSION_RUNNER")
+        if runner is None:
+            runner = shutil.which("systemd-run") or ""
+        if not runner or not os.environ.get("XDG_RUNTIME_DIR"):
+            raise TmuxError(
+                f"UNKNOWN workload slice {expected_slice} expected for {session!r} but runner/XDG unavailable "
+                f"(runner={runner!r} XDG_RUNTIME_DIR={os.environ.get('XDG_RUNTIME_DIR')!r}); fail-closed"
+            )
+        if Path(runner).name != "systemd-run":
+            raise TmuxError(
+                f"UNKNOWN workload slice {expected_slice} requires systemd-run, got {runner!r}"
+            )
+        from .session_runner import raise_session
+        try:
+            raise_session(session, first_window, workspace,
+                          Path(os.environ["XDG_RUNTIME_DIR"]) / "mishe-session-raises",
+                          systemd_runner=runner, tmux_tmpdir=tmux_tmpdir)
+        except RuntimeError as exc:
+            raise TmuxError(str(exc)) from exc
+        return
     runner = os.environ.get("MISHE_SESSION_RUNNER")
     if runner is None:
         runner = shutil.which("systemd-run") or ""
@@ -784,6 +896,10 @@ def start(home: Path, session: str, slug: str, interval: float) -> str:
     from .tmux import TmuxError
 
     slug = validate_slug(slug)
+    if slug == "genome":
+        singleton = _genome_singleton_violation(home, session)
+        if singleton is not None:
+            raise ValueError(f"UNKNOWN genome singleton: {singleton}")
     workspace = str(home.parent.resolve())
     if not executable(home / "top-pains" / slug) or not executable(home / "minds" / slug):
         raise ValueError(f"seed {slug} needs executable top-pains/{slug} and minds/{slug}")
@@ -998,7 +1114,20 @@ def run(home: Path, session: str, slug: str, interval: float, self_pick_seconds:
         raise ValueError("clear grace must be nonnegative")
     last_status = None
     while True:
-        start(home, session, slug, interval)
+        try:
+            start(home, session, slug, interval)
+        except ValueError as exc:
+            # One Genome at a time: a second supervisor that would create
+            # the duplicate pane instead holds. This is not a crash; the
+            # supervisor keeps observing rather than systemd-restarting in
+            # a tight loop and re-contending for the session.
+            msg = str(exc)
+            if "UNKNOWN genome singleton" in msg:
+                print(f"HOLD seed {slug} singleton: {exc}", flush=True)
+                last_status = None
+                time.sleep(interval)
+                continue
+            raise
         # A semantic checker outage (for example an unavailable model) is a
         # HOLD, not a fatal error. Let the resident supervisor keep tending
         # instead of exiting and letting systemd restart it in a tight loop.

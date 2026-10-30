@@ -393,6 +393,64 @@ def pane_root(component: str) -> str:
     normalization.
     """
     return component[:-4] if component.endswith("/src") else component
+
+
+def expected_workload_slice(session: str) -> str | None:
+    """Expected systemd slice for a session, or None when unrestricted."""
+    if session == "mishe-life-support":
+        return "mishe-lifeline.slice"
+    if session.startswith("mishe-self-development-") or session.startswith("android-body"):
+        return "mishe-plants.slice"
+    return None
+
+
+def is_mishe_slice(value: str | None) -> bool:
+    """Whether ``value`` is a Mishe-managed slice name."""
+    if not isinstance(value, str) or not value:
+        return False
+    return value in ("mishe-lifeline.slice", "mishe-plants.slice", "mishe-repair.slice", "mishe.slice")
+
+
+def current_cgroup_slice() -> str | None:
+    """Most specific mishe slice of this process, or None."""
+    try:
+        text = Path("/proc/self/cgroup").read_text()
+    except OSError:
+        return None
+    for line in text.splitlines():
+        if not line.startswith("0::"):
+            continue
+        parts = line[3:].split("/")
+        for part in parts:
+            if part.endswith(".slice") and part.startswith("mishe-"):
+                return part
+        for part in reversed(parts):
+            if part.endswith(".slice"):
+                return part
+    return None
+
+
+def read_cgroup_slice(pid: str) -> str | None:
+    """Slice of ``pid``'s cgroup, or None when unreadable."""
+    if not pid:
+        return None
+    try:
+        text = Path("/proc", pid, "cgroup").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        if not line.startswith("0::"):
+            continue
+        parts = line[3:].split("/")
+        for part in parts:
+            if part.endswith(".slice") and part.startswith("mishe-"):
+                return part
+        for part in reversed(parts):
+            if part.endswith(".slice"):
+                return part
+    return None
+
+
 def pane_field(raw: bytes | str) -> str:
     """Decode one tmux format-field value; empty is valid for absent fields."""
     if isinstance(raw, bytes):
@@ -428,3 +486,31 @@ def launch_argv(raw: bytes | str) -> list[str]:
     if not argv:
         raise ValueError("tmux launch command is empty")
     return argv
+
+def decode_genome_pane_table(raw: bytes | str) -> list[tuple[str, str, str]]:
+    """Decode ``#{pane_index}:#{pane_dead}:#{pane_pid}`` lines for the genome check.
+
+    Each line is three colon-separated fields. Unreadable Unicode or a line
+    not matching ``<index>:<dead>:<pid>`` is malformed input, not a guess,
+    so the whole table is refused — the caller can then treat the sensor
+    as UNKNOWN rather than claim no duplicate exists.
+    """
+    if isinstance(raw, bytes):
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("genome pane table is not UTF-8") from exc
+    else:
+        text = raw
+    records: list[tuple[str, str, str]] = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split(":")
+        if len(parts) != 3:
+            raise ValueError(f"genome pane table has malformed line: {line!r}")
+        idx, dead, pid = parts
+        if not idx.isdigit() or dead not in ("0", "1") or not pid.isdigit():
+            raise ValueError(f"genome pane table has non-numeric fields: {line!r}")
+        records.append((idx, dead, pid))
+    return records

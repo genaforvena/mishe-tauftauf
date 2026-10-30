@@ -116,7 +116,22 @@ def raise_session(session: str, window: str, workspace: str, lock_dir: Path,
         raise ValueError("invalid session window, workspace or timeout")
     lock_dir.mkdir(parents=True, exist_ok=True)
     environment = os.environ.copy()
+    # Always strip a foreign TMUX that points at another session's socket.
+    # A lifeline pane's TMUX names .../mishe-life-support/... even when the
+    # target workspace is mishe-tauftauf. Without the pop, has-session probes
+    # and the new server would both talk to the wrong socket.
+    environment.pop("TMUX", None)
     workload_slice = environment.get("MISHE_WORKLOAD_SLICE")
+    # Decide the expected slice from the session name when the caller has
+    # not already been told. This makes the slice check work even for a
+    # direct raise_session call that forgot to set MISHE_WORKLOAD_SLICE.
+    if not workload_slice:
+        if session == "mishe-life-support":
+            workload_slice = "mishe-lifeline.slice"
+            environment["MISHE_WORKLOAD_SLICE"] = workload_slice
+        elif session.startswith("mishe-self-development-") or session.startswith("android-body"):
+            workload_slice = "mishe-plants.slice"
+            environment["MISHE_WORKLOAD_SLICE"] = workload_slice
     if workload_slice and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*\.slice", workload_slice):
         raise ValueError("invalid workload slice")
     # An explicit per-site socket directory wins over the inherited one: a
@@ -124,8 +139,12 @@ def raise_session(session: str, window: str, workspace: str, lock_dir: Path,
     # its own site's socket, never the default one (duplicate-session fork).
     private_dir = tmux_tmpdir if tmux_tmpdir is not None else environment.get("TMUX_TMPDIR")
     if private_dir:
-        environment.pop("TMUX", None)
         environment["TMUX_TMPDIR"] = private_dir
+    else:
+        # Fail-closed for workload sessions: a slice without a private socket
+        # is the lifeline-vs-plants confusion (default socket shared).
+        if workload_slice:
+            raise RuntimeError(f"UNKNOWN session {session!r} needs a private TMUX_TMPDIR for slice {workload_slice}; none provided")
     def exists() -> bool:
         return subprocess.run(["tmux", "has-session", "-t", "=" + session],
                               capture_output=True, timeout=5, env=environment).returncode == 0
