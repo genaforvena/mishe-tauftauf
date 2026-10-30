@@ -184,11 +184,11 @@ def assess(repo: pathlib.Path = REPO) -> dict:
     ``reverted`` or ``current``.  Raises ``Undecidable`` when the evidence
     cannot be read, so a missing guard never reads as a fault.
     """
+    installed = _installed_bytes()
     install_commit = _pointer("install_commit", repo)
     revert_commit = _pointer("revert_commit", repo)
     install_bytes = _source_at(install_commit, repo)
     revert_bytes = _source_at(revert_commit, repo)
-    installed = _installed_bytes()
     row = {
         "install_commit": install_commit,
         "revert_commit": revert_commit,
