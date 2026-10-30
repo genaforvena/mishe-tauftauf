@@ -261,8 +261,11 @@ def _runtime(home):
     result = {"selection": "UNKNOWN", "selection_sha256": None, "source": None, "head": None,
               "selection_state": "UNKNOWN", "services_state": "UNKNOWN", "renderers_state": "UNKNOWN",
               "configured_service_roots": {}, "service_roots": {}, "renderer_roots": {},
-              "service_states": {}, "renderer_states": {}, "problems": []}
+              "service_states": {}, "renderer_states": {}, "problems": [], "parked": []}
     problems = result["problems"]
+    from . import dispositions
+    parked = dispositions.parked_roles(home)  # unreadable records list nothing: absence stays a problem
+    result["parked"] = parked
     pin = home / "health/runtime-release.json"
     try:
         raw = pin.read_bytes() if pin.exists() else None
@@ -300,6 +303,11 @@ def _runtime(home):
         # with no MainPID is not running and is named as such.
         for unit, pid in _service_pids(units).items():
             if pid is None:
+                role = next((r for r in parked if unit.endswith("-" + r + ".service")), None)
+                if role:
+                    # Declared absence with an expiring record: PARKED, not UNKNOWN.
+                    result["service_states"][unit] = "PARKED"
+                    continue
                 problems.append("live service process not running: " + unit)
                 continue
             roots = wall_view._live_import_roots(pid)
@@ -308,7 +316,7 @@ def _runtime(home):
                 continue
             result["service_roots"][unit] = sorted(set(roots))
             result["service_states"][unit] = "KNOWN"
-        if configured is not None and all(state == "KNOWN" for state in result["service_states"].values()):
+        if configured is not None and all(state in ("KNOWN", "PARKED") for state in result["service_states"].values()):
             result["services_state"] = "KNOWN"
     except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as exc:
         problems.append("service observation unavailable (" + type(exc).__name__ + ")")
@@ -377,6 +385,9 @@ def _runtime(home):
             for role in renderers:
                 pid = pids.get(role) if pids is not None else None
                 if pid is None:
+                    if role in parked:
+                        result["renderer_states"][role] = "PARKED"
+                        continue
                     problems.append("renderer not running: " + role)
                     continue
                 roots = wall_view._live_import_roots(pid)
@@ -393,7 +404,7 @@ def _runtime(home):
                     continue
                 result["renderer_roots"][role] = sorted(set(roots))
                 result["renderer_states"][role] = "KNOWN"
-        if declared is not None and renderers and all(state == "KNOWN" for state in result["renderer_states"].values()):
+        if declared is not None and renderers and all(state in ("KNOWN", "PARKED") for state in result["renderer_states"].values()):
             result["renderers_state"] = "KNOWN"
     except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as exc:
         problems.append("renderer observation unavailable (" + type(exc).__name__ + ")")

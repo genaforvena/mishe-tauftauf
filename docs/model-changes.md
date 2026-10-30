@@ -64,6 +64,22 @@ Arbitrary wrappers, inline credentials, resumed sessions and native runners with
 their own provider packages require separate adapters; they remain explicit
 UNKNOWN or fail preflight. The command does not change accounts or other plants.
 
+## Alerts, dispositions and parked roles
+
+A model-change finding is sent once to Health, then escalates to Genome after 1h,
+6h and 24h unresolved (daily after). The text carries no time bucket, so repeats
+dedupe. A resolver records its answer with an expiry; the finding stays listed in
+`checks/model-changes.json` under `dispositioned`, and returns as new when the
+record expires:
+
+    mishe-tauftauf --home SITE_HOME disposition set model-change:ID benign --owner health --evidence "..." --ttl-hours 24
+    mishe-tauftauf --home SITE_HOME disposition park ROLE --owner operator --evidence "..." --ttl-hours 72
+    mishe-tauftauf --home SITE_HOME disposition list
+
+A parked role's missing service or renderer reads PARKED in the substrate
+observation instead of UNKNOWN; a missing one on an unparked role stays UNKNOWN.
+Unreadable records or alert memory never mute: they re-alert.
+
 ## Engine account inventory (read-only)
 
 `mishe engine accounts` lists the registered subscription pools from

@@ -17,6 +17,7 @@ import time
 import uuid
 
 from . import model_boundary as boundary
+from . import dispositions
 from . import seed
 from .activity import roles
 from .feed import Feed
@@ -403,6 +404,11 @@ def watch_once(home, lock_wait=LOCK_WAIT_SECONDS, notify=None):
     home = site_home(home)
     reports = []
     root = home / 'model-changes'
+    alerts_path = home / 'checks' / 'model-change-alerts.json'
+    try:
+        alerts = boundary.load(alerts_path)
+    except (OSError, ValueError):
+        alerts = {}  # unreadable memory re-alerts once; it never mutes
     for path in sorted(root.iterdir()) if root.exists() else []:
         if not path.is_dir():
             continue
@@ -416,12 +422,36 @@ def watch_once(home, lock_wait=LOCK_WAIT_SECONDS, notify=None):
         except (OSError, ValueError, TypeError, KeyError) as exc:
             report = {'id': path.name, 'state': 'unknown', 'reason': str(exc), 'roles': {}, 'checked': now()}
         reports.append(report)
-        if report['state'] == 'unknown' or (report['state'] == 'pending' and now() - report['created'] > 120):
-            reason = str(report.get('reason') or 'no named reason')[:200]
-            Feed(home).append_runtime_once('model-change', f'[dm] to=health\nModel change {path.name} {report["state"]}: {reason}; interval={int(now() // 120)}. Inspect model status and retained evidence. Resolver=health; action=inspect exact role/process/provider failure; disposition within 120s.')
-    snapshot = {'checked': now(), 'reports': reports, 'state': 'unknown' if any(
-        r['state'] == 'unknown' or (r['state'] == 'pending' and now() - r['created'] > 120)
-        for r in reports) else 'ok'}
+        bad = report['state'] == 'unknown' or (report['state'] == 'pending' and now() - report['created'] > 120)
+        if not bad:
+            dispositions.resolve(alerts, path.name)
+            continue
+        reason = str(report.get('reason') or 'no named reason')[:200]
+        held = dispositions.active(home, 'model-change:' + path.name, now=now())
+        if held:
+            # Recorded answer, still listed: the finding is not erased, only not re-sent.
+            report['disposition'] = {k: held[k] for k in ('kind', 'owner', 'evidence', 'recheck_at')}
+            dispositions.resolve(alerts, path.name)
+            continue
+        # Edge-triggered: one message per new finding or changed reason, then an
+        # age ladder that widens the resolver. No time bucket in the text, so the
+        # append-once guard dedupes repeats instead of being defeated by them.
+        due = dispositions.edge(alerts, path.name, reason, now=now())
+        if due is None:
+            continue
+        level, first = due
+        if level == 0:
+            to, who = 'health', 'Resolver=health'
+            tail = f'Inspect model status and retained evidence; record the answer with `disposition set model-change:{path.name}` (expires, then returns) or fix the cause.'
+        else:
+            to, who = 'genome', 'Resolver=genome (escalated from health)'
+            tail = f'Unresolved {(now() - first) / 3600:.1f}h after first sighting; health has not resolved or dispositioned it. Resolve, disposition with evidence, or defer to a named trigger.'
+        Feed(home).append_runtime_once('model-change', f'[dm] to={to}\nModel change {path.name} {report["state"]}: {reason}; escalation={level}. {who}. {tail}')
+    boundary.save(alerts_path, alerts)
+    open_reports = [r for r in reports if r['state'] == 'unknown' or (r['state'] == 'pending' and now() - r['created'] > 120)]
+    snapshot = {'checked': now(), 'reports': reports,
+                'dispositioned': sorted(r['id'] for r in open_reports if 'disposition' in r),
+                'state': 'unknown' if any('disposition' not in r for r in open_reports) else 'ok'}
     boundary.save(home / 'checks' / 'model-changes.json', snapshot)
     return snapshot
 

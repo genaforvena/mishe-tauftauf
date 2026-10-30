@@ -992,6 +992,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--no-create", action="store_true", help="do not create outer view window when inside tmux")
     p.set_defaults(func=cmd_view)
     from .model_cli import register
+    from .dispositions import register as register_dispositions
+    register_dispositions(sub)
     register(sub)
     from .engine_usage import register as register_engine
     register_engine(sub)
