@@ -25,6 +25,10 @@ AGENTS.md
 research/*
 !research/field-review
 !research/field-review/**
+!research/body/
+research/body/*
+!research/body/clock_bound.py
+!research/body/personal-multibody.py
 coordination/OPERATOR-TOPOLOGY-*.md
 checks/exit-node-egress.py
 tests/test_exit_node_egress.py
