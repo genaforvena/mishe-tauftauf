@@ -194,14 +194,40 @@ def test_an_unknown_verdict_is_written_as_unknown(monkeypatch, tmp_path):
 
 
 def test_the_detector_runs_against_the_committed_tree(monkeypatch):
-    """The check names real commits, so the pointers it reads must resolve."""
+    """The check names real commits, so the pointers it reads must resolve.
+
+    On a machine with no guard installed the check reports UNKNOWN, which is
+    a plain line rather than JSON, so the verdict is read from whichever form
+    the check produced.  The point of this test is that the two named targets
+    are real commits in this repository and that the check runs to a decision
+    rather than raising.
+    """
     result = subprocess.run([sys.executable, str(CHECK), "--json"], capture_output=True, text=True)
     assert result.returncode in (0, 2, 3), result.stderr
     row = json.loads(result.stdout)
-    assert row["state"] in ("current", "drift", "not-activated", "reverted")
+    assert row["state"] in ("current", "drift", "not-activated", "reverted", "UNKNOWN")
     if row["state"] in ("current", "not-activated"):
         # Both named targets must be real commits in this repository.
         for commit in (row["install_commit"], row["revert_commit"]):
             shown = subprocess.run(["git", "-C", str(CHECK.parents[1]), "cat-file", "-e",
                                     commit + "^{commit}"], capture_output=True)
             assert shown.returncode == 0, commit
+
+
+def test_the_unknown_path_is_machine_readable(monkeypatch, capsys):
+    """A machine with no guard gets a readable UNKNOWN verdict, and exit 3.
+
+    The JSON form is promised in both cases: a monitor reading this check's
+    output must not have to parse prose to learn whether the question was
+    decided, and a CI runner must be able to read the same field either way.
+    """
+    check = load_check()
+
+    def refuse():
+        raise check.Undecidable("no guard is installed at /usr/local/lib/mishe-containment/guard.py")
+
+    monkeypatch.setattr(check, "_installed_bytes", refuse)
+    assert check.main(["--json"]) == 3
+    row = json.loads(capsys.readouterr().out)
+    assert row["state"] == "UNKNOWN"
+    assert "no guard is installed" in row["reason"]

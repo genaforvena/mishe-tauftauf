@@ -236,11 +236,17 @@ def main(argv=None) -> int:
     try:
         row = assess(args.repo)
     except Undecidable as exc:
-        print("UNKNOWN — " + str(exc))
+        unknown = {"state": "UNKNOWN", "reason": str(exc)}
+        # The JSON form is machine-readable in both cases: a monitor reading
+        # this check's output must not have to parse prose to learn whether
+        # the question was decided.
+        if args.json:
+            print(json.dumps(unknown, indent=1))
+        else:
+            print("UNKNOWN — " + str(exc))
         if args.state:
             args.state.parent.mkdir(parents=True, exist_ok=True)
-            args.state.write_text(json.dumps({"state": "UNKNOWN", "reason": str(exc)}, indent=1),
-                                  encoding="utf-8")
+            args.state.write_text(json.dumps(unknown, indent=1), encoding="utf-8")
         return 3
     if args.json:
         print(json.dumps(row, indent=1))
