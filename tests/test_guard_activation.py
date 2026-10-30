@@ -9,6 +9,7 @@ import datetime
 import importlib.util
 import pathlib
 import subprocess
+import sys
 
 import pytest
 
@@ -191,9 +192,16 @@ def test_the_install_target_tolerates_one_unusable_protected_session_sample(tmp_
     monkeypatch.setattr(guard.time, "monotonic", lambda: clock["now"])
 
     def offered(life_state, ticks):
-        """The latch reasons the watch loop offers for one session reading."""
+        """The latch reasons and the stop calls the watch loop makes.
+
+        Both are recorded.  The trip cause is not only that the plant is
+        latched off, it is that the plant is *stopped*; a repair that
+        deferred the latch but stopped the plant on the first bad sample
+        would satisfy an assertion on the latch reasons alone.
+        """
         import tempfile
         reasons = []
+        stops = []
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             state, run = root / "state", root / "run"
@@ -205,7 +213,12 @@ def test_the_install_target_tolerates_one_unusable_protected_session_sample(tmp_
                 oom_kill=0, memory=1, maximum=2, tasks=1, task_max=2, available=1,
                 disk_free=1, memory_pressure=0.0, io_pressure=0.0, limits_ok=True,
                 ssh_available=True, host_io_available=True, probes={})
-            guard.stop = lambda config: []
+
+            def record_stop(config):
+                stops.append(clock["now"])
+                return []
+
+            guard.stop = record_stop
             guard.notify = lambda message: None
             real_latch = guard.latch
 
@@ -214,7 +227,10 @@ def test_the_install_target_tolerates_one_unusable_protected_session_sample(tmp_
                 real_latch(target_state, why, observation)
 
             guard.latch = record
-            guard.ensure_life_support = lambda config, start=False: dict(state=life_state)
+            if life_state is None:
+                guard.ensure_life_support = lambda config, start=False: None
+            else:
+                guard.ensure_life_support = lambda config, start=False: dict(state=life_state)
             remaining = {"n": ticks}
 
             def tick(_):
@@ -226,14 +242,198 @@ def test_the_install_target_tolerates_one_unusable_protected_session_sample(tmp_
             monkeypatch.setattr(guard.time, "sleep", tick)
             with pytest.raises(InterruptedError):
                 guard.watch({})
-        return reasons
+        return reasons, stops
 
     trip = "protected recovery session missing, dead or unobservable"
-    assert trip not in offered("UNKNOWN", 2), (
+    reasons, stops = offered("UNKNOWN", 2)
+    assert trip not in reasons, (
         "the install target latched the plant off after a single unusable "
         "protected-session sample, which is the trip cause being repaired")
-    assert trip in offered("RED", 10), (
+
+    # The watch loop stops the plant on its own startup latch, so the count
+    # of stop calls alone says nothing.  What the repair must not do is stop
+    # the plant *more* because the session read badly.  A live session is
+    # the comparison: the same loop, the same number of iterations, one
+    # fewer reason to stop.
+    _, live_stops = offered("PANES_LIVE", 2)
+    assert len(stops) == len(live_stops), (
+        "the install target stopped the plant on a single unusable "
+        "protected-session sample, which is the harm being repaired")
+
+    reasons, stops = offered("RED", 10)
+    assert trip in reasons, (
         "the install target must still latch a session that stays missing")
+    assert stops, (
+        "the install target must still stop the plant when the session "
+        "stays missing")
+    assert min(stops) - 1000.0 >= guard.LIFE_MISSING_SECONDS, (
+        "the install target stopped the plant before the session had been "
+        "missing for the whole debounce interval")
+
+
+def test_the_detector_rejects_the_same_bytes_without_the_debounce(tmp_path, monkeypatch):
+    """The negative control: the detector must fail when the repair is absent.
+
+    The behavioural test above passes for bytes that carry the debounce.  It
+    has to fail for bytes that do not, or it is not a detector at all: the
+    same watch loop, with the debounce interval set to zero, must latch on
+    the single unusable sample.  Without this control the test would pass
+    identically for a repaired install target and for an unrepaired one.
+    """
+    repo = pathlib.Path(__file__).resolve().parents[1]
+    source = "src/mishe_tauftauf/host_containment.py"
+    install = _pointer("install_commit")
+    raw = subprocess.run(["git", "-C", str(repo), "show", f"{install}:{source}"],
+                         capture_output=True)
+    if raw.returncode:
+        pytest.skip("the committed bytes of the install target are not available here")
+    body = raw.stdout.replace(b"LIFE_MISSING_SECONDS = 20", b"LIFE_MISSING_SECONDS = 0")
+    assert body != raw.stdout, "the debounce constant must be the one the test neutralises"
+
+    target = tmp_path / "guard_without_debounce.py"
+    target.write_bytes(body)
+    spec = importlib.util.spec_from_file_location("guard_without_debounce", target)
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    assert guard.LIFE_MISSING_SECONDS == 0
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(guard.time, "monotonic", lambda: clock["now"])
+
+    import tempfile
+    reasons = []
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp)
+        state, run = root / "state", root / "run"
+        state.mkdir()
+        run.mkdir()
+        guard.STATE = state
+        guard.RUN = run
+        guard.observe = lambda config: dict(
+            oom_kill=0, memory=1, maximum=2, tasks=1, task_max=2, available=1,
+            disk_free=1, memory_pressure=0.0, io_pressure=0.0, limits_ok=True,
+            ssh_available=True, host_io_available=True, probes={})
+        guard.stop = lambda config: []
+        guard.notify = lambda message: None
+        real_latch = guard.latch
+
+        def record(target_state, why, observation):
+            reasons.append(why)
+            real_latch(target_state, why, observation)
+
+        guard.latch = record
+        guard.ensure_life_support = lambda config, start=False: dict(state="UNKNOWN")
+        remaining = {"n": 2}
+
+        def tick(_):
+            remaining["n"] -= 1
+            clock["now"] += 5
+            if remaining["n"] <= 0:
+                raise InterruptedError
+
+        monkeypatch.setattr(guard.time, "sleep", tick)
+        with pytest.raises(InterruptedError):
+            guard.watch({})
+
+    trip = "protected recovery session missing, dead or unobservable"
+    assert trip in reasons, (
+        "the detector must fail for bytes that carry no debounce, or the "
+        "behavioural test proves nothing")
+
+
+def test_the_install_target_does_not_latch_when_there_is_no_protected_session(tmp_path, monkeypatch):
+    """A configuration without a protected session must never latch on it.
+
+    ``ensure_life_support`` returns ``None`` when the configuration has no
+    ``life_support`` key.  That is not a missing session, so the trip
+    reason must not be offered; and the debounce interval must be cleared,
+    so a later real failure starts its own interval rather than inheriting
+    an old gap.
+    """
+    repo = pathlib.Path(__file__).resolve().parents[1]
+    source = "src/mishe_tauftauf/host_containment.py"
+    install = _pointer("install_commit")
+    raw = subprocess.run(["git", "-C", str(repo), "show", f"{install}:{source}"],
+                         capture_output=True)
+    if raw.returncode:
+        pytest.skip("the committed bytes of the install target are not available here")
+
+    target = tmp_path / "guard_install_target.py"
+    target.write_bytes(raw.stdout)
+    spec = importlib.util.spec_from_file_location("guard_install_target", target)
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(guard.time, "monotonic", lambda: clock["now"])
+
+    import tempfile
+    reasons = []
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp)
+        state, run = root / "state", root / "run"
+        state.mkdir()
+        run.mkdir()
+        guard.STATE = state
+        guard.RUN = run
+        guard.observe = lambda config: dict(
+            oom_kill=0, memory=1, maximum=2, tasks=1, task_max=2, available=1,
+            disk_free=1, memory_pressure=0.0, io_pressure=0.0, limits_ok=True,
+            ssh_available=True, host_io_available=True, probes={})
+        guard.stop = lambda config: []
+        guard.notify = lambda message: None
+        real_latch = guard.latch
+
+        def record(target_state, why, observation):
+            reasons.append(why)
+            real_latch(target_state, why, observation)
+
+        guard.latch = record
+        guard.ensure_life_support = lambda config, start=False: None
+        remaining = {"n": 15}
+
+        def tick(_):
+            remaining["n"] -= 1
+            clock["now"] += 5
+            if remaining["n"] <= 0:
+                raise InterruptedError
+
+        monkeypatch.setattr(guard.time, "sleep", tick)
+        with pytest.raises(InterruptedError):
+            guard.watch({})
+
+    trip = "protected recovery session missing, dead or unobservable"
+    assert trip not in reasons, (
+        "the install target latched the plant off for a configuration that "
+        "has no protected session at all")
+
+
+def test_the_install_and_the_revert_target_the_same_workload():
+    """Installing the fix must not change what a trip stops.
+
+    The repair changes when the plant is stopped, not what is stopped.  If
+    the two pointer commits disagreed about the stop inventory, the install
+    would silently widen or narrow the boundary it is supposed to leave
+    alone.
+    """
+    repo = pathlib.Path(__file__).resolve().parents[1]
+    source = "src/mishe_tauftauf/host_containment.py"
+
+    def stop_body(commit):
+        raw = subprocess.run(["git", "-C", str(repo), "show", f"{commit}:{source}"],
+                             capture_output=True)
+        if raw.returncode:
+            pytest.skip("the committed bytes of the install target are not available here")
+        text = raw.stdout.decode("utf-8")
+        start = text.index("def stop(config):")
+        end = text.index("\ndef ", start + 1)
+        return text[start:end]
+
+    revert_body = stop_body(_pointer("revert_commit"))
+    install_body = stop_body(_pointer("install_commit"))
+    assert revert_body == install_body, (
+        "the install target stops a different workload than the revert "
+        "target; installing the fix would change the boundary")
 
 
 def _apply_tool():
@@ -294,14 +494,87 @@ def test_a_write_is_refused_when_the_installed_bytes_are_not_the_expected_ones()
 
     The refusal is the property that keeps an unrelated edit on the host
     from being overwritten, so it is checked against the same decision the
-    tool makes.
+    tool makes.  The decision has to be observable: a plan that is not
+    ``None`` is a write the tool is allowed to make, and a plan that is
+    ``None`` is the refusal.
     """
     tool = _apply_tool()
     before, after = b"revert bytes", b"install bytes"
     drifted = b"someone else's bytes"
 
-    expected, _ = tool.write_plan("apply", drifted, before, after)
-    assert drifted != expected, "a drifted host must not match the expected bytes"
+    assert tool.write_plan("apply", drifted, before, after) is None, (
+        "a drifted host must not match the bytes an install expects")
+    assert tool.write_plan("revert", drifted, before, after) is None, (
+        "a drifted host must not match the bytes a revert expects")
 
-    expected, _ = tool.write_plan("revert", drifted, before, after)
-    assert drifted != expected, "a drifted host must not match the expected bytes"
+    assert tool.write_plan("apply", before, before, after) is not None, (
+        "a host carrying the revert target's bytes accepts an install")
+    assert tool.write_plan("revert", after, before, after) is not None, (
+        "a host carrying the install target's bytes accepts a revert")
+
+
+def test_a_refused_write_leaves_the_host_file_untouched(tmp_path, monkeypatch, capsys):
+    """The refusal has to happen before anything is written.
+
+    A refusal that reported itself but still replaced the bytes would pass
+    a test that only looked at the exit code, so the file's contents are
+    checked after the tool refused to write.
+    """
+    tool = _apply_tool()
+    guard = tmp_path / "guard.py"
+    drifted = b"someone else's bytes\n"
+    guard.write_bytes(drifted)
+
+    monkeypatch.setattr(tool, "GUARD_PATH", str(guard))
+    monkeypatch.setattr(tool, "read_installed", lambda: (drifted, None))
+    monkeypatch.setattr(tool, "source_at", lambda commit: b"expected bytes\n")
+
+    monkeypatch.setattr(sys, "argv", ["apply.py", "apply"])
+    assert tool.main() == 1, "a refused write must report failure"
+    captured = capsys.readouterr()
+    assert "refusing changed peer file" in captured.err
+    assert guard.read_bytes() == drifted, "a refused write must not replace the host's bytes"
+
+
+def test_a_revert_also_refuses_a_drifted_host(tmp_path, monkeypatch, capsys):
+    """The backout path must refuse a host it did not write, too."""
+    tool = _apply_tool()
+    guard = tmp_path / "guard.py"
+    drifted = b"someone else's bytes\n"
+    guard.write_bytes(drifted)
+
+    monkeypatch.setattr(tool, "GUARD_PATH", str(guard))
+    monkeypatch.setattr(tool, "read_installed", lambda: (drifted, None))
+    monkeypatch.setattr(tool, "source_at", lambda commit: b"expected bytes\n")
+
+    monkeypatch.setattr(sys, "argv", ["apply.py", "revert"])
+    assert tool.main() == 1, "a refused revert must report failure"
+    assert "refusing changed peer file" in capsys.readouterr().err
+    assert guard.read_bytes() == drifted, "a refused revert must not replace the host's bytes"
+
+
+def test_an_unreadable_installed_guard_is_not_reported_as_absent(tmp_path, monkeypatch):
+    """A sudo failure is a privilege problem, not a missing guard.
+
+    The verdict reaches an operator who acts on it, so a file that could not
+    be read as root must not read as a file that is not there.
+    """
+    tool = _apply_tool()
+    before, after = b"revert bytes", b"install bytes"
+
+    class _Result:
+        returncode = 1
+        stdout = b""
+
+    monkeypatch.setattr(tool, "GUARD_PATH", str(tmp_path / "guard.py"))
+    monkeypatch.setattr(tool.pathlib.Path, "exists", lambda self: True)
+    monkeypatch.setattr(tool.subprocess, "run", lambda *a, **k: _Result())
+
+    current, unreadable = tool.read_installed()
+    assert current is None
+    assert unreadable is not None
+    assert "root" in unreadable
+    assert "no guard is installed" not in unreadable
+
+    verdict = tool.pointer_verdict(current, before, after)
+    assert "no guard is installed" not in verdict or "no guard is installed" not in unreadable

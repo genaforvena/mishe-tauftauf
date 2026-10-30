@@ -59,11 +59,38 @@ def source_at(commit: str) -> bytes:
 
 
 def installed() -> bytes | None:
+    """The installed bytes, or ``None`` when the file is absent.
+
+    An unreadable file and an absent file are different situations, and the
+    verdict that reaches the operator has to name the right one: a sudo
+    failure is a privilege problem, not a missing guard, and an operator
+    sent to look for a missing file will not find the sudo prompt.
+    """
     path = pathlib.Path(GUARD_PATH)
     if not path.exists():
         return None
     return subprocess.run(["sudo", "-n", "cat", GUARD_PATH],
                           capture_output=True).stdout or None
+
+
+def read_installed() -> tuple[bytes | None, str | None]:
+    """The installed bytes and, when they could not be read, why not.
+
+    Returns ``(bytes, None)`` when the file was read, and ``(None, reason)``
+    when it could not be: absent, unreadable, or refused by sudo.  The
+    reason is what the verdict reports, so a sudo failure never reads as a
+    missing guard.
+    """
+    path = pathlib.Path(GUARD_PATH)
+    if not path.exists():
+        return None, "no guard is installed on this host"
+    result = subprocess.run(["sudo", "-n", "cat", GUARD_PATH], capture_output=True)
+    if result.returncode:
+        return None, ("the installed guard could not be read as root "
+                      "(sudo exit %d); every write will be refused" % result.returncode)
+    if not result.stdout:
+        return None, "the installed guard is empty; every write will be refused"
+    return result.stdout, None
 
 
 def pointer_verdict(current: bytes | None, before: bytes, after: bytes) -> str:
@@ -95,13 +122,35 @@ def write_plan(action: str, current: bytes | None, before: bytes, after: bytes):
     checkable: the pair has to be a round trip, and only the exact bytes
     the tool wrote may be replaced.
 
-    Returns the expected bytes, the replacement bytes, or ``None`` when the
-    installed file is not the bytes this action expects, which is the
-    refusal the tool reports.
+    Returns the expected bytes and the replacement bytes, or ``None`` when
+    the installed file is not the bytes this action expects, which is the
+    refusal the tool reports.  The refusal is decided here rather than at
+    the write, so that the decision is one value a caller has to honour:
+    a plan that is not ``None`` is a write the tool is allowed to make.
     """
-    if action == "revert":
-        return after, before
-    return before, after
+    expected, replacement = (after, before) if action == "revert" else (before, after)
+    if current != expected:
+        return None
+    return expected, replacement
+
+
+def write_atomically(path: pathlib.Path, data: bytes) -> None:
+    """Replace the guard's bytes in one step, or not at all.
+
+    A truncated guard is worse than the guard it replaced: systemd would
+    fail to exec it and the host would have no boundary at all.  The bytes
+    therefore go to a temporary file in the same directory and are renamed
+    onto the path, which is atomic, so an interruption leaves the previous
+    guard in place rather than a half-written one.
+    """
+    temp = path.with_name(path.name + ".new")
+    with temp.open("wb") as stream:
+        stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.chmod(temp, MODE)
+    subprocess.run(["sudo", "-n", "chown", "0:0", str(temp)], check=True)
+    os.replace(temp, path)
 
 
 def main() -> int:
@@ -112,27 +161,35 @@ def main() -> int:
         return 2
     before = source_at(names["revert_commit"])
     after = source_at(names["install_commit"])
-    current = installed()
+    current, unreadable = read_installed()
     current_digest = hashlib.sha256(current).hexdigest() if current else None
     if action == "check":
         print("installed:", current_digest)
         print("revert to:", hashlib.sha256(before).hexdigest())
         print("install   :", hashlib.sha256(after).hexdigest())
-        print("verdict   :", pointer_verdict(current, before, after))
+        print("verdict   :", unreadable or pointer_verdict(current, before, after))
         return 0
     revert = action == "revert"
-    expected, replacement = write_plan(action, current, before, after)
-    if current != expected:
+    plan = write_plan(action, current, before, after)
+    if plan is None:
+        expected = after if revert else before
         print("refusing changed peer file: " + GUARD_PATH, file=sys.stderr)
+        if unreadable:
+            print("reason:", unreadable, file=sys.stderr)
         print("installed sha256:", current_digest, file=sys.stderr)
         print("expected  sha256:", hashlib.sha256(expected).hexdigest(), file=sys.stderr)
         return 1
+    expected, replacement = plan
     path = pathlib.Path(GUARD_PATH)
-    path.write_bytes(replacement)
-    os.chmod(path, MODE)
-    subprocess.run(["sudo", "-n", "chown", "0:0", str(path)], check=True)
+    write_atomically(path, replacement)
+    # Report the bytes that are on the disk, not the bytes that were meant
+    # for it: the report is what an operator acts on.
+    on_disk = path.read_bytes()
     print("reverted" if revert else "applied", GUARD_PATH)
-    print("sha256:", hashlib.sha256(replacement).hexdigest())
+    print("sha256:", hashlib.sha256(on_disk).hexdigest())
+    if on_disk != replacement:
+        print("the written bytes do not match the intended bytes", file=sys.stderr)
+        return 1
     # A replaced file is not a running process.  Report the activation state
     # so the install cannot be read as a live change.
     activation = subprocess.run([sys.executable, str(HERE / "check-activation.py")],
