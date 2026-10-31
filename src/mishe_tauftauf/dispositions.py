@@ -81,7 +81,8 @@ def _well_formed(record) -> bool:
         return False
     if not isinstance(record.get("key"), str) or not record["key"]:
         return False
-    if not all(isinstance(record.get(f), str) and record[f].strip() for f in ("owner", "evidence")):
+    if not all(isinstance(record.get(f), str) and any(c not in " \t\r\n" for c in record[f])
+               for f in ("owner", "evidence")):
         return False
     for f in ("created", "recheck_at"):
         value = record.get(f)
