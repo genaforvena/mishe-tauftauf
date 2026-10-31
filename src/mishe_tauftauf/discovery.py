@@ -3359,15 +3359,6 @@ the adjudicated commits.
 
 _HEAD_REWIND_PATH_LIMIT = 12
 
-_HEAD_REWIND_EQUIV_LIMIT = 25
-"""HEAD commits touching a dropped commit's first path, checked for patch-id.
-
-A re-committed change keeps its patch-id even when git's rebase rewrites the
-commit hash, so a HEAD commit with the same patch-id is the same change
-landed again. Only the commits that touch the path are compared, because a
-whole-history patch-id scan costs seconds per dropped commit.
-"""
-
 _DISK_TREND_FLOOR_BYTES = 10 * 2**30
 _DISK_TREND_NEAR_BYTES = 20 * 2**30
 _DISK_TREND_FAST_DRAIN_PER_DAY = 10 * 2**30
@@ -3437,35 +3428,6 @@ def _head_rewinds(home: Path) -> dict[str, object]:
     if ancestry is None or ancestry.returncode != 0:
         return {**unknown, "sample": "HEAD ancestry unreadable"}
     reachable = proc_table.git_reachable_shas(ancestry.stdout)
-
-    def patch_id(sha: str) -> str | None:
-        shown = run("show", "--format=", "--no-color", sha, timeout=30)
-        if shown is None or shown.returncode != 0 or not shown.stdout.strip():
-            return None
-        try:
-            ident = subprocess.run(["git", "patch-id", "--stable"], input=shown.stdout,
-                                   capture_output=True, text=True, timeout=10,
-                                   cwd=checkout_root)
-        except (OSError, subprocess.TimeoutExpired):
-            return None
-        fields = ident.stdout.split()
-        return fields[0] if ident.returncode == 0 and fields else None
-
-    def recommitted_on_head(sha: str, path: str) -> bool:
-        """Whether a HEAD commit touching ``path`` carries the dropped commit's patch-id.
-
-        An unreadable git answer is False: the path then keeps its byte-level
-        verdict instead of being cleared by an equivalence that was not checked.
-        """
-        wanted = patch_id(sha)
-        if wanted is None:
-            return False
-        candidates = run("log", "-n", str(_HEAD_REWIND_EQUIV_LIMIT), "--format=%H",
-                         "HEAD", "--", path)
-        if candidates is None or candidates.returncode != 0:
-            return False
-        return any(patch_id(head) == wanted for head in candidates.stdout.split())
-
     dropped: list[str] = []
     seen: set[str] = set()
     for sha, _message in proc_table.git_reflog_entries(reflog.stdout):
@@ -3515,13 +3477,7 @@ def _head_rewinds(home: Path) -> dict[str, object]:
                 names = run("diff-tree", "--no-commit-id", "--name-only", "-r", sha)
                 if names is None or names.returncode != 0:
                     return {**unknown, "sample": f"changed paths unreadable: {sha[:7]}"}
-                paths = proc_table.git_path_names(names.stdout)[:_HEAD_REWIND_PATH_LIMIT]
-                if paths and recommitted_on_head(sha, paths[0]):
-                    # The whole commit landed again on HEAD under the same
-                    # patch-id, so every one of its paths is lossless.
-                    lossless += len(paths)
-                    continue
-                for path in paths:
+                for path in proc_table.git_path_names(names.stdout)[:_HEAD_REWIND_PATH_LIMIT]:
                     patch = run("show", sha, "--", path)
                     if patch is None or patch.returncode != 0:
                         return {**unknown, "sample": f"patch unreadable: {sha[:7]}"}

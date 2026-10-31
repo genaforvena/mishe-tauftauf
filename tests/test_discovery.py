@@ -2303,8 +2303,12 @@ def test_head_rewinds_recommitted_change_is_its_own_verdict(tmp_path, monkeypatc
                                  "superseded-absent-lines=0/0")
 
 
-def test_head_rewinds_recommitted_under_same_patch_id_reads_lossless(tmp_path, monkeypatch):
-    """A dropped commit landed again on HEAD with the same patch-id is lossless, not review."""
+def test_head_rewinds_same_patch_id_on_head_does_not_clear_lossless(tmp_path, monkeypatch):
+    """A re-landed patch-id is no lossless authority; only the bytes on HEAD are.
+
+    Regression: the dropped change re-landed (same patch-id), then a later commit
+    reverted it. HEAD no longer holds the bytes, so the path must not read lossless.
+    """
     home = tmp_path / "site"
     home.mkdir()
     sha, head = "b" * 40, "c" * 40
@@ -2315,10 +2319,10 @@ def test_head_rewinds_recommitted_under_same_patch_id_reads_lossless(tmp_path, m
                          "verdicts": {("PATCH src/a.py", True): False,
                                       ("PATCH src/a.py", False): False}})
     result = discovery._head_rewinds(home)
-    assert result["state"] == "verified"
-    assert result["lossless"] == 1
-    assert result["needs_review"] == 0
-    assert "lossless-paths=1 needs-review-paths=0" in result["sample"]
+    assert result["state"] == "drift"
+    assert result["lossless"] == 0
+    assert result["needs_review"] == 1
+    assert "lossless-paths=0 needs-review-paths=1" in result["sample"]
 
 
 def test_head_rewinds_different_patch_id_stays_needs_review(tmp_path, monkeypatch):
