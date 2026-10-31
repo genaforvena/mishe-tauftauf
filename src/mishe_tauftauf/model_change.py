@@ -417,13 +417,17 @@ def watch_once(home, lock_wait=LOCK_WAIT_SECONDS, notify=None):
         alerts = boundary.load(alerts_path)
     except (OSError, ValueError):
         alerts = {}  # unreadable memory re-alerts once; it never mutes
+    # One wait budget for the whole cycle. Each contended record used to wait
+    # the full bound, so N deferred records made a cycle N x bound long, past
+    # the 90s freshness window, and check_watch reported stale on every read.
+    deadline = time.monotonic() + lock_wait
     for path in sorted(root.iterdir()) if root.exists() else []:
         if not path.is_dir():
             continue
         if notify:
             notify()
         try:
-            report = advance(home, path.name, lock_wait=lock_wait)
+            report = advance(home, path.name, lock_wait=max(0.0, deadline - time.monotonic()))
         except LockBusy as exc:
             report = {'id': path.name, 'state': 'unknown', 'roles': {}, 'checked': now(),
                       'reason': f'observation deferred: {exc}'}
