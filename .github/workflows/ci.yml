@@ -32,6 +32,14 @@ jobs:
       # from .mind_loop import select while mind_loop.py was never committed, and
       # the tree was promoted because CI never ran this detector.
       - run: python checks/promotion-import-closure.py --home . --repo .
+      # The public reader receives the committed tree.  A relative link in a
+      # tracked page that points at a path the tree does not contain is broken
+      # for every reader who clones the repository, and the working tree still
+      # holds the excluded files, so a link check that reads the checkout sees
+      # a healthy book.  Measured on this plant: a fresh clone of d951c928 had
+      # 20 broken relative links across README.md, docs/getting-started.md and
+      # docs/completions-judge.md, and CI never resolved a link.
+      - run: python checks/shipped-book-links.py --home . --repo .
       - run: python -m pytest -q
 
   tmux:
