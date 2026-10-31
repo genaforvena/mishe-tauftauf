@@ -20,8 +20,9 @@ wrappers. Run host commands from this core checkout: `coordination/` loads its
 
 A clone does not contain an `AGENTS.md`: the plant contract is generated into
 the *target* worktree when you plant it, and this repository's own contract
-lives in `src/mishe_tauftauf/seed_agent_contract.md`. Read the target's
-`AGENTS.md` only after planting it, when it exists.
+lives in `src/mishe_tauftauf/seed_agent_contract.md`. Once the target has been
+planted, its own `AGENTS.md` holds the generated contract block; follow it then,
+and follow the target's existing instructions around it.
 
 For “plant here,” the target is this checkout. An external target must be an
 explicitly authorized, separate Git worktree. Confirm its root with Git; the
