@@ -26,6 +26,8 @@ from .feed import Feed
 VERSION = 1
 TIMEOUT = 5
 SOURCE = "sensor/substrate-watch"
+# At most one notice per window for ordinary churn: 900 s gives at most 4 per hour.
+CHANGE_NOTICE_SECONDS = 900
 
 
 class ObservationError(ValueError):
@@ -617,7 +619,22 @@ def check(home, *, now=None):
         row["kind"] = ("unknown" if row["status"] == "UNKNOWN" else
                        "baseline" if previous is None else
                        "recovery" if previous["status"] == "UNKNOWN" else "change") if changed else "unchanged"
-        if changed:
+        # Ordinary churn (a KNOWN checkout or runtime change) gets at most one notice per
+        # CHANGE_NOTICE_SECONDS. The change stays owed and is sent when the window opens, so
+        # nothing is dropped. Unknown, recovery and baseline transitions are never coalesced.
+        notice_at = previous.get("notice_at") if previous else None
+        owed = bool(previous and previous.get("notice_owed"))
+        window_open = (notice_at is None or
+                       (datetime.fromisoformat(stamp) - datetime.fromisoformat(notice_at)).total_seconds()
+                       >= CHANGE_NOTICE_SECONDS)
+        suppressed = False
+        if row["kind"] == "change" and not window_open:
+            suppressed = True
+        elif not changed and owed and window_open and row["status"] == "KNOWN":
+            changed = True
+            row["kind"] = "change"
+            row["changed"] = ["coalesced"]
+        if changed and not suppressed:
             recipients = (["health"] if row["status"] == "UNKNOWN" else
                           [] if row["kind"] == "baseline" else ["genome", "witness"])
             # Partial source/runtime evidence still reaches its integration owners.
@@ -627,6 +644,7 @@ def check(home, *, now=None):
                                 "identity": row["identity"], "recipients": recipients})
             event_path = history / (event_id + ".json")
             row.update(event_id=event_id, event_path=str(event_path), alerts={})
+            row.update(notice_owed=False, notice_at=stamp if recipients else notice_at)
             event = {"version": VERSION, "event_id": event_id, "previous_event_id": previous["event_id"] if previous else None,
                      "recipients": recipients, "report": dict(row, problems=list(row["problems"]), alerts={})}
             event["event_sha256"] = _digest(event)
@@ -644,6 +662,9 @@ def check(home, *, now=None):
         else:
             row.update(event_id=previous["event_id"], event_path=previous["event_path"], alerts=previous["alerts"])
             event = _read_event(Path(row["event_path"]))
+            # A suppressed change keeps the last notice's event and stays owed; an
+            # unchanged sample carries the owed state forward untouched.
+            row.update(notice_owed=owed or suppressed, notice_at=notice_at)
         # Checkpoint the event before publishing. Stable event text + canonical Feed
         # identity dedup closes a crash between append and the final checkpoint.
         _save_snapshot(path, row)

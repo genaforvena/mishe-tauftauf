@@ -13,6 +13,8 @@ from mishe_tauftauf.wall import addressed
 
 
 NOW = datetime(2026, 10, 20, 12, tzinfo=timezone.utc)
+# Past the ordinary-churn notice window, so a change that should notify does.
+LATER = timedelta(seconds=watch.CHANGE_NOTICE_SECONDS + 1)
 
 
 def git(root, *args):
@@ -80,7 +82,7 @@ def test_same_dirty_filename_second_edit_changes_identity_without_publishing_con
     source.write_text("SECRET-one\n")
     first = watch.check(home, now=NOW)
     source.write_text("SECRET-two\n")  # same length, same porcelain status, different actual bytes
-    second = watch.check(home, now=NOW)
+    second = watch.check(home, now=NOW + LATER)
     assert first["checkout"]["status"] == second["checkout"]["status"]
     assert first["checkout"]["sha256"] != second["checkout"]["sha256"]
     assert first["event_id"] != second["event_id"]
@@ -118,10 +120,10 @@ def test_tracked_and_untracked_documentation_and_untracked_source(site):
     for path in ("analysis/new.unknown-suffix", "research/new.notes", ".local-text"):
         assert {"path": path, "status": "??"} in rows
     (root / "docs/new page.md").write_text("Second documentation edit\n")
-    second = watch.check(home, now=NOW)
+    second = watch.check(home, now=NOW + LATER)
     assert second["checkout"]["sha256"] != untracked["checkout"]["sha256"]
     (root / "docs/new page.md").unlink()
-    removed = watch.check(home, now=NOW)
+    removed = watch.check(home, now=NOW + 2 * LATER)
     assert removed["event_id"] != second["event_id"]
 
 
@@ -521,7 +523,8 @@ def test_append_crash_then_new_source_event_keeps_both_original_notices(site, mo
     first_id = json.loads((home / "checks/substrate-watch.json").read_text())["event_id"]
     source.write_text("Edit B\n")
     monkeypatch.setattr(watch, "_send", real)
-    second = watch.check(home, now=NOW + timedelta(seconds=30))
+    # The crashed notice opened the churn window; the second change is owed until it closes.
+    second = watch.check(home, now=NOW + LATER)
     for role in ("genome", "witness"):
         notices = messages(home, role)
         assert len(notices) == 2
@@ -593,7 +596,7 @@ def test_non_utf8_git_filename_round_trips_and_remains_observable(site):
     assert os.fsencode(row["path"]) == raw_name
     with open(os.fsencode(root) + b"/" + raw_name, "wb") as stream:
         stream.write(b"second text\n")
-    second = watch.check(home, now=NOW)
+    second = watch.check(home, now=NOW + LATER)
     assert second["checkout"]["sha256"] != first["checkout"]["sha256"]
     assert len(messages(home, "genome")) == 2
 
@@ -695,3 +698,49 @@ def test_symlink_cycle_in_runtime_pin_preserves_known_checkout_notices(site, tmp
     assert set(reading["alerts"]) == {"genome", "witness", "health"}
     assert reading["checkout"]["sha256"] in messages(home, "genome")[0].body
     assert pin.read_bytes() == raw
+
+
+def test_ordinary_churn_is_coalesced_then_owed_notice_sent_once(site):
+    root, home = site
+    watch.check(home, now=NOW)
+    source = root / "src/mishe_tauftauf/__init__.py"
+    source.write_text("one\n")
+    first = watch.check(home, now=NOW)
+    assert len(messages(home, "genome")) == 1
+    for index, text in enumerate(("two\n", "three\n", "four\n"), start=1):
+        source.write_text(text)
+        held = watch.check(home, now=NOW + timedelta(seconds=60 * index))
+        assert held["event_id"] == first["event_id"]
+        assert held["notice_owed"] is True
+        assert held["checkout"]["sha256"] != first["checkout"]["sha256"]
+    assert len(messages(home, "genome")) == 1
+    flushed = watch.check(home, now=NOW + LATER)
+    assert len(messages(home, "genome")) == 2
+    assert flushed["notice_owed"] is False
+    assert flushed["event_id"] != first["event_id"]
+    assert flushed["changed"] == ["coalesced"]
+    watch.check(home, now=NOW + LATER + timedelta(seconds=30))
+    assert len(messages(home, "genome")) == 2
+
+
+def test_unknown_transition_is_immediate_inside_the_churn_window(site):
+    root, home = site
+    watch.check(home, now=NOW)
+    (root / "docs/guide.md").write_text("Edit inside the window\n")
+    watch.check(home, now=NOW)
+    assert len(messages(home, "genome")) == 1
+    state = home / "checks/substrate-watch.json"
+    state.write_text("{not json")
+    unknown = watch.check(home, now=NOW + timedelta(seconds=30))
+    assert unknown["status"] == "UNKNOWN"
+    assert len(messages(home, "health")) == 1
+
+
+def test_churn_notices_are_capped_at_four_per_hour(site):
+    root, home = site
+    watch.check(home, now=NOW)
+    source = root / "src/mishe_tauftauf/__init__.py"
+    for minute in range(60):
+        source.write_text(f"edit {minute}\n")
+        watch.check(home, now=NOW + timedelta(minutes=minute))
+    assert len(messages(home, "genome")) <= 4
