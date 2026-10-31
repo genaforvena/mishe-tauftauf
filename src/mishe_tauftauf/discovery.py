@@ -3649,7 +3649,32 @@ def _rewrite_basis(parents: dict[str, str | None], reachable: set[str]) -> dict[
     return counts
 
 
+_RESET_ORIGIN_LABELS = ("unexplained", "stash-internal", "stash-correlated", "ambiguous")
+
+
 def _head_rewinds(home: Path) -> dict[str, object]:
+    """The head-rewinds reading, plus correlation-only reset-origin labels.
+
+    The labels say how each ``reset: moving to HEAD`` in the same reflog window
+    correlates with a dangling stash. They are reported beside the reading and
+    never feed its ``state``: a stash-explained reset is still a reset, and a
+    reader must see the counts sum to the window's HEAD resets, not infer loss
+    or cleanliness from them. ``reset_origin`` is None when git cannot say.
+    """
+    result = _head_rewinds_reading(home)
+    labels = _live_reset_origins(Path(home).resolve().parent)
+    if labels is None:
+        origins = None
+        tail = "reset-origins-in-window=unknown"
+    else:
+        origins = {label: labels.count(label) for label in _RESET_ORIGIN_LABELS}
+        tail = (f"reset-origins-in-window={len(labels)} "
+                + " ".join(f"reset-origin-{label}={origins[label]}"
+                           for label in _RESET_ORIGIN_LABELS))
+    return {**result, "sample": f"{result['sample']} {tail}", "reset_origin": origins}
+
+
+def _head_rewinds_reading(home: Path) -> dict[str, object]:
     """Classify reflog-dropped commits' changed paths against HEAD's tree.
 
     A reset in the shared checkout drops the commits that were HEAD before it.

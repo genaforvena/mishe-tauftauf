@@ -2182,6 +2182,11 @@ def test_pin_lag_served_staleness_error_reads_unknown(tmp_path, monkeypatch):
     assert result["stale_sense_ids"] is None
 
 
+def _reading_sample(result: dict) -> str:
+    """The head-rewinds reading's own sample, without the reset-origin tail."""
+    return result["sample"].split(" reset-origins-in-window=")[0]
+
+
 def _rewind_git(monkeypatch, *, reflog: str, dropped: set[str], applies: dict) -> None:
     """Fake git for the head-rewind sense: reflog text, reachability, tree, paths, patches."""
 
@@ -2252,7 +2257,7 @@ def test_head_rewinds_with_no_dropped_commit_reads_verified(tmp_path, monkeypatc
                 dropped=set(), applies={"paths": "", "verdicts": {}})
     result = discovery._head_rewinds(home)
     assert result["state"] == "verified"
-    assert result["sample"] == ("dropped-commits=0 of last-200-reflog-entries "
+    assert _reading_sample(result) == ("dropped-commits=0 of last-200-reflog-entries "
                                  "classified-commits=0 dropped-ancestry-commits=0")
     assert result["dropped"] == 0
     assert result["dropped_ancestry_commits"] == 0
@@ -2268,7 +2273,7 @@ def test_head_rewinds_present_change_reads_lossless(tmp_path, monkeypatch):
                                       ("PATCH src/a.py", False): False}})
     result = discovery._head_rewinds(home)
     assert result["state"] == "verified"
-    assert result["sample"] == ("dropped-commits=1 of last-200-reflog-entries "
+    assert _reading_sample(result) == ("dropped-commits=1 of last-200-reflog-entries "
                                  "classified-commits=1 unexamined-paths=0 lossless-paths=1 "
                                  "needs-review-paths=0 absent-paths=0 preserved-untracked-paths=0 detracked-local-only-paths=0 superseded-paths=0 "
                                  "absent-at-head-paths=0 unexplained-paths=0 "
@@ -2286,7 +2291,7 @@ def test_head_rewinds_absent_change_reads_drift(tmp_path, monkeypatch):
                                       ("PATCH src/a.py", False): True}})
     result = discovery._head_rewinds(home)
     assert result["state"] == "drift"
-    assert result["sample"] == ("dropped-commits=1 of last-200-reflog-entries "
+    assert _reading_sample(result) == ("dropped-commits=1 of last-200-reflog-entries "
                                  "classified-commits=1 unexamined-paths=0 lossless-paths=0 "
                                  "needs-review-paths=0 absent-paths=1 preserved-untracked-paths=0 detracked-local-only-paths=0 superseded-paths=0 "
                                  "absent-at-head-paths=0 unexplained-paths=0 "
@@ -2307,7 +2312,7 @@ def test_head_rewinds_recommitted_change_is_its_own_verdict(tmp_path, monkeypatc
                                       ("PATCH src/b.py", False): False}})
     result = discovery._head_rewinds(home)
     assert result["state"] == "drift"
-    assert result["sample"] == ("dropped-commits=1 of last-200-reflog-entries "
+    assert _reading_sample(result) == ("dropped-commits=1 of last-200-reflog-entries "
                                  "classified-commits=1 unexamined-paths=0 lossless-paths=1 "
                                  "needs-review-paths=1 absent-paths=0 preserved-untracked-paths=0 detracked-local-only-paths=0 superseded-paths=0 "
                                  "absent-at-head-paths=0 unexplained-paths=1 "
@@ -2333,8 +2338,8 @@ def test_head_rewinds_same_patch_id_on_head_does_not_clear_lossless(tmp_path, mo
     assert result["lossless"] == 0
     assert result["needs_review"] == 1
     assert result["patch_landed_commits"] == 1
-    assert "lossless-paths=0 needs-review-paths=1" in result["sample"]
-    assert result["sample"].endswith("patch-landed-commits=1 rewrite-chain-unreachable-commits=0 rewrite-parent-reachable-commits=0 rewrite-root-commits=1 dropped-ancestry-commits=0")
+    assert "lossless-paths=0 needs-review-paths=1" in _reading_sample(result)
+    assert _reading_sample(result).endswith("patch-landed-commits=1 rewrite-chain-unreachable-commits=0 rewrite-parent-reachable-commits=0 rewrite-root-commits=1 dropped-ancestry-commits=0")
 
 
 def test_head_rewinds_different_patch_id_stays_needs_review(tmp_path, monkeypatch):
@@ -2373,7 +2378,7 @@ def test_head_rewinds_ignored_identical_absent_path_is_preserved_on_disk(tmp_pat
     assert result["absent"] == 0
     assert result["preserved_untracked"] == 1
     assert result["state"] == "verified"
-    assert "absent-paths=0 preserved-untracked-paths=1" in result["sample"]
+    assert "absent-paths=0 preserved-untracked-paths=1" in _reading_sample(result)
 
 
 def test_head_rewinds_not_ignored_identical_absent_path_stays_absent(tmp_path, monkeypatch):
@@ -2395,14 +2400,14 @@ def test_head_rewinds_ignored_divergent_absent_path_stays_absent(tmp_path, monke
     assert result["preserved_untracked"] == 0
     assert result["state"] == "drift"
     assert result["detracked_local_only_paths"] == [{"commit": "bbbbbbbbbbbb", "path": "src/a.py"}]
-    assert "detracked-local-only-paths=1" in result["sample"]
-    assert "needs-review-paths=0 absent-paths=1" in result["sample"]
+    assert "detracked-local-only-paths=1" in _reading_sample(result)
+    assert "needs-review-paths=0 absent-paths=1" in _reading_sample(result)
 
 
 def test_head_rewinds_identical_preserved_path_has_no_edited_count(tmp_path, monkeypatch):
     result = _preserved_case(tmp_path, monkeypatch, ignored=True, on_disk=b"PATCH src/a.py")
     assert result["detracked_local_only"] == 0
-    assert "detracked-local-only-paths=0" in result["sample"]
+    assert "detracked-local-only-paths=0" in _reading_sample(result)
 
 
 def test_preserved_on_disk_real_repo_conditions(tmp_path):
@@ -2507,7 +2512,7 @@ def test_head_rewinds_counts_rebuilt_line_ancestry_behind_one_tip(tmp_path, monk
     assert result["dropped"] == 1
     assert result["classified_commits"] == 1
     assert result["dropped_ancestry_commits"] == 10
-    assert "dropped-ancestry-commits=10" in result["sample"]
+    assert "dropped-ancestry-commits=10" in _reading_sample(result)
     # The tip is examined and the line's other ancestors are not: the reading
     # cannot claim verified coverage while counted ancestry is unclassified.
     assert result["state"] == "unknown"
@@ -2529,7 +2534,7 @@ def test_head_rewinds_unreadable_ancestry_reads_unknown(tmp_path, monkeypatch):
     monkeypatch.setattr(discovery.subprocess, "run", failing)
     result = discovery._head_rewinds(home)
     assert result["state"] == "unknown"
-    assert result["sample"] == "dropped-ancestry unreadable"
+    assert _reading_sample(result) == "dropped-ancestry unreadable"
 
 
 def test_head_rewinds_unreadable_reflog_reads_unknown(tmp_path, monkeypatch):
@@ -2542,7 +2547,7 @@ def test_head_rewinds_unreadable_reflog_reads_unknown(tmp_path, monkeypatch):
     monkeypatch.setattr(discovery.subprocess, "run", mock_run)
     result = discovery._head_rewinds(home)
     assert result["state"] == "unknown"
-    assert result["sample"] == "reflog unreadable"
+    assert _reading_sample(result) == "reflog unreadable"
 
 
 def test_head_rewinds_splits_review_paths_by_later_history(tmp_path, monkeypatch):
@@ -2566,7 +2571,7 @@ def test_head_rewinds_splits_review_paths_by_later_history(tmp_path, monkeypatch
     assert result["review_basis"] == {"superseded": 1, "absent-at-head": 1, "unexplained": 1}
     assert result["superseded_content"]["intact"] == 0
     assert result["superseded_content"]["rewritten"] == 1
-    assert result["sample"].endswith("needs-review-paths=3 absent-paths=0 preserved-untracked-paths=0 detracked-local-only-paths=0 "
+    assert _reading_sample(result).endswith("needs-review-paths=3 absent-paths=0 preserved-untracked-paths=0 detracked-local-only-paths=0 "
                                      "superseded-paths=1 absent-at-head-paths=1 "
                                      "unexplained-paths=1 superseded-intact-paths=0 "
                                      "superseded-rewritten-paths=1 superseded-absent-lines=0/0 patch-landed-commits=0 rewrite-chain-unreachable-commits=0 rewrite-parent-reachable-commits=0 rewrite-root-commits=1 dropped-ancestry-commits=0")
@@ -2648,7 +2653,7 @@ def test_head_rewinds_unreadable_path_history_reads_unknown(tmp_path, monkeypatc
     monkeypatch.setattr(discovery.subprocess, "run", failing_log)
     result = discovery._head_rewinds(home)
     assert result["state"] == "unknown"
-    assert result["sample"] == f"path history unreadable: {sha[:7]}"
+    assert _reading_sample(result) == f"path history unreadable: {sha[:7]}"
 
 
 def test_head_rewinds_bounds_dropped_commits_and_paths(tmp_path, monkeypatch):
@@ -2673,9 +2678,9 @@ def test_head_rewinds_bounds_dropped_commits_and_paths(tmp_path, monkeypatch):
     assert result["classified_commits"] == 0
     assert result["unexamined_paths"] == unread
     assert result["needs_review"] == len(shas) * discovery._HEAD_REWIND_PATH_LIMIT
-    assert f"unexamined-paths={unread}" in result["sample"]
-    assert "classified-commits=0" in result["sample"]
-    assert "dropped-commits=5" in result["sample"]
+    assert f"unexamined-paths={unread}" in _reading_sample(result)
+    assert "classified-commits=0" in _reading_sample(result)
+    assert "dropped-commits=5" in _reading_sample(result)
 
 
 def test_head_rewinds_names_needs_review_and_absent_paths(tmp_path, monkeypatch):
