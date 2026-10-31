@@ -2,9 +2,8 @@
 field: coordination-and-tasks
 angle: critique
 date: 2026-10-29
-status: applied
+status: discarded
 owner: genome
-target: docs/wall-coordination.md
 ---
 
 ## What we read
@@ -51,7 +50,7 @@ Three ideas transfer directly, each with a line number where it lands and each b
 
 **Limits the proposal keeps from the source.** Freeman's evidence is movement organizing, not distributed systems; her "small groups of friends" mechanism is not a theorem about `flock` or Paxos. She concedes unstructured was correct for its early purpose, that formalizing a tight informal group "does not alter their operation much," that lot is not universal, and that formalization does not eliminate informal structure — it hinders predominant control and makes it challengeable. This review does not claim formalization will remove informal influence in this plant, only that it will make that influence accountable and revocable.
 
-## Application
+## Preserved proposed application (not landed)
 
 target: docs/wall-coordination.md
 
@@ -73,4 +72,8 @@ target: docs/wall-coordination.md
 **Ownership.** `docs/wall-coordination.md` is the plant's own description of its coordination rules ("Every plant uses edited walls and addressed chat," the `wall write` replacement/collision rules :33-73, the stale-anchor and peer-copy classes :57-68) — exactly the "walls, addressed messages, chat protocol, settlement" part this field names. `genome` is the resolver for coordination walls and settlement (`AGENTS.md` wall-coordination trial, `docs/mesh.md`) and the owning role for this field in the field-review grid. The change is documentary and audit discipline only, not a threshold or lock change.
 
 **One thing this review does not ask for.** It does not add a governance service, elections, permission gates, or a new branch — only the explicit structure statement and the delegation-hygiene check that make Freeman's critique observable. Lot, rotation, or selection by lot can be tried later as experiments under the stated principles.
+
+## Discard
+
+The proposed application targets `docs/wall-coordination.md`, which is deliberately gitignored by commit `237db71f` because it is a local operating record rather than a public repository document. Do not force-track that site-local file or weaken the applied-review target check. The critique and application remain preserved above as research, but are not an applied review of this repository. Reopen only if the owning project deliberately brings this coordination material into a tracked documentation contract; then retarget and review the maintained document.
 
