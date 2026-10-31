@@ -373,7 +373,15 @@ def test_known_checkout_notices_survive_dead_and_uninspectable_runtime_consumers
     assert {role: len(messages(home, role)) for role in counts} == counts
     (root / "docs/guide.md").write_text("Second integration edit while runtime still UNKNOWN\n")
     second = watch.check(home, now=NOW + timedelta(seconds=60))
-    assert second["event_id"] != changed["event_id"]
+    # A repeat edit inside the notice window is held (owed), not a new DM (witness 138312).
+    assert second["event_id"] == changed["event_id"]
+    assert second["notice_owed"] is True
+    assert len(messages(home, "genome")) == 1
+    assert len(messages(home, "witness")) == 1
+    # When the window opens the owed notice is sent once, as an UNKNOWN coalesced event.
+    flushed = watch.check(home, now=NOW + LATER)
+    assert flushed["event_id"] != changed["event_id"]
+    assert flushed["notice_owed"] is False
     assert len(messages(home, "genome")) == 2
     assert len(messages(home, "witness")) == 2
 
@@ -790,3 +798,26 @@ def test_parked_absence_is_parked_and_unparked_absence_stays_unknown(site, monke
     assert runtime["renderer_states"]["gone"] == "UNKNOWN"
     assert "live service process not running: mishe-x-gone.service" in runtime["problems"]
     assert not any("body-research" in problem for problem in runtime["problems"])
+
+
+def test_sustained_unknown_with_unchanged_problems_is_coalesced_per_window(site):
+    # Regression (witness 138312): checkout churn during one outage must not send one DM per sample.
+    root, home = site
+    watch.check(home, now=NOW)
+    git(root, "clone", "--no-hardlinks", str(root), str(root / "nested-repository"))
+    first = watch.check(home, now=NOW)
+    assert first["status"] == "UNKNOWN"
+    for role in ("genome", "witness"):
+        assert len(messages(home, role)) == 1
+    for step in range(1, 6):
+        (root / "docs" / f"churn-{step}.md").write_text(f"churn {step}\n")
+        row = watch.check(home, now=NOW + timedelta(seconds=30 * step))
+        assert row["status"] == "UNKNOWN"
+        assert row["event_id"] == first["event_id"]
+    for role in ("genome", "witness"):
+        assert len(messages(home, role)) == 1
+    reopened = watch.check(home, now=NOW + LATER)
+    assert reopened["status"] == "UNKNOWN"
+    assert reopened["event_id"] != first["event_id"]
+    for role in ("genome", "witness"):
+        assert len(messages(home, role)) == 2

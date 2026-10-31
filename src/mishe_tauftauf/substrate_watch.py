@@ -632,12 +632,25 @@ def check(home, *, now=None):
         window_open = (notice_at is None or
                        (datetime.fromisoformat(stamp) - datetime.fromisoformat(notice_at)).total_seconds()
                        >= CHANGE_NOTICE_SECONDS)
+        # A sustained outage whose problem set is unchanged (checkout or runtime churn only
+        # moves the identity) is coalesced once genome has already been told about it: repeats
+        # wait for the window, still owed. The first UNKNOWN, the first integration notice of an
+        # outage and any recovery are never coalesced.
+        sustained_unknown = bool(previous and previous["status"] == "UNKNOWN"
+                                 and row["status"] == "UNKNOWN" and previous.get("problems") == row["problems"]
+                                 and "genome" in previous.get("alerts", {}))
         suppressed = False
         if row["kind"] == "change" and not window_open:
+            suppressed = True
+        elif row["kind"] == "unknown" and sustained_unknown and not window_open:
             suppressed = True
         elif not changed and owed and window_open and row["status"] == "KNOWN":
             changed = True
             row["kind"] = "change"
+            row["changed"] = ["coalesced"]
+        elif not changed and owed and window_open and row["status"] == "UNKNOWN":
+            changed = True
+            row["kind"] = "unknown"
             row["changed"] = ["coalesced"]
         if changed and not suppressed:
             recipients = (["health"] if row["status"] == "UNKNOWN" else
