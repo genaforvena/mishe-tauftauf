@@ -2198,6 +2198,14 @@ def _rewind_git(monkeypatch, *, reflog: str, dropped: set[str], applies: dict) -
             return subprocess.CompletedProcess(cmd, 0, applies["paths"], "")
         if cmd[:2] == ["git", "show"]:
             return subprocess.CompletedProcess(cmd, 0, f"PATCH {cmd[-1]}", "")
+        if cmd[:2] == ["git", "log"]:
+            path = cmd[-1]
+            later = applies.get("later", set())
+            return subprocess.CompletedProcess(cmd, 0, "later\n" if path in later else "", "")
+        if cmd[:2] == ["git", "cat-file"]:
+            path = cmd[-1].split(":", 1)[1]
+            present = path not in applies.get("absent_at_head", set())
+            return subprocess.CompletedProcess(cmd, 0 if present else 128, "", "")
         raise AssertionError(f"unexpected git command: {cmd}")
 
     monkeypatch.setattr(discovery.subprocess, "run", mock_run)
@@ -2241,7 +2249,8 @@ def test_head_rewinds_present_change_reads_lossless(tmp_path, monkeypatch):
     assert result["state"] == "verified"
     assert result["sample"] == ("dropped-commits=1 of last-200-reflog-entries "
                                  "classified-commits=1 lossless-paths=1 "
-                                 "needs-review-paths=0 absent-paths=0")
+                                 "needs-review-paths=0 absent-paths=0 superseded-paths=0 "
+                                 "absent-at-head-paths=0 unexplained-paths=0")
 
 
 def test_head_rewinds_absent_change_reads_drift(tmp_path, monkeypatch):
@@ -2256,7 +2265,8 @@ def test_head_rewinds_absent_change_reads_drift(tmp_path, monkeypatch):
     assert result["state"] == "drift"
     assert result["sample"] == ("dropped-commits=1 of last-200-reflog-entries "
                                  "classified-commits=1 lossless-paths=0 "
-                                 "needs-review-paths=0 absent-paths=1")
+                                 "needs-review-paths=0 absent-paths=1 superseded-paths=0 "
+                                 "absent-at-head-paths=0 unexplained-paths=0")
 
 
 def test_head_rewinds_recommitted_change_is_its_own_verdict(tmp_path, monkeypatch):
@@ -2274,7 +2284,8 @@ def test_head_rewinds_recommitted_change_is_its_own_verdict(tmp_path, monkeypatc
     assert result["state"] == "drift"
     assert result["sample"] == ("dropped-commits=1 of last-200-reflog-entries "
                                  "classified-commits=1 lossless-paths=1 "
-                                 "needs-review-paths=1 absent-paths=0")
+                                 "needs-review-paths=1 absent-paths=0 superseded-paths=0 "
+                                 "absent-at-head-paths=0 unexplained-paths=1")
 
 
 def test_head_rewinds_unreadable_reflog_reads_unknown(tmp_path, monkeypatch):
@@ -2288,6 +2299,30 @@ def test_head_rewinds_unreadable_reflog_reads_unknown(tmp_path, monkeypatch):
     result = discovery._head_rewinds(home)
     assert result["state"] == "unknown"
     assert result["sample"] == "reflog unreadable"
+
+
+def test_head_rewinds_splits_review_paths_by_later_history(tmp_path, monkeypatch):
+    """Neither-applies paths are split: later-edited on HEAD, absent at HEAD, unexplained.
+
+    The split explains the review count; it does not clear it, so the state stays drift.
+    """
+    home = tmp_path / "site"
+    home.mkdir()
+    sha = "b" * 40
+    _rewind_git(monkeypatch, reflog=f"{sha} reset: moving to HEAD~1\n", dropped={sha},
+                applies={"paths": "src/later.py\nsrc/gone.py\nsrc/same.py\n",
+                         "later": {"src/later.py"},
+                         "absent_at_head": {"src/gone.py"},
+                         "verdicts": {(f"PATCH {p}", r): False
+                                      for p in ("src/later.py", "src/gone.py", "src/same.py")
+                                      for r in (True, False)}})
+    result = discovery._head_rewinds(home)
+    assert result["state"] == "drift"
+    assert result["needs_review"] == 3
+    assert result["review_basis"] == {"superseded": 1, "absent-at-head": 1, "unexplained": 1}
+    assert result["sample"].endswith("needs-review-paths=3 absent-paths=0 "
+                                     "superseded-paths=1 absent-at-head-paths=1 "
+                                     "unexplained-paths=1")
 
 
 def test_head_rewinds_bounds_dropped_commits_and_paths(tmp_path, monkeypatch):

@@ -3446,7 +3446,26 @@ def _head_rewinds(home: Path) -> dict[str, object]:
     archive = run("archive", "HEAD", timeout=30, text=False)
     if archive is None or archive.returncode != 0:
         return {**unknown, "sample": "HEAD tree unreadable"}
+    def review_basis(sha: str, path: str) -> str | None:
+        """Split a path that applies neither way; None when git cannot say.
+
+        ``superseded``: a commit on HEAD after the dropped one touched the path,
+        so the later history, not the dropped bytes, governs it. ``absent-at-head``:
+        the path is gone from HEAD and no HEAD commit explains why. ``unexplained``:
+        the path is present and nothing later explains the difference.
+        """
+        later = run("log", "--format=%H", f"{sha}..HEAD", "--", path)
+        if later is None or later.returncode != 0:
+            return None
+        if later.stdout.strip():
+            return "superseded"
+        present = run("cat-file", "-e", f"HEAD:{path}")
+        if present is None:
+            return None
+        return "unexplained" if present.returncode == 0 else "absent-at-head"
+
     lossless = review = absent = 0
+    basis_counts = {"superseded": 0, "absent-at-head": 0, "unexplained": 0}
     try:
         with tempfile.TemporaryDirectory() as td:
             with tarfile.open(fileobj=io.BytesIO(archive.stdout), mode="r:*") as tar:
@@ -3466,8 +3485,15 @@ def _head_rewinds(home: Path) -> dict[str, object]:
                         absent += 1
                     else:
                         review += 1
+                        basis = review_basis(sha, path)
+                        if basis is None:
+                            return {**unknown, "sample": f"path history unreadable: {sha[:7]}"}
+                        basis_counts[basis] += 1
     except (OSError, subprocess.TimeoutExpired):
         return {**unknown, "sample": "HEAD tree unreadable"}
+    # The split explains needs-review paths; it does not clear them. A later
+    # commit touching a path does not prove its content equivalent, so the
+    # drift state and the needs-review count stay as they were.
     state = "drift" if (review or absent) else "verified"
     classified = min(len(dropped), _HEAD_REWIND_COMMIT_LIMIT)
     return {"id": "sense.repo.head-rewinds", "state": state,
@@ -3475,11 +3501,15 @@ def _head_rewinds(home: Path) -> dict[str, object]:
                        f"last-{_HEAD_REWIND_REFLOG_LIMIT}-reflog-entries "
                        f"classified-commits={classified} "
                        f"lossless-paths={lossless} "
-                       f"needs-review-paths={review} absent-paths={absent}"),
+                       f"needs-review-paths={review} absent-paths={absent} "
+                       f"superseded-paths={basis_counts['superseded']} "
+                       f"absent-at-head-paths={basis_counts['absent-at-head']} "
+                       f"unexplained-paths={basis_counts['unexplained']}"),
             "dropped": len(dropped), "classified_commits": classified,
             "reflog_window": _HEAD_REWIND_REFLOG_LIMIT,
             "lossless": lossless,
-            "needs_review": review, "absent": absent, "kind": "read"}
+            "needs_review": review, "absent": absent,
+            "review_basis": basis_counts, "kind": "read"}
 
 
 def _applies(tree: Path, patch: str, *, reverse: bool) -> bool:
