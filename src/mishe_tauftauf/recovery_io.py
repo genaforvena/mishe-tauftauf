@@ -362,6 +362,19 @@ def deliver(home, *, limit=1):
         return (0, 0 if urgent else 1, -capacity.get("checked_at", 0) if urgent else 0)
     for path in sorted((root / "outbox").glob("*.json"), key=priority)[:limit]:
         item = read_json(path)
+        receipt_path = root / "delivered" / path.name
+        if receipt_path.exists():
+            # A crash between saving the delivered receipt and removing this
+            # entry leaves both. The receipt is immutable and already says it was
+            # delivered, so re-sending or re-saving would wedge the outbox on
+            # FileExistsError forever (2026-10-29 19:43Z sentinel kill). Finish
+            # the interrupted unlink only when the receipt names the same event.
+            if read_json(receipt_path).get("event") == item["event"]:
+                path.unlink()
+            else:
+                save(root / "delivery-last.json", {"at": time.time(), "event": item["event"],
+                                                  "receipt": {"ok": False, "stderr": "delivered receipt names a different event"}})
+            continue
         payload = item["payload"]
         if "function" in payload:
             function = payload["function"]

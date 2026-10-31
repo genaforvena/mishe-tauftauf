@@ -192,6 +192,24 @@ def test_one_bad_notification_does_not_starve_later_events(tmp_path, monkeypatch
     assert len(called) == 2 and called[0] != called[1]
 
 
+def test_crash_between_receipt_and_unlink_does_not_wedge_the_outbox(tmp_path, monkeypatch):
+    root = tmp_path / "recovery"
+    recovery.event(root, {"first": "failure"}, recipients=["genome"])
+    entry = next((root / "outbox").glob("*.json"))
+    # The sentinel kill landed after the immutable receipt was saved, before the unlink.
+    recovery.save(root / "delivered" / entry.name, dict(recovery.read_json(entry), receipt={"ok": True}), immutable=True)
+    sent = []
+    monkeypatch.setattr(recovery, "run_probe", lambda argv, **kw: sent.append(argv) or {"ok": True})
+    recovery.deliver(tmp_path)                       # used to raise FileExistsError, every retry, forever
+    assert not entry.exists() and sent == []         # finished the unlink; nothing re-sent
+    # A receipt that names a different event is not proof of this one: keep the entry, say so.
+    recovery.event(root, {"second": "failure"}, recipients=["health"])
+    other = next((root / "outbox").glob("*.json"))
+    recovery.save(root / "delivered" / other.name, {"event": "someone-else", "receipt": {"ok": True}}, immutable=True)
+    recovery.deliver(tmp_path)
+    assert other.exists() and "different event" in recovery.read_json(root / "delivery-last.json")["receipt"]["stderr"]
+
+
 def test_evaluation_cannot_claim_success_with_missing_current_monitoring(tmp_path):
     root = tmp_path / "recovery"
     root.mkdir()
