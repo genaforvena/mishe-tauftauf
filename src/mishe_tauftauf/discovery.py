@@ -3436,24 +3436,6 @@ def _reset_origin(
     return labels
 
 
-def _commit_parents(raw: str, shas: list[str]) -> dict[str, str | None] | None:
-    """Map each dropped sha to its first parent (None for a root); None if any is missing.
-
-    Input is ``git rev-list --parents --no-walk=unsorted <shas>`` output: one
-    line per commit, ``<sha> [<parent> ...]``. A commit absent from the output
-    makes the whole mapping None rather than being guessed as a root.
-    """
-    parents: dict[str, str | None] = {}
-    for line in raw.splitlines():
-        fields = line.split()
-        if not fields or re.fullmatch(r"[0-9a-f]{40}", fields[0]) is None:
-            continue
-        parents[fields[0]] = fields[1] if len(fields) > 1 else None
-    if any(sha not in parents for sha in shas):
-        return None
-    return {sha: parents[sha] for sha in shas}
-
-
 def _rewrite_basis(parents: dict[str, str | None], reachable: set[str]) -> dict[str, int]:
     """Count dropped commits by how they left HEAD's line; a label, not a verdict.
 
@@ -3545,7 +3527,7 @@ def _head_rewinds(home: Path) -> dict[str, object]:
     parent_read = run("rev-list", "--parents", "--no-walk=unsorted", *dropped)
     if parent_read is None or parent_read.returncode != 0:
         return {**unknown, "sample": "dropped-commit parents unreadable"}
-    parents = _commit_parents(parent_read.stdout, dropped)
+    parents = proc_table.git_commit_parents(parent_read.stdout, dropped)
     if parents is None:
         return {**unknown, "sample": "dropped-commit parents unreadable"}
     rewrite = _rewrite_basis(parents, reachable)

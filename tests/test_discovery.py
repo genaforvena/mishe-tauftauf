@@ -15,6 +15,7 @@ import pytest
 
 from mishe_tauftauf.discovery import _cpu_busy, latest, renew_scan, scan, scan_age
 from mishe_tauftauf import discovery
+from mishe_tauftauf import proc_table
 from mishe_tauftauf.feed import Feed
 from mishe_tauftauf import seed_culture_views
 from mishe_tauftauf.seed_culture_views import discover
@@ -8793,6 +8794,6 @@ def test_rewrite_basis_labels_chain_parent_reachable_and_root_commits():
 def test_commit_parents_missing_dropped_sha_is_none_not_root():
     a, b = "a" * 40, "b" * 40
     raw = f"{a} {'p' * 40}\n"
-    assert discovery._commit_parents(raw, [a, b]) is None
-    assert discovery._commit_parents(raw, [a]) == {a: "p" * 40}
-    assert discovery._commit_parents(f"{a}\n", [a]) == {a: None}
+    assert proc_table.git_commit_parents(raw, [a, b]) is None
+    assert proc_table.git_commit_parents(raw, [a]) == {a: "p" * 40}
+    assert proc_table.git_commit_parents(f"{a}\n", [a]) == {a: None}

@@ -191,6 +191,23 @@ def git_reachable_shas(raw: str) -> set[str]:
             shas.add(sha)
     return shas
 
+def git_commit_parents(raw: str, shas: list[str]) -> dict[str, str | None] | None:
+    """Map each dropped sha to its first parent (None for a root); None if any is missing.
+
+    Input is ``git rev-list --parents --no-walk=unsorted <shas>`` output: one
+    line per commit, ``<sha> [<parent> ...]``. A commit absent from the output
+    makes the whole mapping None rather than being guessed as a root.
+    """
+    parents: dict[str, str | None] = {}
+    for line in raw.splitlines():
+        fields = line.split()
+        if not fields or re.fullmatch(r"[0-9a-f]{40}", fields[0]) is None:
+            continue
+        parents[fields[0]] = fields[1] if len(fields) > 1 else None
+    if any(sha not in parents for sha in shas):
+        return None
+    return {sha: parents[sha] for sha in shas}
+
 def pane_commands(raw: str) -> list[tuple[str, str, str, str]]:
     """(session, pid, start_command, current_path) from a four-field pane table.
 
