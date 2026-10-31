@@ -2250,7 +2250,9 @@ def test_head_rewinds_present_change_reads_lossless(tmp_path, monkeypatch):
     assert result["sample"] == ("dropped-commits=1 of last-200-reflog-entries "
                                  "classified-commits=1 lossless-paths=1 "
                                  "needs-review-paths=0 absent-paths=0 superseded-paths=0 "
-                                 "absent-at-head-paths=0 unexplained-paths=0")
+                                 "absent-at-head-paths=0 unexplained-paths=0 "
+                                 "superseded-intact-paths=0 superseded-rewritten-paths=0 "
+                                 "superseded-absent-lines=0/0")
 
 
 def test_head_rewinds_absent_change_reads_drift(tmp_path, monkeypatch):
@@ -2266,7 +2268,9 @@ def test_head_rewinds_absent_change_reads_drift(tmp_path, monkeypatch):
     assert result["sample"] == ("dropped-commits=1 of last-200-reflog-entries "
                                  "classified-commits=1 lossless-paths=0 "
                                  "needs-review-paths=0 absent-paths=1 superseded-paths=0 "
-                                 "absent-at-head-paths=0 unexplained-paths=0")
+                                 "absent-at-head-paths=0 unexplained-paths=0 "
+                                 "superseded-intact-paths=0 superseded-rewritten-paths=0 "
+                                 "superseded-absent-lines=0/0")
 
 
 def test_head_rewinds_recommitted_change_is_its_own_verdict(tmp_path, monkeypatch):
@@ -2285,7 +2289,9 @@ def test_head_rewinds_recommitted_change_is_its_own_verdict(tmp_path, monkeypatc
     assert result["sample"] == ("dropped-commits=1 of last-200-reflog-entries "
                                  "classified-commits=1 lossless-paths=1 "
                                  "needs-review-paths=1 absent-paths=0 superseded-paths=0 "
-                                 "absent-at-head-paths=0 unexplained-paths=1")
+                                 "absent-at-head-paths=0 unexplained-paths=1 "
+                                 "superseded-intact-paths=0 superseded-rewritten-paths=0 "
+                                 "superseded-absent-lines=0/0")
 
 
 def test_head_rewinds_unreadable_reflog_reads_unknown(tmp_path, monkeypatch):
@@ -2320,9 +2326,36 @@ def test_head_rewinds_splits_review_paths_by_later_history(tmp_path, monkeypatch
     assert result["state"] == "drift"
     assert result["needs_review"] == 3
     assert result["review_basis"] == {"superseded": 1, "absent-at-head": 1, "unexplained": 1}
+    assert result["superseded_content"]["intact"] == 0
+    assert result["superseded_content"]["rewritten"] == 1
     assert result["sample"].endswith("needs-review-paths=3 absent-paths=0 "
                                      "superseded-paths=1 absent-at-head-paths=1 "
-                                     "unexplained-paths=1")
+                                     "unexplained-paths=1 superseded-intact-paths=0 "
+                                     "superseded-rewritten-paths=1 superseded-absent-lines=0/0")
+
+
+def test_content_presence_intact_when_every_added_line_survives(tmp_path):
+    """A later edit that kept the dropped hunk's added lines reads intact."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "kept.py").write_text("def f():\n    return 1\nextra = 2\n")
+    patch = "@@ -1 +1,2 @@\n+def f():\n+    return 1\n"
+    assert discovery._content_presence(patch, tmp_path, "src/kept.py") == ("intact", 0, 2)
+
+
+def test_content_presence_counts_absent_lines_of_a_rewritten_path(tmp_path):
+    """One reworded added line reads rewritten, and the line counts show how much changed."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "edited.py").write_text("def f():\n    return 2\n")
+    patch = "@@ -1 +1,2 @@\n+def f():\n+    return 1\n"
+    assert discovery._content_presence(patch, tmp_path, "src/edited.py") == ("rewritten", 1, 2)
+
+
+def test_content_presence_rewritten_when_file_gone_or_hunk_adds_nothing(tmp_path):
+    """A deleted file or a deletion-only hunk has no surviving added content to confirm."""
+    assert discovery._content_presence("+x = 1\n", tmp_path, "src/gone.py") == ("rewritten", 1, 1)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "any.py").write_text("x = 1\n")
+    assert discovery._content_presence("-x = 1\n", tmp_path, "src/any.py") == ("rewritten", 0, 0)
 
 
 def test_head_rewinds_unreadable_path_history_reads_unknown(tmp_path, monkeypatch):

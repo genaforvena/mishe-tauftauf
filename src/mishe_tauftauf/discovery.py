@@ -3466,6 +3466,7 @@ def _head_rewinds(home: Path) -> dict[str, object]:
 
     lossless = review = absent = 0
     basis_counts = {"superseded": 0, "absent-at-head": 0, "unexplained": 0}
+    superseded_content = {"intact": 0, "rewritten": 0, "absent_lines": 0, "added_lines": 0}
     try:
         with tempfile.TemporaryDirectory() as td:
             with tarfile.open(fileobj=io.BytesIO(archive.stdout), mode="r:*") as tar:
@@ -3489,6 +3490,12 @@ def _head_rewinds(home: Path) -> dict[str, object]:
                         if basis is None:
                             return {**unknown, "sample": f"path history unreadable: {sha[:7]}"}
                         basis_counts[basis] += 1
+                        if basis == "superseded":
+                            verdict, absent_lines, added_lines = _content_presence(
+                                patch.stdout, tree, path)
+                            superseded_content[verdict] += 1
+                            superseded_content["absent_lines"] += absent_lines
+                            superseded_content["added_lines"] += added_lines
     except (OSError, subprocess.TimeoutExpired):
         return {**unknown, "sample": "HEAD tree unreadable"}
     # The split explains needs-review paths; it does not clear them. A later
@@ -3504,12 +3511,40 @@ def _head_rewinds(home: Path) -> dict[str, object]:
                        f"needs-review-paths={review} absent-paths={absent} "
                        f"superseded-paths={basis_counts['superseded']} "
                        f"absent-at-head-paths={basis_counts['absent-at-head']} "
-                       f"unexplained-paths={basis_counts['unexplained']}"),
+                       f"unexplained-paths={basis_counts['unexplained']} "
+                       f"superseded-intact-paths={superseded_content['intact']} "
+                       f"superseded-rewritten-paths={superseded_content['rewritten']} "
+                       f"superseded-absent-lines={superseded_content['absent_lines']}"
+                       f"/{superseded_content['added_lines']}"),
             "dropped": len(dropped), "classified_commits": classified,
             "reflog_window": _HEAD_REWIND_REFLOG_LIMIT,
             "lossless": lossless,
             "needs_review": review, "absent": absent,
-            "review_basis": basis_counts, "kind": "read"}
+            "review_basis": basis_counts,
+            "superseded_content": superseded_content, "kind": "read"}
+
+
+def _content_presence(patch: str, tree: Path, path: str) -> tuple[str, int, int]:
+    """Whether a superseded path's dropped hunk survives in HEAD's file content.
+
+    Returns ``(verdict, absent_lines, added_lines)``. ``intact``: the hunk has
+    added lines and every one is a line of HEAD's file (a later edit kept the
+    content). ``rewritten``: some added line is absent, the file is gone, or
+    the hunk adds nothing -- a rewrite or a deletion that needs a reader. The
+    line counts let a reader tell two stray lines in 225 from a rewrite of
+    most of the hunk; no threshold is applied here. Exact stripped-line match
+    is coarse: a reworded line counts as absent, so ``rewritten`` does not
+    prove loss.
+    """
+    added = [line[1:].strip() for line in patch.splitlines()
+             if line.startswith("+") and not line.startswith("+++") and line[1:].strip()]
+    try:
+        head_lines = {line.strip() for line in (tree / path).read_text(errors="replace").splitlines()}
+    except (OSError, ValueError):
+        head_lines = set()
+    absent = sum(1 for line in added if line not in head_lines)
+    verdict = "intact" if added and absent == 0 else "rewritten"
+    return verdict, absent, len(added)
 
 
 def _applies(tree: Path, patch: str, *, reverse: bool) -> bool:
