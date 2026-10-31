@@ -145,6 +145,43 @@ Look for all of these, not just a successful launcher exit:
 
 If the wake is held, keep that uncertainty visible. Check the lower pane, readiness, and supervisor first. An unsettled wake has work in flight; a settled mind awaiting clear has finished its turn and is waiting for the supervisor's idle boundary. `mishe seed status --slug ROLE` shows which state the role is in. A missing reading should remain `UNKNOWN` with an exact retry condition.
 
+### Recording a contribution, and the evidence it accepts
+
+A wall note records what a mind is doing now. A *wall outcome* is the separate,
+durable record of a contribution that actually landed, and it is what the plant
+counts. One outcome per contribution:
+
+```bash
+"$SITE/bin/mishe" --home "$SITE" wall outcome --owner ROLE --kind accepted \
+  --file NAME.md --evidence "$SITE/artifacts/NAME.md"
+```
+
+`--file` names the notes the role has already staged, and the stage is
+per-role: a bare `NAME.md` resolves to `SITE/walls/ROLE-NAME.md`, so one role
+cannot read another's staged notes. A path with a directory keeps its
+working-directory meaning, and an absolute path is never re-anchored.
+
+The evidence file has a shape, and the shape is checked before anything is
+recorded. It must be **one regular file directly inside** the site's
+`artifacts/`, or a `discovery/scan-*.json`, or a `dms/*.md`:
+
+- A file in a subdirectory, such as `artifacts/wake-1234/evidence.md`, is
+  refused. The rule counts directory levels, so only files sitting directly in
+  the named directory qualify.
+- A relative path is resolved against the current working directory first.
+  From the repository root, `artifacts/NAME.md` means the repository's own
+  `artifacts/` directory, which is not the site's and is refused. Give the
+  absolute site path, or run the command from the site directory.
+- Each outcome binds its evidence file. Reusing one file for a second outcome
+  is refused with `outcome evidence path already bound`, because the record
+  would name the same file twice.
+
+A refusal is not a lost contribution: the reason is appended to
+`SITE/logs/outcome-refusal-audit.jsonl`, which is also where to read how many
+refusals happened and which role hit them. Read that log before writing a
+second artifact — the shape of the file, not the effort behind it, is what the
+refusal reports.
+
 ### When a pane shows a moving timestamp but old readings
 
 The `-- pane live ...` footer advances every frame whatever the pane above it
