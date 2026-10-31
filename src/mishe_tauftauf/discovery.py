@@ -3519,8 +3519,10 @@ def _head_rewinds(home: Path) -> dict[str, object]:
     if not dropped:
         return {"id": "sense.repo.head-rewinds", "state": "verified",
                 "sample": (f"dropped-commits=0 of last-{_HEAD_REWIND_REFLOG_LIMIT}"
-                           "-reflog-entries classified-commits=0"),
-                "dropped": 0, "classified_commits": 0, "lossless": 0,
+                           "-reflog-entries classified-commits=0 "
+                           "dropped-ancestry-commits=0"),
+                "dropped": 0, "classified_commits": 0,
+                "dropped_ancestry_commits": 0, "lossless": 0,
                 "needs_review": 0, "absent": 0,
                 "reflog_window": _HEAD_REWIND_REFLOG_LIMIT, "kind": "read"}
     landed = _patch_landed(checkout_root, dropped)
@@ -3614,7 +3616,12 @@ def _head_rewinds(home: Path) -> dict[str, object]:
     # The split explains needs-review paths; it does not clear them. A later
     # commit touching a path does not prove its content equivalent, so the
     # drift state and the needs-review count stay as they were.
-    state = "drift" if (review or absent) else ("unknown" if unexamined else "verified")
+    # Ancestors counted off HEAD beyond the classified tips were never examined:
+    # a window with no drift but unclassified ancestry is coverage UNKNOWN, not
+    # verified. Each dropped tip is itself an ancestor off HEAD, hence the subtraction.
+    unclassified_ancestry = max(0, dropped_ancestry - len(dropped))
+    state = ("drift" if (review or absent)
+             else ("unknown" if (unexamined or unclassified_ancestry) else "verified"))
     classified = len(dropped) - partial_commits
     return {"id": "sense.repo.head-rewinds", "state": state,
             "sample": (f"dropped-commits={len(dropped)} of "

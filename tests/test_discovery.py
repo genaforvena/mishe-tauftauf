@@ -2253,8 +2253,9 @@ def test_head_rewinds_with_no_dropped_commit_reads_verified(tmp_path, monkeypatc
     result = discovery._head_rewinds(home)
     assert result["state"] == "verified"
     assert result["sample"] == ("dropped-commits=0 of last-200-reflog-entries "
-                                 "classified-commits=0")
+                                 "classified-commits=0 dropped-ancestry-commits=0")
     assert result["dropped"] == 0
+    assert result["dropped_ancestry_commits"] == 0
 
 
 def test_head_rewinds_present_change_reads_lossless(tmp_path, monkeypatch):
@@ -2503,6 +2504,9 @@ def test_head_rewinds_counts_rebuilt_line_ancestry_behind_one_tip(tmp_path, monk
     assert result["classified_commits"] == 1
     assert result["dropped_ancestry_commits"] == 10
     assert "dropped-ancestry-commits=10" in result["sample"]
+    # The tip is examined and the line's other ancestors are not: the reading
+    # cannot claim verified coverage while counted ancestry is unclassified.
+    assert result["state"] == "unknown"
 
 
 def test_head_rewinds_unreadable_ancestry_reads_unknown(tmp_path, monkeypatch):
