@@ -178,7 +178,9 @@ def _python_command(home: Path, *args: str) -> list[str]:
     """Carry the byte-set ``home`` pins into panes owned by an older tmux server."""
     from .runtime_source import pane_python_path
     search_path = pane_python_path(home, Path(__file__).resolve().parents[2])
-    return ["env", f"PYTHONPATH={search_path}", sys.executable, "-m", "mishe_tauftauf", *args]
+    # Every pane process names its site home. The renderer (``pain watch``) reads
+    # it from the environment; without it the lane reports UNKNOWN "site home unset".
+    return ["env", f"PYTHONPATH={search_path}", f"MISHE_SEED_HOME={home.resolve()}", sys.executable, "-m", "mishe_tauftauf", *args]
 
 
 def _tmux(*args: str, check: bool = True, socket: str | None = None) -> subprocess.CompletedProcess[bytes]:
