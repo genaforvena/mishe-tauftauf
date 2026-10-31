@@ -253,6 +253,77 @@ def filesystem_probe(directory="/var/tmp"):
         return False
 
 
+def io_snapshot(proc_root="/proc", sys_block="/sys/block", max_pids=4000):
+    """Read-only writer census for an io-timeout receipt: per-pid byte counters,
+    per-disk completions and kernel writeback totals. Never writes or signals.
+    Roots are injectable so tests can use a fake /proc tree."""
+    procs, unreadable = {}, 0
+    root = Path(proc_root)
+    try:
+        pids = sorted(p.name for p in root.iterdir() if p.name.isdigit())[:max_pids]
+    except OSError:
+        pids = []
+    for pid in pids:
+        try:
+            fields = dict(line.split(":", 1) for line in (root / pid / "io").read_text().splitlines())
+            stat = (root / pid / "stat").read_text()
+            tail = stat[stat.rindex(")") + 2:].split()
+            procs[pid] = dict(comm=stat[stat.index("(") + 1:stat.rindex(")")], state=tail[0],
+                              wchar=int(fields["wchar"].strip()),
+                              write_bytes=int(fields["write_bytes"].strip()),
+                              cpu=int(tail[11]) + int(tail[12]))
+        except (OSError, KeyError, ValueError, IndexError):
+            unreadable += 1
+    disks = {}
+    try:
+        for line in (root / "diskstats").read_text().splitlines():
+            f = line.split()
+            name = f[2]
+            if name.startswith("loop") or not Path(sys_block, name).exists():
+                continue
+            disks[name] = dict(writes=int(f[7]), write_ms=int(f[10]), in_flight=int(f[11]),
+                               io_ms=int(f[12]))
+    except (OSError, IndexError, ValueError):
+        pass
+    memory = {}
+    try:
+        for line in (root / "meminfo").read_text().splitlines():
+            key, _, rest = line.partition(":")
+            if key in ("Dirty", "Writeback"):
+                memory[key] = int(rest.split()[0]) * 1024
+    except (OSError, IndexError, ValueError):
+        pass
+    return dict(pids=procs, unreadable_pids=unreadable, disks=disks, memory=memory)
+
+
+def io_deltas(first, second, window_seconds, *, top=10):
+    """Pure comparison of two io_snapshot results taken window_seconds apart."""
+    deltas = []
+    for pid, b in second["pids"].items():
+        a = first["pids"].get(pid)
+        if a is None or a["comm"] != b["comm"]:
+            continue  # a recycled pid is not the same writer
+        deltas.append(dict(pid=int(pid), comm=b["comm"], state=b["state"],
+                           write_bytes_delta=b["write_bytes"] - a["write_bytes"],
+                           wchar_delta=b["wchar"] - a["wchar"],
+                           cpu_ticks_delta=b["cpu"] - a["cpu"]))
+    devices = {}
+    for name, b in second["disks"].items():
+        a = first["disks"].get(name)
+        if a is None:
+            continue
+        writes = b["writes"] - a["writes"]
+        devices[name] = dict(writes_completed=writes,
+                             busy_fraction=round((b["io_ms"] - a["io_ms"]) / (window_seconds * 1000), 3),
+                             in_flight_end=b["in_flight"])
+    return dict(window_seconds=window_seconds,
+                top_storage_writers=sorted(deltas, key=lambda d: d["write_bytes_delta"], reverse=True)[:top],
+                top_syscall_writers=sorted(deltas, key=lambda d: d["wchar_delta"], reverse=True)[:top],
+                d_state=[dict(pid=d["pid"], comm=d["comm"]) for d in deltas if d["state"] == "D"],
+                devices=devices, memory_end=second["memory"],
+                unreadable_pids=max(first["unreadable_pids"], second["unreadable_pids"]))
+
+
 def functional_probes(config):
     # Key exchange reaches beyond the banner. The separate user process checks
     # fork/exec, root-filesystem writes/fsync/read and user identity separately.
