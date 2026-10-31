@@ -3530,6 +3530,15 @@ def _head_rewinds(home: Path) -> dict[str, object]:
     parents = proc_table.git_commit_parents(parent_read.stdout, dropped)
     if parents is None:
         return {**unknown, "sample": "dropped-commit parents unreadable"}
+    # The dropped tips are the reflog's entries; their ancestors off HEAD are
+    # the commits a rewrite really removed (a rebuilt line of N commits is one
+    # reflog tip). Counted, not adjudicated: the per-tip classification above
+    # still reads only the tips, so this count names the coverage gap.
+    ancestry_read = run("rev-list", *dropped, "^HEAD") if dropped else None
+    if dropped and (ancestry_read is None or ancestry_read.returncode != 0):
+        return {**unknown, "sample": "dropped-ancestry unreadable"}
+    dropped_ancestry = len({line.strip() for line in ancestry_read.stdout.splitlines()
+                            if line.strip()}) if dropped else 0
     rewrite = _rewrite_basis(parents, reachable)
     archive = run("archive", "HEAD", timeout=30, text=False)
     if archive is None or archive.returncode != 0:
@@ -3627,8 +3636,10 @@ def _head_rewinds(home: Path) -> dict[str, object]:
                        f"{'unknown' if landed is None else landed} "
                        f"rewrite-chain-unreachable-commits={rewrite['chain-unreachable']} "
                        f"rewrite-parent-reachable-commits={rewrite['parent-reachable']} "
-                       f"rewrite-root-commits={rewrite['root']}"),
+                       f"rewrite-root-commits={rewrite['root']} "
+                       f"dropped-ancestry-commits={dropped_ancestry}"),
             "dropped": len(dropped), "classified_commits": classified,
+            "dropped_ancestry_commits": dropped_ancestry,
             "unexamined_paths": unexamined, "patch_landed_commits": landed,
             "reflog_window": _HEAD_REWIND_REFLOG_LIMIT,
             "lossless": lossless,
