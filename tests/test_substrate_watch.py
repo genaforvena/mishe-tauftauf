@@ -724,6 +724,40 @@ def test_symlink_cycle_in_runtime_pin_preserves_known_checkout_notices(site, tmp
     assert pin.read_bytes() == raw
 
 
+def test_transient_mid_sample_churn_is_retried_not_reported(site, monkeypatch):
+    root, home = site
+    watch.check(home, now=NOW)
+    before = len(messages(home, "genome"))
+    real = watch._checkout
+    calls = []
+
+    def churn_once(home):
+        calls.append(1)
+        if len(calls) == 1:
+            raise watch.ChurnError("checkout changed during observation; sample again")
+        return real(home)
+
+    monkeypatch.setattr(watch, "_checkout", churn_once)
+    reading = watch.check(home, now=NOW + timedelta(seconds=30))
+    assert len(calls) == 2
+    assert reading["status"] == "KNOWN"
+    assert not any("sample again" in problem for problem in reading["problems"])
+    assert len(messages(home, "genome")) == before
+
+
+def test_persistent_mid_sample_churn_is_still_a_problem(site, monkeypatch):
+    root, home = site
+    watch.check(home, now=NOW)
+
+    def always_churn(home):
+        raise watch.ChurnError("checkout changed during observation; sample again")
+
+    monkeypatch.setattr(watch, "_checkout", always_churn)
+    reading = watch.check(home, now=NOW + timedelta(seconds=30))
+    assert reading["status"] == "UNKNOWN"
+    assert any("sample again" in problem for problem in reading["problems"])
+
+
 def test_ordinary_churn_is_coalesced_then_owed_notice_sent_once(site):
     root, home = site
     watch.check(home, now=NOW)

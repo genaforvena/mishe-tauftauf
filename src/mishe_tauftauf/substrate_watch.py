@@ -34,6 +34,13 @@ class ObservationError(ValueError):
     pass
 
 
+class ChurnError(ObservationError):
+    """The checkout or runtime pin moved mid-sample: a retry, not a problem."""
+
+
+CHURN_ATTEMPTS = 3
+
+
 def _digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=True,
                                      allow_nan=False).encode()).hexdigest()
@@ -209,7 +216,7 @@ def _checkout(home):
             or index != _git(root, "ls-files", "--stage", "-z")
             or status_raw != _git(root, "status", "--porcelain=v1", "-z", "--untracked-files=no")
             or untracked_raw != _git(root, "ls-files", "--others", "--exclude-standard", "-z")):
-        raise ObservationError("checkout changed during observation; sample again")
+        raise ChurnError("checkout changed during observation; sample again")
     result = {"root": str(root), "head": head, "index_sha256": hashlib.sha256(index).hexdigest(),
               "status": rows, "files": files, "state": "UNKNOWN" if problems else "KNOWN", "problems": problems}
     result["sha256"] = _digest(result)
@@ -278,8 +285,10 @@ def _runtime(home):
         if raw is not None:
             result["head"] = _git_scalar(_git(selected, "rev-parse", "HEAD"))
         if raw != (pin.read_bytes() if pin.exists() else None):
-            raise ObservationError("runtime selection changed during observation; sample again")
+            raise ChurnError("runtime selection changed during observation; sample again")
         result["selection_state"] = "KNOWN"
+    except ChurnError:
+        raise
     except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as exc:
         problems.append("runtime selection unavailable (" + type(exc).__name__ + ")")
     try:
@@ -578,6 +587,16 @@ def _notice(event, recipient):
     return "\n".join(lines)
 
 
+def _observe_sampled(observe, home):
+    """Retry a surface whose sample was overtaken by churn; only persistent churn is a problem."""
+    for attempt in range(1, CHURN_ATTEMPTS + 1):
+        try:
+            return observe(home)
+        except ChurnError:
+            if attempt == CHURN_ATTEMPTS:
+                raise
+
+
 def check(home, *, now=None):
     """Sample once; refresh a durable heartbeat and DM only new evidence transitions.
 
@@ -606,7 +625,7 @@ def check(home, *, now=None):
                "checkout": None, "runtime": None, "state_damage": damage}
         for name, observe in (("checkout", _checkout), ("runtime", _runtime)):
             try:
-                row[name] = observe(home)
+                row[name] = _observe_sampled(observe, home)
                 row["problems"].extend(name + ": " + problem for problem in row[name].get("problems", []))
             except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as exc:
                 # Do not expose exception text: subprocess stderr/JSON errors may contain private values.
