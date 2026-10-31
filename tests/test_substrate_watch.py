@@ -744,3 +744,33 @@ def test_churn_notices_are_capped_at_four_per_hour(site):
         source.write_text(f"edit {minute}\n")
         watch.check(home, now=NOW + timedelta(minutes=minute))
     assert len(messages(home, "genome")) <= 4
+
+
+def test_parked_absence_is_parked_and_unparked_absence_stays_unknown(site, monkeypatch, tmp_path):
+    # Health 131078 asked for rest to read distinctly from failure. A role with an
+    # unexpired parked record and no live process/pane is PARKED; an absent role
+    # with no record is still a problem. An expired record is not parking.
+    from mishe_tauftauf import dispositions
+    root, home = site
+    units = ["mishe-x-body-research.service", "mishe-x-live.service", "mishe-x-gone.service"]
+    (home / "health/services.json").write_text(json.dumps(units))
+    (home / "health/windows.json").write_text(json.dumps(["body-research", "live", "gone"]))
+    for name in ("body-research", "live", "gone"):
+        (home / "top-pains" / name).write_text("#!/bin/sh\n")
+    dispositions.park(home, "body-research", "health", str(tmp_path / "evidence.md"), ttl=3600)
+    monkeypatch.setattr(watch.wall_view, "_service_block",
+                        lambda home: ([], {unit: ["/selected"] for unit in units}, "RED"))
+    monkeypatch.setattr(watch, "_service_pids",
+                        lambda units: {"mishe-x-body-research.service": None,
+                                       "mishe-x-live.service": 101, "mishe-x-gone.service": None})
+    monkeypatch.setattr("mishe_tauftauf.seed.recorded_session", lambda home: "session")
+    monkeypatch.setattr(watch.wall_view, "_renderer_pids", lambda session: {"live": 102})
+    monkeypatch.setattr(watch.wall_view, "_live_import_roots", lambda pid: ["/selected"])
+    runtime = watch._runtime(home)
+    assert runtime["parked"] == ["body-research"]
+    assert runtime["service_states"]["mishe-x-body-research.service"] == "PARKED"
+    assert runtime["service_states"]["mishe-x-gone.service"] == "UNKNOWN"
+    assert runtime["renderer_states"]["body-research"] == "PARKED"
+    assert runtime["renderer_states"]["gone"] == "UNKNOWN"
+    assert "live service process not running: mishe-x-gone.service" in runtime["problems"]
+    assert not any("body-research" in problem for problem in runtime["problems"])
