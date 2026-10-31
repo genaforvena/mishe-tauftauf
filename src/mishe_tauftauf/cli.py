@@ -994,6 +994,8 @@ def parser() -> argparse.ArgumentParser:
     from .model_cli import register
     from .dispositions import register as register_dispositions
     register_dispositions(sub)
+    from .guard_cli import register as register_guard
+    register_guard(sub)
     register(sub)
     from .engine_usage import register as register_engine
     register_engine(sub)
