@@ -2342,6 +2342,20 @@ def test_content_presence_intact_when_every_added_line_survives(tmp_path):
     assert discovery._content_presence(patch, tmp_path, "src/kept.py") == ("intact", 0, 2)
 
 
+def test_content_presence_keeps_plus_plus_content_and_skips_file_header(tmp_path):
+    """An added line ``++counter;`` shows as ``+++counter;`` in a hunk; it is content, not a header."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "inc.c").write_text("int n;\n++counter;\n")
+    patch = ("diff --git a/src/inc.c b/src/inc.c\n"
+             "index 1111111..2222222 100644\n"
+             "--- a/src/inc.c\n"
+             "+++ b/src/inc.c\n"
+             "@@ -1 +1,2 @@\n"
+             "+int n;\n"
+             "+++counter;\n")
+    assert discovery._content_presence(patch, tmp_path, "src/inc.c") == ("intact", 0, 2)
+
+
 def test_content_presence_counts_absent_lines_of_a_rewritten_path(tmp_path):
     """One reworded added line reads rewritten, and the line counts show how much changed."""
     (tmp_path / "src").mkdir()

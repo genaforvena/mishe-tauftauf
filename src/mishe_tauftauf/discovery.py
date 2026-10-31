@@ -3536,8 +3536,15 @@ def _content_presence(patch: str, tree: Path, path: str) -> tuple[str, int, int]
     is coarse: a reworded line counts as absent, so ``rewritten`` does not
     prove loss.
     """
-    added = [line[1:].strip() for line in patch.splitlines()
-             if line.startswith("+") and not line.startswith("+++") and line[1:].strip()]
+    added = []
+    in_hunk = False
+    for line in patch.splitlines():
+        if line.startswith("@@"):
+            in_hunk = True
+        elif not in_hunk and line.startswith("+++ "):
+            continue  # file header, not content; inside a hunk "+++x" is an added "++x"
+        elif line.startswith("+") and line[1:].strip():
+            added.append(line[1:].strip())
     try:
         head_lines = {line.strip() for line in (tree / path).read_text(errors="replace").splitlines()}
     except (OSError, ValueError):
