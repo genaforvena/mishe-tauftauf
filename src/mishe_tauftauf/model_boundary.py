@@ -35,6 +35,7 @@ class Launcher:
     kind: str
     command_line: int
     selector_line: int | None = None
+    directory: str | None = None
 
 
 def identity(value):
@@ -55,7 +56,7 @@ def launcher(text):
     commands = omp_pane._launcher_commands(text)
     if not commands:
         raise ValueError('unsupported shell launcher; use literal export and exec')
-    env, argv = {}, None
+    env, argv, directory = {}, None, None
     for command in commands:
         if command[0] == 'export' and argv is None:
             for word in command[1:]:
@@ -65,6 +66,10 @@ def launcher(text):
                 if name in ('PATH', 'LD_PRELOAD', 'LD_LIBRARY_PATH') or any(x in name for x in ('TOKEN', 'API_KEY', 'SECRET')):
                     raise ValueError('launcher has lookup overrides or inline secrets; use credential references')
                 env[name] = value
+        elif command[0] == 'cd' and argv is None and len(command) == 2 and directory is None:
+            # A literal working-directory change before exec. It is not argv, but
+            # the model runtime must run from the same directory the pane does.
+            directory = command[1]
         elif command[0] == 'exec' and argv is None and len(command) > 1:
             argv = command[1:]
         else:
@@ -74,12 +79,20 @@ def launcher(text):
     program = Path(argv[0]).name
     native = '-m' in argv and 'mishe_tauftauf.native_resident' in argv
     legacy = 'MISHE_NATIVE_SELECTOR' in env
-    if program != 'omp' and not native and not legacy:
+    # claude_gate launchers declare their engine on a whole-line marker. They are
+    # readable for status only; runtime() refuses to replace them (no adapter).
+    claude = program == 'claude' and not native and not legacy and any(
+        line.strip() == '# mishe-engine: claude' for line in text.splitlines())
+    if program != 'omp' and not native and not legacy and not claude:
         raise ValueError('custom engine wrapper is UNKNOWN; no supported model adapter')
     if legacy and _single(argv, '--model'):
         raise ValueError('ambiguous native selector')
     chosen = env['MISHE_NATIVE_SELECTOR'] if legacy else _single(argv, '--model')
-    identity(chosen)
+    if claude:
+        if not chosen or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', chosen):
+            raise ValueError('an exact claude model name is required')
+    else:
+        identity(chosen)
     effort = _single(argv, '--reasoning' if native else '--thinking')
     if effort is not None and effort not in EFFORTS:
         raise ValueError('unsupported effort spelling')
@@ -92,7 +105,8 @@ def launcher(text):
     selector = next((i for i, line in enumerate(lines) if line.lstrip().startswith('export MISHE_NATIVE_SELECTOR=')), None)
     if legacy and selector is None:
         raise ValueError('native selector needs a dedicated export')
-    return Launcher(text, argv, env, chosen, effort, 'native' if native or legacy else 'omp', positions[0], selector)
+    kind = 'native' if native or legacy else 'claude' if claude else 'omp'
+    return Launcher(text, argv, env, chosen, effort, kind, positions[0], selector, directory)
 
 
 def change_option(argv, name, value):
@@ -164,7 +178,7 @@ def runtime(config):
     for name in ('--profile', '--api-key', '--provider', '--continue', '--resume', '--session'):
         if any(word == name or word.startswith(name + '=') for word in config.argv):
             raise ValueError(f'{name} needs a dedicated model-change adapter')
-    cwd = omp_pane.option(config.argv, '--cwd') or os.getcwd()
+    cwd = omp_pane.option(config.argv, '--cwd') or config.directory or os.getcwd()
     return binary, env, options, cwd
 
 
