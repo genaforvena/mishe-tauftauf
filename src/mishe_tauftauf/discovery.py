@@ -759,8 +759,12 @@ def _tmux_window_sample(reading: dict) -> str:
     if reading["env_session"] and reading["env_session"] != reading["session"]:
         env_note = f" env_session={reading['env_session']}"
     if reading["windows"]:
+        # A fallback after a failed enumeration and a second owned session are both
+        # visible in the sample, so a success line cannot hide them.
+        failure_note = f" failure={reading['failure']}" if reading["failure"] else ""
+        count_note = f" enumerated={reading['enumerated']}" if reading["enumerated"] > 1 else ""
         return (f"source={reading['source']} session={session} "
-                f"windows={reading['windows']}{env_note}")
+                f"windows={reading['windows']}{env_note}{failure_note}{count_note}")
     return (f"session unavailable source={reading['source'] or 'none'} session={session} "
             f"enumerated={reading['enumerated']} failure={reading['failure']}{env_note}")
 

@@ -8994,6 +8994,42 @@ def test_tmux_window_sample_records_failure_stage(tmp_path, monkeypatch):
         "failure=enumeration-TmuxError;list-windows-exit=1")
 
 
+def test_tmux_window_sample_keeps_failed_enumeration_on_receipt_success(tmp_path, monkeypatch):
+    """Enumeration raises, receipt names a session, list-windows succeeds: the sample still shows the failure."""
+    home = tmp_path / "site"
+    home.mkdir()
+    monkeypatch.delenv("MISHE_SEED_SESSION", raising=False)
+
+    def unreadable(_home):
+        raise discovery.tmux.TmuxError("tmux executable is unavailable")
+
+    monkeypatch.setattr(discovery.tmux, "home_sessions", unreadable)
+    (home / ".seed-raised").write_text("mishe-life-support $1\n", encoding="utf-8")
+    monkeypatch.setattr(discovery.subprocess, "run",
+                        lambda argv, **_kw: subprocess.CompletedProcess(
+                            argv, 0, "genome\nhealth\n", ""))
+    reading = discovery._tmux_window_reading(home)
+    assert reading["source"] == "receipt" and reading["windows"] == ["genome", "health"]
+    assert discovery._tmux_window_sample(reading) == (
+        "source=receipt session=mishe-life-support windows=['genome', 'health'] "
+        "failure=enumeration-TmuxError")
+
+
+def test_tmux_window_sample_counts_multiple_owned_sessions(tmp_path, monkeypatch):
+    """Two owned sessions: the chosen one is named and the enumerated count is visible."""
+    home = tmp_path / "site"
+    home.mkdir()
+    monkeypatch.delenv("MISHE_SEED_SESSION", raising=False)
+    monkeypatch.setattr(discovery.tmux, "home_sessions",
+                        lambda _home: [("mishe-self-development-current", "/sock/core"),
+                                       ("mishe-other", "/sock/other")])
+    monkeypatch.setattr(discovery.subprocess, "run",
+                        lambda argv, **_kw: subprocess.CompletedProcess(argv, 0, "discover\n", ""))
+    reading = discovery._tmux_window_reading(home)
+    assert discovery._tmux_window_sample(reading) == (
+        "source=owned session=mishe-self-development-current windows=['discover'] enumerated=2")
+
+
 def test_plant_session_prefers_owned_over_receipt(tmp_path, monkeypatch):
     """Two sessions on two sockets: receipt names the default-socket one; owned pin wins, env still wins."""
     home = tmp_path / "site"
