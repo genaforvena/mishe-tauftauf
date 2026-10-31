@@ -865,9 +865,9 @@ def _life_support_watch(tmp_path, monkeypatch, life_state, *, ticks):
     monkeypatch.setattr(guard, "notify", lambda message: None)
     offered = []
     real_latch = guard.latch
-    def record(target, why, observation):
+    def record(target, why, observation, life_support=None):
         offered.append(why)
-        real_latch(target, why, observation)
+        real_latch(target, why, observation, life_support=life_support)
     monkeypatch.setattr(guard, "latch", record)
     monkeypatch.setattr(guard, "ensure_life_support",
                         lambda config, start=False: dict(state=life_state))
@@ -985,3 +985,34 @@ def test_sustained_cpu_throttling_warns_and_routes_without_tripping(tmp_path, mo
     events = list(state.glob("cpu-throttle-*.json")); assert len(events) == 1
     event = guard.read(events[0])
     assert event["warning"] is True and event["resolver"] == "genome"
+
+
+def test_trip_record_keeps_the_protected_session_observation(tmp_path):
+    life = dict(state="PANES_LIVE", panes={"genome.1": {"pid": 7, "live": True, "engine": True}}, missing_since=1.0)
+    guard.latch(tmp_path, "protected recovery session missing, dead or unobservable", sample(), life_support=life)
+    record = guard.read(tmp_path / "tripped")
+    assert record["life_support"] == life
+    assert record["observation"] == sample()
+
+
+def test_latch_without_life_observation_keeps_the_original_shape(tmp_path):
+    guard.latch(tmp_path, "resource trip", sample())
+    assert guard.read(tmp_path / "tripped")["life_support"] is None
+
+
+def test_life_support_key_changes_only_with_observed_pane_identity():
+    live = {"state": "PANES_LIVE", "missing_for_seconds": 0,
+            "panes": {"health.1": {"pid": 10, "live": True, "engine": True, "command": "claude"}}}
+    same_but_older = dict(live, missing_for_seconds=3, panes={"health.1": {"pid": 10, "live": True, "engine": True, "command": "claude"}})
+    replaced = dict(live, panes={"health.1": {"pid": 11, "live": True, "engine": True, "command": "claude"}})
+    assert guard.life_support_key(live) == guard.life_support_key(same_but_older)
+    assert guard.life_support_key(live) != guard.life_support_key(replaced)
+    assert guard.life_support_key(None) is None
+
+
+def test_life_support_state_change_is_recorded_durably(tmp_path):
+    life = {"state": "PANES_LIVE", "panes": {"genome.0": {"pid": 1, "live": True, "engine": True}}}
+    guard.record_life_support(tmp_path, life)
+    records = list(tmp_path.glob("life-support-*.json"))
+    assert len(records) == 1
+    assert guard.read(records[0])["life_support"] == life

@@ -162,12 +162,17 @@ def admitted(state=None, run=None, *, now=None, unit=None):
         return False
 
 
-def latch(state, why, observation):
-    """O_EXCL preserves the original failure, including across sentinel restarts."""
+def latch(state, why, observation, life_support=None):
+    """O_EXCL preserves the original failure, including across sentinel restarts.
+
+    ``life_support`` carries the protected-session observation at trip time so
+    a later reader can classify a life-missing trip as a true loss or a probe
+    race; the resource ``observation`` alone cannot show that.
+    """
     path = state / "tripped"
     try:
         with path.open("x") as stream:
-            json.dump(dict(at=time.time(), reason=why, observation=observation), stream)
+            json.dump(dict(at=time.time(), reason=why, observation=observation, life_support=life_support), stream)
             stream.flush()
             os.fsync(stream.fileno())
     except FileExistsError:
@@ -264,6 +269,23 @@ def record_pressure(state, row, warning):
                 next_probe_seconds=2,
                 action="repeat production SSH key exchange and user fork/exec/fsync/read; stop on any failure",
                 disposition="bounded functional probes recorded; pressure cause remains open"))
+
+
+def life_support_key(life):
+    """The state-change identity of a life-support observation; None when absent."""
+    if not life:
+        return None
+    panes = life.get("panes") or {}
+    return (life.get("state"),
+            tuple(sorted((name, pane.get("pid"), pane.get("live"), pane.get("engine"))
+                         for name, pane in panes.items() if isinstance(pane, dict))))
+
+
+def record_life_support(state, life):
+    """Durable record written only when the protected session's observed state changes."""
+    atomic(state / ("life-support-" + str(time.time_ns()) + ".json"),
+           dict(at=time.time(), life_support=life, resolver="host-sentinel",
+                disposition="life-support observation recorded on state change; trip classification reads this record"))
 
 
 def cpu_stat(config):
@@ -835,6 +857,7 @@ def watch(config):
     last_tick = time.monotonic()
     last_life_start = -100
     life_missing_since = None
+    old_life_key = None
     notify("READY=1")
     while True:
         with transition(STATE):
@@ -885,6 +908,10 @@ def watch(config):
             status["life_support"] = ensure_life_support(config, start=now - last_life_start >= 30)
             if status["life_support"] and "start_request" in status["life_support"]:
                 last_life_start = now
+            life_key = life_support_key(status["life_support"])
+            if life_key != old_life_key:
+                record_life_support(STATE, status["life_support"])
+                old_life_key = life_key
             life_state = (status["life_support"] or {}).get("state")
             if life_state == "PANES_LIVE":
                 life_missing_since = None
@@ -903,7 +930,8 @@ def watch(config):
                 if life_missing_for >= LIFE_MISSING_SECONDS:
                     if stopped is None:
                         status["stop"] = stop(config)
-                    latch(STATE, "protected recovery session missing, dead or unobservable", row)
+                    latch(STATE, "protected recovery session missing, dead or unobservable", row,
+                          life_support=dict(status["life_support"], missing_since=life_missing_since))
                     status.update(state="TRIPPED", mode="LIFE_SUPPORT", clear_since=None)
                     clear_since = None
             else:
