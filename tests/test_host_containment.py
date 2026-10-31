@@ -924,3 +924,64 @@ def test_a_recovered_session_clears_the_missing_interval(tmp_path, monkeypatch):
     with pytest.raises(InterruptedError):
         guard.watch({})
     assert "protected recovery session missing, dead or unobservable" not in guard.read(state / "tripped")["reason"]
+
+
+def test_cpu_stat_reads_the_plants_slice_and_is_none_when_unreadable(tmp_path):
+    plants = tmp_path / guard.PLANTS_SLICE
+    plants.mkdir()
+    (plants / "cpu.stat").write_text("usage_usec 1\nnr_periods 601\nnr_throttled 549\nthrottled_usec 9\n")
+    assert guard.cpu_stat({"cgroup": str(tmp_path)}) == (601, 549)
+    assert guard.cpu_stat({"cgroup": str(tmp_path / "missing")}) is None
+    (plants / "cpu.stat").write_text("nr_periods x\n")
+    assert guard.cpu_stat({"cgroup": str(tmp_path)}) is None
+
+
+def test_cpu_throttle_is_the_throttled_share_over_the_trailing_window():
+    # Two samples 60 s apart: 549 of 601 periods throttled, as measured by Health.
+    throttle = guard.cpu_throttle([(0.0, 100, 50), (60.0, 701, 599)], now=60.0)
+    assert throttle == dict(seconds=60.0, periods=601, throttled=549, ratio=0.9135)
+
+
+def test_cpu_throttle_uses_only_samples_inside_the_window():
+    samples = [(0.0, 0, 0), (100.0, 1000, 0), (130.0, 1300, 300)]
+    throttle = guard.cpu_throttle(samples, now=130.0, window=60)
+    assert throttle["seconds"] == 30.0 and throttle["ratio"] == 1.0
+
+
+@pytest.mark.parametrize("samples", [
+    [],
+    [(0.0, 10, 1)],
+    [(0.0, 10, 1), (5.0, 10, 1)],
+    [(0.0, 10, 5), (5.0, 20, 4)],
+    [(0.0, 20, 1), (5.0, 10, 1)],
+    [(5.0, 10, 1), (5.0, 20, 2)],
+])
+def test_cpu_throttle_is_unknown_without_a_usable_span(samples):
+    assert guard.cpu_throttle(samples, now=5.0) is None
+
+
+def test_sustained_cpu_throttling_warns_and_routes_without_tripping(tmp_path, monkeypatch):
+    state, run = tmp_path / "state", tmp_path / "run"
+    state.mkdir(); run.mkdir()
+    monkeypatch.setattr(guard, "STATE", state); monkeypatch.setattr(guard, "RUN", run)
+    monkeypatch.setattr(guard, "observe", lambda config: sample())
+    monkeypatch.setattr(guard, "stop", lambda config: [])
+    monkeypatch.setattr(guard, "notify", lambda message: None)
+    monkeypatch.setattr(guard, "ensure_life_support", lambda config, start=False: None)
+    readings = iter([(0, 0), (200, 180), (400, 370)])
+    monkeypatch.setattr(guard, "cpu_stat", lambda config: next(readings))
+    ticks = iter([0, 1, 2, 3])
+    def end(_):
+        if next(ticks) == 2:
+            raise InterruptedError
+    monkeypatch.setattr(guard.time, "sleep", end)
+    with pytest.raises(InterruptedError): guard.watch({})
+    status = guard.read(run / "status.json")
+    # The sentinel start latch is the only trip; throttling adds none.
+    assert guard.read(state / "tripped")["reason"] == "sentinel started/restarted: explicit rearm required"
+    assert status["cpu_throttle_warning"] is True
+    assert status["cpu_throttle"]["periods"] == 400 and status["cpu_throttle"]["throttled"] == 370
+    assert status["cpu_throttle"]["ratio"] == 0.925
+    events = list(state.glob("cpu-throttle-*.json")); assert len(events) == 1
+    event = guard.read(events[0])
+    assert event["warning"] is True and event["resolver"] == "genome"

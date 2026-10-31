@@ -34,6 +34,13 @@ STABLE_SECONDS = 120
 #: the session is in fact live.  A single such sample must not latch the whole
 #: plant off; a session that stays missing does.
 LIFE_MISSING_SECONDS = 20
+PLANTS_SLICE = "mishe-plants.slice"
+#: Trailing window for the plants-slice throttle observation (warning only).
+CPU_WINDOW_SECONDS = 60
+#: Throttled share of scheduler periods that raises a warning.  An observation
+#: threshold for routing, not a quota: it never trips the guard or lowers the
+#: plant's cpu.max.
+CPU_THROTTLE_WARNING = .5
 
 #: The commands a protected session's mind pane may be running.  A shell
 #: placeholder is not a mind: it renders nothing and answers nothing, so a
@@ -257,6 +264,42 @@ def record_pressure(state, row, warning):
                 next_probe_seconds=2,
                 action="repeat production SSH key exchange and user fork/exec/fsync/read; stop on any failure",
                 disposition="bounded functional probes recorded; pressure cause remains open"))
+
+
+def cpu_stat(config):
+    """Cumulative (nr_periods, nr_throttled) of the plants slice; None when unreadable."""
+    try:
+        fields = dict(line.split() for line in
+                      (Path(config["cgroup"]) / PLANTS_SLICE / "cpu.stat").read_text().splitlines())
+        return int(fields["nr_periods"]), int(fields["nr_throttled"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def cpu_throttle(samples, now, window=CPU_WINDOW_SECONDS):
+    """Throttled share of scheduler periods over the trailing window.
+
+    samples are (monotonic, nr_periods, nr_throttled) oldest first.  None when
+    there is no usable span, no elapsed period, or a counter went backwards.
+    Observation only: this never trips the guard or changes a ceiling.
+    """
+    if len(samples) < 2:
+        return None
+    base = next((sample for sample in samples if now - sample[0] <= window), samples[0])
+    start, end = base, samples[-1]
+    periods, throttled = end[1] - start[1], end[2] - start[2]
+    if end[0] - start[0] <= 0 or periods <= 0 or throttled < 0:
+        return None
+    return dict(seconds=round(end[0] - start[0], 1), periods=periods, throttled=throttled,
+                ratio=round(throttled / periods, 4))
+
+
+def record_cpu_throttle(state, throttle, warning):
+    atomic(state / ("cpu-throttle-" + str(time.time_ns()) + ".json"),
+           dict(at=time.time(), warning=warning, throttle=throttle, resolver="genome",
+                next_probe_seconds=2,
+                action="measure plants-slice load; the guard neither trips on throttling alone nor raises cpu.max",
+                disposition="warning only; throttling cause remains open"))
 
 
 def io_max_rows(text):
@@ -785,6 +828,9 @@ def watch(config):
     since = None
     old_warning = False
     last_pressure_record = 0
+    cpu_samples = []
+    old_cpu_warning = False
+    last_cpu_record = 0
     clear_since = None
     last_tick = time.monotonic()
     last_life_start = -100
@@ -818,6 +864,20 @@ def watch(config):
                 record_pressure(STATE, row, warning)
                 last_pressure_record = time.monotonic()
             old_warning = warning
+            # Throttling is observed and routed, never a trip: the sample is
+            # separate from the resource row, so an unreadable cpu.stat is
+            # UNKNOWN (throttle None), not a stop.
+            sampled = cpu_stat(config)
+            if sampled is not None:
+                cpu_samples.append((now, *sampled))
+            cpu_samples = [sample for sample in cpu_samples if now - sample[0] <= CPU_WINDOW_SECONDS + 4]
+            throttle = cpu_throttle(cpu_samples, now)
+            cpu_warning = bool(throttle and throttle["ratio"] >= CPU_THROTTLE_WARNING)
+            status.update(cpu_throttle=throttle, cpu_throttle_warning=cpu_warning)
+            if cpu_warning != old_cpu_warning or (cpu_warning and now - last_cpu_record >= 60):
+                record_cpu_throttle(STATE, throttle, cpu_warning)
+                last_cpu_record = now
+            old_cpu_warning = cpu_warning
             if tripped and stopped is None:
                 stopped = stop(config)
             if stopped is not None:
