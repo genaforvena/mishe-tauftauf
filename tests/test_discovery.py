@@ -2356,6 +2356,25 @@ def test_content_presence_keeps_plus_plus_content_and_skips_file_header(tmp_path
     assert discovery._content_presence(patch, tmp_path, "src/inc.c") == ("intact", 0, 2)
 
 
+def test_content_presence_ignores_second_file_header_in_multi_file_patch(tmp_path):
+    """A second file's ``+++ b/...`` header after a hunk is a header, not an added line."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("x = 1\n")
+    (tmp_path / "src" / "b.py").write_text("y = 2\n")
+    patch = ("diff --git a/src/a.py b/src/a.py\n"
+             "--- a/src/a.py\n"
+             "+++ b/src/a.py\n"
+             "@@ -1 +1 @@\n"
+             "+x = 1\n"
+             "diff --git a/src/b.py b/src/b.py\n"
+             "--- a/src/b.py\n"
+             "+++ b/src/b.py\n"
+             "@@ -1 +1 @@\n"
+             "+y = 2\n")
+    # Two added lines, one absent from a.py (b's content); b's header adds nothing.
+    assert discovery._content_presence(patch, tmp_path, "src/a.py") == ("rewritten", 1, 2)
+
+
 def test_content_presence_counts_absent_lines_of_a_rewritten_path(tmp_path):
     """One reworded added line reads rewritten, and the line counts show how much changed."""
     (tmp_path / "src").mkdir()

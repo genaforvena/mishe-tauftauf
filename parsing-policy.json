@@ -35,6 +35,7 @@
     "src/mishe_tauftauf/omp_pane.py",
     "src/mishe_tauftauf/operator_view.py",
     "src/mishe_tauftauf/outcome_publication.py",
+    "src/mishe_tauftauf/patch_text.py",
     "src/mishe_tauftauf/probe_supervisor.py",
     "src/mishe_tauftauf/proc_table.py",
     "src/mishe_tauftauf/records.py",
