@@ -383,8 +383,12 @@ def collect(home, *, now=None, entries=None):
                     raise ValueError("total outcome evidence byte budget exhausted")
                 data = _read(path if path.is_absolute() else home / path, budget)
                 evidence_bytes += len(data)
-                if not data or hashlib.sha256(data).hexdigest() != evidence["sha256"]:
-                    raise ValueError("outcome evidence empty or changed")
+                if not data:
+                    raise ValueError("outcome evidence empty")
+                observed = hashlib.sha256(data).hexdigest()
+                if observed != evidence["sha256"]:
+                    raise ValueError(
+                        f"outcome evidence digest changed: recorded {evidence['sha256']} observed {observed}")
                 evidence_cache[key] = {"state": "OBSERVED"}
             except (OSError, ValueError) as exc:
                 evidence_cache[key] = _unknown(exc)

@@ -167,7 +167,10 @@ def test_remedy_named_successor_re_evidences_a_row_whose_own_evidence_changed(ho
     assert re_evidenced[0]["re_evidenced_by"] == "chat.log#2"
     assert re_evidenced[0]["link_kind"] == "remedy-name"
     assert re_evidenced[0]["own_evidence_state"] == "UNKNOWN"
-    assert re_evidenced[0]["own_evidence_reason"] == "outcome evidence empty or changed"
+    reason = re_evidenced[0]["own_evidence_reason"]
+    assert reason.startswith("outcome evidence digest changed: recorded ")
+    assert hashlib.sha256(b"edited after publication").hexdigest() in reason
+    assert hashlib.sha256(b"bounded observed result").hexdigest() in reason
     assert report["outcomes"]["state"] == "OBSERVED"
     assert report["state"] == "OBSERVED"
 
@@ -451,3 +454,17 @@ def test_a_pinned_clock_still_judges_the_tape_against_that_instant(home):
     report = initiative.collect(home, now=pinned)
     assert report["history"]["state"] == "PARTIAL", report["history"]
     assert report["history"]["reason"] == "invalid/future event times"
+
+
+def test_empty_and_digest_changed_outcome_evidence_have_distinct_reasons(home):
+    empty_entry, empty = outcome(home, 1, age=200, name="empty.txt")
+    empty.write_text("")
+    changed_entry, changed = outcome(home, 2, age=100, name="changed.txt")
+    changed.write_text("edited after publication")
+    report = initiative.collect(home, now=NOW, entries=[empty_entry, changed_entry])
+    dump = json.dumps(report)
+    assert "outcome evidence empty" in dump
+    assert "outcome evidence empty or changed" not in dump
+    recorded = hashlib.sha256(b"bounded observed result").hexdigest()
+    observed = hashlib.sha256(b"edited after publication").hexdigest()
+    assert f"outcome evidence digest changed: recorded {recorded} observed {observed}" in dump
