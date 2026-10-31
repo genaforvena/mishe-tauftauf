@@ -313,8 +313,10 @@ def io_deltas(first, second, window_seconds, *, top=10):
         if a is None:
             continue
         writes = b["writes"] - a["writes"]
+        # A zero-length window has no busy fraction; report it as unknown (None), never divide.
+        busy = round((b["io_ms"] - a["io_ms"]) / (window_seconds * 1000), 3) if window_seconds > 0 else None
         devices[name] = dict(writes_completed=writes,
-                             busy_fraction=round((b["io_ms"] - a["io_ms"]) / (window_seconds * 1000), 3),
+                             busy_fraction=busy,
                              in_flight_end=b["in_flight"])
     return dict(window_seconds=window_seconds,
                 top_storage_writers=sorted(deltas, key=lambda d: d["write_bytes_delta"], reverse=True)[:top],

@@ -77,6 +77,14 @@ def test_delta_ranks_storage_and_syscall_writers_and_flags_d_state(tmp_path):
     assert d["memory_end"]["Dirty"] == 2048 * 1024
 
 
+def test_zero_length_window_reports_unknown_busy_fraction_without_dividing(tmp_path):
+    a = guard.io_snapshot(make_proc(tmp_path / "a" / "proc", {}, disks=disk("sda", 10, io_ms=100), sys_block=("sda",)), tmp_path / "a" / "sys_block")
+    b = guard.io_snapshot(make_proc(tmp_path / "b" / "proc", {}, disks=disk("sda", 12, io_ms=160), sys_block=("sda",)), tmp_path / "b" / "sys_block")
+    d = guard.io_deltas(a, b, 0)
+    assert d["devices"]["sda"]["busy_fraction"] is None
+    assert d["devices"]["sda"]["writes_completed"] == 2
+
+
 def test_recycled_pid_with_a_different_comm_is_not_compared(tmp_path):
     a = make_proc(tmp_path / "a", {9: ("old", "S", 0, 0, 0)})
     b = make_proc(tmp_path / "b", {9: ("new", "S", 999, 999, 0)})
