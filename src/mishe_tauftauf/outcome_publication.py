@@ -91,6 +91,8 @@ TRUSTED_SIGNERS: Final[tuple[str, ...]] = ()
 """Placeholder trust list per C2PA Sec.14.4 p.63 — future Trusted anchor; empty means no signer is Trusted yet, so Valid is the ceiling. No network fetch here."""
 
 # --- Golaszewski critique vocabulary (arXiv:2604.24890v1 + IACR 2026/804 + AFIP 2026-04-20) — 5 goals vs 2 claimed, revocation, timestamp binding, strong vs weak, validator consistency, stripping ---
+# UNACTIVATED: no production caller; not in running pin 91d5385. Revocation and timestamp
+# predicates test C2PA 2.2 status codes (see each docstring for the mapping and its limits).
 PROVENANCE_SECURITY_GOALS: Final[tuple[str, ...]] = ("claim-integrity", "weak-file-integrity", "timestamp-agreement", "validator-consistency", "strong-file-integrity")
 """Five security goals per Golaszewski 2026 p.2 — two C2PA-claimed (claim-integrity, weak-file-integrity) + three essential (timestamp-agreement, validator-consistency, strong-file-integrity). weak vs strong kept distinct."""
 
@@ -508,9 +510,12 @@ def provenance_validation_state(status_codes: list[str]) -> str | None:
 def provenance_revocation_status(status_codes: list[str]) -> str:
     """Map C2PA status codes to revocation trichotomy — Golaszewski p.3-4 Fig.2 / Sec.15.6.
 
-    ``signingCredential.revoked`` -> ``"revoked"``;
-    ``signingCredential.notRevoked`` or ``signingCredential.trusted``+``ocspGood`` -> ``"not-revoked"``;
-    else -> ``"unchecked"`` (spec-legal default that defeats all goals). Non-list -> ``"unchecked"``.
+    C2PA 2.2 Sec. 15.2.2 emits revocation as OCSP-scoped codes:
+    ``signingCredential.ocsp.revoked`` (failure table) -> ``"revoked"``;
+    ``signingCredential.ocsp.notRevoked`` (success table) -> ``"not-revoked"``.
+    Revoked wins if both appear (conservative). Anything else, including
+    ``ocsp.skipped`` / no OCSP code, -> ``"unchecked"``
+    (spec-legal default that defeats all goals). Non-list or malformed -> ``"unchecked"``.
     The word is the detector, not a fetch.
     """
     if not isinstance(status_codes, list):
@@ -518,9 +523,9 @@ def provenance_revocation_status(status_codes: list[str]) -> str:
     for code in status_codes:
         if not isinstance(code, str) or not code:
             return "unchecked"
-    if "signingCredential.revoked" in status_codes:
+    if "signingCredential.ocsp.revoked" in status_codes:
         return "revoked"
-    if "signingCredential.notRevoked" in status_codes or "signingCredential.trusted" in status_codes and "ocsp.good" in status_codes:
+    if "signingCredential.ocsp.notRevoked" in status_codes:
         return "not-revoked"
     return "unchecked"
 
@@ -528,16 +533,20 @@ def provenance_revocation_status(status_codes: list[str]) -> str:
 def provenance_timestamp_binding_holds(status_codes: list[str]) -> bool:
     """Whether timestamp is bound to claim — Golaszewski p.3 Fig.1 / Sec.15.2.
 
-    True only when a ``timestamp.boundToClaim`` / ``timestampAgreement.validated`` /
-    ``claimSignature covers timestamp`` code is present — Fig.1 binding, not mere
-    ``timeStamp.trusted``. Non-list or malformed -> ``False``.
+    Mapping (interpretive, not a verbatim C2PA definition): ``timeStamp.validated``
+    means the time-stamp token's message imprint verifies against the claim
+    signature, which is the binding Fig.1 asks for. ``timeStamp.trusted`` alone
+    is trust in the TSA, not binding, so it does not count. The earlier names
+    ``timestamp.boundToClaim``, ``timestampAgreement.validated`` and
+    ``claimSignature.coversTimestamp`` were removed: they are not C2PA codes.
+    Non-list or malformed -> ``False``.
     """
     if not isinstance(status_codes, list):
         return False
     for code in status_codes:
         if not isinstance(code, str) or not code:
             return False
-    return "timestamp.boundToClaim" in status_codes or "timestampAgreement.validated" in status_codes or "claimSignature.coversTimestamp" in status_codes
+    return "timeStamp.validated" in status_codes
 
 
 def provenance_strong_integrity_holds(status_codes: list[str], *, has_exclusion: bool = False) -> bool:
