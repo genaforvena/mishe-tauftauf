@@ -151,23 +151,25 @@ def claude_roles(home: Path) -> list[str]:
 
 def _panes() -> dict[str, tuple[str, str]] | None:
     """window name -> (foreground command, dead flag) for pane 1 across the
-    plant's tmux sockets; None when no socket can be read."""
+    plant's tmux sockets; None unless EVERY socket can be read. A partial view
+    would report the roles of an unreadable socket as absent, which is a claim
+    the monitoring cannot back: blind is UNKNOWN."""
     found: dict[str, tuple[str, str]] = {}
-    readable = False
+    sockets = 0
     uid = os.getuid()
     for socket in sorted(glob.glob(f"/tmp/tmux-{uid}/mishe-*/tmux-{uid}/default")):
+        sockets += 1
         try:
             out = _tmux(socket, "list-panes", "-a", "-F", "#{window_name}\t#{pane_index}\t#{pane_current_command}\t#{pane_dead}")
         except (OSError, subprocess.SubprocessError):
-            continue
+            return None
         if out.returncode:
-            continue
-        readable = True
+            return None
         for line in out.stdout.splitlines():
             window, index, command, dead = line.split("\t")
             if index == "1":
                 found[window] = (command, dead)
-    return found if readable else None
+    return found if sockets else None
 
 
 def check(home: Path, now: float | None = None) -> tuple[int, list[str]]:
@@ -218,7 +220,39 @@ def settings(home: Path, role: str, gate: Path) -> dict:
     }}
 
 
+GUARD = Path("/usr/local/lib/mishe-containment/guard.py")
+GUARD_CONFIG = Path("/etc/mishe-containment.json")
+
+
+def life_support_roles() -> tuple[str, ...]:
+    """Roles the root sentinel protects; the documented pair if its config is unreadable."""
+    try:
+        return tuple(json.loads(GUARD_CONFIG.read_text())["life_support"]["roles"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return ("genome", "health")
+
+
+def guard_recognises_engine(guard: Path = GUARD) -> bool:
+    """Whether the installed root guard counts this engine as a live mind.
+    Unreadable or unloadable is False: the install then refuses."""
+    import importlib.util
+    try:
+        spec = importlib.util.spec_from_file_location("mishe_guard_probe", guard)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return ENGINE in module.LIFE_SUPPORT_ENGINES
+    except (OSError, ImportError, AttributeError, SyntaxError, TypeError, SystemExit):
+        return False
+
+
 def install(home: Path, role: str, model: str, repo: Path) -> dict:
+    # Moving a protected role onto an engine the sentinel does not recognise
+    # reads as "no mind running" and latches the whole plant off (2026-10-30
+    # 23:58:36Z). Refuse until the installed guard names this engine.
+    if role in life_support_roles() and not guard_recognises_engine():
+        raise ValueError(f"{role} is a protected life-support role and the installed guard "
+                         f"does not recognise engine {ENGINE!r}; install the guard first "
+                         f"(tools/guard-activation/apply.py), then retry")
     home = home.resolve()
     gate_dir = home / "claude-gate"
     gate_dir.mkdir(parents=True, exist_ok=True)

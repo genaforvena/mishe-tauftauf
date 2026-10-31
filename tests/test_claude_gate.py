@@ -92,6 +92,41 @@ def test_check_healthy_and_each_standing_failure(home, monkeypatch):
     assert gate.check(home)[0] == 2                             # no SessionStart receipt
 
 
+def test_partial_tmux_view_is_unknown_not_absent(home, monkeypatch):
+    fire(home, "SessionStart")
+    monkeypatch.setattr(gate.glob, "glob", lambda pattern: ["/s1", "/s2"])
+    answers = {"/s1": "field-review\t1\tclaude\t0\n"}
+
+    def fake(socket, *args):
+        if socket not in answers:
+            raise OSError("dead socket")
+        return type("R", (), {"returncode": 0, "stdout": answers[socket]})()
+
+    monkeypatch.setattr(gate, "_tmux", fake)
+    assert gate._panes() is None                      # one socket unreadable: blind
+    assert gate.check(home)[0] == 3                   # UNKNOWN, never "no pane"
+    answers["/s2"] = "witness\t1\tomp\t0\n"
+    assert gate._panes() == {"field-review": ("claude", "0"), "witness": ("omp", "0")}
+
+
+def test_install_refuses_life_support_role_until_guard_recognises_engine(tmp_path, monkeypatch):
+    (tmp_path / "minds").mkdir()
+    old = tmp_path / "old_guard.py"
+    old.write_text('LIFE_SUPPORT_ENGINES = frozenset({"omp", "codex", "opencode"})\n')
+    new = tmp_path / "new_guard.py"
+    new.write_text('LIFE_SUPPORT_ENGINES = frozenset({"omp", "codex", "opencode", "claude"})\n')
+    monkeypatch.setattr(gate, "life_support_roles", lambda: ("genome", "health"))
+    assert not gate.guard_recognises_engine(old) and gate.guard_recognises_engine(new)
+    assert not gate.guard_recognises_engine(tmp_path / "missing.py")   # unreadable: refuse
+    monkeypatch.setattr(gate, "guard_recognises_engine", lambda: False)
+    with pytest.raises(ValueError, match="protected life-support role"):
+        gate.install(tmp_path, "genome", "claude-haiku-5-5", tmp_path)
+    assert not (tmp_path / "minds" / "genome").exists()                # nothing written
+    gate.install(tmp_path, "senses", "claude-haiku-5-5", tmp_path)     # unprotected role unaffected
+    monkeypatch.setattr(gate, "guard_recognises_engine", lambda: True)
+    gate.install(tmp_path, "genome", "claude-haiku-5-5", tmp_path)
+
+
 def test_no_claude_roles_is_ok_not_unknown(tmp_path):
     (tmp_path / "minds").mkdir()
     assert gate.check(tmp_path)[0] == 0
