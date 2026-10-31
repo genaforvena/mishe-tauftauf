@@ -684,6 +684,34 @@ def _owned_session_window_source(home: Path) -> tuple[str | None, str | None]:
     return name, socket
 
 
+def _tmux_window_names(home: Path) -> list[str]:
+    """Window names of the session this home owns, resolved env > owned > receipt.
+
+    The receipt is whichever supervisor wrote last, so a plant whose receipt
+    names the life-support session reported life-support windows as its own.
+    The environment override wins; then a session whose ownership option names
+    this home, read on the socket that holds it; the receipt only when the home
+    owns no enumerable session. Empty means the windows are unreadable.
+    """
+    session, socket = _owned_session_window_source(home)
+    if session is not None and socket is None:
+        socket = tmux.owned_socket(Path(home), session)
+    if session is None:
+        from .seed import recorded_session
+        session = recorded_session(Path(home))
+        if session is None:
+            return []
+    argv = ["tmux"]
+    if socket:
+        argv.extend(["-S", socket])
+    argv.extend(["list-windows", "-t", session, "-F", "#{window_name}"])
+    try:
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=2)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    return sorted(proc_table.window_names(result.stdout)) if result.returncode == 0 else []
+
+
 def _is_plant_unit(name: str, session: str) -> bool:
     """Whether a failed unit belongs to this plant rather than a foreign consumer.
 
@@ -8027,38 +8055,7 @@ def sample(home: Path) -> dict[str, object]:
                      "sample": ", ".join(sample_text for sample_text, _ in temperatures)
                      if temperatures else "no readable hwmon temperature sensor",
                      "identity": thermal_identity, "kind": "read"})
-    session = os.environ.get("MISHE_SEED_SESSION")
-    if not session:
-        try:
-            session = (home / ".seed-raised").read_text(encoding="utf-8").split()[0]
-        except (OSError, IndexError):
-            session = None
-    if session:
-        try:
-            result = subprocess.run(["tmux", "list-windows", "-t", session, "-F", "#{window_name}"],
-                                    capture_output=True, text=True, timeout=2)
-            names = sorted(result.stdout.splitlines()) if result.returncode == 0 else []
-        except (OSError, subprocess.TimeoutExpired):
-            names = []
-    else:
-        names = []
-    if not names:
-        # The receipt names one session, but this home owns more than one and
-        # the receipt is whichever supervisor wrote last, so the named session
-        # is often absent from the socket this reader is talking to. That made
-        # a live plant read "session unavailable". Ask which sessions this
-        # home actually owns, and read the windows of one that is live here.
-        session, socket = _owned_session_window_source(home)
-        if session is not None:
-            try:
-                argv = ["tmux"]
-                if socket:
-                    argv.extend(["-S", socket])
-                argv.extend(["list-windows", "-t", session, "-F", "#{window_name}"])
-                result = subprocess.run(argv, capture_output=True, text=True, timeout=2)
-                names = sorted(proc_table.window_names(result.stdout)) if result.returncode == 0 else []
-            except (OSError, subprocess.TimeoutExpired):
-                names = []
+    names = _tmux_window_names(home)
     observed.append({"id": "sense.tmux.windows", "state": "verified" if names else "unknown",
                      "sample": names or "session unavailable", "kind": "read"})
     observed.append(_host_session_stability(home))

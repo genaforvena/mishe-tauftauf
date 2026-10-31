@@ -8874,3 +8874,34 @@ def test_commit_parents_missing_dropped_sha_is_none_not_root():
     assert proc_table.git_commit_parents(raw, [a, b]) is None
     assert proc_table.git_commit_parents(raw, [a]) == {a: "p" * 40}
     assert proc_table.git_commit_parents(f"{a}\n", [a]) == {a: None}
+
+
+def test_tmux_windows_prefers_owned_session_over_receipt(tmp_path, monkeypatch):
+    """Receipt names the default-socket (life-support) session; the owned pin session wins."""
+    home = tmp_path / "site"
+    home.mkdir()
+    (home / ".seed-raised").write_text("life-support $1\n", encoding="utf-8")
+    monkeypatch.delenv("MISHE_SEED_SESSION", raising=False)
+    monkeypatch.setattr(discovery.tmux, "home_sessions",
+                        lambda _home: [("pin-session", "/sock/pin")])
+    monkeypatch.setattr(discovery.tmux, "owned_socket", lambda _h, _s: "/sock/pin")
+    windows = {(None, "life-support"): "genome\nhealth\n",
+               ("/sock/pin", "pin-session"): "senses\nwitness\n"}
+    seen = []
+
+    def run(argv, **_kw):
+        socket = argv[2] if argv[1] == "-S" else None
+        seen.append(argv)
+        out = windows.get((socket, argv[argv.index("-t") + 1]))
+        return subprocess.CompletedProcess(argv, 0 if out else 1, out or "", "")
+
+    monkeypatch.setattr(discovery.subprocess, "run", run)
+    assert discovery._tmux_window_names(home) == ["senses", "witness"]
+    monkeypatch.setenv("MISHE_SEED_SESSION", "life-support")
+    monkeypatch.setattr(discovery.tmux, "owned_socket", lambda _h, _s: None)
+    assert discovery._tmux_window_names(home) == ["genome", "health"]
+    monkeypatch.delenv("MISHE_SEED_SESSION")
+    monkeypatch.setattr(discovery.tmux, "home_sessions", lambda _home: [])
+    assert discovery._tmux_window_names(home) == ["genome", "health"]
+    (home / ".seed-raised").unlink()
+    assert discovery._tmux_window_names(home) == []
