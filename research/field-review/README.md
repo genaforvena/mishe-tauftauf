@@ -12,9 +12,14 @@ built so the change is the product.
 
 ## The grid
 
-`fields.json` is the literal grid: 12 fields × 6 angles = 72 cells.
+`fields.json` is the literal grid: 20 fields × 6 angles = 120 cells. The first
+twelve fields are the original grid (72 cells). The last eight are successor
+fields, added on Genome's decision (DM 139117) after a criterion-2/-3 census
+of the plant's modules; they name the 93 non-plumbing modules that the first
+twelve did not, grouped by subsystem, and put the outcome, recovery and
+verdict-path modules first.
 
-The fields are this plant's own subsystems — evidence binding, freshness,
+The original fields are this plant's own subsystems — evidence binding, freshness,
 failure and recovery, coordination, sensing and privacy, publication,
 self-development, model judgment — plus four cross-domain lenses carried over
 from the retired mesh: Deleuze & Guattari, biosemiotics, enactivism, and
