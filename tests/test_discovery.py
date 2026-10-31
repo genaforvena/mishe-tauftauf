@@ -2325,6 +2325,28 @@ def test_head_rewinds_splits_review_paths_by_later_history(tmp_path, monkeypatch
                                      "unexplained-paths=1")
 
 
+def test_head_rewinds_unreadable_path_history_reads_unknown(tmp_path, monkeypatch):
+    """A failed `git log` in the basis lookup must not read as a clean DRIFT count."""
+    home = tmp_path / "site"
+    home.mkdir()
+    sha = "b" * 40
+    _rewind_git(monkeypatch, reflog=f"{sha} reset: moving to HEAD~1\n", dropped={sha},
+                applies={"paths": "src/unknown.py\n", "later": set(),
+                         "verdicts": {(f"PATCH src/unknown.py", r): False
+                                      for r in (True, False)}})
+    real_run = discovery.subprocess.run
+
+    def failing_log(cmd, **kwargs):
+        if cmd[:2] == ["git", "log"]:
+            return subprocess.CompletedProcess(cmd, 128, "", "fatal")
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr(discovery.subprocess, "run", failing_log)
+    result = discovery._head_rewinds(home)
+    assert result["state"] == "unknown"
+    assert result["sample"] == f"path history unreadable: {sha[:7]}"
+
+
 def test_head_rewinds_bounds_dropped_commits_and_paths(tmp_path, monkeypatch):
     """The reflog window and per-commit path cap keep an unbounded rewind cheap."""
     home = tmp_path / "site"
