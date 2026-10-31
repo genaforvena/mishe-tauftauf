@@ -3537,6 +3537,62 @@ def _reset_origin(
     return labels
 
 
+_STASH_SUBJECT = re.compile(r"^(WIP on|On) ")
+
+
+def _live_reset_origins(checkout_root: Path) -> list[str] | None:
+    """Read ``reset_origin`` labels for the live reflog, newest reset first.
+
+    Reflog entries ``reset: moving to HEAD`` give ``(epoch, head)``: the reset's
+    new HEAD equals the HEAD it left. Dangling stash commits come from
+    ``fsck --unreachable --no-reflogs``; a stash is a commit whose subject is
+    ``WIP on``/``On`` and whose first parent is the HEAD it was made on. The
+    reflog and stash epochs are read in the same window, so a reader cannot
+    mistake one for the other. Returns None when git cannot say.
+    """
+    def run(*args: str) -> subprocess.CompletedProcess | None:
+        try:
+            return subprocess.run(["git", *args], capture_output=True, text=True,
+                                  timeout=10, cwd=checkout_root)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+
+    reflog = run("reflog", "--date=unix", "--format=%H|%gd|%gs",
+                 "-n", str(_HEAD_REWIND_REFLOG_LIMIT))
+    if reflog is None or reflog.returncode != 0:
+        return None
+    resets: list[tuple[int, str]] = []
+    for line in reflog.stdout.splitlines():
+        parts = line.split("|", 2)
+        if len(parts) != 3 or parts[2] != "reset: moving to HEAD":
+            continue
+        epoch = re.search(r"\{(\d+)\}$", parts[1])
+        if epoch is None:
+            return None
+        resets.append((int(epoch.group(1)), parts[0]))
+    if not resets:
+        return []
+    unreachable = run("fsck", "--unreachable", "--no-reflogs", "--no-progress")
+    if unreachable is None or unreachable.returncode != 0:
+        return None
+    shas = [line.split()[2] for line in unreachable.stdout.splitlines()
+            if line.startswith("unreachable commit ")]
+    stashes: list[tuple[int, str, str]] = []
+    if shas:
+        listed = run("log", "--no-walk=unsorted", "--format=%H|%P|%ct|%s", *shas)
+        if listed is None or listed.returncode != 0:
+            return None
+        for line in listed.stdout.splitlines():
+            parts = line.split("|", 3)
+            if len(parts) != 4 or not _STASH_SUBJECT.match(parts[3]):
+                continue
+            parents = parts[1].split()
+            if not parents:
+                continue
+            stashes.append((int(parts[2]), parents[0], parts[0]))
+    return _reset_origin(resets, stashes)
+
+
 def _rewrite_basis(parents: dict[str, str | None], reachable: set[str]) -> dict[str, int]:
     """Count dropped commits by how they left HEAD's line; a label, not a verdict.
 
