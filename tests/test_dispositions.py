@@ -87,6 +87,24 @@ def test_malformed_parked_record_never_parks_a_role(tmp_path):
                for row in dispositions.listing(tmp_path, now=T0 + 1))
 
 
+def test_misfiled_record_never_parks_a_role(tmp_path):
+    """Witness 127818 controlled failure: a well-formed parked:witness record stored
+    under another file name must not park witness; it is listed as unreadable."""
+    import json
+    root = tmp_path / "dispositions"
+    root.mkdir()
+    record = {"key": "parked:witness", "kind": "parked", "role": "witness", "owner": "health",
+              "evidence": "test", "created": T0, "recheck_at": T0 + 3600}
+    (root / "other.json").write_text(json.dumps(record))
+    assert dispositions.parked_roles(tmp_path, now=T0 + 1) == []
+    assert not dispositions.parked(tmp_path, "witness", now=T0 + 1)
+    rows = dispositions.listing(tmp_path, now=T0 + 1)
+    assert rows == [{"file": "other.json", "state": "unreadable"}]
+    # The correctly named record for the same key still parks the role.
+    (root / "parked_witness.json").write_text(json.dumps(record))
+    assert dispositions.parked_roles(tmp_path, now=T0 + 1) == ["witness"]
+
+
 class FakeFeed:
     sent = []
 

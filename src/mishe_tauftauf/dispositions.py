@@ -120,6 +120,10 @@ def listing(home, *, now=None):
             record = boundary.load(path)
             if not _well_formed(record):
                 raise ValueError("malformed disposition record")
+            # The file must be the one its key maps to. A record copied or written under
+            # another name would otherwise park or mute a role it was never addressed to.
+            if _path(home, record["key"]).name != path.name:
+                raise ValueError("disposition key does not match its file name")
             record["expired"] = not now < record["recheck_at"]
             rows.append(record)
         except (OSError, ValueError, KeyError, TypeError):
