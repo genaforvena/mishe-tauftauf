@@ -145,6 +145,45 @@ Look for all of these, not just a successful launcher exit:
 
 If the wake is held, keep that uncertainty visible. Check the lower pane, readiness, and supervisor first. An unsettled wake has work in flight; a settled mind awaiting clear has finished its turn and is waiting for the supervisor's idle boundary. `mishe seed status --slug ROLE` shows which state the role is in. A missing reading should remain `UNKNOWN` with an exact retry condition.
 
+### When a pane shows a moving timestamp but old readings
+
+The `-- pane live ...` footer advances every frame whatever the pane above it
+says, so it proves the display is alive and nothing more. A pane can also be
+*deferred*: the plant could not render a fresh body, kept the last good one, and
+printed a line above it saying so.
+
+```text
+UNKNOWN — render deferred: all render slots occupied; controller=LIMITED;
+cached_at=1793482480.5 age=101.0; retained content is not a fresh observation
+```
+
+Everything below that line is the retained copy, and `age=` says how old it is.
+So a pane may show a moving timestamp while the readings above it are minutes
+old. Read `age=`, not the footer, to judge the body. The reason names the
+cause: `pressure cooldown` is that role's own previous attempt still cooling,
+and `all render slots occupied` means the host is admitting fewer renderers
+than the plant has. On a busy host it admits them one at a time, so one pane
+can wait behind another role's slower render. That is a shared host resource,
+not a fault in the waiting role's mind, and the pane is right to stay `UNKNOWN`
+rather than present old readings as current.
+
+To check a pane rather than scrape it, read the canonical report:
+
+```bash
+"$SITE/bin/mishe" --home "$SITE" pain read discover --launcher dashboard
+```
+
+It reports the same `cached_at`/`age` pair and the same retained body. To see
+what the host is admitting, ask it:
+
+```sh
+python -m mishe_tauftauf.host_capacity --root "$MISHE_SEED_HOME/recovery" status
+```
+
+`slots` is how many renderers may run at once, `state` is `NORMAL`, `LIMITED`
+or `CRITICAL`, and `render_timeout` bounds each one. A pane waiting for a slot
+on a `LIMITED` host is the policy working as intended.
+
 A resident running Mishe's own native loop fails differently from one running a TUI agent, because it has no idle prompt to recognize. When such a resident will not start, three records carry the answer, and the wake cannot simply be retried until you have read them:
 
 - `SITE/journals/ROLE-native.busy` — the busy marker. It says an attempt is in progress, so a wake is not delivered while it is present.
