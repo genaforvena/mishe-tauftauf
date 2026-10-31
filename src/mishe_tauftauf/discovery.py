@@ -3351,10 +3351,9 @@ whole history, and the sample says which bound it used.
 _HEAD_REWIND_PATH_LIMIT = 12
 """Changed paths adjudicated per dropped commit; the per-commit cost bound.
 
-Every dropped commit in the reflog window is adjudicated (no commit cap): a
-4-commit cap read 5 needs-review paths where the full 90-commit window holds
-41, and 0 absent paths where it holds 2. The reflog window bounds the commit
-count, so the sample's classified count always equals the dropped count.
+Every dropped commit in the reflog window is adjudicated; the reflog window
+bounds the commit count, so the sample's classified count equals the dropped
+count. The per-path cap bounds each commit's work.
 """
 
 _DISK_TREND_FLOOR_BYTES = 10 * 2**30
@@ -3397,11 +3396,10 @@ def _head_rewinds(home: Path) -> dict[str, object]:
     The dropped-commit count covers a bounded reflog window and the sample
     names that window, because the count is a count *inside* it: a reader who
     saw "dropped=1" could not tell one rewind from a narrow window that
-    stopped early. Only a bounded number of dropped commits are adjudicated
-    per scan -- each costs a patch check per changed path -- so the sample
-    names that count too, because the path verdicts cover only the
-    adjudicated commits. The two units are named apart in the sample: the
-    first counts commits, the rest count changed paths.
+    stopped early. Every dropped commit in that window is adjudicated; each
+    costs a patch check per changed path, bounded by ``_HEAD_REWIND_PATH_LIMIT``.
+    The two units are named apart in the sample: the first counts commits,
+    the rest count changed paths.
     """
     checkout_root = Path(home).resolve().parent
     unknown = {"id": "sense.repo.head-rewinds", "state": "unknown", "kind": "read"}
