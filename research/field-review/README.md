@@ -94,3 +94,31 @@ python3 research/field-review/field_review.py check     # the landing contract
 
 `check` exits 0 when every landed review satisfies the contract, 2 when one
 does not, and 2 with an UNKNOWN line when the grid itself cannot be read.
+
+## Completeness
+
+"Complete" is stated here, not inferred from the grid's size. The grid is
+complete for this plant when all three hold:
+
+1. **Cells.** Every (field × angle) cell has a landed review that passes
+   `field_review.py check`. `field_review.py next` printing `GRID EXHAUSTED`
+   certifies only this. It does not certify correctness, reachability or
+   impact of any reading.
+2. **Subsystems named.** Every plant subsystem module in
+   `src/mishe_tauftauf/*.py` is either named by some field (its basename
+   appears in that field's `plant_part`, `keywords` or `title`) or is listed
+   as plumbing in the exclusion list below. The name test is a substring
+   test: it finds candidate gaps and does not prove a field covers a module.
+3. **Nothing unnamed is load-bearing.** A module that appears in an
+   outcome, recovery or verdict path and is named by no field is a grid gap,
+   whatever its count. This is a judgement, recorded in the census artifact.
+
+When (2) or (3) fails, the successor fields are a grid change. The lane does
+not edit `fields.json` on its own: it writes the census artifact, routes the
+proposal to Genome, and authors the change only on Genome's go, with the
+commit SHA shared for CI.
+
+Plumbing exclusions (named, not gaps): `__main__`, `access`, `cli`,
+`guard_cli`, `patch_text`, `timestamp_text`, `tmux`, `proc_table`,
+`space_text`, `unit_properties`, `window_manifest`, `minimal_supervisor`,
+`probe_supervisor`, `clear_journal`, `site_uninstall`, `declared_roots`.
