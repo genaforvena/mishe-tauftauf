@@ -38,3 +38,32 @@ def test_render_after_failure_cooldown_probes_again(tmp_path: Path, monkeypatch)
     render_admission.render(tmp_path, "health", ["renderer"], now=1000.0)
     render_admission.render(tmp_path, "health", ["renderer"], now=1000.0 + 31)
     assert len(calls) == 2, "after the failure cooldown elapses the probe may run again"
+
+
+def test_failure_after_cached_success_still_opens_cooldown(tmp_path: Path, monkeypatch):
+    calls = []
+    outcomes = iter([{"ok": True, "code": 0, "stdout": "fresh\n", "stderr": "", "seconds": 0.1}])
+
+    def run_probe(command, *, timeout, env, output_limit, pass_fds):
+        calls.append(command)
+        try:
+            return next(outcomes)
+        except StopIteration:
+            return {"ok": False, "code": 124, "stdout": "", "stderr": "timed out", "seconds": timeout}
+
+    monkeypatch.setattr(render_admission, "identity", lambda role: None)
+    monkeypatch.setattr(render_admission, "status",
+                        lambda home, now=None: {"state": "LIMITED", "capacity": {"limited": True}, "render_slots": 1, "render_cooldown": 30})
+    monkeypatch.setattr(render_admission, "run_probe", run_probe)
+
+    success = render_admission.render(tmp_path, "health", ["renderer"], now=1000.0)
+    assert success["ok"] is True
+    failure = render_admission.render(tmp_path, "health", ["renderer"], now=1040.0)
+    assert failure["ok"] is False
+    assert len(calls) == 2
+
+    retry = render_admission.render(tmp_path, "health", ["renderer"], now=1045.0)
+    assert retry["ok"] is None, "failure after a cached success must still start the cooldown"
+    assert "pressure cooldown" in retry["stdout"]
+    assert "fresh" in retry["stdout"], "retained cached success is shown as UNKNOWN content, not fresh"
+    assert len(calls) == 2
