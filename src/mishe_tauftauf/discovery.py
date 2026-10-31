@@ -3539,8 +3539,7 @@ def _head_rewinds(home: Path) -> dict[str, object]:
     ancestry_read = run("rev-list", *dropped, "^HEAD") if dropped else None
     if dropped and (ancestry_read is None or ancestry_read.returncode != 0):
         return {**unknown, "sample": "dropped-ancestry unreadable"}
-    dropped_ancestry = len({line.strip() for line in ancestry_read.stdout.splitlines()
-                            if line.strip()}) if dropped else 0
+    dropped_ancestry = proc_table.git_ancestry_count(ancestry_read.stdout) if dropped else 0
     rewrite = _rewrite_basis(parents, reachable)
     archive = run("archive", "HEAD", timeout=30, text=False)
     if archive is None or archive.returncode != 0:

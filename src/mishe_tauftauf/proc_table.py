@@ -208,6 +208,10 @@ def git_commit_parents(raw: str, shas: list[str]) -> dict[str, str | None] | Non
         return None
     return {sha: parents[sha] for sha in shas}
 
+def git_ancestry_count(raw: str) -> int:
+    """Count distinct commit ids in ``git rev-list <shas> ^HEAD`` output (one per line)."""
+    return len({line.strip() for line in raw.splitlines() if line.strip()})
+
 def pane_commands(raw: str) -> list[tuple[str, str, str, str]]:
     """(session, pid, start_command, current_path) from a four-field pane table.
 

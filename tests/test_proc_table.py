@@ -356,3 +356,12 @@ if __name__ == "__main__":
             expected = comm.startswith("tmux") and "new-session" in argv
             self.assertEqual(proc_table.is_tmux_server(pid_text), expected,
                              f"pid={pid_text} comm={comm!r}")
+
+
+class GitAncestryCountTests(unittest.TestCase):
+    def test_counts_distinct_nonblank_commit_lines(self):
+        raw = "a" * 40 + "\n" + "b" * 40 + "\n\n" + "a" * 40 + "\n"
+        self.assertEqual(proc_table.git_ancestry_count(raw), 2)
+
+    def test_empty_output_counts_zero(self):
+        self.assertEqual(proc_table.git_ancestry_count(""), 0)
