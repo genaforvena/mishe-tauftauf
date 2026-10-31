@@ -3246,7 +3246,7 @@ def test_settle_result_mix_clean_window_is_verified(tmp_path):
         ("2026-10-06T10:10:00Z", "b", "changed"),
     ])
     result = discovery._seed_settle_result_mix(home)
-    assert result["state"] == "verified"
+    assert result["state"] == "self-reported"
     assert result["blocked"] == 0
     assert result["incidents"] == 0
     assert result["since_last"] is None
@@ -3276,7 +3276,7 @@ def test_settle_result_mix_all_verified_window_is_verified(tmp_path):
         ("2026-10-06T10:10:00Z", "b", "verified"),
     ])
     result = discovery._seed_settle_result_mix(home)
-    assert result["state"] == "verified"
+    assert result["state"] == "self-reported"
     assert result["verified"] == 2
 
 
@@ -3313,7 +3313,7 @@ def test_settle_result_mix_blocked_outside_window_does_not_drift(tmp_path):
                     for index in range(100)]
     _settle_tape(home, settlements)
     result = discovery._seed_settle_result_mix(home)
-    assert result["state"] == "verified"
+    assert result["state"] == "self-reported"
     assert result["window"] == 100
     assert result["blocked"] == 0
     assert result["since_last"] == 100
@@ -3342,7 +3342,7 @@ def test_settle_result_mix_ignores_unpaired_and_unknown_results(tmp_path):
     assert result["verified"] == 1
     assert result["other"] == 1
     assert result["blocked"] == 0
-    assert result["state"] == "verified"
+    assert result["state"] == "self-reported"
 
 
 def test_settle_result_mix_missing_tape(tmp_path):

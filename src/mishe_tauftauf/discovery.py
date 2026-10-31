@@ -5949,8 +5949,11 @@ def _seed_settle_result_mix(home: Path) -> dict[str, object]:
     State is ``drift`` when the window holds a ``blocked`` receipt: a blocked
     settlement is the signal the mix moved off the all-clean reading, and it is
     what makes the rate visible rather than inferred from chat. State is
-    ``verified`` only when the window holds at least one ``verified`` result and
-    no ``blocked`` one; ``changed`` is not ``verified``, so a window of only
+    ``self-reported`` only when the window holds at least one ``verified``
+    result and no ``blocked`` one. That word is the author's own ``--result``
+    claim, not an independent acceptance (initiative.py: changed and verified
+    are not independent acceptance), so the state does not certify that the
+    work was verified. ``changed`` is not ``verified``, so a window of only
     ``changed`` (or an empty window) is ``unknown`` for the claim that
     settlements were verified. State is ``unknown`` as well when the tape is
     absent or unreadable, so a source change cannot pass as a clean bill.
@@ -6002,7 +6005,7 @@ def _seed_settle_result_mix(home: Path) -> dict[str, object]:
     if blocked_times:
         state = "drift"
     elif counts["verified"] > 0:
-        state = "verified"
+        state = "self-reported"
     else:
         state = "unknown"
     return {"id": "sense.seed.settle-result-mix",
