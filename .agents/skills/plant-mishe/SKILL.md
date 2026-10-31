@@ -12,11 +12,16 @@ one-shot loop or demo.
 
 ## 1. Establish scope and inspect before changing anything
 
-Read the checkout's `AGENTS.md`, `README.md`,
+Read the checkout's `README.md`,
 `src/mishe_tauftauf/seed_doctrine.md`, and the relevant sections of
 `docs/getting-started.md`. Follow installed local instructions, including command
 wrappers. Run host commands from this core checkout: `coordination/` loads its
 `src/` without a package install.
+
+A clone does not contain an `AGENTS.md`: the plant contract is generated into
+the *target* worktree when you plant it, and this repository's own contract
+lives in `src/mishe_tauftauf/seed_agent_contract.md`. Read the target's
+`AGENTS.md` only after planting it, when it exists.
 
 For “plant here,” the target is this checkout. An external target must be an
 explicitly authorized, separate Git worktree. Confirm its root with Git; the
@@ -26,9 +31,11 @@ whitespace. Inspect existing tracked and untracked changes and preserve them.
 Before choosing new names, inspect recognized site directories `.mishe-seed/`
 and `.mishe-tauftauf/`, any explicitly named site, its `.seed-raised` marker,
 tmux `@mishe-tauftauf-home` ownership, and user services' `FragmentPath` values.
-Use `docs/operating.md` for site discovery and inspection. If multiple resident
-sites exist, resolve the intended site from local evidence or the human's scope;
-do not guess or adopt an unrelated session or unit.
+For site discovery and inspection, read the site's own
+`operator/brief.md` and `operator/commands.md` once the plant exists, and use
+`mishe pain read ROLE --launcher dashboard` for the live pane. If multiple
+resident sites exist, resolve the intended site from local evidence or the
+human's scope; do not guess or adopt an unrelated session or unit.
 
 **If a plant already exists, inspect and tend it rather than planting again.**
 Read its current operator dashboard and installed brief/commands. A request to
@@ -114,8 +121,8 @@ python3 -m coordination.launcher --workspace /absolute/path/to/project --engine-
 
 Plant the core persistently first if automatic linked updates are wanted. The
 core gets the coordination service; a persistent external plant registers in
-core `health/linked-sites.json` and does not get its own coordinator. Verify the
-core unit and the registry's exact target site, session, and applied SHA.
+the core site's `health/linked-sites.json` and does not get its own coordinator.
+Verify the core unit and the registry's exact target site, session, and applied SHA.
 Updates require clean core and target worktrees and fresh passing CI for the
 exact local core `HEAD`. The coordinator checks feed, panes, and services and
 records a result or retryable hold in core `chat.log`.
@@ -177,5 +184,7 @@ Report:
   and disposition time or named retry trigger.
 
 Explain that detaching or closing a terminal does not stop persistent agents;
-point to the operating guide's scoped stop/recovery procedure. Never broaden
-scope to other nodes, accounts, devices, or linked sites to make setup green.
+point to the setup guide's scoped stop procedure (`seed stop` for the session,
+`seed uninstall --session SESSION` to preview and then remove the installed
+units, files and sessions). Never broaden scope to other nodes, accounts,
+devices, or linked sites to make setup green.

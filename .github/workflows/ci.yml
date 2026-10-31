@@ -40,6 +40,14 @@ jobs:
       # 20 broken relative links across README.md, docs/getting-started.md and
       # docs/completions-judge.md, and CI never resolved a link.
       - run: python checks/shipped-book-links.py --home . --repo .
+      # A link is only one way a book names a file.  A procedure can also say
+      # "read docs/operating.md" in prose, and a reader who clones the
+      # repository has no such file.  Measured on this plant: the shipped
+      # plant-mishe SKILL.md -- the file the README's copyable request tells
+      # a reader's agent to use -- directed the agent to read AGENTS.md and
+      # docs/operating.md, neither of which 237db71f leaves in the public
+      # tree.  The link gate could not see it: neither was a link.
+      - run: python checks/shipped-book-paths.py --home . --repo .
       - run: python -m pytest -q
 
   tmux:

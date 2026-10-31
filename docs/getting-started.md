@@ -54,7 +54,7 @@ Before running the launcher, understand its scope:
 - It starts the agents, takes an initial bounded discovery sample, and attempts a CI reading. Persistent supervisors can subsequently wake agents for tasks, changed observations, continuations, or quiet self-selected work within their charters. This is not an inert dashboard.
 - Unless `--no-services` is supplied, it writes, links, enables, and starts user services: `SESSION-ROLE.service` for the resident minds, plus `SESSION-permissions.service`, `SESSION-ci.service`, and `SESSION-silence.service` (the silence watcher, a supervisor rather than a mind). Replanting refreshes those units and restarts ones already active.
 - Planting this core checkout persistently also installs `SESSION-coordination.service`, the linked-site release coordinator. A persistent external plant registers with that coordinator if the core plant already exists.
-- Planting **another worktree** adds or refreshes the marked plant-contract block in its `AGENTS.md`, preserving surrounding instructions. That tracked change becomes a genome task to review and land in the target repository. Application files are not copied from this repository.
+- Planting **another worktree** adds or refreshes the marked plant-contract block in that target's `AGENTS.md`, preserving surrounding instructions. That tracked change becomes a genome task to review and land in the target repository. Application files are not copied from this repository. A clone of *this* repository contains no `AGENTS.md`: the contract block is generated into the target worktree at plant time, and this repository's own contract text lives in `src/mishe_tauftauf/seed_agent_contract.md`.
 
 Services use the Python interpreter running the launcher and this checkout's `src/` via `PYTHONPATH`. Keep both available. Copying a site directory alone does not make a self-contained installation.
 
@@ -210,5 +210,47 @@ env PYTHONPATH=src python3 -m mishe_tauftauf.native_gate \
 ```
 
 Its engine test accepts every python name this site runs — `python`, `python3`, `python3.12` — because the measured defect was a single literal: a live native pane whose launcher ran `python` read not-ready while its lifecycle showed a live mind, and the delivery hold reported the same `mind busy` as a TUI mid-turn. The probe reads the pane's foreground command, its dead flag and the launcher's own busy file, and exits. Read the readiness branch with the same module (`--record` persists a changed verdict at `SITE/checks/native-gate-ROLE.json`); a RED verdict names a live mind the gate rejects, and UNKNOWN names evidence the branch could not read.
+
+## Stop the plant and remove its installation
+
+Detaching is not stopping, and closing the terminal is not either: a persistent
+plant keeps its own user services and its own tmux session. Two levels of
+removal exist, and neither is a routine approval gate — the commands are yours
+to run whenever you want them gone.
+
+Stop the tmux session and leave the installation in place:
+
+```bash
+"$SITE/bin/mishe" --home "$SITE" seed stop --session "$SESSION"
+```
+
+That refuses any session it did not raise: it checks the site's `.seed-raised`
+receipt and the session's ownership marker, and kills nothing it cannot prove
+is its own. It leaves the installed user services enabled, so use the next step
+to remove them too.
+
+Preview the full removal first, then execute it:
+
+```bash
+"$SITE/bin/mishe" --home "$SITE" seed uninstall --session "$SESSION"
+"$SITE/bin/mishe" --home "$SITE" seed uninstall --session "$SESSION" \
+  --execute --confirm-home "$SITE"
+```
+
+The first command only reports: it lists the user units, installed files, tmux
+sessions, linked-site registry rows, owned processes and any stored credentials
+that belong to this site, and changes nothing. The second requires
+`--confirm-home` to match the site's exact absolute path, refuses to run from
+inside the site directory, and then disables the units, kills the owned sessions
+and processes, unlinks the installed files and removes this site's rows from any
+linked-site registry. It verifies afterwards that no owned unit is still active
+and no owned process survives; a failed postcondition keeps the site and its
+uninstall journal for diagnosis instead of claiming success.
+
+Add `--purge-site` to delete the site's local state as well. Without it, the
+site directory and its evidence remain. Run the command from outside the site
+directory. Uninstalling one site does not touch another site's units or
+registry rows; a site that another site still depends on is reported rather
+than removed.
 
 Next: read the running plant with `mishe view`, or read the [Mesh](mesh.md) culture note.
