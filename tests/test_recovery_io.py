@@ -29,7 +29,8 @@ def test_controller_runs_with_shared_seed_and_publication_locks_held(tmp_path):
         fcntl.flock(pub, fcntl.LOCK_EX | fcntl.LOCK_NB)
         started = time.monotonic()
         row = recovery.check(tmp_path, config(), observation=sample(), now=100)
-        assert time.monotonic() - started < 2
+        # The seed-lock probe waits its debounce window before failing; the controller must still finish.
+        assert time.monotonic() - started < recovery.SEED_LOCK_WINDOW_SECONDS + 2
     assert row["capacity"]["limited"]
     assert row["functions"]["seed-lock"]["state"] == "FAILED"
     assert list((tmp_path / "recovery/events").glob("*.json"))

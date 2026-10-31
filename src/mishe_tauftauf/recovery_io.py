@@ -180,14 +180,30 @@ def pressure(proc=Path("/proc")):
         return {"memory_full": None, "io_full": None, "available_ratio": None}
 
 
-def seed_lock_probe(home):
-    """Nonblocking availability only: never a claim that settlement succeeded."""
+SEED_LOCK_WINDOW_SECONDS = 10.0
+
+
+def seed_lock_probe(home, window=SEED_LOCK_WINDOW_SECONDS, poll=0.2):
+    """Availability only: never a claim that settlement succeeded.
+
+    A wake holds the seed lock for the length of a turn, so one non-blocking sample reads
+    "busy" during ordinary work. The probe retries until the lock is acquired and fails only when
+    it stays busy for the whole window, which a healthy turn never does.
+    """
     started = time.monotonic()
     try:
         with (Path(home) / ".seed.lock").open("r+") as handle:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        return {"ok": False, "reason": "seed lock busy", "seconds": time.monotonic() - started}
+            while True:
+                try:
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    if time.monotonic() - started >= window:
+                        return {"ok": False, "reason": f"seed lock busy for {window:.1f}s window",
+                                "seconds": time.monotonic() - started}
+                    time.sleep(poll)
+                    continue
+                fcntl.flock(handle, fcntl.LOCK_UN)
+                break
     except OSError as exc:
         return {"ok": None, "reason": str(exc), "seconds": time.monotonic() - started}
     return {"ok": True, "reason": "lock available; actual settlement untested", "seconds": time.monotonic() - started}
