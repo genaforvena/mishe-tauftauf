@@ -119,15 +119,25 @@ def refresh_health(home: Path) -> str:
     return "SKIPPED busy" if outcome is _HEALTH_BUSY else "REFRESHED"
 
 
+def _last_published(previous: Path) -> str:
+    """The last published verdict for the busy fallback. Never raises: a file removed after a check,
+    or one that cannot be read or decoded, is shown as UNKNOWN with the reason, not propagated."""
+    try:
+        text = previous.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return "none published"
+    except (OSError, UnicodeDecodeError) as exc:
+        return f"UNKNOWN unreadable ({type(exc).__name__})"
+    return nonblank(text) or "none published"
+
+
 def health(home: Path) -> str:
     """Renderer entry. Publishes under the shared lock; while a producer holds it, shows UNKNOWN and
     the last published verdict instead of computing and writing a competing report."""
     rendered = _under_health_lock(home, lambda: _health_publish(home))
     if rendered is not _HEALTH_BUSY:
         return rendered
-    previous = home / "observations" / "health"
-    published = nonblank(previous.read_text(encoding="utf-8")) if previous.exists() else None
-    last = published or "none published"
+    last = _last_published(home / "observations" / "health")
     return "\n".join([
         "GOAL: keep this plant's panes, feed, and resident services working",
         "PURSUIT: repair internal failures from the live check; own reusable code delivery through ready integration",

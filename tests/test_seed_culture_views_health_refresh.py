@@ -103,3 +103,42 @@ def test_hard_killed_producer_releases_lock_for_reacquisition(tmp_path: Path) ->
     time.sleep(0.05)
     assert lock.exists()
     assert refresh_health(home) == "REFRESHED"
+
+
+def _busy(monkeypatch) -> None:
+    monkeypatch.setattr(seed_culture_views, "_under_health_lock", lambda h, a: seed_culture_views._HEALTH_BUSY)
+
+
+def test_busy_fallback_shows_last_published_verdict(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "site"
+    _report(home, "health", "PASS last\n")
+    _busy(monkeypatch)
+    assert "last published: PASS last" in seed_culture_views.health(home)
+
+
+def test_busy_fallback_missing_file_is_none_published(tmp_path: Path, monkeypatch) -> None:
+    _busy(monkeypatch)
+    out = seed_culture_views.health(tmp_path / "site")
+    assert "UNKNOWN" in out and "last published: none published" in out
+
+
+def test_busy_fallback_removed_after_check_stays_unknown(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "site"
+    _report(home, "health", "PASS last\n")
+    _busy(monkeypatch)
+
+    def vanish(self, encoding=None):
+        raise FileNotFoundError(self)
+
+    monkeypatch.setattr(Path, "read_text", vanish)
+    out = seed_culture_views.health(home)
+    assert "STATE: UNKNOWN" in out and "none published" in out
+
+
+def test_busy_fallback_undecodable_is_visible_unknown(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "site"
+    _report(home, "health", "PASS last\n")
+    (home / "observations" / "health").write_bytes(b"\xff\xfe\x00bad")
+    _busy(monkeypatch)
+    out = seed_culture_views.health(home)
+    assert "UNKNOWN unreadable (UnicodeDecodeError)" in out
