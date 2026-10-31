@@ -64,11 +64,36 @@ def active(home, key, *, now=None):
     now = time.time() if now is None else now
     try:
         record = boundary.load(_path(home, key))
-        if record["key"] != key or record["kind"] not in KINDS or not now < record["recheck_at"]:
+        if not _well_formed(record) or record["key"] != key or not now < record["recheck_at"]:
             return None
         return record
     except (OSError, ValueError, KeyError, TypeError):
         return None
+
+
+def _well_formed(record) -> bool:
+    """A record is a disposition only when every field a reader relies on is present.
+
+    A parked record with no owner/evidence, or whose role does not match its key,
+    must not park a role: that would hide a missing role instead of surfacing it.
+    """
+    if not isinstance(record, dict) or record.get("kind") not in KINDS:
+        return False
+    if not isinstance(record.get("key"), str) or not record["key"]:
+        return False
+    if not all(isinstance(record.get(f), str) and record[f].strip() for f in ("owner", "evidence")):
+        return False
+    for f in ("created", "recheck_at"):
+        value = record.get(f)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return False
+    if record["kind"] == "parked":
+        role = record.get("role")
+        if not isinstance(role, str) or not role or record["key"] != "parked:" + role:
+            return False
+    elif "role" in record:
+        return False
+    return True
 
 
 def parked(home, role, *, now=None):
@@ -92,6 +117,8 @@ def listing(home, *, now=None):
     for path in sorted(root.glob("*.json")) if root.exists() else []:
         try:
             record = boundary.load(path)
+            if not _well_formed(record):
+                raise ValueError("malformed disposition record")
             record["expired"] = not now < record["recheck_at"]
             rows.append(record)
         except (OSError, ValueError, KeyError, TypeError):

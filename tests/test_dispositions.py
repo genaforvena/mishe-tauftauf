@@ -62,6 +62,31 @@ def test_parked_roles(tmp_path):
         dispositions.set_disposition(tmp_path, "x", "parked", "o", "e", ttl=10)
 
 
+
+def test_malformed_parked_record_never_parks_a_role(tmp_path):
+    """Witness 127059 controlled failure: a parked record missing owner/evidence,
+    or whose role disagrees with its key, must leave the role missing (a failure)."""
+    import json
+    root = tmp_path / "dispositions"
+    root.mkdir()
+    good = {"key": "parked:a", "kind": "parked", "role": "a", "owner": "o", "evidence": "e",
+            "created": T0, "recheck_at": T0 + 3600}
+    cases = {
+        "no_owner.json": {k: v for k, v in good.items() if k != "owner"} | {"key": "parked:b", "role": "b"},
+        "blank_evidence.json": good | {"key": "parked:c", "role": "c", "evidence": "  "},
+        "role_mismatch.json": good | {"key": "parked:d", "role": "e"},
+        "no_recheck.json": {k: v for k, v in good.items() if k != "recheck_at"} | {"key": "parked:f", "role": "f"},
+    }
+    for name, record in cases.items():
+        (root / name).write_text(json.dumps(record))
+    (root / "parked_a.json").write_text(json.dumps(good))
+    assert dispositions.parked_roles(tmp_path, now=T0 + 1) == ["a"]
+    for role in "bcdef":
+        assert not dispositions.parked(tmp_path, role, now=T0 + 1)
+    assert all(row.get("kind") != "parked" or row.get("role") == "a"
+               for row in dispositions.listing(tmp_path, now=T0 + 1))
+
+
 class FakeFeed:
     sent = []
 
