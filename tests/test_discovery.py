@@ -3235,7 +3235,8 @@ def test_settle_result_mix_counts_and_drifts_on_blocked(tmp_path):
             result["other"], result["incidents"]) == (2, 2, 1, 0, 1)
     assert result["since_last"] == 2
     assert result["sample"] == ("n=5 verified=2 changed=2 blocked=1 other=0 "
-                                "incidents=1 since_last=2")
+                                "incidents=1 since_last=2 "
+                                "join7d=unknown(outcome store unavailable)")
 
 
 def test_settle_result_mix_clean_window_is_verified(tmp_path):
@@ -3251,7 +3252,32 @@ def test_settle_result_mix_clean_window_is_verified(tmp_path):
     assert result["incidents"] == 0
     assert result["since_last"] is None
     assert result["sample"] == ("n=2 verified=1 changed=1 blocked=0 other=0 "
-                                "incidents=0 since_last=none")
+                                "incidents=0 since_last=none "
+                                "join7d=unknown(outcome store unavailable)")
+
+
+def test_settle_outcome_join_counts_same_role_outcome_since_previous_settle(tmp_path, monkeypatch):
+    now = datetime(2026, 10, 31, 12, 0, tzinfo=timezone.utc)
+    settlers = [
+        (datetime(2026, 10, 30, 10, 0, tzinfo=timezone.utc), "a", "changed"),
+        (datetime(2026, 10, 31, 10, 0, tzinfo=timezone.utc), "a", "verified"),
+        (datetime(2026, 10, 31, 11, 0, tzinfo=timezone.utc), "b", "blocked"),
+    ]
+    events = [
+        # a's outcome between a's two settlements: joins the 10:00 settlement only
+        {"timestamp": "2026-10-31T09:30:00Z", "role": "a"},
+        # c's outcome is another role's: it joins none of a's or b's settlements
+        {"timestamp": "2026-10-31T10:30:00Z", "role": "c"},
+    ]
+    monkeypatch.setattr(discovery, "classify_outcomes",
+                        lambda home, since: {"events": events, "incomplete": [], "unavailable": None})
+    join = discovery._settle_outcome_join(tmp_path, settlers, now)
+    assert join["state"] == "measured"
+    assert join["settlements"] == 3
+    assert join["joined"] == {"verified": 1, "changed": 0, "blocked": 0, "other": 0}
+    assert join["unjoined"] == {"verified": 0, "changed": 1, "blocked": 1, "other": 0}
+    assert join["clause"] == ("join7d=1/3 joined verified=1 changed=0 blocked=0 "
+                              "outcome_events=2")
 
 
 def test_settle_result_mix_all_changed_window_is_not_verified(tmp_path):

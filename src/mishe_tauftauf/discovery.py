@@ -5968,6 +5968,7 @@ def _seed_settle_result_mix(home: Path) -> dict[str, object]:
         return {"id": "sense.seed.settle-result-mix", "state": "unknown",
                 "sample": f"chat tape unreadable: {exc}", "kind": "read"}
     settlements: list[tuple[datetime, str]] = []
+    settlers: list[tuple[datetime, str, str]] = []
     try:
         for entry in entries:
             try:
@@ -5979,6 +5980,7 @@ def _seed_settle_result_mix(home: Path) -> dict[str, object]:
                 continue
             ts = datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))
             settlements.append((ts, control.result))
+            settlers.append((ts, control.role, control.result))
     except (OSError, ValueError) as exc:
         # A tape that faults is not a shorter tape: the reading is abandoned
         # whole, as the whole-tape read abandoned it.
@@ -5998,10 +6000,12 @@ def _seed_settle_result_mix(home: Path) -> dict[str, object]:
     last_blocked = next((index for index in range(len(settlements) - 1, -1, -1)
                          if settlements[index][1] == "blocked"), None)
     since_last = None if last_blocked is None else len(settlements) - 1 - last_blocked
+    join = _settle_outcome_join(home, settlers, datetime.now(timezone.utc))
     sample = (f"n={len(window)} verified={counts['verified']} "
               f"changed={counts['changed']} blocked={counts['blocked']} "
               f"other={counts['other']} incidents={incidents} "
-              f"since_last={'none' if since_last is None else since_last}")
+              f"since_last={'none' if since_last is None else since_last} "
+              f"{join['clause']}")
     if blocked_times:
         state = "drift"
     elif counts["verified"] > 0:
@@ -6014,7 +6018,49 @@ def _seed_settle_result_mix(home: Path) -> dict[str, object]:
             "verified": counts["verified"], "changed": counts["changed"],
             "blocked": counts["blocked"], "other": counts["other"],
             "incidents": incidents, "since_last": since_last,
-            "incident_gap_seconds": SETTLE_INCIDENT_GAP_SECONDS}
+            "incident_gap_seconds": SETTLE_INCIDENT_GAP_SECONDS,
+            "join": join}
+
+
+def _settle_outcome_join(home: Path, settlers: list[tuple[datetime, str, str]],
+                         now: datetime) -> dict[str, object]:
+    """Join settlements in the last 7 days to same-role wall outcomes.
+
+    A settlement is joined when its role recorded at least one eligible wall
+    outcome after that role's previous settlement (or after the window start
+    for its first settlement in the window) and no later than the settlement.
+    The join is a time window, not a wake key: it proves co-occurrence on the
+    tape, not that the outcome belongs to that wake. Outcome counts are the
+    authors' own ``wall outcome`` records (author reports, not independent
+    acceptance), so the join reads as activity beside the settlement mix.
+
+    Unknown when the outcome store or tape is unavailable; the settlement
+    state rule is not changed by this join.
+    """
+    since = now - timedelta(days=7)
+    coverage = classify_outcomes(home, since)
+    if coverage.get("unavailable"):
+        return {"state": "unknown", "clause": f"join7d=unknown({coverage['unavailable']})"}
+    outcomes = sorted((datetime.fromisoformat(event["timestamp"].replace("Z", "+00:00")),
+                       event["role"]) for event in coverage["events"])
+    joined: dict[str, int] = {"verified": 0, "changed": 0, "blocked": 0, "other": 0}
+    unjoined: dict[str, int] = {"verified": 0, "changed": 0, "blocked": 0, "other": 0}
+    previous: dict[str, datetime] = {}
+    for ts, role, result in sorted(settlers):
+        start = previous.get(role, since)
+        previous[role] = ts
+        if ts < since:
+            continue
+        hit = any(owner == role and start < at <= ts for at, owner in outcomes)
+        bucket = joined if hit else unjoined
+        bucket[result if result in bucket else "other"] += 1
+    total = sum(joined.values()) + sum(unjoined.values())
+    matched = sum(joined.values())
+    clause = (f"join7d={matched}/{total} joined verified={joined['verified']} "
+              f"changed={joined['changed']} blocked={joined['blocked']} "
+              f"outcome_events={len(outcomes)}")
+    return {"state": "measured", "clause": clause, "settlements": total,
+            "joined": joined, "unjoined": unjoined, "outcome_events": len(outcomes)}
 
 
 EVIDENCE_BINDING_CLAUSE_TIME = datetime(2026, 10, 6, 16, 22, 11, tzinfo=timezone.utc)
