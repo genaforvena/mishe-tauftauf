@@ -6,7 +6,11 @@ so a malformed selection no longer reads as an absent one.
 import json
 from pathlib import Path
 
+import pytest
+
 import mishe_tauftauf.engine_watch as ew
+
+NOW_MS = 1_792_712_432_436
 
 
 def _errors(home: Path):
@@ -16,12 +20,13 @@ def _errors(home: Path):
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
-def test_malformed_current_selection_is_logged_and_still_none(tmp_path):
+def test_malformed_current_selection_is_logged_and_raises(tmp_path):
     cur = tmp_path / "engine" / "current"
     cur.mkdir(parents=True)
     (cur / "health.json").write_text("{not json")
 
-    assert ew._load_current(tmp_path, "health") is None
+    with pytest.raises(ew.CurrentUnreadable):
+        ew._load_current(tmp_path, "health")
 
     wheres = [e["where"] for e in _errors(tmp_path)]
     assert "load_current:health" in wheres
@@ -40,3 +45,48 @@ def test_malformed_policy_is_logged_and_allowlist_still_returns(tmp_path):
 
     assert isinstance(allow, dict)
     assert "load_allowlist:policy" in [e["where"] for e in _errors(tmp_path)]
+
+
+def _fake_plant(home: Path, monkeypatch):
+    import mishe_tauftauf.engine_usage as eu
+    import mishe_tauftauf.token_usage as tu
+    status = {"state": "FRESH", "observed_at": "2026-10-31T10:00:00Z", "accounts": {}}
+    monkeypatch.setattr(eu, "status", lambda h, now_ms=None, omp="omp": status)
+    monkeypatch.setattr(tu, "report", lambda h, now_ms=None: {"state": "FRESH", "observed_at": "2026-10-31T10:00:00Z"})
+    (home / "engine").mkdir(parents=True, exist_ok=True)
+    (home / "engine" / "policy.json").write_text(json.dumps({"health": [{"provider": "opencode-go", "alias": "go-a", "model": "m"}]}))
+
+
+def test_malformed_current_fails_closed_end_to_end(tmp_path, monkeypatch):
+    _fake_plant(tmp_path, monkeypatch)
+    (tmp_path / "engine" / "current").mkdir(parents=True)
+    (tmp_path / "engine" / "current" / "health.json").write_text("{not json")
+
+    cache = ew.once(tmp_path, now_ms=NOW_MS)
+
+    assert cache["unreadable"] == ["current:health"]
+    assert cache["decisions"]["health"]["decision"] == "hold"
+    assert not (tmp_path / ew.PROPOSALS_REL).exists()  # no proposal from an unreadable current
+    result = ew.check(tmp_path, now_ms=NOW_MS)
+    assert result["status"] == "RED"
+    assert "current:health" in result["reason"]
+    alerts = (tmp_path / ew.ALERT_REL).read_text()
+    assert "current:health" in alerts
+
+
+def test_unreadable_policy_holds_every_role(tmp_path, monkeypatch):
+    _fake_plant(tmp_path, monkeypatch)
+    (tmp_path / "engine" / "policy.json").write_text("{not json")
+
+    cache = ew.once(tmp_path, now_ms=NOW_MS)
+
+    assert "policy" in cache["unreadable"]
+    assert all(d["decision"] == "hold" for d in cache["decisions"].values())
+    assert not (tmp_path / ew.PROPOSALS_REL).exists()
+    assert ew.check(tmp_path, now_ms=NOW_MS)["status"] == "RED"
+
+
+def test_missing_cache_is_red_not_green(tmp_path):
+    result = ew.check(tmp_path, now_ms=NOW_MS)
+    assert result["status"] == "RED"
+    assert result["state"] == "UNKNOWN"

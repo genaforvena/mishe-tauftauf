@@ -122,7 +122,11 @@ def _alert(home: Path, reason: str, now_ms: int, age):
         _log_error(home, now_ms, "alert", str(exc)[:500])
 
 
-def _load_allowlist(home: Path, status_obj):
+class CurrentUnreadable(Exception):
+    """A current selection file exists but cannot be read; it is not the same as absent."""
+
+
+def _load_allowlist(home: Path, status_obj, problems=None):
     allow = {}
     pol = home / "engine/policy.json"
     if pol.is_file():
@@ -153,6 +157,8 @@ def _load_allowlist(home: Path, status_obj):
                     return allow
         except Exception as exc:
             _log_error(home, _now_ms(None), "load_allowlist:policy", type(exc).__name__ + " " + str(exc)[:300])
+            if problems is not None:
+                problems.append("policy")
     try:
         import mishe_tauftauf.engine_boundary as eb
         _, registry = eb.load_registry(home)
@@ -168,6 +174,11 @@ def _load_allowlist(home: Path, status_obj):
 
 
 def _load_current(home: Path, role: str):
+    """Return the current selection, None when no file exists, or raise CurrentUnreadable.
+
+    A malformed file is never treated as absent: absence would let a proposal replace
+    a selection that could not be read. The error is also logged, best-effort.
+    """
     for cand in [home / "engine" / "current" / (role + ".json"), home / "engine" / "current.json"]:
         if cand.is_file():
             try:
@@ -178,9 +189,8 @@ def _load_current(home: Path, role: str):
                 if isinstance(data, dict) and role in data and isinstance(data[role], dict):
                     return data[role]
             except Exception as exc:
-                # Visible, not fatal: a malformed current selection must not read as absent.
                 _log_error(home, _now_ms(None), "load_current:" + role, type(exc).__name__ + " " + str(exc)[:300])
-                continue
+                raise CurrentUnreadable(role) from exc
     return None
 
 
@@ -231,14 +241,25 @@ def once(home, now_ms=None, now=None):
     except Exception as exc:
         _log_error(home, t_ms, "token_usage.report", str(exc)[:500])
         stats = {"state": "UNKNOWN", "observed_at": iso, "error": str(exc)[:200]}
-    allow = _load_allowlist(home, eng)
+    problems = []
+    allow = _load_allowlist(home, eng, problems)
     if not allow:
         allow = {}
     import mishe_tauftauf.engine_policy as pol
     decisions = {}
     next_rec = None
     for role, routes in allow.items():
-        cur = _load_current(home, role)
+        try:
+            cur = _load_current(home, role)
+        except CurrentUnreadable:
+            # Fail closed: hold this role, propose nothing, and surface it through the cache.
+            problems.append("current:" + role)
+            decisions[role] = {"decision": "hold", "selected": None, "reason": "current selection unreadable", "evidence_ids": [], "next_reconsider_ms": t_ms + 600000}
+            continue
+        if "policy" in problems:
+            # Fail closed: an unreadable policy must not drive a switch from the registry fallback.
+            decisions[role] = {"decision": "hold", "selected": None, "reason": "policy unreadable", "evidence_ids": [], "next_reconsider_ms": t_ms + 600000}
+            continue
         try:
             dec = pol.decide(role=role, status=eng, allowlist={role: routes}, current_route=cur, now_ms=t_ms, reservations=None, reserve_pct=0.15, reserve_policy="auto", min_hold_ms=600000)
         except Exception as exc:
@@ -251,12 +272,17 @@ def once(home, now_ms=None, now=None):
                 next_rec = nr
         try:
             _maybe_propose(home, role, dec, t_ms)
+        except CurrentUnreadable:
+            problems.append("current:" + role)
         except Exception as exc:
             _log_error(home, t_ms, "propose:" + role, str(exc)[:500])
+    if problems:
+        _alert(home, "engine-watch inputs unreadable: " + ",".join(sorted(set(problems))), t_ms, None)
     cache = {
         "version": VERSION,
         "observed_at": iso,
         "observed_ms": t_ms,
+        "unreadable": sorted(set(problems)),
         "engine_state": eng.get("state") if isinstance(eng, dict) else "UNKNOWN",
         "stats_state": stats.get("state") if isinstance(stats, dict) else "UNKNOWN",
         "engine": eng,
@@ -294,6 +320,10 @@ def check(home, now_ms=None, now=None):
             return {"state": "UNKNOWN", "status": "RED", "reason": reason, "age_seconds": age}
         if not isinstance(data, dict) or "observed_at" not in data or "decisions" not in data:
             reason = "cache malformed: missing required keys"
+            _alert(home, reason, t_ms, age)
+            return {"state": "UNKNOWN", "status": "RED", "reason": reason, "age_seconds": age}
+        if data.get("unreadable"):
+            reason = "engine-watch inputs unreadable: " + ",".join(str(x) for x in data["unreadable"])
             _alert(home, reason, t_ms, age)
             return {"state": "UNKNOWN", "status": "RED", "reason": reason, "age_seconds": age}
         if age < -5:
