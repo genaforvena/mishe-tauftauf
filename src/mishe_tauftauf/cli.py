@@ -10,7 +10,7 @@ import sys
 import time
 from pathlib import Path
 
-from .checks import run_check
+from .checks import HealthPublishBusy, run_check
 from . import access, discovery
 from .feed import Feed, FeedError, parse_feed, utc_now
 from .judges import QUESTIONS, classify, controls, document, run_external
@@ -399,7 +399,11 @@ def cmd_check(args) -> int:
     argv = list(args.program)
     if argv and argv[0] == "--":
         argv.pop(0)
-    path = run_check(args.home, args.slug, argv)
+    try:
+        path = run_check(args.home, args.slug, argv)
+    except HealthPublishBusy as exc:
+        print(f"BUSY {exc}", file=sys.stderr)
+        return 75
     print(path)
     return 0
 

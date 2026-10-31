@@ -269,6 +269,9 @@ def event(root, payload, *, recipients=()):
 def check(home, config, *, observation=None, now=None):
     now = time.time() if now is None else now
     cfg = validate_config(config)
+    # The seed-lock probe may wait a full window; sample it before taking the controller lock so
+    # other controller callers are not blocked behind an observation that is not a state write.
+    control = seed_lock_probe(home)
     with controller_lock(home) as root:
         state_path = root / "state.json"
         if state_path.exists():
@@ -281,7 +284,6 @@ def check(home, config, *, observation=None, now=None):
         cap = policy.capacity((previous or {}).get("capacity"), now=now,
                               recover_seconds=cfg["stable_seconds"],
                               max_gap=cfg["interval"] * 3, **obs)
-        control = seed_lock_probe(home)
         checks = {"host-pressure": {"ok": None if cap["state"] == "UNKNOWN" else not cap["limited"], "observation": obs},
                   "seed-lock": control}
         try:

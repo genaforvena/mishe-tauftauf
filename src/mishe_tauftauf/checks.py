@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import os
 import shlex
 import subprocess
@@ -8,6 +9,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .observations import validate_slug
+
+# Same file, same non-blocking flock as seed_culture_views._under_health_lock: every writer of
+# observations/health must serialise through it, so a manual `check health` cannot interleave with
+# the detached producer. tests/test_checks_health_lock.py pins the two names together.
+HEALTH_REFRESH_LOCK = "health.refresh.lock"
+
+
+class HealthPublishBusy(RuntimeError):
+    """Another writer holds the health publish lock; the check is refused, not queued."""
 
 
 def stamp() -> str:
@@ -39,6 +49,18 @@ def run_check(home: Path, slug: str, argv: list[str]) -> Path:
     )
     directory = home / "observations"
     directory.mkdir(parents=True, exist_ok=True)
+    if slug != "health":
+        return _publish(directory, slug, report)
+    lock_path = directory / HEALTH_REFRESH_LOCK
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise HealthPublishBusy("health publish lock held elsewhere; observations/health not written") from exc
+        return _publish(directory, slug, report)
+
+
+def _publish(directory: Path, slug: str, report: str) -> Path:
     fd, temporary = tempfile.mkstemp(prefix=f".{slug}.", dir=directory)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
