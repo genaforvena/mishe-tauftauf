@@ -205,7 +205,12 @@ def seed_lock_probe(home, wait=None):
                     if time.monotonic() >= deadline:
                         return {"ok": False, "reason": f"seed lock busy for {wait:g}s",
                                 "seconds": time.monotonic() - started}
-                    time.sleep(0.05)
+                    time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+                    # A late wake, or a holder released after the bound, must not
+                    # turn into success: re-check the bound before any retry.
+                    if time.monotonic() >= deadline:
+                        return {"ok": False, "reason": f"seed lock busy for {wait:g}s",
+                                "seconds": time.monotonic() - started}
     except OSError as exc:
         return {"ok": None, "reason": str(exc), "seconds": time.monotonic() - started}
     return {"ok": True, "reason": "lock acquired within bound; actual settlement untested",

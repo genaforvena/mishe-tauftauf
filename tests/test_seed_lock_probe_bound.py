@@ -69,3 +69,39 @@ def test_probe_rejects_negative_bound(tmp_path):
     except ValueError:
         return
     raise AssertionError("negative bound must be rejected")
+
+
+def test_probe_fails_when_holder_releases_after_bound(tmp_path):
+    handle = _lock_file(tmp_path)
+    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def release_after_bound():
+        time.sleep(0.35)
+        handle.close()
+
+    thread = threading.Thread(target=release_after_bound)
+    thread.start()
+    try:
+        result = recovery.seed_lock_probe(tmp_path, wait=0.2)
+    finally:
+        thread.join()
+        handle.close()
+    assert result["ok"] is False
+    assert "busy" in result["reason"]
+
+
+def test_probe_fails_on_late_wake_even_when_lock_is_free(tmp_path, monkeypatch):
+    handle = _lock_file(tmp_path)
+    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    real_sleep = time.sleep
+
+    def late_wake(seconds):
+        # Simulate a scheduler pause: the holder goes away during the sleep
+        # and the probe wakes only after the bound has passed.
+        handle.close()
+        real_sleep(0.5)
+
+    monkeypatch.setattr(recovery.time, "sleep", late_wake)
+    result = recovery.seed_lock_probe(tmp_path, wait=0.2)
+    assert result["ok"] is False
+    assert result["seconds"] >= 0.2
