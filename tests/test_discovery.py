@@ -2674,6 +2674,46 @@ def test_head_rewinds_bounds_dropped_commits_and_paths(tmp_path, monkeypatch):
     assert "dropped-commits=5" in result["sample"]
 
 
+def test_head_rewinds_names_needs_review_and_absent_paths(tmp_path, monkeypatch):
+    """The reading names the paths behind its needs-review and absent counts."""
+    home = tmp_path / "site"
+    home.mkdir()
+    sha = "b" * 40
+    paths = ["src/kept.py", "src/gone.py", "src/rewritten.py"]
+    _rewind_git(monkeypatch, reflog=f"{sha} reset: moving to HEAD~1\n", dropped={sha},
+                applies={"paths": "".join(f"{p}\n" for p in paths),
+                         "verdicts": {(f"PATCH src/kept.py", True): True,
+                                      (f"PATCH src/gone.py", True): False,
+                                      (f"PATCH src/gone.py", False): True,
+                                      (f"PATCH src/rewritten.py", True): False,
+                                      (f"PATCH src/rewritten.py", False): False}})
+    result = discovery._head_rewinds(home)
+    assert result["absent_paths"] == [{"commit": sha[:12], "path": "src/gone.py"}]
+    assert result["needs_review_paths"] == [{"commit": sha[:12], "path": "src/rewritten.py"}]
+    assert result["named_paths_omitted"] == 0
+    assert result["absent"] == len(result["absent_paths"])
+    assert result["needs_review"] == len(result["needs_review_paths"])
+
+
+def test_head_rewinds_caps_named_paths_and_counts_the_rest(tmp_path, monkeypatch):
+    """Names are bounded; every unnamed needs-review path is counted as omitted."""
+    home = tmp_path / "site"
+    home.mkdir()
+    shas = ["b" * 40, "c" * 40, "d" * 40, "e" * 40, "f" * 40]
+    reflog = "".join(f"{sha} reset: moving to HEAD~1\n" for sha in shas)
+    paths = [f"src/f{i}.py" for i in range(discovery._HEAD_REWIND_PATH_LIMIT)]
+    _rewind_git(monkeypatch, reflog=reflog, dropped=set(shas),
+                applies={"paths": "".join(f"{p}\n" for p in paths),
+                         "verdicts": {(f"PATCH {p}", r): False
+                                      for p in paths for r in (True, False)}})
+    result = discovery._head_rewinds(home)
+    total = len(shas) * len(paths)
+    assert result["needs_review"] == total
+    assert len(result["needs_review_paths"]) == discovery._HEAD_REWIND_NAMED_PATH_LIMIT
+    assert result["named_paths_omitted"] == total - discovery._HEAD_REWIND_NAMED_PATH_LIMIT
+    assert len(result["absent_paths"]) == 0
+
+
 def test_head_rewinds_unexamined_paths_without_drift_read_unknown(tmp_path, monkeypatch):
     """Lossless paths that fit the cap cannot verify a commit whose tail was never read."""
     home = tmp_path / "site"

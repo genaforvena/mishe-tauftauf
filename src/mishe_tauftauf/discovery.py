@@ -3392,6 +3392,14 @@ bounds the commit count, so the sample's classified count equals the dropped
 count. The per-path cap bounds each commit's work.
 """
 
+_HEAD_REWIND_NAMED_PATH_LIMIT = 16
+"""Needs-review and absent paths named per rewind reading; the rest are counted.
+
+The counts say how many paths need a mind's judgment; the names say which
+ones, so a reader can check each against its commit. The cap bounds the
+dashboard-facing payload; ``named_paths_omitted`` says how many were not listed.
+"""
+
 _DISK_TREND_FLOOR_BYTES = 10 * 2**30
 _DISK_TREND_NEAR_BYTES = 20 * 2**30
 _DISK_TREND_FAST_DRAIN_PER_DAY = 10 * 2**30
@@ -3560,6 +3568,8 @@ def _head_rewinds(home: Path) -> dict[str, object]:
                 "dropped": 0, "classified_commits": 0,
                 "dropped_ancestry_commits": 0, "lossless": 0,
                 "needs_review": 0, "absent": 0,
+                "needs_review_paths": [], "absent_paths": [],
+                "named_paths_omitted": 0,
                 "reflog_window": _HEAD_REWIND_REFLOG_LIMIT, "kind": "read"}
     landed = _patch_landed(checkout_root, dropped)
     parent_read = run("rev-list", "--parents", "--no-walk=unsorted", *dropped)
@@ -3599,6 +3609,9 @@ def _head_rewinds(home: Path) -> dict[str, object]:
         return "unexplained" if present.returncode == 0 else "absent-at-head"
 
     lossless = review = absent = preserved = detracked_edited = 0
+    review_names: list[dict[str, str]] = []
+    absent_names: list[dict[str, str]] = []
+    named_omitted = 0
     unexamined = partial_commits = 0
     basis_counts = {"superseded": 0, "absent-at-head": 0, "unexplained": 0}
     superseded_content = {"intact": 0, "rewritten": 0, "absent_lines": 0, "added_lines": 0}
@@ -3634,8 +3647,16 @@ def _head_rewinds(home: Path) -> dict[str, object]:
                         preserved += 1
                     elif _applies(tree, patch.stdout, reverse=False):
                         absent += 1
+                        if len(absent_names) < _HEAD_REWIND_NAMED_PATH_LIMIT:
+                            absent_names.append({"commit": sha[:12], "path": path})
+                        else:
+                            named_omitted += 1
                     else:
                         review += 1
+                        if len(review_names) < _HEAD_REWIND_NAMED_PATH_LIMIT:
+                            review_names.append({"commit": sha[:12], "path": path})
+                        else:
+                            named_omitted += 1
                         basis = review_basis(sha, path)
                         if basis is None:
                             return {**unknown, "sample": f"path history unreadable: {sha[:7]}"}
@@ -3686,6 +3707,9 @@ def _head_rewinds(home: Path) -> dict[str, object]:
             "reflog_window": _HEAD_REWIND_REFLOG_LIMIT,
             "lossless": lossless,
             "needs_review": review, "absent": absent,
+            "needs_review_paths": review_names,
+            "absent_paths": absent_names,
+            "named_paths_omitted": named_omitted,
             "preserved_untracked": preserved,
             "detracked_edited": detracked_edited,
             "review_basis": basis_counts,
