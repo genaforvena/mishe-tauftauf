@@ -44,7 +44,9 @@ def test_lock_released_within_window_passes(tmp_path: Path) -> None:
     assert row["ok"] is True
 
 
-def test_lock_held_for_whole_window_fails(tmp_path: Path) -> None:
+def test_lock_held_for_whole_window_is_unknown_not_failed_or_passed(tmp_path: Path) -> None:
+    # Controlled failure path: a held lock must never read as ok. It is UNKNOWN (contention is not
+    # a claimed failure of the probe, and the probe cannot tell a live turn from a stuck holder).
     (tmp_path / ".seed.lock").write_text("")
     holder = _hold(tmp_path, 30)
     try:
@@ -54,8 +56,8 @@ def test_lock_held_for_whole_window_fails(tmp_path: Path) -> None:
     finally:
         holder.kill()
         holder.wait(timeout=10)
-    assert row["ok"] is False
-    assert row["reason"] == "seed lock busy for 1.0s window"
+    assert row["ok"] is None
+    assert row["reason"] == "seed lock held for 1.0s window; availability not measured"
     assert 1.0 <= elapsed < 5.0
 
 

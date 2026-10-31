@@ -186,9 +186,10 @@ SEED_LOCK_WINDOW_SECONDS = 10.0
 def seed_lock_probe(home, window=SEED_LOCK_WINDOW_SECONDS, poll=0.2):
     """Availability only: never a claim that settlement succeeded.
 
-    A wake holds the seed lock for the length of a turn, so one non-blocking sample reads
-    "busy" during ordinary work. The probe retries until the lock is acquired and fails only when
-    it stays busy for the whole window, which a healthy turn never does.
+    A wake holds the seed lock for the length of a turn, which can run for minutes. Busy is
+    contention, not failure: the probe waits up to the window for release and passes if the lock
+    frees in time. A lock still held at the end of the window is UNKNOWN (ok None), never a pass
+    and never a claimed failure, because the probe cannot tell a live turn from a stuck holder.
     """
     started = time.monotonic()
     try:
@@ -198,7 +199,7 @@ def seed_lock_probe(home, window=SEED_LOCK_WINDOW_SECONDS, poll=0.2):
                     fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:
                     if time.monotonic() - started >= window:
-                        return {"ok": False, "reason": f"seed lock busy for {window:.1f}s window",
+                        return {"ok": None, "reason": f"seed lock held for {window:.1f}s window; availability not measured",
                                 "seconds": time.monotonic() - started}
                     time.sleep(poll)
                     continue
