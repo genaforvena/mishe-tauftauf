@@ -427,6 +427,35 @@ def test_a_live_mind_with_a_shell_renderer_is_still_live(tmp_path, monkeypatch):
     assert row["minds_running"] is True
 
 
+def test_a_contained_claude_mind_counts_as_an_engine(tmp_path, monkeypatch):
+    """The site's claude-launched minds are minds, not absent panes."""
+    group = next(line[3:] for line in pathlib.Path("/proc/self/cgroup").read_text().splitlines() if line.startswith("0::"))
+    rows = []
+    for role in ("health", "genome"):
+        rows.append(f"{role}\t0\t0\t{os.getpid()}\t{tmp_path}\tpython3")
+        rows.append(f"{role}\t1\t0\t{os.getpid()}\t{tmp_path}\tclaude")
+    monkeypatch.setattr(guard, "bounded_command", lambda *args, **kwargs: (0, ("\n".join(rows) + "\n").encode()))
+    config = dict(user="test", life_support=dict(socket="unused", session="life", home=str(tmp_path), cgroup=group, roles=["health", "genome"]))
+    row = guard.life_observation(config)
+    assert row["state"] == "PANES_LIVE"
+    assert row["minds_running"] is True
+    assert row["panes"]["health.1"]["engine"] is True
+
+
+def test_an_uncontained_claude_pane_is_not_a_protected_mind(tmp_path, monkeypatch):
+    """A claude process outside the protected cgroup must not satisfy minds_running."""
+    rows = []
+    for role in ("health", "genome"):
+        rows.append(f"{role}\t0\t0\t{os.getpid()}\t{tmp_path}\tpython3")
+        rows.append(f"{role}\t1\t0\t{os.getpid()}\t{tmp_path}\tclaude")
+    monkeypatch.setattr(guard, "bounded_command", lambda *args, **kwargs: (0, ("\n".join(rows) + "\n").encode()))
+    config = dict(user="test", life_support=dict(socket="unused", session="life", home=str(tmp_path), cgroup="/not-this-process", roles=["health", "genome"]))
+    row = guard.life_observation(config)
+    assert row["state"] == "RED"
+    assert row["minds_running"] is False
+    assert row["panes"]["genome.1"]["engine"] is False
+
+
 def test_ssh_probe_tolerates_a_slow_successful_handshake(monkeypatch):
     seen = []
     def command(argv, **kwargs):

@@ -43,7 +43,10 @@ LIFE_MISSING_SECONDS = 20
 #: count as a mind as well.  The plant's own readiness gate recognises the
 #: same set (native_gate.ENGINE_NAMES and ENGINE_PREFIXES); a mind that the
 #: gate would accept must not read as absent here.
-LIFE_SUPPORT_ENGINES = frozenset({"omp", "codex", "opencode"})
+#: ``claude`` is the Claude Code engine that the site's current mind launchers
+#: run (``claude --model ...`` under the claude-gate settings).  Without it a
+#: contained, working claude mind read as absent and held clearance closed.
+LIFE_SUPPORT_ENGINES = frozenset({"omp", "codex", "opencode", "claude"})
 LIFE_SUPPORT_PYTHON_NAMES = ("python", "python3")
 LIFE_SUPPORT_PYTHON_PREFIXES = ("python3.",)
 
@@ -493,7 +496,9 @@ def life_observation(config):
                 # placeholder is not a mind: reporting it as live made the
                 # protected session look healthy while no mind existed, which
                 # is the exact false reading this observation must not give.
-                engine = _is_mind_engine(command)
+                # Only a mind inside the protected cgroup counts: an engine
+                # running outside it is not the protected session's mind.
+                engine = _is_mind_engine(command) and contained
                 found[name + "." + index] = dict(
                     pid=int(pid), live=dead == "0" and owner == life["home"] and contained,
                     command=command, engine=engine)
