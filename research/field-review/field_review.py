@@ -427,6 +427,33 @@ def _git_code(repo: Path, args: list[str]) -> int | None:
         return None
 
 
+RESTORE_SUBJECT_PREFIX = "field-review: restore lane"
+
+
+def realized_commits(repo: Path, target: str, review_date: str) -> str:
+    """Commits on the branch that touch the target on or after the review date.
+
+    This is the owner-facing realization signal: a later commit to the target
+    is the usual way an applied review lands. The lane-restore commit re-staged
+    reviews and is excluded by subject. The date is day-granular, so a same-day
+    commit may predate the review; the subject is shown so the reader can judge.
+    Content change (the ``state`` column) is a separate, second signal.
+    """
+    if not target or not DATE_RE.match(review_date or ""):
+        return ""
+    out = _git(repo, ["log", "--format=%h%x1f%cs%x1f%s", "HEAD", "--", target])
+    shas: list[str] = []
+    for line in out.decode("utf-8", "replace").splitlines():
+        parts = line.split("\x1f", 2)
+        if len(parts) != 3:
+            continue
+        sha, day, subject = parts
+        if day < review_date or subject.startswith(RESTORE_SUBJECT_PREFIX):
+            continue
+        shas.append(sha)
+    return " ".join(shas)
+
+
 def applied_target_states(repo: Path) -> list[dict[str, str]]:
     """For each landed review with status applied: did its target's bytes change?
 
@@ -458,7 +485,8 @@ def applied_target_states(repo: Path) -> list[dict[str, str]]:
                 target = line.split(":", 1)[1].strip()
                 break
         row = {"review": name, "owner": matter.get("owner", ""), "target": target,
-               "landed": "", "state": "UNKNOWN", "commits": ""}
+               "landed": "", "state": "UNKNOWN", "commits": "",
+               "realized": realized_commits(repo, target, matter.get("date", ""))}
         landing = _git(repo, ["log", "--diff-filter=A", "--format=%H",
                               "--reverse", "HEAD", "--", name]).decode().split()
         if not target or not landing:
@@ -552,9 +580,12 @@ def main(argv=None) -> int:
             counts[row["state"]] = counts.get(row["state"], 0) + 1
             print(f"{row['state']:<9} {row['owner'] or '-':<12} {row['target'] or '-'}"
                   f"  landed={row['landed'] or '-'}  review={row['review']}"
-                  + (f"  commits={row['commits']}" if row["commits"] else ""))
+                  + (f"  commits={row['commits']}" if row["commits"] else "")
+                  + (f"  realized={row['realized']}" if row["realized"] else ""))
+        realized = sum(1 for row in rows if row["realized"])
         summary = ", ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "none"
-        print(f"applied reviews: {len(rows)} ({summary}); content facts only,"
+        print(f"applied reviews: {len(rows)} ({summary}); realized (target commit on/after"
+              f" review date, excluding restore)={realized}; content facts only,"
               " not dispositions")
         return 0
     if command == "check":

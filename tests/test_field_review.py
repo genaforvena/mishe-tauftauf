@@ -380,6 +380,34 @@ class AppliedTargetTest(unittest.TestCase):
             self.assertEqual(rows[0]["state"], "UNCHANGED")
             self.assertEqual(rows[0]["commits"], "")
 
+    def test_target_commit_on_or_after_review_date_is_realized(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--recent--2026-10-21.md": GOOD_REVIEW})
+            (repo / "src" / "example.py").write_text("# alpha, realized\n", encoding="utf-8")
+            _commit(repo, "field-review: implement alpha onto example")
+            rows = field_review.applied_target_states(repo)
+            self.assertTrue(rows[0]["realized"])
+            self.assertEqual(rows[0]["state"], "CHANGED")
+
+    def test_restore_lane_commit_is_not_realization(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--recent--2026-10-21.md": GOOD_REVIEW})
+            (repo / "src" / "example.py").write_text("# touched by restore\n", encoding="utf-8")
+            _commit(repo, "field-review: restore lane after .gitignore suppressed reviews")
+            restore_sha = subprocess.run(["git", "-C", str(repo), "rev-parse", "--short", "HEAD"],
+                                         capture_output=True, text=True, check=True).stdout.strip()
+            rows = field_review.applied_target_states(repo)
+            self.assertNotIn(restore_sha, rows[0]["realized"].split())
+
+    def test_commits_before_review_date_are_not_realization(self):
+        future = GOOD_REVIEW.replace("date: 2026-10-21", "date: 2099-01-01")
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--recent--2026-10-21.md": future})
+            (repo / "src" / "example.py").write_text("# early\n", encoding="utf-8")
+            _commit(repo, "target edit")
+            rows = field_review.applied_target_states(repo)
+            self.assertEqual(rows[0]["realized"], "")
+
     def test_applied_review_without_target_is_unknown(self):
         no_target = GOOD_REVIEW.replace("target: src/example.py\n\nAdd", "Add")
         with tempfile.TemporaryDirectory() as tmp:
