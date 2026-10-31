@@ -3436,6 +3436,45 @@ def _reset_origin(
     return labels
 
 
+def _commit_parents(raw: str, shas: list[str]) -> dict[str, str | None] | None:
+    """Map each dropped sha to its first parent (None for a root); None if any is missing.
+
+    Input is ``git rev-list --parents --no-walk=unsorted <shas>`` output: one
+    line per commit, ``<sha> [<parent> ...]``. A commit absent from the output
+    makes the whole mapping None rather than being guessed as a root.
+    """
+    parents: dict[str, str | None] = {}
+    for line in raw.splitlines():
+        fields = line.split()
+        if not fields or re.fullmatch(r"[0-9a-f]{40}", fields[0]) is None:
+            continue
+        parents[fields[0]] = fields[1] if len(fields) > 1 else None
+    if any(sha not in parents for sha in shas):
+        return None
+    return {sha: parents[sha] for sha in shas}
+
+
+def _rewrite_basis(parents: dict[str, str | None], reachable: set[str]) -> dict[str, int]:
+    """Count dropped commits by how they left HEAD's line; a label, not a verdict.
+
+    ``chain-unreachable``: the commit's parent is also off HEAD, so the commit
+    left as part of a dropped chain, the shape a history rewrite leaves when it
+    rebuilds a line. ``parent-reachable``: the parent is still on HEAD, so only
+    this commit was replaced on a surviving base (an amend or single-commit
+    rebase). ``root``: the commit has no parent. None of these says whether the
+    bytes were sanitised or lost; the path classifier still decides that.
+    """
+    counts = {"chain-unreachable": 0, "parent-reachable": 0, "root": 0}
+    for parent in parents.values():
+        if parent is None:
+            counts["root"] += 1
+        elif parent in reachable:
+            counts["parent-reachable"] += 1
+        else:
+            counts["chain-unreachable"] += 1
+    return counts
+
+
 def _head_rewinds(home: Path) -> dict[str, object]:
     """Classify reflog-dropped commits' changed paths against HEAD's tree.
 
@@ -3503,6 +3542,13 @@ def _head_rewinds(home: Path) -> dict[str, object]:
                 "needs_review": 0, "absent": 0,
                 "reflog_window": _HEAD_REWIND_REFLOG_LIMIT, "kind": "read"}
     landed = _patch_landed(checkout_root, dropped)
+    parent_read = run("rev-list", "--parents", "--no-walk=unsorted", *dropped)
+    if parent_read is None or parent_read.returncode != 0:
+        return {**unknown, "sample": "dropped-commit parents unreadable"}
+    parents = _commit_parents(parent_read.stdout, dropped)
+    if parents is None:
+        return {**unknown, "sample": "dropped-commit parents unreadable"}
+    rewrite = _rewrite_basis(parents, reachable)
     archive = run("archive", "HEAD", timeout=30, text=False)
     if archive is None or archive.returncode != 0:
         return {**unknown, "sample": "HEAD tree unreadable"}
@@ -3589,7 +3635,10 @@ def _head_rewinds(home: Path) -> dict[str, object]:
                        f"superseded-absent-lines={superseded_content['absent_lines']}"
                        f"/{superseded_content['added_lines']} "
                        "patch-landed-commits="
-                       f"{'unknown' if landed is None else landed}"),
+                       f"{'unknown' if landed is None else landed} "
+                       f"rewrite-chain-unreachable-commits={rewrite['chain-unreachable']} "
+                       f"rewrite-parent-reachable-commits={rewrite['parent-reachable']} "
+                       f"rewrite-root-commits={rewrite['root']}"),
             "dropped": len(dropped), "classified_commits": classified,
             "unexamined_paths": unexamined, "patch_landed_commits": landed,
             "reflog_window": _HEAD_REWIND_REFLOG_LIMIT,
@@ -3597,6 +3646,7 @@ def _head_rewinds(home: Path) -> dict[str, object]:
             "needs_review": review, "absent": absent,
             "preserved_untracked": preserved,
             "review_basis": basis_counts,
+            "rewrite_basis": rewrite,
             "superseded_content": superseded_content, "kind": "read"}
 
 

@@ -2187,6 +2187,12 @@ def _rewind_git(monkeypatch, *, reflog: str, dropped: set[str], applies: dict) -
     def mock_run(cmd, **kwargs):
         if cmd[:2] == ["git", "reflog"]:
             return subprocess.CompletedProcess(cmd, 0, reflog, "")
+        if cmd[:2] == ["git", "rev-list"] and "--parents" in cmd:
+            # Dropped commits map to a parent from applies["parents"]; absent means a root.
+            parents = applies.get("parents", {})
+            lines = [f"{sha} {parents[sha]}" if sha in parents else sha
+                     for sha in cmd[cmd.index("--no-walk=unsorted") + 1:]]
+            return subprocess.CompletedProcess(cmd, 0, "".join(f"{line}\n" for line in lines), "")
         if cmd[:2] == ["git", "rev-list"]:
             shas = [line.split()[0] for line in reflog.splitlines() if line.strip()]
             ancestors = [sha for sha in shas if sha not in dropped]
@@ -2261,7 +2267,7 @@ def test_head_rewinds_present_change_reads_lossless(tmp_path, monkeypatch):
                                  "needs-review-paths=0 absent-paths=0 preserved-untracked-paths=0 superseded-paths=0 "
                                  "absent-at-head-paths=0 unexplained-paths=0 "
                                  "superseded-intact-paths=0 superseded-rewritten-paths=0 "
-                                 "superseded-absent-lines=0/0 patch-landed-commits=0")
+                                 "superseded-absent-lines=0/0 patch-landed-commits=0 rewrite-chain-unreachable-commits=0 rewrite-parent-reachable-commits=0 rewrite-root-commits=1")
 
 
 def test_head_rewinds_absent_change_reads_drift(tmp_path, monkeypatch):
@@ -2279,7 +2285,7 @@ def test_head_rewinds_absent_change_reads_drift(tmp_path, monkeypatch):
                                  "needs-review-paths=0 absent-paths=1 preserved-untracked-paths=0 superseded-paths=0 "
                                  "absent-at-head-paths=0 unexplained-paths=0 "
                                  "superseded-intact-paths=0 superseded-rewritten-paths=0 "
-                                 "superseded-absent-lines=0/0 patch-landed-commits=0")
+                                 "superseded-absent-lines=0/0 patch-landed-commits=0 rewrite-chain-unreachable-commits=0 rewrite-parent-reachable-commits=0 rewrite-root-commits=1")
 
 
 def test_head_rewinds_recommitted_change_is_its_own_verdict(tmp_path, monkeypatch):
@@ -2300,7 +2306,7 @@ def test_head_rewinds_recommitted_change_is_its_own_verdict(tmp_path, monkeypatc
                                  "needs-review-paths=1 absent-paths=0 preserved-untracked-paths=0 superseded-paths=0 "
                                  "absent-at-head-paths=0 unexplained-paths=1 "
                                  "superseded-intact-paths=0 superseded-rewritten-paths=0 "
-                                 "superseded-absent-lines=0/0 patch-landed-commits=0")
+                                 "superseded-absent-lines=0/0 patch-landed-commits=0 rewrite-chain-unreachable-commits=0 rewrite-parent-reachable-commits=0 rewrite-root-commits=1")
 
 
 def test_head_rewinds_same_patch_id_on_head_does_not_clear_lossless(tmp_path, monkeypatch):
@@ -2322,7 +2328,7 @@ def test_head_rewinds_same_patch_id_on_head_does_not_clear_lossless(tmp_path, mo
     assert result["needs_review"] == 1
     assert result["patch_landed_commits"] == 1
     assert "lossless-paths=0 needs-review-paths=1" in result["sample"]
-    assert result["sample"].endswith("patch-landed-commits=1")
+    assert result["sample"].endswith("patch-landed-commits=1 rewrite-chain-unreachable-commits=0 rewrite-parent-reachable-commits=0 rewrite-root-commits=1")
 
 
 def test_head_rewinds_different_patch_id_stays_needs_review(tmp_path, monkeypatch):
@@ -2503,7 +2509,7 @@ def test_head_rewinds_splits_review_paths_by_later_history(tmp_path, monkeypatch
     assert result["sample"].endswith("needs-review-paths=3 absent-paths=0 preserved-untracked-paths=0 "
                                      "superseded-paths=1 absent-at-head-paths=1 "
                                      "unexplained-paths=1 superseded-intact-paths=0 "
-                                     "superseded-rewritten-paths=1 superseded-absent-lines=0/0 patch-landed-commits=0")
+                                     "superseded-rewritten-paths=1 superseded-absent-lines=0/0 patch-landed-commits=0 rewrite-chain-unreachable-commits=0 rewrite-parent-reachable-commits=0 rewrite-root-commits=1")
 
 
 def test_content_presence_intact_when_every_added_line_survives(tmp_path):
@@ -8774,3 +8780,19 @@ def test_notify_scan_notifies_on_delivery_invariant_unknown_violation_change(
     discovery._notify_scan(home, snapshot_two, snapshot_one, path)
     after = len(Feed(home).entries())
     assert after > before
+
+
+def test_rewrite_basis_labels_chain_parent_reachable_and_root_commits():
+    a, b, c, d = ("a" * 40, "b" * 40, "c" * 40, "d" * 40)
+    reachable = {"p" * 40}
+    parents = {a: "p" * 40, b: c, c: None, d: "p" * 40}
+    assert discovery._rewrite_basis(parents, reachable) == {
+        "chain-unreachable": 1, "parent-reachable": 2, "root": 1}
+
+
+def test_commit_parents_missing_dropped_sha_is_none_not_root():
+    a, b = "a" * 40, "b" * 40
+    raw = f"{a} {'p' * 40}\n"
+    assert discovery._commit_parents(raw, [a, b]) is None
+    assert discovery._commit_parents(raw, [a]) == {a: "p" * 40}
+    assert discovery._commit_parents(f"{a}\n", [a]) == {a: None}
