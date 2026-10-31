@@ -514,3 +514,44 @@ def decode_genome_pane_table(raw: bytes | str) -> list[tuple[str, str, str]]:
             raise ValueError(f"genome pane table has non-numeric fields: {line!r}")
         records.append((idx, dead, pid))
     return records
+
+
+SANDBOX_MARKERS = ("pytest-of-", "mishe-test-tmux")
+
+
+def scan_sandbox_processes(
+    slice_name: str = "mishe-lifeline.slice",
+    proc_root: Path = Path("/proc"),
+) -> tuple[list[dict], int]:
+    """Processes in ``slice_name`` whose argv or cwd names a pytest sandbox.
+
+    Returns ``(matches, unreadable)``. A match is a dict with ``pid``, ``cwd``
+    and ``marker``. ``unreadable`` counts numeric pids whose cgroup, cmdline
+    or cwd could not be read, so a caller reports UNKNOWN rather than a clean
+    zero. A pid that vanishes mid-scan counts as unreadable too. A missing
+    ``proc_root`` raises OSError: no observation is not an empty one.
+    """
+    matches: list[dict] = []
+    unreadable = 0
+    for entry in proc_root.iterdir():
+        pid = entry.name
+        if not pid.isdigit():
+            continue
+        try:
+            cgroup = (entry / "cgroup").read_text(encoding="utf-8", errors="replace")
+            cmdline = (entry / "cmdline").read_bytes()
+        except OSError:
+            unreadable += 1
+            continue
+        if f"/{slice_name}/" not in cgroup:
+            continue
+        try:
+            cwd = os.readlink(entry / "cwd")
+        except OSError:
+            cwd = ""
+            unreadable += 1
+        argv = cmdline.replace(b"\0", b" ").decode("utf-8", "replace")
+        marker = next((m for m in SANDBOX_MARKERS if m in argv or m in cwd), None)
+        if marker is not None:
+            matches.append({"pid": int(pid), "cwd": cwd, "marker": marker})
+    return matches, unreadable

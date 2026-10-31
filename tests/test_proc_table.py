@@ -9,7 +9,9 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from mishe_tauftauf import proc_table
@@ -258,6 +260,79 @@ class ProcessTableTests(unittest.TestCase):
         self.assertEqual(proc_table.git_path_names("src/a.py\n\ntests/test_a.py\n"),
                          ["src/a.py", "tests/test_a.py"])
         self.assertEqual(proc_table.git_path_names(""), [])
+class SandboxProcessScanTests(unittest.TestCase):
+    """A synthetic /proc tree: the scan reads only what the fixture provides."""
+
+    LIFELINE = "0::/user.slice/user-1000.slice/mishe-lifeline.slice/tmux-spawn-x.scope\n"
+    PLANTS = "0::/user.slice/user-1000.slice/mishe-plants.slice/tmux-spawn-y.scope\n"
+
+    def _proc(self, root, pid, cgroup=None, argv=b"", cwd=None):
+        entry = root / str(pid)
+        entry.mkdir()
+        if cgroup is not None:
+            (entry / "cgroup").write_text(cgroup)
+        if argv is not None:
+            (entry / "cmdline").write_bytes(argv)
+        if cwd is not None:
+            (entry / "cwd").symlink_to(cwd)
+        return entry
+
+    def test_argv_marker_inside_lifeline_is_a_match(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cwd = root / "home"
+            cwd.mkdir()
+            self._proc(root, 4001, self.LIFELINE,
+                       b"tmux\0-S\0/tmp/pytest-of-mesh-home/pytest-205/mishe-test-tmux0/tmux-1000/default\0",
+                       cwd=str(cwd))
+            matches, unreadable = proc_table.scan_sandbox_processes(proc_root=root)
+            self.assertEqual(matches, [{"pid": 4001, "cwd": str(cwd), "marker": "pytest-of-"}])
+            self.assertEqual(unreadable, 0)
+
+    def test_cwd_marker_matches_watcher_loops_without_argv_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sandbox = root / "sandbox"
+            sandbox.mkdir()
+            self._proc(root, 4002, self.LIFELINE, b"python3\0-m\0mishe_tauftauf\0pain\0watch\0genome\0",
+                       cwd=str(sandbox))
+            matches, _ = proc_table.scan_sandbox_processes(proc_root=root)
+            self.assertEqual(matches, [])
+            # The sandbox path under a pytest tree is what the watcher's cwd names.
+            sandbox2 = root / "pytest-of-mesh-home" / "pytest-205" / "application"
+            sandbox2.mkdir(parents=True)
+            self._proc(root, 4003, self.LIFELINE, b"python3\0-m\0mishe_tauftauf\0pain\0watch\0health\0",
+                       cwd=str(sandbox2))
+            matches, _ = proc_table.scan_sandbox_processes(proc_root=root)
+            self.assertEqual([m["pid"] for m in matches], [4003])
+            self.assertEqual(matches[0]["marker"], "pytest-of-")
+
+    def test_marker_outside_the_slice_is_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._proc(root, 4004, self.PLANTS, b"tmux\0-S\0/tmp/pytest-of-x/mishe-test-tmux0/default\0")
+            self._proc(root, 4005, None, b"tmux\0-S\0/tmp/pytest-of-x/mishe-test-tmux0/default\0")
+            matches, unreadable = proc_table.scan_sandbox_processes(proc_root=root)
+            self.assertEqual(matches, [])
+            self.assertEqual(unreadable, 1)
+
+    def test_unreadable_cwd_is_counted_not_guessed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._proc(root, 4006, self.LIFELINE, b"python3\0-m\0health\0", cwd=None)
+            matches, unreadable = proc_table.scan_sandbox_processes(proc_root=root)
+            self.assertEqual(matches, [])
+            self.assertEqual(unreadable, 1)
+
+    def test_non_numeric_entries_are_skipped_and_missing_root_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "self").mkdir()
+            self.assertEqual(proc_table.scan_sandbox_processes(proc_root=root), ([], 0))
+            with self.assertRaises(OSError):
+                proc_table.scan_sandbox_processes(proc_root=root / "absent")
+
+
 if __name__ == "__main__":
     unittest.main()
 
