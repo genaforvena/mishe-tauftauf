@@ -2202,6 +2202,13 @@ def _rewind_git(monkeypatch, *, reflog: str, dropped: set[str], applies: dict) -
             path = cmd[-1]
             later = applies.get("later", set())
             return subprocess.CompletedProcess(cmd, 0, "later\n" if path in later else "", "")
+        if cmd[:2] == ["git", "ls-files"]:
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[:2] == ["git", "check-ignore"]:
+            return subprocess.CompletedProcess(cmd, 0 if applies.get("ignored") else 1, "", "")
+        if cmd[:3] == ["git", "cat-file", "blob"]:
+            path = cmd[-1].split(":", 1)[1]
+            return subprocess.CompletedProcess(cmd, 0, f"PATCH {path}".encode(), "")
         if cmd[:2] == ["git", "cat-file"]:
             path = cmd[-1].split(":", 1)[1]
             present = path not in applies.get("absent_at_head", set())
@@ -2251,7 +2258,7 @@ def test_head_rewinds_present_change_reads_lossless(tmp_path, monkeypatch):
     assert result["state"] == "verified"
     assert result["sample"] == ("dropped-commits=1 of last-200-reflog-entries "
                                  "classified-commits=1 unexamined-paths=0 lossless-paths=1 "
-                                 "needs-review-paths=0 absent-paths=0 superseded-paths=0 "
+                                 "needs-review-paths=0 absent-paths=0 preserved-untracked-paths=0 superseded-paths=0 "
                                  "absent-at-head-paths=0 unexplained-paths=0 "
                                  "superseded-intact-paths=0 superseded-rewritten-paths=0 "
                                  "superseded-absent-lines=0/0 patch-landed-commits=0")
@@ -2269,7 +2276,7 @@ def test_head_rewinds_absent_change_reads_drift(tmp_path, monkeypatch):
     assert result["state"] == "drift"
     assert result["sample"] == ("dropped-commits=1 of last-200-reflog-entries "
                                  "classified-commits=1 unexamined-paths=0 lossless-paths=0 "
-                                 "needs-review-paths=0 absent-paths=1 superseded-paths=0 "
+                                 "needs-review-paths=0 absent-paths=1 preserved-untracked-paths=0 superseded-paths=0 "
                                  "absent-at-head-paths=0 unexplained-paths=0 "
                                  "superseded-intact-paths=0 superseded-rewritten-paths=0 "
                                  "superseded-absent-lines=0/0 patch-landed-commits=0")
@@ -2290,7 +2297,7 @@ def test_head_rewinds_recommitted_change_is_its_own_verdict(tmp_path, monkeypatc
     assert result["state"] == "drift"
     assert result["sample"] == ("dropped-commits=1 of last-200-reflog-entries "
                                  "classified-commits=1 unexamined-paths=0 lossless-paths=1 "
-                                 "needs-review-paths=1 absent-paths=0 superseded-paths=0 "
+                                 "needs-review-paths=1 absent-paths=0 preserved-untracked-paths=0 superseded-paths=0 "
                                  "absent-at-head-paths=0 unexplained-paths=1 "
                                  "superseded-intact-paths=0 superseded-rewritten-paths=0 "
                                  "superseded-absent-lines=0/0 patch-landed-commits=0")
@@ -2332,6 +2339,86 @@ def test_head_rewinds_different_patch_id_stays_needs_review(tmp_path, monkeypatc
     assert result["needs_review"] == 1
     assert result["lossless"] == 0
     assert result["patch_landed_commits"] == 0
+
+
+def _preserved_case(tmp_path, monkeypatch, *, ignored: bool, on_disk: bytes):
+    home = tmp_path / "site"
+    home.mkdir()
+    (tmp_path / "src").mkdir(exist_ok=True)
+    (tmp_path / "src" / "a.py").write_bytes(on_disk)
+    sha = "b" * 40
+    _rewind_git(monkeypatch, reflog=f"{sha} reset: moving to HEAD~1\n", dropped={sha},
+                applies={"paths": "src/a.py\n", "ignored": ignored,
+                         "verdicts": {("PATCH src/a.py", True): False,
+                                      ("PATCH src/a.py", False): True}})
+    return discovery._head_rewinds(home)
+
+
+def test_head_rewinds_ignored_identical_absent_path_is_preserved_on_disk(tmp_path, monkeypatch):
+    """Gitignored, untracked, bytes equal the dropped blob: named preserved, not absent."""
+    result = _preserved_case(tmp_path, monkeypatch, ignored=True,
+                             on_disk=b"PATCH src/a.py")
+    assert result["absent"] == 0
+    assert result["preserved_untracked"] == 1
+    assert result["state"] == "verified"
+    assert "absent-paths=0 preserved-untracked-paths=1" in result["sample"]
+
+
+def test_head_rewinds_not_ignored_identical_absent_path_stays_absent(tmp_path, monkeypatch):
+    result = _preserved_case(tmp_path, monkeypatch, ignored=False,
+                             on_disk=b"PATCH src/a.py")
+    assert result["absent"] == 1
+    assert result["preserved_untracked"] == 0
+    assert result["state"] == "drift"
+
+
+def test_head_rewinds_ignored_divergent_absent_path_stays_absent(tmp_path, monkeypatch):
+    result = _preserved_case(tmp_path, monkeypatch, ignored=True,
+                             on_disk=b"redacted, different bytes")
+    assert result["absent"] == 1
+    assert result["preserved_untracked"] == 0
+    assert result["state"] == "drift"
+
+
+def test_preserved_on_disk_real_repo_conditions(tmp_path):
+    """Synthetic repo: ignored+identical=preserved; not ignored or differing or tracked=not."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args, text=True):
+        return subprocess.run(["git", "-c", "commit.gpgsign=false", *args], cwd=repo,
+                              capture_output=True, text=text,
+                              env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                                   "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+
+    git("init", "-q")
+    (repo / "private").mkdir()
+    (repo / "private" / "notes.txt").write_text("old\n")
+    git("add", "private/notes.txt")
+    git("commit", "-q", "-m", "track notes")
+    dropped = git("rev-parse", "HEAD").stdout.strip()
+    # HEAD de-tracks the file and ignores it; the bytes stay on disk.
+    git("rm", "-q", "--cached", "private/notes.txt")
+    (repo / ".gitignore").write_text("private/\n")
+    git("add", ".gitignore")
+    git("commit", "-q", "-m", "untrack notes")
+    empty_tree = tmp_path / "head_tree"
+    empty_tree.mkdir()
+
+    def run(*args, text=True):
+        return git(*args, text=text)
+
+    preserve = discovery._preserved_on_disk
+    assert preserve(repo, dropped, "private/notes.txt", empty_tree, run) is True
+    (repo / ".gitignore").write_text("")
+    assert preserve(repo, dropped, "private/notes.txt", empty_tree, run) is False
+    (repo / ".gitignore").write_text("private/\n")
+    (repo / "private" / "notes.txt").write_text("redacted\n")
+    assert preserve(repo, dropped, "private/notes.txt", empty_tree, run) is False
+    (repo / "private" / "notes.txt").write_text("old\n")
+    (empty_tree / "private").mkdir()
+    (empty_tree / "private" / "notes.txt").write_text("old\n")
+    assert preserve(repo, dropped, "private/notes.txt", empty_tree, run) is False
 
 
 def _repo_git(repo, *args):
@@ -2413,7 +2500,7 @@ def test_head_rewinds_splits_review_paths_by_later_history(tmp_path, monkeypatch
     assert result["review_basis"] == {"superseded": 1, "absent-at-head": 1, "unexplained": 1}
     assert result["superseded_content"]["intact"] == 0
     assert result["superseded_content"]["rewritten"] == 1
-    assert result["sample"].endswith("needs-review-paths=3 absent-paths=0 "
+    assert result["sample"].endswith("needs-review-paths=3 absent-paths=0 preserved-untracked-paths=0 "
                                      "superseded-paths=1 absent-at-head-paths=1 "
                                      "unexplained-paths=1 superseded-intact-paths=0 "
                                      "superseded-rewritten-paths=1 superseded-absent-lines=0/0 patch-landed-commits=0")
