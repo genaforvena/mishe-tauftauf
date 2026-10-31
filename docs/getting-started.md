@@ -161,7 +161,7 @@ env PYTHONPATH=src python3 -m mishe_tauftauf.native_gate \
   --home "$SITE" --session "$SESSION" --role "$ROLE" --record
 ```
 
-The first reports the attempts of that wake that no plant record accounts for. The second persists a changed readiness verdict and prints it: RED names a live mind the gate rejects, UNKNOWN names evidence it could not read.
+The first reports the attempts of that wake that no plant record accounts for. The second persists a changed readiness verdict and prints it: RED names a live mind the gate rejects, UNKNOWN names evidence it could not read. It judges the role's *current* pane: a role that has since moved to a TUI agent reads OK without consulting the hold records, so read those records directly when a role that used to run the native loop will not start.
 
 Reconcile before you retry. A native wake may take a fresh attempt only when its earlier attempts are provably effect-free and transient; any attempt that dispatched an effect, proposed a capability call, settled, or whose own evidence is unreadable holds the wake for reconciliation instead. A wake that used every bounded fresh attempt is held as well, and the record names the attempts and their cause so you do not have to re-derive them. The resident also refuses a second attempt at the same wake — the attempt directory already exists — so a repeated failure leaves the wake unsettled and the resident unable to start, and a restart does not clear that. Preserve each attempt directory and its `failure.txt` and `journal.jsonl`: they are the evidence of what the wake actually did. `--repair-blocked` and `--release-hold` remove the hold records; use them only after reading the attempts they refer to, and never to paper over an effect whose outcome is still unknown.
 
