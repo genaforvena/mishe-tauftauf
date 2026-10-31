@@ -71,7 +71,11 @@ def hook(event: str, home: Path, role: str) -> int:
                 _remove(journal(home, role, suffix))
             _touch(journal(home, role, "alive"), f"{os.getppid()}\n")
         elif event == "SessionEnd":
-            for suffix in ("alive", "busy", "blocked"):
+            # Never remove ``alive`` here: /clear fires SessionEnd and SessionStart
+            # together, and a SessionEnd that lands second would delete the new
+            # session's receipt (genome, 2026-10-31). A process that really ended
+            # is caught by the pane check (foreground command is no longer claude).
+            for suffix in ("busy", "blocked"):
                 _remove(journal(home, role, suffix))
         elif event == "UserPromptSubmit":
             _remove(journal(home, role, "failure"))

@@ -39,7 +39,13 @@ def test_lifecycle_readiness(home):
     fire(home, "Stop")
     assert idle_ready(home)[0]
     fire(home, "SessionEnd")
-    assert not idle_ready(home)[0]
+    assert not idle_ready(home, command="zsh")[0]      # a really ended session: pane is no longer claude
+    # /clear fires SessionEnd and SessionStart together, in either order; the new
+    # session's receipt must survive both.
+    for order in (("SessionEnd", "SessionStart"), ("SessionStart", "SessionEnd")):
+        for event in order:
+            fire(home, event)
+        assert idle_ready(home) == (True, "idle")
 
 
 def test_wrong_engine_or_dead_pane_never_ready(home):
