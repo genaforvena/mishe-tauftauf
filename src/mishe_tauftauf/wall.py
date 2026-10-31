@@ -278,14 +278,35 @@ def outcome(home: Path, role: str, kind: str, text: str, evidence: Path,
         raise
 
 
+def resolve_outcome_evidence(home: Path, evidence: Path) -> Path:
+    """Resolve a relative outcome evidence argument to its eligible site file.
+
+    A relative path names the cwd form first, the historical rule. When that form
+    is not an eligible site path, the home-relative form is used instead, so a
+    bare ``artifacts/NAME.md`` run from the repository root still names the owned
+    site file. Neither form is preferred when the cwd form is already eligible,
+    so no path accepted before this rule changes meaning.
+    """
+    if evidence.is_absolute():
+        return evidence
+    cwd_form = Path.cwd() / evidence
+    if eligible_evidence_path(home, cwd_form):
+        return cwd_form
+    home_form = Path(home) / evidence
+    if eligible_evidence_path(home, home_form) and home_form.is_file():
+        return home_form
+    return cwd_form
+
+
 def _publish_outcome(home: Path, role: str, kind: str, text: str, evidence: Path,
                      supersedes: list[str] | None = None):
-    original_evidence = evidence if evidence.is_absolute() else Path.cwd() / evidence
+    original_evidence = resolve_outcome_evidence(home, evidence)
     if not eligible_evidence_path(home, original_evidence):
         raise ValueError(
             "outcome evidence must be an eligible single file under artifacts/, "
-            "discovery/scan-*.json or dms/*.md; symlinks and traversal are forbidden")
-    evidence = evidence.resolve()
+            "discovery/scan-*.json or dms/*.md; symlinks and traversal are forbidden"
+            f" (resolved to {original_evidence})")
+    evidence = original_evidence.resolve()
     if not evidence.is_file():
         raise ValueError("outcome evidence must be an existing file")
     evidence_str = str(evidence)
