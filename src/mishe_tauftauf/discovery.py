@@ -728,7 +728,7 @@ def _tmux_window_reading(home: Path) -> dict:
     if session is None:
         return {"windows": None, "source": None, "session": None, "socket": None,
                 "env_session": env_session, "enumerated": enumerated,
-                "failure": failure or "no-owned-or-receipt-session"}
+                "failure": failure or "no-owned-or-receipt-session", "also": []}
     argv = ["tmux"]
     if socket:
         argv.extend(["-S", socket])
@@ -738,14 +738,57 @@ def _tmux_window_reading(home: Path) -> dict:
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {"windows": None, "source": source, "session": session, "socket": socket,
                 "env_session": env_session, "enumerated": enumerated,
-                "failure": _joined_failure(failure, f"list-windows-{type(exc).__name__}")}
+                "failure": _joined_failure(failure, f"list-windows-{type(exc).__name__}"),
+                "also": []}
     if result.returncode != 0:
         return {"windows": None, "source": source, "session": session, "socket": socket,
                 "env_session": env_session, "enumerated": enumerated,
-                "failure": _joined_failure(failure, f"list-windows-exit={result.returncode}")}
+                "failure": _joined_failure(failure, f"list-windows-exit={result.returncode}"),
+                "also": []}
     return {"windows": sorted(proc_table.window_names(result.stdout)), "source": source,
             "session": session, "socket": socket, "env_session": env_session,
-            "enumerated": enumerated, "failure": failure}
+            "enumerated": enumerated, "failure": failure,
+            "also": _other_owned_session_windows(owned[1:]) if source == "owned" else []}
+
+
+def _other_owned_session_windows(others: list[tuple[str, str | None]]) -> list[dict]:
+    """Window names of each further owned session, so a second session is not invisible.
+
+    The verdict stays with the first owned session (the one ``_tmux_window_reading``
+    names). Every other owned session is read on its own socket and reported with
+    its own failure stage, never dropped and never folded into the verdict.
+    """
+    rows = []
+    for name, socket in others:
+        argv = ["tmux"]
+        if socket:
+            argv.extend(["-S", socket])
+        argv.extend(["list-windows", "-t", name, "-F", "#{window_name}"])
+        try:
+            result = subprocess.run(argv, capture_output=True, text=True, timeout=2)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            rows.append({"session": name, "windows": None,
+                         "failure": f"list-windows-{type(exc).__name__}"})
+            continue
+        if result.returncode != 0:
+            rows.append({"session": name, "windows": None,
+                         "failure": f"list-windows-exit={result.returncode}"})
+            continue
+        rows.append({"session": name,
+                     "windows": sorted(proc_table.window_names(result.stdout)),
+                     "failure": None})
+    return rows
+
+
+def _also_sample(reading: dict) -> str:
+    """The other owned sessions as ``also=name:[windows]`` or ``also=name:unavailable(stage)``."""
+    parts = []
+    for row in reading.get("also") or []:
+        if row["windows"] is None:
+            parts.append(f"{row['session']}:unavailable({row['failure']})")
+        else:
+            parts.append(f"{row['session']}:{row['windows']}")
+    return f" also={';'.join(parts)}" if parts else ""
 
 
 def _tmux_window_sample(reading: dict) -> str:
@@ -764,9 +807,11 @@ def _tmux_window_sample(reading: dict) -> str:
         failure_note = f" failure={reading['failure']}" if reading["failure"] else ""
         count_note = f" enumerated={reading['enumerated']}" if reading["enumerated"] > 1 else ""
         return (f"source={reading['source']} session={session} "
-                f"windows={reading['windows']}{env_note}{failure_note}{count_note}")
+                f"windows={reading['windows']}{env_note}{failure_note}{count_note}"
+                f"{_also_sample(reading)}")
     return (f"session unavailable source={reading['source'] or 'none'} session={session} "
-            f"enumerated={reading['enumerated']} failure={reading['failure']}{env_note}")
+            f"enumerated={reading['enumerated']} failure={reading['failure']}{env_note}"
+            f"{_also_sample(reading)}")
 
 
 def _is_plant_unit(name: str, session: str) -> bool:

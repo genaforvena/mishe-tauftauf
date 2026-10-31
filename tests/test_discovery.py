@@ -9016,18 +9016,44 @@ def test_tmux_window_sample_keeps_failed_enumeration_on_receipt_success(tmp_path
 
 
 def test_tmux_window_sample_counts_multiple_owned_sessions(tmp_path, monkeypatch):
-    """Two owned sessions: the chosen one is named and the enumerated count is visible."""
+    """Two owned sessions: the verdict session is named, the second is reported with its own windows."""
     home = tmp_path / "site"
     home.mkdir()
     monkeypatch.delenv("MISHE_SEED_SESSION", raising=False)
     monkeypatch.setattr(discovery.tmux, "home_sessions",
                         lambda _home: [("mishe-self-development-current", "/sock/core"),
                                        ("mishe-other", "/sock/other")])
-    monkeypatch.setattr(discovery.subprocess, "run",
-                        lambda argv, **_kw: subprocess.CompletedProcess(argv, 0, "discover\n", ""))
+    outputs = {"mishe-self-development-current": "discover\n", "mishe-other": "genome\nhealth\n"}
+
+    def run(argv, **_kw):
+        return subprocess.CompletedProcess(argv, 0, outputs[argv[argv.index("-t") + 1]], "")
+
+    monkeypatch.setattr(discovery.subprocess, "run", run)
     reading = discovery._tmux_window_reading(home)
     assert discovery._tmux_window_sample(reading) == (
-        "source=owned session=mishe-self-development-current windows=['discover'] enumerated=2")
+        "source=owned session=mishe-self-development-current windows=['discover'] enumerated=2"
+        " also=mishe-other:['genome', 'health']")
+
+
+def test_tmux_window_sample_reports_failed_second_owned_session(tmp_path, monkeypatch):
+    """A second owned session whose read fails is shown as unavailable with its stage, not dropped."""
+    home = tmp_path / "site"
+    home.mkdir()
+    monkeypatch.delenv("MISHE_SEED_SESSION", raising=False)
+    monkeypatch.setattr(discovery.tmux, "home_sessions",
+                        lambda _home: [("mishe-self-development-current", "/sock/core"),
+                                       ("mishe-other", "/sock/other")])
+
+    def run(argv, **_kw):
+        if argv[argv.index("-t") + 1] == "mishe-other":
+            return subprocess.CompletedProcess(argv, 1, "", "")
+        return subprocess.CompletedProcess(argv, 0, "discover\n", "")
+
+    monkeypatch.setattr(discovery.subprocess, "run", run)
+    reading = discovery._tmux_window_reading(home)
+    assert discovery._tmux_window_sample(reading) == (
+        "source=owned session=mishe-self-development-current windows=['discover'] enumerated=2"
+        " also=mishe-other:unavailable(list-windows-exit=1)")
 
 
 def test_plant_session_prefers_owned_over_receipt(tmp_path, monkeypatch):
