@@ -2265,7 +2265,7 @@ def test_head_rewinds_present_change_reads_lossless(tmp_path, monkeypatch):
     assert result["state"] == "verified"
     assert result["sample"] == ("dropped-commits=1 of last-200-reflog-entries "
                                  "classified-commits=1 unexamined-paths=0 lossless-paths=1 "
-                                 "needs-review-paths=0 absent-paths=0 preserved-untracked-paths=0 superseded-paths=0 "
+                                 "needs-review-paths=0 absent-paths=0 preserved-untracked-paths=0 detracked-edited-paths=0 superseded-paths=0 "
                                  "absent-at-head-paths=0 unexplained-paths=0 "
                                  "superseded-intact-paths=0 superseded-rewritten-paths=0 "
                                  "superseded-absent-lines=0/0 patch-landed-commits=0 rewrite-chain-unreachable-commits=0 rewrite-parent-reachable-commits=0 rewrite-root-commits=1")
@@ -2283,7 +2283,7 @@ def test_head_rewinds_absent_change_reads_drift(tmp_path, monkeypatch):
     assert result["state"] == "drift"
     assert result["sample"] == ("dropped-commits=1 of last-200-reflog-entries "
                                  "classified-commits=1 unexamined-paths=0 lossless-paths=0 "
-                                 "needs-review-paths=0 absent-paths=1 preserved-untracked-paths=0 superseded-paths=0 "
+                                 "needs-review-paths=0 absent-paths=1 preserved-untracked-paths=0 detracked-edited-paths=0 superseded-paths=0 "
                                  "absent-at-head-paths=0 unexplained-paths=0 "
                                  "superseded-intact-paths=0 superseded-rewritten-paths=0 "
                                  "superseded-absent-lines=0/0 patch-landed-commits=0 rewrite-chain-unreachable-commits=0 rewrite-parent-reachable-commits=0 rewrite-root-commits=1")
@@ -2304,7 +2304,7 @@ def test_head_rewinds_recommitted_change_is_its_own_verdict(tmp_path, monkeypatc
     assert result["state"] == "drift"
     assert result["sample"] == ("dropped-commits=1 of last-200-reflog-entries "
                                  "classified-commits=1 unexamined-paths=0 lossless-paths=1 "
-                                 "needs-review-paths=1 absent-paths=0 preserved-untracked-paths=0 superseded-paths=0 "
+                                 "needs-review-paths=1 absent-paths=0 preserved-untracked-paths=0 detracked-edited-paths=0 superseded-paths=0 "
                                  "absent-at-head-paths=0 unexplained-paths=1 "
                                  "superseded-intact-paths=0 superseded-rewritten-paths=0 "
                                  "superseded-absent-lines=0/0 patch-landed-commits=0 rewrite-chain-unreachable-commits=0 rewrite-parent-reachable-commits=0 rewrite-root-commits=1")
@@ -2385,6 +2385,15 @@ def test_head_rewinds_ignored_divergent_absent_path_stays_absent(tmp_path, monke
     assert result["absent"] == 1
     assert result["preserved_untracked"] == 0
     assert result["state"] == "drift"
+    # Edited de-tracked bytes are counted separately; the bucket verdict is unchanged.
+    assert result["detracked_edited"] == 1
+    assert "detracked-edited-paths=1" in result["sample"]
+
+
+def test_head_rewinds_identical_preserved_path_has_no_edited_count(tmp_path, monkeypatch):
+    result = _preserved_case(tmp_path, monkeypatch, ignored=True, on_disk=b"PATCH src/a.py")
+    assert result["detracked_edited"] == 0
+    assert "detracked-edited-paths=0" in result["sample"]
 
 
 def test_preserved_on_disk_real_repo_conditions(tmp_path):
@@ -2415,17 +2424,17 @@ def test_preserved_on_disk_real_repo_conditions(tmp_path):
     def run(*args, text=True):
         return git(*args, text=text)
 
-    preserve = discovery._preserved_on_disk
-    assert preserve(repo, dropped, "private/notes.txt", empty_tree, run) is True
+    state = discovery._detracked_disk_state
+    assert state(repo, dropped, "private/notes.txt", empty_tree, run) == "preserved"
     (repo / ".gitignore").write_text("")
-    assert preserve(repo, dropped, "private/notes.txt", empty_tree, run) is False
+    assert state(repo, dropped, "private/notes.txt", empty_tree, run) == "other"
     (repo / ".gitignore").write_text("private/\n")
     (repo / "private" / "notes.txt").write_text("redacted\n")
-    assert preserve(repo, dropped, "private/notes.txt", empty_tree, run) is False
+    assert state(repo, dropped, "private/notes.txt", empty_tree, run) == "edited"
     (repo / "private" / "notes.txt").write_text("old\n")
     (empty_tree / "private").mkdir()
     (empty_tree / "private" / "notes.txt").write_text("old\n")
-    assert preserve(repo, dropped, "private/notes.txt", empty_tree, run) is False
+    assert state(repo, dropped, "private/notes.txt", empty_tree, run) == "other"
 
 
 def _repo_git(repo, *args):
@@ -2507,7 +2516,7 @@ def test_head_rewinds_splits_review_paths_by_later_history(tmp_path, monkeypatch
     assert result["review_basis"] == {"superseded": 1, "absent-at-head": 1, "unexplained": 1}
     assert result["superseded_content"]["intact"] == 0
     assert result["superseded_content"]["rewritten"] == 1
-    assert result["sample"].endswith("needs-review-paths=3 absent-paths=0 preserved-untracked-paths=0 "
+    assert result["sample"].endswith("needs-review-paths=3 absent-paths=0 preserved-untracked-paths=0 detracked-edited-paths=0 "
                                      "superseded-paths=1 absent-at-head-paths=1 "
                                      "unexplained-paths=1 superseded-intact-paths=0 "
                                      "superseded-rewritten-paths=1 superseded-absent-lines=0/0 patch-landed-commits=0 rewrite-chain-unreachable-commits=0 rewrite-parent-reachable-commits=0 rewrite-root-commits=1")

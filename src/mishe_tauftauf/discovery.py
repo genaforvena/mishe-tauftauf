@@ -3552,7 +3552,7 @@ def _head_rewinds(home: Path) -> dict[str, object]:
             return None
         return "unexplained" if present.returncode == 0 else "absent-at-head"
 
-    lossless = review = absent = preserved = 0
+    lossless = review = absent = preserved = detracked_edited = 0
     unexamined = partial_commits = 0
     basis_counts = {"superseded": 0, "absent-at-head": 0, "unexplained": 0}
     superseded_content = {"intact": 0, "rewritten": 0, "absent_lines": 0, "added_lines": 0}
@@ -3577,7 +3577,13 @@ def _head_rewinds(home: Path) -> dict[str, object]:
                         return {**unknown, "sample": f"patch unreadable: {sha[:7]}"}
                     if _applies(tree, patch.stdout, reverse=True):
                         lossless += 1
-                    elif _preserved_on_disk(checkout_root, sha, path, tree, run):
+                        continue
+                    disk = _detracked_disk_state(checkout_root, sha, path, tree, run)
+                    if disk == "edited":
+                        # Separate count, not a bucket: a de-tracked path whose on-disk
+                        # bytes changed. It still follows the buckets below (needs-review).
+                        detracked_edited += 1
+                    if disk == "preserved":
                         # Intentional de-tracking, not loss: the bytes survive on disk.
                         preserved += 1
                     elif _applies(tree, patch.stdout, reverse=False):
@@ -3609,6 +3615,7 @@ def _head_rewinds(home: Path) -> dict[str, object]:
                        f"lossless-paths={lossless} "
                        f"needs-review-paths={review} absent-paths={absent} "
                        f"preserved-untracked-paths={preserved} "
+                       f"detracked-edited-paths={detracked_edited} "
                        f"superseded-paths={basis_counts['superseded']} "
                        f"absent-at-head-paths={basis_counts['absent-at-head']} "
                        f"unexplained-paths={basis_counts['unexplained']} "
@@ -3627,40 +3634,41 @@ def _head_rewinds(home: Path) -> dict[str, object]:
             "lossless": lossless,
             "needs_review": review, "absent": absent,
             "preserved_untracked": preserved,
+            "detracked_edited": detracked_edited,
             "review_basis": basis_counts,
             "rewrite_basis": rewrite,
             "superseded_content": superseded_content, "kind": "read"}
 
 
-def _preserved_on_disk(checkout_root: Path, sha: str, path: str, tree: Path, run) -> bool:
-    """Whether a path absent at HEAD survives untracked, byte-identical on disk.
+def _detracked_disk_state(checkout_root: Path, sha: str, path: str, tree: Path, run) -> str:
+    """Classify a path absent at HEAD that is ignored and untracked on disk.
 
-    True only when every condition holds: the path is not in HEAD's tree (the
-    extracted archive), not in the index, matched by an ignore rule (so the
-    absence is a deliberate de-tracking), and the working-tree file is a regular
-    file whose bytes equal the dropped commit's blob. Any git failure, a
-    differing or missing file, or a symlink returns False, so the path keeps its
-    absent or needs-review class. This never clears a path as lossless; it names
-    the bytes that survive on disk, separately.
+    ``preserved``: every condition holds and the working-tree bytes equal the
+    dropped commit's blob, so the absence is a deliberate de-tracking whose bytes
+    survive. ``edited``: the same de-tracking holds (absent from HEAD and index,
+    ignored, a regular file on disk) but the bytes differ from the dropped blob.
+    ``other``: any git failure, a missing or symlinked file, or a path that is not
+    a de-tracked ignored file. Neither ``preserved`` nor ``edited`` clears a path
+    as lossless; they only name what survives on disk.
     """
     if os.path.lexists(tree / path):
-        return False
+        return "other"
     tracked = run("ls-files", "--", path)
     if tracked is None or tracked.returncode != 0 or tracked.stdout:
-        return False
+        return "other"
     ignored = run("check-ignore", "-q", "--", path)
     if ignored is None or ignored.returncode != 0:
-        return False
+        return "other"
     blob = run("cat-file", "blob", f"{sha}:{path}", text=False)
     if blob is None or blob.returncode != 0:
-        return False
+        return "other"
     on_disk = checkout_root / path
     if on_disk.is_symlink() or not on_disk.is_file():
-        return False
+        return "other"
     try:
-        return on_disk.read_bytes() == blob.stdout
+        return "preserved" if on_disk.read_bytes() == blob.stdout else "edited"
     except OSError:
-        return False
+        return "other"
 
 
 def _content_presence(patch: str, tree: Path, path: str) -> tuple[str, int, int]:
