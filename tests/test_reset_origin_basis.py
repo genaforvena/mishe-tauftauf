@@ -1,9 +1,11 @@
 """Contract for the head-rewinds ``reset_origin`` basis.
 
-A ``reset: moving to HEAD`` reflog entry is labelled ``stash-correlated`` when exactly one
-dangling stash commit lies within two seconds of the reset and has as parent 1 the HEAD
-that the reset left. Otherwise it is ``unexplained`` (no candidate stash) or ``ambiguous``
-(several candidate stashes or resets compete for the evidence).
+A ``reset: moving to HEAD`` reflog entry is labelled ``stash-internal`` when exactly one
+dangling stash commit shares the reset's exact second and has as parent the HEAD that the
+reset left (``git stash push`` writes its own reset at the stash's epoch). It is labelled
+``stash-correlated`` when that single stash lies one or two seconds away. Otherwise it is
+``unexplained`` (no candidate stash) or ``ambiguous`` (several candidate stashes or resets
+compete for the evidence).
 
 This is correlation only. A matching timestamp and parent is not a traced caller and not
 proof that a stash caused the reset, so the label never says "recovered" or "explained".
@@ -25,10 +27,18 @@ STASH_B = "d567f9b0" + "0" * 32
 STASH_C = "237db71f" + "0" * 32
 
 
-def test_single_stash_at_same_second_with_matching_parent_is_stash_correlated():
+def test_single_stash_at_same_second_with_matching_parent_is_stash_internal():
     stashes = [(T_RESET, PRE_RESET_HEAD, STASH_A)]
     resets = [(T_RESET, PRE_RESET_HEAD)]
-    assert discovery._reset_origin(resets, stashes) == ["stash-correlated"]
+    assert discovery._reset_origin(resets, stashes) == ["stash-internal"]
+
+
+def test_stash_one_or_two_seconds_away_is_stash_correlated_not_internal():
+    """Only the exact second is the stash's own reset; a near second stays correlated."""
+    for offset in (1, -1, 2, -2):
+        stashes = [(T_RESET + offset, PRE_RESET_HEAD, STASH_A)]
+        assert discovery._reset_origin([(T_RESET, PRE_RESET_HEAD)], stashes) == [
+            "stash-correlated"]
 
 
 def test_reset_without_any_stash_is_unexplained():
@@ -57,7 +67,7 @@ def test_duplicate_record_of_the_same_stash_commit_is_one_candidate():
     """The same stash sha listed twice is one stash, not an ambiguity."""
     stashes = [(T_RESET, PRE_RESET_HEAD, STASH_A), (T_RESET, PRE_RESET_HEAD, STASH_A)]
     assert discovery._reset_origin([(T_RESET, PRE_RESET_HEAD)], stashes) == [
-        "stash-correlated"]
+        "stash-internal"]
 
 
 def test_two_distinct_stashes_in_window_for_one_reset_is_ambiguous():
@@ -89,7 +99,7 @@ def test_result_follows_reset_order_under_permutation():
     resets = [(T_RESET, PRE_RESET_HEAD), (T_RESET + 5000, OTHER_HEAD)]
     forward = discovery._reset_origin(resets, stashes)
     backward = discovery._reset_origin(list(reversed(resets)), list(reversed(stashes)))
-    assert forward == ["stash-correlated", "stash-correlated"]
+    assert forward == ["stash-internal", "stash-internal"]
     assert backward == list(reversed(forward))
 
 
@@ -102,7 +112,7 @@ def test_mixed_window_keeps_each_reset_independent():
     resets = [(T_RESET, PRE_RESET_HEAD), (T_RESET + 5000, OTHER_HEAD),
               (T_RESET + 9000, STASH_C)]
     assert discovery._reset_origin(resets, stashes) == [
-        "stash-correlated", "stash-correlated", "unexplained"]
+        "stash-internal", "stash-internal", "unexplained"]
 
 
 def test_conflicting_metadata_for_one_stash_is_ambiguous_in_both_orders():
@@ -124,12 +134,12 @@ def test_conflicting_stash_matching_no_reset_does_not_touch_other_labels():
     stashes = [(T_RESET, PRE_RESET_HEAD, STASH_A), (T_RESET + 5000, OTHER_HEAD, STASH_B),
                (T_RESET + 5000, OTHER_HEAD, STASH_B), (T_RESET + 9000, STASH_C, STASH_C)]
     resets = [(T_RESET, PRE_RESET_HEAD)]
-    assert discovery._reset_origin(resets, stashes) == ["stash-correlated"]
-    assert discovery._reset_origin(resets, list(reversed(stashes))) == ["stash-correlated"]
+    assert discovery._reset_origin(resets, stashes) == ["stash-internal"]
+    assert discovery._reset_origin(resets, list(reversed(stashes))) == ["stash-internal"]
 
 
 def test_exact_duplicate_records_remain_one_observation_in_both_orders():
     stashes = [(T_RESET, PRE_RESET_HEAD, STASH_A), (T_RESET, PRE_RESET_HEAD, STASH_A)]
     resets = [(T_RESET, PRE_RESET_HEAD)]
-    assert discovery._reset_origin(resets, stashes) == ["stash-correlated"]
-    assert discovery._reset_origin(resets, list(reversed(stashes))) == ["stash-correlated"]
+    assert discovery._reset_origin(resets, stashes) == ["stash-internal"]
+    assert discovery._reset_origin(resets, list(reversed(stashes))) == ["stash-internal"]

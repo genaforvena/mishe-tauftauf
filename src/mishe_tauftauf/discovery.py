@@ -3433,8 +3433,12 @@ def _reset_origin(
     is the HEAD the reset left. Labels, in reset order:
 
     - ``unexplained``: no candidate stash.
-    - ``stash-correlated``: exactly one candidate, and that stash is a candidate
-      for no other reset.
+    - ``stash-internal``: exactly one candidate, that stash is a candidate for no
+      other reset, and it shares the reset's exact second. ``git stash push`` writes
+      its own ``reset: moving to HEAD`` at the stash's epoch, so an exact-second
+      match is the stash's side effect, not a separate reset.
+    - ``stash-correlated``: exactly one candidate, that stash is a candidate for no
+      other reset, and it lies 1-2 seconds away (not the same second).
     - ``ambiguous``: several candidate stashes, or one stash shared by several
       resets. Ties are never settled by list order.
 
@@ -3468,13 +3472,14 @@ def _reset_origin(
             claims[stash] = claims.get(stash, 0) + 1
 
     labels: list[str] = []
-    for matched in candidates:
+    for (reset_epoch, reset_head), matched in zip(resets, candidates):
         if not matched:
             labels.append("unexplained")
         elif any(stash in conflicting for stash in matched):
             labels.append("ambiguous")
         elif len(matched) == 1 and claims[matched[0]] == 1:
-            labels.append("stash-correlated")
+            exact = (reset_epoch, reset_head) in observations[matched[0]]
+            labels.append("stash-internal" if exact else "stash-correlated")
         else:
             labels.append("ambiguous")
     return labels
