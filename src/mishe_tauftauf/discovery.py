@@ -3374,6 +3374,68 @@ disagreement instead of inheriting one window's number.
 """
 
 
+RESET_STASH_WINDOW_SECONDS = 2
+
+
+def _reset_origin(
+    resets: list[tuple[int, str]],
+    stashes: list[tuple[int, str, str]],
+) -> list[str]:
+    """Label each ``reset: moving to HEAD`` by correlation with dangling stashes.
+
+    ``resets`` is ``(epoch, head_before_reset)`` per reflog reset; ``stashes`` is
+    ``(epoch, parent_sha, stash_sha)`` per dangling stash commit. A reset is a
+    candidate match for a stash within +/-RESET_STASH_WINDOW_SECONDS whose parent
+    is the HEAD the reset left. Labels, in reset order:
+
+    - ``unexplained``: no candidate stash.
+    - ``stash-correlated``: exactly one candidate, and that stash is a candidate
+      for no other reset.
+    - ``ambiguous``: several candidate stashes, or one stash shared by several
+      resets. Ties are never settled by list order.
+
+    Duplicate records of one stash are kept as a set of observations, never
+    collapsed to the first one seen. Exact duplicates are one observation. A
+    stash SHA recorded with conflicting ``(epoch, parent)`` metadata is
+    contradictory producer evidence: any reset it could match is ``ambiguous``,
+    and the label does not depend on the order of the input lists.
+
+    This is correlation only, not a traced caller or cause.
+    """
+    observations: dict[str, set[tuple[int, str]]] = {}
+    for epoch, parent, stash in stashes:
+        observations.setdefault(stash, set()).add((epoch, parent))
+    conflicting = {stash for stash, seen in observations.items() if len(seen) > 1}
+
+    candidates: list[list[str]] = []
+    claims: dict[str, int] = {}
+    for reset_epoch, reset_head in resets:
+        matched = sorted(
+            stash
+            for stash, seen in observations.items()
+            if any(
+                parent == reset_head
+                and abs(epoch - reset_epoch) <= RESET_STASH_WINDOW_SECONDS
+                for epoch, parent in seen
+            )
+        )
+        candidates.append(matched)
+        for stash in matched:
+            claims[stash] = claims.get(stash, 0) + 1
+
+    labels: list[str] = []
+    for matched in candidates:
+        if not matched:
+            labels.append("unexplained")
+        elif any(stash in conflicting for stash in matched):
+            labels.append("ambiguous")
+        elif len(matched) == 1 and claims[matched[0]] == 1:
+            labels.append("stash-correlated")
+        else:
+            labels.append("ambiguous")
+    return labels
+
+
 def _head_rewinds(home: Path) -> dict[str, object]:
     """Classify reflog-dropped commits' changed paths against HEAD's tree.
 
