@@ -6041,8 +6041,10 @@ def _settle_outcome_join(home: Path, settlers: list[tuple[datetime, str, str]],
     coverage = classify_outcomes(home, since)
     if coverage.get("unavailable"):
         return {"state": "unknown", "clause": f"join7d=unknown({coverage['unavailable']})"}
-    outcomes = sorted((datetime.fromisoformat(event["timestamp"].replace("Z", "+00:00")),
-                       event["role"]) for event in coverage["events"])
+    decoded = [(decode_iso_datetime(event["timestamp"]), event["role"]) for event in coverage["events"]]
+    if any(moment is None for moment, _role in decoded):
+        return {"state": "unknown", "clause": "join7d=unknown(untimed outcome)"}
+    outcomes = sorted(decoded)
     joined: dict[str, int] = {"verified": 0, "changed": 0, "blocked": 0, "other": 0}
     unjoined: dict[str, int] = {"verified": 0, "changed": 0, "blocked": 0, "other": 0}
     previous: dict[str, datetime] = {}
