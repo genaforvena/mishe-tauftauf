@@ -2198,15 +2198,6 @@ def _rewind_git(monkeypatch, *, reflog: str, dropped: set[str], applies: dict) -
             return subprocess.CompletedProcess(cmd, 0, applies["paths"], "")
         if cmd[:2] == ["git", "show"]:
             return subprocess.CompletedProcess(cmd, 0, f"PATCH {cmd[-1]}", "")
-        if cmd[:2] == ["git", "patch-id"]:
-            # Same patch text, same id; unknown text gets a unique id so it never matches.
-            text = kwargs["input"]
-            ident = applies.get("patch_ids", {}).get(text, f"unique-{text}")
-            return subprocess.CompletedProcess(cmd, 0, f"{ident} 0000\n", "")
-        if cmd[:2] == ["git", "log"] and ".." not in " ".join(cmd):
-            # HEAD commits touching the path, for the patch-id equivalence check.
-            candidates = applies.get("head_candidates", [])
-            return subprocess.CompletedProcess(cmd, 0, "".join(f"{c}\n" for c in candidates), "")
         if cmd[:2] == ["git", "log"]:
             path = cmd[-1]
             later = applies.get("later", set())
@@ -2218,6 +2209,8 @@ def _rewind_git(monkeypatch, *, reflog: str, dropped: set[str], applies: dict) -
         raise AssertionError(f"unexpected git command: {cmd}")
 
     monkeypatch.setattr(discovery.subprocess, "run", mock_run)
+    monkeypatch.setattr(discovery, "_patch_landed",
+                        lambda root, dropped: applies.get("patch_landed", 0))
     monkeypatch.setattr(discovery.tarfile, "open", lambda **kwargs: _MockTar())
     monkeypatch.setattr(discovery, "_applies",
                         lambda tree, patch, *, reverse: applies["verdicts"][(patch, reverse)])
@@ -2261,7 +2254,7 @@ def test_head_rewinds_present_change_reads_lossless(tmp_path, monkeypatch):
                                  "needs-review-paths=0 absent-paths=0 superseded-paths=0 "
                                  "absent-at-head-paths=0 unexplained-paths=0 "
                                  "superseded-intact-paths=0 superseded-rewritten-paths=0 "
-                                 "superseded-absent-lines=0/0")
+                                 "superseded-absent-lines=0/0 patch-landed-commits=0")
 
 
 def test_head_rewinds_absent_change_reads_drift(tmp_path, monkeypatch):
@@ -2279,7 +2272,7 @@ def test_head_rewinds_absent_change_reads_drift(tmp_path, monkeypatch):
                                  "needs-review-paths=0 absent-paths=1 superseded-paths=0 "
                                  "absent-at-head-paths=0 unexplained-paths=0 "
                                  "superseded-intact-paths=0 superseded-rewritten-paths=0 "
-                                 "superseded-absent-lines=0/0")
+                                 "superseded-absent-lines=0/0 patch-landed-commits=0")
 
 
 def test_head_rewinds_recommitted_change_is_its_own_verdict(tmp_path, monkeypatch):
@@ -2300,7 +2293,7 @@ def test_head_rewinds_recommitted_change_is_its_own_verdict(tmp_path, monkeypatc
                                  "needs-review-paths=1 absent-paths=0 superseded-paths=0 "
                                  "absent-at-head-paths=0 unexplained-paths=1 "
                                  "superseded-intact-paths=0 superseded-rewritten-paths=0 "
-                                 "superseded-absent-lines=0/0")
+                                 "superseded-absent-lines=0/0 patch-landed-commits=0")
 
 
 def test_head_rewinds_same_patch_id_on_head_does_not_clear_lossless(tmp_path, monkeypatch):
@@ -2313,16 +2306,16 @@ def test_head_rewinds_same_patch_id_on_head_does_not_clear_lossless(tmp_path, mo
     home.mkdir()
     sha, head = "b" * 40, "c" * 40
     _rewind_git(monkeypatch, reflog=f"{sha} reset: moving to HEAD~1\n", dropped={sha},
-                applies={"paths": "src/a.py\n",
-                         "head_candidates": [head],
-                         "patch_ids": {f"PATCH {sha}": "same-id", f"PATCH {head}": "same-id"},
+                applies={"paths": "src/a.py\n", "patch_landed": 1,
                          "verdicts": {("PATCH src/a.py", True): False,
                                       ("PATCH src/a.py", False): False}})
     result = discovery._head_rewinds(home)
     assert result["state"] == "drift"
     assert result["lossless"] == 0
     assert result["needs_review"] == 1
+    assert result["patch_landed_commits"] == 1
     assert "lossless-paths=0 needs-review-paths=1" in result["sample"]
+    assert result["sample"].endswith("patch-landed-commits=1")
 
 
 def test_head_rewinds_different_patch_id_stays_needs_review(tmp_path, monkeypatch):
@@ -2331,15 +2324,59 @@ def test_head_rewinds_different_patch_id_stays_needs_review(tmp_path, monkeypatc
     home.mkdir()
     sha, head = "b" * 40, "c" * 40
     _rewind_git(monkeypatch, reflog=f"{sha} reset: moving to HEAD~1\n", dropped={sha},
-                applies={"paths": "src/a.py\n",
-                         "head_candidates": [head],
-                         "patch_ids": {f"PATCH {sha}": "id-one", f"PATCH {head}": "id-two"},
+                applies={"paths": "src/a.py\n", "patch_landed": 0,
                          "verdicts": {("PATCH src/a.py", True): False,
                                       ("PATCH src/a.py", False): False}})
     result = discovery._head_rewinds(home)
     assert result["state"] == "drift"
     assert result["needs_review"] == 1
     assert result["lossless"] == 0
+    assert result["patch_landed_commits"] == 0
+
+
+def _repo_git(repo, *args):
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    out = subprocess.run(["git", "-c", "commit.gpgsign=false", *args], cwd=repo, env=env,
+                         capture_output=True, text=True, check=True)
+    return out.stdout.strip()
+
+
+def test_patch_landed_matches_cherry_pick_and_reword_not_absent_change(tmp_path):
+    """Real-git fixture: whole-commit patch-id matches a re-landed diff, not an absent one.
+
+    X is cherry-picked onto HEAD (new hash, same diff). Z is reworded (amend: new
+    hash, same diff). W is dropped with no HEAD copy. Only X and Z count as landed.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _repo_git(repo, "init", "-q")
+    (repo / "base.txt").write_text("base\n")
+    _repo_git(repo, "add", "base.txt")
+    _repo_git(repo, "commit", "-q", "-m", "base")
+    base = _repo_git(repo, "rev-parse", "HEAD")
+
+    (repo / "b.txt").write_text("hello\n")
+    _repo_git(repo, "add", "b.txt")
+    _repo_git(repo, "commit", "-q", "-m", "x")
+    dropped_x = _repo_git(repo, "rev-parse", "HEAD")
+    _repo_git(repo, "reset", "-q", "--hard", base)
+    _repo_git(repo, "cherry-pick", dropped_x)
+
+    (repo / "c.txt").write_text("z\n")
+    _repo_git(repo, "add", "c.txt")
+    _repo_git(repo, "commit", "-q", "-m", "old message")
+    dropped_z = _repo_git(repo, "rev-parse", "HEAD")
+    _repo_git(repo, "commit", "-q", "--amend", "-m", "reworded message")
+
+    (repo / "d.txt").write_text("w\n")
+    _repo_git(repo, "add", "d.txt")
+    _repo_git(repo, "commit", "-q", "-m", "w")
+    dropped_w = _repo_git(repo, "rev-parse", "HEAD")
+    _repo_git(repo, "reset", "-q", "--hard", "HEAD~1")
+
+    assert discovery._patch_landed(repo, [dropped_x, dropped_z, dropped_w]) == 2
+    assert discovery._patch_landed(repo, []) == 0
 
 
 def test_head_rewinds_unreadable_reflog_reads_unknown(tmp_path, monkeypatch):
@@ -2379,7 +2416,7 @@ def test_head_rewinds_splits_review_paths_by_later_history(tmp_path, monkeypatch
     assert result["sample"].endswith("needs-review-paths=3 absent-paths=0 "
                                      "superseded-paths=1 absent-at-head-paths=1 "
                                      "unexplained-paths=1 superseded-intact-paths=0 "
-                                     "superseded-rewritten-paths=1 superseded-absent-lines=0/0")
+                                     "superseded-rewritten-paths=1 superseded-absent-lines=0/0 patch-landed-commits=0")
 
 
 def test_content_presence_intact_when_every_added_line_survives(tmp_path):

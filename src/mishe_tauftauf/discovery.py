@@ -3440,6 +3440,7 @@ def _head_rewinds(home: Path) -> dict[str, object]:
                 "dropped": 0, "classified_commits": 0, "lossless": 0,
                 "needs_review": 0, "absent": 0,
                 "reflog_window": _HEAD_REWIND_REFLOG_LIMIT, "kind": "read"}
+    landed = _patch_landed(checkout_root, dropped)
     archive = run("archive", "HEAD", timeout=30, text=False)
     if archive is None or archive.returncode != 0:
         return {**unknown, "sample": "HEAD tree unreadable"}
@@ -3520,9 +3521,11 @@ def _head_rewinds(home: Path) -> dict[str, object]:
                        f"superseded-intact-paths={superseded_content['intact']} "
                        f"superseded-rewritten-paths={superseded_content['rewritten']} "
                        f"superseded-absent-lines={superseded_content['absent_lines']}"
-                       f"/{superseded_content['added_lines']}"),
+                       f"/{superseded_content['added_lines']} "
+                       "patch-landed-commits="
+                       f"{'unknown' if landed is None else landed}"),
             "dropped": len(dropped), "classified_commits": classified,
-            "unexamined_paths": unexamined,
+            "unexamined_paths": unexamined, "patch_landed_commits": landed,
             "reflog_window": _HEAD_REWIND_REFLOG_LIMIT,
             "lossless": lossless,
             "needs_review": review, "absent": absent,
@@ -3561,6 +3564,56 @@ def _applies(tree: Path, patch: str, *, reverse: bool) -> bool:
     except (OSError, subprocess.TimeoutExpired):
         return False
     return result.returncode == 0
+
+
+_HEAD_REWIND_PATCH_WINDOW = 400
+"""HEAD commits whose whole-commit patch-ids are compared with dropped commits."""
+
+
+def _patch_ids(checkout_root: Path, *log_args: str) -> dict[str, str] | None:
+    """Map commit sha to its whole-commit patch-id; None when git cannot say.
+
+    One ``git log -p`` and one ``git patch-id`` process cover every commit the
+    arguments select, so the cost does not grow with the commit count.
+    """
+    try:
+        logged = subprocess.run(["git", "log", "--no-color", "-p", "--format=commit %H",
+                                 *log_args], capture_output=True, text=True,
+                                timeout=30, cwd=checkout_root)
+        if logged.returncode != 0:
+            return None
+        ident = subprocess.run(["git", "patch-id", "--stable"], input=logged.stdout,
+                               capture_output=True, text=True, timeout=30,
+                               cwd=checkout_root)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if ident.returncode != 0:
+        return None
+    ids: dict[str, str] = {}
+    for line in ident.stdout.splitlines():
+        fields = line.split()
+        if len(fields) == 2:
+            ids[fields[1]] = fields[0]
+    return ids
+
+
+def _patch_landed(checkout_root: Path, dropped: list[str]) -> int | None:
+    """Count dropped commits whose whole-commit patch-id HEAD's recent history carries.
+
+    A report, not a verdict. A match means the same whole diff was committed
+    again (a cherry-pick or a reword); it says nothing about whether HEAD still
+    holds those bytes, and a partial cherry-pick does not match at all. It
+    therefore never clears a path as lossless. A reverted re-land still
+    matches here, which is why the byte-level apply check stays the only
+    lossless authority. None when git cannot read either side.
+    """
+    wanted = _patch_ids(checkout_root, "--no-walk=unsorted", *dropped)
+    head = _patch_ids(checkout_root, "-n", str(_HEAD_REWIND_PATCH_WINDOW), "HEAD")
+    if wanted is None or head is None:
+        return None
+    head_ids = set(head.values())
+    return sum(1 for sha in dropped if wanted.get(sha) in head_ids)
+
 
 def _disk_trend(home: Path, now: datetime | None = None) -> dict[str, object]:
     """Derive a disk rate/floor verdict from the retained scan corpus.
