@@ -151,8 +151,8 @@ def _load_allowlist(home: Path, status_obj):
                             allow[role] = clean
                 if allow:
                     return allow
-        except Exception:
-            pass
+        except Exception as exc:
+            _log_error(home, _now_ms(None), "load_allowlist:policy", type(exc).__name__ + " " + str(exc)[:300])
     try:
         import mishe_tauftauf.engine_boundary as eb
         _, registry = eb.load_registry(home)
@@ -162,8 +162,8 @@ def _load_allowlist(home: Path, status_obj):
                 routes.append({"provider": entry["provider"], "alias": alias, "model": entry["provider"] + "/auto", "effort": "high", "runner": "omp"})
         if routes:
             allow = {"default": routes}
-    except Exception:
-        pass
+    except Exception as exc:
+        _log_error(home, _now_ms(None), "load_allowlist:registry", type(exc).__name__ + " " + str(exc)[:300])
     return allow
 
 
@@ -177,7 +177,9 @@ def _load_current(home: Path, role: str):
                     return data
                 if isinstance(data, dict) and role in data and isinstance(data[role], dict):
                     return data[role]
-            except Exception:
+            except Exception as exc:
+                # Visible, not fatal: a malformed current selection must not read as absent.
+                _log_error(home, _now_ms(None), "load_current:" + role, type(exc).__name__ + " " + str(exc)[:300])
                 continue
     return None
 
