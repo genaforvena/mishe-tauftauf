@@ -88,6 +88,25 @@ def _report(home: Path, slug: str, verdict: str) -> None:
 
 
 HEALTH_REFRESH_LOCK = "health.refresh.lock"
+_HEALTH_BUSY = object()
+
+
+def _under_health_lock(home: Path, action):
+    """Run action() while holding the health publish lock; return _HEALTH_BUSY if another writer holds it.
+
+    Every writer of observations/health (the detached producer and the direct renderer) goes through
+    this one non-blocking lock, so two publishes never interleave and an older verdict can never
+    overwrite a fresher one. The kernel releases flock when the holder dies, so a hard-killed holder
+    cannot leave the lock stuck.
+    """
+    lock_path = home / "observations" / HEALTH_REFRESH_LOCK
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return _HEALTH_BUSY
+        return action()
 
 
 def refresh_health(home: Path) -> str:
@@ -96,15 +115,24 @@ def refresh_health(home: Path) -> str:
     Single-flight: a second producer that finds the lock held exits as SKIPPED without touching the
     report. Returns the outcome word so callers and receipts can name it.
     """
-    lock_path = home / "observations" / HEALTH_REFRESH_LOCK
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("a+", encoding="utf-8") as lock:
-        try:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return "SKIPPED busy"
-        health(home)
-        return "REFRESHED"
+    outcome = _under_health_lock(home, lambda: _health_publish(home))
+    return "SKIPPED busy" if outcome is _HEALTH_BUSY else "REFRESHED"
+
+
+def health(home: Path) -> str:
+    """Renderer entry. Publishes under the shared lock; while a producer holds it, shows UNKNOWN and
+    the last published verdict instead of computing and writing a competing report."""
+    rendered = _under_health_lock(home, lambda: _health_publish(home))
+    if rendered is not _HEALTH_BUSY:
+        return rendered
+    previous = home / "observations" / "health"
+    last = previous.read_text(encoding="utf-8").strip() if previous.exists() else "none published"
+    return "\n".join([
+        "GOAL: keep this plant's panes, feed, and resident services working",
+        "PURSUIT: repair internal failures from the live check; own reusable code delivery through ready integration",
+        "NEXT: investigate the first RED or UNKNOWN internal check and verify its live recovery",
+        f"STATE: UNKNOWN — health producer refresh in progress; last published: {last}",
+    ]) + "\n"
 
 
 def _scan_reading(snapshot: dict[str, object]) -> tuple[str, str]:
@@ -875,7 +903,8 @@ def _pane_roots(home: Path, pane_rows: list[tuple[str, str, str, str]]) -> tuple
     return f"PANE ROOTS: PASS pin={pin_text} on-pin={on_pin}", "", []
 
 
-def health(home: Path) -> str:
+def _health_publish(home: Path) -> str:
+    """Compute and publish the health view. Callers must hold the health lock (see _under_health_lock)."""
     lines = ["GOAL: keep this plant's panes, feed, and resident services working",
              "PURSUIT: repair internal failures from the live check; own reusable code delivery through ready integration",
              "NEXT: investigate the first RED or UNKNOWN internal check and verify its live recovery"]
