@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 
 
 def is_peer_copy(notes: str, peer_wall: bytes) -> bool:
@@ -58,3 +59,17 @@ def decode_audit_entries(text: str) -> list[dict]:
         if isinstance(entry, dict):
             entries.append(entry)
     return entries
+
+
+def heading_present(text: str, heading: str) -> bool:
+    """Report whether a markdown heading line starts with ``heading``.
+
+    Case-insensitive; ``heading`` may be a regular expression fragment such as
+    ``blockers?``. Only heading lines count, so body text is never a heading.
+    """
+    return re.search(rf"^#+ *{heading}\b", text, re.IGNORECASE | re.MULTILINE) is not None
+
+
+def ends_with_newline(text: str) -> bool:
+    """Report whether a wall document already ends with a newline."""
+    return text[-1:] == "\n"
