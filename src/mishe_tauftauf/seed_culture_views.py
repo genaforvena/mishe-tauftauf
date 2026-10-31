@@ -178,6 +178,10 @@ def _observation_reading(item: dict[str, object], freshness: str,
             candidate = light.get("status_reason") if isinstance(light, dict) else None
             bound = nonblank(candidate)
         state = current["state"]
+        if "boundary" not in item and not (fresh_scan or source_state == "unavailable"):
+            # No retained boundary: the item itself is the reading, so the
+            # generic stale gate above must still apply here.
+            state = "unknown"
         detail = (f"{current['sample']} source_state={source_state}; "
                   f"display_state={current['state']}; "
                   f"clock={'unverified; ' + bound if bound else 'unverified'}")
