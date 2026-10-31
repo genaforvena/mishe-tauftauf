@@ -390,6 +390,11 @@ def _runtime(home):
                     if role in parked:
                         result["renderer_states"][role] = "PARKED"
                         continue
+                    if pids is None:
+                        # Session observation failed: the role is unobserved, not
+                        # stopped. The single "observation unavailable" problem above
+                        # records it; the per-role state stays UNKNOWN.
+                        continue
                     problems.append("renderer not running: " + role)
                     continue
                 roots = wall_view._live_import_roots(pid)

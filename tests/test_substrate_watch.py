@@ -415,6 +415,22 @@ def test_renderer_set_is_the_declared_windows_not_stale_top_pains_entries(site, 
     assert not any("undeclared" in problem for problem in runtime["problems"])
 
 
+def test_unobservable_renderer_session_is_unknown_not_stopped(site, monkeypatch):
+    root, home = site
+    (home / "health/windows.json").write_text(json.dumps(["genome", "health"]))
+    (home / "top-pains" / "genome").write_text("#!/bin/sh\n")
+    (home / "top-pains" / "health").write_text("#!/bin/sh\n")
+    monkeypatch.setattr("mishe_tauftauf.seed.recorded_session", lambda home: "session")
+    monkeypatch.setattr(watch.wall_view, "_renderer_pids", lambda session: None)
+    runtime = watch._runtime(home)
+    # No session socket means no observation, not a stopped renderer: each role
+    # stays UNKNOWN and only the single observation-unavailable problem is named.
+    assert runtime["renderer_states"] == {"genome": "UNKNOWN", "health": "UNKNOWN"}
+    assert "renderer session observation unavailable" in runtime["problems"]
+    assert not any(problem.startswith("renderer not running:") for problem in runtime["problems"])
+    assert runtime["state"] == "UNKNOWN"
+
+
 def test_declared_renderer_windows_that_all_run_are_known(site, monkeypatch):
     root, home = site
     (home / "health/windows.json").write_text(json.dumps(["live"]))
