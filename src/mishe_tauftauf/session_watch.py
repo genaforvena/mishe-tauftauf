@@ -54,6 +54,43 @@ def assess(current: dict, previous: dict | None, now: float) -> dict:
     return result
 
 
+def expected_windows(home: Path) -> set[str] | None:
+    """Declared windows this session must host, or None when that is unknowable.
+
+    The manifest is the declaration. Life-support roles run in their own session,
+    which the substrate observer watches, and parked roles carry an unexpired
+    disposition record; both are removed from this session's expectation and
+    nothing else is. An absent or unreadable manifest is UNKNOWN, never an
+    empty expectation that would pass vacuously.
+    """
+    from . import dispositions
+    from .claude_gate import life_support_roles
+    from .window_manifest import read
+    if not (home / "health" / "windows.json").is_file():
+        return None
+    try:
+        declared = read(home)
+    except (OSError, ValueError):
+        return None
+    expected = set(declared) - set(life_support_roles()) - set(dispositions.parked_roles(home))
+    return expected or None
+
+
+def pane_verdict(rows: list[str], expected: set[str] | None) -> tuple[bool | None, list[str], list[str]]:
+    """(panes_live, missing windows, dead panes) from `list-panes` rows.
+
+    Each row is ``window.pane:dead``. panes_live is True only when every expected
+    window has a pane and none is dead; it is None when the expectation is unknown.
+    """
+    targets = [row.rsplit(":", 1)[0] for row in rows]
+    present = {target.rsplit(".", 1)[0] for target in targets}
+    dead = [row.rsplit(":", 1)[0] for row in rows if row.endswith(":1")]
+    if expected is None:
+        return None, [], dead
+    missing = sorted(expected - present)
+    return (not missing and not dead), missing, dead
+
+
 def observe(home: Path, session: str) -> dict:
     # One aggregate budget, not a per-call one: the loop's heartbeat may only
     # be 30s apart, so four sequential reads must never add up past that. The
@@ -76,18 +113,23 @@ def observe(home: Path, session: str) -> dict:
                      "pain", "read", "operator", "--launcher", "dashboard"],
                     timeout=15.0)
     rows = [row for row in panes.stdout.splitlines() if row]
-    dead = [row.rsplit(":", 1)[0] for row in rows if row.endswith(":1")]
+    expected, panes_live, missing, dead = None, None, [], []
+    if panes.returncode == 0:
+        expected = expected_windows(home)
+        panes_live, missing, dead = pane_verdict(rows, expected)
     # A RED must name what it saw. The 2026-10-16T03:37Z and 03:59Z episodes
     # read as a detector defect (a failed tmux call) until a probe showed
     # returncode 0 with one genuinely dead pane, so every row carries the
-    # returncode, the pane count and the dead panes' window.pane names.
+    # returncode, the expected and missing windows, and the dead panes'
+    # window.pane names. A fixed pane count hid which window was gone.
     evidence = (f"rc={panes.returncode} panes={len(rows)} "
+                f"expected={'unknown' if expected is None else len(expected)} "
+                f"missing={','.join(missing) if missing else 'none'} "
                 f"dead={','.join(dead) if dead else 'none'}")
     return {"identity": identity.stdout.strip() if identity.returncode == 0 else None,
             "available": owner.returncode == 0 and owner.stdout.strip() == str(home.resolve())
                          and identity.returncode == 0 and bool(identity.stdout.strip()),
-            "panes_live": (None if panes.returncode != 0 else
-                           len(rows) >= 20 and not dead),
+            "panes_live": panes_live,
             "pane_evidence": evidence,
             "dashboard_live": dashboard.returncode == 0}
 

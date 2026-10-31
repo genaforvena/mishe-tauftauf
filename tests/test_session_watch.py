@@ -184,6 +184,8 @@ def test_watchdog_heartbeat_precedes_slow_route(tmp_path,monkeypatch):
 
 def test_dead_pane_evidence_names_the_window(tmp_path, monkeypatch):
     import subprocess
+    _manifest(tmp_path, ["docs"])
+    monkeypatch.setattr("mishe_tauftauf.claude_gate.life_support_roles", lambda: ())
     def run(argv, **kw):
         if "show-option" in argv:
             output=str(tmp_path)+"\n"
@@ -197,7 +199,7 @@ def test_dead_pane_evidence_names_the_window(tmp_path, monkeypatch):
     monkeypatch.setattr(watch.subprocess,"run",run)
     row=watch.observe(tmp_path,"owned")
     assert row["panes_live"] is False
-    assert row["pane_evidence"]=="rc=0 panes=25 dead=docs.1"
+    assert row["pane_evidence"]=="rc=0 panes=25 expected=1 missing=none dead=docs.1"
 
 
 def test_failed_pane_command_keeps_the_returncode_in_evidence(tmp_path, monkeypatch):
@@ -215,7 +217,7 @@ def test_failed_pane_command_keeps_the_returncode_in_evidence(tmp_path, monkeypa
     monkeypatch.setattr(watch.subprocess,"run",run)
     row=watch.observe(tmp_path,"owned")
     assert row["panes_live"] is None
-    assert row["pane_evidence"]=="rc=1 panes=0 dead=none"
+    assert row["pane_evidence"]=="rc=1 panes=0 expected=unknown missing=none dead=none"
 
 
 def test_pane_evidence_change_logs_new_event_without_a_second_route(tmp_path,monkeypatch):
@@ -311,3 +313,48 @@ def test_a_spent_observation_budget_fails_instead_of_reading_on(monkeypatch, tmp
     with pytest.raises(watch.subprocess.TimeoutExpired):
         watch.observe(tmp_path, "session")
     assert len(calls) == 1
+
+
+def _manifest(home, names):
+    (home / "health").mkdir(parents=True, exist_ok=True)
+    (home / "health" / "windows.json").write_text(__import__("json").dumps(names))
+
+
+def test_missing_declared_window_is_named_and_not_live(tmp_path, monkeypatch):
+    """A fixed pane count hid which window was gone; an expected-window check names it."""
+    _manifest(tmp_path, ["discover", "senses", "ledger"])
+    monkeypatch.setattr("mishe_tauftauf.claude_gate.life_support_roles", lambda: ())
+    expected = watch.expected_windows(tmp_path)
+    assert expected == {"discover", "senses", "ledger"}
+    rows = ["discover.0:0", "discover.1:0", "senses.0:0", "senses.1:0"]
+    live, missing, dead = watch.pane_verdict(rows, expected)
+    assert live is False and missing == ["ledger"] and dead == []
+
+
+def test_life_support_and_parked_roles_are_not_expected(tmp_path, monkeypatch):
+    from mishe_tauftauf import dispositions
+    _manifest(tmp_path, ["discover", "genome", "health", "body-research"])
+    monkeypatch.setattr("mishe_tauftauf.claude_gate.life_support_roles", lambda: ("genome", "health"))
+    dispositions.park(tmp_path, "body-research", "health", "evidence: parked for test", ttl=3600)
+    assert watch.expected_windows(tmp_path) == {"discover"}
+    live, missing, _ = watch.pane_verdict(["discover.0:0"], watch.expected_windows(tmp_path))
+    assert live is True and missing == []
+
+
+def test_unexpired_park_only_removes_the_named_role(tmp_path, monkeypatch):
+    _manifest(tmp_path, ["discover", "research-methods"])
+    monkeypatch.setattr("mishe_tauftauf.claude_gate.life_support_roles", lambda: ())
+    assert watch.expected_windows(tmp_path) == {"discover", "research-methods"}
+
+
+def test_absent_or_empty_manifest_is_unknown_not_vacuous_green(tmp_path, monkeypatch):
+    monkeypatch.setattr("mishe_tauftauf.claude_gate.life_support_roles", lambda: ())
+    assert watch.expected_windows(tmp_path) is None
+    _manifest(tmp_path, [])
+    assert watch.expected_windows(tmp_path) is None
+    assert watch.pane_verdict(["discover.0:0"], None)[0] is None
+
+
+def test_dead_pane_is_still_red_with_expected_windows():
+    live, missing, dead = watch.pane_verdict(["discover.0:1", "discover.1:0"], {"discover"})
+    assert live is False and dead == ["discover.0"] and missing == []
