@@ -319,6 +319,12 @@ def advance(home, change, lock_wait=None):
     return status(home, change)
 
 
+def role_reason(roles):
+    """Name the per-role cause so a top-level UNKNOWN is never reported as unnamed."""
+    named = [f"{role}: {row['reason']}" for role, row in sorted(roles.items()) if row.get('reason')]
+    return '; '.join(named)[:200] or None
+
+
 def _status(home, change):
     root, receipt = boundary.receipt(home, change)
     report = {'id': change, 'source': receipt['source'], 'target': receipt['target'],
@@ -358,6 +364,8 @@ def _status(home, change):
                        else 'delivered' if states <= {'verified', 'delivered'} and 'delivered' in states
                        else 'unknown' if states & {'unknown', 'conflict', 'activating', 'failed'}
                        else 'pending')
+    if report['state'] not in ('verified', 'delivered', 'reverted'):
+        report['reason'] = role_reason(report['roles']) or receipt.get('reason')
     return report
 
 
