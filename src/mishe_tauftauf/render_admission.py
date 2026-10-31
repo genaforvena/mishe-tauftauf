@@ -11,6 +11,14 @@ import time
 from .recovery_io import identity, read_json, run_probe, save, status
 
 
+def _attempt_at(path):
+    try:
+        at = read_json(path).get("at")
+    except (ValueError, AttributeError):
+        return None
+    return float(at) if isinstance(at, (int, float)) and not isinstance(at, bool) else None
+
+
 def render(home, role, command, *, now=None):
     now = time.time() if now is None else now
     identity(role)
@@ -50,7 +58,9 @@ def render(home, role, command, *, now=None):
         message = f"UNKNOWN — render deferred: {reason}; controller={state['state']}; cached_at={cache['at'] if cache else 'none'} age={age}; retained content is not a fresh observation\n"
         return {"code": 1, "stdout": message + original, "stderr": message, "ok": None}
 
-    if cache and 0 <= now - cache["at"] < cooldown:
+    attempt_path = root / "render-attempts" / f"{role}.json"
+    last_attempt = _attempt_at(attempt_path)
+    if last_attempt is not None and 0 <= now - last_attempt < cooldown:
         return deferred("pressure cooldown")
     for number in range(slots):
         with (slot_root / f"render-slot-{number}.lock").open("a+") as handle:
@@ -58,6 +68,9 @@ def render(home, role, command, *, now=None):
                 fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 continue
+            # Every admitted probe starts the cooldown, success or failure, and is
+            # recorded before it runs so a crash mid-probe still cools the next retry.
+            save(attempt_path, {"at": now, "role": role})
             env = dict(os.environ)
             if "MISHE_RECOVERY_PREVIOUS_PYTHONPATH_SET" in env:
                 was_set = env.pop("MISHE_RECOVERY_PREVIOUS_PYTHONPATH_SET")
