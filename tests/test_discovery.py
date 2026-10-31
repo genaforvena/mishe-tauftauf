@@ -3056,6 +3056,41 @@ def test_settle_result_mix_clean_window_is_verified(tmp_path):
                                 "incidents=0 since_last=none")
 
 
+def test_settle_result_mix_all_changed_window_is_not_verified(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir(parents=True, exist_ok=True)
+    _settle_tape(home, [
+        ("2026-10-06T10:00:00Z", "a", "changed"),
+        ("2026-10-06T10:10:00Z", "b", "changed"),
+    ])
+    result = discovery._seed_settle_result_mix(home)
+    assert result["state"] == "unknown"
+    assert result["verified"] == 0
+    assert result["changed"] == 2
+    assert result["blocked"] == 0
+
+
+def test_settle_result_mix_all_verified_window_is_verified(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir(parents=True, exist_ok=True)
+    _settle_tape(home, [
+        ("2026-10-06T10:00:00Z", "a", "verified"),
+        ("2026-10-06T10:10:00Z", "b", "verified"),
+    ])
+    result = discovery._seed_settle_result_mix(home)
+    assert result["state"] == "verified"
+    assert result["verified"] == 2
+
+
+def test_settle_result_mix_empty_tape_is_not_verified(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "chat.log").write_bytes(b"")
+    result = discovery._seed_settle_result_mix(home)
+    assert result["state"] == "unknown"
+    assert result["window"] == 0
+
+
 def test_settle_result_mix_clusters_blocked_within_the_gap(tmp_path):
     home = tmp_path / "site"
     home.mkdir(parents=True, exist_ok=True)

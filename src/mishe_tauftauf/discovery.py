@@ -5552,11 +5552,14 @@ def _seed_settle_result_mix(home: Path) -> dict[str, object]:
     settlement. The window is a count, not a duration, so the sample is current
     as of the scan.
 
-    State is ``verified`` when the window holds no ``blocked`` receipt and
-    ``drift`` when one does: a blocked settlement is the signal the mix moved
-    off the all-clean reading, and it is what makes the rate visible rather
-    than inferred from chat. State is ``unknown`` when the tape is absent or
-    unreadable, so a source change cannot pass as a clean bill.
+    State is ``drift`` when the window holds a ``blocked`` receipt: a blocked
+    settlement is the signal the mix moved off the all-clean reading, and it is
+    what makes the rate visible rather than inferred from chat. State is
+    ``verified`` only when the window holds at least one ``verified`` result and
+    no ``blocked`` one; ``changed`` is not ``verified``, so a window of only
+    ``changed`` (or an empty window) is ``unknown`` for the claim that
+    settlements were verified. State is ``unknown`` as well when the tape is
+    absent or unreadable, so a source change cannot pass as a clean bill.
     """
     tape_path = home / "chat.log"
     if not tape_path.exists():
@@ -5602,8 +5605,14 @@ def _seed_settle_result_mix(home: Path) -> dict[str, object]:
               f"changed={counts['changed']} blocked={counts['blocked']} "
               f"other={counts['other']} incidents={incidents} "
               f"since_last={'none' if since_last is None else since_last}")
+    if blocked_times:
+        state = "drift"
+    elif counts["verified"] > 0:
+        state = "verified"
+    else:
+        state = "unknown"
     return {"id": "sense.seed.settle-result-mix",
-            "state": "drift" if blocked_times else "verified",
+            "state": state,
             "sample": sample, "kind": "read", "window": len(window),
             "verified": counts["verified"], "changed": counts["changed"],
             "blocked": counts["blocked"], "other": counts["other"],
