@@ -2473,12 +2473,13 @@ def test_head_rewinds_bounds_dropped_commits_and_paths(tmp_path, monkeypatch):
                                       for i in range(99)} | {
                              (f"PATCH src/f{i}.py", False): False for i in range(99)}})
     result = discovery._head_rewinds(home)
-    # Every dropped commit in the window is counted; only a bounded number of
-    # them are adjudicated, and the sample names both counts.
+    # Every dropped commit in the window is counted and adjudicated; the
+    # per-commit path cap bounds each commit's work, and the sample names both
+    # counts.
     assert result["dropped"] == len(shas)
-    assert result["classified_commits"] == discovery._HEAD_REWIND_COMMIT_LIMIT
-    assert result["needs_review"] == discovery._HEAD_REWIND_COMMIT_LIMIT * discovery._HEAD_REWIND_PATH_LIMIT
-    assert "classified-commits=4" in result["sample"]
+    assert result["classified_commits"] == len(shas)
+    assert result["needs_review"] == len(shas) * discovery._HEAD_REWIND_PATH_LIMIT
+    assert f"classified-commits={len(shas)}" in result["sample"]
     assert "dropped-commits=5" in result["sample"]
 
 def _scan(home: Path, created: str, free_bytes: int) -> None:

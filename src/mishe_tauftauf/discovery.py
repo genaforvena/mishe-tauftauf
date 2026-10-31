@@ -3348,16 +3348,14 @@ read as "one rewind ever happened". The window bounds the work; it is not the
 whole history, and the sample says which bound it used.
 """
 
-_HEAD_REWIND_COMMIT_LIMIT = 4
-"""Dropped commits adjudicated per scan.
-
-Every dropped commit costs a patch check per changed path, so the number of
-adjudicated commits is bounded while the number of dropped commits in the
-window is not. The sample names both, because the path verdicts cover only
-the adjudicated commits.
-"""
-
 _HEAD_REWIND_PATH_LIMIT = 12
+"""Changed paths adjudicated per dropped commit; the per-commit cost bound.
+
+Every dropped commit in the reflog window is adjudicated (no commit cap): a
+4-commit cap read 5 needs-review paths where the full 90-commit window holds
+41, and 0 absent paths where it holds 2. The reflog window bounds the commit
+count, so the sample's classified count always equals the dropped count.
+"""
 
 _DISK_TREND_FLOOR_BYTES = 10 * 2**30
 _DISK_TREND_NEAR_BYTES = 20 * 2**30
@@ -3473,7 +3471,7 @@ def _head_rewinds(home: Path) -> dict[str, object]:
             with tarfile.open(fileobj=io.BytesIO(archive.stdout), mode="r:*") as tar:
                 tar.extractall(Path(td), filter="data")
             tree = Path(td)
-            for sha in dropped[:_HEAD_REWIND_COMMIT_LIMIT]:
+            for sha in dropped:
                 names = run("diff-tree", "--no-commit-id", "--name-only", "-r", sha)
                 if names is None or names.returncode != 0:
                     return {**unknown, "sample": f"changed paths unreadable: {sha[:7]}"}
@@ -3503,7 +3501,7 @@ def _head_rewinds(home: Path) -> dict[str, object]:
     # commit touching a path does not prove its content equivalent, so the
     # drift state and the needs-review count stay as they were.
     state = "drift" if (review or absent) else "verified"
-    classified = min(len(dropped), _HEAD_REWIND_COMMIT_LIMIT)
+    classified = len(dropped)
     return {"id": "sense.repo.head-rewinds", "state": state,
             "sample": (f"dropped-commits={len(dropped)} of "
                        f"last-{_HEAD_REWIND_REFLOG_LIMIT}-reflog-entries "
