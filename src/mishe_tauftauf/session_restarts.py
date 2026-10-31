@@ -72,12 +72,19 @@ def _is_birth(message, session: str) -> bool:
     return message[:len(prefix)] == prefix
 
 
-def assess_restarts(entries, session: str) -> dict:
+def assess_restarts(entries, session: str, window_minutes=None) -> dict:
     """Assess restart cadence over caller-supplied (epoch_us, message) pairs.
 
     Returns a plain dict: verdict plus births count, gap list, under-30m
     count, and reason. Non-list input, missing session, or malformed entries
     report unknown, never steady.
+
+    When the caller supplies ``window_minutes`` (a positive int), a verdict of
+    steady or churn also carries an additive ``intensity`` mapping in the OTP
+    supervisor MaxR/MaxT shape: ``max_r`` restarts tolerated per
+    ``window_minutes``, the observed ``births``, and ``exceeded`` (births >
+    max_r). Verdict and reason are unchanged; it names the window the count
+    clause already assumed and acts on nothing.
     """
     base: dict = {"verdict": UNKNOWN, "reason": "unusable-input",
                   "births": 0, "gaps": [], "under_30m": 0}
@@ -100,6 +107,11 @@ def assess_restarts(entries, session: str) -> dict:
     stamps.sort()
     births = len(stamps)
     base["births"] = births
+    if (isinstance(window_minutes, int) and not isinstance(window_minutes, bool)
+            and window_minutes > 0):
+        max_r = COUNT_DRIFT_THRESHOLD - 1
+        base["intensity"] = {"max_r": max_r, "window_minutes": window_minutes,
+                             "births": births, "exceeded": births > max_r}
     if births == 0:
         base["verdict"] = STEADY
         base["reason"] = "no-births-in-window"

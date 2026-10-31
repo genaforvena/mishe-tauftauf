@@ -4443,13 +4443,13 @@ def _host_session_restarts(home: Path, past_minutes: int = 60) -> dict[str, obje
     if entries is None:
         unknown["reason"] = "invalid journal entry metadata"
         return unknown
-    verdict = session_restarts.assess_restarts(entries, session)
+    verdict = session_restarts.assess_restarts(entries, session, past_minutes)
     state = {"steady": "verified", "churn": "drift"}.get(str(verdict.get("verdict")), "unknown")
     sample = f"last-{past_minutes}m " + session_restarts.sample_text(verdict)
     return {"id": "sense.host.session-restarts", "state": state,
             "sample": sample, "kind": "read", "session": session,
             "verdict": verdict.get("verdict"), "reason": verdict.get("reason"),
-            "coverage": coverage}
+            "intensity": verdict.get("intensity"), "coverage": coverage}
 
 def _coord_authorship_fog(home: Path, now: datetime | None = None) -> dict[str, object]:
     """Name dirty-tree bytes no wall or chat line claims, so landing stops guessing.

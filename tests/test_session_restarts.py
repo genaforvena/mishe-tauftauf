@@ -126,3 +126,16 @@ def test_decode_journal_entries_malformed_metadata_is_none():
         bad_ts.encode(), "boot1", "systemd", 0, 999_0000000) is None
     assert session_restarts.decode_journal_entries(
         "not-bytes".encode().decode(), "boot1", "systemd", 0, 999_0000000) is None
+
+
+def test_intensity_is_additive_and_verdict_unchanged():
+    base = 1_000_000_000_000_000
+    entries = [(base + i * 60_000_000 * 2, f"Started {SESSION}-session.scope") for i in range(3)]
+    plain = session_restarts.assess_restarts(entries, SESSION)
+    timed = session_restarts.assess_restarts(entries, SESSION, 60)
+    assert "intensity" not in plain
+    assert timed.pop("intensity") == {"max_r": 2, "window_minutes": 60, "births": 3, "exceeded": True}
+    assert timed == plain
+    empty = session_restarts.assess_restarts([], SESSION, 60)
+    assert empty["intensity"]["exceeded"] is False and empty["verdict"] == "steady"
+    assert "intensity" not in session_restarts.assess_restarts([], "", 60)
