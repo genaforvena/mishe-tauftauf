@@ -61,6 +61,8 @@ from .scan_freshness import age_bounds, aoi_summary, classify_age, endpoint
 from . import patch_text
 from .spawn_dialect import (script_spawns_site_package,
                             spawns_site_package)
+from .reflog_boundary import (decode_reflog_resets, decode_stash_commits,
+                              decode_unreachable_commits)
 from .timestamp_text import decode_iso_datetime
 from .unit_properties import SITE_UNIT_PREFIX, is_site_unit
 
@@ -3582,9 +3584,6 @@ def _reset_origin(
     return labels
 
 
-_STASH_SUBJECT = re.compile(r"^(WIP on|On) ")
-
-
 def _live_reset_origins(checkout_root: Path) -> list[str] | None:
     """Read ``reset_origin`` labels for the live reflog, newest reset first.
 
@@ -3606,35 +3605,26 @@ def _live_reset_origins(checkout_root: Path) -> list[str] | None:
                  "-n", str(_HEAD_REWIND_REFLOG_LIMIT))
     if reflog is None or reflog.returncode != 0:
         return None
-    resets: list[tuple[int, str]] = []
-    for line in reflog.stdout.splitlines():
-        parts = line.split("|", 2)
-        if len(parts) != 3 or parts[2] != "reset: moving to HEAD":
-            continue
-        epoch = re.search(r"\{(\d+)\}$", parts[1])
-        if epoch is None:
-            return None
-        resets.append((int(epoch.group(1)), parts[0]))
+    resets = decode_reflog_resets(reflog.stdout)
+    if resets is None:
+        return None
     if not resets:
         return []
     unreachable = run("fsck", "--unreachable", "--no-reflogs", "--no-progress")
     if unreachable is None or unreachable.returncode != 0:
         return None
-    shas = [line.split()[2] for line in unreachable.stdout.splitlines()
-            if line.startswith("unreachable commit ")]
+    shas = decode_unreachable_commits(unreachable.stdout)
+    if shas is None:
+        return None
     stashes: list[tuple[int, str, str]] = []
     if shas:
         listed = run("log", "--no-walk=unsorted", "--format=%H|%P|%ct|%s", *shas)
         if listed is None or listed.returncode != 0:
             return None
-        for line in listed.stdout.splitlines():
-            parts = line.split("|", 3)
-            if len(parts) != 4 or not _STASH_SUBJECT.match(parts[3]):
-                continue
-            parents = parts[1].split()
-            if not parents:
-                continue
-            stashes.append((int(parts[2]), parents[0], parts[0]))
+        decoded = decode_stash_commits(listed.stdout)
+        if decoded is None:
+            return None
+        stashes = decoded
     return _reset_origin(resets, stashes)
 
 
