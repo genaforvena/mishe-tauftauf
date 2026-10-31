@@ -73,7 +73,9 @@ env -u TMUX tmux attach -t mishe-seed
 Follow [Getting started](docs/getting-started.md) for the first task, manual
 supervision, another agent command, or planting another owned project. Do not
 rerun the launcher just to read a running plant: it can refresh and restart
-services. Use the [inspection guide](docs/operating.md#inspect-the-running-plant).
+services. To read a running plant, attach to its session with `mishe view` and
+read the resident windows; every window shows its checks above and the agent
+below.
 
 ## What you will see
 
@@ -150,8 +152,8 @@ someone who can act.
 
 Scripts should decide reproducible facts. Agents choose what to do about the
 remaining questions. Self-observation includes questioning the checks themselves,
-not just watching CPU load. The [false-CI-unknown case study](docs/how-it-works.md#case-study-a-false-ci-unknown)
-shows that distinction in a real repair.
+not just watching CPU load: a missing CI reading stays `UNKNOWN` rather than
+being reported as a pass, and questioning that verdict is part of the repair.
 
 Within granted scope, try the useful experiment early, inspect the real result,
 and keep, revise or revert it. A bounded failure with an honest causal account
@@ -162,9 +164,9 @@ the same.
 ## Scope and limits
 
 - **Local, not hosted.** You supply the host and agent access. Most residents use
-  authenticated agent CLIs. The experimental internal loop calls the provider
-  library directly; [agent-step experiments](docs/agent-step-experiments.md)
-  distinguish implemented mechanisms from proposals and live acceptance.
+  authenticated agent CLIs. An experimental internal loop calls the provider
+  library directly; the distinction between an implemented mechanism, a proposal
+  and a live acceptance is kept explicit rather than assumed.
 - **Authority is not isolation.** Charters and the permission ledger record
   intended scope; they do not enforce Linux permissions. Plant only in systems
   you own or are authorized to maintain. No authority over other nodes,
@@ -183,11 +185,11 @@ the same.
 | You want to… | Read |
 | --- | --- |
 | Set up a plant and watch one task | [Getting started](docs/getting-started.md) |
-| Understand observations, roles, and fresh contexts | [How it works](docs/how-it-works.md) |
-| Inspect, recover, stop, or update a plant | [Operating guide](docs/operating.md) |
-| Coordinate shared work and verify delivery | [Wall coordination](docs/wall-coordination.md) |
 | Read the current development culture | [Mesh](docs/mesh.md) |
-| See the agent's rules | [Agent contract](AGENTS.md) and [seed doctrine](src/mishe_tauftauf/seed_doctrine.md) |
+| Change a resident's model | [Changing mind models](docs/model-changes.md) |
+| Set up the optional analysis advisor | [Observable analysis advice](docs/analysis-advisor.md) |
+| Use an external judge provider | [Completion judge adapter](docs/completions-judge.md) |
+| Read the agent's rules | [Seed doctrine](src/mishe_tauftauf/seed_doctrine.md) |
 
 For development: `src/mishe_tauftauf/` contains the runtime and CLI;
 `coordination/` contains checkout-only planting and linked-release commands;

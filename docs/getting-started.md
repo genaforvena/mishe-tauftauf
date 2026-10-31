@@ -1,8 +1,8 @@
 # Plant a site and watch one task
 
-[README](../README.md) · [Mesh](mesh.md) · [Operating the plant](operating.md) · [How it works](how-it-works.md) · [Wall coordination](wall-coordination.md)
+[README](../README.md) · [Mesh](mesh.md) · [Changing mind models](model-changes.md)
 
-This guide starts with a fresh checkout and ends with a task whose result you can inspect. If a plant already lives in the worktree, use [its actual site and session](operating.md#find-the-site-you-mean) instead of the fresh-checkout names below.
+This guide starts with a fresh checkout and ends with a task whose result you can inspect. If a plant already lives in the worktree, use its actual site and session instead of the fresh-checkout names below: list the tmux sessions, read each session's ownership marker with `tmux show-option -qv -t "$SESSION" @mishe-tauftauf-home`, and take the site path that marker reports.
 
 The easiest entry is to clone this repository, start your installed coding agent
 in it, and ask it to use the [plant-mishe skill](../.agents/skills/plant-mishe/SKILL.md).
@@ -50,7 +50,7 @@ A **site** is the local directory containing this plant's state. A **session** i
 Before running the launcher, understand its scope:
 
 - It creates an ignored site with launchers, charters, checks, observations, handoffs, artifacts, a permission ledger, and an append-only `chat.log`. If necessary, it adds a local ignore rule to Git's `info/exclude`; it does not commit that state.
-- It creates the resident windows (`discover`, `senses`, `health`, `genome`, `witness`, `docs`, `research-methods`), a `permissions` panel, and an `operator` shell. A site can declare additional residents with a charter and launcher; planting preserves their windows rather than generating their services ([how it works](how-it-works.md#the-initial-channels)). Each resident window has a refreshing observation pane above an agent pane. The `operator` shell is the human owner's convenience, not a role or a gate on work.
+- It creates the resident windows (`discover`, `senses`, `health`, `genome`, `witness`, `docs`, `research-methods`), a `permissions` panel, and an `operator` shell. A site can declare additional residents with a charter and launcher; planting preserves their windows rather than generating their services. Each resident window has a refreshing observation pane above an agent pane. The `operator` shell is the human owner's convenience, not a role or a gate on work.
 - It starts the agents, takes an initial bounded discovery sample, and attempts a CI reading. Persistent supervisors can subsequently wake agents for tasks, changed observations, continuations, or quiet self-selected work within their charters. This is not an inert dashboard.
 - Unless `--no-services` is supplied, it writes, links, enables, and starts user services: `SESSION-ROLE.service` for the resident minds, plus `SESSION-permissions.service`, `SESSION-ci.service`, and `SESSION-silence.service` (the silence watcher, a supervisor rather than a mind). Replanting refreshes those units and restarts ones already active.
 - Planting this core checkout persistently also installs `SESSION-coordination.service`, the linked-site release coordinator. A persistent external plant registers with that coordinator if the core plant already exists.
@@ -58,7 +58,7 @@ Before running the launcher, understand its scope:
 
 Services use the Python interpreter running the launcher and this checkout's `src/` via `PYTHONPATH`. Keep both available. Copying a site directory alone does not make a self-contained installation.
 
-The permission ledger is a scoped record of operator decisions, not an operating-system sandbox. Choose a worktree and account whose scope you intend the agents to use. See [permissions and local state](operating.md#decide-a-scoped-permission).
+The permission ledger is a scoped record of operator decisions, not an operating-system sandbox. Choose a worktree and account whose scope you intend the agents to use. The ledger is readable with `mishe access list`, and the `permissions` window shows the current panel.
 
 ## 3. Plant this fresh checkout
 
@@ -141,9 +141,9 @@ Look for all of these, not just a successful launcher exit:
 2. `discover show` reports a fresh scan and a verified `sense.proc.loadavg` sample. The task's artifact points to the actual scan under `SITE/discovery/`, and the live `discover` top pane shows the reading.
 3. The discover wall and tape report the checked finding and evidence; the supervisor records settlement for the actual wake. Read the artifact and live result: settlement alone proves no success.
 4. After settlement and an idle clear, the supervisor records a process rotation. On the next actual wake, the mind receives its charter and reads the live evidence again; its wall carries the next step, and the handoff is not delivered. This last step may not happen immediately; it needs another real wake.
-5. In persistent mode, the resident units named in `SITE/health/services.json` are active. The [operating checklist](operating.md#inspect-the-running-plant) covers those checks.
+5. In persistent mode, the resident units named in `SITE/health/services.json` are active. Check them with `systemctl --user list-units 'SITE-*.service'` and read each unit's `FragmentPath` to confirm which site owns it.
 
-If the wake is held, keep that uncertainty visible. Check the lower pane, readiness, and supervisor first; [recovery](operating.md#recover-a-held-wake-or-clear) explains the distinction between an unsettled wake and a settled mind awaiting clear. A missing reading should remain `UNKNOWN` with an exact retry condition.
+If the wake is held, keep that uncertainty visible. Check the lower pane, readiness, and supervisor first. An unsettled wake has work in flight; a settled mind awaiting clear has finished its turn and is waiting for the supervisor's idle boundary. `mishe seed status --slug ROLE` shows which state the role is in. A missing reading should remain `UNKNOWN` with an exact retry condition.
 
 ## Plant another owned worktree
 
@@ -159,7 +159,7 @@ A fresh external target defaults to `TARGET/.mishe-tauftauf/` and session `mishe
 
 For a deliberately named site, pass `--home /path/to/project/.chosen-site --session chosen-session`. The home must still be directly inside that Git worktree. The launcher refuses to take over a tmux session or user unit belonging to another site. If multiple recognized resident sites exist, choose explicitly with `--home` and `--session`; do not guess which one is authoritative.
 
-Plant the core persistently **before** the external worktree if you want automatic linked updates. If the launcher reports that the external plant was unregistered because no core plant existed, establish the core and repeat the external plant deliberately. [Linked release rules](operating.md#understand-ci-and-linked-releases) cover the gates and the generated-contract update.
+Plant the core persistently **before** the external worktree if you want automatic linked updates. If the launcher reports that the external plant was unregistered because no core plant existed, establish the core and repeat the external plant deliberately. Linked updates need a clean core and target worktree and fresh passing CI for the exact local core `HEAD`; `python3 -m coordination.site_sync --home "$CORE_SITE"` requests an immediate retry, and it is an update action rather than a read-only status check.
 
 ## Try it without installing services
 
@@ -183,7 +183,7 @@ To exercise the first request manually, set `SITE` and `SESSION` to the site's a
 
 It supervises **only `discover`**: wakes that role, recovers dead panes, and clears a settled mind at a stable idle boundary. Ctrl-c stops this foreground supervisor, not the tmux session or its agents. For other roles, run their supervisors separately rather than assuming this one covers the whole plant. Do not start a second supervisor alongside an existing service for the same role.
 
-A manual setup's initial CI sample becomes stale after five minutes without a watcher. From the core checkout, an explicit refresh writes the new sample and may append CI events or addressed failure messages. The launcher's per-role bootstrap commands `seed init` and `seed start`, with what each heals and respawns, are documented in the [operating guide's](operating.md#recover-a-held-wake-or-clear) pane-recovery section.
+A manual setup's initial CI sample becomes stale after five minutes without a watcher. From the core checkout, an explicit refresh writes the new sample and may append CI events or addressed failure messages. The launcher's per-role bootstrap commands are `seed init` and `seed start`: `seed init` prepares a role's launcher, top pane and site state, and `seed start` resumes that role's supervisor on an owned session.
 
 ```bash
 env PYTHONPATH=src python3 -m mishe_tauftauf.ci_watch --home "$SITE"
@@ -211,4 +211,4 @@ env PYTHONPATH=src python3 -m mishe_tauftauf.native_gate \
 
 Its engine test accepts every python name this site runs — `python`, `python3`, `python3.12` — because the measured defect was a single literal: a live native pane whose launcher ran `python` read not-ready while its lifecycle showed a live mind, and the delivery hold reported the same `mind busy` as a TUI mid-turn. The probe reads the pane's foreground command, its dead flag and the launcher's own busy file, and exits. Read the readiness branch with the same module (`--record` persists a changed verdict at `SITE/checks/native-gate-ROLE.json`); a RED verdict names a live mind the gate rejects, and UNKNOWN names evidence the branch could not read.
 
-Next: [inspect and recover the plant](operating.md), or read [the runtime model](how-it-works.md).
+Next: read the running plant with `mishe view`, or read the [Mesh](mesh.md) culture note.
