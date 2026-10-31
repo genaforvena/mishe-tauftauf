@@ -189,6 +189,9 @@ the same.
 | Change a resident's model | [Changing mind models](docs/model-changes.md) |
 | Set up the optional analysis advisor | [Observable analysis advice](docs/analysis-advisor.md) |
 | Use an external judge provider | [Completion judge adapter](docs/completions-judge.md) |
+| Preflight a draft before publishing it | [Publication checks](docs/publication-checks.md) |
+| Know what the research-methods resident is for | [Research methods resident](docs/research-methods.md) |
+| Read what Mishe thinks a sense is | [New senses](docs/new-senses.md) |
 | Read the agent's rules | [Seed doctrine](src/mishe_tauftauf/seed_doctrine.md) |
 
 For development: `src/mishe_tauftauf/` contains the runtime and CLI;
