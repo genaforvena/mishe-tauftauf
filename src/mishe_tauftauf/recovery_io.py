@@ -180,41 +180,17 @@ def pressure(proc=Path("/proc")):
         return {"memory_full": None, "io_full": None, "available_ratio": None}
 
 
-SEED_LOCK_PROBE_WAIT = 3.0
-
-
-def seed_lock_probe(home, wait=None):
-    """Bounded availability only: never a claim that settlement succeeded.
-
-    Short seed-lock holders (yields, wall ticks) release within seconds, so one
-    instantaneous try reports contention as failure. Poll for up to ``wait``
-    seconds; a holder that keeps the lock past that bound still fails.
-    """
-    wait = SEED_LOCK_PROBE_WAIT if wait is None else wait
-    if not (wait >= 0):
-        raise ValueError("seed lock probe wait must be nonnegative")
+def seed_lock_probe(home):
+    """Nonblocking availability only: never a claim that settlement succeeded."""
     started = time.monotonic()
-    deadline = started + wait
     try:
         with (Path(home) / ".seed.lock").open("r+") as handle:
-            while True:
-                try:
-                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except BlockingIOError:
-                    if time.monotonic() >= deadline:
-                        return {"ok": False, "reason": f"seed lock busy for {wait:g}s",
-                                "seconds": time.monotonic() - started}
-                    time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
-                    # A late wake, or a holder released after the bound, must not
-                    # turn into success: re-check the bound before any retry.
-                    if time.monotonic() >= deadline:
-                        return {"ok": False, "reason": f"seed lock busy for {wait:g}s",
-                                "seconds": time.monotonic() - started}
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return {"ok": False, "reason": "seed lock busy", "seconds": time.monotonic() - started}
     except OSError as exc:
         return {"ok": None, "reason": str(exc), "seconds": time.monotonic() - started}
-    return {"ok": True, "reason": "lock acquired within bound; actual settlement untested",
-            "seconds": time.monotonic() - started}
+    return {"ok": True, "reason": "lock available; actual settlement untested", "seconds": time.monotonic() - started}
 
 
 @contextmanager

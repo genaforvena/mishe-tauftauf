@@ -21,8 +21,7 @@ def sample():
     return {"memory_full": 40., "io_full": 60., "available_ratio": .04}
 
 
-def test_controller_runs_with_shared_seed_and_publication_locks_held(tmp_path, monkeypatch):
-    monkeypatch.setattr(recovery, "SEED_LOCK_PROBE_WAIT", 0.2)
+def test_controller_runs_with_shared_seed_and_publication_locks_held(tmp_path):
     for name in (".seed.lock", ".publication.lock"):
         (tmp_path / name).touch()
     with (tmp_path / ".seed.lock").open("r+") as seed, (tmp_path / ".publication.lock").open("r+") as pub:
