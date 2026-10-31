@@ -3589,12 +3589,7 @@ def _patch_ids(checkout_root: Path, *log_args: str) -> dict[str, str] | None:
         return None
     if ident.returncode != 0:
         return None
-    ids: dict[str, str] = {}
-    for line in ident.stdout.splitlines():
-        fields = line.split()
-        if len(fields) == 2:
-            ids[fields[1]] = fields[0]
-    return ids
+    return patch_text.patch_ids(ident.stdout)
 
 
 def _patch_landed(checkout_root: Path, dropped: list[str]) -> int | None:

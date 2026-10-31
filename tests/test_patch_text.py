@@ -56,3 +56,8 @@ def test_removed_line_that_looks_like_header_does_not_end_hunk():
 def test_no_newline_marker_and_blank_additions_are_ignored():
     patch = "@@ -1 +1,2 @@\n-old\n\\ No newline at end of file\n+new\n+   \n"
     assert patch_text.added_lines(patch) == ["new"]
+
+
+def test_patch_ids_maps_sha_to_id_and_skips_malformed_lines():
+    output = "aaa111 sha1\nbbb222 sha2\nmalformed\n\nccc333 sha1\n"
+    assert patch_text.patch_ids(output) == {"sha1": "ccc333", "sha2": "bbb222"}

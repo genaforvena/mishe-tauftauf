@@ -48,6 +48,20 @@ def added_lines(patch: str) -> list[str]:
     return added
 
 
+def patch_ids(patch_id_output: str) -> dict[str, str]:
+    """Map commit sha to patch-id from ``git patch-id --stable`` output.
+
+    Each output line is ``<patch-id> <commit-sha>``; lines that do not carry
+    exactly those two fields are skipped. A repeated sha keeps its last id.
+    """
+    ids: dict[str, str] = {}
+    for line in patch_id_output.splitlines():
+        fields = line.split()
+        if len(fields) == 2:
+            ids[fields[1]] = fields[0]
+    return ids
+
+
 def stripped_lines(text: str) -> set[str]:
     """Each line of ``text`` with surrounding whitespace removed, as a set."""
     return {line.strip() for line in text.splitlines()}
