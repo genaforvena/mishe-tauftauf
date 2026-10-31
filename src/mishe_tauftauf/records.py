@@ -5,8 +5,12 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import stat
 import secrets
+import threading
+import time
+import zlib
 from pathlib import Path
 
 MAX_BYTES = 1024 * 1024
@@ -189,3 +193,145 @@ def envelope(entry) -> dict:
             not isinstance(record.get("payload"), dict)):
         raise ValueError("invalid immutable record envelope")
     return record
+
+
+#: Verified payloads persist per site so a fresh process does not re-hash every
+#: referenced record on each render. A hit is served only while the record file
+#: still has the identity it had when it was verified and the entry is younger
+#: than VERIFIED_MAX_AGE; anything else runs the full envelope() verification.
+VERIFIED_STORE = "records.verified.sqlite3"
+VERIFIED_MAX_AGE = 6 * 3600
+VERIFIED_FLUSH_ROWS = 500
+_STORE_LOCK = threading.Lock()
+_STORES: dict[str, "VerifiedStore"] = {}
+
+
+class VerifiedStore:
+    """Per-digest cache of payloads that passed envelope() verification.
+
+    Identity is (inode, size, ctime_ns, mtime_ns) read from the record directory's
+    own descriptor. ctime changes on every write, rename or metadata change, so a
+    rewritten or replaced record never matches its stored identity. A missing,
+    corrupt or unreadable store disables the cache for that call; it never
+    substitutes a stale payload.
+    """
+
+    def __init__(self, home: Path):
+        self.home = Path(home)
+        self.path = self.home / VERIFIED_STORE
+        self._lock = threading.Lock()
+        self._connection = None
+        self._broken = False
+
+    def _connect(self):
+        if self._connection is None and not self._broken:
+            try:
+                connection = sqlite3.connect(self.path, timeout=10, check_same_thread=False)
+                connection.execute("PRAGMA journal_mode=WAL")
+                connection.execute("CREATE TABLE IF NOT EXISTS verified ("
+                                   "digest TEXT PRIMARY KEY, ino INTEGER, size INTEGER, "
+                                   "ctime_ns INTEGER, mtime_ns INTEGER, verified_at REAL, "
+                                   "payload BLOB NOT NULL)")
+                connection.commit()
+                self._connection = connection
+            except sqlite3.Error:
+                self._broken = True
+        return self._connection
+
+    @staticmethod
+    def _identity(directory: int, name: str) -> tuple[int, int, int, int]:
+        info = os.stat(name, dir_fd=directory, follow_symlinks=False)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("record is not a regular file")
+        return (info.st_ino, info.st_size, info.st_ctime_ns, info.st_mtime_ns)
+
+    def lookup(self, digest: str, directory: int, now: float) -> dict | None:
+        with self._lock:
+            connection = self._connect()
+            if connection is None:
+                return None
+            try:
+                row = connection.execute(
+                    "SELECT ino, size, ctime_ns, mtime_ns, verified_at, payload FROM verified WHERE digest=?",
+                    (digest,)).fetchone()
+            except sqlite3.Error:
+                self._broken = True
+                return None
+        if row is None or not (0 <= now - row[4] < VERIFIED_MAX_AGE):
+            return None
+        try:
+            current = self._identity(directory, digest + ".json")
+        except (OSError, ValueError):
+            return None
+        if current != tuple(row[:4]):
+            return None
+        try:
+            payload = json.loads(zlib.decompress(row[5]))
+        except (ValueError, zlib.error):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def store(self, rows: list[tuple]) -> None:
+        if not rows:
+            return
+        with self._lock:
+            connection = self._connect()
+            if connection is None:
+                return
+            try:
+                with connection:
+                    connection.executemany(
+                        "INSERT OR REPLACE INTO verified VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
+            except sqlite3.Error:
+                self._broken = True
+
+
+def verified_store(home: Path | str) -> VerifiedStore:
+    key = str(Path(home))
+    with _STORE_LOCK:
+        store = _STORES.get(key)
+        if store is None:
+            store = _STORES[key] = VerifiedStore(Path(home))
+        return store
+
+
+def cached_payload(entry, pending: dict, store: VerifiedStore | None = None) -> dict:
+    """Return the payload of a single-reference entry, serving verified hits.
+
+    Anything other than one well-formed reference, a legacy JSON control line, or
+    a missing site context takes the uncached payload() path, which raises as before.
+    A miss runs envelope() in full; its identity is captured before the read so a
+    record rewritten mid-read cannot be recorded with a newer identity.
+    """
+    lines = entry.body.splitlines()
+    refs = [line for line in lines if line.lstrip().startswith("[record]")]
+    if (len(lines) > 1 and lines[1].lstrip().startswith("{")) or len(refs) != 1 or entry.home is None:
+        return payload(entry)
+    match = REFERENCE_RE.fullmatch(refs[0])
+    if match is None or match.group(1) != match.group(2):
+        return payload(entry)
+    digest = match.group(1)
+    if digest in pending:
+        # Same record referenced again in this pass: decode the blob already verified.
+        return json.loads(zlib.decompress(pending[digest][-1]))
+    store = store or verified_store(entry.home)
+    now = time.time()
+    try:
+        directory = _directory(Path(entry.home))
+    except OSError:
+        return payload(entry)
+    try:
+        hit = store.lookup(digest, directory, now)
+        if hit is not None:
+            return hit
+        try:
+            before = store._identity(directory, digest + ".json")
+        except (OSError, ValueError):
+            before = None
+    finally:
+        os.close(directory)
+    record = envelope(entry)
+    if before is not None:
+        blob = zlib.compress(json.dumps(record["payload"], sort_keys=True, separators=(",", ":")).encode(), 6)
+        pending[digest] = (digest, *before, now, blob)
+    return record["payload"]

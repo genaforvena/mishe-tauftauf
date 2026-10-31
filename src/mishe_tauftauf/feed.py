@@ -595,12 +595,26 @@ class Feed:
 
     @staticmethod
     def _verify_records(entries, sink: dict | None = None) -> None:
-        from .records import payload
+        # Verified payloads persist per site (records.VerifiedStore). A hit is served
+        # only while the referenced file keeps its verified identity; a miss runs the
+        # full envelope verification and is stored after the whole pass succeeds.
+        from .records import VERIFIED_FLUSH_ROWS, cached_payload, verified_store
+        pending: dict = {}
+        store = None
         for entry in entries:
             if any(line.lstrip().startswith("[record]") for line in entry.body.splitlines()):
-                data = payload(entry)
+                if store is None and entry.home is not None:
+                    store = verified_store(entry.home)
+                data = cached_payload(entry, pending, store)
                 if sink is not None:
                     sink[entry.sequence] = data
+                if store is not None and len(pending) >= VERIFIED_FLUSH_ROWS:
+                    # Flush as the pass goes: a render killed by its supervisor keeps
+                    # the verifications it finished, so the next render starts ahead.
+                    store.store(list(pending.values()))
+                    pending.clear()
+        if store is not None:
+            store.store(list(pending.values()))
 
     def _extend_entries(self, cached, data: bytes, metadata) -> list[FeedEntry] | None:
         """Continue a cached full read with the frames appended since it was taken.
