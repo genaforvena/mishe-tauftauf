@@ -151,7 +151,10 @@ def _clip_sample(sample: str, limit: int = 120) -> str:
 def _observation_reading(item: dict[str, object], freshness: str,
                          home: Path | None = None) -> tuple[str, str]:
     source_state = str(item.get("state", "unknown"))
-    state = source_state if freshness == "recent" or source_state == "unavailable" else "unknown"
+    # A recent scan does not refresh an expired sample: a source that reports
+    # its own sample as stale is UNKNOWN for current claims, whatever the scan age.
+    fresh_scan = freshness == "recent" and source_state != "stale"
+    state = source_state if fresh_scan or source_state == "unavailable" else "unknown"
     identity = str(item.get("id", "unknown"))
     sample = str(item.get("sample", "unknown"))
     if identity == "sense.space.light":
