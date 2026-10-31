@@ -418,6 +418,65 @@ def edited_landed_reviews(repo: Path) -> list[str]:
     return edited
 
 
+def _git_code(repo: Path, args: list[str]) -> int | None:
+    """Exit code of a git command, or None when git could not be run."""
+    try:
+        return subprocess.run(["git", "-C", str(repo), *args],
+                              capture_output=True, timeout=60).returncode
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def applied_target_states(repo: Path) -> list[dict[str, str]]:
+    """For each landed review with status applied: did its target's bytes change?
+
+    The contract check proves a review landed; it does not prove the change it
+    proposed reached the target. This reads the branch's own history and
+    reports content facts only: the target's bytes differ between the review's
+    landing parent and HEAD, and which commits touched the target in that
+    range. It is evidence for the owning role's disposition, not a verdict:
+    a change in the range may be unrelated to the proposal, and an unchanged
+    target may have been changed in a way the owner has not yet landed.
+
+    A commit date is not a content change, so no date is compared.
+    """
+    rows: list[dict[str, str]] = []
+    for name in landed_review_names(repo):
+        blob = head_bytes(repo, name)
+        if blob is None:
+            continue
+        text = blob.decode("utf-8", "replace")
+        matter = front_matter(text)
+        if matter.get("status") != "applied":
+            continue
+        target = ""
+        in_application = False
+        for line in text.splitlines():
+            if line.startswith("## "):
+                in_application = line.strip() == APPLICATION_HEADING
+            elif in_application and line.startswith("target:"):
+                target = line.split(":", 1)[1].strip()
+                break
+        row = {"review": name, "owner": matter.get("owner", ""), "target": target,
+               "landed": "", "state": "UNKNOWN", "commits": ""}
+        landing = _git(repo, ["log", "--diff-filter=A", "--format=%H",
+                              "--reverse", "HEAD", "--", name]).decode().split()
+        if not target or not landing:
+            rows.append(row)
+            continue
+        base = landing[0]
+        row["landed"] = base[:9]
+        differs = _git_code(repo, ["diff", "--quiet", f"{base}^", "HEAD", "--", target])
+        if differs is None:
+            rows.append(row)
+            continue
+        row["state"] = "CHANGED" if differs == 1 else "UNCHANGED"
+        commits = _git(repo, ["log", "--format=%h", f"{base}^..HEAD", "--", target])
+        row["commits"] = " ".join(commits.decode().split())
+        rows.append(row)
+    return rows
+
+
 def render_brief(cell: Cell, hits: list[Hit]) -> str:
     """The prompt material for one cell: question, sweep, and the contract."""
     grouped = hits_by_keyword(hits, cell.keywords)
@@ -463,6 +522,7 @@ def main(argv=None) -> int:
     sub.add_parser("next", help="print the next uncovered cell and its sweep")
     sub.add_parser("coverage", help="print covered and pending cells")
     sub.add_parser("check", help="check every review against the landing contract")
+    sub.add_parser("applied", help="for applied reviews, whether the target's bytes changed since landing")
     args = parser.parse_args(argv)
     repo = args.repo.resolve()
     registry = repo / "research" / "field-review" / "fields.json"
@@ -484,6 +544,18 @@ def main(argv=None) -> int:
             print(f"unlanded: {len(waiting)} review(s) in the working tree")
             for name, age in waiting:
                 print(f"  waiting {age:.0f}s: {name}")
+        return 0
+    if command == "applied":
+        rows = applied_target_states(repo)
+        counts: dict[str, int] = {}
+        for row in rows:
+            counts[row["state"]] = counts.get(row["state"], 0) + 1
+            print(f"{row['state']:<9} {row['owner'] or '-':<12} {row['target'] or '-'}"
+                  f"  landed={row['landed'] or '-'}  review={row['review']}"
+                  + (f"  commits={row['commits']}" if row["commits"] else ""))
+        summary = ", ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "none"
+        print(f"applied reviews: {len(rows)} ({summary}); content facts only,"
+              " not dispositions")
         return 0
     if command == "check":
         problems = validate_tree(repo)

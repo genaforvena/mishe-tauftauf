@@ -350,6 +350,60 @@ The plant already implements this, so there is nothing to apply.
             self.assertTrue(any("owner is not a plant role" in p for p in problems))
 
 
+def _commit(repo: Path, message: str) -> None:
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@example.org",
+                    "-c", "user.name=test", "commit", "-qm", message], check=True)
+
+
+class AppliedTargetTest(unittest.TestCase):
+    """The applied subcommand reports target content changes, not dispositions."""
+
+    def test_target_changed_after_landing_is_changed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--recent--2026-10-21.md": GOOD_REVIEW})
+            (repo / "src" / "example.py").write_text("# alpha, decay added\n", encoding="utf-8")
+            _commit(repo, "target edit")
+            rows = field_review.applied_target_states(repo)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["state"], "CHANGED")
+            self.assertEqual(rows[0]["target"], "src/example.py")
+            self.assertEqual(rows[0]["owner"], "genome")
+            self.assertTrue(rows[0]["commits"])
+
+    def test_target_untouched_since_landing_is_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--recent--2026-10-21.md": GOOD_REVIEW})
+            (repo / "docs" / "note.md").write_text("elsewhere\n", encoding="utf-8")
+            _commit(repo, "unrelated edit")
+            rows = field_review.applied_target_states(repo)
+            self.assertEqual(rows[0]["state"], "UNCHANGED")
+            self.assertEqual(rows[0]["commits"], "")
+
+    def test_applied_review_without_target_is_unknown(self):
+        no_target = GOOD_REVIEW.replace("target: src/example.py\n\nAdd", "Add")
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--recent--2026-10-21.md": no_target})
+            rows = field_review.applied_target_states(repo)
+            self.assertEqual(rows[0]["state"], "UNKNOWN")
+
+    def test_discarded_reviews_are_not_counted(self):
+        discarded = GOOD_REVIEW.replace("status: applied", "status: discarded")
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--recent--2026-10-21.md": discarded})
+            self.assertEqual(field_review.applied_target_states(repo), [])
+
+    def test_applied_command_exits_zero_and_states_facts_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--recent--2026-10-21.md": GOOD_REVIEW})
+            result = subprocess.run(
+                ["python3", str(TOOL), "--repo", str(repo), "applied"],
+                capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("UNCHANGED", result.stdout)
+            self.assertIn("content facts only", result.stdout)
+
+
 class CommandTest(unittest.TestCase):
     def test_check_exits_zero_on_a_clean_tree(self):
         with tempfile.TemporaryDirectory() as tmp:
