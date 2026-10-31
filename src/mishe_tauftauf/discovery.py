@@ -3639,18 +3639,19 @@ def _head_rewinds(home: Path) -> dict[str, object]:
                         lossless += 1
                         continue
                     disk = _detracked_disk_state(checkout_root, sha, path, tree, run)
-                    if disk == "preserved":
-                        # Intentional de-tracking, not loss: the bytes survive on disk.
-                        preserved += 1
-                    elif disk == "edited":
-                        # Own label, not needs-review: a de-tracked, ignored path whose
-                        # on-disk bytes changed after de-tracking. No git copy of those
-                        # edits exists, so it is local-only; the state stays drift.
+                    if disk == "edited":
+                        # Annotation, not a bucket: a de-tracked, ignored path whose on-disk
+                        # bytes changed after de-tracking has no git copy of those edits.
+                        # It still follows the buckets below (absent or needs-review), so
+                        # the divergence is never cleared by this label.
                         detracked_local_only += 1
                         if len(local_only_names) < _HEAD_REWIND_NAMED_PATH_LIMIT:
                             local_only_names.append({"commit": sha[:12], "path": path})
                         else:
                             named_omitted += 1
+                    if disk == "preserved":
+                        # Intentional de-tracking, not loss: the bytes survive on disk.
+                        preserved += 1
                     elif _applies(tree, patch.stdout, reverse=False):
                         absent += 1
                         if len(absent_names) < _HEAD_REWIND_NAMED_PATH_LIMIT:

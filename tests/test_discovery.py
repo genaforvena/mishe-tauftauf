@@ -2387,16 +2387,16 @@ def test_head_rewinds_not_ignored_identical_absent_path_stays_absent(tmp_path, m
 def test_head_rewinds_ignored_divergent_absent_path_stays_absent(tmp_path, monkeypatch):
     result = _preserved_case(tmp_path, monkeypatch, ignored=True,
                              on_disk=b"redacted, different bytes")
-    # Own label: local-only, not needs-review and not absent. Still drift, since
-    # the post-detracking edits have no git copy.
+    # Annotation, not a bucket: the path stays absent (its bucket is unchanged), and
+    # is also named as local-only edits. Still drift; the label clears nothing.
     assert result["detracked_local_only"] == 1
-    assert result["absent"] == 0
+    assert result["absent"] == 1
     assert result["needs_review"] == 0
     assert result["preserved_untracked"] == 0
     assert result["state"] == "drift"
     assert result["detracked_local_only_paths"] == [{"commit": "bbbbbbbbbbbb", "path": "src/a.py"}]
     assert "detracked-local-only-paths=1" in result["sample"]
-    assert "needs-review-paths=0 absent-paths=0" in result["sample"]
+    assert "needs-review-paths=0 absent-paths=1" in result["sample"]
 
 
 def test_head_rewinds_identical_preserved_path_has_no_edited_count(tmp_path, monkeypatch):
