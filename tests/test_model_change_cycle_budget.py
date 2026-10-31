@@ -38,7 +38,7 @@ def test_contended_cycle_spends_one_budget_not_one_per_change(watcher, monkeypat
     budget = 0.5
     granted = []
 
-    def busy_advance(home, name, lock_wait):
+    def busy_advance(home, name, lock_wait, **kwargs):
         granted.append(lock_wait)
         # Model the contended lock: each attempt waits what it was granted, then gives up.
         time.sleep(lock_wait)
@@ -59,7 +59,7 @@ def test_contended_cycle_spends_one_budget_not_one_per_change(watcher, monkeypat
 def test_uncontended_changes_each_observe_with_the_remaining_budget(watcher, monkeypatch):
     calls = []
 
-    def free_advance(home, name, lock_wait):
+    def free_advance(home, name, lock_wait, **kwargs):
         calls.append((name, lock_wait))
         return {"id": name, "state": "ok", "roles": {}, "checked": 0.0}
 

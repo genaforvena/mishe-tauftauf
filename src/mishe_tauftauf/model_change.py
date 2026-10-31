@@ -287,7 +287,13 @@ def _activate(home, change, root, receipt, role, row):
     row['reason'] = 'new process observed; waiting for resident provider completion'
 
 
-def advance(home, change, lock_wait=None):
+def advance(home, change, lock_wait=None, strict=False):
+    """strict=True lets a read failure of THIS observation escape to the caller.
+
+    status() turns read exceptions into a normal unknown report, which the cycle
+    would then treat as an old finding. The watcher passes strict so a fresh
+    failure is recognised as new evidence.
+    """
     home = site_home(home)
     with _seed_lock(home, wait=lock_wait):
         root, receipt = boundary.receipt(home, change)
@@ -316,7 +322,7 @@ def advance(home, change, lock_wait=None):
                 if row['state'] != 'activating':
                     row['state'] = 'queued' if not seed.recorded_session(home) else 'unknown'
             boundary.save(root / 'receipt.json', receipt)
-    return status(home, change)
+    return _status(home, change) if strict else status(home, change)
 
 
 def role_reason(roles):
@@ -426,12 +432,19 @@ def watch_once(home, lock_wait=LOCK_WAIT_SECONDS, notify=None):
             continue
         if notify:
             notify()
+        transient = False
+        # A failure of THIS observation is new evidence: a disposition recorded for an
+        # earlier finding must never answer it (Witness wake 132060 control).
+        fresh_failure = False
         try:
-            report = advance(home, path.name, lock_wait=max(0.0, deadline - time.monotonic()))
+            report = advance(home, path.name, lock_wait=max(0.0, deadline - time.monotonic()), strict=True)
         except LockBusy as exc:
+            transient = True
+            fresh_failure = True
             report = {'id': path.name, 'state': 'unknown', 'roles': {}, 'checked': now(),
                       'reason': f'observation deferred: {exc}'}
         except (OSError, ValueError, TypeError, KeyError) as exc:
+            fresh_failure = True
             report = {'id': path.name, 'state': 'unknown', 'reason': str(exc), 'roles': {}, 'checked': now()}
         reports.append(report)
         bad = report['state'] == 'unknown' or (report['state'] == 'pending' and now() - report['created'] > 120)
@@ -439,7 +452,7 @@ def watch_once(home, lock_wait=LOCK_WAIT_SECONDS, notify=None):
             dispositions.resolve(alerts, path.name)
             continue
         reason = str(report.get('reason') or 'no named reason')[:200]
-        held = dispositions.active(home, 'model-change:' + path.name, now=now())
+        held = None if fresh_failure else dispositions.active(home, 'model-change:' + path.name, now=now())
         if held:
             # Recorded answer, still listed: the finding is not erased, only not re-sent.
             report['disposition'] = {k: held[k] for k in ('kind', 'owner', 'evidence', 'recheck_at')}
@@ -448,7 +461,11 @@ def watch_once(home, lock_wait=LOCK_WAIT_SECONDS, notify=None):
         # Edge-triggered: one message per new finding or changed reason, then an
         # age ladder that widens the resolver. No time bucket in the text, so the
         # append-once guard dedupes repeats instead of being defeated by them.
-        due = dispositions.edge(alerts, path.name, reason, now=now())
+        # The edge key is the finding's class, not its wording: a seed-lock deferral and
+        # a report with no named reason are the same unobserved state, and alternating
+        # between them used to reset the ladder on every observation (chat 124237/124274).
+        signature = 'unobserved' if transient or not report.get('reason') else reason
+        due = dispositions.edge(alerts, path.name, signature, now=now())
         if due is None:
             continue
         level, first = due
@@ -466,6 +483,34 @@ def watch_once(home, lock_wait=LOCK_WAIT_SECONDS, notify=None):
                 'state': 'unknown' if any('disposition' not in r for r in open_reports) else 'ok'}
     boundary.save(home / 'checks' / 'model-changes.json', snapshot)
     return snapshot
+
+
+GUARD_ALERT_KEY = 'guard-unit'
+GUARD_ALERT_TEXT = ('[dm] to=health\nModel-change watcher or independent freshness guard failed. '
+                    'Resolver=health; inspect model watch --check and systemd journal; disposition within 120s. '
+                    'Missing or stale monitoring is UNKNOWN.')
+
+
+def route_guard_failure(home, at=None):
+    """Edge-triggered route for the OnFailure hook of the model-change guard unit.
+
+    The guard unit fails on every timer tick while the model-change state is
+    non-GREEN, so an unconditional append re-DMs the same text every 30s. This
+    reuses the watcher's edge ladder: one message per failure signature, then
+    the age ladder. The finding stays visible on the dashboard; only repeats are
+    suppressed. Returns the due level, or None when this firing stays quiet.
+    """
+    home = site_home(home)
+    alerts_path = home / 'checks' / 'model-change-alerts.json'
+    try:
+        alerts = boundary.load(alerts_path)
+    except (OSError, ValueError):
+        alerts = {}
+    due = dispositions.edge(alerts, GUARD_ALERT_KEY, 'guard-failed', now=at)
+    if due is not None:
+        Feed(home).append_runtime_once('model-change', GUARD_ALERT_TEXT)
+    boundary.save(alerts_path, alerts)
+    return None if due is None else due[0]
 
 
 def check_watch(home):
