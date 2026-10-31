@@ -145,6 +145,26 @@ Look for all of these, not just a successful launcher exit:
 
 If the wake is held, keep that uncertainty visible. Check the lower pane, readiness, and supervisor first. An unsettled wake has work in flight; a settled mind awaiting clear has finished its turn and is waiting for the supervisor's idle boundary. `mishe seed status --slug ROLE` shows which state the role is in. A missing reading should remain `UNKNOWN` with an exact retry condition.
 
+A resident running Mishe's own native loop fails differently from one running a TUI agent, because it has no idle prompt to recognize. When such a resident will not start, three records carry the answer, and the wake cannot simply be retried until you have read them:
+
+- `SITE/journals/ROLE-native.busy` — the busy marker. It says an attempt is in progress, so a wake is not delivered while it is present.
+- `SITE/journals/ROLE-native.blocked.json` — the hold record. It names the wake that cannot proceed and why, with a verdict such as `requires-reconciliation`. A role with no hold record is not blocked; a record that exists but cannot be decoded stays visibly unreadable rather than reading as no failure.
+- `SITE/checks/native-gate-ROLE.json` — the readiness branch verdict for that role.
+
+Read them with the module that owns them rather than by eye, and ask it which attempts exist before you change anything. Point `--attempts` at the directory that holds that role's attempt directories; find it from the resident's own launcher or its recorded evidence rather than assuming one path:
+
+```bash
+env PYTHONPATH=src python3 -m mishe_tauftauf.native_recovery \
+  --home "$SITE" --role "$ROLE" --unseen-attempt --wake "$WAKE" \
+  --attempts "$ATTEMPTS_DIR"
+env PYTHONPATH=src python3 -m mishe_tauftauf.native_gate \
+  --home "$SITE" --session "$SESSION" --role "$ROLE" --record
+```
+
+The first reports the attempts of that wake that no plant record accounts for. The second persists a changed readiness verdict and prints it: RED names a live mind the gate rejects, UNKNOWN names evidence it could not read.
+
+Reconcile before you retry. A native wake may take a fresh attempt only when its earlier attempts are provably effect-free and transient; any attempt that dispatched an effect, proposed a capability call, settled, or whose own evidence is unreadable holds the wake for reconciliation instead. A wake that used every bounded fresh attempt is held as well, and the record names the attempts and their cause so you do not have to re-derive them. The resident also refuses a second attempt at the same wake — the attempt directory already exists — so a repeated failure leaves the wake unsettled and the resident unable to start, and a restart does not clear that. Preserve each attempt directory and its `failure.txt` and `journal.jsonl`: they are the evidence of what the wake actually did. `--repair-blocked` and `--release-hold` remove the hold records; use them only after reading the attempts they refer to, and never to paper over an effect whose outcome is still unknown.
+
 ## Plant another owned worktree
 
 Run from the **core checkout**; replace the path with the target worktree root:
