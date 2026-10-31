@@ -361,7 +361,10 @@ def validate_review(path: Path, repo: Path) -> list[str]:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
         return [f"unreadable review: {exc}"]
-    return validate_review_text(path.name, text, repo)
+    # The target must be a file the branch carries, the same test the
+    # landing contract checker applies to the reviewed tree.
+    return validate_review_text(path.name, text, repo,
+                                target_exists=lambda target: head_has_file(repo, target))
 
 
 def validate_tree(repo: Path) -> dict[str, list[str]]:
