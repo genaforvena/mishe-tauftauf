@@ -3608,9 +3608,10 @@ def _head_rewinds(home: Path) -> dict[str, object]:
             return None
         return "unexplained" if present.returncode == 0 else "absent-at-head"
 
-    lossless = review = absent = preserved = detracked_edited = 0
+    lossless = review = absent = preserved = detracked_local_only = 0
     review_names: list[dict[str, str]] = []
     absent_names: list[dict[str, str]] = []
+    local_only_names: list[dict[str, str]] = []
     named_omitted = 0
     unexamined = partial_commits = 0
     basis_counts = {"superseded": 0, "absent-at-head": 0, "unexplained": 0}
@@ -3638,13 +3639,18 @@ def _head_rewinds(home: Path) -> dict[str, object]:
                         lossless += 1
                         continue
                     disk = _detracked_disk_state(checkout_root, sha, path, tree, run)
-                    if disk == "edited":
-                        # Separate count, not a bucket: a de-tracked path whose on-disk
-                        # bytes changed. It still follows the buckets below (needs-review).
-                        detracked_edited += 1
                     if disk == "preserved":
                         # Intentional de-tracking, not loss: the bytes survive on disk.
                         preserved += 1
+                    elif disk == "edited":
+                        # Own label, not needs-review: a de-tracked, ignored path whose
+                        # on-disk bytes changed after de-tracking. No git copy of those
+                        # edits exists, so it is local-only; the state stays drift.
+                        detracked_local_only += 1
+                        if len(local_only_names) < _HEAD_REWIND_NAMED_PATH_LIMIT:
+                            local_only_names.append({"commit": sha[:12], "path": path})
+                        else:
+                            named_omitted += 1
                     elif _applies(tree, patch.stdout, reverse=False):
                         absent += 1
                         if len(absent_names) < _HEAD_REWIND_NAMED_PATH_LIMIT:
@@ -3676,7 +3682,7 @@ def _head_rewinds(home: Path) -> dict[str, object]:
     # a window with no drift but unclassified ancestry is coverage UNKNOWN, not
     # verified. Each dropped tip is itself an ancestor off HEAD, hence the subtraction.
     unclassified_ancestry = max(0, dropped_ancestry - len(dropped))
-    state = ("drift" if (review or absent)
+    state = ("drift" if (review or absent or detracked_local_only)
              else ("unknown" if (unexamined or unclassified_ancestry) else "verified"))
     classified = len(dropped) - partial_commits
     return {"id": "sense.repo.head-rewinds", "state": state,
@@ -3687,7 +3693,7 @@ def _head_rewinds(home: Path) -> dict[str, object]:
                        f"lossless-paths={lossless} "
                        f"needs-review-paths={review} absent-paths={absent} "
                        f"preserved-untracked-paths={preserved} "
-                       f"detracked-edited-paths={detracked_edited} "
+                       f"detracked-local-only-paths={detracked_local_only} "
                        f"superseded-paths={basis_counts['superseded']} "
                        f"absent-at-head-paths={basis_counts['absent-at-head']} "
                        f"unexplained-paths={basis_counts['unexplained']} "
@@ -3711,7 +3717,8 @@ def _head_rewinds(home: Path) -> dict[str, object]:
             "absent_paths": absent_names,
             "named_paths_omitted": named_omitted,
             "preserved_untracked": preserved,
-            "detracked_edited": detracked_edited,
+            "detracked_local_only": detracked_local_only,
+            "detracked_local_only_paths": local_only_names,
             "review_basis": basis_counts,
             "rewrite_basis": rewrite,
             "superseded_content": superseded_content, "kind": "read"}

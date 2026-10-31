@@ -2270,7 +2270,7 @@ def test_head_rewinds_present_change_reads_lossless(tmp_path, monkeypatch):
     assert result["state"] == "verified"
     assert result["sample"] == ("dropped-commits=1 of last-200-reflog-entries "
                                  "classified-commits=1 unexamined-paths=0 lossless-paths=1 "
-                                 "needs-review-paths=0 absent-paths=0 preserved-untracked-paths=0 detracked-edited-paths=0 superseded-paths=0 "
+                                 "needs-review-paths=0 absent-paths=0 preserved-untracked-paths=0 detracked-local-only-paths=0 superseded-paths=0 "
                                  "absent-at-head-paths=0 unexplained-paths=0 "
                                  "superseded-intact-paths=0 superseded-rewritten-paths=0 "
                                  "superseded-absent-lines=0/0 patch-landed-commits=0 rewrite-chain-unreachable-commits=0 rewrite-parent-reachable-commits=0 rewrite-root-commits=1 dropped-ancestry-commits=0")
@@ -2288,7 +2288,7 @@ def test_head_rewinds_absent_change_reads_drift(tmp_path, monkeypatch):
     assert result["state"] == "drift"
     assert result["sample"] == ("dropped-commits=1 of last-200-reflog-entries "
                                  "classified-commits=1 unexamined-paths=0 lossless-paths=0 "
-                                 "needs-review-paths=0 absent-paths=1 preserved-untracked-paths=0 detracked-edited-paths=0 superseded-paths=0 "
+                                 "needs-review-paths=0 absent-paths=1 preserved-untracked-paths=0 detracked-local-only-paths=0 superseded-paths=0 "
                                  "absent-at-head-paths=0 unexplained-paths=0 "
                                  "superseded-intact-paths=0 superseded-rewritten-paths=0 "
                                  "superseded-absent-lines=0/0 patch-landed-commits=0 rewrite-chain-unreachable-commits=0 rewrite-parent-reachable-commits=0 rewrite-root-commits=1 dropped-ancestry-commits=0")
@@ -2309,7 +2309,7 @@ def test_head_rewinds_recommitted_change_is_its_own_verdict(tmp_path, monkeypatc
     assert result["state"] == "drift"
     assert result["sample"] == ("dropped-commits=1 of last-200-reflog-entries "
                                  "classified-commits=1 unexamined-paths=0 lossless-paths=1 "
-                                 "needs-review-paths=1 absent-paths=0 preserved-untracked-paths=0 detracked-edited-paths=0 superseded-paths=0 "
+                                 "needs-review-paths=1 absent-paths=0 preserved-untracked-paths=0 detracked-local-only-paths=0 superseded-paths=0 "
                                  "absent-at-head-paths=0 unexplained-paths=1 "
                                  "superseded-intact-paths=0 superseded-rewritten-paths=0 "
                                  "superseded-absent-lines=0/0 patch-landed-commits=0 rewrite-chain-unreachable-commits=0 rewrite-parent-reachable-commits=0 rewrite-root-commits=1 dropped-ancestry-commits=0")
@@ -2387,18 +2387,22 @@ def test_head_rewinds_not_ignored_identical_absent_path_stays_absent(tmp_path, m
 def test_head_rewinds_ignored_divergent_absent_path_stays_absent(tmp_path, monkeypatch):
     result = _preserved_case(tmp_path, monkeypatch, ignored=True,
                              on_disk=b"redacted, different bytes")
-    assert result["absent"] == 1
+    # Own label: local-only, not needs-review and not absent. Still drift, since
+    # the post-detracking edits have no git copy.
+    assert result["detracked_local_only"] == 1
+    assert result["absent"] == 0
+    assert result["needs_review"] == 0
     assert result["preserved_untracked"] == 0
     assert result["state"] == "drift"
-    # Edited de-tracked bytes are counted separately; the bucket verdict is unchanged.
-    assert result["detracked_edited"] == 1
-    assert "detracked-edited-paths=1" in result["sample"]
+    assert result["detracked_local_only_paths"] == [{"commit": "bbbbbbbbbbbb", "path": "src/a.py"}]
+    assert "detracked-local-only-paths=1" in result["sample"]
+    assert "needs-review-paths=0 absent-paths=0" in result["sample"]
 
 
 def test_head_rewinds_identical_preserved_path_has_no_edited_count(tmp_path, monkeypatch):
     result = _preserved_case(tmp_path, monkeypatch, ignored=True, on_disk=b"PATCH src/a.py")
-    assert result["detracked_edited"] == 0
-    assert "detracked-edited-paths=0" in result["sample"]
+    assert result["detracked_local_only"] == 0
+    assert "detracked-local-only-paths=0" in result["sample"]
 
 
 def test_preserved_on_disk_real_repo_conditions(tmp_path):
@@ -2562,7 +2566,7 @@ def test_head_rewinds_splits_review_paths_by_later_history(tmp_path, monkeypatch
     assert result["review_basis"] == {"superseded": 1, "absent-at-head": 1, "unexplained": 1}
     assert result["superseded_content"]["intact"] == 0
     assert result["superseded_content"]["rewritten"] == 1
-    assert result["sample"].endswith("needs-review-paths=3 absent-paths=0 preserved-untracked-paths=0 detracked-edited-paths=0 "
+    assert result["sample"].endswith("needs-review-paths=3 absent-paths=0 preserved-untracked-paths=0 detracked-local-only-paths=0 "
                                      "superseded-paths=1 absent-at-head-paths=1 "
                                      "unexplained-paths=1 superseded-intact-paths=0 "
                                      "superseded-rewritten-paths=1 superseded-absent-lines=0/0 patch-landed-commits=0 rewrite-chain-unreachable-commits=0 rewrite-parent-reachable-commits=0 rewrite-root-commits=1 dropped-ancestry-commits=0")
