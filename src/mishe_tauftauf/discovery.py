@@ -3457,7 +3457,7 @@ def _head_rewinds(home: Path) -> dict[str, object]:
         later = run("log", "--format=%H", f"{sha}..HEAD", "--", path)
         if later is None or later.returncode != 0:
             return None
-        if later.stdout.strip():
+        if later.stdout:
             return "superseded"
         present = run("cat-file", "-e", f"HEAD:{path}")
         if present is None:
