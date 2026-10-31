@@ -639,7 +639,7 @@ def _plant_session(home: Path) -> str | None:
         return None
 
 
-def _owned_sessions(home: Path) -> set[str]:
+def _owned_sessions(home: Path) -> set[str] | None:
     """The names of every session this home owns, across every socket.
 
     A home owns one session when it is the only site on the host, and two
@@ -647,11 +647,14 @@ def _owned_sessions(home: Path) -> set[str]:
     asks "is my session missing?" must answer for the session it was told
     about, not for the one a shared receipt happens to name, so the home's
     own sessions are enumerated rather than trusted from one file.
+
+    Returns None when the enumeration itself failed. An empty set would read
+    every session as missing, so a failed read must stay unknown instead.
     """
     try:
         return {name for name, _socket in tmux.home_sessions(Path(home))}
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        return set()
+    except (OSError, ValueError, TimeoutError, _TimeoutExpired, tmux.TmuxError):
+        return None
 
 
 def _owned_session_window_source(home: Path) -> tuple[str | None, str | None]:
@@ -4176,6 +4179,10 @@ def _host_session_stability(home: Path) -> dict[str, object]:
             shields[str(pid_text)] = adj
     unshielded = sorted(pid for pid, adj in shields.items()
                         if adj != "-900" and (plant_servers is None or pid in plant_servers))
+    if session is not None and session not in live and owned is None:
+        return {"id": "sense.host.session-stability", "state": "unknown",
+                "sample": f"live=[{','.join(live)}] session-ownership=unreadable",
+                "live": live, "kind": "read"}
     if session is not None and session not in live and session not in owned:
         return {"id": "sense.host.session-stability", "state": "drift",
                 "sample": f"live=[{','.join(live)}] session-missing={session} unshielded=[{','.join(unshielded)}]",

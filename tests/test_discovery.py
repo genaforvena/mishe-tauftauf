@@ -7916,6 +7916,28 @@ def test_session_stability_drift_when_session_missing(monkeypatch, tmp_path):
     assert "session-missing=mishe-self-development-current" in result["sample"]
 
 
+def test_session_stability_unreadable_ownership_is_unknown_not_drift(monkeypatch, tmp_path):
+    """A failed owned-session enumeration must not read the session as missing.
+
+    The ambient listing omits the recorded session, but this home's ownership
+    enumeration fails: the session may live on another socket. An empty owned
+    set would call it missing; the reading must stay unknown instead.
+    """
+    from mishe_tauftauf import discovery
+
+    monkeypatch.setattr(discovery.subprocess, "run",
+                        _stability_run(b"android-body\n", b"111\n", b"",
+                                       pgrep_rc=1))
+
+    def unreadable(home):
+        raise OSError("socket enumeration failed")
+
+    monkeypatch.setattr(discovery.tmux, "home_sessions", unreadable)
+    result = discovery._host_session_stability(_stability_home(tmp_path))
+    assert result["state"] == "unknown"
+    assert "session-ownership=unreadable" in result["sample"]
+
+
 def test_session_stability_drift_when_server_unshielded(monkeypatch, tmp_path):
     from mishe_tauftauf import discovery
 
