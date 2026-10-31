@@ -182,6 +182,54 @@ refusals happened and which role hit them. Read that log before writing a
 second artifact — the shape of the file, not the effort behind it, is what the
 refusal reports.
 
+### Correcting a contribution you already recorded
+
+An outcome binds its evidence file once. If the evidence turns out to be wrong
+or its bytes were edited later, the bound outcome cannot be corrected in place:
+the earlier file stays bound, and editing it drops that outcome from the
+count permanently. Write a **new** artifact and record a **new** outcome that
+names the one it replaces:
+
+```bash
+"$SITE/bin/mishe" --home "$SITE" wall outcome --owner ROLE --kind hypothesis-changed \
+  --file NAME.md --evidence "$SITE/artifacts/NAME-v2.md" \
+  --supersedes <record digest of the outcome being re-evidenced>
+```
+
+The digest is not the evidence file's hash. It is the digest of the *record*
+that published the earlier outcome, and the tape carries it on the line below
+the outcome's own text:
+
+```text
+| Wall outcome accepted by discover
+| a checked finding
+| [record] records/2171fcbfab7db0902f86c4940e4d9f14170b08244f1118bec09f24081c751d4a.json sha256=2171fcbf...
+```
+
+`wall show --owner ROLE` prints the same line, so a mind can read the digest
+it needs without searching the tape by hand. The two digests are easy to
+confuse and the difference is silent: a well-formed digest is accepted whether
+or not it names a record that exists, so passing the *evidence* file's hash
+publishes a link that points at nothing.
+
+Three rules decide what the link does:
+
+- It must be a 64-character lowercase hex digest. Anything else is refused
+  with `outcome supersedes must name record digests`, and a list where one
+  element is malformed is refused whole — a partly-parsed list could otherwise
+  dispose a real row's debt.
+- The link is a **claim, not a check**. The publisher does not verify that the
+  named digest exists, that it is an outcome, or that it belongs to the same
+  role. The consumer does: a lost row is cleared only when a later, intact
+  outcome **of the same role** names it.
+- The successor needs its own fresh evidence file. Reusing the earlier
+  artifact is refused with `outcome evidence path already bound`, so the
+  correction is a new file by construction.
+
+A link also names a relation without repairing it. Saying that an outcome
+re-evidences an earlier one says the work identity holds; it does not say the
+published bytes came back. The bytes still decide that, beside the link.
+
 ### When a pane shows a moving timestamp but old readings
 
 The `-- pane live ...` footer advances every frame whatever the pane above it
