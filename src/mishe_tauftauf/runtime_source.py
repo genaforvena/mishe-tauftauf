@@ -155,7 +155,7 @@ def refresh_cli(home: Path, source: Path) -> None:
         if (len(lines) != 3 or lines[0] != "#!/bin/sh" or not lines[1].startswith("export PYTHONPATH=")
                 or not lines[2].startswith("exec ") or not lines[2].endswith(' -m mishe_tauftauf "$@"')):
             raise ValueError(f"custom runtime CLI {cli.name} must be reconciled before source refresh")
-        lines[1] = f"export PYTHONPATH={shlex.quote(str(source / 'src'))}${{PYTHONPATH:+:$PYTHONPATH}}"
+        lines[1] = f"export PYTHONPATH={shlex.quote(str(source.resolve() / 'src'))}${{PYTHONPATH:+:$PYTHONPATH}}"
         updated = "\n".join(lines) + "\n"
         if updated != current:
             temporary = cli.with_suffix(".source.tmp")
