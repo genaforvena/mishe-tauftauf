@@ -126,7 +126,8 @@ def health(home: Path) -> str:
     if rendered is not _HEALTH_BUSY:
         return rendered
     previous = home / "observations" / "health"
-    last = previous.read_text(encoding="utf-8").strip() if previous.exists() else "none published"
+    published = nonblank(previous.read_text(encoding="utf-8")) if previous.exists() else None
+    last = published or "none published"
     return "\n".join([
         "GOAL: keep this plant's panes, feed, and resident services working",
         "PURSUIT: repair internal failures from the live check; own reusable code delivery through ready integration",
