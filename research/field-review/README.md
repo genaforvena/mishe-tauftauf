@@ -61,6 +61,10 @@ check` enforces the content contract:
   existing repository **file**) or `## Discard` (one line of why);
 - the source URL is in the reading section, and that section is not empty.
 
+`check` fixes the form of a review, not what its sections say. Whether a
+reading is substantive, and whether the content varies across reviews, is an
+open measurement that the contract does not make.
+
 Landing is a separate question from content, and it is answered by the branch:
 coverage counts the reviews `git ls-tree HEAD` carries, never the index and
 never the working tree. A review that is written but not committed is reported
