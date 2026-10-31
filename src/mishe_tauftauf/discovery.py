@@ -689,32 +689,80 @@ def _owned_session_window_source(home: Path) -> tuple[str | None, str | None]:
     return name, socket
 
 
-def _tmux_window_names(home: Path) -> list[str]:
-    """Window names of the session this home owns, resolved env > owned > receipt.
+def _joined_failure(*stages: str | None) -> str | None:
+    """Every failed stage in order, so an earlier enumeration failure is not hidden by a later one."""
+    joined = ";".join(stage for stage in stages if stage)
+    return joined or None
 
-    The receipt is whichever supervisor wrote last, so a plant whose receipt
-    names the life-support session reported life-support windows as its own.
-    The environment override wins; then a session whose ownership option names
-    this home, read on the socket that holds it; the receipt only when the home
-    owns no enumerable session. Empty means the windows are unreadable.
+
+def _tmux_window_reading(home: Path) -> dict:
+    """Window names and provenance of the session this home owns, for sense.tmux.windows.
+
+    Precedence is owned, then receipt. The owned session is the first one whose
+    ownership option names this home, read on the socket that holds it. The
+    receipt is used only when enumeration finds no owned session, and it is read
+    on the default socket. MISHE_SEED_SESSION is not a source here: an
+    environment value that names a foreign session is recorded as ``env_session``
+    evidence, never followed. The environment override stays in force for the
+    other consumers (wall_view, seed_culture_views, observations.run_renderer).
+
+    ``windows`` is None when the read failed, and an empty list when the
+    session has no windows. ``failure`` names the stage that failed.
     """
-    session, socket = _owned_session_window_source(home)
-    if session is not None and socket is None:
-        socket = tmux.owned_socket(Path(home), session)
-    if session is None:
+    env_session = os.environ.get("MISHE_SEED_SESSION") or None
+    failure = None
+    try:
+        owned = tmux.home_sessions(Path(home))
+    except (OSError, ValueError, subprocess.TimeoutExpired, tmux.TmuxError) as exc:
+        owned = []
+        failure = f"enumeration-{type(exc).__name__}"
+    enumerated = len(owned)
+    if owned:
+        session, socket = owned[0]
+        source = "owned"
+    else:
         from .seed import recorded_session
         session = recorded_session(Path(home))
-        if session is None:
-            return []
+        socket = None
+        source = "receipt" if session else None
+    if session is None:
+        return {"windows": None, "source": None, "session": None, "socket": None,
+                "env_session": env_session, "enumerated": enumerated,
+                "failure": failure or "no-owned-or-receipt-session"}
     argv = ["tmux"]
     if socket:
         argv.extend(["-S", socket])
     argv.extend(["list-windows", "-t", session, "-F", "#{window_name}"])
     try:
         result = subprocess.run(argv, capture_output=True, text=True, timeout=2)
-    except (OSError, subprocess.TimeoutExpired):
-        return []
-    return sorted(proc_table.window_names(result.stdout)) if result.returncode == 0 else []
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"windows": None, "source": source, "session": session, "socket": socket,
+                "env_session": env_session, "enumerated": enumerated,
+                "failure": _joined_failure(failure, f"list-windows-{type(exc).__name__}")}
+    if result.returncode != 0:
+        return {"windows": None, "source": source, "session": session, "socket": socket,
+                "env_session": env_session, "enumerated": enumerated,
+                "failure": _joined_failure(failure, f"list-windows-exit={result.returncode}")}
+    return {"windows": sorted(proc_table.window_names(result.stdout)), "source": source,
+            "session": session, "socket": socket, "env_session": env_session,
+            "enumerated": enumerated, "failure": failure}
+
+
+def _tmux_window_sample(reading: dict) -> str:
+    """The sense.tmux.windows sample: provenance first, then the windows or the failure.
+
+    ``env_session`` is appended whenever the environment names a session other
+    than the one read, so a mismatch is visible instead of silent.
+    """
+    session = reading["session"] or "-"
+    env_note = ""
+    if reading["env_session"] and reading["env_session"] != reading["session"]:
+        env_note = f" env_session={reading['env_session']}"
+    if reading["windows"]:
+        return (f"source={reading['source']} session={session} "
+                f"windows={reading['windows']}{env_note}")
+    return (f"session unavailable source={reading['source'] or 'none'} session={session} "
+            f"enumerated={reading['enumerated']} failure={reading['failure']}{env_note}")
 
 
 def _is_plant_unit(name: str, session: str) -> bool:
@@ -8091,9 +8139,10 @@ def sample(home: Path) -> dict[str, object]:
                      "sample": ", ".join(sample_text for sample_text, _ in temperatures)
                      if temperatures else "no readable hwmon temperature sensor",
                      "identity": thermal_identity, "kind": "read"})
-    names = _tmux_window_names(home)
-    observed.append({"id": "sense.tmux.windows", "state": "verified" if names else "unknown",
-                     "sample": names or "session unavailable", "kind": "read"})
+    tmux_reading = _tmux_window_reading(home)
+    observed.append({"id": "sense.tmux.windows",
+                     "state": "verified" if tmux_reading["windows"] else "unknown",
+                     "sample": _tmux_window_sample(tmux_reading), "kind": "read"})
     observed.append(_host_session_stability(home))
     observed.append(_host_server_keeper(home))
     observed.append(_host_server_slice(home))

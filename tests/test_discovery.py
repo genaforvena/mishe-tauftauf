@@ -8940,15 +8940,58 @@ def test_tmux_windows_prefers_owned_session_over_receipt(tmp_path, monkeypatch):
         return subprocess.CompletedProcess(argv, 0 if out else 1, out or "", "")
 
     monkeypatch.setattr(discovery.subprocess, "run", run)
-    assert discovery._tmux_window_names(home) == ["senses", "witness"]
+    reading = discovery._tmux_window_reading(home)
+    assert reading["windows"] == ["senses", "witness"] and reading["source"] == "owned"
     monkeypatch.setenv("MISHE_SEED_SESSION", "life-support")
-    monkeypatch.setattr(discovery.tmux, "owned_socket", lambda _h, _s: None)
-    assert discovery._tmux_window_names(home) == ["genome", "health"]
+    reading = discovery._tmux_window_reading(home)
+    assert reading["windows"] == ["senses", "witness"]
+    assert reading["env_session"] == "life-support"
     monkeypatch.delenv("MISHE_SEED_SESSION")
     monkeypatch.setattr(discovery.tmux, "home_sessions", lambda _home: [])
-    assert discovery._tmux_window_names(home) == ["genome", "health"]
+    reading = discovery._tmux_window_reading(home)
+    assert reading["windows"] == ["genome", "health"] and reading["source"] == "receipt"
     (home / ".seed-raised").unlink()
-    assert discovery._tmux_window_names(home) == []
+    reading = discovery._tmux_window_reading(home)
+    assert reading["windows"] is None and reading["source"] is None
+
+
+def test_tmux_window_sample_names_source_and_foreign_env(tmp_path, monkeypatch):
+    """Env names a foreign session while the owned session is live: owned is read and env is recorded."""
+    home = tmp_path / "site"
+    home.mkdir()
+    monkeypatch.setenv("MISHE_SEED_SESSION", "mishe-life-support")
+    monkeypatch.setattr(discovery.tmux, "home_sessions",
+                        lambda _home: [("mishe-self-development-current", "/sock/core")])
+    monkeypatch.setattr(discovery.subprocess, "run",
+                        lambda argv, **_kw: subprocess.CompletedProcess(
+                            argv, 0, "discover\nsenses\nwitness\n", ""))
+    reading = discovery._tmux_window_reading(home)
+    sample = discovery._tmux_window_sample(reading)
+    assert sample == ("source=owned session=mishe-self-development-current "
+                      "windows=['discover', 'senses', 'witness'] env_session=mishe-life-support")
+    assert discovery._tmux_window_sample(
+        {**reading, "env_session": "mishe-self-development-current"}).endswith("witness']")
+
+
+def test_tmux_window_sample_records_failure_stage(tmp_path, monkeypatch):
+    """A failed enumeration is recorded as its stage, not silently read as an empty session."""
+    home = tmp_path / "site"
+    home.mkdir()
+    monkeypatch.delenv("MISHE_SEED_SESSION", raising=False)
+
+    def unreadable(_home):
+        raise discovery.tmux.TmuxError("tmux executable is unavailable")
+
+    monkeypatch.setattr(discovery.tmux, "home_sessions", unreadable)
+    (home / ".seed-raised").write_text("mishe-life-support $1\n", encoding="utf-8")
+    monkeypatch.setattr(discovery.subprocess, "run",
+                        lambda argv, **_kw: subprocess.CompletedProcess(argv, 1, "", ""))
+    reading = discovery._tmux_window_reading(home)
+    assert reading["windows"] is None
+    assert reading["failure"] == "enumeration-TmuxError;list-windows-exit=1"
+    assert discovery._tmux_window_sample(reading) == (
+        "session unavailable source=receipt session=mishe-life-support enumerated=0 "
+        "failure=enumeration-TmuxError;list-windows-exit=1")
 
 
 def test_plant_session_prefers_owned_over_receipt(tmp_path, monkeypatch):
