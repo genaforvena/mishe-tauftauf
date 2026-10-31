@@ -443,8 +443,10 @@ def _validate(row):
         _incident(incident)
         if key != incident["finding"]["id"] or _time(incident["last_notice"]) > now:
             raise ValueError("invalid incident identity/time")
-    if set(row["incidents"]) != {f["id"] for f in row["findings"]}:
+    if not {f["id"] for f in row["findings"]} <= set(row["incidents"]):
         raise ValueError("incomplete incident coverage")
+    if set(row["incidents"]) - {f["id"] for f in row["findings"]} and row["state"] != "UNKNOWN":
+        raise ValueError("held incidents outside a producer fault")
     if any(row["incidents"][f["id"]]["finding"] != f for f in row["findings"]):
         raise ValueError("inconsistent incident evidence")
     if not isinstance(row["deliveries"], dict) or len(row["deliveries"]) > MAX_EVENTS:
@@ -875,7 +877,7 @@ def check(home, *, now=None, interval=None):
         if any(key not in events or any(role not in events[key]["recipients"] for role in receipts)
                for key, receipts in deliveries.items()):
             raise ValueError("delivery evidence archive missing or inconsistent")
-        problems, report = [], None
+        problems, report, unevaluated = [], None, False
         domain = "producer report"
         try:
             # The report is validated against the clock taken after it was
@@ -902,6 +904,9 @@ def check(home, *, now=None, interval=None):
         except (OSError, ValueError, TypeError, KeyError, UnicodeError) as exc:
             findings = [_make("unknown", None, "producer",
                               _producer_fault(home, domain, exc, previous, now, interval))]
+            # The fault replaces the evaluation, not the conditions: nothing was
+            # re-read, so absence from this cycle is not clearance.
+            unevaluated = True
         if damage:
             findings.append(_make("unknown", None, "monitor-state", damage))
         incidents = {}
@@ -954,6 +959,12 @@ def check(home, *, now=None, interval=None):
                 event = {"version": VERSION, "event_id": event_id, **content}
                 _save(home / "checks/initiative-watch-events" / (event_id + ".json"), event)
                 events[event_id] = event
+        if unevaluated and previous:
+            # Held incidents keep first_seen and the reminder schedule through a
+            # fault cycle; they are not findings and route nothing until re-read.
+            for key, held in previous["incidents"].items():
+                if key not in incidents:
+                    incidents[key] = held
         row = {"version": VERSION, "generated_at": now.isoformat(), "state": "UNKNOWN",
                "producer_at": report["generated_at"] if report else None,
                "producer_state": report["state"] if report else None,

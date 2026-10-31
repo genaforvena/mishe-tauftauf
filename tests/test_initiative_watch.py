@@ -645,3 +645,32 @@ def test_a_pinned_clock_still_judges_the_tape_against_that_instant(home):
     publish(home)
     row = watch.check(home, now=NOW)
     assert "unknown:tape-time" in [item["id"] for item in kinds(row, "unknown")]
+
+
+def initial_notices(home, key):
+    return [event for event in (watch._archive(home)).values()
+            if event["incident"]["finding"]["id"] == key and event["incident"]["stage"] == "initial"]
+
+
+def test_a_transient_producer_fault_does_not_reset_unchanged_incidents(home):
+    """A restart can read the producer report mid-write; the fault cycle must not clear the table.
+
+    Before the fix, the fault cycle replaced every finding with the producer
+    fault, so the unchanged aged wake was absent from the checkpoint and was
+    announced again as "initial" when the producer read recovered.
+    """
+    append(home, "seed", "seed wake docs observation=1", age=3600)
+    publish(home)
+    first = watch.check(home, now=NOW)
+    key = kinds(first, "aged-wake")[0]["id"]
+    assert len(initial_notices(home, key)) == 1
+    path = home / "checks/initiative.json"
+    path.unlink()
+    faulted = watch.check(home, now=NOW + timedelta(seconds=60))
+    assert kinds(faulted, "unknown") and not kinds(faulted, "aged-wake")
+    assert faulted["incidents"][key]["first_seen"] == first["incidents"][key]["first_seen"]
+    publish(home, now=NOW + timedelta(seconds=120))
+    recovered = watch.check(home, now=NOW + timedelta(seconds=120))
+    assert kinds(recovered, "aged-wake")
+    assert recovered["incidents"][key]["first_seen"] == first["incidents"][key]["first_seen"]
+    assert len(initial_notices(home, key)) == 1
