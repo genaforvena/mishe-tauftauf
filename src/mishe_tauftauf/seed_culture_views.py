@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import subprocess
@@ -67,9 +68,43 @@ def _redmi_monitor(home: Path) -> tuple[str, str]:
 
 
 def _report(home: Path, slug: str, verdict: str) -> None:
+    """Publish a verdict atomically: readers see the old report or the new one, never a partial file.
+
+    A producer killed mid-write (render supervisor timeout) leaves the last good report in place,
+    so its mtime keeps recording the last successful refresh.
+    """
     path = home / "observations" / slug
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(verdict + "\n", encoding="utf-8")
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with tmp.open("w", encoding="utf-8") as handle:
+            handle.write(verdict + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+
+
+HEALTH_REFRESH_LOCK = "health.refresh.lock"
+
+
+def refresh_health(home: Path) -> str:
+    """Detached producer for observations/health; run under an outer deadline, not from the renderer.
+
+    Single-flight: a second producer that finds the lock held exits as SKIPPED without touching the
+    report. Returns the outcome word so callers and receipts can name it.
+    """
+    lock_path = home / "observations" / HEALTH_REFRESH_LOCK
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return "SKIPPED busy"
+        health(home)
+        return "REFRESHED"
 
 
 def _scan_reading(snapshot: dict[str, object]) -> tuple[str, str]:
@@ -1232,7 +1267,14 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--home", type=Path, required=True)
     parser.add_argument("--view", choices=("discover", "senses", "health", "permissions"), required=True)
+    parser.add_argument("--refresh-report", action="store_true",
+                        help="health only: publish observations/health; prints REFRESHED or SKIPPED busy (producer mode)")
     args = parser.parse_args()
+    if args.refresh_report:
+        if args.view != "health":
+            parser.error("--refresh-report applies to --view health only")
+        print(refresh_health(args.home))
+        return
     print(globals()[args.view](args.home), end="")
 
 
