@@ -369,11 +369,20 @@ def deliver(home, *, limit=1):
             # delivered, so re-sending or re-saving would wedge the outbox on
             # FileExistsError forever (2026-10-29 19:43Z sentinel kill). Finish
             # the interrupted unlink only when the receipt names the same event.
-            if read_json(receipt_path).get("event") == item["event"]:
+            # Only a successful receipt for this exact event, recipient and payload
+            # counts as delivery. Any other persisted receipt is conflicting evidence:
+            # keep the outbox entry, record the conflict, and rotate it to the back
+            # of the queue so it cannot starve later events (Witness 131741).
+            saved = read_json(receipt_path)
+            if (saved.get("event") == item["event"] and saved.get("receipt", {}).get("ok") is True
+                    and saved.get("recipient") == item["recipient"] and saved.get("payload") == item["payload"]):
                 path.unlink()
             else:
+                reason = ("delivered receipt names a different event" if saved.get("event") != item["event"]
+                          else "delivered receipt is not a successful match for this recipient and payload")
                 save(root / "delivery-last.json", {"at": time.time(), "event": item["event"],
-                                                  "receipt": {"ok": False, "stderr": "delivered receipt names a different event"}})
+                                                  "receipt": {"ok": False, "stderr": reason}})
+                save(root / "attempts" / path.name, {"at": time.time(), "ok": False, "conflict": reason})
             continue
         payload = item["payload"]
         if "function" in payload:

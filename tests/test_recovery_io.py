@@ -210,6 +210,29 @@ def test_crash_between_receipt_and_unlink_does_not_wedge_the_outbox(tmp_path, mo
     assert other.exists() and "different event" in recovery.read_json(root / "delivery-last.json")["receipt"]["stderr"]
 
 
+def test_conflicting_delivered_receipt_keeps_outbox_and_does_not_starve(tmp_path, monkeypatch):
+    # Witness 131741 control: a negative receipt for the same event used to unlink the outbox.
+    root = tmp_path / "recovery"
+    recovery.event(root, {"first": "failure"}, recipients=["genome"])
+    bad = next((root / "outbox").glob("*.json"))
+    item = recovery.read_json(bad)
+    recovery.save(root / "delivered" / bad.name, dict(item, receipt={"ok": False}), immutable=True)
+    recovery.event(root, {"second": "failure"}, recipients=["health"])
+    sent = []
+    monkeypatch.setattr(recovery, "run_probe", lambda argv, **kw: sent.append(argv[-1]) or {"ok": True})
+    recovery.deliver(tmp_path, limit=2)             # both entries in one pass; order is not the subject
+    assert bad.exists() and "not a successful match" in recovery.read_json(root / "delivery-last.json")["receipt"]["stderr"]
+    assert len(sent) == 1 and "to=health" in sent[0]   # the later event was delivered, not starved
+    # Successful receipt addressed to a different recipient is also not proof of this delivery.
+    other_root = tmp_path / "other" / "recovery"
+    recovery.event(other_root, {"third": "failure"}, recipients=["genome"])
+    entry = next((other_root / "outbox").glob("*.json"))
+    wrong = dict(recovery.read_json(entry), recipient="health", receipt={"ok": True})
+    recovery.save(other_root / "delivered" / entry.name, wrong, immutable=True)
+    recovery.deliver(tmp_path / "other")
+    assert entry.exists()
+
+
 def test_evaluation_cannot_claim_success_with_missing_current_monitoring(tmp_path):
     root = tmp_path / "recovery"
     root.mkdir()
