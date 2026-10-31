@@ -58,6 +58,16 @@ def test_a_blocked_publication_is_audited_with_the_gap_that_blocked_it(tmp_path)
     assert entry["ts"]
 
 
+def test_a_refusal_records_the_evidence_argument_it_was_made_for(tmp_path):
+    home = _site(tmp_path)
+    evidence = _evidence(home)
+    Feed(home).append("witness", "Wall outcome accepted by witness\nProse without a reference.\n")
+    with pytest.raises(ValueError, match="cannot derive"):
+        wall.outcome(home, "research-methods", "accepted", "A later contribution.", evidence)
+    entry = _refusals(home)[0]
+    assert entry["evidence"] == str(evidence)
+
+
 def test_a_successful_publication_leaves_no_refusal_record(tmp_path):
     home = _site(tmp_path)
     wall.outcome(home, "research-methods", "accepted", "A contribution.", _evidence(home))

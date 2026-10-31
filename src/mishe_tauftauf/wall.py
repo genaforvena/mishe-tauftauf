@@ -42,16 +42,20 @@ class BoundSetUnavailable(ValueError):
         self.gaps = list(gaps or [])
 
 
-def _audit_outcome_refusal(home: Path, role: str, kind: str, reason: str, gaps) -> None:
+def _audit_outcome_refusal(home: Path, role: str, kind: str, reason: str, gaps,
+                           evidence: str | None = None) -> None:
     """Append a refused outcome publication so the denial is observable.
 
-    Never raises: an audit write must not break the refusal it records.
+    ``evidence`` is the evidence argument the caller named, so a refusal can be
+    attributed to the artifact it was made for. Never raises: an audit write
+    must not break the refusal it records.
     """
     try:
         logs_dir = home / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
         entry = {"ts": datetime.now(timezone.utc).isoformat(), "role": role, "kind": kind,
-                 "reason": reason, "gaps": list(gaps), "pid": os.getpid(), "uid": os.geteuid()}
+                 "reason": reason, "gaps": list(gaps), "evidence": evidence,
+                 "pid": os.getpid(), "uid": os.geteuid()}
         with open(logs_dir / "outcome-refusal-audit.jsonl", "a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry) + "\n")
     except Exception:
@@ -269,7 +273,8 @@ def outcome(home: Path, role: str, kind: str, text: str, evidence: Path,
     try:
         return _publish_outcome(home, role, kind, text, evidence, supersedes)
     except ValueError as exc:
-        _audit_outcome_refusal(home, role, kind, str(exc), getattr(exc, "gaps", []))
+        _audit_outcome_refusal(home, role, kind, str(exc), getattr(exc, "gaps", []),
+                               evidence=str(evidence))
         raise
 
 
