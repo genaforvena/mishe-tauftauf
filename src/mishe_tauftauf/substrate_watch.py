@@ -243,6 +243,20 @@ def _service_pids(units):
     return pids
 
 
+def _controller_shed(home):
+    """Units the host-capacity controller stopped while LIMITED; unreadable state sheds nothing."""
+    try:
+        row = json.loads((home / "recovery/host-capacity.json").read_text())
+    except (OSError, ValueError):
+        return frozenset()
+    if not isinstance(row, dict) or row.get("limited") is not True:
+        return frozenset()
+    managed = row.get("managed_units")
+    if not isinstance(managed, list):
+        return frozenset()
+    return frozenset(unit for unit in managed if isinstance(unit, str))
+
+
 def _selected_source(home, raw):
     """Boundary: runtime-release v1, validated without Git writes or hooks."""
     if raw is None:
@@ -312,12 +326,18 @@ def _runtime(home):
         # surface UNKNOWN forever for standalone units that import nothing from
         # the package, and named a readable environment "unavailable". A unit
         # with no MainPID is not running and is named as such.
+        shed = _controller_shed(home)
         for unit, pid in _service_pids(units).items():
             if pid is None:
                 role = next((r for r in parked if unit.endswith("-" + r + ".service")), None)
                 if role:
                     # Declared absence with an expiring record: PARKED, not UNKNOWN.
                     result["service_states"][unit] = "PARKED"
+                    continue
+                if unit in shed:
+                    # Deliberately stopped by the host-capacity controller while LIMITED:
+                    # still UNKNOWN (never healthy), but named as shed, not as a crash.
+                    problems.append("controller-shed (host-capacity LIMITED, managed; not a crash): " + unit)
                     continue
                 problems.append("live service process not running: " + unit)
                 continue

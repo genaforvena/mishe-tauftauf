@@ -855,3 +855,29 @@ def test_sustained_unknown_with_unchanged_problems_is_coalesced_per_window(site)
     assert reopened["event_id"] != first["event_id"]
     for role in ("genome", "witness"):
         assert len(messages(home, role)) == 2
+
+
+def test_controller_shed_unit_is_named_shed_still_unknown_and_unreadable_state_is_not_shed(site, monkeypatch):
+    # Health 144391: units the host-capacity controller stopped while LIMITED were reported as
+    # "not running". They stay UNKNOWN (never healthy) but are named as controller-shed. Only a
+    # LIMITED row listing the unit sheds it; unreadable capacity state keeps the crash wording.
+    root, home = site
+    units = ["mishe-x-shed.service", "mishe-x-crash.service"]
+    (home / "health/services.json").write_text(json.dumps(units))
+    (home / "health/windows.json").write_text(json.dumps([]))
+    monkeypatch.setattr(watch.wall_view, "_service_block",
+                        lambda home: ([], {unit: ["/selected"] for unit in units}, "RED"))
+    monkeypatch.setattr(watch, "_service_pids", lambda units: dict.fromkeys(units))
+    monkeypatch.setattr("mishe_tauftauf.seed.recorded_session", lambda home: "session")
+    monkeypatch.setattr(watch.wall_view, "_renderer_pids", lambda session: {})
+    capacity = home / "recovery/host-capacity.json"
+    capacity.parent.mkdir(parents=True, exist_ok=True)
+    capacity.write_text(json.dumps({"limited": True, "managed_units": ["mishe-x-shed.service"]}))
+    runtime = watch._runtime(home)
+    assert runtime["service_states"]["mishe-x-shed.service"] == "UNKNOWN"
+    assert "controller-shed (host-capacity LIMITED, managed; not a crash): mishe-x-shed.service" in runtime["problems"]
+    assert "live service process not running: mishe-x-crash.service" in runtime["problems"]
+    capacity.write_text("{not json")
+    runtime = watch._runtime(home)
+    assert "live service process not running: mishe-x-shed.service" in runtime["problems"]
+    assert not any("controller-shed" in problem for problem in runtime["problems"])
