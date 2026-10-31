@@ -3462,6 +3462,7 @@ def _head_rewinds(home: Path) -> dict[str, object]:
         return "unexplained" if present.returncode == 0 else "absent-at-head"
 
     lossless = review = absent = 0
+    unexamined = partial_commits = 0
     basis_counts = {"superseded": 0, "absent-at-head": 0, "unexplained": 0}
     superseded_content = {"intact": 0, "rewritten": 0, "absent_lines": 0, "added_lines": 0}
     try:
@@ -3473,7 +3474,13 @@ def _head_rewinds(home: Path) -> dict[str, object]:
                 names = run("diff-tree", "--no-commit-id", "--name-only", "-r", sha)
                 if names is None or names.returncode != 0:
                     return {**unknown, "sample": f"changed paths unreadable: {sha[:7]}"}
-                for path in proc_table.git_path_names(names.stdout)[:_HEAD_REWIND_PATH_LIMIT]:
+                all_paths = proc_table.git_path_names(names.stdout)
+                # Paths past the cap are never read: they are UNKNOWN coverage,
+                # not verified lossless, so the commit is not fully classified.
+                if len(all_paths) > _HEAD_REWIND_PATH_LIMIT:
+                    unexamined += len(all_paths) - _HEAD_REWIND_PATH_LIMIT
+                    partial_commits += 1
+                for path in all_paths[:_HEAD_REWIND_PATH_LIMIT]:
                     patch = run("show", sha, "--", path)
                     if patch is None or patch.returncode != 0:
                         return {**unknown, "sample": f"patch unreadable: {sha[:7]}"}
@@ -3498,12 +3505,13 @@ def _head_rewinds(home: Path) -> dict[str, object]:
     # The split explains needs-review paths; it does not clear them. A later
     # commit touching a path does not prove its content equivalent, so the
     # drift state and the needs-review count stay as they were.
-    state = "drift" if (review or absent) else "verified"
-    classified = len(dropped)
+    state = "drift" if (review or absent) else ("unknown" if unexamined else "verified")
+    classified = len(dropped) - partial_commits
     return {"id": "sense.repo.head-rewinds", "state": state,
             "sample": (f"dropped-commits={len(dropped)} of "
                        f"last-{_HEAD_REWIND_REFLOG_LIMIT}-reflog-entries "
                        f"classified-commits={classified} "
+                       f"unexamined-paths={unexamined} "
                        f"lossless-paths={lossless} "
                        f"needs-review-paths={review} absent-paths={absent} "
                        f"superseded-paths={basis_counts['superseded']} "
@@ -3514,6 +3522,7 @@ def _head_rewinds(home: Path) -> dict[str, object]:
                        f"superseded-absent-lines={superseded_content['absent_lines']}"
                        f"/{superseded_content['added_lines']}"),
             "dropped": len(dropped), "classified_commits": classified,
+            "unexamined_paths": unexamined,
             "reflog_window": _HEAD_REWIND_REFLOG_LIMIT,
             "lossless": lossless,
             "needs_review": review, "absent": absent,

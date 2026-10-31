@@ -2257,7 +2257,7 @@ def test_head_rewinds_present_change_reads_lossless(tmp_path, monkeypatch):
     result = discovery._head_rewinds(home)
     assert result["state"] == "verified"
     assert result["sample"] == ("dropped-commits=1 of last-200-reflog-entries "
-                                 "classified-commits=1 lossless-paths=1 "
+                                 "classified-commits=1 unexamined-paths=0 lossless-paths=1 "
                                  "needs-review-paths=0 absent-paths=0 superseded-paths=0 "
                                  "absent-at-head-paths=0 unexplained-paths=0 "
                                  "superseded-intact-paths=0 superseded-rewritten-paths=0 "
@@ -2275,7 +2275,7 @@ def test_head_rewinds_absent_change_reads_drift(tmp_path, monkeypatch):
     result = discovery._head_rewinds(home)
     assert result["state"] == "drift"
     assert result["sample"] == ("dropped-commits=1 of last-200-reflog-entries "
-                                 "classified-commits=1 lossless-paths=0 "
+                                 "classified-commits=1 unexamined-paths=0 lossless-paths=0 "
                                  "needs-review-paths=0 absent-paths=1 superseded-paths=0 "
                                  "absent-at-head-paths=0 unexplained-paths=0 "
                                  "superseded-intact-paths=0 superseded-rewritten-paths=0 "
@@ -2296,7 +2296,7 @@ def test_head_rewinds_recommitted_change_is_its_own_verdict(tmp_path, monkeypatc
     result = discovery._head_rewinds(home)
     assert result["state"] == "drift"
     assert result["sample"] == ("dropped-commits=1 of last-200-reflog-entries "
-                                 "classified-commits=1 lossless-paths=1 "
+                                 "classified-commits=1 unexamined-paths=0 lossless-paths=1 "
                                  "needs-review-paths=1 absent-paths=0 superseded-paths=0 "
                                  "absent-at-head-paths=0 unexplained-paths=1 "
                                  "superseded-intact-paths=0 superseded-rewritten-paths=0 "
@@ -2477,10 +2477,33 @@ def test_head_rewinds_bounds_dropped_commits_and_paths(tmp_path, monkeypatch):
     # per-commit path cap bounds each commit's work, and the sample names both
     # counts.
     assert result["dropped"] == len(shas)
-    assert result["classified_commits"] == len(shas)
+    # A commit with paths past the cap is not fully classified: its unread
+    # paths are counted as unexamined coverage, never as classified or lossless.
+    unread = len(shas) * (99 - discovery._HEAD_REWIND_PATH_LIMIT)
+    assert result["classified_commits"] == 0
+    assert result["unexamined_paths"] == unread
     assert result["needs_review"] == len(shas) * discovery._HEAD_REWIND_PATH_LIMIT
-    assert f"classified-commits={len(shas)}" in result["sample"]
+    assert f"unexamined-paths={unread}" in result["sample"]
+    assert "classified-commits=0" in result["sample"]
     assert "dropped-commits=5" in result["sample"]
+
+
+def test_head_rewinds_unexamined_paths_without_drift_read_unknown(tmp_path, monkeypatch):
+    """Lossless paths that fit the cap cannot verify a commit whose tail was never read."""
+    home = tmp_path / "site"
+    home.mkdir()
+    sha = "b" * 40
+    paths = [f"src/f{i}.py" for i in range(discovery._HEAD_REWIND_PATH_LIMIT + 1)]
+    _rewind_git(monkeypatch, reflog=f"{sha} reset: moving to HEAD~1\n", dropped={sha},
+                applies={"paths": "".join(f"{p}\n" for p in paths),
+                         "verdicts": {(f"PATCH {p}", True): True for p in paths}
+                                     | {(f"PATCH {p}", False): False for p in paths}})
+    result = discovery._head_rewinds(home)
+    assert result["state"] == "unknown"
+    assert result["unexamined_paths"] == 1
+    assert result["classified_commits"] == 0
+    assert result["lossless"] == discovery._HEAD_REWIND_PATH_LIMIT
+    assert "unexamined-paths=1" in result["sample"]
 
 def _scan(home: Path, created: str, free_bytes: int) -> None:
     """Write a minimal scan file with one verified disk.free observation."""
