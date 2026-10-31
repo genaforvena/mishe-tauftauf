@@ -44,3 +44,32 @@ def test_missing_or_ineligible_path_stays_refused(tmp_path, monkeypatch):
     assert not eligible_evidence_path(home, missing)
     traversal = resolve_outcome_evidence(home, Path("artifacts/../../secret.md"))
     assert not eligible_evidence_path(home, traversal)
+
+
+def test_refused_outcome_audit_records_submitted_and_resolved_form(tmp_path, monkeypatch):
+    import json
+
+    from mishe_tauftauf import wall
+
+    home = _site(tmp_path)
+    monkeypatch.chdir(home.parent)
+    # A bare artifacts/ path that resolves to a file which is not eligible
+    # (traversal) is refused; the audit names what was submitted and what was checked.
+    submitted = Path("artifacts/../../secret.md")
+    wall._audit_outcome_refusal(
+        home, "senses", "hypothesis-changed", "refused", [],
+        evidence=str(submitted),
+        resolved=str(wall._resolved_form_for_audit(home, submitted)),
+    )
+    entry = json.loads((home / "logs" / "outcome-refusal-audit.jsonl").read_text().splitlines()[-1])
+    assert entry["evidence"] == str(submitted)
+    assert entry["resolved"] == str(resolve_outcome_evidence(home, submitted))
+    assert "dms" not in entry and "content" not in entry
+
+
+def test_resolved_form_for_audit_never_raises(tmp_path, monkeypatch):
+    from mishe_tauftauf import wall
+
+    home = _site(tmp_path)
+    monkeypatch.chdir(home.parent)
+    assert wall._resolved_form_for_audit(home, Path("artifacts/wake.md")) == str(home / "artifacts" / "wake.md")
