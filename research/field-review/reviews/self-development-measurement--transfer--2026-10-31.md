@@ -31,7 +31,9 @@ Limits, stated as the paper would state them. The placebo windows are autocorrel
 
 ## Application
 
-Target: `src/mishe_tauftauf/trial_metrics.py`, `report()`.
+target: src/mishe_tauftauf/trial_metrics.py
+
+Function: `report()`.
 
 Proposed change (for the owner to take through tests and live activation; this review does not edit the module): add K non-overlapping equal-length windows immediately before the baseline window, computed with the same `collect()`; for each count print the placebo min, median and max and the trial's rank among them; print UNKNOWN for any count whose placebo spread is too wide to read. Keep the existing "Prior 10 hours" column unchanged so the table still reconciles.
 
