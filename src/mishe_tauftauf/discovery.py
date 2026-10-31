@@ -3614,7 +3614,7 @@ def _preserved_on_disk(checkout_root: Path, sha: str, path: str, tree: Path, run
     if os.path.lexists(tree / path):
         return False
     tracked = run("ls-files", "--", path)
-    if tracked is None or tracked.returncode != 0 or tracked.stdout.strip():
+    if tracked is None or tracked.returncode != 0 or tracked.stdout:
         return False
     ignored = run("check-ignore", "-q", "--", path)
     if ignored is None or ignored.returncode != 0:
