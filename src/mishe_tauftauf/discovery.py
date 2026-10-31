@@ -629,8 +629,13 @@ def _unit_restart_context(units: list[str]) -> dict[str, dict]:
 
 
 def _plant_session(home: Path) -> str | None:
-    """The session this site raised: the environment override, else its receipt."""
-    session = os.environ.get("MISHE_SEED_SESSION")
+    """The session this site raised: env override > owned session > receipt.
+
+    The receipt is whichever supervisor wrote last, so it can name a session on
+    another socket; the home's own session wins and the receipt is the expected
+    name only when the home owns no enumerable session.
+    """
+    session, _socket = _owned_session_window_source(home)
     if session:
         return session
     try:
@@ -4163,10 +4168,7 @@ def _host_session_stability(home: Path) -> dict[str, object]:
     tmux or /proc reads stay unknown rather than reading as stability. All
     external text enters through proc_table decoders, never inline parsing.
     """
-    session = os.environ.get("MISHE_SEED_SESSION") or None
-    if not session:
-        from .seed import recorded_session
-        session = recorded_session(home)
+    session = _plant_session(home)
     try:
         listed = subprocess.run(["tmux", "list-sessions", "-F", "#{session_name}"],
                                 capture_output=True, timeout=2)
@@ -4244,10 +4246,7 @@ def _host_server_keeper(home: Path) -> dict[str, object]:
     reading's to report rather than this one's to duplicate. All external
     text enters through proc_table decoders.
     """
-    session = os.environ.get("MISHE_SEED_SESSION") or None
-    if not session:
-        from .seed import recorded_session
-        session = recorded_session(home)
+    session = _plant_session(home)
     if not session:
         return {"id": "sense.host.server-keeper", "state": "unknown",
                 "sample": "declared session unreadable", "kind": "read"}

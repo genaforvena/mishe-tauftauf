@@ -8905,3 +8905,18 @@ def test_tmux_windows_prefers_owned_session_over_receipt(tmp_path, monkeypatch):
     assert discovery._tmux_window_names(home) == ["genome", "health"]
     (home / ".seed-raised").unlink()
     assert discovery._tmux_window_names(home) == []
+
+
+def test_plant_session_prefers_owned_over_receipt(tmp_path, monkeypatch):
+    """Two sessions on two sockets: receipt names the default-socket one; owned pin wins, env still wins."""
+    home = tmp_path / "site"
+    home.mkdir()
+    (home / ".seed-raised").write_text("life-support $1\n", encoding="utf-8")
+    monkeypatch.delenv("MISHE_SEED_SESSION", raising=False)
+    monkeypatch.setattr(discovery.tmux, "home_sessions", lambda _h: [("pin-session", "/sock/pin")])
+    assert discovery._plant_session(home) == "pin-session"
+    monkeypatch.setenv("MISHE_SEED_SESSION", "override")
+    assert discovery._plant_session(home) == "override"
+    monkeypatch.delenv("MISHE_SEED_SESSION")
+    monkeypatch.setattr(discovery.tmux, "home_sessions", lambda _h: [])
+    assert discovery._plant_session(home) == "life-support"
