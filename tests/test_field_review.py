@@ -563,6 +563,23 @@ class ScheduledCheckTest(unittest.TestCase):
             self.assertEqual(result.returncode, 3)
             self.assertIn("UNKNOWN", result.stdout)
 
+    def test_landed_status_split_counts_discards_beside_applications(self):
+        texts = {
+            "reviews/a--x--2026-10-31.md": "---\nstatus: applied\n---\n",
+            "reviews/b--x--2026-10-31.md": "---\nstatus: discarded\n---\n",
+            "reviews/c--x--2026-10-31.md": "---\nstatus: discarded\n---\n",
+        }
+        original_names = field_review.landed_review_names
+        original_bytes = field_review.head_bytes
+        try:
+            field_review.landed_review_names = lambda repo: sorted(texts)
+            field_review.head_bytes = lambda repo, rel: texts[rel].encode()
+            counts = field_review.landed_status_counts(Path("."))
+        finally:
+            field_review.landed_review_names = original_names
+            field_review.head_bytes = original_bytes
+        self.assertEqual(counts, {"applied": 1, "discarded": 2})
+
 
 if __name__ == "__main__":
     unittest.main()

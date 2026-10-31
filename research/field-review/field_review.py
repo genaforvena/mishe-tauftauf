@@ -205,6 +205,24 @@ def landed_review_names(repo: Path) -> list[str]:
     return sorted(p for p in head_paths(repo, prefix) if p.endswith(".md"))
 
 
+def landed_status_counts(repo: Path) -> dict[str, int]:
+    """How many landed reviews are applied and how many discarded.
+
+    The coverage count (one review per cell) can be met by one-line discards as
+    easily as by applications, so the split is shown beside it. A content fact,
+    not a quality score: it says how the count was reached, nothing more.
+    """
+    counts = {"applied": 0, "discarded": 0}
+    for name in landed_review_names(repo):
+        blob = head_bytes(repo, name)
+        if blob is None:
+            continue
+        status = front_matter(blob.decode("utf-8", "replace")).get("status", "")
+        if status in counts:
+            counts[status] += 1
+    return counts
+
+
 def covered_cells(repo: Path) -> dict[str, str]:
     """Covered cell key -> the branch's review that covers it.
 
@@ -587,6 +605,11 @@ def main(argv=None) -> int:
         print(f"applied reviews: {len(rows)} ({summary}); realized (target commit on/after"
               f" review date, excluding restore)={realized}; content facts only,"
               " not dispositions")
+        split = landed_status_counts(repo)
+        landed_total = split["applied"] + split["discarded"]
+        share = (100.0 * split["discarded"] / landed_total) if landed_total else 0.0
+        print(f"landed reviews by status: applied={split['applied']} discarded={split['discarded']}"
+              f" discard_share={share:.0f}%; the cell count is met by either")
         return 0
     if command == "check":
         problems = validate_tree(repo)
