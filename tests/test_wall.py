@@ -1889,3 +1889,17 @@ def test_health_dashboard_states_an_unreadable_renderer_only_on_evidence(tmp_pat
         ["RENDERER BYTES: UNKNOWN pin=x unreadable=docs"], "UNKNOWN"))
     with_evidence = wall_view.render(home, "health")
     assert "STATE: UNKNOWN — a top-pane renderer is unreadable" in with_evidence
+
+
+def test_pane_states_visible_and_total_counts_for_filtered_sections(tmp_path):
+    """Overview first: a filtered pane must say how many it shows and what the tape holds."""
+    from mishe_tauftauf import wall
+    setup_wall(tmp_path)
+    wall.write(tmp_path, "witness", "Plate\n")
+    for n in range(12):
+        Feed(tmp_path).append("health", f"finding {n}")
+    text = wall.pane(tmp_path, "witness")
+    tape = Feed(tmp_path).tail_sequence()
+    assert f"CHAT.LOG — last 8 of {tape} tape events shown" in text
+    assert "MESSAGES — last 0 addressed shown" in text
+    assert f"tape {tape} events" in text

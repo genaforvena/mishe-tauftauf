@@ -285,3 +285,24 @@ def test_renderer_deferred_ignores_non_ok_cache(tmp_path: Path) -> None:
     assert not result.ok
     assert "should not appear" not in result.body
 
+
+
+def test_headline_level_is_capped_by_the_worst_line_beneath_it(tmp_path: Path) -> None:
+    """The HEADLINE may not read GREEN over an UNKNOWN or RED line in the same frame."""
+    from datetime import datetime, timezone
+    import json
+
+    from mishe_tauftauf.observations import headline
+
+    (tmp_path / "checks").mkdir()
+    (tmp_path / "checks/silence-watch.json").write_text(json.dumps({"state": "OK", "idle_seconds": 7}))
+    (tmp_path / "checks/silence-heartbeat.json").write_text(
+        json.dumps({"at": datetime.now(timezone.utc).isoformat()}))
+
+    assert headline(tmp_path).startswith("HEADLINE: GREEN")
+    assert headline(tmp_path, "SENSE clean: VERIFIED ok\n").startswith("HEADLINE: GREEN")
+    assert headline(tmp_path, "SUBSTRATE UNKNOWN stale\n").startswith("HEADLINE: UNKNOWN")
+    assert headline(tmp_path, "RENDERER: RED boom\n").startswith("HEADLINE: RED")
+    # A RED headline stays RED even when every line beneath it is clean.
+    (tmp_path / "checks/silence-watch.json").write_text(json.dumps({"state": "SILENT"}))
+    assert headline(tmp_path, "clean\n").startswith("HEADLINE: RED")

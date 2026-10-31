@@ -308,8 +308,17 @@ def _watcher(home: Path) -> str:
     return "stale" if age < 0 or age > 30 else "live"
 
 
-def headline(home: Path) -> str:
-    """A one-line focus: mind state, delivery staleness and watcher liveness."""
+def worst_line_level(body: str) -> str | None:
+    """The least-green status token found on any line beneath the headline."""
+    tokens = set(re.findall(r"\b(RED|UNKNOWN)\b", body))
+    return "RED" if "RED" in tokens else "UNKNOWN" if tokens else None
+
+
+def headline(home: Path, body: str = "") -> str:
+    """A one-line focus: mind state, delivery staleness and watcher liveness.
+
+    The level never reads greener than the worst line of the same frame (body).
+    """
     path = home / "checks/silence-watch.json"
     reading = {}
     if path.exists():
@@ -328,6 +337,11 @@ def headline(home: Path) -> str:
     if isinstance(delivery.get("last_activation_seconds"), (int, float)):
         facts.append(f"activation {delivery['last_activation_seconds'] / 3600:.1f}h ago")
     level = "RED" if state in {"SILENT", "ENDED"} or watcher != "live" else "GREEN" if state == "OK" else "UNKNOWN"
+    worst = worst_line_level(body)
+    if worst == "RED":
+        level = "RED"
+    elif worst == "UNKNOWN" and level == "GREEN":
+        level = "UNKNOWN"
     return f"HEADLINE: {level} — " + "; ".join(facts) + "\n"
 
 
@@ -365,7 +379,7 @@ def compose_frame(home: Path, slug: str, timeout: float | None = None) -> Render
     has_report = (home / "observations" / slug).is_file()
     reportless = slug in {"genome", "research-methods"}
     checked = "\n" + check_report(home, slug) if has_report and not reportless else ""
-    return RenderedPain(slug, headline(home) + rendered.body + failure + checked + wall.pane(home, slug), rendered.ok, rendered.reason)
+    return RenderedPain(slug, headline(home, rendered.body + failure + checked) + rendered.body + failure + checked + wall.pane(home, slug), rendered.ok, rendered.reason)
 
 
 def strip_owned_chrome(text: str, *, strip_expectations: bool = False) -> str:

@@ -671,13 +671,27 @@ def context(home: Path, role: str) -> str:
     return "\n\n".join(sections)
 
 
+def wall_skeleton_line(path: Path) -> str:
+    """Presentation only: which common headings a wall carries. Never gates admission or content."""
+    if not path.exists():
+        return "WALL SKELETON: UNKNOWN (no file)"
+    text = path.read_text()
+
+    def present(heading: str) -> str:
+        return "yes" if re.search(rf"^#+ *{heading}\b", text, re.IGNORECASE | re.MULTILINE) else "no"
+
+    return f"WALL SKELETON: plate={present('plate')} blockers={present('blockers?')} next={present('next')}"
+
+
 def pane(home: Path, role: str) -> str:
     path = home / "walls" / f"{role}.md"
     text = path.read_text() if path.exists() else "(empty; mind may plan here)\n"
     shared = Feed(home).role_entries(role)
     entries = [e for e in shared if addressed(e, role)][-3:]
     recent = [e for e in shared if e.source != "seed"][-8:]
-    chat = "\nCHAT.LOG — shared conversation previews; full tape: " + str(home / "chat.log") + "\n"
+    tape = Feed(home).tail_sequence()
+    chat = (f"\nCHAT.LOG — last {len(recent)} of {tape} tape events shown (seed included; non-seed total not counted); "
+            "full tape: " + str(home / "chat.log") + "\n")
     chat += "\n".join(f"{e.sequence} {e.source}: " +
                       (" ".join(e.body.split())[:360] + (" …" if len(" ".join(e.body.split())) > 360 else ""))
                       for e in recent) or "(no conversation yet)"
@@ -692,7 +706,10 @@ def pane(home: Path, role: str) -> str:
     from .activity import line
     from .follow_through import lines as follow_through_lines
     activity = line(home, entries=shared)
-    return "\nMIND WALL — edited notes; sensor truth is above\n" + "\n".join(follow_through_lines(home)) + "\n" + text + transport + "\nMESSAGES\n" + "\n".join(
+    skeleton = wall_skeleton_line(home / "walls" / f"{role}.md")
+    messages_header = (f"\nMESSAGES — last {len(entries)} addressed shown "
+                       f"(addressed total not counted; tape {tape} events)\n")
+    return "\nMIND WALL — edited notes; sensor truth is above\n" + "\n".join(follow_through_lines(home)) + "\n" + text + ("" if text.endswith("\n") else "\n") + skeleton + "\n" + transport + messages_header + "\n".join(
         f"{e.sequence} {e.source}: {e.body}" for e in entries) + "\n" + chat + "\n" + activity + "\n"
 
 
