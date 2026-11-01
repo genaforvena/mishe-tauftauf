@@ -348,6 +348,10 @@ def validate_review_text(name: str, text: str, repo: Path, *,
     has_discard = DISCARD_HEADING in text
     if has_application == has_discard:
         problems.append("exactly one of the Application or Discard sections is required")
+    if status == "applied" and not has_application:
+        problems.append("status applied requires the Application section")
+    if status == "discarded" and not has_discard:
+        problems.append("status discarded requires the Discard section")
     if has_application:
         target = ""
         for line in section_body(text, APPLICATION_HEADING).splitlines():

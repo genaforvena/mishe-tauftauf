@@ -248,6 +248,20 @@ class LandingContractTest(unittest.TestCase):
             problems = field_review.validate_tree(repo)["alpha--recent--2026-10-21.md"]
             self.assertTrue(any("exactly one of the Application or Discard" in p for p in problems))
 
+    def test_applied_status_without_application_section_is_refused(self):
+        broken = GOOD_REVIEW.replace("## Application", "## Discard\n\nnot applied") 
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--recent--2026-10-21.md": broken})
+            problems = field_review.validate_tree(repo)["alpha--recent--2026-10-21.md"]
+            self.assertTrue(any("status applied requires the Application section" in p for p in problems))
+
+    def test_discarded_status_without_discard_section_is_refused(self):
+        broken = GOOD_REVIEW.replace("status: applied", "status: discarded")
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--recent--2026-10-21.md": broken})
+            problems = field_review.validate_tree(repo)["alpha--recent--2026-10-21.md"]
+            self.assertTrue(any("status discarded requires the Discard section" in p for p in problems))
+
     def test_a_discard_with_one_line_passes(self):
         discard = """---
 field: alpha

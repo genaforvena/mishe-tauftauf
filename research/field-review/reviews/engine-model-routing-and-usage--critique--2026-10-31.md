@@ -32,9 +32,11 @@ Mapping the paper's categories onto the policy gives three concrete mechanisms, 
 
 The application is narrow. It does not change the policy's rule, the constant or the hysteresis. It pins the reserve boundary in the existing test file so that a future edit which moves the comparison from `<` to `<=`, or which drops the `0 <` lower bound, fails a test rather than shifting routes silently.
 
-## Discard
+## Application
 
-Not discarded. Applied as a boundary test; the feedback mechanism (point 1) is recorded as an observation gap, not a change, because it needs a live count of route flips before any action.
+target: tests/test_engine_policy.py
+
+Proposed to genome as a boundary test in the existing test file: pin the reserve comparison at `eff == reserve_pct` and at `eff` just above 0, so a `<` to `<=` edit or a dropped lower bound fails a test. The feedback mechanism (point 1) is recorded as an observation gap, not a change, because it needs a live count of route flips before any action.
 
 ## Limits
 
