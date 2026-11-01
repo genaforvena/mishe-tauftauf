@@ -1060,32 +1060,36 @@ class Feed:
         )
 
 
-def read_scan_created_stamps(home: Path, *, window: int = 100) -> list[datetime]:
-    """Ordered ``created`` stamps for windowed AoI (boundary: scan JSON -> datetime).
+def read_scan_acquisitions(home: Path, *, window: int = 100) -> list[tuple[datetime, datetime]]:
+    """Ordered ``(acquisition start, created)`` pairs per scan receipt (boundary: scan JSON -> datetime).
 
-    Yates et al. §II: monitor age ``Δ(t)=t−u(t)`` with ``stamps`` earliest-first.
-    Returns last ``window`` aware datetimes from ``discovery/scan-*.json`` sorted
-    by filename (iso ``created``), skipping unreadable entries. Empty on first
-    scan (warmup → ``None`` via ``aoi_summary``). Kept in ``feed.py`` because
-    it is the boundary adapter for scan JSON parsing (``json.loads`` /
-    ``fromisoformat``); callers keep ``discovery.py`` parsing-free.
+    Yates et al. §II: monitor age ``Δ(t)=t−u(t)`` where ``u(t)`` is the instant
+    the data was observed. A receipt's ``created`` is stamped at acquisition
+    *end*, so the observation instant is ``acquisition.start.utc_ns``. Returns
+    the last ``window`` pairs sorted by filename, skipping unreadable receipts
+    and legacy receipts without a UTC acquisition start (warmup stays unknown).
+    Kept in ``feed.py`` because it is the boundary adapter for scan JSON parsing.
     """
     discovery = home / "discovery"
     if not discovery.is_dir():
         return []
-    created: list[datetime] = []
+    pairs: list[tuple[datetime, datetime]] = []
     for name in sorted(discovery.glob("scan-*.json")):
         try:
             doc = json.loads(name.read_text(encoding="utf-8"))
-            when = datetime.fromisoformat(str(doc["created"]).replace("Z", "+00:00"))
-        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+            created = datetime.fromisoformat(str(doc["created"]).replace("Z", "+00:00"))
+            start_ns = doc["acquisition"]["start"]["utc_ns"]
+            if isinstance(start_ns, bool) or not isinstance(start_ns, int):
+                continue
+            started = datetime.fromtimestamp(start_ns / 1_000_000_000, timezone.utc)
+        except (OSError, ValueError, TypeError, KeyError, OverflowError, json.JSONDecodeError):
             continue
-        if when.tzinfo is None:
+        if created.tzinfo is None:
             continue
-        created.append(when)
-    if window is not None and window > 0 and len(created) > window:
-        created = created[-window:]
-    return created
+        pairs.append((started, created))
+    if window is not None and window > 0 and len(pairs) > window:
+        pairs = pairs[-window:]
+    return pairs
 
 
 def read_scan_series(home: Path, sense_id: str) -> list[tuple[datetime, int]]:

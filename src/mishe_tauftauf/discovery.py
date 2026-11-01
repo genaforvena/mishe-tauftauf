@@ -30,7 +30,7 @@ from .slice_throttle import read_slice_throttle
 from .unit_psi_reading import read_unit_psi
 from .activity import roles as seated_roles
 from .feed import (Feed, FeedEntry, entry_timestamp as _feed_entry_timestamp,
-                  iter_feed_file, publication_lock, read_scan_created_stamps, read_scan_series,
+                  iter_feed_file, publication_lock, read_scan_acquisitions, read_scan_series,
                   read_text_tail)
 from .chat_protocol import decode_lifecycle, ProtocolError
 from .host_radio import (BLUETOOTH_ROOT, COMMAND_TIMEOUT_SECONDS, NET_ROOT,
@@ -8621,16 +8621,16 @@ def scan(home: Path) -> Path:
     try:
         start = endpoint()
         snapshot = dict(sample(home))
-        # Windowed AoI beside age_bounds: prior created stamps as the sawtooth,
-        # now = this receipt's created. Additive, warmup -> None (unknown)
-        # same vocabulary as classify_age. Parsing via feed.py boundary.
+        # Windowed AoI beside age_bounds: prior acquisition starts (observation
+        # instants) as the sawtooth, now = this receipt's created. Additive,
+        # warmup -> None (unknown) same vocabulary as classify_age.
         try:
-            _prior = read_scan_created_stamps(home, window=100)
             _now = decode_iso_datetime(snapshot.get("created"))
-            _aoi = aoi_summary(_prior, now=_now) if _now is not None and len(_prior) >= 2 else None
-            snapshot["scan_window_aoi"] = _aoi
+            snapshot["scan_window_aoi"] = scan_window_aoi(home, now=_now) if _now is not None else None
+            snapshot["scan_window_initial_age"] = scan_initial_age(home)
         except Exception:
             snapshot["scan_window_aoi"] = None
+            snapshot["scan_window_initial_age"] = None
         snapshot["acquisition"] = {"start": start, "end": endpoint()}
         snapshot["scan_id"] = scan_id
         snapshot["producer"] = _producer()
@@ -8911,59 +8911,54 @@ RENEWAL_MAX_AGE_SECONDS = 600.0
 
 
 def scan_window_aoi(home: Path, *, now=None, window: int = 100) -> dict | None:
-    """Windowed AoI over prior scan ``created`` stamps, additive beside ``age_bounds``.
+    """Windowed AoI over prior receipts' acquisition starts, additive beside ``age_bounds``.
 
-    ``scan()`` publishes one ``created`` per receipt; the prior ``created``
-    series is ``stamps`` for ``aoi_summary`` (Yates Eq. 2-3, peak ``Δ^{(p)}``
-    §II-B). ``now`` defaults to ``now``; callers that already have a snapshot
-    ``created`` pass it so a second reader can recompute from published fields
-    alone (ledger-band idiom). ``None`` on warmup (<2 stamps) — same
-    ``unknown`` vocabulary as ``classify_age``.
+    ``scan()`` publishes one ``created`` per receipt, stamped at acquisition
+    end. The data a receipt carries was observed at its ``acquisition.start``,
+    so that instant is the sawtooth update ``u(t)`` (Yates Eq. 2-3, peak
+    ``Δ^{(p)}`` §II-B), not the publish stamp. ``now`` defaults to the current
+    clock; callers that have a snapshot ``created`` pass it so a second reader
+    recomputes from published fields alone. ``None`` on warmup (<2 receipts) —
+    the same ``unknown`` vocabulary as ``classify_age``.
 
-    Ledger-band note: ``read_scan_created_stamps`` returns the on-disk series
-    including the receipt whose ``created`` the caller passes as ``now``. The
-    published ``scan_window_aoi`` was built from *prior* stamps only
-    (``scan()`` reads before writing the new receipt), so a faithful
-    recomputation must exclude ``now`` when it is already the newest stamp.
-    Otherwise the helper would report ``current=0`` and an extra peak that the
-    publisher never counted. When ``now`` matches the newest on-disk stamp,
-    the helper reads ``window+1`` stamps and drops that newest, still
-    returning a window of at most ``window`` priors.
+    Ledger-band note: the newest on-disk receipt may be the one whose
+    ``created`` the caller passes as ``now``. Its observation instant is then
+    excluded so a recomputation matches what the publisher counted (it read
+    only prior receipts).
     """
     from datetime import datetime, timezone
 
+    pairs = read_scan_acquisitions(home, window=window + 1)
     if now is None:
-        stamps = read_scan_created_stamps(home, window=window)
-        if len(stamps) < 2:
-            return None
         now = datetime.now(timezone.utc)
-        return aoi_summary(stamps, now=now)
-    # ``now`` supplied (ledger-band second reader). Read one extra so we
-    # can exclude ``now`` without shrinking the window.
-    stamps = read_scan_created_stamps(home, window=window + 1)
+    elif not isinstance(now, datetime) or now.tzinfo is None:
+        return None
+    if pairs and pairs[-1][1].astimezone(timezone.utc) == now.astimezone(timezone.utc):
+        pairs = pairs[:-1]
+    pairs = pairs[-window:] if window and window > 0 else pairs
+    stamps = [started for started, _created in pairs]
     if len(stamps) < 2:
         return None
-    try:
-        now_utc = now.astimezone(timezone.utc) if isinstance(now, datetime) and now.tzinfo is not None else None
-    except Exception:
-        now_utc = None
-    if now_utc is not None and stamps:
-        try:
-            last_utc = stamps[-1].astimezone(timezone.utc)
-            if last_utc == now_utc:
-                stamps = stamps[:-1]
-                if len(stamps) < 2:
-                    return None
-                # Keep at most ``window`` priors, earliest-first.
-                if len(stamps) > window:
-                    stamps = stamps[-window:]
-        except Exception:
-            pass
-    else:
-        # No comparable ``now``; cap to requested window.
-        if len(stamps) > window:
-            stamps = stamps[-window:]
     return aoi_summary(stamps, now=now)
+
+
+def scan_initial_age(home: Path, *, window: int = 100) -> dict | None:
+    """Acquisition duration as a lag: ``created - acquisition.start`` over prior receipts.
+
+    The windowed AoI counts from the observation instant, so each receipt's
+    age at publish already includes its own acquisition duration. This reports
+    that lag (median, max, n) beside the AoI so the understatement is visible.
+    Warmup (no prior receipts) is ``None``.
+    """
+    lags = [(created - started).total_seconds()
+            for started, created in read_scan_acquisitions(home, window=window)]
+    lags = [lag for lag in lags if lag >= 0]
+    if not lags:
+        return None
+    ordered = sorted(lags)
+    middle = len(ordered) // 2
+    median = ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
+    return {"median": float(median), "max": float(ordered[-1]), "n": len(ordered)}
 
 
 def scan_age(home: Path) -> float | None:

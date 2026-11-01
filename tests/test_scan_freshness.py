@@ -285,3 +285,47 @@ def test_aoi_summary_rejects_naive_non_monotonic_and_future_windows() -> None:
 
     stamps = _stamps(t0, [10.0])
     assert freshness.aoi_summary(stamps, now=t0) is None
+
+
+def _receipt(home, name: str, created: datetime, started_ns: int | None) -> None:
+    import json
+
+    doc: dict = {"created": created.isoformat().replace("+00:00", "Z")}
+    if started_ns is not None:
+        doc["acquisition"] = {"start": {"utc_ns": started_ns}}
+    directory = home / "discovery"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / name).write_text(json.dumps(doc), encoding="utf-8")
+
+
+def test_windowed_aoi_counts_from_acquisition_start_not_publish(tmp_path) -> None:
+    from mishe_tauftauf import discovery
+
+    t0 = datetime(2026, 11, 1, 0, 0, tzinfo=timezone.utc)
+    # Each receipt's data was observed 40 s before its created (publish) stamp.
+    for index in range(3):
+        created = t0 + timedelta(seconds=300 * index)
+        started_ns = int((created - timedelta(seconds=40)).timestamp() * 1_000_000_000)
+        _receipt(tmp_path, f"scan-{index:03d}.json", created, started_ns)
+    _receipt(tmp_path, "scan-legacy.json", t0 - timedelta(seconds=1), None)
+
+    now = t0 + timedelta(seconds=900)
+    aoi = discovery.scan_window_aoi(tmp_path, now=now)
+    # Observation starts t0-40, t0+260, t0+560 -> current = now - (t0+560) = 340 s.
+    assert aoi is not None
+    assert aoi["current"] == pytest.approx(340.0)
+    assert aoi["n"] == 2
+
+    initial = discovery.scan_initial_age(tmp_path)
+    assert initial == {"median": 40.0, "max": 40.0, "n": 3}
+
+
+def test_windowed_aoi_warmup_and_legacy_receipts_stay_unknown(tmp_path) -> None:
+    from mishe_tauftauf import discovery
+
+    t0 = datetime(2026, 11, 1, 0, 0, tzinfo=timezone.utc)
+    assert discovery.scan_window_aoi(tmp_path, now=t0) is None
+    assert discovery.scan_initial_age(tmp_path) is None
+    _receipt(tmp_path, "scan-000.json", t0, None)
+    _receipt(tmp_path, "scan-001.json", t0 + timedelta(seconds=10), None)
+    assert discovery.scan_window_aoi(tmp_path, now=t0 + timedelta(seconds=20)) is None
