@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from . import host_boot, omp_pane, proc_table, space_text, tmux
+from . import head_rewind_dispositions, host_boot, omp_pane, proc_table, space_text, tmux
 from .body_perception import (read_redmi10, read_redmi10_dense_baseline,
                              read_redmi10_delivery_gaps, read_redmi10_light,
                              read_redmi10_peer_delivery)
@@ -3717,6 +3717,19 @@ def _head_rewinds(home: Path) -> dict[str, object]:
     return {**result, "sample": f"{result['sample']} {tail}", "reset_origin": origins}
 
 
+def _disposition_tail(dispositioned: int, malformed: int, unreadable: bool,
+                      any_records: bool) -> str:
+    """Disposition counts appended to the reading; empty when no record exists.
+
+    The suffix is conditional so a site with no records keeps the reading's
+    sample exactly as it was before records existed.
+    """
+    if not (any_records or malformed or unreadable):
+        return ""
+    tail = f" dispositioned-paths={dispositioned} disposition-records-malformed={malformed}"
+    return tail + (" disposition-records=unreadable" if unreadable else "")
+
+
 def _head_rewinds_reading(home: Path) -> dict[str, object]:
     """Classify reflog-dropped commits' changed paths against HEAD's tree.
 
@@ -3746,6 +3759,14 @@ def _head_rewinds_reading(home: Path) -> dict[str, object]:
     """
     checkout_root = Path(home).resolve().parent
     unknown = {"id": "sense.repo.head-rewinds", "state": "unknown", "kind": "read"}
+    # Records are read before git: an unreadable record directory leaves every
+    # needs-review path unmatched, and that is said in the sample.
+    loaded_records = head_rewind_dispositions.load(Path(home))
+    if loaded_records is None:
+        dispositions, records_malformed, records_unreadable = {}, 0, True
+    else:
+        dispositions, records_malformed = loaded_records
+        records_unreadable = False
 
     def run(*args: str, timeout: float = 10, text: bool = True) -> subprocess.CompletedProcess | None:
         try:
@@ -3785,6 +3806,8 @@ def _head_rewinds_reading(home: Path) -> dict[str, object]:
                 "dropped_ancestry_commits": 0, "lossless": 0,
                 "needs_review": 0, "absent": 0,
                 "needs_review_paths": [], "absent_paths": [],
+                "dispositioned": 0, "dispositioned_paths": [],
+                "disposition_records_malformed": records_malformed,
                 "named_paths_omitted": 0,
                 "reflog_window": _HEAD_REWIND_REFLOG_LIMIT, "kind": "read"}
     landed = _patch_landed(checkout_root, dropped)
@@ -3825,6 +3848,8 @@ def _head_rewinds_reading(home: Path) -> dict[str, object]:
         return "unexplained" if present.returncode == 0 else "absent-at-head"
 
     lossless = review = absent = preserved = detracked_local_only = reverted = 0
+    dispositioned = 0
+    dispositioned_names: list[dict[str, str]] = []
     review_names: list[dict[str, str]] = []
     absent_names: list[dict[str, str]] = []
     local_only_names: list[dict[str, str]] = []
@@ -3881,6 +3906,19 @@ def _head_rewinds_reading(home: Path) -> dict[str, object]:
                         else:
                             named_omitted += 1
                     else:
+                        # A matching record needs the dropped commit's blob for this path,
+                        # so the blob is read only when a record names this commit and path.
+                        if dispositions and any(key[0] == sha and key[1] == path
+                                                for key in dispositions):
+                            blob = run("rev-parse", "--verify", "-q", f"{sha}:{path}")
+                            if blob is not None and blob.returncode == 0:
+                                if (sha, path, blob.stdout.strip()) in dispositions:
+                                    dispositioned += 1
+                                    if len(dispositioned_names) < _HEAD_REWIND_NAMED_PATH_LIMIT:
+                                        dispositioned_names.append({"commit": sha[:12], "path": path})
+                                    else:
+                                        named_omitted += 1
+                                    continue
                         review += 1
                         if len(review_names) < _HEAD_REWIND_NAMED_PATH_LIMIT:
                             review_names.append({"commit": sha[:12], "path": path})
@@ -3905,8 +3943,11 @@ def _head_rewinds_reading(home: Path) -> dict[str, object]:
     # a window with no drift but unclassified ancestry is coverage UNKNOWN, not
     # verified. Each dropped tip is itself an ancestor off HEAD, hence the subtraction.
     unclassified_ancestry = max(0, dropped_ancestry - len(dropped))
-    state = ("drift" if (review or absent or detracked_local_only)
-             else ("unknown" if (unexamined or unclassified_ancestry) else "verified"))
+    # A recorded disposition explains a path; it does not clear the rewind. The
+    # record is an author claim, so the reading stays drift while it exists.
+    state = ("drift" if (review or absent or detracked_local_only or dispositioned)
+             else ("unknown" if (unexamined or unclassified_ancestry
+                                 or records_unreadable) else "verified"))
     classified = len(dropped) - partial_commits
     return {"id": "sense.repo.head-rewinds", "state": state,
             "sample": (f"dropped-commits={len(dropped)} of "
@@ -3930,7 +3971,9 @@ def _head_rewinds_reading(home: Path) -> dict[str, object]:
                        f"rewrite-chain-unreachable-commits={rewrite['chain-unreachable']} "
                        f"rewrite-parent-reachable-commits={rewrite['parent-reachable']} "
                        f"rewrite-root-commits={rewrite['root']} "
-                       f"dropped-ancestry-commits={dropped_ancestry}"),
+                       f"dropped-ancestry-commits={dropped_ancestry}"
+                       + _disposition_tail(dispositioned, records_malformed, records_unreadable,
+                                           bool(dispositions))),
             "dropped": len(dropped), "classified_commits": classified,
             "dropped_ancestry_commits": dropped_ancestry,
             "unexamined_paths": unexamined, "patch_landed_commits": landed,
@@ -3938,6 +3981,9 @@ def _head_rewinds_reading(home: Path) -> dict[str, object]:
             "lossless": lossless,
             "needs_review": review, "absent": absent, "reverted_at_head": reverted,
             "needs_review_paths": review_names,
+            "dispositioned": dispositioned,
+            "dispositioned_paths": dispositioned_names,
+            "disposition_records_malformed": records_malformed,
             "absent_paths": absent_names,
             "named_paths_omitted": named_omitted,
             "preserved_untracked": preserved,
