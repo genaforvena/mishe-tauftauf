@@ -9,7 +9,9 @@ A Signal is (value, observed_at, source, state). State is one of:
 Combinators do no I/O and read no clock. Callers pass ``now`` explicitly,
 so every rule is deterministic and replayable from recorded tapes.
 
-Invariant: missing, failed or stale input is never reported as OK.
+Invariant: missing, failed or stale input is never reported as OK, except
+``hold`` within max_age of the last OK reading (a deliberate read-gap
+bridge; the held result keeps the previous observed_at).
 """
 
 from __future__ import annotations
@@ -116,10 +118,23 @@ def hold(previous: Signal | None, current: Signal, now: float, max_age: float) -
 
 
 def edge(previous_value: Any, current_value: Any) -> bool:
-    """True when the value changed. The first reading (no previous) is an edge."""
+    """True when the value changed.
+
+    ``None`` is the "no previous reading" sentinel, so the first reading is
+    always an edge, even when that reading is itself None. Callers that need a
+    real None value must track the first reading separately.
+    """
     return previous_value is None or previous_value != current_value
 
 
 def rate_limit(last_emit: float | None, now: float, min_interval: float) -> bool:
-    """True when enough time has passed to emit again."""
-    return last_emit is None or now - last_emit >= min_interval
+    """True when enough time has passed to emit again.
+
+    A clock that stepped back (now < last_emit) is not trusted to measure the
+    interval. It returns True, so emission resumes instead of being suppressed
+    for the length of the step. The caller then records ``now`` as the new
+    last_emit, which restores normal spacing.
+    """
+    if last_emit is None or now < last_emit:
+        return True
+    return now - last_emit >= min_interval

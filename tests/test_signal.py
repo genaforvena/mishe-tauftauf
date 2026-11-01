@@ -108,3 +108,34 @@ def test_rate_limit_spaces_emissions_with_injected_clock():
     assert sig.rate_limit(None, now=0.0, min_interval=5.0)
     assert not sig.rate_limit(0.0, now=4.9, min_interval=5.0)
     assert sig.rate_limit(0.0, now=5.0, min_interval=5.0)
+
+
+def test_hold_with_previous_unknown_or_stale_returns_current():
+    gap = sig.unknown("host", "read failed")
+    prev_unknown = sig.unknown("host", "earlier failure")
+    assert sig.hold(prev_unknown, gap, now=5.0, max_age=10.0) is gap
+    prev_stale = sig.expire(sig.observed("LIMITED", 0.0, "host"), now=50.0, max_age=10.0)
+    assert prev_stale.state == sig.STALE
+    assert sig.hold(prev_stale, gap, now=50.0, max_age=10.0) is gap
+
+
+def test_join_unknown_with_timestamp_keeps_time_but_stays_unknown():
+    j = sig.join([sig.observed(1, 10.0, "a"), sig.unknown("b", "missing", observed_at=4.0)])
+    assert j.state == sig.UNKNOWN
+    assert j.observed_at == 4.0
+    assert "missing" in j.value
+
+
+def test_edge_none_is_the_no_previous_sentinel():
+    # None as previous means "no reading yet", so the first reading is an edge
+    # even when that reading is None. Pinned so the rule is not silently changed.
+    assert sig.edge(None, None) is True
+    assert sig.edge(None, "OK") is True
+
+
+def test_rate_limit_clock_stepped_back_emits_and_does_not_stall():
+    # now < last_emit: the interval cannot be trusted, so emit rather than
+    # suppress for the length of the backward step.
+    assert sig.rate_limit(100.0, now=40.0, min_interval=5.0) is True
+    # Once the caller records the new time, normal spacing resumes.
+    assert sig.rate_limit(40.0, now=41.0, min_interval=5.0) is False
