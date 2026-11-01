@@ -36,8 +36,27 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[1]
 CHECK = REPO / "checks" / "shipped-book-vs-served-release.py"
+
+
+def skip_reason(home: Path) -> str | None:
+    """Why the live assertion cannot be asked here, or None when it can.
+
+    The served-release record is a **site** file, and ``.mishe-*`` is
+    gitignored, so a clone carries none.  A clone has no served release to
+    compare the book with, and the check reports that as UNKNOWN -- an
+    honest reading, and not a pass.
+
+    The absence is the only reason to skip.  A site whose record exists but
+    is malformed has a broken observation, and a broken observation is RED:
+    the question is asked, and the answer fails the assertion.
+    """
+    if not (home / "health" / "runtime-release.json").is_file():
+        return "no served-release record beside this checkout"
+    return None
 
 STALE_PAGE = """# Evidence
 
@@ -249,8 +268,27 @@ def test_this_repository_satisfies_the_check_it_ships():
     the book and the release disagree, and the check is expected to say so --
     that disagreement is the finding this check exists to publish, and it is
     health's pin to advance, not the book's to bend.
+
+    The record is a **site** file, not a repository file: ``.mishe-*`` is
+    gitignored, so a clone has none.  A clone cannot answer the question
+    this test asks -- there is no served release to compare the book with --
+    and the check says so by exiting 3 (UNKNOWN).  That is the honest
+    reading, and it is not a pass, so the test skips rather than asserting
+    it.  The live half of the check is not lost: the plant's observer-check
+    runner schedules ``shipped-book-vs-served-release.py`` against the live
+    site, where the record exists and this same assertion runs.
+
+    The skip is narrow on purpose.  It fires only when the record is
+    *absent*; a record that is present but malformed, or a release that
+    cannot be exercised, still fails the test here, because on a checkout
+    that has a site the question is decidable and must be answered.
     """
-    result = subprocess.run([sys.executable, str(CHECK), "--home", str(REPO / ".mishe-tauftauf"),
+    home = REPO / ".mishe-tauftauf"
+    reason = skip_reason(home)
+    if reason is not None:
+        pytest.skip(reason)
+
+    result = subprocess.run([sys.executable, str(CHECK), "--home", str(home),
                               "--repo", str(REPO)],
                              capture_output=True, text=True)
     assert result.returncode in (0, 2), result.stdout + result.stderr
@@ -261,3 +299,43 @@ def test_this_repository_satisfies_the_check_it_ships():
         assert "served release" in result.stdout, result.stdout
     else:
         assert "OK" in result.stdout, result.stdout
+
+
+def test_a_clone_without_a_site_skips_the_live_assertion(tmp_path):
+    """A clone has no served release, so it must not be asked the question.
+
+    The served-release record lives in the site's own directory, and
+    ``.mishe-*`` is gitignored, so a clone carries none.  Measured on
+    2026-11-01 (Docs wake 159116): CI runs this test on a clone, the check
+    exits 3 (UNKNOWN -- "no served-release record"), and the assertion
+    accepted only 0 or 2, so CI was red for the whole tree on a question no
+    clone can answer.
+
+    The check's own reading of that state is UNKNOWN, which is honest and is
+    not a pass.  The test must therefore skip, not assert a pass.
+    """
+    reason = skip_reason(tmp_path / "site")
+    assert reason is not None
+    assert "served-release record" in reason
+
+
+def test_a_site_with_a_broken_record_is_asked_the_question(tmp_path):
+    """A present-but-unreadable record is RED, not a reason to skip.
+
+    The skip is for a clone, which has no site at all.  A site whose
+    served-release record exists but cannot be read has a broken
+    observation, and a broken observation must fail rather than pass
+    unnoticed.  So the skip decision turns on **absence** only: a record
+    that is present, even a malformed one, keeps the question asked.
+    """
+    home = tmp_path / "site"
+    (home / "health").mkdir(parents=True)
+    (home / "health" / "runtime-release.json").write_text("{not json", encoding="utf-8")
+
+    assert skip_reason(home) is None
+
+    result = subprocess.run([sys.executable, str(CHECK), "--home", str(home),
+                              "--tree", str(make_tree(tmp_path, {"docs/getting-started.md": CURRENT_PAGE}))],
+                             capture_output=True, text=True)
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert "UNKNOWN" in result.stdout, result.stdout
