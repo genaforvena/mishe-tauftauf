@@ -80,7 +80,10 @@ EVIDENCE_UNNAMEABLE_REASON = (
     "their policy version cannot be named and neither a rate nor a bound is "
     "quoted for them")
 
-#: The state a stratum's bound carries when it is quoted.
+#: The state a stratum's bound carries when it is quoted. "verified" here means
+#: only that a bound was computed for the stratum; it does not prove the content
+#: of any outcome in it is true (the ledger's clean-audit "verified" is a separate
+#: word with a separate meaning).
 EVIDENCE_BOUND_STATE_VERIFIED = "verified"
 
 #: The state a stratum's bound carries when it cannot be quoted.
