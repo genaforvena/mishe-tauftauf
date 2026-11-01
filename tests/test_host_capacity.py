@@ -27,6 +27,11 @@ def test_pressure_closes_admission_and_requires_continuous_recovery():
     assert row["state"] == "NORMAL"
 
 
+def test_host_sample_row_labels_pressure_window():
+    row = host.decide(None, sample(), now=100, stable_seconds=20)
+    assert row["pressure_window"] == {"memory_full": "avg60 full", "io_full": "avg60 full"}
+
+
 def test_old_oom_counter_is_retained_without_permanent_overload():
     row = host.decide(None, sample(oom=9), now=100, stable_seconds=20)
     row = host.decide(row, sample(oom=10), now=105, stable_seconds=20)

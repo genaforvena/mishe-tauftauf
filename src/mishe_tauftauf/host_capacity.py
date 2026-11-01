@@ -21,7 +21,10 @@ def decide(previous, observation, *, now, stable_seconds=120):
            "observation": observation, "managed_units": old.get("managed_units", []),
            "pending_stops": old.get("pending_stops", {}),
            "pending_starts": old.get("pending_starts", {}),
-           "clear_since": None, "oom_delta": 0, "scope": "resource capacity; not functional restoration"}
+           "clear_since": None, "oom_delta": 0, "scope": "resource capacity; not functional restoration",
+           # Row-level window label: memory_full/io_full are the avg60 of /proc/pressure `full` lines
+           # (recovery_io.pressure). Readers of host-samples.jsonl need this without the source.
+           "pressure_window": {"memory_full": "avg60 full", "io_full": "avg60 full"}}
     try:
         values = [observation[k] for k in ("memory_full", "io_full", "available_ratio", "current", "high", "max")]
         if any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in values):
