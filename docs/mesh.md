@@ -58,4 +58,6 @@ and its audit for a write, the tape and the outcome record for a message, the
 branch and the CI run for a landing. A declared coupling that no reading can
 check is not thereby true.
 
-See the [README](../README.md) for an introduction and setup.
+See the [README](../README.md) for an introduction and setup, and [Wall
+coordination](wall-coordination.md) for how a coupling is written, audited and
+settled.
