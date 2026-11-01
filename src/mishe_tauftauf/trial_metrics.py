@@ -43,7 +43,10 @@ PLACEBO_COUNTS = ("wakes", "redeliveries", "settlements", "observations", "addre
 
 
 def _instant(entry) -> datetime:
-    return datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))
+    instant = decode_iso_datetime(entry.timestamp)
+    if instant is None:
+        raise ValueError("feed entry timestamp is unreadable")
+    return instant
 
 
 def _window_counts(entries) -> dict:
