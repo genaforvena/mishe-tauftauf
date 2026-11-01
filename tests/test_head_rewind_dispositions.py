@@ -142,3 +142,25 @@ def test_non_json_record_is_malformed(rewound):
 
 def test_absent_record_directory_is_zero_records(tmp_path):
     assert head_rewind_dispositions.load(tmp_path / "absent") == ({}, 0)
+
+
+def test_malformed_record_is_counted_when_nothing_was_dropped(tmp_path):
+    """No dropped commits: the early return still reports disposition counts."""
+    repo = tmp_path / "checkout"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    (repo / PATH).write_text("one\n")
+    _git(repo, "add", PATH)
+    _git(repo, "commit", "-q", "-m", "base")
+    site = repo / "site"
+    site.mkdir()
+    directory = site / "dispositions" / "head-rewinds"
+    directory.mkdir(parents=True)
+    (directory / "bad.json").write_text("{not json")
+
+    result = discovery._head_rewinds(site)
+
+    assert result["dropped"] == 0
+    assert result["dispositioned"] == 0
+    assert result["dispositioned_paths"] == []
+    assert result["disposition_records_malformed"] == 1

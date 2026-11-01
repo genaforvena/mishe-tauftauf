@@ -3906,13 +3906,14 @@ def _head_rewinds_reading(home: Path) -> dict[str, object]:
                         else:
                             named_omitted += 1
                     else:
-                        # A matching record needs the dropped commit's blob for this path,
-                        # so the blob is read only when a record names this commit and path.
+                        # A matching record needs the dropped commit's blob for this path.
+                        # The blob is read only when a record names this commit and path.
                         if dispositions and any(key[0] == sha and key[1] == path
                                                 for key in dispositions):
                             blob = run("rev-parse", "--verify", "-q", f"{sha}:{path}")
                             if blob is not None and blob.returncode == 0:
-                                if (sha, path, head_rewind_dispositions.blob_id(blob.stdout)) in dispositions:
+                                key = (sha, path, head_rewind_dispositions.blob_id(blob.stdout))
+                                if key in dispositions:
                                     dispositioned += 1
                                     if len(dispositioned_names) < _HEAD_REWIND_NAMED_PATH_LIMIT:
                                         dispositioned_names.append({"commit": sha[:12], "path": path})
