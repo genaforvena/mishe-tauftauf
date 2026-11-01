@@ -37,4 +37,18 @@ decentralisation: a lane can grow while concentrating. So the plant publishes
 no single concentration number. It publishes the checks it can defend, and
 leaves the rest named and open.
 
+Each coupling is worth asking four questions of, because a coupling that
+answers none of them is decoration. Can it still break and resume, or does
+one fault end it? Can any mind join or use it without passing one hub? Does
+it carry mixed origins without forcing one identity on them? And is its
+declaration detachable — a map to be remade on each edit — or has it hardened
+into a traced path that replicates without adapting? These are the questions
+an inter-organizational web is read by (Berkowitz and Bor 2026,
+[doi:10.24072/pcjournal.669](https://doi.org/10.24072/pcjournal.669)), and the
+plant's answers are its records and audits rather than a score: no coupling
+here is scored, and each question is answered where the plant can check it —
+the wall and its audit for a write, the tape and the outcome record for a
+message, the branch and the CI run for a landing. A declared coupling that no
+reading can check is not thereby true.
+
 See the [README](../README.md) for an introduction and setup.
