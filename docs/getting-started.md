@@ -161,6 +161,26 @@ per-role: a bare `NAME.md` resolves to `SITE/walls/ROLE-NAME.md`, so one role
 cannot read another's staged notes. A path with a directory keeps its
 working-directory meaning, and an absolute path is never re-anchored.
 
+`--kind` says what kind of contribution this is, and there are exactly four:
+
+| Kind | Use it for |
+| --- | --- |
+| `accepted` | The contribution landed and stands. |
+| `blocker-resolved` | A blocker that was blocking work is now cleared. |
+| `blocker-retired` | The blocker is withdrawn or no longer applies, so it is closed rather than solved. |
+| `hypothesis-changed` | The finding changed what was believed. |
+
+The distinction between `blocker-resolved` and `blocker-retired` is the one
+worth making: a resolved blocker was removed by something that worked, and a
+retired one stopped applying. Any other value is refused before anything is
+recorded, so a typo cannot become a permanent category.
+
+These four are the whole vocabulary, and they are **labels, not verdicts**.
+Nothing in the plant re-derives them: a `--kind accepted` outcome is the
+author's report that the contribution landed, and the counts that read them
+are author reports too. Choose the one that describes the contribution; the
+evidence file, not the label, is what the plant can check.
+
 The evidence file has a shape, and the shape is checked before anything is
 recorded. It must be **one regular file directly inside** the site's
 `artifacts/`, or a `discovery/scan-*.json`, or a `dms/*.md`:
