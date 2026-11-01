@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
-from unit_psi_attribution import attribute  # noqa: E402
+from mishe_tauftauf.unit_psi_reading import attribute  # noqa: E402
 
 
 def _unit(full60, high, mx, swap=None, swap_max=None):
@@ -88,3 +88,28 @@ def test_cli_reads_fixture_file(tmp_path, capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["malformed"] == 1
     assert out["top_full_avg60"][0]["high_delta"] == 2
+
+
+def test_zero_swap_cap_is_unknown_not_uncapped():
+    from mishe_tauftauf.unit_psi_reading import swap_of_max
+    assert swap_of_max({"swap": 5, "swap_max": 0}) == (5.0, "unknown")
+    assert swap_of_max({"swap": 5, "swap_max": "max"}) == (5.0, "uncapped")
+    assert swap_of_max({"swap": 5, "swap_max": 10}) == (5.0, "50.0%")
+
+
+def test_cli_tail_miss_keeps_anchor_unknown_not_zero(tmp_path, capsys):
+    from unit_psi_attribution import _cli
+    from mishe_tauftauf.unit_psi_reading import TAIL_BYTES
+    path = tmp_path / "big.jsonl"
+    pad = "x" * 4096
+    # every record that fits in the tail is older than the 300 s window of the newest
+    filler = [{"at": 1000.0 + i, "cgroups": {"x.service": _unit(0.0, 0, 0), "pad": pad}}
+              for i in range(0, 200)]
+    newest = _rec(2000.0, {"x.service": _unit(0.0, 9, 0)})
+    path.write_text("\n".join(json.dumps(r) for r in filler + [newest]) + "\n")
+    assert path.stat().st_size > TAIL_BYTES
+    assert _cli([str(path)]) == 0
+    out = json.loads(capsys.readouterr().out)
+    # the 300 s anchor is far outside the 256 KiB tail: no delta is invented
+    assert out["span_s"] is None
+    assert out["top_full_avg60"][0]["high_delta"] is None
