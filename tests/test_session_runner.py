@@ -14,9 +14,11 @@ def isolate_ambient_workload_slice(monkeypatch):
     ``MISHE_WORKLOAD_SLICE`` reaches its slice guard. A mind shell runs inside
     ``mishe-plants.slice`` and exports that variable; CI, which has no ambient
     binding, does not. The cases below that do not ask about a slice use a
-    fake tmux whose ``display-message`` answers empty stdout, so the guard
-    cannot find one pane pid and refuses before the assertion under test.
-    The result was a suite that failed only where it was run.
+    fake tmux whose ``display-message`` yields no usable pane pid — empty
+    stdout for ``backend()``; a non-zero exit, or a pid with no readable
+    ``/proc`` entry, for ``_cleanup_backend()`` — so the guard refuses
+    before the assertion under test. The result was a suite that failed
+    only where it was run.
 
     The three cases that do exercise a slice set the variable themselves, after
     this fixture has run, so they still see it.
