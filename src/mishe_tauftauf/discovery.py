@@ -8488,7 +8488,7 @@ def _producer() -> str:
             capture_output=True, text=True, timeout=2,
             cwd=checkout_root,
         )
-        sha = result.stdout.strip() if result.returncode == 0 else "unknown"
+        sha = (decode_commit_sha(result.stdout) or "unknown") if result.returncode == 0 else "unknown"
     except (OSError, subprocess.TimeoutExpired):
         sha = "unknown"
     return f"{package_root}@{sha}"
