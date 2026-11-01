@@ -43,3 +43,6 @@ docs/wall-coordination.md
 docs/superpowers/
 research/field-review/__pycache__/
 .claude/
+
+# Stray repo-root pub wall output; walls belong in the gitignored site (.mishe-tauftauf/walls). Keeps substrate-watch from counting it as checkout change.
+/pub/
