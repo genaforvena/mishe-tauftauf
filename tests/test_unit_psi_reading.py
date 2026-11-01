@@ -149,3 +149,45 @@ def test_tail_seek_inside_a_line_drops_only_the_partial_line(tmp_path, monkeypat
     records, malformed = reading._tail_records(path)
     assert [r["at"] for r in records] == [8, 9]
     assert malformed == 0
+
+
+def _hier_record(at, parent_total, child_total, parent_high=5):
+    return {"at": at, "cgroups": {
+        "mishe-lifeline.slice": {"psi": {"some": {"avg10": 1.0, "total": parent_total}},
+                                 "events": {"high": parent_high}},
+        "mishe-lifeline.slice/mishe-genome.service": {
+            "psi": {"some": {"avg10": 0.5, "total": child_total}}, "events": {"high": 1}},
+    }}
+
+
+def test_stall_inversion_is_detected_both_sides():
+    from mishe_tauftauf.unit_psi_reading import stall_inversions
+    # senses wake 160438: child +102.62 s over the same interval as parent +70.86 s.
+    assert stall_inversions({"mishe-lifeline.slice": 70_860_000,
+                             "mishe-lifeline.slice/mishe-genome.service": 102_620_000}) == {
+        "mishe-lifeline.slice", "mishe-lifeline.slice/mishe-genome.service"}
+
+
+def test_stall_within_skew_tolerance_and_consistent_hierarchy_are_not_flagged():
+    from mishe_tauftauf.unit_psi_reading import stall_inversions
+    assert stall_inversions({"a": 5_000_000, "a/b": 5_400_000}) == set()   # sampling skew
+    assert stall_inversions({"a": 70_000_000, "a/b": 10_000_000}) == set()  # healthy
+
+
+def test_sample_refuses_to_attribute_stall_on_an_inverted_hierarchy(tmp_path):
+    path = tmp_path / "p.jsonl"
+    _write(path, [_hier_record(900.0, 1_000_000_000, 1_000_000_000, parent_high=5),
+                  _hier_record(1000.0, 1_070_860_000, 1_102_620_000, parent_high=8)])
+    out = read_unit_psi(path, now=1010.0)
+    assert "stall-hierarchy=inverted:" in out["sample"]
+    assert "some-stall=unknown(hierarchy-inverted)" in out["sample"]
+    assert "some-stall=+" not in out["sample"]
+
+
+def test_sample_attributes_stall_when_hierarchy_is_consistent(tmp_path):
+    path = tmp_path / "p.jsonl"
+    _write(path, [_hier_record(900.0, 1_000_000_000, 100_000_000, parent_high=5),
+                  _hier_record(1000.0, 1_070_860_000, 150_000_000, parent_high=8)])
+    out = read_unit_psi(path, now=1010.0)
+    assert "stall-hierarchy=ok" in out["sample"]
+    assert "some-stall=+70860.0ms" in out["sample"]

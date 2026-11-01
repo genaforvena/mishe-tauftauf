@@ -164,6 +164,27 @@ def attribute(records: list[dict], *, window_s: float = WINDOW_S, top: int = 3) 
     }
 
 
+STALL_SKEW_TOLERANCE_US = 1_000_000
+
+
+def _ancestors(name: str) -> list[str]:
+    return [name[:i] for i, ch in enumerate(name) if ch == "/"]
+
+
+def stall_inversions(stall_us: dict[str, int]) -> set[str]:
+    """Units involved in a hierarchy break: a child's some-stall delta above an ancestor's
+    over the same interval. Kernel PSI charges a stall to the cgroup and every ancestor, so
+    a child cannot exceed its parent except by sampling skew (absorbed by the tolerance).
+    Both sides of a break are returned; neither stall can be attributed to one unit."""
+    bad: set[str] = set()
+    for child, child_delta in stall_us.items():
+        for anc in _ancestors(child):
+            if anc in stall_us and child_delta > stall_us[anc] + STALL_SKEW_TOLERANCE_US:
+                bad.add(child)
+                bad.add(anc)
+    return bad
+
+
 def _nested(mapping, *keys):
     cur = mapping
     for key in keys:
@@ -229,10 +250,22 @@ def read_unit_psi(path, *, now: float) -> dict:
     if not unit_rows:
         return {**base, "state": "unknown", "sample": "no unit carries psi.some.avg10"}
 
+    inverted = stall_inversions(stall_us)
+    if stall_us:
+        hierarchy_text = (f"stall-hierarchy=inverted:{','.join(sorted(inverted))}" if inverted
+                          else "stall-hierarchy=ok")
+    else:
+        hierarchy_text = "stall-hierarchy=unchecked"
     top_high = sorted(deltas.items(), key=lambda kv: kv[1], reverse=True)[:1]
     if top_high and top_high[0][1] > 0:
-        stall = stall_us.get(top_high[0][0])
-        stall_text = f" some-stall=+{stall / 1000:.1f}ms" if stall is not None else " some-stall=unknown"
+        unit = top_high[0][0]
+        stall = stall_us.get(unit)
+        if unit in inverted:
+            stall_text = " some-stall=unknown(hierarchy-inverted)"
+        elif stall is not None:
+            stall_text = f" some-stall=+{stall / 1000:.1f}ms"
+        else:
+            stall_text = " some-stall=unknown"
         high_text = f"top-high-delta={top_high[0][0]}:+{top_high[0][1]}/{span:.0f}s{stall_text}"
     else:
         high_text = f"high-delta=0/{span:.0f}s" if deltas else "high-delta=unknown(no-window)"
@@ -242,7 +275,7 @@ def read_unit_psi(path, *, now: float) -> dict:
               f"{plant_text} top-some={top_some[0]}:{top_some[1]:.2f} {high_text} "
               f"swap-plants={_swap_fraction(plants) if isinstance(plants, dict) else 'unknown'} "
               f"swap-plants-at-cap>={AT_CAP_FRACTION:g}={swap_at_cap(plants)} "
-              f"malformed={malformed}")
+              f"{hierarchy_text} malformed={malformed}")
     if age < 0 or age > MAX_AGE_S:
         return {**base, "state": "stale", "sample": f"historical: {sample}"}
     return {**base, "state": "verified", "sample": sample}
