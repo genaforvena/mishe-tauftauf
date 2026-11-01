@@ -903,6 +903,15 @@ def k_anonymity_k(
     address this; a release of raw body sequences needs a separate check or
     differential privacy, not this value. The paper does not evaluate
     k-anonymity on time series. Revisit this note against the paper.
+
+    Blind spot, homogeneity and background knowledge: k counts rows per QI
+    class and never reads the sensitive values inside a class. A class of
+    size k whose rows all share one sensitive value passes k-anonymity and
+    still discloses that value to anyone who knows the QI: the homogeneity
+    attack. Background knowledge about a person's QI can single out a class
+    the same way (Machanavajjhala et al., l-diversity, ICDE 2006). No
+    sensitive attribute is declared here, and no l-diversity check exists.
+    Pinned by test_k_anonymity_passes_a_homogeneous_class_on_light_class.
     """
     hist = qi_histogram(rows, qi_keys)
     if not hist:

@@ -849,3 +849,27 @@ def test_consent_receipts_match_the_personal_carrying_flow_table() -> None:
         assert principle == "human-consented-personal-analysis", info_type
         assert receipt["recipients"] == body_perception._CI_FLOWS[
             ("personal-carrying", principle)], info_type
+
+
+def test_k_anonymity_passes_a_homogeneous_class_on_light_class() -> None:
+    """Characterization of a blind spot, not a safety property. The dark class
+    has two rows that share one sensitive value (asleep), so k=2 passes while
+    that value is fully disclosed for the class. A future l-diversity check
+    must change this assertion deliberately."""
+    rows = [
+        {"light_class": "dark", "activity": "asleep"},
+        {"light_class": "dark", "activity": "asleep"},
+        {"light_class": "bright", "activity": "awake"},
+        {"light_class": "bright", "activity": "walking"},
+    ]
+    qi = body_perception.QI_DEFAULT_KEYS
+    assert body_perception.k_anonymity_k(rows, qi) == 2
+    assert body_perception.k_anonymity_is_k_anonymous(rows, qi, 2) is True
+    assert body_perception.k_anonymity_suppressed_count(rows, qi, 2) == 0
+    distinct = {
+        row["light_class"]: {r["activity"] for r in rows
+                             if r["light_class"] == row["light_class"]}
+        for row in rows
+    }
+    assert len(distinct["dark"]) == 1
+    assert len(distinct["bright"]) == 2
