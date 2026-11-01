@@ -220,9 +220,12 @@ recorded. It must be **one regular file directly inside** the site's
   refused. The rule counts directory levels, so only files sitting directly in
   the named directory qualify.
 - A relative path is resolved against the current working directory first.
-  From the repository root, `artifacts/NAME.md` means the repository's own
-  `artifacts/` directory, which is not the site's and is refused. Give the
-  absolute site path, or run the command from the site directory.
+  When that form does not name an eligible file in the site, the same relative
+  path is resolved against the site home instead, so `artifacts/NAME.md` from
+  the repository root names the **site's** `artifacts/NAME.md` and is accepted.
+  A path that is eligible under neither form is refused, and the refusal names
+  the path it resolved to. Give the absolute site path if you want no
+  ambiguity.
 - Each outcome binds its evidence file. Reusing one file for a second outcome
   is refused with `outcome evidence path already bound`, because the record
   would name the same file twice.

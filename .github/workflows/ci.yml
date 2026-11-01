@@ -65,6 +65,16 @@ jobs:
       # book.  The link, path and promise gates could not see it, because the
       # path was real and the page was linked.
       - run: python checks/shipped-book-runtimes.py --home . --repo .
+      # A page can state a rule that is true of the running plant and false of
+      # the clone the reader receives, and every other gate passes it: the
+      # path exists, the link resolves, the command is named.  Measured on
+      # this plant: docs/getting-started.md said a relative --evidence path is
+      # refused, which is what the plant's own pinned release does -- but
+      # 81d04a3d had already changed the rule in the clone, so the reader's
+      # command works and the book says it does not.  The gate runs the real
+      # command against the committed tree and compares what the page states
+      # with what the tree does.
+      - run: python checks/shipped-book-evidence.py --home . --repo .
       - run: python -m pytest -q
 
   tmux:
