@@ -4503,9 +4503,10 @@ def _host_session_stability(home: Path) -> dict[str, object]:
     crash-looping; without this reading the operator window is the only
     detector and the fix is manual. A session absent from the live list is
     drift, not unknown: the receipt names the expected session. The live
-    sessions' own servers report their oom_score_adj; anything above -900
-    means the host-guard shield lapsed and the plant's server is OOM-killable
-    again. A server this socket does not host — a test's disposable server on
+    sessions' own servers must sit in a managed mishe slice under a finite
+    memory.max (host containment placement; the retired -900 OOM shield is no
+    longer applied by host-guard). A server outside that placement is
+    uncontained drift; an unreadable cgroup stays unknown. A server this socket does not host — a test's disposable server on
     its own TMUX_TMPDIR socket, say — is not a live server here and must not
     read as a plant shield lapse; when the socket's own server pids cannot be
     read, every server is checked so a broken read stays visible. Unreadable
@@ -4536,7 +4537,7 @@ def _host_session_stability(home: Path) -> dict[str, object]:
     # another socket is not missing: it is live, on its own server. Only a
     # session this home owns nowhere is missing.
     owned = _owned_sessions(home)
-    shields: dict[str, str] = {}
+    placements: dict[str, str] = {}
     # The server's comm is "tmux: server", so pgrep -x misses it; match the
     # full command line and keep only the new-session server processes.
     try:
@@ -4547,12 +4548,12 @@ def _host_session_stability(home: Path) -> dict[str, object]:
         for pid_text in proc_table.pane_pids(servers.stdout):
             if not proc_table.is_tmux_server(str(pid_text)):
                 continue
-            adj = proc_table.read_oom_score_adj(str(pid_text))
-            if adj is None:
-                continue
-            shields[str(pid_text)] = adj
-    unshielded = sorted(pid for pid, adj in shields.items()
-                        if adj != "-900" and (plant_servers is None or pid in plant_servers))
+            placement = proc_table.server_containment(str(pid_text))
+            placements[str(pid_text)] = placement if placement is not None else "unreadable"
+    in_scope = [pid for pid in placements if plant_servers is None or pid in plant_servers]
+    unshielded = sorted(pid for pid in in_scope
+                        if placements[pid].startswith(("uncontained:", "unbounded:")))
+    unreadable = sorted(pid for pid in in_scope if placements[pid] == "unreadable")
     if session is not None and session not in live and owned is None:
         return {"id": "sense.host.session-stability", "state": "unknown",
                 "sample": f"live=[{','.join(live)}] session-ownership=unreadable",
@@ -4563,11 +4564,19 @@ def _host_session_stability(home: Path) -> dict[str, object]:
                 "live": live, "session": session, "unshielded": unshielded, "kind": "read"}
     if unshielded:
         return {"id": "sense.host.session-stability", "state": "drift",
-                "sample": f"live=[{','.join(live)}] unshielded-servers={','.join(unshielded)}",
-                "live": live, "unshielded": unshielded, "kind": "read"}
+                "sample": (f"live=[{','.join(live)}] uncontained-servers="
+                           + ",".join(f"{pid}:{placements[pid]}" for pid in unshielded)),
+                "live": live, "unshielded": unshielded, "containment": placements,
+                "kind": "read"}
+    if unreadable:
+        return {"id": "sense.host.session-stability", "state": "unknown",
+                "sample": f"live=[{','.join(live)}] containment-unreadable={','.join(unreadable)}",
+                "live": live, "unshielded": unshielded, "containment": placements,
+                "kind": "read"}
     return {"id": "sense.host.session-stability", "state": "verified",
-            "sample": f"live=[{','.join(live)}] servers={len(shields)} shielded",
-            "live": live, "unshielded": unshielded, "kind": "read"}
+            "sample": f"live=[{','.join(live)}] servers={len(in_scope)} contained",
+            "live": live, "unshielded": unshielded, "containment": placements,
+            "kind": "read"}
 
 
 def _host_server_keeper(home: Path) -> dict[str, object]:

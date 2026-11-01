@@ -491,6 +491,55 @@ def read_cgroup_slice(pid: str) -> str | None:
     return None
 
 
+MANAGED_PLANT_SLICES = ("mishe-plants.slice", "mishe-lifeline.slice")
+CGROUP_ROOT = Path("/sys/fs/cgroup")
+
+
+def server_containment(pid: str, cgroup_root: Path = CGROUP_ROOT) -> str | None:
+    """Containment placement of a tmux server, replacing the retired -900 shield.
+
+    ``contained:<slice>`` when the process's cgroup sits under a managed mishe
+    slice (plants or lifeline) and a finite ``memory.max`` bounds it, on its own
+    cgroup or on an ancestor up to and including that managed slice.
+    ``uncontained:<path>`` when it sits outside those slices or no finite bound
+    applies (``unbounded:<slice>``). None when the cgroup cannot be read, so the
+    caller keeps the reading unknown rather than calling it contained.
+    """
+    path = read_cgroup_path(pid)
+    if path is None:
+        return None
+    parts = [part for part in path.split("/") if part]
+    managed = [part for part in parts if part in MANAGED_PLANT_SLICES]
+    if not managed:
+        return f"uncontained:{path}"
+    slice_name = managed[-1]
+    cut = max(index for index, part in enumerate(parts) if part == slice_name)
+    # Walk from the server's own cgroup up to the managed slice, inclusive.
+    for depth in range(len(parts), cut, -1):
+        node = cgroup_root.joinpath(*parts[:depth])
+        try:
+            limit = (node / "memory.max").read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if limit != "max":
+            return f"contained:{slice_name}"
+    return f"unbounded:{slice_name}"
+
+
+def read_cgroup_path(pid: str) -> str | None:
+    """The unified cgroup v2 path (``0::/...``) of ``pid``, or None when unreadable."""
+    if not pid:
+        return None
+    try:
+        text = Path("/proc", pid, "cgroup").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        if line.startswith("0::"):
+            return line[3:]
+    return None
+
+
 def pane_field(raw: bytes | str) -> str:
     """Decode one tmux format-field value; empty is valid for absent fields."""
     if isinstance(raw, bytes):

@@ -8065,7 +8065,7 @@ def test_session_stability_no_live_sessions_keeps_only_the_missing_session(
     monkeypatch.setattr(discovery.subprocess, "run",
                         _stability_run(b"", b"", b"999\n", name_rc=1))
     monkeypatch.setattr(discovery.proc_table, "is_tmux_server", lambda pid: True)
-    monkeypatch.setattr(discovery.proc_table, "read_oom_score_adj", lambda pid: "0")
+    monkeypatch.setattr(discovery.proc_table, "server_containment", lambda pid: "uncontained:/user.slice/x.service")
     result = discovery._host_session_stability(_stability_home(tmp_path))
     assert result["state"] == "drift"
     assert result["live"] == []
@@ -8080,7 +8080,7 @@ def test_session_stability_verified_when_live_and_shielded(monkeypatch, tmp_path
                         _stability_run(b"mishe-self-development-current\nandroid-body\n",
                                        b"111\n", b"111\n"))
     monkeypatch.setattr(discovery.proc_table, "is_tmux_server", lambda pid: True)
-    monkeypatch.setattr(discovery.proc_table, "read_oom_score_adj", lambda pid: "-900")
+    monkeypatch.setattr(discovery.proc_table, "server_containment", lambda pid: "contained:mishe-plants.slice")
     result = discovery._host_session_stability(_stability_home(tmp_path))
     assert result["id"] == "sense.host.session-stability"
     assert result["state"] == "verified"
@@ -8100,8 +8100,8 @@ def test_session_stability_ignores_a_foreign_unshielded_server(monkeypatch, tmp_
                         _stability_run(b"mishe-self-development-current\n",
                                        b"111\n", b"111\n999\n"))
     monkeypatch.setattr(discovery.proc_table, "is_tmux_server", lambda pid: True)
-    monkeypatch.setattr(discovery.proc_table, "read_oom_score_adj",
-                        lambda pid: "-900" if pid == "111" else "0")
+    monkeypatch.setattr(discovery.proc_table, "server_containment",
+                        lambda pid: "contained:mishe-plants.slice" if pid == "111" else "uncontained:/user.slice/x.service")
     result = discovery._host_session_stability(_stability_home(tmp_path))
     assert result["state"] == "verified"
     assert result["unshielded"] == []
@@ -8121,7 +8121,7 @@ def test_session_stability_keeps_foreign_servers_when_the_pid_list_is_unreadable
                         _stability_run(b"mishe-self-development-current\n", b"",
                                        b"999\n", pid_rc=1))
     monkeypatch.setattr(discovery.proc_table, "is_tmux_server", lambda pid: True)
-    monkeypatch.setattr(discovery.proc_table, "read_oom_score_adj", lambda pid: "0")
+    monkeypatch.setattr(discovery.proc_table, "server_containment", lambda pid: "uncontained:/user.slice/x.service")
     result = discovery._host_session_stability(_stability_home(tmp_path))
     assert result["state"] == "drift"
     assert result["unshielded"] == ["999"]
@@ -8168,7 +8168,7 @@ def test_session_stability_drift_when_server_unshielded(monkeypatch, tmp_path):
                         _stability_run(b"mishe-self-development-current\n",
                                        b"222\n", b"222\n"))
     monkeypatch.setattr(discovery.proc_table, "is_tmux_server", lambda pid: True)
-    monkeypatch.setattr(discovery.proc_table, "read_oom_score_adj", lambda pid: "200")
+    monkeypatch.setattr(discovery.proc_table, "server_containment", lambda pid: "uncontained:/user.slice/x.service")
     result = discovery._host_session_stability(_stability_home(tmp_path))
     assert result["state"] == "drift"
     assert result["unshielded"] == ["222"]
@@ -9341,3 +9341,79 @@ def test_dm_disposition_age_wall_cited_counts_sender_citation(tmp_path):
     assert result["dispositioned"] == 1
     # Existing counts and the sample string are unchanged by the new field.
     assert "wall_cited" not in result["sample"]
+
+
+def _fake_cgroup(root, parts, limit):
+    """Build a cgroup-v2-shaped directory tree; ``limit`` None writes no memory.max."""
+    node = root.joinpath(*parts)
+    node.mkdir(parents=True, exist_ok=True)
+    if limit is not None:
+        (node / "memory.max").write_text(limit + "\n")
+    return node
+
+
+def _proc_cgroup(monkeypatch, path):
+    from mishe_tauftauf import proc_table
+
+    monkeypatch.setattr(proc_table, "read_cgroup_path", lambda pid: path)
+
+
+def test_server_containment_contained_under_plants_with_own_bound(monkeypatch, tmp_path):
+    from mishe_tauftauf import proc_table
+
+    base = ("user.slice", "user-1000.slice", "user@1000.service", "mishe.slice",
+            "mishe-plants.slice", "mishe-self.service")
+    _fake_cgroup(tmp_path, base, "2147483648")
+    _proc_cgroup(monkeypatch, "/" + "/".join(base))
+    assert proc_table.server_containment("1", cgroup_root=tmp_path) == "contained:mishe-plants.slice"
+
+
+def test_server_containment_bound_inherited_from_managed_slice(monkeypatch, tmp_path):
+    from mishe_tauftauf import proc_table
+
+    base = ("mishe.slice", "mishe-lifeline.slice")
+    _fake_cgroup(tmp_path, base, "3221225472")
+    child = base + ("life.service",)
+    _fake_cgroup(tmp_path, child, None)
+    _proc_cgroup(monkeypatch, "/" + "/".join(child))
+    assert proc_table.server_containment("1", cgroup_root=tmp_path) == "contained:mishe-lifeline.slice"
+
+
+def test_server_containment_unbounded_inside_managed_slice(monkeypatch, tmp_path):
+    from mishe_tauftauf import proc_table
+
+    base = ("mishe.slice", "mishe-plants.slice", "open.service")
+    _fake_cgroup(tmp_path, base, "max")
+    _proc_cgroup(monkeypatch, "/" + "/".join(base))
+    assert proc_table.server_containment("1", cgroup_root=tmp_path) == "unbounded:mishe-plants.slice"
+
+
+def test_server_containment_outside_managed_slices_is_uncontained(monkeypatch, tmp_path):
+    from mishe_tauftauf import proc_table
+
+    base = ("user.slice", "session-3.scope")
+    _fake_cgroup(tmp_path, base, "1073741824")
+    _proc_cgroup(monkeypatch, "/" + "/".join(base))
+    result = proc_table.server_containment("1", cgroup_root=tmp_path)
+    assert result.startswith("uncontained:")
+
+
+def test_server_containment_unreadable_cgroup_is_none(monkeypatch, tmp_path):
+    from mishe_tauftauf import proc_table
+
+    _proc_cgroup(monkeypatch, None)
+    assert proc_table.server_containment("1", cgroup_root=tmp_path) is None
+
+
+def test_session_stability_unreadable_containment_is_unknown_not_drift(monkeypatch, tmp_path):
+    """A server whose cgroup cannot be read stays UNKNOWN, never verified or drift."""
+    from mishe_tauftauf import discovery
+
+    monkeypatch.setattr(discovery.subprocess, "run",
+                        _stability_run(b"mishe-self-development-current\n",
+                                       b"111\n", b"111\n"))
+    monkeypatch.setattr(discovery.proc_table, "is_tmux_server", lambda pid: True)
+    monkeypatch.setattr(discovery.proc_table, "server_containment", lambda pid: None)
+    result = discovery._host_session_stability(_stability_home(tmp_path))
+    assert result["state"] == "unknown"
+    assert "containment-unreadable=111" in result["sample"]
