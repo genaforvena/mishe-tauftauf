@@ -118,3 +118,34 @@ def test_stall_is_unknown_when_total_missing_and_absent_when_no_high_delta(tmp_p
     out2 = read_unit_psi(path2, now=1010.0)
     assert "high-delta=0/100s" in out2["sample"]
     assert "some-stall" not in out2["sample"]
+
+
+def _fixed_width_log(path):
+    # Ten 25-byte lines ('{"at": N, "cgroups": {}}' plus newline), 250 bytes in all.
+    path.write_bytes(b"".join(json.dumps({"at": i, "cgroups": {}}).encode() + b"\n"
+                              for i in range(10)))
+    assert path.stat().st_size == 250
+
+
+def test_tail_seek_landing_on_line_start_keeps_that_record(tmp_path, monkeypatch):
+    # A 75-byte tail seeks to byte 175, exactly the start of line 7: lines 7, 8, 9 are whole.
+    import mishe_tauftauf.unit_psi_reading as reading
+
+    path = tmp_path / "sampler.jsonl"
+    _fixed_width_log(path)
+    monkeypatch.setattr(reading, "TAIL_BYTES", 75)
+    records, malformed = reading._tail_records(path)
+    assert [r["at"] for r in records] == [7, 8, 9]
+    assert malformed == 0
+
+
+def test_tail_seek_inside_a_line_drops_only_the_partial_line(tmp_path, monkeypatch):
+    # A 70-byte tail seeks to byte 180, inside line 7: that partial line goes, 8 and 9 stay.
+    import mishe_tauftauf.unit_psi_reading as reading
+
+    path = tmp_path / "sampler.jsonl"
+    _fixed_width_log(path)
+    monkeypatch.setattr(reading, "TAIL_BYTES", 70)
+    records, malformed = reading._tail_records(path)
+    assert [r["at"] for r in records] == [8, 9]
+    assert malformed == 0

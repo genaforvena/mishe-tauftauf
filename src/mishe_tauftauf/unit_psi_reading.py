@@ -29,8 +29,11 @@ def _tail_records(path: Path) -> tuple[list[dict], int]:
     size = path.stat().st_size
     with path.open("rb") as handle:
         if size > TAIL_BYTES:
-            handle.seek(size - TAIL_BYTES)
-            handle.readline()  # drop the partial line the seek landed inside
+            start = size - TAIL_BYTES
+            handle.seek(start - 1)
+            landed_on_line_start = handle.read(1) == b"\n"
+            if not landed_on_line_start:
+                handle.readline()  # drop the partial line the seek landed inside
         raw = handle.read()
     return parse_jsonl_records(raw)
 
