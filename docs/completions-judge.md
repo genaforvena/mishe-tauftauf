@@ -192,6 +192,16 @@ question name carries both traits, so the two documents differ only in their
 instructions; keep the style text with your cases file so each row can be
 attributed, as above.
 
+Write the trait as a single paragraph. The adapter splits a document on its
+first two blank lines and reads the text between them as the instruction, so a
+blank line inside your trait ends it: the paragraph after the blank line is
+sent to the provider as part of the state block, which the adapter tells the
+provider to treat as untrusted data. The document is still accepted, the row is
+still written, and the row's `document_sha256` still matches the document you
+built, because your full trait text is inside the hashed text. The row is
+therefore attributable and still scored on a different question than the one you
+wrote. A single newline inside the trait is fine; only a blank line truncates.
+
 Two limits are worth keeping in view. Adapters that share an upstream model or
 a prompt template may share the very variance you are trying to measure, so a
 high agreement between them is not by itself validity. And a single adapter

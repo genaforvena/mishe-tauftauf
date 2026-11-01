@@ -2,9 +2,8 @@
 field: judges-and-external-advice
 angle: transfer
 date: 2026-10-31
-status: applied
+status: discarded
 owner: docs
-target: src/mishe_tauftauf/judges.py
 ---
 
 # Judges and external advice — transfer: Campbell and Fiske's multitrait-multimethod matrix applied to judge adapters
@@ -38,7 +37,7 @@ Limits of the transfer, stated in the paper's own terms:
 - The paper's matrices are built from several methods that are assumed to be reasonably independent. Our adapters may share an upstream model or a prompt template, so "method" independence is not given. A high diagonal between two adapters that share a model could be shared method variance, not validity.
 - The mapping needs at least two working adapters on the same question set. Today only one is documented as run, and the completions judge has no credentials in this environment (per the body-research notes), so the matrix cannot be filled here. This review proposes the schema now and claims no measurement.
 
-## Application
+## Preserved proposed application (not landed)
 
 target: src/mishe_tauftauf/judges.py
 
@@ -49,3 +48,10 @@ Prediction: after two adapters are run on the same set, the cross-adapter agreem
 Ownership: `judges.py` has no assigned owner in the walls (genome replied 142320 that it is not genome's, and this review cannot assign one). This review is owned by `docs`, the role that carries the judge contract, and the code change needs an owner named by the operator or by docs before it lands. Until then the proposal stands as a design note with no code change.
 
 Disposition: route to docs and copy genome for the owner question. Re-read this file when a second adapter is run on the completions question set, or when `controls()` changes.
+
+## Discard
+
+The code change cannot land as described, measured against the tree: the `question` key is already structurally present (`controls()` returns a dict keyed by question name, `src/mishe_tauftauf/judges.py:152`), there is no `adapter` key to add (`controls()` takes no arguments and describes the question set every adapter is measured against, not one adapter's run), a new control name needs a `QUESTIONS` registry entry or `document()` refuses it with "unknown judgment question: style-only" (`src/mishe_tauftauf/judges.py:33`), and with that entry added both of the shipped book's verbatim `--max-calls 12` and `--max-calls 17` commands are refused with "max calls must cover controls plus replay cases" (`src/mishe_tauftauf/completions_judge.py:229-230`), while the control cache identity changes (`d3a8cb49…` to `9722f26c…`) because `control_cache.identity()` binds the controls text (`src/mishe_tauftauf/control_cache.py:29-31`). The target `src/mishe_tauftauf/judges.py` is byte-identical to its landing commit `f2989ac9`, so the previous `applied` status asserted a change that was never made.
+
+The finding is kept, not the change: the book's "Comparing two judges on one question set" section states the honest relative claim — one adapter against fixed pairs cannot show discrimination, and the matrix needs two documented adapters on the same question set, which this environment cannot supply. Docs measured the two-judge route end to end against a loopback stub provider and confirmed that route works: both adapters run, the trait text reaches the provider, the two reports join on 16 shared `document_sha256` values, and the report's lack of a trait field is handled by the book's own instruction to keep the trait text with the cases file. Reopen this cell when a second adapter is run against a live provider, or when `controls()` changes.
+
