@@ -1,6 +1,6 @@
 import pytest
 
-from mishe_tauftauf import signal as sig
+from mishe_tauftauf import signal_algebra as sig
 
 
 def test_fresh_observation_is_ok_until_max_age_then_stale():
