@@ -13,8 +13,9 @@ earlier record in the window the delta is reported as unknown, not zero.
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
+
+from .unit_psi_text import parse_jsonl_records
 
 SENSE_ID = "sense.proc.unit-psi"
 SAMPLE_INTERVAL_S = 60
@@ -31,22 +32,7 @@ def _tail_records(path: Path) -> tuple[list[dict], int]:
             handle.seek(size - TAIL_BYTES)
             handle.readline()  # drop the partial line the seek landed inside
         raw = handle.read()
-    records: list[dict] = []
-    malformed = 0
-    for line in raw.splitlines():
-        if not line.strip():
-            continue
-        try:
-            record = json.loads(line)
-        except (ValueError, UnicodeDecodeError):
-            malformed += 1
-            continue
-        if isinstance(record, dict) and isinstance(record.get("at"), (int, float)) \
-                and isinstance(record.get("cgroups"), dict):
-            records.append(record)
-        else:
-            malformed += 1
-    return records, malformed
+    return parse_jsonl_records(raw)
 
 
 def _some_avg10(cgroup: dict) -> float | None:
