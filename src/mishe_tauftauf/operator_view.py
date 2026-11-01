@@ -29,6 +29,20 @@ from .tmux import _pane_stopped_or_dead, _tmux, await_owned
 PUBLISHER_GRACE_SECONDS = 90.0
 
 
+def _pane_pid(session: str, window: str) -> str | None:
+    """PID of the dashboard pane's process, the key for once-per-publisher reports."""
+    result = _tmux("display-message", "-p", "-t", f"{session}:{window}.0",
+                   "#{pane_pid}", check=False)
+    pid = result.stdout.decode("ascii", "replace").strip() if not result.returncode else ""
+    return pid if pid.isdigit() else None
+
+
+def _grace_pid(target: str) -> str:
+    """The publisher pid already reported as starting, or an empty string."""
+    return _tmux("show-option", "-wqv", "-t", target,
+                 "@mishe-operator-grace-pid", check=False).stdout.decode().strip()
+
+
 def _pane_age_seconds(session: str, window: str) -> float | None:
     """Age of the dashboard pane's process, or None when it cannot be read."""
     result = _tmux("display-message", "-p", "-t", f"{session}:{window}.0",
@@ -211,6 +225,16 @@ def _ensure(home: Path, session: str, window: str, *, package_root: Path | None,
                     # its frame is respawned exactly as before.
                     age = _pane_age_seconds(session, window)
                     if age is not None and age < PUBLISHER_GRACE_SECONDS:
+                        # Report once per publisher process, not per tick: the
+                        # grace state is one event, and a per-tick line flooded
+                        # the chat (191 identical lines). The pid is the state key,
+                        # so a respawned publisher reports its own grace once.
+                        pid = _pane_pid(session, window)
+                        if pid is not None and _grace_pid(target) == pid:
+                            return ""
+                        if pid is not None:
+                            _tmux("set-option", "-w", "-t", target,
+                                  "@mishe-operator-grace-pid", pid)
                         detail = f" (trigger: {trigger})" if trigger else ""
                         return (f"operator publisher still starting in {target}"
                                 f"{detail}; publication pending: {exc}")

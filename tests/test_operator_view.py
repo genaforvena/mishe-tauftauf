@@ -472,3 +472,38 @@ def test_pane_age_is_unknown_when_the_pane_cannot_be_read(tmp_path, monkeypatch)
     monkeypatch.setattr(operator_view, "_tmux",
                         lambda *a, **k: CompletedProcess(a, 1, b""))
     assert operator_view._pane_age_seconds("owned", "operator") is None
+
+
+def test_grace_window_reports_once_per_publisher(tmp_path, monkeypatch):
+    from mishe_tauftauf import operator_view
+    from mishe_tauftauf import dashboard
+    options = {}
+    def tmux(*args, **kwargs):
+        if args[0] == "list-windows":
+            return CompletedProcess(args, 0, b"operator\n")
+        if args[0] == "list-panes":
+            return CompletedProcess(args, 0, b"%dashboard\n%shell\n")
+        if args[0] == "show-option":
+            name = args[-1]
+            if name == "@mishe-operator-dashboard":
+                return CompletedProcess(args, 0, b"%dashboard\n")
+            return CompletedProcess(args, 0, (options.get(name, "") + "\n").encode())
+        if args[0] == "set-option" and args[-2].startswith("@mishe-operator-grace"):
+            options[args[-2]] = args[-1]
+        return CompletedProcess(args, 0, b"")
+    def unreadable(home, window):
+        raise ValueError("stale publication")
+    monkeypatch.setattr(operator_view, "await_owned", lambda *a: True)
+    monkeypatch.setattr(operator_view, "_tmux", tmux)
+    monkeypatch.setattr(operator_view, "_pane_stopped_or_dead", lambda *a: False)
+    monkeypatch.setattr(operator_view, "_pane_age_seconds", lambda *a: 5.0)
+    monkeypatch.setattr(operator_view, "_pane_pid", lambda *a: "4242")
+    monkeypatch.setattr(dashboard, "read", unreadable)
+    first = operator_view.ensure(tmp_path, "owned", "operator", refresh=False)
+    second = operator_view.ensure(tmp_path, "owned", "operator", refresh=False)
+    assert "still starting" in first
+    assert second == ""
+    # A respawned publisher (new pid) is a new state change and reports once.
+    monkeypatch.setattr(operator_view, "_pane_pid", lambda *a: "5151")
+    third = operator_view.ensure(tmp_path, "owned", "operator", refresh=False)
+    assert "still starting" in third
