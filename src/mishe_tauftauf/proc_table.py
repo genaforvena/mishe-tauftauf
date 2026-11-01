@@ -526,6 +526,11 @@ def server_containment(pid: str, cgroup_root: Path = CGROUP_ROOT) -> str | None:
     return f"unbounded:{slice_name}"
 
 
+def placement_unshielded(placement: str) -> bool:
+    """True when a ``server_containment`` placement is drift (uncontained or unbounded)."""
+    return placement.startswith(("uncontained:", "unbounded:"))
+
+
 def read_cgroup_path(pid: str) -> str | None:
     """The unified cgroup v2 path (``0::/...``) of ``pid``, or None when unreadable."""
     if not pid:

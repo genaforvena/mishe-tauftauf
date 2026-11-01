@@ -4552,7 +4552,7 @@ def _host_session_stability(home: Path) -> dict[str, object]:
             placements[str(pid_text)] = placement if placement is not None else "unreadable"
     in_scope = [pid for pid in placements if plant_servers is None or pid in plant_servers]
     unshielded = sorted(pid for pid in in_scope
-                        if placements[pid].startswith(("uncontained:", "unbounded:")))
+                        if proc_table.placement_unshielded(placements[pid]))
     unreadable = sorted(pid for pid in in_scope if placements[pid] == "unreadable")
     if session is not None and session not in live and owned is None:
         return {"id": "sense.host.session-stability", "state": "unknown",

@@ -377,3 +377,16 @@ def test_git_revert_named_shas_reads_only_full_named_commits():
            f"{'7' * 40}\x00This reverts commit abc123.\n\x01")
     assert proc_table.git_revert_named_shas(raw) == [twin]
     assert proc_table.git_revert_named_shas("") == []
+
+
+def test_placement_unshielded_names_only_drift_placements():
+    """Containment placements are classified by the adapter, not by callers.
+
+    ``contained:`` and an unreadable (None-mapped) reading are not drift; the two
+    drift prefixes are. Callers classify through this predicate so the parsing
+    boundary stays with this adapter.
+    """
+    assert proc_table.placement_unshielded("uncontained:/user.slice/x.service")
+    assert proc_table.placement_unshielded("unbounded:mishe-plants.slice")
+    assert not proc_table.placement_unshielded("contained:mishe-plants.slice")
+    assert not proc_table.placement_unshielded("unreadable")
