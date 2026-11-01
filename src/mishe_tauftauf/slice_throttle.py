@@ -18,7 +18,7 @@ docs.kernel.org/admin-guide/cgroup-v2.html). A quiet reading therefore does not
 rule out throttling from above the slice. The sample reports the slice's own
 limit as the sense's verdict. Throttling inherited from an ancestor is read
 separately from the sibling file cpu.stat.local (its ``throttled_usec``): the
-``inherited`` field is ``local delta - own delta``, and is UNKNOWN (never zero)
+``inherited`` field is inferred as ``local delta - own delta``, and is UNKNOWN (never zero)
 when cpu.stat.local is absent. The sense id and sample text do not change.
 """
 from __future__ import annotations
