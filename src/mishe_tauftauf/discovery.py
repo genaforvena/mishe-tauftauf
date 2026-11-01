@@ -26,6 +26,7 @@ from .body_perception import (read_redmi10, read_redmi10_dense_baseline,
                              read_redmi10_delivery_gaps, read_redmi10_light,
                              read_redmi10_peer_delivery)
 from .multibody import read_multibody_coverage
+from .slice_throttle import read_slice_throttle
 from .activity import roles as seated_roles
 from .feed import (Feed, FeedEntry, entry_timestamp as _feed_entry_timestamp,
                   iter_feed_file, publication_lock, read_scan_created_stamps, read_scan_series,
@@ -8365,6 +8366,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_host_server_keeper(home))
     observed.append(_host_server_slice(home))
     observed.append(_host_session_restarts(home))
+    observed.extend(read_slice_throttle(home))
     roots, _coverage_failure = _service_import_roots(home)
     observed.append(_sensor_coverage(home, roots))
     observed.append(_renderer_coverage(home))
