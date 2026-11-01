@@ -5985,7 +5985,8 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
                            f"broadcast_excluded={broadcast_excluded} "
                            f"nonmind_excluded={nonmind_excluded}"),
                 "kind": "read", "dms": 0, "reply_edge": 0, "seq_credit": 0,
-                "credit_only": 0, "wall_only": 0, "dispositioned": 0, "open": 0,
+                "credit_only": 0, "wall_only": 0, "wall_cited": 0,
+                "dispositioned": 0, "open": 0,
                 "stall": 0, "broadcast_excluded": broadcast_excluded,
                 "nonmind_excluded": nonmind_excluded}
     outcomes: list[tuple[datetime, str]] = []
@@ -6013,7 +6014,7 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
     wall_by_role: dict[str, list[datetime]] = {}
     for ots, orole in outcomes:
         wall_by_role.setdefault(orole, []).append(ots)
-    reply_n = seq_n = credit_only_n = wall_only_n = dispositioned = stall_n = 0
+    reply_n = seq_n = credit_only_n = wall_only_n = wall_cited_n = dispositioned = stall_n = 0
     ages: list[float] = []
     open_ages: list[tuple[float, str]] = []
     for ts, sender, target, seq in dms:
@@ -6050,6 +6051,13 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
             credit_only_n += 1
         if has_wall and not has_reply:
             wall_only_n += 1
+        # wall_cited: a later tape outcome by the target names the sender. It
+        # is a validity probe beside wall_join, not a change to the credit rule.
+        sender_re = re.compile(rf"(?<![\w-]){re.escape(sender)}(?![\w-])")
+        cited_bodies = seq_by_role.get(target, ([], []))
+        if any(role_t > ts and sender_re.search(body)
+               for role_t, body in zip(*cited_bodies)):
+            wall_cited_n += 1
         if disp_time is not None:
             dispositioned += 1
             ages.append((disp_time - ts).total_seconds())
@@ -6087,6 +6095,7 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
             "sample": sample, "kind": "read",
             "dms": len(dms), "reply_edge": reply_n, "seq_credit": seq_n,
             "credit_only": credit_only_n, "wall_only": wall_only_n,
+            "wall_cited": wall_cited_n,
             "dispositioned": dispositioned, "open": open_count, "stall": stall_n,
             "p50_minutes": round(p50), "p90_minutes": round(p90),
             "oldest_open": oldest, "broadcast_excluded": broadcast_excluded,

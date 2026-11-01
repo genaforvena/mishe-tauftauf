@@ -9229,3 +9229,44 @@ def test_session_restarts_zero_births_before_window_is_steady(tmp_path, monkeypa
     row = discovery._host_session_restarts(tmp_path, past_minutes=60)
     assert row["state"] == "verified"
     assert row["verdict"] == "steady"
+
+
+def _wall_join_fixture(home: Path, outcome_body: str) -> None:
+    # health DMs witness; witness later records an outcome whose tape body is
+    # outcome_body and whose record is written, so wall_join credits the DM.
+    (home / "records").mkdir(parents=True, exist_ok=True)
+    digest = _write_outcome(home, "witness")
+    entries = [
+        (1, "2026-10-06T12:30:00Z", "health", "[dm] to=witness\n# hi witness\n"),
+        (2, "2026-10-06T13:00:00Z", "witness", outcome_body),
+        (3, "2026-10-06T13:00:01Z", "witness",
+         f"[record] records/{digest}.json sha256={digest}\n"),
+    ]
+    (home / "chat.log").write_bytes(
+        b"".join(_tape_entry(seq, ts, src, body) for seq, ts, src, body in entries))
+
+
+def test_dm_disposition_age_wall_cited_requires_sender_named(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir(parents=True, exist_ok=True)
+    # Outcome names neither the sender nor the DM: wall_join credits it, wall_cited does not.
+    _wall_join_fixture(home, "Wall outcome accepted by witness\n# witness wake\n\nAll quiet.\n")
+    result = discovery._coord_dm_disposition_age(home, now=_dm_now())
+    assert result["state"] == "verified"
+    assert result["wall_only"] == 1
+    assert result["wall_cited"] == 0
+    assert result["dispositioned"] == 1
+
+
+def test_dm_disposition_age_wall_cited_counts_sender_citation(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir(parents=True, exist_ok=True)
+    # Outcome names the sender (health): a citation, not an unrelated wall write.
+    _wall_join_fixture(home, "Wall outcome accepted by witness\n# witness wake\n\nRead health. Acked.\n")
+    result = discovery._coord_dm_disposition_age(home, now=_dm_now())
+    assert result["state"] == "verified"
+    assert result["wall_only"] == 1
+    assert result["wall_cited"] == 1
+    assert result["dispositioned"] == 1
+    # Existing counts and the sample string are unchanged by the new field.
+    assert "wall_cited" not in result["sample"]
