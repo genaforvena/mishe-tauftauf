@@ -139,3 +139,31 @@ def test_intensity_is_additive_and_verdict_unchanged():
     empty = session_restarts.assess_restarts([], SESSION, 60)
     assert empty["intensity"]["exceeded"] is False and empty["verdict"] == "steady"
     assert "intensity" not in session_restarts.assess_restarts([], "", 60)
+
+
+SERVICE_ID = "c6cded82d22e4265852356e45bd3f07c"
+SERVICE_BIRTH = (f"Started {SESSION}-session-{SERVICE_ID}.service - "
+                 f"Mishe resident session {SESSION}.")
+SIBLING_WATCH = (f"Started {SESSION}-session-watch.service - "
+                 "Mishe owned session and presentation detector.")
+
+
+def test_transient_service_birth_counts():
+    # 2026-11-01 live shape: the resident session is a transient .service.
+    assert session_restarts._is_birth(SERVICE_BIRTH, SESSION)
+    entries = _entries((100_0000000, SERVICE_BIRTH), (400_0000000, SERVICE_BIRTH))
+    row = session_restarts.assess_restarts(entries, SESSION)
+    assert row["verdict"] == "steady"
+    assert row["births"] == 2
+
+
+def test_sibling_watch_service_is_not_a_birth():
+    assert not session_restarts._is_birth(SIBLING_WATCH, SESSION)
+
+
+def test_service_shape_requires_hex_id_and_unit_boundary():
+    short_id = f"Started {SESSION}-session-c6cded.service - x."
+    glued = f"Started {SESSION}-session-{SERVICE_ID}.serviceX - x."
+    assert not session_restarts._is_birth(short_id, SESSION)
+    assert not session_restarts._is_birth(glued, SESSION)
+    assert not session_restarts._is_birth(f"Stopped {SESSION}-session-{SERVICE_ID}.service", SESSION)

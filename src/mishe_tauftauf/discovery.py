@@ -4645,7 +4645,7 @@ def _host_session_restarts(home: Path, past_minutes: int = 60) -> dict[str, obje
         "--since", since.strftime("%Y-%m-%d %H:%M:%S.%f UTC"),
         "--until", until.strftime("%Y-%m-%d %H:%M:%S.%f UTC"),
         "--no-pager", "--quiet", "--case-sensitive=yes",
-        "--grep", f"^Started {session}-session\\.scope"])
+        "--grep", f"^Started {session}-session(\\.scope|-[0-9a-f]{{32}}\\.service)"])
     after = _journal_boot()
     finished = time.monotonic_ns()
     coverage["acquisition_finished_ns"] = finished

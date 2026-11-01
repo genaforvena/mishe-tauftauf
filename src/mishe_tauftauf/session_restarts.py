@@ -5,12 +5,14 @@ No discovery wiring, no consumer, no live activation.
 
 Contract:
 - Authoritative source: journal MESSAGE lines `Started <session>-session.scope`
-  under the systemd identifier (seed.py raises the resident session with
-  `systemd-run --unit <session>-session.scope`). One birth per boot is
-  healthy; repeated births mean the session keeps dying and being re-raised.
-- Match: Python-side prefix test on MESSAGE for this plant's exact
-  `<session>-session.scope` scope unit. Foreign sessions, services, and
-  non-string lines never match.
+  (seed.py raises the resident session with
+  `systemd-run --unit <session>-session.scope`) or
+  `Started <session>-session-<32-hex>.service` (the transient service the
+  resident session is raised as). One birth per boot is healthy; repeated
+  births mean the session keeps dying and being re-raised.
+- Match: Python-side prefix test on MESSAGE for this plant's exact scope unit,
+  or this plant's service unit with a 32-hex id. Foreign sessions, sibling
+  units such as `-session-watch.service`, and non-string lines never match.
 - Verdicts: `steady` (0 births over a well-formed window, or <3 births and no
   sub-10m gap), `churn` (>=3 births in the trailing window OR any inter-birth
   gap under 10 minutes with >=2 births), `unknown` (session missing,
@@ -62,14 +64,35 @@ CHURN = "churn"
 UNKNOWN = "unknown"
 
 
+_UNIT_ID_ALPHABET = frozenset("0123456789abcdef")
+_UNIT_ID_LENGTH = 32
+
+
 def _is_birth(message, session: str) -> bool:
-    """Whether one MESSAGE line is this session's scope birth."""
+    """Whether one MESSAGE line is this session's birth.
+
+    Two unit shapes carry the plant session: the seed's ``systemd-run --unit
+    <session>-session.scope`` scope, and the transient
+    ``<session>-session-<32-hex>.service`` unit the self-development session
+    is raised as (observed 2026-11-01: a service, not a scope). The hex id is
+    what separates the plant session from sibling units such as
+    ``<session>-session-watch.service``, which must not count as births.
+    """
     if not isinstance(message, str):
         return False
     if not isinstance(session, str) or not session:
         return False
-    prefix = "Started " + session + "-session.scope"
-    return message[:len(prefix)] == prefix
+    scope = "Started " + session + "-session.scope"
+    if message[:len(scope)] == scope:
+        return True
+    unit_prefix = "Started " + session + "-session-"
+    if message[:len(unit_prefix)] != unit_prefix:
+        return False
+    ident, dot, after = message[len(unit_prefix):].partition(".service")
+    if not dot or (after and not after.startswith(" ")):
+        return False
+    return (len(ident) == _UNIT_ID_LENGTH
+            and all(char in _UNIT_ID_ALPHABET for char in ident))
 
 
 def assess_restarts(entries, session: str, window_minutes=None) -> dict:
