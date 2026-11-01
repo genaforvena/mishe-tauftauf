@@ -50,8 +50,12 @@ use the narrow recovery procedure before considering a replant.
 
 Use the setup guide's read-only prerequisite checks:
 
-- Linux, Python 3.10+, Git, and tmux. There are no required third-party Python
-  dependencies for planting.
+- Linux, Python 3.10+, Git, and tmux. The runtime's only required third-party
+  dependency is `wcwidth`, which renders the terminal dashboard; check it with
+  `python3 -c "import wcwidth"` and install it with
+  `python3 -m pip install "wcwidth>=0.9,<1"` if the import fails. Planting
+  refuses to start panes that would die at import, so a missing `wcwidth`
+  fails the plant rather than degrading it.
 - An installed agent CLI with usable authentication and model access. Prefer
   the human's working command; inspect its actual supported invocation rather
   than guessing flags. Command existence alone does not prove provider access.

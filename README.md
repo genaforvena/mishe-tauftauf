@@ -61,7 +61,16 @@ export TMUX_TMPDIR="/tmp/tmux-$(id -u)/${PWD##*/}"
 python3 -m coordination.launcher --engine-command 'codex'
 ```
 
-No Python package install is required. The launcher prints the actual session
+No Python package install is required for the runtime itself, but one small
+third-party package must already be importable by the interpreter that runs the
+launcher: `wcwidth`. It renders the terminal dashboard, and planting refuses to
+start panes that would die at import. Install it once if the check below fails:
+
+```bash
+python3 -c "import wcwidth" || python3 -m pip install "wcwidth>=0.9,<1"
+```
+
+The launcher prints the actual session
 and service result. Fresh defaults are site `.mishe-seed/` and tmux session
 `mishe-seed`; existing plants can have different names. Attach to the **reported**
 session from the same terminal, retaining that socket setting—for the fresh default:

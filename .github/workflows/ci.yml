@@ -85,6 +85,17 @@ jobs:
       # real init against each placement a reader can choose and compares
       # what the page states with what the tree does.
       - run: python checks/shipped-book-placement.py --home . --repo .
+      # A page can list the prerequisites a reader needs and omit the one
+      # that decides the outcome.  Measured on this plant: the shipped
+      # docs/getting-started.md and .agents/skills/plant-mishe/SKILL.md told
+      # a reader that "the runtime has no required third-party Python
+      # dependencies", while 6004170f had added viewport.py's module-level
+      # `from wcwidth import ...` and pyproject.toml declares wcwidth.  The
+      # reader's documented first command then failed at the last step of
+      # planting, with a refusal that names the dependency but not the fix.
+      # The gate plants the tree with each dependency absent and compares
+      # what the page states with what the tree requires.
+      - run: python checks/shipped-book-dependencies.py --home . --repo .
       - run: python -m pytest -q
 
   tmux:

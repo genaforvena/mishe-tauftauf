@@ -13,11 +13,16 @@ is the underlying procedure if you or the agent need the exact commands.
 
 ## 1. Check the prerequisites
 
-Run the host commands from this repository's checkout, even when the work will happen in another repository. They load `src/` themselves; a package install is not required.
+Run the host commands from this repository's checkout, even when the work will happen in another repository. They load `src/` themselves; a package install of Mishe itself is not required.
 
 You need:
 
-- **Linux and Python 3.10 or newer.** The runtime has no required third-party Python dependencies.
+- **Linux and Python 3.10 or newer.**
+- **The `wcwidth` package, importable by the interpreter that runs the launcher.** It is the runtime's only required third-party dependency: it renders the terminal dashboard, and planting refuses to start panes that would die at import. Check it and install it if needed:
+
+  ```bash
+  python3 -c "import wcwidth" || python3 -m pip install "wcwidth>=0.9,<1"
+  ```
 - **Git and an owned Git worktree.** The site directory must sit directly inside the worktree root, not inside an arbitrary subdirectory and not at the repository root itself.
 - **tmux.** This supplies the shared terminal session and its panes.
 - **An installed, usable coding-agent CLI**, such as Codex or OMP, with its own authentication and model access already configured. Planting starts real agents that may consume your provider's usage or credits. It checks that a new mind's command exists; it does not supply credentials or prove that a model request will work.
