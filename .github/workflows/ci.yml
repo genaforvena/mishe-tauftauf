@@ -75,6 +75,16 @@ jobs:
       # command against the committed tree and compares what the page states
       # with what the tree does.
       - run: python checks/shipped-book-evidence.py --home . --repo .
+      # A page can say where the plant's own state lives, and the reader can
+      # then plant nowhere the clone accepts.  Measured on this plant:
+      # docs/mesh.md said each plant keeps its local state "outside the shared
+      # source repository", while seed._require_worktree refuses a site that
+      # is not directly inside a Git worktree -- so the page contradicted the
+      # clone and five other shipped pages, and no other gate could see it,
+      # because no path was named and no link was broken.  The gate runs the
+      # real init against each placement a reader can choose and compares
+      # what the page states with what the tree does.
+      - run: python checks/shipped-book-placement.py --home . --repo .
       - run: python -m pytest -q
 
   tmux:
