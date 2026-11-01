@@ -14,7 +14,7 @@ decides the verdict: commit ``237db71f`` ("Remove local operating records
 from the public repository", 2026-10-30) gitignored seven reader pages that
 still exist on this checkout, so the working tree shows 16 pages where a clone
 shows 9.  Measured on 2026-11-01, the working tree's pages name 52 leaf
-invocations and the clone's name 33; the 19 in between are named only by
+invocations and the clone's name 34; the 18 in between are named only by
 pages a reader never receives.  So the corpus is read through ``git archive``,
 exactly like ``checks/shipped-book-links.py``.  The working-tree reading is
 reported beside it, because the gap between the two is the measurement.
@@ -115,9 +115,8 @@ DISPOSITIONS: dict[str, str] = {
     # supervisor's internals.
     "seed tick": "one supervisor tick; the resident loop's internals, not a reader step",
     "seed follow": "follows one mind's idle launcher; a resident-loop internal, not a reader step",
-    # Wall surfaces the book does not teach.  `wall write`, `wall show` and
-    # `wall outcome` are the documented ones.
-    "wall dm": "addressed message between minds; the book's shared conversation is `append`, and `wall dm` is the pair's internal form",
+    # Wall surfaces the book does not teach.  `wall write`, `wall show`,
+    # `wall outcome` and `wall dm` are the documented ones.
     "wall retry": "explicit retry of a failed delivery; an in-plant recovery step, not a reader step",
     "wall silence": "suppresses a wall write for a role; an in-plant control, not a reader step",
     # Plant diagnostics and sampling.  The book teaches `pain read` for a
@@ -239,6 +238,13 @@ def committed_reader_corpus(repo: Path) -> dict[str, str]:
     ``wall silence``, ``discover scan``, ``doctor``, ``pain list``, ``pain
     watch``, ``seed tick``, ``seed follow``, ``task claim`` and ``tmux
     start``.  A reader who clones the repository cannot find them.
+
+    Later the same day the shipped book grew its own answer to one of them:
+    ``docs/getting-started.md`` now names ``wall dm`` (Docs wake 155786,
+    commit ``f03cd749``), so the clone's corpus covers it and the count fell
+    to **18**.  A leaf that moves from the untracked-only set into the
+    shipped book is the measure working: the gap closed because a reader can
+    now find the command, not because the check narrowed.
 
     So the working-tree corpus answers a question no reader has: "does this
     checkout's local book name every command?".  The clone's corpus answers
