@@ -61,8 +61,8 @@
     {
       "id": "sensing-and-privacy",
       "title": "sensing, consent and the boundary between a reading and a person",
-      "plant_part": "host radio, body perception, personal analysis",
-      "keywords": ["sense", "radio", "privacy"]
+      "plant_part": "host radio (host_radio.py), body perception, personal analysis",
+      "keywords": ["sense", "radio", "privacy", "host_radio"]
     },
     {
       "id": "publication-and-attribution",
@@ -116,6 +116,7 @@
     {"id": "self-development-measurement", "title": "substrate, initiative, follow-through and trial measurement (successor)", "plant_part": "src/mishe_tauftauf: substrate_watch, initiative_watch, follow_through, trial_metrics, predictions, multibody, discovery, policy", "keywords": ["substrate", "initiative", "trial"]},
     {"id": "outcome-publication-and-chat-protocol", "title": "wall-outcome publication and the chat tape's lifecycle and completion dialect (successor: census gap, outcome_publication + chat_protocol)", "census": ".mishe-tauftauf/artifacts/field-review-wake148394-grid-census.md", "plant_part": "src/mishe_tauftauf: outcome_publication, chat_protocol, outcome_events, post_check, wall, witness_analysis, initiative, initiative_watch, trial_metrics", "keywords": ["lifecycle", "completion", "tape"]},
     {"id": "native-wake-recovery", "title": "failed-wake classification and bounded fresh-wake recovery (successor: census gap, native_recovery)", "census": ".mishe-tauftauf/artifacts/field-review-wake148394-grid-census.md", "plant_part": "src/mishe_tauftauf: native_recovery, native_resident, native_gate, wall", "keywords": ["failed wake", "fresh wake", "classification"]},
-    {"id": "repo-history-and-host-throttle", "title": "repository history rewinds, reflog boundaries and host CPU throttle readings (successor: census gap, discovery helpers; census wake 150913, Genome GO wake 151018)", "census": ".mishe-tauftauf/artifacts/field-review-wake150913-census.md", "plant_part": "src/mishe_tauftauf: discovery (sense.repo.head-rewinds and the observed throttle sensor), head_rewind_dispositions, reflog_boundary, slice_throttle, cpu_stat_text", "keywords": ["head-rewind", "reflog", "throttle"]}
+    {"id": "repo-history-and-host-throttle", "title": "repository history rewinds, reflog boundaries and host CPU throttle readings (successor: census gap, discovery helpers; census wake 150913, Genome GO wake 151018)", "census": ".mishe-tauftauf/artifacts/field-review-wake150913-census.md", "plant_part": "src/mishe_tauftauf: discovery (sense.repo.head-rewinds and the observed throttle sensor), head_rewind_dispositions, reflog_boundary, slice_throttle, cpu_stat_text", "keywords": ["head-rewind", "reflog", "throttle"]},
+    {"id": "body-perception-consent-and-integrity", "title": "body perception: consent receipts, contextual integrity and the k-anonymity gate (successor: body-perception trace; Genome decision DM 153464)", "plant_part": "src/mishe_tauftauf: body_perception (personal_body_flow_allows, personal_consent_allows, PERSONAL_CONSENT_RECEIPTS, the k-anonymity gate)", "keywords": ["body_perception", "consent", "contextual integrity"]}
   ]
 }
