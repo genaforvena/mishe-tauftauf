@@ -262,8 +262,9 @@ def unit_text(home: Path, session: str, slug: str, python: str, *, operator_wind
                f"--slug {slug} --interval 5 --self-pick-seconds {self_pick_seconds} "
                "--clear-grace-seconds 30")
     # Supervisors carry OOMScoreAdjust=-500 so memory pressure takes disposable
-    # one-shot workers first. Tmux servers are not units; the host-guard loop
-    # shields them with -900 at runtime.
+    # one-shot workers first. Tmux servers are not units; host containment
+    # places them under the managed plant slice with a finite memory.max
+    # instead of an OOM shield (the -900 shield is retired).
     return (
         f"[Unit]\nDescription=Mishe {slug} resident channel\nAfter=default.target\n\n"
         "[Service]\nType=simple\n"
