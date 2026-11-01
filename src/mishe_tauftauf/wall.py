@@ -903,6 +903,12 @@ def settle(home: Path, role: str, wake: int, text: str, continuation: bool, resu
     from .observations import validate_slug
     validate_slug(role)
     settings(home)
+    # Prime the role view before taking the plant-wide seed lock. A cold process
+    # re-parses the whole tape here (about 14 s on a 137 MB chat.log); under the
+    # lock that cost starves every other seed holder. The locked read below is
+    # incremental: role_entries extends the cached view by the bytes appended
+    # since, so the lock is held for the delta only.
+    seed._state(home, role)
     with seed._lock(home):
         _, pending, last_yield, *_ = seed._state(home, role)
         if pending != wake:
