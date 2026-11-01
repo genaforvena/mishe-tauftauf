@@ -23,6 +23,7 @@ RESET_SUBJECT = "reset: moving to HEAD"
 UNREACHABLE_KIND = ["unreachable", "commit"]
 _REFLOG_EPOCH = re.compile(r"\{(\d+)\}$")
 _STASH_SUBJECT = re.compile(r"^(WIP on|On) ")
+_FULL_SHA = re.compile(r"[0-9a-f]{40}")
 
 
 def decode_reflog_resets(text: str) -> list[tuple[int, str]] | None:
@@ -73,3 +74,15 @@ def decode_stash_commits(text: str) -> list[tuple[int, str, str]] | None:
             return None
         stashes.append((int(parts[2]), parents[0], parts[0]))
     return stashes
+
+
+def decode_commit_sha(text: str) -> str | None:
+    """A full 40-hex commit id from ``git merge-base`` output, else None."""
+    sha = text.strip()
+    return sha if _FULL_SHA.fullmatch(sha) else None
+
+
+def decode_commit_count(text: str) -> int | None:
+    """A commit count from ``git rev-list --count`` output, else None."""
+    count = text.strip()
+    return int(count) if count.isdigit() else None

@@ -58,3 +58,15 @@ def test_stash_with_non_digit_timestamp_is_malformed():
 def test_empty_inputs_decode_to_empty_values():
     assert rb.decode_unreachable_commits("") == []
     assert rb.decode_stash_commits("") == []
+
+
+def test_commit_sha_and_count_decoders_reject_malformed_git_output():
+    from mishe_tauftauf.reflog_boundary import decode_commit_count, decode_commit_sha
+
+    fork = "b3c694c" + "0" * 33
+    assert decode_commit_sha(f"{fork}\n") == fork
+    assert decode_commit_sha("b3c694c") is None
+    assert decode_commit_sha("") is None
+    assert decode_commit_count("1450\n") == 1450
+    assert decode_commit_count("") is None
+    assert decode_commit_count("fatal: bad revision") is None

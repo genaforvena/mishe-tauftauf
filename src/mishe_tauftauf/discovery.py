@@ -62,8 +62,8 @@ from .scan_freshness import age_bounds, aoi_summary, classify_age, endpoint
 from . import patch_text
 from .spawn_dialect import (script_spawns_site_package,
                             spawns_site_package)
-from .reflog_boundary import (decode_reflog_resets, decode_stash_commits,
-                              decode_unreachable_commits)
+from .reflog_boundary import (decode_commit_count, decode_commit_sha, decode_reflog_resets,
+                              decode_stash_commits, decode_unreachable_commits)
 from .timestamp_text import decode_iso_datetime
 from .unit_properties import SITE_UNIT_PREFIX, is_site_unit
 
@@ -4207,9 +4207,10 @@ def _runtime_pin_lag(home: Path, now: datetime | None = None) -> dict[str, objec
                                   capture_output=True, text=True, timeout=2,
                                   cwd=checkout_root)
         if ancestor.returncode != 0:
-            return {"id": "sense.runtime.pin-lag", "state": "unknown",
-                    "sample": "pin not an ancestor of HEAD",
-                    "pin": pin, "head": head_sha, "kind": "read"}
+            # Diverged or rewritten history: name the fork point and both
+            # sides' counts so a 1-commit lag and a 1450-commit divergence
+            # read differently. Stays UNKNOWN; a missing count is named, not guessed.
+            return _pin_divergence(checkout_root, pin, head_sha)
         count = subprocess.run(["git", "rev-list", "--count", f"{pin}..{head_sha}"],
                                capture_output=True, text=True, timeout=2,
                                cwd=checkout_root)
@@ -4246,6 +4247,34 @@ def _runtime_pin_lag(home: Path, now: datetime | None = None) -> dict[str, objec
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {"id": "sense.runtime.pin-lag", "state": "unknown",
                 "sample": f"git error: {exc}", "kind": "read"}
+
+
+def _pin_divergence(checkout_root: Path, pin: str, head_sha: str) -> dict:
+    """UNKNOWN reading for a pin that is not an ancestor of HEAD.
+
+    Adds the merge-base and the pin-only / HEAD-only commit counts to the
+    sample. Each git probe is independent: a failed probe is named as
+    ``unavailable`` in the sample rather than dropped or guessed.
+    """
+    def _git(args: list[str]) -> str | None:
+        try:
+            proc = subprocess.run(["git", *args], capture_output=True, text=True,
+                                  timeout=2, cwd=checkout_root)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        return proc.stdout if proc.returncode == 0 else None
+
+    base = decode_commit_sha(_git(["merge-base", pin, head_sha]) or "")
+    base_short = base[:7] if base else None
+    pin_only_n = decode_commit_count(_git(["rev-list", "--count", f"{head_sha}..{pin}"]) or "")
+    head_only_n = decode_commit_count(_git(["rev-list", "--count", f"{pin}..{head_sha}"]) or "")
+    sample = (f"pin not an ancestor of HEAD pin={pin[:7]} head={head_sha[:7]} "
+              f"merge-base={base_short or 'unavailable'} "
+              f"pin-only={pin_only_n if pin_only_n is not None else 'unavailable'} "
+              f"head-only={head_only_n if head_only_n is not None else 'unavailable'}")
+    return {"id": "sense.runtime.pin-lag", "state": "unknown", "sample": sample,
+            "pin": pin, "head": head_sha, "merge_base": base_short,
+            "pin_only": pin_only_n, "head_only": head_only_n, "kind": "read"}
 
 
 def _served_staleness(checkout_root: Path, pin: str, head_sha: str) -> tuple[list[str], str | None]:

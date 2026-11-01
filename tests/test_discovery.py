@@ -2069,17 +2069,50 @@ def test_pin_lag_pin_not_ancestor(tmp_path, monkeypatch):
     head = "b" * 40
     _write_pin(home, pin)
 
+    fork = "c" * 40
+
     class _FakeGit:
         def run(self, cmd, **kwargs):
             if cmd[:2] == ["git", "rev-parse"]:
                 return subprocess.CompletedProcess(cmd, 0, head, "")
             if cmd[:3] == ["git", "merge-base", "--is-ancestor"]:
                 return subprocess.CompletedProcess(cmd, 1, "", "")
+            if cmd[:2] == ["git", "merge-base"]:
+                return subprocess.CompletedProcess(cmd, 0, fork + "\n", "")
+            if cmd[:3] == ["git", "rev-list", "--count"]:
+                rng = cmd[-1]
+                return subprocess.CompletedProcess(cmd, 0, "1450\n" if rng.startswith(head) else "1098\n", "")
             raise AssertionError(f"unexpected git command: {cmd}")
     monkeypatch.setattr(discovery, "subprocess", _FakeGit())
     result = discovery._runtime_pin_lag(home)
     assert result["state"] == "unknown"
-    assert result["sample"] == "pin not an ancestor of HEAD"
+    assert result["sample"] == (f"pin not an ancestor of HEAD pin={pin[:7]} head={head[:7]} "
+                                f"merge-base={fork[:7]} pin-only=1450 head-only=1098")
+    assert result["merge_base"] == fork[:7]
+    assert result["pin_only"] == 1450
+    assert result["head_only"] == 1098
+
+
+def test_pin_lag_divergence_names_unavailable_probes(tmp_path, monkeypatch):
+    home = tmp_path / "site"
+    pin = "a" * 40
+    head = "b" * 40
+    _write_pin(home, pin)
+
+    class _FakeGit:
+        def run(self, cmd, **kwargs):
+            if cmd[:2] == ["git", "rev-parse"]:
+                return subprocess.CompletedProcess(cmd, 0, head, "")
+            if cmd[:3] == ["git", "merge-base", "--is-ancestor"]:
+                return subprocess.CompletedProcess(cmd, 1, "", "")
+            if cmd[:2] == ["git", "merge-base"]:
+                return subprocess.CompletedProcess(cmd, 1, "", "")
+            return subprocess.CompletedProcess(cmd, 128, "", "fatal")
+    monkeypatch.setattr(discovery, "subprocess", _FakeGit())
+    result = discovery._runtime_pin_lag(home)
+    assert result["state"] == "unknown"
+    assert result["sample"] == (f"pin not an ancestor of HEAD pin={pin[:7]} head={head[:7]} "
+                                "merge-base=unavailable pin-only=unavailable head-only=unavailable")
 
 
 def test_pin_lag_git_error(tmp_path, monkeypatch):
