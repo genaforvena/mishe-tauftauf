@@ -260,7 +260,26 @@ def test_the_check_runs_alone_with_only_its_own_file(tmp_path):
     assert "BOOK vs SERVED RELEASE" in result.stdout
 
 
-def test_this_repository_satisfies_the_check_it_ships():
+def assert_the_shipped_book_satisfies_the_check_it_ships(home: Path) -> None:
+    """Run the live check against a site home and assert what it must say.
+
+    This is the assertion itself, without the skip that guards it, so that a
+    test can drive it directly and prove it is still asked.
+    """
+    result = subprocess.run([sys.executable, str(CHECK), "--home", str(home),
+                              "--repo", str(REPO)],
+                             capture_output=True, text=True)
+    assert result.returncode in (0, 2), result.stdout + result.stderr
+    if result.returncode == 2:
+        # A failure must name the page and both readings, so the finding is
+        # actionable rather than a bare verdict.
+        assert "BOOK vs SERVED RELEASE" in result.stdout, result.stdout
+        assert "served release" in result.stdout, result.stdout
+    else:
+        assert "OK" in result.stdout, result.stdout
+
+
+def test_this_repository_satisfies_the_check_it_ships(home: Path | None = None):
     """The shipped book must agree with the release this plant actually runs.
 
     The plant's served release is read from the site's own record, so this
@@ -282,23 +301,17 @@ def test_this_repository_satisfies_the_check_it_ships():
     *absent*; a record that is present but malformed, or a release that
     cannot be exercised, still fails the test here, because on a checkout
     that has a site the question is decidable and must be answered.
+
+    ``home`` exists so that another test can ask this same question against a
+    site it plants, and so that the fact that this test is still asked -- not
+    skipped, not deleted -- is itself pinned.
     """
-    home = REPO / ".mishe-tauftauf"
-    reason = skip_reason(home)
+    site = REPO / ".mishe-tauftauf" if home is None else home
+    reason = skip_reason(site)
     if reason is not None:
         pytest.skip(reason)
 
-    result = subprocess.run([sys.executable, str(CHECK), "--home", str(home),
-                              "--repo", str(REPO)],
-                             capture_output=True, text=True)
-    assert result.returncode in (0, 2), result.stdout + result.stderr
-    if result.returncode == 2:
-        # A failure must name the page and both readings, so the finding is
-        # actionable rather than a bare verdict.
-        assert "BOOK vs SERVED RELEASE" in result.stdout, result.stdout
-        assert "served release" in result.stdout, result.stdout
-    else:
-        assert "OK" in result.stdout, result.stdout
+    assert_the_shipped_book_satisfies_the_check_it_ships(site)
 
 
 def test_a_clone_without_a_site_skips_the_live_assertion(tmp_path):
@@ -339,3 +352,33 @@ def test_a_site_with_a_broken_record_is_asked_the_question(tmp_path):
                              capture_output=True, text=True)
     assert result.returncode == 3, result.stdout + result.stderr
     assert "UNKNOWN" in result.stdout, result.stdout
+
+
+def test_a_checkout_with_a_site_is_asked_the_question_not_skipped(tmp_path):
+    """The live assertion must still run wherever a site exists.
+
+    The skip this file carries exists for a clone, which has no served
+    release to compare the book with.  It must not become a way to stop
+    asking the question everywhere: a checkout that *does* carry a site has
+    the record, so the question is decidable there and must be asked.
+
+    Measured on 2026-11-01 (Docs wake 159116, independent review): with the
+    skip in place, replacing the guarded call with an unconditional
+    ``pytest.skip`` -- or deleting the live test outright -- left every other
+    test in this file green.  The two tests above pin the skip *predicate*,
+    but nothing pinned the claim the docstring makes, that the live half is
+    not lost.  This test pins it.
+
+    It drives the live test itself -- not a copy of its body -- and requires
+    that it neither skips nor silently passes.  A copy would miss the
+    mutations this test exists to catch: an unconditional skip inside the
+    live test, or the live test being removed altogether.
+    """
+    home = make_home(tmp_path, make_old_release(tmp_path), "0" * 40)
+    assert skip_reason(home) is None
+
+    try:
+        test_this_repository_satisfies_the_check_it_ships(home)
+    except pytest.skip.Exception:
+        pytest.fail("a checkout with a site must be asked the question, "
+                    "not skipped")
