@@ -115,6 +115,26 @@ def _read(path: Path, limit: int = 65536) -> str | None:
     except OSError:
         return None
 
+def _chat_tape_tail(path: Path, chars: int) -> str:
+    """The last ``chars`` characters of the chat tape, read without the whole tape.
+
+    ``read_text()[-chars:]`` decodes the entire tape (about 131 MB), so one
+    sense held roughly 630 MB of transient text per call and ran twice per scan.
+    UTF-8 spends at most four bytes per character, so the final ``4 * chars``
+    bytes hold every one of the last ``chars`` characters; decoding them and
+    slicing gives the same text as the whole-tape read. An unreadable tape
+    reads as empty, as the whole-tape read did.
+    """
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, 2)
+            handle.seek(max(0, handle.tell() - 4 * chars))
+            raw = handle.read()
+    except OSError:
+        return ""
+    return raw.decode("utf-8", errors="replace")[-chars:]
+
+
 def _cpu_busy(path: Path = Path("/proc/stat"), samples: int = 2, interval: float = 0.1) -> dict:
     """Measure short-window host CPU busyness from aggregate /proc/stat deltas."""
     counters: list[list[int]] = []
@@ -4658,10 +4678,7 @@ def _coord_authorship_fog(home: Path, now: datetime | None = None) -> dict[str, 
                 continue
     except OSError:
         pass
-    try:
-        tape = (Path(home) / "chat.log").read_text(encoding="utf-8", errors="replace")[-200000:]
-    except OSError:
-        tape = ""
+    tape = _chat_tape_tail(Path(home) / "chat.log", 200000)
     # Exclude the sense's own publications from the claim source: the sense
     # publishes its fog paths in its sample, and on the next evaluation those
     # paths would read as "claimed" while the bytes are still unclaimed. The

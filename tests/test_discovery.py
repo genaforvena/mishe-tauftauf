@@ -9100,3 +9100,23 @@ def test_plant_session_prefers_owned_over_receipt(tmp_path, monkeypatch):
     monkeypatch.delenv("MISHE_SEED_SESSION")
     monkeypatch.setattr(discovery.tmux, "home_sessions", lambda _h: [])
     assert discovery._plant_session(home) == "life-support"
+
+
+def test_chat_tape_tail_matches_whole_read_and_stays_bounded(tmp_path: Path) -> None:
+    import tracemalloc
+
+    tape = tmp_path / "chat.log"
+    # Astral characters take four bytes each, the worst case the window must cover.
+    line = "v1 0000 2026-11-01T00:00:00Z mind ::\n    | body 𝔘𝔫𝔦 ✓ ascii tail\n    .\n"
+    tape.write_text(line * 200000, encoding="utf-8")
+    whole = tape.read_text(encoding="utf-8", errors="replace")[-200000:]
+    assert discovery._chat_tape_tail(tape, 200000) == whole
+    assert discovery._chat_tape_tail(tmp_path / "missing.log", 200000) == ""
+    tracemalloc.start()
+    try:
+        discovery._chat_tape_tail(tape, 200000)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    # The whole-tape read of this ~14 MB fixture peaks well above this bound.
+    assert peak < 10_000_000
