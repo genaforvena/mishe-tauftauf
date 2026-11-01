@@ -72,3 +72,29 @@ def decide_anon(previous, sample: dict, *, at: float, now: float, max_age: float
     """host_capacity.decide on the anon reading. Missing or stale input yields UNKNOWN."""
     obs = controller_observation(sample, at=at, now=now, max_age=max_age)
     return host_capacity.decide(previous, obs, now=now)
+
+
+def _ratio(part, high):
+    return "n/a" if part is None or not high else f"{part / high:.2f}"
+
+
+def dashboard_line(sample: dict, *, previous, at: float, now: float, max_age: float = 60.0) -> str:
+    """One host-capacity line for a scratch frame: the signal-graph reading next to the current rule.
+
+    Never prints a decision from missing input: a missing or stale part yields UNKNOWN naming it.
+    The current rule (cgroup current, file cache included) is recomputed on the same sample so the
+    two readings can be compared without touching the running controller.
+    """
+    signals = sample_signals(sample, at=at, max_age=max_age)
+    fresh = {k: ls.hold_until_expiry(s, now, max_age) for k, s in signals.items()}
+    missing = sorted(k for k, s in fresh.items() if s.state != ls.OK)
+    if missing:
+        return "UNKNOWN — host capacity signal unavailable: " + ", ".join(missing)
+    high = fresh["limits"].value[0]
+    legacy = decide_anon(previous, dict(sample, anon=sample["current"]), at=at, now=now, max_age=max_age)
+    signal = decide_anon(previous, sample, at=at, now=now, max_age=max_age)
+    return (f"HOST CAPACITY — anon/high {_ratio(fresh['anon'].value, high)} "
+            f"file/high {_ratio(fresh['file'].value, high)} "
+            f"current/high {_ratio(fresh['current'].value, high)} "
+            f"mem-full60 {fresh['memory_full'].value:g} io-full {fresh['io_full'].value:g}; "
+            f"signal rule={signal['state']} current rule={legacy['state']}")
