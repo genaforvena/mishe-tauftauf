@@ -16,7 +16,7 @@ target: src/mishe_tauftauf/trial_metrics.py
 
 ## What this plant already does
 
-- `src/mishe_tauftauf/trial_metrics.py` already measures ordinary window-to-window noise. `placebo_scale` (added by `f1094ba0`) computes a mean absolute swing over coverage-gated placebo windows for `PLACEBO_COUNTS = ("wakes", "redeliveries", "settlements", "observations", "addressed_messages")` (line 33). Windows below a feed-entry floor are excluded, and a zero swing reads UNKNOWN.
+- `src/mishe_tauftauf/trial_metrics.py` already measures ordinary window-to-window noise. `placebo_scale` (added by `f1094ba0`) computes a mean absolute swing over coverage-gated placebo windows for `PLACEBO_COUNTS = ("wakes", "redeliveries", "settlements", "observations", "addressed_messages")` (line 42). Windows below a feed-entry floor are excluded, and a zero swing reads UNKNOWN.
 - `TOP_FACTOR_RETIRED` retires the cumulative score for the same reason Goodhart names: a sum over a proxy gets optimized. The plant already refuses that composite.
 - The report's limits line states that outcomes are "author reports with digest-checked evidence references, not independent semantic acceptance" (line 166).
 
