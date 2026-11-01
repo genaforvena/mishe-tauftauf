@@ -54,13 +54,13 @@ def test_high_and_max_deltas_need_an_anchor_in_window():
 
 
 def test_no_anchor_reports_unknown_delta_not_zero():
-    only = _rec(200.0, {"x.service": _unit(0.0, 14, 3)})
+    only = _rec(200.0, {"x.service": _unit(1.0, 14, 3)})
     out = attribute([only])
     assert out["span_s"] is None
     assert out["high_or_max_moved"] == []
     assert out["top_full_avg60"][0]["high_delta"] is None
     # a record outside the window is also no anchor
-    far = [_rec(0.0, {"x.service": _unit(0.0, 1, 1)}), _rec(1000.0, {"x.service": _unit(0.0, 2, 2)})]
+    far = [_rec(0.0, {"x.service": _unit(1.0, 1, 1)}), _rec(1000.0, {"x.service": _unit(1.0, 2, 2)})]
     assert attribute(far, window_s=300)["span_s"] is None
 
 
@@ -105,7 +105,7 @@ def test_cli_tail_miss_keeps_anchor_unknown_not_zero(tmp_path, capsys):
     # every record that fits in the tail is older than the 300 s window of the newest
     filler = [{"at": 1000.0 + i, "cgroups": {"x.service": _unit(0.0, 0, 0), "pad": pad}}
               for i in range(0, 200)]
-    newest = _rec(2000.0, {"x.service": _unit(0.0, 9, 0)})
+    newest = _rec(2000.0, {"x.service": _unit(1.0, 9, 0)})
     path.write_text("\n".join(json.dumps(r) for r in filler + [newest]) + "\n")
     assert path.stat().st_size > TAIL_BYTES
     assert _cli([str(path)]) == 0
@@ -113,3 +113,32 @@ def test_cli_tail_miss_keeps_anchor_unknown_not_zero(tmp_path, capsys):
     # the 300 s anchor is far outside the 256 KiB tail: no delta is invented
     assert out["span_s"] is None
     assert out["top_full_avg60"][0]["high_delta"] is None
+
+
+def _stalled_unit(full60, some_total_us):
+    cg = _unit(full60, 0, 0)
+    cg["psi"]["some"]["total"] = some_total_us
+    return cg
+
+
+def test_zero_avg60_units_are_counted_not_ranked():
+    units = {
+        "z1.service": _stalled_unit(0.0, 5_000_000),   # stalled, EWMA rounded to zero
+        "z2.service": _stalled_unit(0.0, 1_200_000),   # stalled, EWMA rounded to zero
+        "z3.service": _stalled_unit(0.0, 0),           # never stalled
+        "hot.service": _stalled_unit(0.4, 9_000_000),  # the only real ranking signal
+    }
+    out = attribute([_rec(100.0, units)])
+    assert out["units_with_full_avg60"] == 4
+    assert out["units_full_avg60_zero"] == 3
+    assert out["units_with_stall_total_but_zero_avg60"] == 2
+    assert [r["unit"] for r in out["top_full_avg60"]] == ["hot.service"]
+
+
+def test_all_zero_record_publishes_no_top_list():
+    units = {"a.service": _stalled_unit(0.0, 10), "b.service": _stalled_unit(0.0, 0)}
+    out = attribute([_rec(100.0, units)])
+    assert out["state"] == "verified"
+    assert out["top_full_avg60"] == []
+    assert out["units_full_avg60_zero"] == 2
+    assert out["units_with_stall_total_but_zero_avg60"] == 1

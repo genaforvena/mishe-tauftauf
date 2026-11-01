@@ -141,20 +141,28 @@ def attribute(records: list[dict], *, window_s: float = WINDOW_S, top: int = 3) 
             "unit": name,
             "full_avg60": _num_or_none(_nested(cgroup, "psi", "full", "avg60")),
             "some_avg60": _num_or_none(_nested(cgroup, "psi", "some", "avg60")),
+            "some_total_us": _some_total_us(cgroup),
             "high_delta": delta("high"),
             "max_delta": delta("max"),
             "swap_bytes": swap_bytes,
             "swap_of_max": swap_frac,
         })
 
-    ranked = sorted((r for r in rows if r["full_avg60"] is not None),
+    with_value = [r for r in rows if r["full_avg60"] is not None]
+    # Zero readings carry no ranking information: the 2-decimal EWMA rounds short stalls
+    # to 0.0, so zeros are counted, never published as a top list.
+    ranked = sorted((r for r in with_value if r["full_avg60"] > 0),
                     key=lambda r: r["full_avg60"], reverse=True)
+    zero_rows = [r for r in with_value if r["full_avg60"] == 0]
     return {
-        "state": "verified" if ranked else "unknown",
+        "state": "verified" if with_value else "unknown",
         "at": at,
         "span_s": span,
         "units_total": len(rows),
-        "units_with_full_avg60": len(ranked),
+        "units_with_full_avg60": len(with_value),
+        "units_full_avg60_zero": len(zero_rows),
+        "units_with_stall_total_but_zero_avg60": sum(
+            1 for r in zero_rows if (r["some_total_us"] or 0) > 0),
         "top_full_avg60": ranked[:top],
         "high_or_max_moved": sorted(
             (r for r in rows if (r["high_delta"] or 0) > 0 or (r["max_delta"] or 0) > 0),
