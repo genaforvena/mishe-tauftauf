@@ -70,6 +70,12 @@ def l1_sensitivity_sum(value_range: float) -> float | None:
 def laplace_scale(*, sensitivity: float, epsilon: float) -> float | None:
     """Laplace scale b = Delta f / epsilon (Theorem 3.6 p.30-31).
 
+    ``sensitivity`` must be a global L1 bound: Delta f is the maximum of
+    ||f(x)-f(y)||_1 over ALL neighbouring pairs (Def. 3.1, Dwork & Roth 2014).
+    An observed or data-dependent maximum is not a valid sensitivity; passing
+    one silently breaks the epsilon guarantee and this helper cannot detect it.
+    Gaussian noise (footnote 1) needs its own calibration and is not covered.
+
     Returns sensitivity/epsilon when both finite, sensitivity>=0, epsilon>0,
     else None. Continuous Laplace must be discretized to finite precision
     (Remark 2.1 p.16); this helper returns only the scale, not a sample.
