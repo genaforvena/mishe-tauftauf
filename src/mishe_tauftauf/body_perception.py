@@ -1045,6 +1045,42 @@ def _dense_light_class(lux: float) -> str:
     return "very-bright"
 
 
+def _dense_sequence_accounting(lines: list[str]) -> dict[str, int]:
+    """Expected-vs-received accounting over the host sequence of a window.
+
+    Follows RFC 3550 Appendix A.3: expected is the producer's sequence span
+    over the window, received is the distinct sequence numbers seen, and the
+    loss is their difference, reported as a count and never clamped. Repeated
+    rows are named as duplicates rather than hidden. Rows whose first field is
+    not an integer sequence are counted as unparsed and excluded. A sequence
+    that steps back (a host restart or a reordered append) is counted too, so
+    a span that spans a restart is not read as clean loss.
+    """
+    seqs: list[int] = []
+    unparsed = 0
+    steps_back = 0
+    previous: int | None = None
+    for line in lines:
+        head = line.split(maxsplit=1)[0] if line.strip() else ""
+        try:
+            seq = int(head)
+        except ValueError:
+            unparsed += 1
+            continue
+        if previous is not None and seq <= previous:
+            steps_back += 1
+        previous = seq
+        seqs.append(seq)
+    if not seqs:
+        return {"expected": 0, "received": 0, "lost": 0, "dup": 0,
+                "unparsed": unparsed, "steps_back": steps_back}
+    received = len(set(seqs))
+    expected = max(seqs) - min(seqs) + 1
+    return {"expected": expected, "received": received,
+            "lost": expected - received, "dup": len(seqs) - received,
+            "unparsed": unparsed, "steps_back": steps_back}
+
+
 def read_redmi10_dense_baseline(home: Path, now: float | None = None) -> dict[str, object]:
     """Compact carried-device context from the consumer's dense observation queue.
 
@@ -1159,6 +1195,7 @@ def read_redmi10_dense_baseline(home: Path, now: float | None = None) -> dict[st
     _close_run()
     if total_count == 0 or last_epoch is None:
         return _dense_unknown("dense-queue-empty")
+    seq = _dense_sequence_accounting(lines[-DENSE_WINDOW_ROWS:])
     break_seconds = current - last_epoch
     state = "verified" if break_seconds < DENSE_FRESH_SECONDS else "stale"
     window_seconds = (last_epoch - first_epoch) if first_epoch is not None else 0
@@ -1187,6 +1224,12 @@ def read_redmi10_dense_baseline(home: Path, now: float | None = None) -> dict[st
                f"longest-stale-run={longest_stale_run}s "
                "(a run is a stretch of consecutive acceleration rows of one "
                "kind inside the window, timed from its first row to its last); "
+               f"seq-expected={seq['expected']} seq-received={seq['received']} "
+               f"seq-lost={seq['lost']} seq-dup={seq['dup']} "
+               f"seq-unparsed={seq['unparsed']} seq-steps-back={seq['steps_back']} "
+               "(host sequence span over the window; loss only shows host-side "
+               "after numbering, phone-side loss needs the app's spool-overflow "
+               "record); "
                "phone/host clock split unknown; acceleration includes gravity "
                "and is not person-movement evidence.")
     return {"id": DENSE_SENSE_ID, "kind": "read", "state": state,
@@ -1202,6 +1245,9 @@ def read_redmi10_dense_baseline(home: Path, now: float | None = None) -> dict[st
             "value_runs": value_runs, "stale_runs": stale_runs,
             "longest_value_run_s": longest_value_run,
             "longest_stale_run_s": longest_stale_run,
+            "seq_expected": seq["expected"], "seq_received": seq["received"],
+            "seq_lost": seq["lost"], "seq_dup": seq["dup"],
+            "seq_unparsed": seq["unparsed"], "seq_steps_back": seq["steps_back"],
             "details": details}
 
 
