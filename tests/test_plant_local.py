@@ -9,6 +9,11 @@ from types import SimpleNamespace
 import pytest
 from mishe_tauftauf import plant
 
+# A plant bring-up (seed windows, discovery, CI reading) took about 55 s on a
+# host at load average 14 (2026-11-01 18:24Z, standalone CLI run); the old 45 s
+# budget failed before the assertions ran. Bounded budget, not a resource raise.
+PLANT_CLI_TIMEOUT_SECONDS = 180
+
 
 def test_refresh_contract_preserves_other_agent_instructions() -> None:
     module = vars(plant)
@@ -396,7 +401,7 @@ def test_runtime_only_cli_preserves_dirty_application_and_contract(tmp_path: Pat
     argv = [sys.executable, "-m", "mishe_tauftauf.plant", "--workspace", str(workspace),
             "--home", str(home), "--session", session, "--engine-command", "cat", "--no-services"]
     try:
-        initial = subprocess.run(argv, capture_output=True, text=True, timeout=45)
+        initial = subprocess.run(argv, capture_output=True, text=True, timeout=PLANT_CLI_TIMEOUT_SECONDS)
         assert initial.returncode == 0, initial.stderr
         agents = workspace / "AGENTS.md"
         agents.write_text("Unlanded application contract.\n")
@@ -404,7 +409,7 @@ def test_runtime_only_cli_preserves_dirty_application_and_contract(tmp_path: Pat
         application.write_text("unlanded application work\n")
         mind = home / "minds/genome"
         original_mind = mind.read_bytes()
-        refresh = subprocess.run([*argv, "--runtime-only"], capture_output=True, text=True, timeout=45)
+        refresh = subprocess.run([*argv, "--runtime-only"], capture_output=True, text=True, timeout=PLANT_CLI_TIMEOUT_SECONDS)
         assert refresh.returncode == 0, refresh.stderr
         assert agents.read_text() == "Unlanded application contract.\n"
         assert application.read_text() == "unlanded application work\n"
@@ -421,7 +426,7 @@ def test_runtime_only_cli_preserves_dirty_application_and_contract(tmp_path: Pat
         subprocess.run(["git", "-C", str(release), "-c", "user.name=test", "-c", "user.email=test@example.com",
                         "commit", "-qm", "runtime snapshot"], check=True)
         selected = subprocess.run([*argv, "--runtime-only", "--runtime-source", str(release)],
-                                  capture_output=True, text=True, timeout=45)
+                                  capture_output=True, text=True, timeout=PLANT_CLI_TIMEOUT_SECONDS)
         assert selected.returncode == 0, selected.stderr
         assert str(release / "src") in (home / "bin/mishe-tauftauf").read_text()
         assert (home / "bin/mishe").is_file()
@@ -461,14 +466,14 @@ def test_replant_drops_a_retired_window_name(tmp_path: Path) -> None:
     argv = [sys.executable, "-m", "mishe_tauftauf.plant", "--workspace", str(workspace),
             "--home", str(home), "--session", session, "--engine-command", "cat", "--no-services"]
     try:
-        first = subprocess.run(argv, capture_output=True, text=True, timeout=45)
+        first = subprocess.run(argv, capture_output=True, text=True, timeout=PLANT_CLI_TIMEOUT_SECONDS)
         assert first.returncode == 0, first.stderr
         manifest = home / "health" / "windows.json"
         names = set(json.loads(manifest.read_text(encoding="utf-8")))
         assert "operator" in names
         subprocess.run(["tmux", "new-window", "-d", "-t", session, "-n", "scratch"], check=True)
         manifest.write_text(json.dumps(sorted(names | {"codex", "scratch"})) + "\n", encoding="utf-8")
-        second = subprocess.run([*argv, "--runtime-only"], capture_output=True, text=True, timeout=45)
+        second = subprocess.run([*argv, "--runtime-only"], capture_output=True, text=True, timeout=PLANT_CLI_TIMEOUT_SECONDS)
         assert second.returncode == 0, second.stderr
         after = set(json.loads(manifest.read_text(encoding="utf-8")))
         assert "codex" not in after
@@ -501,11 +506,11 @@ runpy.run_module('mishe_tauftauf.plant', run_name='__main__')
         initial_script = script.replace("delivery.check_all = unavailable_maintenance", "delivery.check_all = lambda home: None")
         initial = subprocess.run([sys.executable, "-c", initial_script, "--workspace", str(workspace),
             "--home", str(home), "--session", session, "--engine-command", "cat", "--no-services"],
-            capture_output=True, text=True, timeout=45)
+            capture_output=True, text=True, timeout=PLANT_CLI_TIMEOUT_SECONDS)
         assert initial.returncode == 0, initial.stderr
         result = subprocess.run([sys.executable, "-c", script, "--workspace", str(workspace),
             "--home", str(home), "--session", session, "--engine-command", "cat", "--no-services",
-            "--runtime-only"], capture_output=True, text=True, timeout=45)
+            "--runtime-only"], capture_output=True, text=True, timeout=PLANT_CLI_TIMEOUT_SECONDS)
         assert result.returncode == 0, result.stderr
         assert "plant ready" in result.stdout
         from mishe_tauftauf import ci_watch

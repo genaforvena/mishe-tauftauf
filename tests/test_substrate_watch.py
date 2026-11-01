@@ -857,6 +857,42 @@ def test_sustained_unknown_with_unchanged_problems_is_coalesced_per_window(site)
         assert len(messages(home, role)) == 2
 
 
+def test_sustained_liveness_outage_with_checkout_churn_is_coalesced_per_window(site, monkeypatch):
+    # Witness 164102: live substrate-watch sent one DM per ~30 s during a liveness-only outage
+    # (three services not running) while the checkout churned. The checkout-only regression above
+    # has no liveness problems, so it could not show the live case. This one has both.
+    root, home = site
+    units = ["mishe-x-coordination.service", "mishe-x-initiative.service", "mishe-x-observer.service"]
+    (home / "health/services.json").write_text(json.dumps(units))
+    (home / "health/windows.json").write_text(json.dumps([]))
+    monkeypatch.setattr(watch.wall_view, "_service_block",
+                        lambda home: ([], {unit: ["/selected"] for unit in units}, "RED"))
+    monkeypatch.setattr(watch, "_service_pids", lambda units: dict.fromkeys(units))
+    monkeypatch.setattr("mishe_tauftauf.seed.recorded_session", lambda home: "session")
+    monkeypatch.setattr(watch.wall_view, "_renderer_pids", lambda session: {})
+    monkeypatch.setattr(watch.wall_view, "_live_import_roots", lambda pid: ["/selected"])
+    watch.check(home, now=NOW)
+    # Liveness debounce: the outage is announced only after it persists for the debounce window.
+    announced = watch.check(home, now=NOW + timedelta(seconds=watch.LIVENESS_DEBOUNCE_SECONDS + 1))
+    assert announced["status"] == "UNKNOWN"
+    assert len(messages(home, "health")) == 1
+    assert messages(home, "genome") == []
+    # The first checkout change inside the outage is integration news for genome.
+    (root / "docs" / "live-churn-0.md").write_text("churn 0\n")
+    first_churn = watch.check(home, now=NOW + timedelta(seconds=watch.LIVENESS_DEBOUNCE_SECONDS + 31))
+    assert len(messages(home, "genome")) == 1
+    first = first_churn["event_id"]
+    for step in range(1, 6):
+        (root / "docs" / f"live-churn-{step}.md").write_text(f"churn {step}\n")
+        row = watch.check(home, now=NOW + timedelta(seconds=watch.LIVENESS_DEBOUNCE_SECONDS + 31 + 30 * step))
+        assert row["status"] == "UNKNOWN"
+        assert row["event_id"] == first
+    assert len(messages(home, "genome")) == 1
+    reopened = watch.check(home, now=NOW + LATER + timedelta(seconds=watch.LIVENESS_DEBOUNCE_SECONDS + 31))
+    assert reopened["status"] == "UNKNOWN"
+    assert len(messages(home, "genome")) == 2
+
+
 def test_controller_shed_unit_is_named_shed_still_unknown_and_unreadable_state_is_not_shed(site, monkeypatch):
     # Health 144391: units the host-capacity controller stopped while LIMITED were reported as
     # "not running". They stay UNKNOWN (never healthy) but are named as controller-shed. Only a
