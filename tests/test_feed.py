@@ -804,6 +804,24 @@ class ReadTextTailTest(unittest.TestCase):
                 expected = text[-chars:]
                 self.assertEqual(feed_module.read_text_tail(path, chars), expected)
 
+    def test_matches_universal_newline_read_for_crlf_and_lone_cr(self):
+        text = "alpha\r\nbeta\rgamma\r\n" * 400 + "tail\r"
+        path = self.directory / "crlf.log"
+        path.write_bytes(text.encode("utf-8"))
+        whole = path.read_text(encoding="utf-8")
+        for chars in (1, 5, 8, 100, 900, len(whole), len(whole) + 50):
+            with self.subTest(chars=chars):
+                self.assertEqual(feed_module.read_text_tail(path, chars), whole[-chars:])
+
+    def test_widens_window_when_newline_translation_shortens_it(self):
+        # Every character is a \r\n pair: a 4*chars byte window holds only
+        # 2*chars translated characters, so the reader must widen to fill chars.
+        text = "\r\n" * 3000
+        path = self.directory / "pairs.log"
+        path.write_bytes(text.encode("utf-8"))
+        whole = path.read_text(encoding="utf-8")
+        self.assertEqual(feed_module.read_text_tail(path, 2500), whole[-2500:])
+
     def test_missing_file_reads_as_empty(self):
         self.assertEqual(feed_module.read_text_tail(self.directory / "absent.log", 10), "")
 

@@ -225,18 +225,34 @@ def iter_feed_entries(lines, *, start_sequence: int = 1,
 def read_text_tail(path: Path | str, chars: int) -> str:
     """The last ``chars`` characters of a UTF-8 text file, read in bounded bytes.
 
-    UTF-8 spends at most four bytes per character, so the final ``4 * chars``
-    bytes hold every one of the last ``chars`` characters. An unreadable file
-    reads as empty.
+    Equal to ``path.read_text(encoding="utf-8")[-chars:]``: universal newlines
+    apply, so ``\\r\\n`` and lone ``\\r`` read as ``\\n``. UTF-8 spends at most
+    four bytes per character, so the final ``4 * chars`` bytes hold every raw
+    character of the tail; newline translation can only shorten that, so the
+    window widens until the translated text holds ``chars`` characters or the
+    file start is reached. The first character of a window that does not start
+    at the file start may be a split sequence, so it is dropped before slicing.
+    An unreadable file reads as empty.
     """
+    if chars <= 0:
+        return ""
     try:
         with open(path, "rb") as handle:
-            handle.seek(0, 2)
-            handle.seek(max(0, handle.tell() - 4 * chars))
-            raw = handle.read()
+            size = handle.seek(0, 2)
+            window = 4 * chars
+            while True:
+                start = max(0, size - window)
+                handle.seek(start)
+                raw = handle.read(size - start)
+                text = raw.decode("utf-8", errors="replace")
+                text = text.replace("\r\n", "\n").replace("\r", "\n")
+                if start == 0:
+                    return text[-chars:]
+                if len(text) > chars:
+                    return text[1:][-chars:]
+                window *= 2
     except OSError:
         return ""
-    return raw.decode("utf-8", errors="replace")[-chars:]
 
 
 def iter_feed_file(path: Path | str, *, home: Path | str | None = None,
