@@ -422,7 +422,6 @@ def launcher_model(text: str) -> str | None:
 
 _OMP_INSERT_PROMPT_RE = re.compile(r"\s*π > INSERT(?: +[A-Za-z0-9!?-]+)* >")
 _OMP_NORMAL_PROMPT_RE = re.compile(r"\s*π > NORMAL >")
-_OMP_SPINNER_IDLE_RE = re.compile(r"\s*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s*\d+\s*[msh]\s*>\s*INSERT(?: +[A-Za-z0-9!?-]+)*\s*>.*[▶┃]")
 
 
 def omp_idle_mode(pane: str) -> str | None:
@@ -431,7 +430,7 @@ def omp_idle_mode(pane: str) -> str | None:
         status = line.lstrip()
         if status.startswith(tuple("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")) and "Working..." in status:
             return None
-        if _OMP_INSERT_PROMPT_RE.match(line) or _OMP_SPINNER_IDLE_RE.match(line):
+        if _OMP_INSERT_PROMPT_RE.match(line):
             mode = "insert"
         elif _OMP_NORMAL_PROMPT_RE.match(line):
             mode = "normal"

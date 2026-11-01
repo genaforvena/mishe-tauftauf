@@ -179,3 +179,26 @@ def test_frame_empty_reports_whitespace_only_captures() -> None:
     assert omp_pane.frame_empty("")
     assert omp_pane.frame_empty("  \n  ")
     assert not omp_pane.frame_empty("$ sleep 150")
+
+
+def test_omp_timer_spinner_frame_is_not_idle() -> None:
+    # Captured live docs frame (witness wake 154112): a timer-form spinner with a live tok/s line and
+    # an advancing turn clock is a running turn; the doc rule says working spinners are rejected.
+    docs_frame = (
+        "⚡ 111.2 tok/s\n"
+        " ⠹ 28m > INSERT > ⬢ MiniMax-M3.1-Flash · ◑ med > 📁 ~/mishe-tauftauf > ⑂ main *3 ?6 "
+        "▶─────────────12%───────────┃───────1M─\n"
+    )
+    assert omp_pane.omp_idle_mode(docs_frame) is None
+
+
+def test_omp_plain_insert_frame_stays_idle() -> None:
+    operator_frame = (
+        " π > INSERT > ⬢ MiniMax-M3 · ⟳ auto > 📁 ~/mishe-tauftauf > ⑂ main *3 ?6 "
+        "▶─0.8%───────────┃────────1M─\n"
+    )
+    assert omp_pane.omp_idle_mode(operator_frame) == "insert"
+
+
+def test_omp_timer_spinner_without_insert_stays_not_idle() -> None:
+    assert omp_pane.omp_idle_mode(" ⠇ 6m > INSERT > ⬢ Atria Dawn Preview\n") is None
