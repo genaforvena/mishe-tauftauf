@@ -451,3 +451,10 @@ def test_group_privacy_epsilon_assumes_unbounded_record_count():
     # the multiplier is the granularity distance d_G (arXiv:2308.14649 v2).
     assert stats_boundary.group_privacy_epsilon(epsilon=0.5, k=3) == 1.5
     assert stats_boundary.group_privacy_epsilon(epsilon=0.5, k=0) is None
+
+
+def test_stats_boundary_docstrings_state_posterior_and_exact_release_limits():
+    # Pufferfish TODS Thm 6.2: k*epsilon is an output-ratio bound, not posterior odds.
+    # Pufferfish §6.3.2: exact releases before a noisy one sit outside the epsilon budget.
+    assert "posterior odds" in stats_boundary.group_privacy_epsilon.__doc__
+    assert "Exact aggregates released before any noisy release" in stats_boundary.__doc__

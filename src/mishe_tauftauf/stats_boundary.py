@@ -15,6 +15,9 @@ Lap(Delta f / epsilon) with composition sum epsilon/delta and group
 privacy k*epsilon; post-processing f∘M stays (epsilon,delta)-DP.
 This module stays exact — the DP symbols below are the typed calibration
 so that adding Lap(Delta/epsilon) later is a reviewed privacy change.
+Exact aggregates released before any noisy release are outside the epsilon
+budget, and composition over the noisy release does not cover them (Pufferfish
+TODS §6.3.2); a noisy release needs a ledger that includes prior exact releases.
 """
 from __future__ import annotations
 
@@ -160,6 +163,10 @@ def group_privacy_epsilon(*, epsilon: float, k: int) -> float | None:
     granularities the multiplier is the granularity distance d_G(D,D') between
     the datasets (Guerra-Balboa et al., arXiv:2308.14649 v2); callers using
     such a granularity must pass that distance as k, not a record count.
+    k*epsilon bounds the mechanism's output ratio for neighbouring datasets; it
+    does not bound an attacker's posterior odds about a person when records are
+    correlated (Pufferfish TODS Thm 6.2). Callers reasoning about posterior
+    leakage must name an independence assumption.
 
     Returns k*epsilon for k>=1 finite epsilon>0 else None. For (epsilon,delta)
     the delta multiplier is k*exp((k-1)epsilon) (fn.1 p.20) — noted, not returned.
