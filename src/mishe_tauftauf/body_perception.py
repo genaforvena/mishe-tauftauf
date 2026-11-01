@@ -897,12 +897,15 @@ def k_anonymity_k(
 
     Boundary: this k is over ``qi_keys`` only (default ``QI_DEFAULT_KEYS``,
     ``light_class``). k >= 2 on ``light_class`` does not bound the
-    re-identification risk of a released time-series segment. Lange et al.
-    (ASIA CCS 2025, arXiv 2308.08310) re-identify smartwatch users from short
-    raw segments and report that de-identification and k-anonymity do not
-    address this; a release of raw body sequences needs a separate check or
-    differential privacy, not this value. The paper does not evaluate
-    k-anonymity on time series. Revisit this note against the paper.
+    re-identification risk of a released time-series segment. Lange, Schreieder,
+    Christen and Rahm, "Slice it up: Unmasking User Identities in Smartwatch
+    Health Data" (ACM ASIA CCS 2025, DOI 10.1145/3708821.3710834; preprint
+    arXiv 2308.08310), re-identify smartwatch users from short raw segments.
+    They state that de-identification alone is insufficient, that k-anonymity
+    is often unsuitable for time series, and they do not evaluate it; they
+    propose differential privacy as the stronger defence. A release of raw body
+    sequences needs a separate check or differential privacy, not this value.
+    Revisit this note against the paper.
 
     Blind spot, homogeneity and background knowledge: k counts rows per QI
     class and never reads the sensitive values inside a class. A class of
