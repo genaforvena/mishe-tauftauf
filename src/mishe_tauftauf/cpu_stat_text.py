@@ -52,6 +52,14 @@ def parse_cpu_max_period(text: str | None) -> int | None:
     return period if period > 0 else None
 
 
+UNIT_SUFFIXES = (".service", ".scope")
+
+
+def is_unit_entry(name: str) -> bool:
+    """True when a cgroup directory entry names a systemd unit (``.service`` or ``.scope``)."""
+    return name.endswith(UNIT_SUFFIXES)
+
+
 def slice_sense_id(slice_name: str) -> str:
     """``mishe-plants.slice`` -> ``sense.cgroup.mishe-plants.throttle``."""
     stem = slice_name[: -len(SLICE_SUFFIX)] if slice_name.endswith(SLICE_SUFFIX) else slice_name

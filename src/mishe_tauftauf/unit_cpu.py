@@ -18,7 +18,7 @@ import os
 import time
 from pathlib import Path
 
-from .cpu_stat_text import parse_cpu_stat, read_cpu_stat_file
+from .cpu_stat_text import is_unit_entry, parse_cpu_stat, read_cpu_stat_file
 from .slice_throttle import default_cgroup_root
 
 SLICE = "mishe-plants.slice"
@@ -26,7 +26,6 @@ SENSE_ID = "sense.proc.unit-cpu"
 RECONCILE_TOLERANCE = 0.05
 TOP_UNITS = 8
 SAMPLE_SECONDS = 1.0
-_UNIT_SUFFIXES = (".service", ".scope")
 
 
 def _usage(path: Path) -> int | None:
@@ -45,7 +44,7 @@ def _snapshot(slice_path: Path) -> tuple[int, dict[str, int]] | None:
         return None
     units: dict[str, int] = {}
     for name in names:
-        if not name.endswith(_UNIT_SUFFIXES) or not (slice_path / name).is_dir():
+        if not is_unit_entry(name) or not (slice_path / name).is_dir():
             continue
         usage = _usage(slice_path / name)
         if usage is not None:
