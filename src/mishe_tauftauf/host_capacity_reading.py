@@ -1,11 +1,12 @@
 """Host capacity as a signal graph: anon pressure instead of total cgroup current.
 
-cgroup memory.current includes reclaimable file cache. With memory.high set, the
-kernel reclaims cache to hold the slice near high, so current/high parks near
-0.9 whether or not anything is wrong. Replay on 2026-11-01 (artifact
-signals-replay-20261101): the anon reading cuts LIMITED/CRITICAL starts from 33 to 14
-on the same rows; the remaining starts are PSI memory stalls with anon refaults
-dominant, which this module still reports. This module reads anon (and file,
+Kernel-documented fact (cgroup-v2 admin guide): memory.current includes reclaimable
+file cache, and memory.high is a throttle that triggers reclaim pressure. The kernel
+does not document reclaim "holding the slice near high" or current/high parking near
+0.9; that is not claimed here. Replay-measured fact (artifact signals-replay-20261101):
+the anon reading cuts LIMITED/CRITICAL starts from 33 to 14 on the same rows; the
+remaining starts are PSI memory stalls with anon refaults dominant, which this module
+still reports. This module reads anon (and file,
 for the record) separately; the decision is still host_capacity.decide, fed the
 anon reading. Nothing here is wired into the running controller.
 
