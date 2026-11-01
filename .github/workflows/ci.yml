@@ -48,6 +48,14 @@ jobs:
       # docs/operating.md, neither of which 237db71f leaves in the public
       # tree.  The link gate could not see it: neither was a link.
       - run: python checks/shipped-book-paths.py --home . --repo .
+      # A reachable destination is not a kept promise.  A page that says "see
+      # X for the commands that write a wall and settle a wake" claims
+      # something about X's contents, and a link that resolves says nothing
+      # about that.  Measured on this plant: docs/mesh.md pointed at the
+      # tracked docs/getting-started.md for three commands, and that page
+      # named one of them; the link gate could not see it, because the link
+      # resolved.
+      - run: python checks/shipped-book-promises.py --home . --repo .
       - run: python -m pytest -q
 
   tmux:

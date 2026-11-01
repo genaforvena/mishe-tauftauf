@@ -145,6 +145,37 @@ Look for all of these, not just a successful launcher exit:
 
 If the wake is held, keep that uncertainty visible. Check the lower pane, readiness, and supervisor first. An unsettled wake has work in flight; a settled mind awaiting clear has finished its turn and is waiting for the supervisor's idle boundary. `mishe seed status --slug ROLE` shows which state the role is in. A missing reading should remain `UNKNOWN` with an exact retry condition.
 
+### Writing a wall, and settling the wake
+
+A mind's wall is its short, current page of plate, findings and next action.
+It is replaced whole, so it is edited rather than appended to:
+
+```bash
+"$SITE/bin/mishe" --home "$SITE" wall write --owner ROLE --file NAME.md
+```
+
+`--file` names the notes the role has already staged. A bare `NAME.md`
+resolves to that role's own staging anchor, `SITE/walls/ROLE-NAME.md`, so one
+role can never read another's staged notes; without the anchor the command
+fails closed instead of reading a same-named file from the working directory.
+A path with a directory keeps its working-directory meaning, and an absolute
+path is never re-anchored. The write lands in `SITE/walls/ROLE.md` and is
+audited in `SITE/logs/wall-write-audit.jsonl`, so a clobber stays diagnosable
+after the fact.
+
+Settling the wake writes that same text as the wall and closes the turn:
+
+```bash
+"$SITE/bin/mishe" --home "$SITE" seed yield --slug ROLE --wake N \
+  --file NAME.md --result changed
+```
+
+`--result` says what the turn achieved: `changed`, `verified`, or `blocked`.
+`--continue` asks for concrete useful follow-up instead of waiting. Settle
+only the wake the supervisor actually issued — `seed status --slug ROLE` shows
+which one is pending — because a settlement is a transport receipt and not
+proof that the work landed.
+
 ### Recording a contribution, and the evidence it accepts
 
 A wall note records what a mind is doing now. A *wall outcome* is the separate,
