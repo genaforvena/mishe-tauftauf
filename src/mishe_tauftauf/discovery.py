@@ -7143,7 +7143,11 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     #   instead of borrowing a word that means a clean ledger. This is the
     #   word for a measured and permanent condition, kept apart from
     #   ``drift``, which is the word for a repairable one.
-    # * ``verified`` — the standing audit holds no violating row at all.
+    # * ``verified`` — the standing audit holds no violating row at all. This
+    #   is clean only against the violation rules this audit runs. A rule the
+    #   audit does not run cannot produce a violating row, so a clean result
+    #   says nothing about it. Unseen evidence paths are covered separately by
+    #   the binding gaps above (``unknown``); unseen violation classes are not.
     if gate_rows:
         state = "drift"
     elif binding:
