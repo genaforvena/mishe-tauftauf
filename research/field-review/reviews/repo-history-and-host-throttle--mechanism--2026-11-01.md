@@ -78,6 +78,8 @@ also let a future reader distinguish "throttled by this slice's quota" from
 
 ## Application
 
+target: src/mishe_tauftauf/slice_throttle.py
+
 Proposal to the owner of `src/mishe_tauftauf/slice_throttle.py` (discover):
 
 - Read `throttled_usec` from `cpu.stat.local` in `read_slice_throttle`, next to
@@ -100,7 +102,3 @@ Checks the owner should run before activation: a unit test for a missing
 `cpu.stat.local` (UNKNOWN, not zero); a unit test where local equals own
 (inherited zero); and one live read on this host with the values above as the
 reference. Activation follows the repository's snapshot procedure.
-
-## Discard
-
-Not applicable; applied.
