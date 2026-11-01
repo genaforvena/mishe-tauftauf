@@ -6,6 +6,24 @@ import pytest
 from mishe_tauftauf import session_runner as runner
 
 
+@pytest.fixture(autouse=True)
+def isolate_ambient_workload_slice(monkeypatch):
+    """Keep the caller's workload slice out of this module's unrelated cases.
+
+    ``raise_session`` copies the caller's environment, so an ambient
+    ``MISHE_WORKLOAD_SLICE`` reaches its slice guard. A mind shell runs inside
+    ``mishe-plants.slice`` and exports that variable; CI, which has no ambient
+    binding, does not. The cases below that do not ask about a slice use a
+    fake tmux whose ``display-message`` answers empty stdout, so the guard
+    cannot find one pane pid and refuses before the assertion under test.
+    The result was a suite that failed only where it was run.
+
+    The three cases that do exercise a slice set the variable themselves, after
+    this fixture has run, so they still see it.
+    """
+    monkeypatch.delenv("MISHE_WORKLOAD_SLICE", raising=False)
+
+
 def backend(monkeypatch, *, available=False, delay=0, failure=False):
     state = {"available": available, "checks": 0, "raises": [], "pending": False}
     def run(argv, **kwargs):
