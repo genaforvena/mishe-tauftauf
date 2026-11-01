@@ -336,6 +336,29 @@ def role_reason(roles):
     return '; '.join(named)[:200] or None
 
 
+def _superseded_activation(home, root, role, row, change, target):
+    """Reconcile an activation interrupted before its marker was observed.
+
+    The interrupted row has no after_process, so the live process is the only binding left. It counts
+    as delivered only when that process started after activation_at, carries no marker of this change,
+    selects the target, and completes a provider turn on it. Otherwise the row stays activating.
+    """
+    activated = row.get('activation_at')
+    try:
+        _, proc = boundary.process(home, role)
+    except (OSError, ValueError, KeyError, IndexError, subprocess.SubprocessError) as exc:
+        return {'state': 'activating', 'reason': f'interrupted activation; live process unreadable: {exc}'}
+    if proc['model'] != target or proc['marker'] == change:
+        return {'state': 'activating', 'reason': 'interrupted activation; live process does not select the target'}
+    if activated is None or not proc['started'] > activated:
+        return {'state': 'activating', 'reason': 'interrupted activation; live process predates activation'}
+    state = boundary.completion(root / role, target, proc['started'])
+    if state == 'verified':
+        return {'state': 'delivered', 'current_provider': 'unknown', 'superseded_process': proc,
+                'reason': 'interrupted activation superseded by canonical rotation; live process completed a provider turn on the target'}
+    return {'state': 'activating', 'reason': f'interrupted activation; superseding process completion {state}'}
+
+
 def _status(home, change):
     root, receipt = boundary.receipt(home, change)
     report = {'id': change, 'source': receipt['source'], 'target': receipt['target'],
@@ -347,6 +370,8 @@ def _status(home, change):
         expected = row['before'] if reverting else row['after']
         if path.is_symlink() or boundary.digest(path.read_bytes()) != expected:
             result.update(state='conflict', reason='desired launcher differs from receipt')
+        elif row['state'] == 'activating' and not reverting:
+            result.update(_superseded_activation(home, root, role, row, change, receipt['target']))
         elif row['state'] not in ('activating', 'conflict'):
             observed = boundary.observe(home, role, change + ('-revert' if reverting else ''),
                 receipt['source'] if reverting else receipt['target'],
