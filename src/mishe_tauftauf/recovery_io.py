@@ -510,8 +510,23 @@ def deliver(home, *, limit=1):
             detail = f"Independent recovery guard reports {payload['guard']['state']}. Inspect producer freshness and its service; missing observation stays UNKNOWN."
         elif "host_capacity" in payload:
             capacity = payload["host_capacity"]
-            detail = (f"Combined host capacity is {capacity['state']}; new cgroup OOM kills {capacity.get('oom_delta', 0)}; "
-                      f"action issue {capacity.get('action_error', 'none')}. Resolver Health; backup Genome; disposition within 300 seconds.")
+            observed = capacity.get("checked_at")
+            age = (time.time() - observed
+                   if isinstance(observed, (int, float)) and math.isfinite(observed) else None)
+            if age is None or age < 0:
+                # A future-dated observation is not evidence of current state (clock skew or a corrupt row).
+                freshness = "observation time missing or in the future; treat as UNKNOWN, not current"
+                due = "unknown"
+            else:
+                due = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(observed + 300))
+                if age > capacity.get("max_age", 60):
+                    freshness = (f"STALE observation at {time.strftime('%H:%M:%SZ', time.gmtime(observed))}, "
+                                 f"age {int(age)}s > max_age {capacity.get('max_age')}s; historical, not current")
+                else:
+                    freshness = f"observed {time.strftime('%H:%M:%SZ', time.gmtime(observed))}, age {int(age)}s"
+            detail = (f"Combined host capacity was {capacity['state']} ({freshness}); new cgroup OOM kills {capacity.get('oom_delta', 0)}; "
+                      f"action issue {capacity.get('action_error', 'none')}. Resolver Health; backup Genome; "
+                      f"disposition due {due} (300 seconds after observation).")
         else:
             detail = "Inspect the retained recovery event and its exact action or acceptance evidence."
         text = (f"[dm] to={item['recipient']}\nRecovery event {item['event']}. {detail}\n"

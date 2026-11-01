@@ -62,6 +62,9 @@ def render(home, role, command, *, now=None):
     last_attempt = _attempt_at(attempt_path)
     if last_attempt is not None and 0 <= now - last_attempt < cooldown:
         return deferred("pressure cooldown")
+    if slots == 0:
+        # Policy, not contention: CRITICAL admits no optional render (host_capacity.py slots=0).
+        return deferred(f"host capacity {state['state']} admits no optional render")
     for number in range(slots):
         with (slot_root / f"render-slot-{number}.lock").open("a+") as handle:
             try:
