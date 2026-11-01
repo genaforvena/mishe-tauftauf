@@ -1710,3 +1710,22 @@ def test_a_settled_row_is_a_checked_read_not_an_unchecked_one(
             == next(line for line in baseline.splitlines() if "need a checked read" in line))
     # And the pane does not claim the reading is verified.
     assert "SETTLED senses 1 reading(s) report accounted history" in rendered
+
+
+def test_senses_and_discover_show_absent_throttle_senses_unknown_not_calm(
+        tmp_path: Path, current_endpoint) -> None:
+    """A scan without the throttle senses renders both slices UNKNOWN, with the claim visible.
+
+    The sample must survive the pane's clip, so the reader sees "not calm" on the line.
+    """
+    home = tmp_path / "site"
+    _write_scan(home, [
+        {"id": "sense.proc.loadavg", "state": "verified", "sample": "1.23", "kind": "read"},
+    ])
+    for pane in (senses, discover):
+        rendered = pane(home)
+        for slice_name in ("mishe-plants", "mishe-lifeline"):
+            line = next(line for line in rendered.splitlines()
+                        if line.startswith(f"UNKNOWN sense.cgroup.{slice_name}.throttle:"))
+            assert f"{slice_name}.slice throttle absent from scan; not measured, not calm" in line
+        assert "VERIFIED sense.cgroup" not in rendered

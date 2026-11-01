@@ -7,7 +7,7 @@ VERIFIED = {"id": "sense.cgroup.mishe-plants.throttle", "kind": "read", "state":
 
 
 def test_absent_row_renders_unknown_under_recent_scan():
-    (row,) = missing_throttle_rows([])[:1]
+    row = missing_throttle_rows([])[0]
     state, line = _observation_reading(row, "recent")
     assert state == "unknown"
     assert line.startswith("UNKNOWN sense.cgroup.mishe-plants.throttle:")

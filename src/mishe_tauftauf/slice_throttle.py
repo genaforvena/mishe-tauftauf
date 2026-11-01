@@ -162,8 +162,7 @@ def missing_throttle_rows(observations: list) -> list[dict]:
         sense_id = slice_sense_id(name)
         if sense_id not in present:
             rows.append({"id": sense_id, "state": "unknown", "kind": "read",
-                         "sample": (f"{name} throttle absent from the scan: the producer predates "
-                                    "this sense or did not run it; no throttle was measured, not calm")})
+                         "sample": f"{name} throttle absent from scan; not measured, not calm"})
     return rows
 
 
