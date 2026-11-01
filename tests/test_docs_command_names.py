@@ -81,3 +81,48 @@ def test_prefix_forms_begin_a_site_cli_invocation() -> None:
     # at index 5, not 4.
     assert tool.invocation_start(["python3", "-m", "mishe_tauftauf", "--home",
                                   "SITE", "predict"], tops) == 5
+
+
+def test_the_audit_reads_the_committed_corpus_not_the_working_tree(
+        monkeypatch, tmp_path: Path) -> None:
+    """A page a clone never receives cannot carry a finding for a reader.
+
+    Seven reader pages are gitignored since commit 237db71f and still exist on
+    this checkout, so a working-tree scan audits pages a clone never
+    receives.  The audit therefore reads the committed bytes.
+    """
+    tool = _load_tool()
+    src = tmp_path / "served" / "src"
+    trie = {"wall": {"show": {}}, "pain": {"read": {}}}
+    checker = SimpleNamespace(
+        served_release_src=lambda home: (src.parent, "a" * 40, src),
+        reader_corpus=lambda root: {"README.md": "run `mishe wall show`\n"},
+        committed_reader_corpus=lambda repo: {"README.md": "run `mishe wall show`\n"},
+    )
+    monkeypatch.setattr(tool, "load_leaf_checker", lambda: checker)
+    monkeypatch.setattr(tool, "leaf_trie", lambda served_src: (trie, set(trie)))
+
+    result = tool.audit(tmp_path / "site", checker.committed_reader_corpus(tmp_path))
+
+    assert result["corpus_files"] == 1
+    assert result["findings"] == []
+
+
+def test_a_committed_corpus_cannot_be_emptied_into_a_clean_audit(
+        monkeypatch, tmp_path: Path) -> None:
+    """An unreadable committed corpus is UNKNOWN, never a clean book."""
+    tool = _load_tool()
+    src = tmp_path / "served" / "src"
+    checker = SimpleNamespace(
+        served_release_src=lambda home: (src.parent, "a" * 40, src),
+        reader_corpus=lambda root: {},
+        committed_reader_corpus=lambda repo: {},
+    )
+    monkeypatch.setattr(tool, "load_leaf_checker", lambda: checker)
+    monkeypatch.setattr(tool, "leaf_trie", lambda served_src: ({}, set()))
+
+    code = tool.main(["--home", str(tmp_path / "site"),
+                       "--repo", str(tmp_path / "repo"),
+                       "--out", str(tmp_path / "out.json")])
+
+    assert code == 2

@@ -80,8 +80,11 @@ def _corpus(tmp: Path) -> Path:
 
 def _run(home: Path, root: Path, out: Path, src: Path | None = None
          ) -> subprocess.CompletedProcess[str]:
+    # The fixture book is a plain directory, not a repository, so it is
+    # audited through ``--tree``: the checker reads the *committed* bytes of a
+    # repository, and a fixture tree is the explicit alternative to that.
     argv = [sys.executable, str(_CHECKER), "--home", str(home),
-            "--root", str(root), "--out", str(out)]
+            "--root", str(root), "--tree", str(root), "--out", str(out)]
     if src is not None:
         argv += ["--src", str(src)]
     return subprocess.run(argv, capture_output=True, text=True, timeout=120,
@@ -213,10 +216,17 @@ def test_every_uncovered_leaf_of_the_served_plant_is_dispositioned() -> None:
         pytest.skip("no served-release record beside this checkout")
     out = home / "artifacts" / "check-leaf-invocation-coverage.json"
 
-    done = _run(home, _CHECKOUT_ROOT, out)
+    # The real plant is audited from its committed bytes, not from the
+    # working tree: seven reader pages are gitignored and a clone never
+    # receives them.  Without ``--tree`` the audit reads HEAD.
+    argv = [sys.executable, str(_CHECKER), "--home", str(home),
+            "--root", str(_CHECKOUT_ROOT), "--out", str(out)]
+    done = subprocess.run(argv, capture_output=True, text=True, timeout=300,
+                          cwd=str(_CHECKOUT_ROOT))
 
     assert done.returncode == 0, done.stderr
     record = json.loads(out.read_text(encoding="utf-8"))
+    assert record["corpus_source"].startswith("committed bytes")
     assert record["undispositioned"] == []
 
 
@@ -231,4 +241,100 @@ def test_an_invalid_record_reads_unknown(tmp_path: Path) -> None:
     assert done.returncode == 2
     assert "UNKNOWN" in done.stderr
     assert "deadbeef" in done.stderr
+    assert not out.exists()
+
+
+def _repo_book(tmp: Path) -> Path:
+    """A repository whose committed book names ``alpha one`` only."""
+    repo = tmp / "repo"
+    (repo / "docs").mkdir(parents=True)
+    (repo / "README.md").write_text("run alpha one for the first command\n",
+                                    encoding="utf-8")
+    (repo / "docs" / "guide.md").write_text("beta is the bare top\n",
+                                            encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(repo)], check=True,
+                   capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True,
+                   capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@example.com",
+                    "-c", "user.name=Test", "commit", "-qm", "book"],
+                   check=True, capture_output=True)
+    return repo
+
+
+def _run_repo(home: Path, repo: Path, out: Path
+              ) -> subprocess.CompletedProcess[str]:
+    argv = [sys.executable, str(_CHECKER), "--home", str(home),
+            "--repo", str(repo), "--out", str(out)]
+    return subprocess.run(argv, capture_output=True, text=True, timeout=120,
+                          cwd=str(_CHECKOUT_ROOT))
+
+
+def test_a_gitignored_page_does_not_satisfy_the_clones_book(tmp_path: Path
+                                                             ) -> None:
+    """A page a clone never receives cannot name a command for a reader.
+
+    This is the class that made the working-tree reading wrong: seven reader
+    pages are gitignored since commit 237db71f, and they satisfied the corpus
+    while the clone's book named 19 fewer commands.
+    """
+    release = _release(tmp_path)
+    home = _home(tmp_path, release)
+    repo = _repo_book(tmp_path)
+    # A page the repository does not track, naming a command the committed
+    # book never mentions.
+    (repo / "docs" / "local.md").write_text("alpha two is the local page\n",
+                                            encoding="utf-8")
+    (repo / ".gitignore").write_text("docs/local.md\n", encoding="utf-8")
+    out = tmp_path / "coverage.json"
+
+    done = _run_repo(home, repo, out)
+
+    assert done.returncode == 0, done.stderr
+    record = json.loads(out.read_text(encoding="utf-8"))
+    assert record["corpus_source"].startswith("committed bytes")
+    # The committed book does not name 'alpha two', so it is uncovered ...
+    assert "alpha two" in record["strict_zero"]
+    # ... and the untracked page is reported as naming it for the working
+    # tree only, which is the measurement the two readings exist to make.
+    assert record["named_only_by_untracked_pages"] == ["alpha two"]
+    assert record["invocations_covered"] < 3
+
+
+def test_a_page_the_clone_receives_names_the_command(tmp_path: Path) -> None:
+    """The gate flips: a committed page that names the leaf covers it."""
+    release = _release(tmp_path)
+    home = _home(tmp_path, release)
+    repo = _repo_book(tmp_path)
+    (repo / "docs" / "guide.md").write_text("beta is the bare top\n"
+                                            "alpha two is named here\n",
+                                            encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True,
+                   capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@example.com",
+                    "-c", "user.name=Test", "commit", "-qm", "name it"],
+                   check=True, capture_output=True)
+    out = tmp_path / "coverage.json"
+
+    done = _run_repo(home, repo, out)
+
+    assert done.returncode == 0, done.stderr
+    record = json.loads(out.read_text(encoding="utf-8"))
+    assert "alpha two" not in record["strict_zero"]
+    assert record["named_only_by_untracked_pages"] == []
+
+
+def test_a_repository_without_a_readable_book_reads_unknown(tmp_path: Path
+                                                             ) -> None:
+    """An empty corpus is UNKNOWN, never a clean audit of nothing."""
+    release = _release(tmp_path)
+    home = _home(tmp_path, release)
+    out = tmp_path / "coverage.json"
+
+    # A directory that is not a repository: the committed bytes cannot be
+    # read, so the clone's book cannot be audited.
+    done = _run_repo(home, tmp_path / "not-a-repo", out)
+
+    assert done.returncode == 2
+    assert "UNKNOWN" in done.stderr
     assert not out.exists()

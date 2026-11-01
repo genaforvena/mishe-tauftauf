@@ -6,7 +6,18 @@ reader-facing capability must carry the vocabulary a reader's goal will use.
 This checker is the recurring, deterministic form of that rule. It walks the
 argparse tree of the release this site actually serves and matches every leaf
 invocation (`top sub`, or a bare `top`) against the reader corpus
-(`README.md` plus `docs/*.md` in this checkout).
+(`README.md` plus `docs/*.md`).
+
+The corpus is the **committed** pages — the bytes a clone of this repository
+receives.  The working tree and a clone differ here, and the difference
+decides the verdict: commit ``237db71f`` ("Remove local operating records
+from the public repository", 2026-10-30) gitignored seven reader pages that
+still exist on this checkout, so the working tree shows 16 pages where a clone
+shows 9.  Measured on 2026-11-01, the working tree's pages name 52 leaf
+invocations and the clone's name 33; the 19 in between are named only by
+pages a reader never receives.  So the corpus is read through ``git archive``,
+exactly like ``checks/shipped-book-links.py``.  The working-tree reading is
+reported beside it, because the gap between the two is the measurement.
 
 The audited tree is resolved from the site's served-release record
 (`SITE_HOME/health/runtime-release.json`), the same authority
@@ -36,11 +47,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 HEX = frozenset("0123456789abcdef")
+GIT = "git"
 
 # Why each uncovered leaf is uncovered, kept beside the check that enumerates
 # them so the uncovered set can only ever change for a stated reason. Three
@@ -78,6 +93,40 @@ DISPOSITIONS: dict[str, str] = {
     "engine explain": "shadow admission decision for a role; readers use `engine status`/`engine accounts`",
     "tmux stop": "teardown of an owned session, the paired inverse of `tmux start`; not a repair step",
     "dispatch-receipt": "bare top; an external dispatcher's delivery receipt with no live producer path in this plant",
+    # Retired task-ledger mutation, refused at runtime with "task-ledger
+    # mutation is retired"; the committed book's `wall dm`/`wall write` is the
+    # replacement.  It is retired on the served release too, so naming it
+    # would advertise a command that refuses.
+    "task claim": "retired task-ledger mutation; walls and addressed messages replaced it",
+    # The permission ledger's own surfaces.  The book names `access list` for
+    # reading the ledger (docs/getting-started.md); the decisions below are
+    # operator or in-plant procedure that the shipped reader pages do not
+    # teach, so a clone's reader cannot act on them from the book alone.
+    "access menu": "interactive permission menu; the operator's console surface, not a documented reader step",
+    "access check": "reads one permission request's state; a step of the operator's decision procedure, not a reader step",
+    "access grant": "operator decision on a permission request; the operator's console surface, not a documented reader step",
+    "access revoke": "operator decision on a permission request; the operator's console surface, not a documented reader step",
+    "access request": "a mind's request for a capability; the plant's own request procedure, not a documented reader step",
+    "access recover": "records a bounded recovery for a blocked request; the plant's own blocker procedure",
+    "access resolve": "closes a recovery with checked evidence; the plant's own blocker procedure",
+    "access recoveries": "lists recorded recoveries; the plant's own blocker bookkeeping",
+    # Resident-loop surfaces.  The book teaches `seed status` (the role's own
+    # wake state) and `seed yield` (settling it); the loop's own ticks are the
+    # supervisor's internals.
+    "seed tick": "one supervisor tick; the resident loop's internals, not a reader step",
+    "seed follow": "follows one mind's idle launcher; a resident-loop internal, not a reader step",
+    # Wall surfaces the book does not teach.  `wall write`, `wall show` and
+    # `wall outcome` are the documented ones.
+    "wall dm": "addressed message between minds; the book's shared conversation is `append`, and `wall dm` is the pair's internal form",
+    "wall retry": "explicit retry of a failed delivery; an in-plant recovery step, not a reader step",
+    "wall silence": "suppresses a wall write for a role; an in-plant control, not a reader step",
+    # Plant diagnostics and sampling.  The book teaches `pain read` for a
+    # pane and `discover show` for the last scan.
+    "doctor": "local-plant diagnostics (site in Git, feed contiguity, pane layout); a repair operator's surface, not a reader step",
+    "pain list": "lists the resident slugs; the reader reaches a pane by name, so the list is a supervisor's surface",
+    "pain watch": "streams one pane's frame; the reader reads a pane with `pain read`",
+    "discover scan": "takes a fresh discovery sample; the supervisor takes it, and the reader reads the last scan with `discover show`",
+    "tmux start": "raises the plant's tmux session; the launcher does this at plant time, so a reader does not start it",
 }
 
 
@@ -167,14 +216,71 @@ def reader_corpus(root: Path) -> dict[str, str]:
     return corpus
 
 
-def audit(root: Path, src: Path) -> dict:
-    """Leaf-invocation coverage of the reader corpus against the served tree."""
+def committed_reader_corpus(repo: Path) -> dict[str, str]:
+    """The reader pages a clone of this repository actually receives.
+
+    The working tree and a clone differ here, and the difference decides the
+    verdict.  Commit ``237db71f`` ("Remove local operating records from the
+    public repository", 2026-10-30) added the public guide
+    ``docs/getting-started.md`` and, in the same commit, added the
+    ``.gitignore`` rules that excluded ``docs/operating.md``,
+    ``docs/how-it-works.md``, ``docs/wall-coordination.md``,
+    ``docs/agent-step-experiments.md``, ``docs/decision-models.md``,
+    ``docs/protocol-boundaries.md`` and ``docs/recovery.md``.  Those seven
+    pages still exist on this checkout, so ``reader_corpus`` sees 16 files
+    where a clone sees 9.
+
+    Measured on this plant on 2026-11-01 (Docs wake 155786): the working-tree
+    reading leaves **one** unnamed leaf, ``dispatch-receipt``, while the
+    clone's reading leaves **19**.  Eighteen of the nineteen are named only by
+    the gitignored pages — ``access grant``, ``access revoke``, ``access
+    request``, ``access recover``, ``access resolve``, ``access check``,
+    ``access menu``, ``access recoveries``, ``wall dm``, ``wall retry``,
+    ``wall silence``, ``discover scan``, ``doctor``, ``pain list``, ``pain
+    watch``, ``seed tick``, ``seed follow``, ``task claim`` and ``tmux
+    start``.  A reader who clones the repository cannot find them.
+
+    So the working-tree corpus answers a question no reader has: "does this
+    checkout's local book name every command?".  The clone's corpus answers
+    the reader's: "can a reader who cloned this find the command?".  This
+    function reads the committed bytes through ``git archive``, exactly like
+    ``checks/shipped-book-links.py``, so an untracked or gitignored working-tree
+    page can never satisfy a check that describes the clone.
+
+    A repository that cannot be read yields an empty corpus and the caller
+    reports UNKNOWN rather than a clean audit of nothing.
+    """
+    tmp = tempfile.mkdtemp(prefix="reader-corpus-")
+    try:
+        archive = subprocess.run([GIT, "-C", str(repo), "archive", "HEAD"],
+                                 capture_output=True)
+        if archive.returncode:
+            return {}
+        unpack = subprocess.run(["tar", "-x", "-C", tmp], input=archive.stdout,
+                                capture_output=True)
+        if unpack.returncode:
+            return {}
+        return reader_corpus(Path(tmp))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def audit(root: Path, src: Path, corpus: dict[str, str] | None = None) -> dict:
+    """Leaf-invocation coverage of a reader corpus against the served tree.
+
+    ``corpus`` is the set of reader pages to audit.  It defaults to the pages
+    of ``root`` as they are on disk; ``main`` passes the **committed** pages,
+    because that is what a clone receives (see
+    ``committed_reader_corpus``).  The corpus is never narrowed to make a
+    verdict look better.
+    """
     raw = leaves(load_parser(src))
     # `access` carries the alias `permit`, so the tree enumerates both forms
     # of every access leaf; merge alias forms onto their canonical access
     # name before matching.
     invocations = sorted({i.replace("permit ", "access ", 1) for i in raw})
-    corpus = reader_corpus(root)
+    if corpus is None:
+        corpus = reader_corpus(root)
     blob = "\n".join(corpus.values())
     covered, zero = [], []
     for inv in invocations:
@@ -197,6 +303,7 @@ def audit(root: Path, src: Path) -> dict:
         "invocations_total": len(invocations),
         "invocations_raw_with_aliases": len(raw),
         "invocations_covered": len(covered),
+        "covered": covered,
         "invocations_strict_zero": len(zero),
         "strict_zero": zero,
         "dispositioned": {inv: DISPOSITIONS[inv] for inv in zero
@@ -211,7 +318,13 @@ def main(argv=None) -> int:
     parser.add_argument("--home", type=Path, default=REPO / ".mishe-tauftauf",
                         help="site home holding the served-release record")
     parser.add_argument("--root", type=Path, default=REPO,
-                        help="checkout root holding the reader corpus")
+                        help="checkout root holding the local reader pages")
+    parser.add_argument("--repo", type=Path, default=None,
+                        help="repository whose committed bytes are the clone's "
+                             "reader corpus (default: --root)")
+    parser.add_argument("--tree", type=Path, default=None,
+                        help="an explicit tree to audit instead of the "
+                             "committed bytes")
     parser.add_argument("--src", type=Path,
                         help="accepted only when it is the served release")
     parser.add_argument("--out", type=Path,
@@ -234,15 +347,58 @@ def main(argv=None) -> int:
             return 2
         print(f"--src {requested} is the served release {sha}")
 
+    if args.tree:
+        tree = args.tree.resolve()
+        corpus = reader_corpus(tree)
+        corpus_source = "an explicit tree"
+        repo = None
+    else:
+        repo = (args.repo or args.root).resolve()
+        try:
+            corpus = committed_reader_corpus(repo)
+        except (OSError, ValueError) as exc:
+            print(f"UNKNOWN — committed reader corpus unavailable: {exc}",
+                  file=sys.stderr)
+            return 2
+        corpus_source = "committed bytes of HEAD (what a clone receives)"
+    if not corpus:
+        # An empty corpus would audit nothing and report a clean book that
+        # does not exist.  UNKNOWN is the honest reading.
+        print(f"UNKNOWN — no reader corpus could be read; the clone's book "
+              f"cannot be audited", file=sys.stderr)
+        return 2
+
     try:
-        result = audit(args.root, served_src)
+        result = audit(args.root, served_src, corpus)
     except (ImportError, OSError, ValueError, SyntaxError) as exc:
         print(f"UNKNOWN — served release {sha} could not be audited: {exc}",
               file=sys.stderr)
         return 2
 
+    # The working-tree reading is kept beside the clone's, because the gap
+    # between them is the measurement: a page that exists only here names
+    # commands no reader of the repository can reach.
+    working = None
+    if repo is not None:
+        try:
+            working = audit(repo, served_src, reader_corpus(repo))
+        except (ImportError, OSError, ValueError, SyntaxError) as exc:
+            print(f"note — the working-tree reading was unavailable: {exc}",
+                  file=sys.stderr)
+    if working is not None:
+        result["working_tree_corpus_files"] = len(working["corpus_files"])
+        result["working_tree_corpus_bytes"] = working["corpus_bytes"]
+        result["working_tree_undispositioned"] = working["undispositioned"]
+        # A leaf the working tree names but the clone's corpus does not is
+        # named only by a page this checkout holds and a clone does not.
+        # Coverage, not the undispositioned count, is the measure: a leaf with
+        # a recorded reason is still a command a reader cannot find.
+        result["named_only_by_untracked_pages"] = sorted(
+            set(working["covered"]) - set(result["covered"]))
+
     record = {"served_sha": sha, "release_root": str(release_root),
               "served_src": str(served_src), "corpus_root": str(args.root),
+              "corpus_source": corpus_source,
               **result,
               "sample_time_utc": __import__("datetime").datetime.now(
                   __import__("datetime").timezone.utc).isoformat()}
@@ -254,7 +410,7 @@ def main(argv=None) -> int:
         print(f"note — artifact not written to {out}: {exc}", file=sys.stderr)
 
     print(f"reader corpus: {len(result['corpus_files'])} files, "
-          f"{result['corpus_bytes']} bytes")
+          f"{result['corpus_bytes']} bytes ({corpus_source})")
     print(f"leaf invocations {result['invocations_total']} "
           f"({result['invocations_raw_with_aliases']} with alias forms); "
           f"named {result['invocations_covered']}; "
@@ -268,6 +424,15 @@ def main(argv=None) -> int:
         print(f"  {inv}")
     print(f"bare tops never named in the corpus: "
           f"{' '.join(result['bare_tops_strict_zero']) or '(none)'}")
+    if working is not None:
+        only_untracked = result.get("named_only_by_untracked_pages", [])
+        print(f"working tree: {result['working_tree_corpus_files']} files, "
+              f"{result['working_tree_corpus_bytes']} bytes; "
+              f"leaves named by the clone's book {result['invocations_covered']} "
+              f"vs {len(working['covered'])} by the working tree "
+              f"— named only by pages this clone does not receive "
+              f"({len(only_untracked)}): "
+              f"{' '.join(only_untracked) or '(none)'}")
     print(f"artifact: {out}")
     return 0
 

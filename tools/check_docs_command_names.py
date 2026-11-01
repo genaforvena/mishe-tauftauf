@@ -7,6 +7,14 @@ lines in README.md and docs/*.md against the served CLI's argparse tree.
 Unknown subcommands are stale claims. Prose is excluded because command tops
 such as `wall`, `seed` and `pain` are also ordinary words.
 
+The corpus is the **committed** pages — the bytes a clone of this repository
+receives — not the working tree.  Seven reader pages are gitignored since
+commit ``237db71f`` (2026-10-30) but still exist on this checkout, so a
+working-tree scan audits 16 pages where a clone receives 9.  A stale command
+claim in a page the clone never receives is not the reader's problem; a stale
+claim in a page it does receive is.  The corpus is therefore read through
+``git archive``, as ``checks/shipped-book-links.py`` does.
+
 A non-site command-shaped span may be recorded in DISPOSITIONS. An
 undispositioned finding fails the check. The scan is deliberately lexical:
 plain prose, continued shell commands and unrecognized wrapper forms remain
@@ -23,11 +31,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 LEAF_CHECKER = ROOT / "tools" / "check_leaf_invocation_coverage.py"
 
-DISPOSITIONS = {
-    ("docs/protocol-boundaries.md", "tmux list-panes"): (
-        "the raw tmux binary's pane listing, decoded by proc_table.py; not a site-CLI invocation"
-    ),
-}
+# No disposition is recorded here.  The one that stood for
+# ``docs/protocol-boundaries.md`` is gone: that page is gitignored since
+# commit ``237db71f`` (2026-10-30), so a clone never receives it, and the
+# span it keyed — ``tmux list-panes`` — is already excluded by
+# ``RAW_BINARY_TOPS`` before any disposition is consulted, so the key could
+# never fire.  A dead key would read as covered coverage.
+DISPOSITIONS: dict[tuple[str, str], str] = {}
 CLI_NAME_MARKS = ("mishe", "mishe-tauftauf", "mishe_tauftauf")
 """Command name endings that mark a site-CLI invocation in a docs span.
 
@@ -112,11 +122,12 @@ def walk(tokens: list[str], start: int, trie: dict) -> str | None:
     return None
 
 
-def audit(home: Path) -> dict:
+def audit(home: Path, corpus: dict[str, str] | None = None) -> dict:
     module = load_leaf_checker()
     _, served_sha, src = module.served_release_src(home)
     trie, tops = leaf_trie(src)
-    corpus = module.reader_corpus(home.resolve().parent)
+    if corpus is None:
+        corpus = module.reader_corpus(home.resolve().parent)
     findings = []
     for name in sorted(corpus):
         for span in candidate_spans(corpus[name]):
@@ -149,22 +160,44 @@ def main(argv=None) -> int:
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--home", type=Path, default=ROOT / ".mishe-tauftauf")
+    parser.add_argument("--repo", type=Path, default=None,
+                        help="repository whose committed bytes are the clone's "
+                             "reader corpus (default: the checkout root)")
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args(argv)
 
-    result = audit(args.home)
+    module = load_leaf_checker()
+    repo = (args.repo or ROOT).resolve()
+    corpus = module.committed_reader_corpus(repo)
+    if not corpus:
+        print(f"UNKNOWN — no committed reader corpus could be read from {repo}; "
+              f"the clone's book cannot be audited", file=sys.stderr)
+        return 2
+
+    result = audit(args.home, corpus)
+    # A disposition keyed to a page this clone does not receive can never fire
+    # here.  It is reported rather than deleted, so the artifact shows which
+    # recorded reasons are currently unreachable instead of looking complete.
+    unreachable = sorted({page for page, _ in DISPOSITIONS
+                          if page not in corpus})
+    result["corpus_source"] = "committed bytes of HEAD (what a clone receives)"
+    result["dispositions_on_unshipped_pages"] = unreachable
     out = args.out or args.home / "artifacts" / "check-docs-command-names.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=1) + "\n", encoding="utf-8")
 
     print(f"served release {result['served_sha']}")
-    print(f"reader corpus: {result['corpus_files']} files, {result['corpus_bytes']} bytes")
+    print(f"reader corpus: {result['corpus_files']} files, {result['corpus_bytes']} bytes "
+          f"(committed bytes of HEAD)")
     for finding in result["findings"]:
         mark = "dispositioned" if "disposition" in finding else "STALE COMMAND"
         print(f"{mark}: {finding['file']}: {finding['span']!r} -> unknown {finding['token']!r}")
         if "disposition" in finding:
             print(f"    {finding['disposition']}")
     print(f"named-command findings {len(result['findings'])}; undispositioned {len(result['undispositioned'])}")
+    if unreachable:
+        print(f"recorded dispositions on pages this clone does not receive: "
+              f"{' '.join(unreachable)}")
     print(f"artifact: {out}")
     return 1 if result["undispositioned"] else 0
 
