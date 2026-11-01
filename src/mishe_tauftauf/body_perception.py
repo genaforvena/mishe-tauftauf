@@ -1168,7 +1168,8 @@ def read_redmi10_dense_baseline(home: Path, now: float | None = None) -> dict[st
     light_text = f"{last_light_lux:g}lux {light_class}" if last_light_lux is not None else "unknown"
     charging_text = ("yes" if last_charging else "no") if last_charging is not None else "unknown"
     sample = (f"L={light_text} charging={charging_text} "
-              f"motion={motion_ratio:.0%} break={break_seconds:.0f}s "
+              f"motion={motion_ratio:.0%} ({motion_count}/{total_count} rows) "
+              f"break={break_seconds:.0f}s "
               f"window={window_seconds}s rows={total_count} "
               f"runs=value:{value_runs}/stale:{stale_runs} "
               f"longest=value:{longest_value_run}s/stale:{longest_stale_run}s")

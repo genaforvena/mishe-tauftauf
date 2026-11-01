@@ -566,6 +566,9 @@ def test_dense_baseline_motion_coverage_counts_rows_carrying_values(
     # One of 84 rows carries motion values: the observation rate.
     assert row["motion_ratio"] == pytest.approx(1 / 84)
     assert "motion=1%" in row["sample"]
+    # The rate is printed with its numerator and denominator, so a reader can
+    # see how many delivered rows (all channels) sit under the percentage.
+    assert "motion=1% (1/84 rows)" in row["sample"]
     assert "motion-coverage=1.2%" in row["details"]
     assert "delivery-coverage=25.0%" in row["details"]
 
