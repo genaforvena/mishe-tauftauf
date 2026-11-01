@@ -1807,6 +1807,15 @@ def test_wall_outcome_enforces_eligible_immutable_path_allowlist(tmp_path):
                 if entry.body.startswith("Wall outcome ")]) == len(allowed)
 
 
+def test_wall_outcome_refusal_names_flat_artifact_convention(tmp_path):
+    from mishe_tauftauf import wall
+    nested = tmp_path / "artifacts" / "field-review" / "note.md"
+    nested.parent.mkdir(parents=True)
+    nested.write_text("nested evidence\n")
+    with pytest.raises(ValueError, match="flat artifacts/NAME file"):
+        wall.outcome(tmp_path, "genome", "accepted", "Nested must refuse.", nested)
+
+
 def test_wall_outcome_refuses_already_bound_allowed_scan_path(tmp_path):
     from mishe_tauftauf import wall
 

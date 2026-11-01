@@ -318,7 +318,8 @@ def _publish_outcome(home: Path, role: str, kind: str, text: str, evidence: Path
     if not eligible_evidence_path(home, original_evidence):
         raise ValueError(
             "outcome evidence must be an eligible single file under artifacts/, "
-            "discovery/scan-*.json or dms/*.md; symlinks and traversal are forbidden"
+            "discovery/scan-*.json or dms/*.md; use a flat artifacts/NAME file "
+            "(nested artifacts/<role>/<file> is refused); symlinks and traversal are forbidden"
             f" (resolved to {original_evidence})")
     evidence = original_evidence.resolve()
     if not evidence.is_file():
