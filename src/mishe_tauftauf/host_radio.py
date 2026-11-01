@@ -31,6 +31,7 @@ import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Final
 
 BLUETOOTH_ROOT = Path("/sys/class/bluetooth")
 RFKILL_ROOT = Path("/sys/class/rfkill")
@@ -38,6 +39,26 @@ NET_ROOT = Path("/sys/class/net")
 COMMAND_TIMEOUT_SECONDS = 10.0
 """``bluetoothctl show`` bound: the daemon answers in ~7s on this host (witness,
 2026-10-10), so 5s read as a false ``bluetoothctl-timeout`` UNKNOWN."""
+
+WLAN_SENSING_SUPPORTED: Final[bool] = False
+"""Negative capability: this module does not implement 802.11bf WLAN sensing.
+
+Ropitault et al. 2023 (D0.5, sections I-III and V, footnote 1; ratified as
+802.11bf-2025) defines a sensing initiator/responder pair, transmitter/receiver
+roles, target-bearing and non-target-bearing measurements, and a CSI-only report.
+None of that procedure is implemented or imported here. A CSI path is a
+privacy-boundary change that needs its own privacy review before it can exist.
+Reading the host's own adapters is not WLAN sensing."""
+
+
+def wlan_sensing_capability() -> dict[str, bool]:
+    """Typed statement of what this module does not do. Pure; no I/O."""
+    return {"supported": WLAN_SENSING_SUPPORTED, "csi_reports": False}
+
+
+def is_host_radio_sensing_only() -> bool:
+    """True while the module reads adapter state and never a person's WLAN signal."""
+    return not WLAN_SENSING_SUPPORTED
 
 POWERED = re.compile(r"^[ \t]*Powered:\s+(yes|no)$", re.MULTILINE)
 ACTIVE_INSTANCES = re.compile(r"^[ \t]*ActiveInstances:\s+0x[0-9a-fA-F]+\s+\((\d+)\)$",

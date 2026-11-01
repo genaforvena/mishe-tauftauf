@@ -513,3 +513,10 @@ def test_decode_tailnet_status_returns_only_object_mappings() -> None:
         "BackendState": "Running"}
     assert host_radio.decode_tailnet_status("not json") is None
     assert host_radio.decode_tailnet_status("[1, 2]") is None
+
+
+def test_wlan_sensing_is_a_typed_negative_capability() -> None:
+    assert host_radio.WLAN_SENSING_SUPPORTED is False
+    assert host_radio.wlan_sensing_capability() == {
+        "supported": False, "csi_reports": False}
+    assert host_radio.is_host_radio_sensing_only() is True

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -231,3 +232,56 @@ def test_unavailable_boottime_clock_is_none(monkeypatch) -> None:
 
     monkeypatch.setattr(freshness.time, "clock_gettime_ns", unavailable)
     assert freshness.endpoint() is None
+
+
+def _stamps(start: datetime, gaps: list[float]) -> list[datetime]:
+    out = [start]
+    for gap in gaps:
+        out.append(out[-1] + timedelta(seconds=gap))
+    return out
+
+
+def test_aoi_summary_warmup_is_unknown_not_fresh() -> None:
+    t0 = datetime(2026, 11, 1, 0, 0, tzinfo=timezone.utc)
+    assert freshness.aoi_summary([t0], now=t0 + timedelta(seconds=5)) is None
+    assert freshness.aoi_summary([], now=t0) is None
+
+
+def test_aoi_summary_steady_publisher_reports_peak_and_current_age() -> None:
+    t0 = datetime(2026, 11, 1, 0, 0, tzinfo=timezone.utc)
+    stamps = _stamps(t0, [10.0] * 5)
+    summary = freshness.aoi_summary(stamps, now=stamps[-1] + timedelta(seconds=4))
+
+    assert summary is not None
+    assert summary["current"] == pytest.approx(4.0)
+    assert summary["mean_peak"] == pytest.approx(10.0)
+    assert summary["max"] == pytest.approx(10.0)
+    assert summary["min"] == pytest.approx(10.0)
+    assert summary["n"] == 5
+    assert summary["window_seconds"] == pytest.approx(50.0)
+    # Eq. 2 with Q = D^2/2: sum(D^2)/(2*sum(D)) = 500/(2*50) = 5.
+    assert summary["mean_age"] == pytest.approx(5.0)
+
+
+def test_aoi_summary_breathes_with_uneven_peaks() -> None:
+    t0 = datetime(2026, 11, 1, 0, 0, tzinfo=timezone.utc)
+    stamps = _stamps(t0, [5.0, 5.0, 30.0])
+    summary = freshness.aoi_summary(stamps, now=stamps[-1])
+
+    assert summary is not None
+    assert summary["max"] == pytest.approx(30.0)
+    assert summary["min"] == pytest.approx(5.0)
+    assert summary["mean_peak"] == pytest.approx(40.0 / 3)
+    assert summary["mean_age"] > summary["mean_peak"] / 2
+
+
+def test_aoi_summary_rejects_naive_non_monotonic_and_future_windows() -> None:
+    t0 = datetime(2026, 11, 1, 0, 0, tzinfo=timezone.utc)
+    naive = [datetime(2026, 11, 1, 0, 0), datetime(2026, 11, 1, 0, 0, 10)]
+    assert freshness.aoi_summary(naive, now=t0) is None
+
+    repeated = [t0, t0]
+    assert freshness.aoi_summary(repeated, now=t0 + timedelta(seconds=1)) is None
+
+    stamps = _stamps(t0, [10.0])
+    assert freshness.aoi_summary(stamps, now=t0) is None
