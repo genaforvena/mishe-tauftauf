@@ -347,8 +347,20 @@ def _capture_renderer_failure(home: Path, slug: str) -> None:
         handle.write(f"\n=== {utc_now()} ===\n")
         traceback.print_exc(file=handle)
 
+def _bind_renderer_home(home: Path) -> None:
+    """Export the site home this renderer renders, unless its supervisor already bound one.
+
+    Pane launchers that bypass ``tmux._python_command`` (operator view, plant refresh) start
+    ``pain watch`` without ``MISHE_SEED_HOME``, and the field-review lane reads that variable from
+    the environment, so it reported UNKNOWN "site home unset". A conflicting binding is left in
+    place so ``validate_home_binding`` keeps the mismatch visible instead of overwriting it.
+    """
+    os.environ.setdefault("MISHE_SEED_HOME", str(Path(home).resolve()))
+
+
 def cmd_pain_watch(args) -> int:
     validate_slug(args.slug)
+    _bind_renderer_home(args.home)
     feed = Feed(args.home)
     tick = 0
     try:

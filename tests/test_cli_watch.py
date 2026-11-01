@@ -2,7 +2,17 @@ from __future__ import annotations
 
 from argparse import Namespace
 
+import pytest
+
 from mishe_tauftauf import cli
+
+
+@pytest.fixture(autouse=True)
+def _restore_renderer_site_home(monkeypatch):
+    # cmd_pain_watch exports MISHE_SEED_HOME for the renderer; record and undo it so the
+    # binding does not leak into other test modules that read the environment.
+    monkeypatch.setenv("MISHE_SEED_HOME", "placeholder")
+    monkeypatch.delenv("MISHE_SEED_HOME")
 
 
 def test_pain_watcher_keeps_red_pane_alive_on_malformed_feed(tmp_path, monkeypatch, capsys) -> None:
