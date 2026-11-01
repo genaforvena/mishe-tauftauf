@@ -22,6 +22,7 @@ What these tests pin:
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -106,6 +107,38 @@ def test_a_scope_about_something_else_is_not_a_finding(tmp_path):
     result = run_check(tree)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "statements=0" in result.stdout, result.stdout
+
+
+def test_the_gate_tells_a_per_mind_implementation_from_a_plant_wide_one(tmp_path):
+    """The gate must measure the scope, not assume it.
+
+    A check that reads "plant-wide" whatever the tree does would pass every
+    page and catch nothing.  So the tree is patched to measure one role's own
+    wall, and the gate must then read the scope as per-mind -- and judge the
+    page against that, not against the plant-wide answer.
+    """
+    tree = make_tree(tmp_path, {"docs/getting-started.md": PER_MIND_PAGE})
+    activity = tree / "src" / "mishe_tauftauf" / "activity.py"
+    source = activity.read_text(encoding="utf-8")
+    original = ('    for path in (home / "walls").glob("*.md"):\n'
+                '        if path.stem in monitored:\n')
+    patched = ('    own = os.environ.get("PROBE_ROLE")\n'
+               '    for path in (home / "walls").glob("*.md"):\n'
+               '        if path.stem in monitored and (own is None or path.stem == own):\n')
+    assert original in source, "the activity reading changed shape"
+    source = source.replace(original, patched)
+    if "\nimport os\n" not in source:
+        source = source.replace("import math", "import math\nimport os", 1)
+    activity.write_text(source, encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(CHECK), "--home", str(REPO), "--tree", str(tree)],
+        capture_output=True, text=True,
+        env={**os.environ, "PYTHONPATH": str(tree / "src"), "PROBE_ROLE": "docs"})
+    assert "observed scope=per-mind" in result.stdout, result.stdout
+    # The page states per-mind, and the tree now measures per-mind, so the
+    # page is correct here -- the gate must not fail a true statement.
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_a_page_that_states_nothing_is_not_a_finding(tmp_path):

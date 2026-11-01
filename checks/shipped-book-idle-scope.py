@@ -72,6 +72,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 GIT = "/usr/bin/git"
@@ -263,9 +264,10 @@ def _observe(tree: Path, home: Path) -> dict:
     """Read the scope the tree implements, by exercising it.
 
     The figure is read the way a reader reads it: the watcher writes its
-    reading, and the headline renders from it.  Two monitored roles are given
-    different activity ages -- one quiet for an hour, the other acting now --
-    and the figure that appears on the *quiet* role's pane is read.
+    reading, and the role's **frame** renders the headline that carries it.
+    Two monitored roles are given different activity ages -- one quiet for an
+    hour, the other acting now -- and the figure that appears on the *quiet*
+    role's pane is read.
 
     If the figure on the quiet role's pane is small, it was reset by the
     other role's activity and the scope is plant-wide.  If it is near the
@@ -284,10 +286,42 @@ def _observe(tree: Path, home: Path) -> dict:
         path.write_text(f"# {role}\n", encoding="utf-8")
         os.utime(path, (now - 3600, now - 3600))
 
-    def render() -> tuple[float | None, str, str]:
-        """Run the watcher, then read the idle figure off the rendered pane."""
-        activity.check(home)
-        headline = observations.headline(home, "body")
+    # The activity reading also counts "plant start" as an action, taken from
+    # the site's coordination mode.  A freshly planted site stamps that at the
+    # present moment, which would be the newest action in the plant and would
+    # make every figure small -- the reading would then be plant-wide for
+    # *any* implementation, and the check could not tell a per-mind
+    # implementation from a plant-wide one.  So the start is moved back past
+    # the measured ages, and the figure is then decided by the walls alone.
+    mode_path = home / "coordination-mode.json"
+    try:
+        mode = json.loads(mode_path.read_text())
+    except (OSError, ValueError):
+        mode = {}
+    if isinstance(mode, dict):
+        mode["started"] = datetime.fromtimestamp(now - 7200, timezone.utc).isoformat()
+        mode_path.write_text(json.dumps(mode, indent=2) + "\n", encoding="utf-8")
+
+    def render(role: str) -> tuple[float | None, str, str]:
+        """Run the watcher, then read the idle figure off the role's frame.
+
+        The frame runs under the planted site's own binding.  A mind process
+        is bound to the site its supervisor named (``MISHE_SEED_HOME``), and
+        the check inherits the environment of whoever ran it -- so without
+        this the frame refuses the planted site as a foreign home and the
+        figure cannot be read at all.
+        """
+        bound = os.environ.get("MISHE_SEED_HOME")
+        os.environ["MISHE_SEED_HOME"] = str(home)
+        try:
+            activity.check(home)
+            frame = observations.compose_frame(home, role, timeout=30.0)
+        finally:
+            if bound is None:
+                os.environ.pop("MISHE_SEED_HOME", None)
+            else:
+                os.environ["MISHE_SEED_HOME"] = bound
+        headline = frame.body.splitlines()[0] if frame.body else ""
         match = re.search(r"\bidle\s+([0-9]+(?:\.[0-9]+)?)s", headline)
         reading = json.loads((home / "checks" / "silence-watch.json").read_text())
         if not match:
@@ -297,7 +331,7 @@ def _observe(tree: Path, home: Path) -> dict:
     # The quiet role's own wall is an hour old; the other role acts now.
     os.utime(home / "walls" / f"{active}.md", (now, now))
     time.sleep(1.1)
-    first, first_evidence, first_headline = render()
+    first, first_evidence, first_headline = render(quiet)
 
     if first is None:
         raise ValueError("the committed tree rendered no idle figure")
@@ -309,7 +343,7 @@ def _observe(tree: Path, home: Path) -> dict:
     os.utime(home / "walls" / f"{active}.md", (now - 3600, now - 3600))
     os.utime(home / "walls" / f"{quiet}.md", (now, now))
     time.sleep(1.1)
-    second, second_evidence, second_headline = render()
+    second, second_evidence, second_headline = render(active)
 
     # The quiet role's own wall is an hour old, so a per-mind figure for its
     # pane would be near 3600.  A plant-wide figure is reset by the other
