@@ -4663,10 +4663,41 @@ def _host_session_restarts(home: Path, past_minutes: int = 60) -> dict[str, obje
     verdict = session_restarts.assess_restarts(entries, session, past_minutes)
     state = {"steady": "verified", "churn": "drift"}.get(str(verdict.get("verdict")), "unknown")
     sample = f"last-{past_minutes}m " + session_restarts.sample_text(verdict)
+    if verdict.get("verdict") == session_restarts.STEADY and verdict.get("births") == 0:
+        # Zero births is steady only if the session pre-dates the window: a
+        # session raised inside the window must have left a birth line.
+        created = _tmux_session_created(session)
+        if created is None:
+            unknown["reason"] = "session-creation-unavailable"
+            return unknown
+        if created >= since.timestamp():
+            unknown["reason"] = "birth-not-in-journal"
+            unknown["session"] = session
+            unknown["sample"] = (f"last-{past_minutes}m births=0 but session "
+                                 f"created {datetime.fromtimestamp(created, timezone.utc).isoformat()} "
+                                 "inside the window")
+            return unknown
     return {"id": "sense.host.session-restarts", "state": state,
             "sample": sample, "kind": "read", "session": session,
             "verdict": verdict.get("verdict"), "reason": verdict.get("reason"),
             "intensity": verdict.get("intensity"), "coverage": coverage}
+
+def _tmux_session_created(session: str) -> float | None:
+    """Epoch seconds the tmux session was created, or None when unreadable."""
+    if shutil.which("tmux") is None:
+        return None
+    try:
+        result = subprocess.run(["tmux", "display-message", "-p", "-t", session,
+                                 "#{session_created}"],
+                                capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    text = result.stdout.strip()
+    if not text.isdigit():
+        return None
+    return float(int(text))
 
 def _coord_authorship_fog(home: Path, now: datetime | None = None) -> dict[str, object]:
     """Name dirty-tree bytes no wall or chat line claims, so landing stops guessing.

@@ -8137,6 +8137,9 @@ def test_session_restarts_verified_on_empty_acquisition(monkeypatch, tmp_path):
     from mishe_tauftauf import discovery
     monkeypatch.setattr(discovery, "_journal_command", lambda cmd, timeout=10: b"")
     monkeypatch.setattr(discovery, "_journal_boot", lambda: "boot-restart")
+    # The session pre-dates the window, so zero births is verified steady.
+    monkeypatch.setattr(discovery, "_tmux_session_created",
+                        lambda session: __import__("time").time() - 86400)
     result = discovery._host_session_restarts(_stability_home(tmp_path))
     assert result["state"] == "verified"
     assert result["verdict"] == "steady"
@@ -9153,3 +9156,32 @@ def test_chat_tape_tail_matches_whole_read_and_stays_bounded(tmp_path: Path) -> 
         tracemalloc.stop()
     # The whole-tape read of this ~14 MB fixture peaks well above this bound.
     assert peak < 10_000_000
+
+
+def test_session_restarts_zero_births_inside_window_is_unknown(tmp_path, monkeypatch):
+    from mishe_tauftauf import discovery
+    from datetime import datetime, timezone
+    import time as _time
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(discovery, "_plant_session", lambda home: "mishe-x")
+    monkeypatch.setattr(discovery, "_journal_boot", lambda: "boot-1")
+    monkeypatch.setattr(discovery, "_journal_command", lambda cmd, timeout=10: b"")
+    monkeypatch.setattr(discovery, "_tmux_session_created",
+                        lambda session: now.timestamp() - 60)
+    row = discovery._host_session_restarts(tmp_path, past_minutes=60)
+    assert row["state"] == "unknown"
+    assert row["reason"] == "birth-not-in-journal"
+
+
+def test_session_restarts_zero_births_before_window_is_steady(tmp_path, monkeypatch):
+    from mishe_tauftauf import discovery
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(discovery, "_plant_session", lambda home: "mishe-x")
+    monkeypatch.setattr(discovery, "_journal_boot", lambda: "boot-1")
+    monkeypatch.setattr(discovery, "_journal_command", lambda cmd, timeout=10: b"")
+    monkeypatch.setattr(discovery, "_tmux_session_created",
+                        lambda session: now.timestamp() - 7200)
+    row = discovery._host_session_restarts(tmp_path, past_minutes=60)
+    assert row["state"] == "verified"
+    assert row["verdict"] == "steady"
