@@ -49,6 +49,12 @@ def _high_events(cgroup: dict) -> int | None:
         return None
 
 
+def _some_total_us(cgroup: dict) -> int | None:
+    """Cumulative psi.some stall in microseconds; exact, unlike the 2-decimal EWMA avg60."""
+    value = _nested(cgroup, "psi", "some", "total")
+    return int(value) if isinstance(value, int) and not isinstance(value, bool) else None
+
+
 def read_tail(path) -> tuple[list[dict], int]:
     """Public tail read for other views of the same sampler file (same TAIL_BYTES policy)."""
     return _tail_records(Path(path))
@@ -196,6 +202,7 @@ def read_unit_psi(path, *, now: float) -> dict:
     # Per-unit high-event delta over the window; the newest record must anchor it.
     earlier = [r for r in records[:-1] if float(latest["at"]) - float(r["at"]) <= WINDOW_S]
     deltas: dict[str, int] = {}
+    stall_us: dict[str, int] = {}
     if earlier:
         anchor = earlier[0]
         span = float(latest["at"]) - float(anchor["at"])
@@ -205,6 +212,10 @@ def read_unit_psi(path, *, now: float) -> dict:
             then_high = _high_events(then) if isinstance(then, dict) else None
             if now_high is not None and then_high is not None:
                 deltas[name] = now_high - then_high
+            now_stall = _some_total_us(cgroup)
+            then_stall = _some_total_us(then) if isinstance(then, dict) else None
+            if now_stall is not None and then_stall is not None:
+                stall_us[name] = now_stall - then_stall
     else:
         span = 0.0
 
@@ -216,9 +227,12 @@ def read_unit_psi(path, *, now: float) -> dict:
         return {**base, "state": "unknown", "sample": "no unit carries psi.some.avg10"}
 
     top_high = sorted(deltas.items(), key=lambda kv: kv[1], reverse=True)[:1]
-    high_text = (f"top-high-delta={top_high[0][0]}:+{top_high[0][1]}/{span:.0f}s"
-                 if top_high and top_high[0][1] > 0 else
-                 (f"high-delta=0/{span:.0f}s" if deltas else "high-delta=unknown(no-window)"))
+    if top_high and top_high[0][1] > 0:
+        stall = stall_us.get(top_high[0][0])
+        stall_text = f" some-stall=+{stall / 1000:.1f}ms" if stall is not None else " some-stall=unknown"
+        high_text = f"top-high-delta={top_high[0][0]}:+{top_high[0][1]}/{span:.0f}s{stall_text}"
+    else:
+        high_text = f"high-delta=0/{span:.0f}s" if deltas else "high-delta=unknown(no-window)"
     top_some = max(unit_rows, key=lambda kv: kv[1])
     plant_text = f"plants-some-avg10={plant_some:.2f}" if plant_some is not None else "plants-some-avg10=unknown"
     sample = (f"units={len(units)} psi-units={len(unit_rows)} age={age:.0f}s "

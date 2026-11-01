@@ -91,3 +91,30 @@ def test_empty_cgroups_is_unknown(tmp_path):
     _write(path, [{"at": 1000.0, "cgroups": {}}])
     out = read_unit_psi(path, now=1000.0)
     assert out["state"] == "unknown"
+
+
+def _stall_record(at, high, total):
+    rec = _record(at, high=high)
+    rec["cgroups"]["mishe-plants.slice"]["psi"]["some"]["total"] = total
+    return rec
+
+
+def test_sample_reports_exact_some_stall_on_top_high_unit(tmp_path):
+    path = tmp_path / "p.jsonl"
+    _write(path, [_stall_record(900.0, high=10, total=1_000_000),
+                  _stall_record(1000.0, high=13, total=1_091_000)])
+    out = read_unit_psi(path, now=1010.0)
+    assert "top-high-delta=mishe-plants.slice:+3/100s some-stall=+91.0ms" in out["sample"]
+
+
+def test_stall_is_unknown_when_total_missing_and_absent_when_no_high_delta(tmp_path):
+    path = tmp_path / "p.jsonl"
+    _write(path, [_record(900.0, high=10), _record(1000.0, high=13)])
+    out = read_unit_psi(path, now=1010.0)
+    assert "some-stall=unknown" in out["sample"]
+
+    path2 = tmp_path / "q.jsonl"
+    _write(path2, [_stall_record(900.0, high=10, total=5), _stall_record(1000.0, high=10, total=9)])
+    out2 = read_unit_psi(path2, now=1010.0)
+    assert "high-delta=0/100s" in out2["sample"]
+    assert "some-stall" not in out2["sample"]
