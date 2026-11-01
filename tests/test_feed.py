@@ -787,5 +787,26 @@ class FeedTests(unittest.TestCase):
                 list(feed_module.iter_feed_file(path, home=directory))
 
 
+class ReadTextTailTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.directory = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_matches_whole_file_tail_with_multibyte_text(self):
+        text = "ascii " * 500 + "héllo wörld 日本語 ✓ 🎉 " * 300
+        path = self.directory / "tape.log"
+        path.write_text(text, encoding="utf-8")
+        for chars in (1, 7, 200, 1000, len(text), len(text) + 50):
+            with self.subTest(chars=chars):
+                expected = text[-chars:]
+                self.assertEqual(feed_module.read_text_tail(path, chars), expected)
+
+    def test_missing_file_reads_as_empty(self):
+        self.assertEqual(feed_module.read_text_tail(self.directory / "absent.log", 10), "")
+
+
 if __name__ == "__main__":
     unittest.main()
