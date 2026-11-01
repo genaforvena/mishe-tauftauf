@@ -349,7 +349,10 @@ def _publish_outcome(home: Path, role: str, kind: str, text: str, evidence: Path
         except TypeError:
             bound = _bound_evidence_paths(home)
         if evidence_str in bound:
-            raise ValueError(f"outcome evidence path already bound: {evidence_str}")
+            raise ValueError(
+                f"outcome evidence path already bound: {evidence_str}; each outcome binds its own "
+                "flat artifacts/NAME file (bind a copy of the final bytes), or re-evidence with "
+                "--supersedes <record digest>")
         data = evidence.read_bytes()
         if not data:
             raise ValueError("outcome evidence must not be empty")
