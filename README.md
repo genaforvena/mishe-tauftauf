@@ -208,8 +208,9 @@ the same.
 For development: `src/mishe_tauftauf/` contains the runtime and CLI;
 `coordination/` contains checkout-only planting and linked-release commands;
 `tests/` contains behavioral checks. Instructions and workflows live in
-`instructions/`, `skills/`, and `.agents/skills/`. With a local test environment,
-run `PYTHONPATH=src .venv/bin/pytest -q`; tests complement, not replace, observing
-the changed path in use.
+`instructions/`, `skills/`, and `.agents/skills/`. Run the checks with
+`env PYTHONPATH=src python3 -m pytest -q`; they need `pytest` on the
+interpreter, and they complement, not replace, observing the changed path in
+use.
 
 **[CC0 1.0](LICENSE)** — take it, fork it, grow your own. Keep the checks honest.

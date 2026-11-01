@@ -130,6 +130,20 @@ jobs:
       # shell, whether each plant-code command resolves in a clone that
       # has not installed the package.
       - run: python checks/shipped-book-commands.py --repo .
+      # A command can name a program the clone does not contain, and the
+      # command gate cannot see it: that gate reads the *module* a command
+      # imports, and a program that is not plant code -- a local test
+      # runner, a venv interpreter -- was never its question.  Measured on
+      # this plant: the shipped README.md told a reader to run the checks
+      # with "PYTHONPATH=src .venv/bin/pytest -q", and .venv/ is excluded
+      # by the repository's own ignore rules, so the clone the reader
+      # receives has no such file -- the reader's command answered "No such
+      # file or directory" and exited 127 before it reached the plant.  The
+      # path gate could not see it either: it reads a *directive* in prose
+      # ("read", "use", "see") and a path-shaped span, and the README says
+      # "run" about a command.  The gate reads the program word each
+      # command runs and asks the clone whether it carries that program.
+      - run: python checks/shipped-book-program-paths.py --repo .
       - run: python -m pytest -q
 
   tmux:
