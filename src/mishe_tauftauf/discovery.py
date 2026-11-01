@@ -5790,19 +5790,27 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
     except (OSError, ValueError) as exc:
         return {"id": "sense.coord.dm-disposition-age", "state": "unknown",
                 "sample": f"chat tape unreadable: {exc}", "kind": "read"}
+    window_start = now - timedelta(seconds=DM_DISPOSITION_WINDOW_SECONDS)
     ref_time: dict[str, datetime] = {}
     outcome_entries: list[tuple[datetime, str, str]] = []
     all_dms: list[tuple[datetime, str, str, int]] = []
     try:
+        # Only entries at or after the window start can pair with a DM in the
+        # window: every reply, seq citation and wall outcome that credits a DM
+        # is later than that DM. Earlier entries are dropped while streaming
+        # so the reader holds the window, not the tape's 10 MB of outcome bodies.
+        # ref_time keeps its first-citation time over the whole tape, because
+        # a citation before the window start still sets a record's time.
         for entry in entries:
             ts = datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))
+            in_window = ts >= window_start
             dm_match = DM_TO_RE.match(entry.body)
-            if dm_match:
+            if dm_match and in_window:
                 all_dms.append((ts, entry.source, dm_match.group(1), entry.sequence))
             ref_match = RECORD_REF_RE.search(entry.body)
             if ref_match:
                 ref_time.setdefault(ref_match.group(1), ts)
-            if entry.body.startswith("Wall outcome "):
+            if in_window and entry.body.startswith("Wall outcome "):
                 out_match = WALL_OUTCOME_RE.match(entry.body)
                 if out_match:
                     outcome_entries.append((ts, out_match.group(1), entry.body))
@@ -5816,7 +5824,6 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
         return {"id": "sense.coord.dm-disposition-age", "state": "unknown",
                 "sample": "outcome store unavailable", "kind": "read"}
     seated = seated_roles(home)
-    window_start = now - timedelta(seconds=DM_DISPOSITION_WINDOW_SECONDS)
     scoped = [dm for dm in all_dms
               if dm[0] >= window_start and dm[2] not in PSEUDO_TARGETS]
     broadcast_excluded = sum(1 for dm in all_dms
