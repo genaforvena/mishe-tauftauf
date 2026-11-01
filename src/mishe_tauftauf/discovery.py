@@ -3912,7 +3912,7 @@ def _head_rewinds_reading(home: Path) -> dict[str, object]:
                                                 for key in dispositions):
                             blob = run("rev-parse", "--verify", "-q", f"{sha}:{path}")
                             if blob is not None and blob.returncode == 0:
-                                if (sha, path, blob.stdout.strip()) in dispositions:
+                                if (sha, path, head_rewind_dispositions.blob_id(blob.stdout)) in dispositions:
                                     dispositioned += 1
                                     if len(dispositioned_names) < _HEAD_REWIND_NAMED_PATH_LIMIT:
                                         dispositioned_names.append({"commit": sha[:12], "path": path})

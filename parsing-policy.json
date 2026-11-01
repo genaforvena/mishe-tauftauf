@@ -2,6 +2,7 @@
   "boundaries": [
     "src/mishe_tauftauf/body_perception.py",
     "src/mishe_tauftauf/chat_protocol.py",
+    "src/mishe_tauftauf/claude_gate.py",
     "src/mishe_tauftauf/clear_journal.py",
     "src/mishe_tauftauf/cli.py",
     "src/mishe_tauftauf/coord_tape.py",
@@ -15,6 +16,7 @@
     "src/mishe_tauftauf/engine_rotation.py",
     "src/mishe_tauftauf/feed.py",
     "src/mishe_tauftauf/follow_through.py",
+    "src/mishe_tauftauf/head_rewind_dispositions.py",
     "src/mishe_tauftauf/host_boot.py",
     "src/mishe_tauftauf/host_capacity.py",
     "src/mishe_tauftauf/host_containment.py",
@@ -23,7 +25,6 @@
     "src/mishe_tauftauf/inference_optiona.py",
     "src/mishe_tauftauf/initiative.py",
     "src/mishe_tauftauf/initiative_watch.py",
-    "src/mishe_tauftauf/claude_gate.py",
     "src/mishe_tauftauf/mind_loop.py",
     "src/mishe_tauftauf/model_boundary.py",
     "src/mishe_tauftauf/model_cli.py",

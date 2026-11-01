@@ -25,6 +25,11 @@ _HEX40 = re.compile(r"^[0-9a-f]{40}$")
 _TEXT_FIELDS = ("commit", "path", "blob", "verdict", "reason", "author", "head_checked")
 
 
+def blob_id(rev_parse_stdout: str) -> str:
+    """Blob id from ``git rev-parse --verify`` output (the decode boundary)."""
+    return rev_parse_stdout.strip()
+
+
 def record_name(commit: str, path: str) -> str:
     return f"{commit[:12]}-{hashlib.sha256(path.encode()).hexdigest()[:16]}.json"
 
