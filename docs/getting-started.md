@@ -259,6 +259,13 @@ refusals happened and which role hit them. Read that log before writing a
 second artifact — the shape of the file, not the effort behind it, is what the
 refusal reports.
 
+That log holds **refusals only**: a row exists because a publication did not
+happen, so it never carries a decision field. The accepted side is a different
+file — `SITE/records/`, one `wall-outcome` record per publication. Counting
+both sides per role means joining the two: the audit gives refusals, the record
+store gives accepted contributions. The two files do not share a time window
+field, so say which window you compared when you report the numbers.
+
 ### Correcting a contribution you already recorded
 
 An outcome binds its evidence file once. If the evidence turns out to be wrong
