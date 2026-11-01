@@ -264,6 +264,34 @@ def _judged_holder_age(home, handle, now):
     return max(0.0, now - acquired), None
 
 
+def _holder_fact(handle, why):
+    """Name the busy lock's flock holder(s) from /proc: pid, cmdline and PYTHONPATH release.
+
+    Read-only and bounded. It makes an unstamped UNKNOWN precise without changing its verdict:
+    the holder is evidence of a live process, not a claim that the holder is current or healthy.
+    """
+    pids = _flock_holder_pids(handle)
+    if pids is None:
+        return f"HELD, holder not readable from /proc/locks; stamp: {why}"
+    if not pids:
+        return f"HELD, no flock holder visible in /proc/locks; stamp: {why}"
+    facts = []
+    for pid in sorted(pids):
+        try:
+            cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode("utf-8", "replace").strip()
+        except OSError:
+            cmdline = "unreadable"
+        release = "unreadable"
+        try:
+            env = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
+            found = [item.decode("utf-8", "replace") for item in env if item.startswith(b"PYTHONPATH=")]
+            release = found[0][len("PYTHONPATH="):] if found else "unset"
+        except OSError:
+            pass
+        facts.append(f"HELD, holder pid {pid}, stamp: {why}; cmdline={cmdline[:200]!r}; PYTHONPATH={release}")
+    return "; ".join(facts)
+
+
 def seed_lock_probe(home, window=SEED_LOCK_WINDOW_SECONDS, poll=0.2, stuck_after=SEED_HOLDER_STUCK_SECONDS):
     """Availability only: never a claim that settlement succeeded.
 
@@ -285,7 +313,7 @@ def seed_lock_probe(home, window=SEED_LOCK_WINDOW_SECONDS, poll=0.2, stuck_after
                         seconds = time.monotonic() - started
                         age, why = _judged_holder_age(home, handle, time.time())
                         if age is None:
-                            return {"ok": None, "reason": f"seed lock held for {window:.1f}s window; availability not measured: {why}",
+                            return {"ok": None, "reason": f"seed lock held for {window:.1f}s window; availability not measured: {why}; {_holder_fact(handle, why)}",
                                     "seconds": seconds}
                         if age > stuck_after:
                             return {"ok": False, "holder_age": age, "seconds": seconds,

@@ -58,7 +58,9 @@ def test_lock_held_for_whole_window_is_unknown_not_failed_or_passed(tmp_path: Pa
         holder.kill()
         holder.wait(timeout=10)
     assert row["ok"] is None
-    assert row["reason"] == "seed lock held for 1.0s window; availability not measured: no readable stamp"
+    assert row["reason"].startswith("seed lock held for 1.0s window; availability not measured: no readable stamp; HELD, holder pid ")
+    assert "stamp: no readable stamp" in row["reason"] and "PYTHONPATH=" in row["reason"]
+    assert row["ok"] is None
     assert 1.0 <= elapsed < 5.0
 
 
