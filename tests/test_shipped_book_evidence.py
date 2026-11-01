@@ -134,6 +134,21 @@ def test_a_tree_that_cannot_be_exercised_reads_unknown(tmp_path):
     assert "UNKNOWN" in result.stdout
 
 
+def test_the_single_use_refusal_is_not_the_rules_outcome(tmp_path):
+    """A re-bound artifact is a different refusal, and must not read as the rule.
+
+    "outcome evidence path already bound" is the single-use evidence
+    contract, not the rule about where a relative path resolves.  Reading it
+    as the rule's outcome would turn a re-bound artifact into a rule
+    difference and report a page that states the rule correctly as stale.
+    """
+    tree = make_tree(tmp_path, {"docs/getting-started.md": CURRENT_PAGE})
+    result = run_check(tree)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "already bound" not in result.stdout, result.stdout
+    assert "observed outside=accepted" in result.stdout, result.stdout
+
+
 def test_the_committed_tree_of_this_repository_runs_what_it_documents():
     """This repository's own shipped book must satisfy the check it ships."""
     result = subprocess.run([sys.executable, str(CHECK), "--home", str(REPO),

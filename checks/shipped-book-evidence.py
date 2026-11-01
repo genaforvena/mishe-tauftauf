@@ -74,6 +74,11 @@ Scope and limits, named:
 * The check compares the *rule*, not the wording.  A page that describes the
   rule correctly in its own words still passes, because the check looks for
   the outcome the page states, not for a sentence it expects.
+* Only the **eligibility** refusal is the rule's outcome.  "outcome evidence
+  path already bound" is a different refusal -- the single-use evidence
+  contract -- and reading it as the rule's outcome would turn a re-bound
+  artifact into a rule difference.  Each reading uses its own artifact name,
+  so the contract cannot fire; if it does, the reading is UNKNOWN.
 
 Exit status:
   0  every stated evidence-resolution outcome matches the committed tree
@@ -313,8 +318,15 @@ def _run_outcome(home: Path, tree: Path, work: Path, cwd: Path, artifact: str) -
     if result.returncode == 0:
         return "accepted"
     message = (result.stdout + result.stderr).lower()
-    if "must be an eligible single file" in message or "already bound" in message:
+    if "must be an eligible single file" in message:
         return "refused"
+    # "outcome evidence path already bound" is a **different** refusal: the
+    # single-use evidence contract, not the rule about where a relative path
+    # resolves.  Treating it as the rule's outcome would make the check read
+    # a re-bound artifact as a rule difference, so it is not this rule's
+    # outcome and the reading is UNKNOWN.
+    if "already bound" in message:
+        return "unknown"
     return "unknown"
 
 
