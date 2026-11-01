@@ -179,3 +179,24 @@ def test_reconciliation_drops_managed_units_without_mutating_the_set_it_walks(tm
     row["limited"] = False
     result = host.reconcile(tmp_path, row, {"optional_units": names})
     assert result["managed_units"] == []
+
+
+def test_steady_plateau_below_clear_band_clears_after_stable_window():
+    # 2026-11-01 flap: the working set oscillated 0.79-0.82*high; the old 0.8 cut reset the timer every sample.
+    row = host.decide(None, sample(current=1150), now=100, stable_seconds=120)
+    assert row["state"] == "CRITICAL"
+    row = host.decide(row, sample(current=1000 * .82 - 1), now=110, stable_seconds=120)
+    assert row["limited"]
+    for now in range(120, 240, 10):
+        current = 1000 * (.82 if now % 20 else .79)
+        row = host.decide(row, sample(current=current), now=now, stable_seconds=120)
+    assert row["state"] == "NORMAL"
+
+
+def test_clear_band_still_reholds_at_overload_threshold():
+    row = host.decide(None, sample(current=1150), now=100, stable_seconds=20)
+    for now in (105, 110):
+        row = host.decide(row, sample(current=860), now=now, stable_seconds=20)
+    assert row["limited"] and row["state"] == "LIMITED"
+    row = host.decide(row, sample(current=900), now=115, stable_seconds=20)
+    assert row["state"] == "LIMITED" and row["clear_since"] is None

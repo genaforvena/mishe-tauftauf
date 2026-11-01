@@ -36,7 +36,10 @@ def decide(previous, observation, *, now, stable_seconds=120):
         row["oom_delta"] = max(0, count - before.get("events", {}).get("oom_kill", count))
         critical = current >= maximum * .9 or available < .06 or memory >= 25 or row["oom_delta"] > 0
         overloaded = critical or current >= high * .9 or available < .12 or memory >= 5 or io >= 40
-        clear = current < high * .8 and available >= .18 and memory < 1 and io < 10
+        # Clear band 0.85*high: the steady working set of this slice sits at ~0.80-0.82*high,
+        # so a 0.8 cut reset the stability timer on every ordinary sample (2026-11-01 flap).
+        # Overload still re-holds at 0.9*high, leaving a 0.05*high band between clear and overload.
+        clear = current < high * .85 and available >= .18 and memory < 1 and io < 10
         contiguous = 0 <= now - old.get("checked_at", now) <= 20
         since = old.get("clear_since") if contiguous else None
         if clear and not overloaded:
