@@ -257,6 +257,8 @@ def _placebo_lines(sample, baseline) -> list[str]:
         scale_text = "UNKNOWN" if scale is None else f"{scale:.2f}"
         q_text = "UNKNOWN (zero scale)" if scale is None else f"{diff / scale:.2f}"
         lines.append(f"| {name.replace('_', ' ')} | {diff} | {scale_text} | {q_text} |")
+    lines += ["", f"Limit: the entry floor ({placebo['floor']}) is a judgment, not derived from outage evidence; "
+              "the scaled section is not a verdict on usefulness, and the floor was chosen on the same windows it reports."]
     return lines
 
 
