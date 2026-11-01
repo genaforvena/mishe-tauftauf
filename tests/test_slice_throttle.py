@@ -94,3 +94,55 @@ def test_self_limit_throttle_is_verified_reading(tmp_path):
     assert plants["state"] == "verified"
     assert plants["throttle"]["throttled"] == 300
     assert plants["throttle"]["ratio"] == 0.5
+
+
+def _local(root: Path, usec: int, slice_name="mishe-plants.slice") -> None:
+    (root / slice_name / "cpu.stat.local").write_text(f"throttled_usec {usec}\n")
+
+
+def test_inherited_throttle_is_local_delta_minus_own_delta():
+    previous = {"at": 1000.0, "nr_periods": 600, "nr_throttled": 100, "throttled_usec": 1_000_000,
+                "local_throttled_usec": 5_000_000}
+    current = {"at": 1060.0, "nr_periods": 1200, "nr_throttled": 670, "throttled_usec": 1_000_000 + 60_000_000,
+               "local_throttled_usec": 5_000_000 + 90_000_000}
+    verdict = st.throttle_verdict(previous, current, 1060.0)
+    assert verdict["inherited"] == {"state": "verified", "throttled_usec": 30_000_000,
+                                    "throttled_usec_per_min": 30_000_000.0}
+
+
+def test_missing_cpu_stat_local_is_unknown_not_zero():
+    previous = {"at": 1000.0, "nr_periods": 600, "nr_throttled": 100, "throttled_usec": 1, "local_throttled_usec": None}
+    current = {"at": 1060.0, "nr_periods": 1200, "nr_throttled": 110, "throttled_usec": 2, "local_throttled_usec": None}
+    verdict = st.throttle_verdict(previous, current, 1060.0)
+    assert verdict["state"] == "verified"
+    assert verdict["inherited"]["state"] == "unknown"
+    assert "unavailable" in verdict["inherited"]["reason"]
+
+
+def test_local_equal_to_own_means_no_inherited_throttle():
+    previous = {"at": 1000.0, "nr_periods": 600, "nr_throttled": 0, "throttled_usec": 0, "local_throttled_usec": 0}
+    current = {"at": 1060.0, "nr_periods": 1200, "nr_throttled": 300, "throttled_usec": 90_000_000,
+               "local_throttled_usec": 90_000_000}
+    verdict = st.throttle_verdict(previous, current, 1060.0)
+    assert verdict["inherited"] == {"state": "verified", "throttled_usec": 0, "throttled_usec_per_min": 0.0}
+
+
+def test_read_carries_cpu_stat_local_into_inherited_field(tmp_path):
+    home = tmp_path / "home"
+    root = tmp_path / "cg"
+    _cgroup(root, 600, 0, 0)
+    _local(root, 0)
+    st.read_slice_throttle(home, root, now=1000.0)
+    _cgroup(root, 1200, 300, 90_000_000)
+    _local(root, 150_000_000)
+    readings = st.read_slice_throttle(home, root, now=1060.0)
+    plants = next(r for r in readings if r["id"] == "sense.cgroup.mishe-plants.throttle")
+    assert plants["throttle"]["inherited"]["throttled_usec"] == 60_000_000
+    assert plants["sample"].startswith("mishe-plants.slice window=60.0s ratio=0.5")
+    # Missing cpu.stat.local on the lifeline slice: the own verdict stands, inherited is UNKNOWN.
+    _cgroup(root, 489, 0, 0, "mishe-lifeline.slice")
+    st.read_slice_throttle(home, root, now=1000.0)
+    _cgroup(root, 978, 160, 12_000_000, "mishe-lifeline.slice")
+    readings = st.read_slice_throttle(home, root, now=1060.0)
+    lifeline = next(r for r in readings if r["id"] == "sense.cgroup.mishe-lifeline.throttle")
+    assert lifeline["throttle"]["inherited"]["state"] == "unknown"

@@ -11,7 +11,14 @@ import json
 from pathlib import Path
 
 COUNTERS = ("nr_periods", "nr_throttled", "throttled_usec")
+LOCAL_COUNTER = "throttled_usec"
 SLICE_SUFFIX = ".slice"
+
+
+def parse_cpu_stat_local(text: str | None) -> int | None:
+    """``throttled_usec`` from a cpu.stat.local body; None when absent or unparseable."""
+    fields = parse_cpu_stat(text, (LOCAL_COUNTER,))
+    return None if fields is None else fields[LOCAL_COUNTER]
 
 
 def parse_cpu_stat(text: str | None, counters: tuple[str, ...] = COUNTERS) -> dict[str, int] | None:

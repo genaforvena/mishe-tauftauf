@@ -16,7 +16,10 @@ ancestor cgroup's limit (kernel admin-guide cgroup-v2, cpu section, "the above
 five CFS bandwidth stats are non-hierarchical"; read 2026-11-01 from
 docs.kernel.org/admin-guide/cgroup-v2.html). A quiet reading therefore does not
 rule out throttling from above the slice. The sample reports the slice's own
-limit and nothing about its ancestors.
+limit as the sense's verdict. Throttling inherited from an ancestor is read
+separately from the sibling file cpu.stat.local (its ``throttled_usec``): the
+``inherited`` field is ``local delta - own delta``, and is UNKNOWN (never zero)
+when cpu.stat.local is absent. The sense id and sample text do not change.
 """
 from __future__ import annotations
 
@@ -24,7 +27,15 @@ import os
 import time
 from pathlib import Path
 
-from .cpu_stat_text import COUNTERS, baseline_text, parse_cpu_stat, read_baseline, read_cpu_stat_file, slice_sense_id
+from .cpu_stat_text import (
+    COUNTERS,
+    baseline_text,
+    parse_cpu_stat,
+    parse_cpu_stat_local,
+    read_baseline,
+    read_cpu_stat_file,
+    slice_sense_id,
+)
 
 SLICES = ("mishe-plants.slice", "mishe-lifeline.slice")
 MIN_GAP_SECONDS = 20.0
@@ -61,7 +72,25 @@ def throttle_verdict(previous: dict, current: dict, now: float) -> dict:
             "ratio": round(deltas["nr_throttled"] / periods, 4),
             "periods_per_min": round(periods / minutes, 1),
             "throttled_per_min": round(deltas["nr_throttled"] / minutes, 1),
-            "throttled_usec_per_min": round(deltas["throttled_usec"] / minutes, 1)}
+            "throttled_usec_per_min": round(deltas["throttled_usec"] / minutes, 1),
+            "inherited": _inherited_throttle(previous, current, deltas["throttled_usec"], minutes)}
+
+
+def _inherited_throttle(previous: dict, current: dict, own_usec: int, minutes: float) -> dict:
+    """Ancestor-limit throttling: cpu.stat.local delta minus the slice's own delta."""
+    before = previous.get("local_throttled_usec")
+    after = current.get("local_throttled_usec")
+    if before is None or after is None:
+        return {"state": "unknown", "reason": "cpu.stat.local unavailable"}
+    local_usec = int(after) - int(before)
+    if local_usec < 0:
+        return {"state": "unknown", "reason": "cpu.stat.local went backwards"}
+    inherited = local_usec - own_usec
+    if inherited < 0:
+        return {"state": "unknown", "reason": "cpu.stat.local below own throttled_usec"}
+    return {"state": "verified",
+            "throttled_usec": inherited,
+            "throttled_usec_per_min": round(inherited / minutes, 1)}
 
 
 def read_slice_throttle(home: Path, cgroup_root: Path | None = None,
@@ -81,7 +110,8 @@ def read_slice_throttle(home: Path, cgroup_root: Path | None = None,
             readings.append({"id": sense_id, "state": "unknown",
                              "sample": f"{name} cpu.stat unreadable", "kind": "read"})
             continue
-        current = {"at": now, **counters}
+        local_usec = parse_cpu_stat_local(read_cpu_stat_file(root / name / "cpu.stat.local"))
+        current = {"at": now, **counters, "local_throttled_usec": local_usec}
         next_state[name] = current
         previous = previous_state.get(name)
         if not isinstance(previous, dict) or "at" not in previous:
