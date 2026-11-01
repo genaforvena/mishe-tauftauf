@@ -107,10 +107,13 @@ def get(home: Path, identity: str) -> Request:
 
 def decisions(home: Path) -> dict[str, str]:
     state: dict[str, str] = {}
-    for entry in Feed(home).entries():
+    # Only operator/permissions decision lines are consumed here. Other entries,
+    # including record references, are not read, so their payloads are not verified.
+    for entry in Feed(home).entries(verify_records=False):
         if entry.source != "operator/permissions":
             continue
         if match := DECISION_RE.match(entry.body):
+            Feed._verify_records((entry,))
             state[match.group(1)] = match.group(2)
     return state
 

@@ -33,7 +33,11 @@ _PUBLICATION_DEPTH = threading.local()
 # re-reads it per frame. Keep one parsed revision per feed path, keyed by the
 # index's file metadata, so unchanged frames skip the parse. Any append or
 # external rewrite changes inode/size/mtime/ctime and invalidates the entry.
-_ENTRIES_CACHE: dict[str, tuple[tuple, list]] = {}
+# Entries are (metadata, parsed list, verified). A reader that asks for record
+# verification takes only verified revisions; a reader that opts out of record
+# verification (verify_records=False) may use either, and an unverified
+# revision never replaces a verified one for the same tape revision.
+_ENTRIES_CACHE: dict[str, tuple[tuple, list, bool]] = {}
 _ENTRIES_CACHE_LOCK = threading.Lock()
 _ROLE_ENTRIES_CACHE = OrderedDict()
 
@@ -649,7 +653,18 @@ class Feed:
         if store is not None:
             store.store(list(pending.values()))
 
-    def _extend_entries(self, cached, data: bytes, metadata) -> list[FeedEntry] | None:
+    @staticmethod
+    def _store_entries(path: Path | str, metadata, entries: list, verified: bool) -> None:
+        key = str(path)
+        with _ENTRIES_CACHE_LOCK:
+            held = _ENTRIES_CACHE.get(key)
+            if (not verified and held is not None and held[2]
+                    and tuple(held[0]) == tuple(metadata)):
+                return
+            _ENTRIES_CACHE[key] = (metadata, entries, verified)
+
+    def _extend_entries(self, cached, data: bytes, metadata,
+                        verify_records: bool = True) -> list[FeedEntry] | None:
         """Continue a cached full read with the frames appended since it was taken.
 
         A live pane re-reads the whole tape every tick, so replaying the entire
@@ -660,7 +675,7 @@ class Feed:
         append and the caller falls back to a full parse. The suffix bytes are
         captured under the tape lock and parsed after it is released.
         """
-        previous, entries = cached
+        previous, entries = cached[0], cached[1]
         if not entries or previous[0] != metadata[0] or previous[1] >= metadata[1]:
             return None
         try:
@@ -669,10 +684,12 @@ class Feed:
             return None
         if not parsed or parsed[0].sequence != entries[-1].sequence + 1:
             return None
-        self._verify_records(parsed)
+        if verify_records:
+            self._verify_records(parsed)
         return entries + parsed
 
-    def _capture(self, handle, start: int, limit: int | None, allow_extend: bool = True):
+    def _capture(self, handle, start: int, limit: int | None, allow_extend: bool = True,
+                 verified: bool = True):
         """Capture the bytes a reader will parse, under the tape's shared lock.
 
         The tape is append-only and the writer's exclusive lock excludes every
@@ -699,6 +716,9 @@ class Feed:
         if start == 1 and limit is None:
             with _ENTRIES_CACHE_LOCK:
                 cached = _ENTRIES_CACHE.get(str(self.path))
+            # An unverified revision cannot serve a reader that requires verification.
+            if cached is not None and verified and not cached[2]:
+                cached = None
             if cached is not None and tuple(cached[0]) == metadata:
                 return ("cached", b"", cached)
         if allow_extend and cached is not None and cached[0][0] == metadata[0] and cached[0][1] < metadata[1]:
@@ -780,7 +800,10 @@ class Feed:
         return list(view)
 
     def entries(self, *, start: int = 1, limit: int | None = None,
-                payloads: dict | None = None) -> list[FeedEntry]:
+                payloads: dict | None = None, verify_records: bool = True) -> list[FeedEntry]:
+        """Parse the tape. verify_records=False skips record payload verification
+        for a caller that reads only plain-text entries and verifies any record it
+        consumes itself; the parse and tape-level checks still run."""
         if start < 1 or limit is not None and limit < 0:
             raise ValueError("start must be positive and limit nonnegative")
         if not self.path.exists():
@@ -797,17 +820,16 @@ class Feed:
                 # the capture: parsing and verification follow after it is
                 # released, so a cold full-tape read does not starve the writer.
                 fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
-                mode, data, span = self._capture(handle, start, limit, allow_extend)
+                mode, data, span = self._capture(handle, start, limit, allow_extend, verify_records)
                 metadata = tuple(self._metadata(handle))
             if mode == "cached":
                 return list(span[1])
             if mode == "empty":
                 return []
             if mode == "extend":
-                extended = self._extend_entries(span, data, metadata)
+                extended = self._extend_entries(span, data, metadata, verify_records)
                 if extended is not None:
-                    with _ENTRIES_CACHE_LOCK:
-                        _ENTRIES_CACHE[str(self.path)] = (metadata, extended)
+                    self._store_entries(self.path, metadata, extended, verify_records)
                     return list(extended)
                 # The suffix was not a contiguous continuation of the cached
                 # revision. Read the whole revision instead of splicing it.
@@ -831,10 +853,10 @@ class Feed:
             # Fill the sink only on a full verify pass; a cache hit leaves it
             # empty so the caller's projection falls back to per-entry
             # resolution, exactly as before.
-            self._verify_records(result, payloads)
+            if verify_records:
+                self._verify_records(result, payloads)
             if start == 1 and limit is None:
-                with _ENTRIES_CACHE_LOCK:
-                    _ENTRIES_CACHE[str(self.path)] = (metadata, list(result))
+                self._store_entries(self.path, metadata, list(result), verify_records)
             return result
 
     def tail_sequence(self) -> int:
