@@ -13,33 +13,33 @@ def _sample(**over):
 
 def test_file_cache_alone_does_not_limit_the_signal_rule():
     # current is 0.69*high (cache-heavy), anon is 0.13*high: the signal rule stays NORMAL.
-    line = hcr.dashboard_line(_sample(), previous=None, at=100.0, now=100.0)
+    line = hcr.dashboard_line(_sample(), previous_current=None, previous_signal=None, at=100.0, now=100.0)
     assert "signal rule=NORMAL" in line
     assert "current/high 0.69" in line and "anon/high 0.12" in line
 
 
 def test_real_anon_growth_still_limits_the_signal_rule():
     s = _sample(anon=15.8 * GB, current=16.5 * GB)
-    line = hcr.dashboard_line(s, previous=None, at=100.0, now=100.0)
+    line = hcr.dashboard_line(s, previous_current=None, previous_signal=None, at=100.0, now=100.0)
     assert "signal rule=CRITICAL" in line  # anon 0.99*high >= 0.9*max
 
 
 def test_missing_part_is_unknown_not_normal():
     s = _sample()
     del s["file"]
-    line = hcr.dashboard_line(s, previous=None, at=100.0, now=100.0)
+    line = hcr.dashboard_line(s, previous_current=None, previous_signal=None, at=100.0, now=100.0)
     assert line.startswith("UNKNOWN") and "file" in line
 
 
 def test_stale_sample_is_unknown_not_normal():
-    line = hcr.dashboard_line(_sample(), previous=None, at=100.0, now=1000.0, max_age=60.0)
+    line = hcr.dashboard_line(_sample(), previous_current=None, previous_signal=None, at=100.0, now=1000.0, max_age=60.0)
     assert line.startswith("UNKNOWN")
 
 
 def test_anon_alone_at_max_reaches_critical():
     # Genome blocker (2026-11-01): anon-based decide must still reach CRITICAL when anon alone is at memory.max.
     s = _sample(anon=17 * GB, current=17 * GB)
-    line = hcr.dashboard_line(s, previous=None, at=100.0, now=100.0)
+    line = hcr.dashboard_line(s, previous_current=None, previous_signal=None, at=100.0, now=100.0)
     assert "signal rule=CRITICAL" in line
 
 
@@ -53,3 +53,25 @@ def test_anon_just_below_ninety_percent_of_max_is_not_critical_on_max_rule():
     s = _sample(anon=17 * GB * .89, current=17 * GB * .89)
     obs = hcr.controller_observation(s, at=100.0, now=100.0)
     assert hcr.host_capacity.decide(None, obs, now=100.0)["state"] != "CRITICAL"
+
+
+def test_each_rule_chains_on_its_own_history():
+    # Controller latched LIMITED on the current rule (cache-heavy plateau), signal rule never latched.
+    # One shared previous row would give the wrong state for one of the two rules.
+    # Current rule: cache-heavy sample (current 15 GB: over 0.9*high, under 0.9*max) latches LIMITED.
+    held_legacy = hcr.decide_anon(None, dict(_sample(current=15 * GB), anon=15 * GB),
+                                  at=100.0, now=100.0)
+    assert held_legacy["state"] == "LIMITED"
+    line, legacy, signal = hcr.dashboard_frame(_sample(), previous_current=held_legacy,
+                                               previous_signal=None, at=110.0, now=110.0)
+    assert legacy["state"] == "LIMITED" and signal["state"] == "NORMAL"
+    assert "signal rule=NORMAL current rule=LIMITED" in line
+
+
+def test_frame_returns_rows_for_chaining_and_none_when_unknown():
+    line, legacy, signal = hcr.dashboard_frame(_sample(), previous_current=None, previous_signal=None,
+                                               at=100.0, now=100.0)
+    assert legacy is not None and signal is not None
+    line, legacy, signal = hcr.dashboard_frame(_sample(anon=None), previous_current=None,
+                                               previous_signal=None, at=100.0, now=100.0)
+    assert legacy is None and signal is None and line.startswith("UNKNOWN")

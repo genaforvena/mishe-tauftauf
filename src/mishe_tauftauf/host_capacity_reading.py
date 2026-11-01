@@ -79,23 +79,33 @@ def _ratio(part, high):
     return "n/a" if part is None or not high else f"{part / high:.2f}"
 
 
-def dashboard_line(sample: dict, *, previous, at: float, now: float, max_age: float = 60.0) -> str:
-    """One host-capacity line for a scratch frame: the signal-graph reading next to the current rule.
+def dashboard_frame(sample: dict, *, previous_current, previous_signal, at: float, now: float,
+                    max_age: float = 60.0):
+    """(line, current_row, signal_row): each rule chains on its own previous row.
 
-    Never prints a decision from missing input: a missing or stale part yields UNKNOWN naming it.
-    The current rule (cgroup current, file cache included) is recomputed on the same sample so the
-    two readings can be compared without touching the running controller.
+    A single previous row cannot serve both rules: the current rule holds LIMITED on its own
+    history, the signal rule on the anon history. Callers pass each rule's last row back in.
+    Missing or stale input yields UNKNOWN rows for that rule and an UNKNOWN line naming the part.
     """
     signals = sample_signals(sample, at=at, max_age=max_age)
     fresh = {k: ls.hold_until_expiry(s, now, max_age) for k, s in signals.items()}
     missing = sorted(k for k, s in fresh.items() if s.state != ls.OK)
     if missing:
-        return "UNKNOWN — host capacity signal unavailable: " + ", ".join(missing)
+        line = "UNKNOWN — host capacity signal unavailable: " + ", ".join(missing)
+        return line, None, None
     high = fresh["limits"].value[0]
-    legacy = decide_anon(previous, dict(sample, anon=sample["current"]), at=at, now=now, max_age=max_age)
-    signal = decide_anon(previous, sample, at=at, now=now, max_age=max_age)
-    return (f"HOST CAPACITY — anon/high {_ratio(fresh['anon'].value, high)} "
+    legacy = decide_anon(previous_current, dict(sample, anon=sample["current"]), at=at, now=now, max_age=max_age)
+    signal = decide_anon(previous_signal, sample, at=at, now=now, max_age=max_age)
+    line = (f"HOST CAPACITY — anon/high {_ratio(fresh['anon'].value, high)} "
             f"file/high {_ratio(fresh['file'].value, high)} "
             f"current/high {_ratio(fresh['current'].value, high)} "
             f"mem-full60 {fresh['memory_full'].value:g} io-full {fresh['io_full'].value:g}; "
             f"signal rule={signal['state']} current rule={legacy['state']}")
+    return line, legacy, signal
+
+
+def dashboard_line(sample: dict, *, previous_current=None, previous_signal=None, at: float, now: float,
+                   max_age: float = 60.0) -> str:
+    """One host-capacity line for a scratch frame: the signal-graph reading next to the current rule."""
+    return dashboard_frame(sample, previous_current=previous_current, previous_signal=previous_signal,
+                           at=at, now=now, max_age=max_age)[0]
