@@ -16,7 +16,20 @@ ROOT = Path(__file__).resolve().parents[2]
 
 from . import ci_watch, discovery, seed, seed_permission_panel
 from .feed import Feed
-from .tmux import _tmux, owns_session
+from .proc_table import current_cgroup_slice
+from .tmux import _tmux, owns_session, session_owner
+
+
+def promotion_gate_line(home: Path, session: str, verdict: str) -> str:
+    """One key=value PROMOTION-GATE line naming the caller, socket source and owner read.
+
+    The socket source is ``ambient`` when the caller carries TMUX_TMPDIR (the
+    inherited server), otherwise ``home`` (the site-derived socket). Read-only.
+    """
+    owner = session_owner(session, home=home) or "none"
+    source = "ambient" if os.environ.get("TMUX_TMPDIR") else "home"
+    return (f"PROMOTION-GATE caller_slice={current_cgroup_slice() or 'none'} socket_source={source} "
+            f"owner_read={owner} home={home.resolve()} verdict={verdict}")
 
 # Resident mind roles the plant launches and supervises. `docs` is a chartered,
 # wall-addressable role (activity.ROLES, seed_docs_charter.md); leaving it out
@@ -562,8 +575,10 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
     required = {operator_window, *ROLES, "permissions", *site_declared_roles(home)} - held
     if not required <= actual:
         raise RuntimeError(f"missing windows: {sorted(required - actual)}")
+    # A held role is still an expected window: its absence is a visible hold that
+    # health must keep flagging, not a window the site has stopped expecting.
     (home / "health" / "windows.json").write_text(
-        json.dumps(_expected_windows(required, _manifest_windows(home), actual)) + "\n",
+        json.dumps(_expected_windows(required | held, _manifest_windows(home), actual)) + "\n",
         encoding="utf-8")
     print(f"plant ready: session={session} windows={','.join(sorted(actual))} services={'enabled' if persist else 'skipped'}")
     if contract_changed:
@@ -591,7 +606,9 @@ def main(argv: list[str] | None = None) -> tuple[Path, str, Path, bool]:
     if args.runtime_source:
         from .runtime_source import select_source
         if not owns_session(home, session):
+            print(promotion_gate_line(home, session, "refused:not-owned"), file=sys.stderr)
             raise ValueError("selecting runtime source requires an existing owned session")
+        print(promotion_gate_line(home, session, "owner-gate-passed"), file=sys.stderr)
         select_source(home, args.runtime_source, session)
     plant(home, session, args.engine_command, preferred_operator_window(home, args.operator_window), not args.no_services,
           runtime_only=args.runtime_only)

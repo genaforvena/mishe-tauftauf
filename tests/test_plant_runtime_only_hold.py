@@ -65,6 +65,11 @@ def test_runtime_only_reports_genome_hold_and_completes(tmp_path: Path, monkeypa
     assert "reconcile_services" in order
     assert "start:genome" in order
     assert [s for s in order if s.startswith("start:") and s != "start:genome"], "other roles must still start"
+    # health reads windows.json: a held genome must stay an expected window after the refresh.
+    import json
+    expected = json.loads((home / "health" / "windows.json").read_text())
+    assert "genome" in expected
+    assert set(live) <= set(expected)
 
 
 def test_runtime_only_still_requires_non_held_windows(tmp_path: Path, monkeypatch) -> None:
