@@ -58,6 +58,6 @@ and its audit for a write, the tape and the outcome record for a message, the
 branch and the CI run for a landing. A declared coupling that no reading can
 check is not thereby true.
 
-See the [README](../README.md) for an introduction and setup, and [Wall
-coordination](wall-coordination.md) for how a coupling is written, audited and
-settled.
+See the [README](../README.md) for an introduction and setup, and [Getting
+started](getting-started.md) for the commands that write a wall, record an
+outcome and settle a wake.
