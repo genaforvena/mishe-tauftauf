@@ -76,7 +76,7 @@ The pinned Laya adapter is an optional experimental checker. Real contrast repla
 
 ## Optional installed Codex reviewer
 
-`python -m mishe_tauftauf.codex_review` accepts the same private request/response
+`env PYTHONPATH=src python3 -m mishe_tauftauf.codex_review` accepts the same private request/response
 protocol. Its required arguments are `--cli /absolute/path/to/codex`,
 `--runtime-config /actual/CODEX_HOME/config.toml`, and `--probe-report /private/probe.json`.
 These explicit file dependencies let the parent cache bind the CLI, configured

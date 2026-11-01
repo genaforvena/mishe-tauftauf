@@ -29,7 +29,7 @@ Configure the site with absolute executable and worker paths:
 }
 ```
 
-Use `python -m mishe_tauftauf.witness_analysis --home SITE --wake NUMBER` on an
+Use `env PYTHONPATH=src python3 -m mishe_tauftauf.witness_analysis --home SITE --wake NUMBER` on an
 actual canonical witness wake. Repeated calls return that wake's original advice;
 configuration changes take effect on the next wake. This deliberately keeps
 model loading off the supervisor and refreshing top pane. Optional site wrappers
@@ -80,7 +80,7 @@ threshold blocks work. Advice and feedback never append ordinary chat entries.
 After the investigation, record the actual choice and evidence:
 
 ```sh
-python -m mishe_tauftauf.witness_analysis --home SITE --wake NUMBER \
+env PYTHONPATH=src python3 -m mishe_tauftauf.witness_analysis --home SITE --wake NUMBER \
   --used evidence-audit --outcome useful --note 'Artifact/path: what the check established; why the suggestion was accepted or overridden.'
 ```
 
@@ -97,7 +97,7 @@ feedback wakes.
 Before yielding, run:
 
 ```sh
-python -m mishe_tauftauf.handoff_check --home SITE --handoff FILE
+env PYTHONPATH=src python3 -m mishe_tauftauf.handoff_check --home SITE --handoff FILE
 ```
 
 It checks the `Next:` paragraph or a Markdown `Next step` section against canonical

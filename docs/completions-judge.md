@@ -3,7 +3,7 @@
 This adapter uses an explicitly selected OpenAI-compatible **Chat Completions**
 endpoint (`BASE/chat/completions`), not the legacy text completions endpoint.
 Native System One models use a different protocol: the TypeSafe Jev adapter
-(`python -m mishe_tauftauf.jev_judge --self-test`) proves its own envelope
+(`env PYTHONPATH=src python3 -m mishe_tauftauf.jev_judge --self-test`) proves its own envelope
 contract offline.
 It has no third-party dependencies and does not change the default judge.
 The provider must support system/user messages, `response_format: json_object`,
@@ -21,7 +21,7 @@ entries. HTTPS is required except for loopback HTTP; redirects are refused.
 From the installed checkout, substitute your actual base URL and model:
 
 ```bash
-.venv/bin/python -m mishe_tauftauf.completions_judge \
+env PYTHONPATH=src python3 -m mishe_tauftauf.completions_judge \
   --base-url https://YOUR-PROVIDER/v1 --model YOUR-MODEL \
   --report .mishe-tauftauf/artifacts/completions-controls.jsonl \
   --max-calls 12
@@ -146,7 +146,7 @@ controls plus the five cases:
 
 ```bash
 PYTHONPATH=src python3 extra-judge-cases.py > extra-judge-cases.jsonl
-.venv/bin/python -m mishe_tauftauf.completions_judge \
+env PYTHONPATH=src python3 -m mishe_tauftauf.completions_judge \
   --base-url https://YOUR-PROVIDER/v1 --model YOUR-MODEL \
   --report .mishe-tauftauf/artifacts/completions-extra.jsonl \
   --cases extra-judge-cases.jsonl --max-calls 17

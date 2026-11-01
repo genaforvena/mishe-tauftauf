@@ -354,7 +354,8 @@ It reports the same `cached_at`/`age` pair and the same retained body. To see
 what the host is admitting, ask it:
 
 ```sh
-python -m mishe_tauftauf.host_capacity --root "$MISHE_SEED_HOME/recovery" status
+env PYTHONPATH=src python3 -m mishe_tauftauf.host_capacity \
+  --root "$MISHE_SEED_HOME/recovery" status
 ```
 
 `slots` is how many renderers may run at once, `state` is `NORMAL`, `LIMITED`

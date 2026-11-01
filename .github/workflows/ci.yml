@@ -118,6 +118,18 @@ jobs:
       # from that tree's own planting code, and compares what the page states
       # with what a unit can be named.
       - run: python checks/shipped-book-unit-pattern.py --repo .
+      # A page can hand the reader a command that names a module that
+      # exists and still be unrunnable: the interpreter it names may not
+      # exist, and the package it imports may need an install the book
+      # says is not needed.  Measured on this plant: docs/getting-started.md
+      # said "python -m mishe_tauftauf.host_capacity", and Ubuntu 24.04
+      # ships no python binary at all -- the reader's own command answered
+      # "command not found" before it reached the plant.  The link, path,
+      # promise and runtime gates could not see it: no path was named and
+      # no link was broken.  The gate asks the interpreter, in a reader's
+      # shell, whether each plant-code command resolves in a clone that
+      # has not installed the package.
+      - run: python checks/shipped-book-commands.py --repo .
       - run: python -m pytest -q
 
   tmux:
