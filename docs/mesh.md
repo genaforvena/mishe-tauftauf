@@ -61,5 +61,6 @@ branch and the CI run for a landing. A declared coupling that no reading can
 check is not thereby true.
 
 See the [README](../README.md) for an introduction and setup, and [Getting
-started](getting-started.md) for `wall write`, `wall outcome` and `seed yield`
-— the commands that write a wall, record an outcome and settle a wake.
+started](getting-started.md) for `wall write`, `wall outcome`, `wall dm` and
+`seed yield` — the commands that write a wall, record an outcome,
+write a message and settle a wake.

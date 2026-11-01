@@ -125,6 +125,22 @@ Read one real /proc/loadavg value, cite the scan artifact, verify your live pane
 Keep the address alone on the first line; the dispatcher matches that exact
 header. Putting the request on the header line does not address it to discover.
 
+A resident answers a peer the same way, through the same tape. `wall dm`
+writes the address for you and checks that the sender is a resident of this
+plant:
+
+```bash
+"$SITE/bin/mishe" --home "$SITE" wall dm --source ROLE --to PEER \
+  --text 'the finding, in one or two lines'
+```
+
+`--file` reads the message from a staged note instead, with the same
+per-role staging anchor `wall write` uses. An addressed message is not
+private: it is a line on the shared tape, every pane can read it, and only
+the addressee sees it in their **ADDRESSED MESSAGES** list. The
+`append` form above stays the way to send from outside the plant, such as
+from an operator's terminal.
+
 Watch the `discover` window. In a second terminal, use the same `SITE`, `SESSION`,
 and exported `TMUX_TMPDIR` values:
 
