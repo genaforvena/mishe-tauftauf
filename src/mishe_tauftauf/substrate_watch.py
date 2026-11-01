@@ -28,6 +28,11 @@ TIMEOUT = 5
 SOURCE = "sensor/substrate-watch"
 # At most one notice per window for ordinary churn: 900 s gives at most 4 per hour.
 CHANGE_NOTICE_SECONDS = 900
+# A process-liveness outage (a service or renderer observed not running) is announced only
+# after it has held this long. Flips shorter than this are observed in the snapshot, which
+# stays UNKNOWN, but send no DM; their recovery is silent too while unannounced.
+LIVENESS_DEBOUNCE_SECONDS = 300
+LIVENESS_PROBLEM_PREFIXES = ("runtime: live service process not running: ", "runtime: renderer not running: ")
 
 
 class ObservationError(ValueError):
@@ -496,6 +501,12 @@ def _read_state(path):
     return value
 
 
+def _liveness_only(row):
+    """UNKNOWN whose every problem is a process observed absent (no checkout or damage problem)."""
+    return (row["status"] == "UNKNOWN" and bool(row["problems"])
+            and all(problem.startswith(LIVENESS_PROBLEM_PREFIXES) for problem in row["problems"]))
+
+
 def _changes(previous, reading):
     changes = []
     for field in ("checkout", "runtime"):
@@ -675,11 +686,38 @@ def check(home, *, now=None):
         # moves the identity) is coalesced once genome has already been told about it: repeats
         # wait for the window, still owed. The first UNKNOWN, the first integration notice of an
         # outage and any recovery are never coalesced.
+        # Liveness-only outages coalesce per window even when their process set moves
+        # (services restarting one by one during the same outage).
         sustained_unknown = bool(previous and previous["status"] == "UNKNOWN"
-                                 and row["status"] == "UNKNOWN" and previous.get("problems") == row["problems"]
+                                 and row["status"] == "UNKNOWN"
+                                 and (previous.get("problems") == row["problems"]
+                                      or (_liveness_only(row) and _liveness_only(previous)))
                                  and "genome" in previous.get("alerts", {}))
+        # Liveness debounce: an outage not yet announced is held until it persists for
+        # LIVENESS_DEBOUNCE_SECONDS; its recovery is then silent. The row status is still
+        # written at once, so the snapshot never hides UNKNOWN.
+        announced = bool(previous) and previous.get("announced", previous["status"] == "UNKNOWN")
+        held = _liveness_only(row) and previous is not None and not announced
+        quiet = False
+        row["pending_since"] = None
         suppressed = False
-        if row["kind"] == "change" and not window_open:
+        if held:
+            since = (previous.get("pending_since") if previous["status"] == "UNKNOWN" else None) or stamp
+            row["pending_since"] = since
+            quiet = True
+            if (datetime.fromisoformat(stamp) - datetime.fromisoformat(since)).total_seconds() < LIVENESS_DEBOUNCE_SECONDS:
+                suppressed = True
+            elif not changed:
+                changed = True
+                row["kind"] = "unknown"
+                row["changed"] = ["debounced"]
+        elif changed and previous and _liveness_only(previous) and row["status"] == "KNOWN" and not announced:
+            # Recovery from an outage that was never announced: nothing to close.
+            suppressed = True
+            quiet = True
+        if suppressed:
+            pass
+        elif row["kind"] == "change" and not window_open:
             suppressed = True
         elif row["kind"] == "unknown" and sustained_unknown and not window_open:
             suppressed = True
@@ -701,7 +739,8 @@ def check(home, *, now=None):
                                 "identity": row["identity"], "recipients": recipients})
             event_path = history / (event_id + ".json")
             row.update(event_id=event_id, event_path=str(event_path), alerts={})
-            row.update(notice_owed=False, notice_at=stamp if recipients else notice_at)
+            row.update(notice_owed=False, notice_at=stamp if recipients else notice_at,
+                       announced=row["status"] == "UNKNOWN")
             event = {"version": VERSION, "event_id": event_id, "previous_event_id": previous["event_id"] if previous else None,
                      "recipients": recipients, "report": dict(row, problems=list(row["problems"]), alerts={})}
             event["event_sha256"] = _digest(event)
@@ -721,7 +760,10 @@ def check(home, *, now=None):
             event = _read_event(Path(row["event_path"]))
             # A suppressed change keeps the last notice's event and stays owed; an
             # unchanged sample carries the owed state forward untouched.
-            row.update(notice_owed=owed or suppressed, notice_at=notice_at)
+            # A quiet (debounced or unannounced-recovery) hold owes nothing: the outage
+            # was never announced, so no later coalesced notice is due for it.
+            row.update(notice_owed=owed or (suppressed and not quiet), notice_at=notice_at,
+                       announced=announced and row["status"] == "UNKNOWN")
         # Checkpoint the event before publishing. Stable event text + canonical Feed
         # identity dedup closes a crash between append and the final checkpoint.
         _save_snapshot(path, row)

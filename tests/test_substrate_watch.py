@@ -881,3 +881,69 @@ def test_controller_shed_unit_is_named_shed_still_unknown_and_unreadable_state_i
     runtime = watch._runtime(home)
     assert "live service process not running: mishe-x-shed.service" in runtime["problems"]
     assert not any("controller-shed" in problem for problem in runtime["problems"])
+
+
+def _runtime_with_problems(monkeypatch, base, problems):
+    """Replace only the runtime surface's observed process problems; checkout stays real."""
+    def observe(home):
+        row = json.loads(json.dumps(base))
+        row["problems"] = list(problems)
+        row["state"] = "UNKNOWN" if problems else "KNOWN"
+        return row
+    monkeypatch.setattr(watch, "_runtime", observe)
+
+
+def _liveness_messages(home):
+    return [len(messages(home, role)) for role in ("genome", "witness", "health")]
+
+
+def test_brief_liveness_flip_is_observed_but_silent(site, monkeypatch):
+    # Witness finding (chat 154525): a renderer/service flip must not DM three owners per flip.
+    _, home = site
+    base = watch.check(home, now=NOW)["runtime"]
+    _runtime_with_problems(monkeypatch, base, ["renderer not running: genome"])
+    flip = watch.check(home, now=NOW + timedelta(seconds=30))
+    assert flip["status"] == "UNKNOWN"
+    assert flip["announced"] is False
+    assert flip["problems"] == ["runtime: renderer not running: genome"]
+    _runtime_with_problems(monkeypatch, base, [])
+    back = watch.check(home, now=NOW + timedelta(seconds=60))
+    assert back["status"] == "KNOWN"
+    assert _liveness_messages(home) == [0, 0, 0]
+
+
+def test_persistent_liveness_outage_is_announced_once_then_recovery_closes_it(site, monkeypatch):
+    _, home = site
+    base = watch.check(home, now=NOW)["runtime"]
+    debounce = timedelta(seconds=watch.LIVENESS_DEBOUNCE_SECONDS)
+    start = NOW + timedelta(seconds=30)
+    _runtime_with_problems(monkeypatch, base, ["live service process not running: unit-a"])
+    held = watch.check(home, now=start)
+    assert held["status"] == "UNKNOWN" and _liveness_messages(home) == [0, 0, 0]
+    still_held = watch.check(home, now=start + timedelta(seconds=60))
+    assert still_held["status"] == "UNKNOWN" and _liveness_messages(home) == [0, 0, 0]
+    announced = watch.check(home, now=start + debounce)
+    assert announced["kind"] == "unknown" and announced["announced"] is True
+    assert _liveness_messages(home) == [1, 1, 1]
+    repeat = watch.check(home, now=start + debounce + timedelta(seconds=30))
+    assert repeat["event_id"] == announced["event_id"] and _liveness_messages(home) == [1, 1, 1]
+    # A second dead process inside the same outage is coalesced by the notice window.
+    _runtime_with_problems(monkeypatch, base, ["live service process not running: unit-a",
+                                               "live service process not running: unit-b"])
+    widened = watch.check(home, now=start + debounce + timedelta(seconds=60))
+    assert widened["status"] == "UNKNOWN" and _liveness_messages(home) == [1, 1, 1]
+    _runtime_with_problems(monkeypatch, base, [])
+    recovered = watch.check(home, now=start + debounce + timedelta(seconds=120))
+    assert recovered["kind"] == "recovery" and recovered["status"] == "KNOWN"
+    assert len(messages(home, "genome")) == 2 and len(messages(home, "witness")) == 2
+    assert len(messages(home, "health")) == 1
+
+
+def test_non_liveness_unknown_stays_immediate(site, monkeypatch):
+    # Only process-absence problems are debounced; a runtime observation failure is announced at once.
+    _, home = site
+    watch.check(home, now=NOW)
+    (home / "health/services.json").write_text("not json")
+    unknown = watch.check(home, now=NOW + timedelta(seconds=30))
+    assert unknown["status"] == "UNKNOWN" and unknown["announced"] is True
+    assert messages(home, "health")
