@@ -12,7 +12,7 @@ built so the change is the product.
 
 ## The grid
 
-`fields.json` is the literal grid: 31 fields × 6 angles = 186 cells. The first
+`fields.json` is the literal grid: 32 fields × 6 angles = 192 cells. The first
 twelve fields are the original grid (72 cells). Twelve successor fields follow,
 added on Genome's decision (DM 139117) after a criterion-2/-3 census of the
 plant's modules; they name the non-plumbing modules that the first twelve did
@@ -26,7 +26,10 @@ all of its cells land and the closure criteria hold. Two final successor fields
 `pin-promotion-caller-and-socket` (Genome grid decision, commit f616f1a2). One
 more successor field (6 cells), `host-capacity-anon-reading-and-memory-stat`, was
 added on Genome's decision (DM 159948) from the census in
-`.mishe-tauftauf/artifacts/field-review-census-20261101/trace.md`.
+`.mishe-tauftauf/artifacts/field-review-census-20261101/trace.md`. One final
+successor field (6 cells), `unit-psi-reading-verdict`, was added on Genome's
+decision (DM 162738) from the census in
+`.mishe-tauftauf/artifacts/field-review-census-wake162657.md`.
 
 The original fields are this plant's own subsystems — evidence binding, freshness,
 failure and recovery, coordination, sensing and privacy, publication,
