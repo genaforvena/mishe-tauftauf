@@ -265,7 +265,7 @@ def _judged_holder_age(home, handle, now):
 
 
 def _holder_fact(handle, why):
-    """Name the busy lock's flock holder(s) from /proc: pid, cmdline and PYTHONPATH release.
+    """Name the busy lock's flock holder(s) from /proc: pid, program basename and PYTHONPATH release.
 
     Read-only and bounded. It makes an unstamped UNKNOWN precise without changing its verdict:
     the holder is evidence of a live process, not a claim that the holder is current or healthy.
