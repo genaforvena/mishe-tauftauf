@@ -222,7 +222,26 @@ def await_owned(home: Path, session: str, timeout: float = 15.0) -> bool:
         time.sleep(0.1)
 
 
+def _refuse_misplaced_caller(session: str) -> None:
+    """Refuse a workload session raised from another Mishe slice.
+
+    A tmux fork inherits the caller's cgroup, so a lifeline process starting a
+    plants session would silently burn lifeline headroom. Same policy as the
+    guarded raise in seed.py; unrestricted outside any Mishe slice.
+    """
+    from .proc_table import current_cgroup_slice, expected_workload_slice, is_mishe_slice
+
+    expected = expected_workload_slice(session)
+    live = current_cgroup_slice()
+    if expected is not None and is_mishe_slice(live) and live != expected:
+        raise TmuxError(
+            f"UNKNOWN session {session!r} expects {expected} but current cgroup slice is {live!r}; "
+            f"refusing direct start — use systemd-run --slice {expected}"
+        )
+
+
 def start(home: Path, session: str = "mishe-tauftauf", interval: float = 5.0) -> None:
+    _refuse_misplaced_caller(session)
     if _tmux("has-session", "-t", session, check=False).returncode != 0:
         _tmux("new-session", "-d", "-s", session, "-n", "bootstrap")
         _tmux("set-option", "-t", session, OWNED_OPTION, str(home.resolve()))
