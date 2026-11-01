@@ -413,6 +413,33 @@ class AppliedTargetTest(unittest.TestCase):
             rows = field_review.applied_target_states(repo)
             self.assertNotIn(restore_sha, rows[0]["realized"].split())
 
+    def test_review_restored_after_its_realization_is_not_unchanged(self):
+        # The publication-review case: the target was realized, then a lane-restore
+        # commit re-added the review. Anchoring at the restore would hide the realization.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {})
+            (repo / "src" / "example.py").write_text("# alpha, realized\n", encoding="utf-8")
+            _commit(repo, "field-review: implement alpha onto example")
+            (repo / "research" / "field-review" / "reviews" / "alpha--recent--2026-10-21.md").write_text(
+                GOOD_REVIEW, encoding="utf-8")
+            _commit(repo, "field-review: restore lane after .gitignore suppressed reviews")
+            rows = field_review.applied_target_states(repo)
+            self.assertEqual(rows[0]["anchor"], "realization")
+            self.assertEqual(rows[0]["state"], "CHANGED")
+            self.assertTrue(rows[0]["commits"])
+
+    def test_review_restored_with_no_realization_anchors_at_restore(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {})
+            # A future review date keeps the seed commit from counting as a realization.
+            future = GOOD_REVIEW.replace("date: 2026-10-21", "date: 2099-01-01")
+            (repo / "research" / "field-review" / "reviews" / "alpha--recent--2026-10-21.md").write_text(
+                future, encoding="utf-8")
+            _commit(repo, "field-review: restore lane after .gitignore suppressed reviews")
+            rows = field_review.applied_target_states(repo)
+            self.assertEqual(rows[0]["anchor"], "restore")
+            self.assertEqual(rows[0]["state"], "UNCHANGED")
+
     def test_commits_before_review_date_are_not_realization(self):
         future = GOOD_REVIEW.replace("date: 2026-10-21", "date: 2099-01-01")
         with tempfile.TemporaryDirectory() as tmp:

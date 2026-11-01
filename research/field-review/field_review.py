@@ -450,6 +450,7 @@ def _git_code(repo: Path, args: list[str]) -> int | None:
 
 
 RESTORE_SUBJECT_PREFIX = "field-review: restore lane"
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
 
 def realized_commits(repo: Path, target: str, review_date: str) -> str:
@@ -548,23 +549,42 @@ def applied_target_states(repo: Path) -> list[dict[str, str]]:
                 target = line.split(":", 1)[1].strip()
                 break
         row = {"review": name, "owner": matter.get("owner", ""), "target": target,
-               "landed": "", "state": "UNKNOWN", "commits": "",
+               "landed": "", "anchor": "", "state": "UNKNOWN", "commits": "",
                "realized": realized_commits(repo, target, matter.get("date", ""))}
         row.update(symbol_facts(section_body(text, APPLICATION_HEADING),
                                 head_bytes(repo, target) if target else None))
-        landing = _git(repo, ["log", "--diff-filter=A", "--format=%H",
-                              "--reverse", "HEAD", "--", name]).decode().split()
-        if not target or not landing:
+        adds = _git(repo, ["log", "--diff-filter=A", "--format=%H%x1f%s",
+                           "--reverse", "HEAD", "--", name]).decode().splitlines()
+        added = [tuple(line.split("\x1f", 1)) for line in adds if "\x1f" in line]
+        landings = [sha for sha, subject in added if not subject.startswith(RESTORE_SUBJECT_PREFIX)]
+        realized = row["realized"].split()
+        # The anchor is the point the target is compared from. A review re-staged by
+        # the lane-restore commit has no true landing on the branch, so comparing from
+        # that commit would call an already-realized target UNCHANGED. Fall back to the
+        # oldest realization, then to the restore commit only when nothing else exists.
+        if landings:
+            base, anchor = landings[0], "landing"
+        elif realized:
+            base, anchor = realized[-1], "realization"
+        elif added:
+            base, anchor = added[0][0], "restore"
+        else:
+            base, anchor = "", ""
+        if not target or not base:
             rows.append(row)
             continue
-        base = landing[0]
         row["landed"] = base[:9]
-        differs = _git_code(repo, ["diff", "--quiet", f"{base}^", "HEAD", "--", target])
-        if differs is None:
+        row["anchor"] = anchor
+        # A root commit has no parent: compare against the empty tree and take every commit.
+        has_parent = _git_code(repo, ["rev-parse", "--verify", "-q", f"{base}^"]) == 0
+        before = f"{base}^" if has_parent else EMPTY_TREE
+        differs = _git_code(repo, ["diff", "--quiet", before, "HEAD", "--", target])
+        if differs not in (0, 1):
             rows.append(row)
             continue
         row["state"] = "CHANGED" if differs == 1 else "UNCHANGED"
-        commits = _git(repo, ["log", "--format=%h", f"{base}^..HEAD", "--", target])
+        span = f"{before}..HEAD" if has_parent else "HEAD"
+        commits = _git(repo, ["log", "--format=%h", span, "--", target])
         row["commits"] = " ".join(commits.decode().split())
         rows.append(row)
     return rows
@@ -644,7 +664,9 @@ def main(argv=None) -> int:
         for row in rows:
             counts[row["state"]] = counts.get(row["state"], 0) + 1
             print(f"{row['state']:<9} {row['owner'] or '-':<12} {row['target'] or '-'}"
-                  f"  landed={row['landed'] or '-'}  review={row['review']}"
+                  f"  landed={row['landed'] or '-'}"
+                  + (f" anchor={row['anchor']}" if row["anchor"] else "")
+                  + f"  review={row['review']}"
                   + (f"  commits={row['commits']}" if row["commits"] else "")
                   + (f"  realized={row['realized']}" if row["realized"] else "")
                   + (f"  symbol_state={row['symbol_state']}"
