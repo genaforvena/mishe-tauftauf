@@ -289,7 +289,10 @@ def check(home, config, *, observation=None, now=None):
                   "seed-lock": control}
         try:
             guard_row = read_json(root / "guard.json")
-            guard_ok = 0 <= now - guard_row["checked_at"] <= max(45, cfg["interval"] * 3)
+            # `now` predates the seed-lock wait; a guard row written during that wait is fresh, not future.
+            # Bound the allowed lead by the measured wait, so a far-future row still fails closed.
+            lead = float(control.get("seconds") or 0.0) + 1.0
+            guard_ok = -lead <= now - guard_row["checked_at"] <= max(45, cfg["interval"] * 3)
         except (ValueError, TypeError, KeyError):
             guard_ok = False
         checks["independent-guard"] = {"ok": True if guard_ok else None,

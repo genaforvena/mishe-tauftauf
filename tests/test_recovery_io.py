@@ -364,3 +364,36 @@ def test_fresh_host_emergency_precedes_unattempted_historical_outbox(tmp_path, m
     # A failed urgent item returns to ordinary oldest-attempt fairness.
     recovery.deliver(tmp_path)
     assert "0" * 64 in called[1]
+
+
+def test_guard_row_written_during_seed_lock_wait_is_fresh_not_future(tmp_path, monkeypatch):
+    # A busy seed lock makes the controller wait up to the debounce window before it reads the guard.
+    # The guard runs every ~15 s, so its row can legitimately be written inside that wait, i.e. after
+    # the controller's `now`. That row is fresh; it must not be judged stale for a negative age.
+    now = 1000.0
+
+    def busy_seed_lock(home):
+        (Path(home) / "recovery").mkdir(parents=True, exist_ok=True)
+        (Path(home) / "recovery" / "guard.json").write_text(json.dumps({
+            "checked_at": now + 3.0, "functional_state": "DEGRADED", "state": "FRESH",
+            "scope": "independent producer schema/freshness only, not function restoration"}))
+        return {"ok": None, "reason": "seed lock held", "seconds": 3.2}
+
+    monkeypatch.setattr(recovery, "seed_lock_probe", busy_seed_lock)
+    row = recovery.check(tmp_path, config(), observation=sample(), now=now)
+    assert row["checks"]["independent-guard"]["ok"] is True
+    assert row["functions"]["independent-guard"]["first_failed"] is None
+
+
+def test_guard_row_far_in_future_still_fails_closed(tmp_path, monkeypatch):
+    now = 1000.0
+
+    def bogus_clock(home):
+        (Path(home) / "recovery").mkdir(parents=True, exist_ok=True)
+        (Path(home) / "recovery" / "guard.json").write_text(json.dumps({
+            "checked_at": now + 500.0, "functional_state": "READY", "state": "FRESH", "scope": "x"}))
+        return {"ok": True, "reason": "lock available", "seconds": 0.0}
+
+    monkeypatch.setattr(recovery, "seed_lock_probe", bogus_clock)
+    row = recovery.check(tmp_path, config(), observation=sample(), now=now)
+    assert row["checks"]["independent-guard"]["ok"] is None
