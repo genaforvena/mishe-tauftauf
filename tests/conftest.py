@@ -5,6 +5,24 @@ import subprocess
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def restore_site_binding_env():
+    """Undo MISHE_SEED_HOME writes made by in-process CLI calls.
+
+    ``cli.main`` binds ``MISHE_SEED_HOME`` with ``os.environ.setdefault`` when a
+    test runs it in-process. Nothing restored that, so a later case in the same
+    session was refused by ``observations.validate_home_binding`` (CI core 3.10,
+    run 41259521270: 591 failed, 1620 "does not match" refusals). Each case
+    starts and ends with the binding as the session fixture left it.
+    """
+    saved = os.environ.get("MISHE_SEED_HOME")
+    yield
+    if saved is None:
+        os.environ.pop("MISHE_SEED_HOME", None)
+    else:
+        os.environ["MISHE_SEED_HOME"] = saved
+
+
 @pytest.fixture
 def receipt_recovery_case():
     """Factory: a crashed caller journal whose effect store holds a receipt.
