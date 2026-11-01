@@ -309,6 +309,40 @@ The first reports the attempts of that wake that no plant record accounts for. T
 
 Reconcile before you retry. A native wake may take a fresh attempt only when its earlier attempts are provably effect-free and transient; any attempt that dispatched an effect, proposed a capability call, settled, or whose own evidence is unreadable holds the wake for reconciliation instead. A wake that used every bounded fresh attempt is held as well, and the record names the attempts and their cause so you do not have to re-derive them. The resident also refuses a second attempt at the same wake — the attempt directory already exists — so a repeated failure leaves the wake unsettled and the resident unable to start, and a restart does not clear that. Preserve each attempt directory and its `failure.txt` and `journal.jsonl`: they are the evidence of what the wake actually did. `--repair-blocked` and `--release-hold` remove the hold records; use them only after reading the attempts they refer to, and never to paper over an effect whose outcome is still unknown.
 
+### Stopping a native wake
+
+A native resident can be stopped from outside, without a command in the plant's
+CLI. Its stop marker is a file named `cancel` in that role's own native
+directory — `SITE/native/ROLE/cancel`, one directory per role under the site's
+`native/` folder. Create the file and the resident stops: it refuses to start
+any further effect, kills a command that is already running with its process
+group, and ends the wake.
+
+```bash
+touch "$SITE/native/$ROLE/cancel"
+```
+
+The marker is a stop, not a cleanup. What a stopped wake leaves behind is the
+point of it. The resident keeps the busy marker (`SITE/journals/ROLE-native.busy`)
+and the attempt directory, so the wake stays unsettled and its evidence stays
+UNKNOWN rather than being tidied away: a command that was cancelled partway
+through may have changed something, and the plant cannot tell from a stop
+marker alone. The marker also blocks the resident from starting again until
+the file is removed, so a role left with the marker in place reads as not
+ready rather than quietly resuming.
+
+Read what the stopped wake did before you remove the marker. The attempt
+directory holds `failure.txt`, `journal.jsonl` and the effect ledger — the
+same evidence as any other failed attempt — and `native_recovery` reports it.
+Removing the marker is what unblocks startup; it does not settle the wake,
+clear the busy marker, or make the unknown effects known. Those stay as
+reconciliation work, and a later attempt at the same wake needs the
+recovery opt-in described above.
+
+Nothing in the plant removes this marker for you. No resident, CLI command or
+supervisor deletes it, so a marker left in place keeps that role stopped until
+a person removes it.
+
 ## Plant another owned worktree
 
 Run from the **core checkout**; replace the path with the target worktree root:
