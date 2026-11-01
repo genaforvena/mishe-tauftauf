@@ -8,9 +8,10 @@ Lawrence 2005 politics-of-4I (AMR 30:1, DOI 10.5465/amr.2005.15281431) —
 Crossan et al. 1999 4I: intuiting → interpreting → integrating → institutionalizing;
 Lawrence maps discipline→intuiting, influence→interpreting, force→integrating,
 domination→institutionalizing (Fig.1/Table1 pp.182-183); modes episodic (influence,
-force) vs systemic (domination, discipline). Routing stages type as influence
-(initial/changed), force (escalation), domination (reminder). Vocabulary is a
-detector, not a causal claim; any form may appear in any process (p.184).
+force) vs systemic (domination, discipline). ROUTING_POWER below is a plant analogy,
+not a Lawrence mapping: the 2024 6I paper (BMJ Open 14(5) e083830) restates only the
+process→form mapping and classifies no routing stage. Vocabulary is a detector, not a
+causal claim; any form may appear in any process (p.184).
 """
 from __future__ import annotations
 
@@ -57,9 +58,15 @@ ROUTING_POWER: Final[dict[str, str]] = {
     "initial": "influence",
     "changed": "influence",
     "escalation": "force",
-    "reminder": "domination",
+    "reminder": "discipline",
 }
-"""Routing stage→power form: influence/force/domination; None for unknown."""
+"""Plant analogy (not a Lawrence or 6I mapping): routing stage→power form; None for unknown.
+
+A reminder re-presents a finding and restricts no response option, so it is typed
+discipline, not domination. The 2024 source defines domination by restricted response
+options; its domination case is the outcome-writer refusal, which is not typed here yet.
+No caller reads this mapping yet (see follow_through_power_form).
+"""
 
 
 def follow_through_power_form(
@@ -71,7 +78,7 @@ def follow_through_power_form(
     """Type the power form for a routing stage or learning process.
 
     Pure, deterministic, no I/O. Returns the form for a routing stage
-    (initial/changed→influence, escalation→force, reminder→domination) or
+    (initial/changed→influence, escalation→force, reminder→discipline; plant analogy) or
     for a learning process (via PROCESS_POWER_MAP), else None for incomplete
     or unknown inputs. The mapping is the detector (Lawrence p.184 fluidity
     caveat kept as None), not a causal assignment.

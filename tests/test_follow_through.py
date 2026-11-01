@@ -92,3 +92,12 @@ def test_relative_home_observes_the_same_valid_cache(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert follow_through.health("site", now=now)["state"] == "GREEN"
     assert substrate_watch.snapshot_lines("site", now=now) == substrate_watch.snapshot_lines(home, now=now)
+
+
+def test_routing_reminder_is_discipline_not_domination():
+    # A reminder restricts no response option, so it is not the source's domination case.
+    assert follow_through.follow_through_power_form(stage="reminder") == "discipline"
+    assert follow_through.follow_through_mode_for_form("discipline") == "systemic"
+    assert follow_through.follow_through_power_form(stage="escalation") == "force"
+    assert follow_through.follow_through_power_form(stage="unknown-stage") is None
+    assert follow_through.follow_through_power_form(process="institutionalizing") == "domination"
