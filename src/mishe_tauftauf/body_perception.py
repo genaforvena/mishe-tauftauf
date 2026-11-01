@@ -872,6 +872,15 @@ def k_anonymity_k(
     Assumption 2.1 p.4 fn.1: correctness of the chosen QI is a modelling
     assumption — if the QI omits a linkable attribute the measured k
     understates risk; see [18] §2.2 p.4. No generalisation/suppression here.
+
+    Boundary: this k is over ``qi_keys`` only (default ``QI_DEFAULT_KEYS``,
+    ``light_class``). k >= 2 on ``light_class`` does not bound the
+    re-identification risk of a released time-series segment. Lange et al.
+    (ASIA CCS 2025, arXiv 2308.08310) re-identify smartwatch users from short
+    raw segments and report that de-identification and k-anonymity do not
+    address this; a release of raw body sequences needs a separate check or
+    differential privacy, not this value. The paper does not evaluate
+    k-anonymity on time series. Revisit this note against the paper.
     """
     hist = qi_histogram(rows, qi_keys)
     if not hist:
