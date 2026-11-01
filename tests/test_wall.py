@@ -1903,3 +1903,18 @@ def test_pane_states_visible_and_total_counts_for_filtered_sections(tmp_path):
     assert f"CHAT.LOG — last 8 of {tape} tape events shown" in text
     assert "MESSAGES — last 0 addressed shown" in text
     assert f"tape {tape} events" in text
+
+
+def test_health_digest_ignores_render_deferral_age_but_keeps_its_state():
+    from mishe_tauftauf.wall import observation_text
+    deferred = ("UNKNOWN — top-pain health renderer exit-1: UNKNOWN — render deferred: all render slots "
+                "occupied; controller=LIMITED; cached_at=1793509498.8524976 age=95.19615292549133; "
+                "retained content is not a fresh observation\n"
+                "RENDERER: RED exit-1: UNKNOWN — render deferred: all render slots occupied; "
+                "controller=LIMITED; cached_at=1793509498.8524976 age=95.19615292549133; retained content is not a fresh observation\n")
+    later = deferred.replace("cached_at=1793509498.8524976 age=95.19615292549133",
+                             "cached_at=1793509561.1 age=158.4")
+    assert observation_text("health", deferred) == observation_text("health", later)
+    assert observation_text("health", deferred) != observation_text(
+        "health", deferred.replace("all render slots occupied", "render admitted"))
+    assert "age=95.19615292549133" not in observation_text("health", deferred)

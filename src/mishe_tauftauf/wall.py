@@ -411,7 +411,16 @@ def observation_text(role: str, sensor: str) -> str:
         body = "\n".join(normalized)
     else:
         body = seed._observation_text(role, body)
+    # A retained render deferral carries a float age and a cache stamp that
+    # advance every render tick. Keep the state and reason in the digest; the
+    # human display keeps the numbers.
+    body = _RENDER_VOLATILE_AGE.sub(" age=…", body)
+    body = _RENDER_VOLATILE_CACHE.sub("cached_at=…", body)
     return "\n".join(headline + [body])
+
+
+_RENDER_VOLATILE_AGE = re.compile(r" age=[0-9][0-9.eE+-]*(?=;)")
+_RENDER_VOLATILE_CACHE = re.compile(r"cached_at=[0-9][0-9.eE+-]*")
 
 
 def settings(home: Path) -> dict:
