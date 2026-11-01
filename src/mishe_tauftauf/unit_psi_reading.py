@@ -217,6 +217,26 @@ def _high_or_max(cgroup, counter: str):
     return int(value) if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+def _top_stall_text(stall_us: dict[str, int], inverted: set[str], span: float,
+                    has_window: bool) -> str:
+    """Stall leader over the window, independent of the high-event leader.
+
+    Share is the kernel's own measure: stall time / wall time over the span, from the
+    exact psi.some.total counter. Printed with 4 decimals in percent (0.0001% grain).
+    """
+    if not has_window or span <= 0:
+        return "top-stall=unknown(no-window)"
+    if not stall_us:
+        return "top-stall=unknown"
+    unit, delta = max(stall_us.items(), key=lambda kv: kv[1])
+    if delta <= 0:
+        return f"top-stall=none/{span:.0f}s"
+    if unit in inverted:
+        return "top-stall=unknown(hierarchy-inverted)"
+    share = 100.0 * delta / (1_000_000 * span)
+    return f"top-stall={unit}:{share:.4f}%/{span:.0f}s"
+
+
 def read_unit_psi(path, *, now: float) -> dict:
     """Sense dict (id, state, sample, kind, validity, source) from the sampler JSONL at `path`."""
     source = str(path)
@@ -285,10 +305,13 @@ def read_unit_psi(path, *, now: float) -> dict:
         high_text = f"top-high-delta={top_high[0][0]}:+{top_high[0][1]}/{span:.0f}s{stall_text}"
     else:
         high_text = f"high-delta=0/{span:.0f}s" if deltas else "high-delta=unknown(no-window)"
-    top_some = max(unit_rows, key=lambda kv: kv[1])
+    stall_text = _top_stall_text(stall_us, inverted, span, bool(earlier))
+    top_some_name, top_some_value = max(unit_rows, key=lambda kv: kv[1])
+    some_text = (f"top-some={top_some_name}:{top_some_value:.2f}" if top_some_value > 0
+                 else "top-some=all-zero")
     plant_text = f"plants-some-avg10={plant_some:.2f}" if plant_some is not None else "plants-some-avg10=unknown"
     sample = (f"units={len(units)} psi-units={len(unit_rows)} age={age:.0f}s "
-              f"{plant_text} top-some={top_some[0]}:{top_some[1]:.2f} {high_text} "
+              f"{plant_text} {some_text} {stall_text} {high_text} "
               f"swap-plants={_swap_fraction(plants) if isinstance(plants, dict) else 'unknown'} "
               f"swap-plants-at-cap>={AT_CAP_FRACTION:g}={swap_at_cap(plants)} "
               f"{hierarchy_text} malformed={malformed}")

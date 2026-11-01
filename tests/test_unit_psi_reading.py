@@ -191,3 +191,47 @@ def test_sample_attributes_stall_when_hierarchy_is_consistent(tmp_path):
     out = read_unit_psi(path, now=1010.0)
     assert "stall-hierarchy=ok" in out["sample"]
     assert "some-stall=+70860.0ms" in out["sample"]
+
+
+def _leader_record(at, high, plants_total, discover_total, lifeline_high):
+    """Stall leader (discover) differs from the high-event leader (lifeline)."""
+    return {"at": at, "cgroups": {
+        "mishe-plants.slice": {"psi": {"some": {"avg10": 0.0, "total": plants_total}},
+                               "events": {"high": high}},
+        "mishe-plants.slice/discover.service": {"psi": {"some": {"avg10": 0.0,
+                                                                 "total": discover_total}},
+                                                "events": {"high": 0}},
+        "mishe-lifeline.slice": {"psi": {"some": {"avg10": 0.0, "total": 0}},
+                                 "events": {"high": lifeline_high}},
+    }}
+
+
+def test_top_stall_names_stall_leader_not_high_leader(tmp_path):
+    path = tmp_path / "p.jsonl"
+    # 1282 us over 241 s: the discover unit leads on stall; lifeline leads on high events.
+    _write(path, [_leader_record(759.0, high=10, plants_total=0, discover_total=5_000,
+                                 lifeline_high=1),
+                  _leader_record(1000.0, high=10, plants_total=0, discover_total=6_282,
+                                 lifeline_high=2)])
+    out = read_unit_psi(path, now=1000.0)
+    assert "top-stall=mishe-plants.slice/discover.service:0.0005%/241s" in out["sample"]
+    assert "top-high-delta=mishe-lifeline.slice:+1/241s some-stall=+0.0ms" in out["sample"]
+
+
+def test_top_stall_is_unknown_without_window(tmp_path):
+    path = tmp_path / "p.jsonl"
+    _write(path, [_leader_record(1000.0, high=10, plants_total=0, discover_total=6_282,
+                                 lifeline_high=2)])
+    out = read_unit_psi(path, now=1000.0)
+    assert "top-stall=unknown(no-window)" in out["sample"]
+
+
+def test_all_zero_some_reports_all_zero_not_first_unit(tmp_path):
+    path = tmp_path / "p.jsonl"
+    _write(path, [_leader_record(759.0, high=10, plants_total=0, discover_total=5,
+                                 lifeline_high=1),
+                  _leader_record(1000.0, high=10, plants_total=0, discover_total=5,
+                                 lifeline_high=1)])
+    out = read_unit_psi(path, now=1000.0)
+    assert "top-some=all-zero" in out["sample"]
+    assert "top-stall=none/241s" in out["sample"]
