@@ -43,6 +43,25 @@ def test_fresh_record_is_verified_with_window_delta(tmp_path):
     assert "swap-plants=10.0%" in out["sample"]
 
 
+def test_swap_at_cap_states_are_explicit():
+    from mishe_tauftauf.unit_psi_reading import swap_at_cap
+    assert swap_at_cap({"swap": 990, "swap_max": 1000}) == "yes"
+    assert swap_at_cap({"swap": 989, "swap_max": 1000}) == "no"
+    assert swap_at_cap({"swap": 5, "swap_max": "max"}) == "uncapped"
+    assert swap_at_cap({"swap": 5, "swap_max": 0}) == "unknown"
+    assert swap_at_cap({"swap": 5}) == "unknown"
+    assert swap_at_cap({"swap_max": 10}) == "unknown"
+
+
+def test_sample_carries_at_cap_line(tmp_path):
+    path = tmp_path / "p.jsonl"
+    rec = _record(1000.0, high=13)
+    rec["cgroups"]["mishe-plants.slice"]["swap"] = 995
+    _write(path, [rec])
+    out = read_unit_psi(path, now=1000.0)
+    assert "swap-plants-at-cap>=0.99=yes" in out["sample"]
+
+
 def test_no_earlier_record_in_window_reports_unknown_delta_not_zero(tmp_path):
     path = tmp_path / "p.jsonl"
     _write(path, [_record(1000.0, high=13)])

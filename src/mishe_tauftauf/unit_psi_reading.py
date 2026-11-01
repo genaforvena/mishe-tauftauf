@@ -77,6 +77,26 @@ def _swap_fraction(cgroup: dict) -> str:
     return swap_of_max(cgroup)[1]
 
 
+AT_CAP_FRACTION = 0.99
+
+
+def swap_at_cap(cgroup: dict) -> str:
+    """"yes" when swap >= AT_CAP_FRACTION of a finite swap.max, "no" below it,
+    "uncapped" for the sampler's "max" string, "unknown" when swap or a usable cap is missing."""
+    if not isinstance(cgroup, dict):
+        return "unknown"
+    swap = _num_or_none(cgroup.get("swap"))
+    swap_max = cgroup.get("swap_max")
+    if swap is None:
+        return "unknown"
+    if swap_max == "max":
+        return "uncapped"
+    cap = _num_or_none(swap_max)
+    if cap is None or cap <= 0:
+        return "unknown"
+    return "yes" if swap >= AT_CAP_FRACTION * cap else "no"
+
+
 def attribute(records: list[dict], *, window_s: float = WINDOW_S, top: int = 3) -> dict:
     """Per-unit attribution for the newest record (pure; no I/O).
 
@@ -204,6 +224,7 @@ def read_unit_psi(path, *, now: float) -> dict:
     sample = (f"units={len(units)} psi-units={len(unit_rows)} age={age:.0f}s "
               f"{plant_text} top-some={top_some[0]}:{top_some[1]:.2f} {high_text} "
               f"swap-plants={_swap_fraction(plants) if isinstance(plants, dict) else 'unknown'} "
+              f"swap-plants-at-cap>={AT_CAP_FRACTION:g}={swap_at_cap(plants)} "
               f"malformed={malformed}")
     if age < 0 or age > MAX_AGE_S:
         return {**base, "state": "stale", "sample": f"historical: {sample}"}
