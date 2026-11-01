@@ -31,12 +31,14 @@ def publish(home: Path, slug: str, frame: str, ok: bool, *, now=None):
 
 def read(home: Path, slug: str, *, now=None, max_age=30) -> tuple[str, bool]:
     validate_slug(slug)
-    now = now or datetime.now(timezone.utc)
     try:
         record = json.loads((home / "dashboards" / f"{slug}.json").read_text())
         if record["version"] != 1 or record["slug"] != slug or record["home"] != str(home.resolve()):
             raise ValueError("dashboard identity mismatch")
-        age = (now - datetime.fromisoformat(record["created"])).total_seconds()
+        # Sample the clock after the read: a publish landing between a pre-read clock and the read
+        # produced a negative age and a false "stale or future" refusal.
+        current = now or datetime.now(timezone.utc)
+        age = (current - datetime.fromisoformat(record["created"])).total_seconds()
         if not 0 <= age <= max_age:
             raise ValueError("dashboard stale or future")
         frame = record["frame"]

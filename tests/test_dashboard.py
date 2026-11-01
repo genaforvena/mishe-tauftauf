@@ -18,6 +18,29 @@ def test_watcher_and_mind_share_complete_frame_without_terminal_clipping(tmp_pat
     assert capsys.readouterr().out == displayed
 
 
+def test_publish_landing_during_read_is_not_refused_as_future(tmp_path, monkeypatch):
+    clock = datetime(2026, 9, 30, tzinfo=timezone.utc)
+    dashboard.publish(tmp_path, "genome", "frame", True, now=clock)
+    # Models the race: until the record is read, the wall clock reads one second before the record
+    # was created (a publish lands after an earlier clock sample). Once read, the clock is at `clock`.
+    state = {"read": False}
+    real_read_text = dashboard.Path.read_text
+
+    def read_text(self, *a, **k):
+        text = real_read_text(self, *a, **k)
+        state["read"] = True
+        return text
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock if state["read"] else clock - timedelta(seconds=1)
+
+    monkeypatch.setattr(dashboard.Path, "read_text", read_text)
+    monkeypatch.setattr(dashboard, "datetime", Clock)
+    assert dashboard.read(tmp_path, "genome")[0] == "frame"
+
+
 def test_missing_stale_future_and_corrupt_dashboard_fail_closed(tmp_path):
     clock = datetime(2026, 9, 30, tzinfo=timezone.utc)
     with pytest.raises(ValueError, match="missing"):
