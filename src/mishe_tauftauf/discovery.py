@@ -27,6 +27,7 @@ from .body_perception import (read_redmi10, read_redmi10_dense_baseline,
                              read_redmi10_peer_delivery)
 from .multibody import read_multibody_coverage
 from .slice_throttle import read_slice_throttle
+from .unit_cpu import read_unit_cpu
 from .unit_psi_reading import read_unit_psi
 from .activity import roles as seated_roles
 from .feed import (Feed, FeedEntry, entry_timestamp as _feed_entry_timestamp,
@@ -8414,6 +8415,8 @@ def sample(home: Path) -> dict[str, object]:
         # command is declared available and a retry can produce a sample.
         observed.append({"id": "sense.proc.top-cpu", "state": "unknown",
                          "sample": "ps process sample unavailable", "kind": "read"})
+    # Cgroup accounting keeps exited children that the /proc sample above cannot see.
+    observed.append(read_unit_cpu())
     interrupts = _read(Path("/proc/interrupts"), 65536)
     keyboard = []
     for line in (interrupts or "").splitlines():
