@@ -173,9 +173,17 @@ def _ancestors(name: str) -> list[str]:
 
 def stall_inversions(stall_us: dict[str, int]) -> set[str]:
     """Units involved in a hierarchy break: a child's some-stall delta above an ancestor's
-    over the same interval. Kernel PSI charges a stall to the cgroup and every ancestor, so
-    a child cannot exceed its parent except by sampling skew (absorbed by the tolerance).
-    Both sides of a break are returned; neither stall can be attributed to one unit."""
+    over the same interval, beyond STALL_SKEW_TOLERANCE_US.
+
+    Basis is an assumption, not a cited kernel rule: the check presumes a stall is charged
+    to the cgroup and every ancestor. The cgroup v2 psi doc does not state that, and the
+    kernel source was not checked here. Measured on operator/unit-psi.jsonl (194 rows,
+    2026-11-01): no child-minus-ancestor cumulative some-total was ever positive across 695
+    pairs, but a single-minute delta exceeded its parent's by up to 26 s in 16 of 193
+    intervals, all under mishe-lifeline and tmux scopes. Records are read unit by unit, so
+    that is read-order skew, not a proven break. Treat a returned set as a skew-sensitive
+    signal, not as proof of a hierarchy fault. Both sides of a break are returned; neither
+    stall can be attributed to one unit."""
     bad: set[str] = set()
     for child, child_delta in stall_us.items():
         for anc in _ancestors(child):
