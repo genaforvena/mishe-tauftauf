@@ -82,8 +82,11 @@ def is_valid_dp_params(*, epsilon: float, delta: float, n: int | None = None) ->
     """Whether (epsilon,delta) is valid, with dangerous-delta gate delta < 1/n (Def. 2.4 p.18).
 
     Requires epsilon finite >0, delta finite in [0,1), and when n given
-    (dataset size) delta < 1/n — "values of delta on order 1/||x||1 are very
-    dangerous" (p.18). Returns False on any non-finite or out-of-range input.
+    delta < 1/n — "values of delta on order 1/||x||1 are very dangerous"
+    (p.18, qualitative warning; the book gives no numeric cutoff).
+    n is caller-asserted dataset size: this gate bounds delta against the
+    n the caller supplies and does not verify it against any data.
+    Returns False on any non-finite or out-of-range input.
     """
     if not _finite(epsilon) or not _finite(delta):
         return False
@@ -98,10 +101,11 @@ def is_valid_dp_params(*, epsilon: float, delta: float, n: int | None = None) ->
             return False
         if delta >= 1.0 / nn:
             return False
-        # "On order 1/n" (p.18) is broader than strict >=1/n; within one
-        # decade is still dangerous (e.g. delta=0.001 with n=100 where
-        # 1/n=0.01). Typed as delta*n >= 0.1 => invalid, so 0.1*(1/n) is the
-        # decade threshold. This makes the acceptance
+        # PLANT CHOICE, not from Dwork & Roth: the book says delta "on the
+        # order of 1/n" is dangerous (p.18) with no numeric cutoff. Treating
+        # anything within a decade of 1/n as dangerous (delta*n >= 0.1 =>
+        # invalid) is this module's calibration; revising 0.1 is a reviewed
+        # calibration change, not a change to the source. This makes the acceptance
         # is_valid_dp_params(1.0, 0.001, n=100)==False hold while
         # is_valid_dp_params(1.0, 0.0001, n=100)==True (negligible delta).
         if delta != 0.0 and delta * nn >= 0.1:
