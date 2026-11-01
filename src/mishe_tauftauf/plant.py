@@ -495,8 +495,17 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
         "version": 1, "home": str(home), "session": session, "uid": os.getuid()
     }) + "\n", encoding="utf-8")
     write_service_manifest(home, session, persist)
+    held: set[str] = set()
     for slug in ROLES:
-        print(seed.start(home, session, slug, 5), flush=True)
+        try:
+            print(seed.start(home, session, slug, 5), flush=True)
+        except seed.GenomeSingletonHold as exc:
+            # A runtime-only refresh must not fail on a Genome held by the
+            # life-support session; the hold stays visible and the rest proceed.
+            if not runtime_only:
+                raise
+            held.add(slug)
+            print(f"HOLD {slug}: {exc}", flush=True)
     if not owns_session(home, session):
         raise RuntimeError(f"session {session} lost its site ownership marker")
     from .operator_view import ensure as ensure_operator
@@ -549,7 +558,8 @@ def plant(home: Path, session: str, engine_command: str, operator_window: str, p
         else:
             os.environ["MISHE_SEED_SESSION"] = previous_session
     actual = set(_tmux("list-windows", "-t", session, "-F", "#{window_name}").stdout.decode().splitlines())
-    required = {operator_window, *ROLES, "permissions", *site_declared_roles(home)}
+    # Only a role held by a singleton guard is excused, and only for this refresh.
+    required = {operator_window, *ROLES, "permissions", *site_declared_roles(home)} - held
     if not required <= actual:
         raise RuntimeError(f"missing windows: {sorted(required - actual)}")
     (home / "health" / "windows.json").write_text(

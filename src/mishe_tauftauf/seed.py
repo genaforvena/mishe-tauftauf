@@ -711,6 +711,14 @@ def _current_cgroup_slice() -> str | None:
     return current_cgroup_slice()
 
 
+class GenomeSingletonHold(ValueError):
+    """A Genome start refused because another Genome pane is live elsewhere.
+
+    A typed hold, so a runtime-only refresh can report it and continue with the
+    other roles while a full plant still fails loudly.
+    """
+
+
 def _genome_singleton_violation(home: Path, session: str) -> str | None:
     """Return a reason if another Genome pane is already live elsewhere.
 
@@ -905,7 +913,7 @@ def start(home: Path, session: str, slug: str, interval: float) -> str:
     if slug == "genome":
         singleton = _genome_singleton_violation(home, session)
         if singleton is not None:
-            raise ValueError(f"UNKNOWN genome singleton: {singleton}")
+            raise GenomeSingletonHold(f"UNKNOWN genome singleton: {singleton}")
     workspace = str(home.parent.resolve())
     if not executable(home / "top-pains" / slug) or not executable(home / "minds" / slug):
         raise ValueError(f"seed {slug} needs executable top-pains/{slug} and minds/{slug}")
