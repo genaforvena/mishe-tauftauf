@@ -28,7 +28,8 @@ from .body_perception import (read_redmi10, read_redmi10_dense_baseline,
 from .multibody import read_multibody_coverage
 from .activity import roles as seated_roles
 from .feed import (Feed, FeedEntry, entry_timestamp as _feed_entry_timestamp,
-                  iter_feed_file, publication_lock, read_scan_created_stamps, read_scan_series)
+                  iter_feed_file, publication_lock, read_scan_created_stamps, read_scan_series,
+                  read_text_tail)
 from .chat_protocol import decode_lifecycle, ProtocolError
 from .host_radio import (BLUETOOTH_ROOT, COMMAND_TIMEOUT_SECONDS, NET_ROOT,
                          RFKILL_ROOT, admin_up, bluetooth_controllers, carrier_state,
@@ -125,14 +126,7 @@ def _chat_tape_tail(path: Path, chars: int) -> str:
     slicing gives the same text as the whole-tape read. An unreadable tape
     reads as empty, as the whole-tape read did.
     """
-    try:
-        with path.open("rb") as handle:
-            handle.seek(0, 2)
-            handle.seek(max(0, handle.tell() - 4 * chars))
-            raw = handle.read()
-    except OSError:
-        return ""
-    return raw.decode("utf-8", errors="replace")[-chars:]
+    return read_text_tail(path, chars)
 
 
 def _cpu_busy(path: Path = Path("/proc/stat"), samples: int = 2, interval: float = 0.1) -> dict:

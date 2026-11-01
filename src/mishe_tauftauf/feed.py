@@ -222,6 +222,23 @@ def iter_feed_entries(lines, *, start_sequence: int = 1,
         expected += 1
 
 
+def read_text_tail(path: Path | str, chars: int) -> str:
+    """The last ``chars`` characters of a UTF-8 text file, read in bounded bytes.
+
+    UTF-8 spends at most four bytes per character, so the final ``4 * chars``
+    bytes hold every one of the last ``chars`` characters. An unreadable file
+    reads as empty.
+    """
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(0, 2)
+            handle.seek(max(0, handle.tell() - 4 * chars))
+            raw = handle.read()
+    except OSError:
+        return ""
+    return raw.decode("utf-8", errors="replace")[-chars:]
+
+
 def iter_feed_file(path: Path | str, *, home: Path | str | None = None,
                    chunk_bytes: int = 1024 * 1024):
     """Yield the tape's entries without holding the tape in memory.
