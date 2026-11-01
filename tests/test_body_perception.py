@@ -834,3 +834,18 @@ def test_peer_delivery_is_unknown_for_an_offline_peer_in_an_unhealthy_report(
     assert row["state"] == "unknown"
     assert row["reason"] == "backend-state-NeedsLogin"
     assert "verdict" not in row
+
+
+def test_consent_receipts_match_the_personal_carrying_flow_table() -> None:
+    """Drift guard, no runtime behaviour: every BODY_INFORMATION_TYPES member
+    has a receipt whose principle and recipients equal the personal-carrying
+    row of _CI_FLOWS, and the receipt keys cover exactly the typed info set.
+    Two hand-kept tables must agree; this fails when one is edited alone."""
+    assert set(body_perception.PERSONAL_CONSENT_RECEIPTS) == set(
+        body_perception.BODY_INFORMATION_TYPES)
+    for info_type in sorted(body_perception.BODY_INFORMATION_TYPES):
+        receipt = body_perception.PERSONAL_CONSENT_RECEIPTS[info_type]
+        principle = receipt["principle"]
+        assert principle == "human-consented-personal-analysis", info_type
+        assert receipt["recipients"] == body_perception._CI_FLOWS[
+            ("personal-carrying", principle)], info_type

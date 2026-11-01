@@ -268,6 +268,18 @@ def personal_body_flow_allows(
     sender='redmi10', recipient=recipient, subject='human',
     info_type=info_type, transmission_principle=transmission_principle)``.
     Pure, no I/O.
+
+    Boundary note (field-review 2026-11-01, Barth et al. 2006 §§2, 3.3):
+    this is a static grant. The consent is encoded as a fixed table row, so
+    the receipt ``date`` and any revocation are not consulted; opt-in is not
+    modelled as a past-tense condition on the trace. On the
+    ``personal-carrying`` path the flow check here and the receipt check in
+    :func:`personal_consent_allows` use the same allow-list, so the second
+    is redundant rather than an independent gate. As of 2026-11-01 no
+    caller in ``src/``, ``tests/`` or ``tools/`` invokes this predicate:
+    it is an unenforced view, not a guard on flows. Do not describe it as
+    guarding flows until a caller exists; if one is added, name that caller
+    here and re-check this note.
     """
     return contextual_integrity_allows(
         context="personal-carrying",
@@ -309,6 +321,16 @@ def personal_consent_allows(
     BODY_INFORMATION_TYPES. Blanket non-self-executing, now typed.
     Pure, no I/O, no SENSE_ID/verdict; redistribution still a
     privacy-boundary change reviewed under docs/protocol-boundaries.md.
+
+    Boundary note (field-review 2026-11-01, Barth et al. 2006 §§2, 3.3):
+    the receipt ``date`` and revocation state are not read here, so opt-in
+    is a static grant rather than the past-tense condition Barth §3.3
+    describes. Condition (3) and condition (4) draw on the same allow-list
+    for the ``personal-carrying`` path, so the receipt check is redundant
+    with :func:`personal_body_flow_allows`, not an independent constraint.
+    As of 2026-11-01 no caller in ``src/``, ``tests/`` or ``tools/`` invokes
+    this predicate; it is unenforced and does not guard flows. Name the
+    caller here and re-check this note if one is added.
     """
     receipt = PERSONAL_CONSENT_RECEIPTS.get(info_type)
     if receipt is None:
