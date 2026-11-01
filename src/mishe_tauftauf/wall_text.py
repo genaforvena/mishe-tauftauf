@@ -73,3 +73,17 @@ def heading_present(text: str, heading: str) -> bool:
 def ends_with_newline(text: str) -> bool:
     """Report whether a wall document already ends with a newline."""
     return text[-1:] == "\n"
+
+
+_RENDER_VOLATILE_AGE = re.compile(r" age=[0-9][0-9.eE+-]*(?=;)")
+_RENDER_VOLATILE_CACHE = re.compile(r"cached_at=[0-9][0-9.eE+-]*")
+
+
+def strip_render_volatile(body: str) -> str:
+    """Blank the float age and cache stamp of a retained render deferral.
+
+    Those values advance every render tick; the digest must not change with
+    them. The state and reason stay in the text.
+    """
+    body = _RENDER_VOLATILE_AGE.sub(" age=…", body)
+    return _RENDER_VOLATILE_CACHE.sub("cached_at=…", body)
