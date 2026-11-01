@@ -12,7 +12,7 @@ built so the change is the product.
 
 ## The grid
 
-`fields.json` is the literal grid: 30 fields × 6 angles = 180 cells. The first
+`fields.json` is the literal grid: 31 fields × 6 angles = 186 cells. The first
 twelve fields are the original grid (72 cells). Twelve successor fields follow,
 added on Genome's decision (DM 139117) after a criterion-2/-3 census of the
 plant's modules; they name the non-plumbing modules that the first twelve did
@@ -23,7 +23,10 @@ body_perception, follow_through, stats_boundary and engine_policy. Each carries
 a `census` pointer and a `closure` criterion; the grid is exhausted again when
 all of its cells land and the closure criteria hold. Two final successor fields
 (12 cells) followed: `probe-process-group-bounds` (census, commit 05b221e0) and
-`pin-promotion-caller-and-socket` (Genome grid decision, commit f616f1a2).
+`pin-promotion-caller-and-socket` (Genome grid decision, commit f616f1a2). One
+more successor field (6 cells), `host-capacity-anon-reading-and-memory-stat`, was
+added on Genome's decision (DM 159948) from the census in
+`.mishe-tauftauf/artifacts/field-review-census-20261101/trace.md`.
 
 The original fields are this plant's own subsystems — evidence binding, freshness,
 failure and recovery, coordination, sensing and privacy, publication,
@@ -135,5 +138,5 @@ commit SHA shared for CI.
 
 Plumbing exclusions (named, not gaps): `__main__`, `access`, `cli`,
 `guard_cli`, `patch_text`, `timestamp_text`, `tmux`, `proc_table`,
-`space_text`, `unit_properties`, `window_manifest`, `minimal_supervisor`,
+`space_text`, `unit_properties`, `unit_psi_text`, `memory_stat_text`, `window_manifest`, `minimal_supervisor`,
 `probe_supervisor`, `clear_journal`, `site_uninstall`, `declared_roots`.

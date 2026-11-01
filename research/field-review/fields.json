@@ -130,6 +130,14 @@
       "closure": "a pin promotion run from a non-lifeline caller with the site socket reaches its loaded-bytes check, and a probe of the same caller/socket refusal names the boundary here",
       "plant_part": "src/mishe_tauftauf/plant.py (runtime source selection, owns_session) and .mishe-tauftauf/bin/pin-promote-*.sh",
       "keywords": ["promotion", "pin", "tmux socket", "lifeline"]
+    },
+    {
+      "id": "host-capacity-anon-reading-and-memory-stat",
+      "title": "host-capacity anon-pressure reading: memory.stat decoder, unwired shadow controller and its replay (successor: census 20261101, genome DM 159948)",
+      "census": ".mishe-tauftauf/artifacts/field-review-census-20261101/trace.md",
+      "closure": "host_capacity_reading and memory_stat_reading are wired into the running controller with a decision reading against the signals replay rows, or retired with their tests; any cell that cites the replay restates that the replay reads recorded rows through decide_anon, not docstrings",
+      "plant_part": "src/mishe_tauftauf/host_capacity_reading.py, src/mishe_tauftauf/memory_stat_reading.py, src/mishe_tauftauf/live_signal.py (unwired from host_capacity.decide)",
+      "keywords": ["host_capacity_reading", "memory_stat_reading", "live_signal", "memory.stat", "replay"]
     }
   ]
 }
