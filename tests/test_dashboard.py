@@ -5,14 +5,6 @@ import pytest
 from mishe_tauftauf import cli, dashboard
 
 
-@pytest.fixture(autouse=True)
-def _restore_renderer_site_home(monkeypatch):
-    # cmd_pain_watch exports MISHE_SEED_HOME for the renderer; record and undo it so the
-    # binding does not leak into later test modules (the wall tests then fail on a foreign home).
-    monkeypatch.setenv("MISHE_SEED_HOME", "placeholder")
-    monkeypatch.delenv("MISHE_SEED_HOME")
-
-
 def test_watcher_and_mind_share_complete_frame_without_terminal_clipping(tmp_path, monkeypatch, capsys):
     from mishe_tauftauf.observations import RenderedPain
     body = "ALERT: RED outside draft\n" + "detail\n" * 80
