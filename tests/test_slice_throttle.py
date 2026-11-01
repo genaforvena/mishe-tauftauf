@@ -195,3 +195,16 @@ def test_read_carries_cpu_max_period_into_throttled_cpus(tmp_path):
     readings = st.read_slice_throttle(home, root, now=1120.0)
     plants = next(r for r in readings if r["id"] == "sense.cgroup.mishe-plants.throttle")
     assert plants["throttle"]["throttled_cpus"]["state"] == "unknown"
+
+
+def test_absent_throttle_rows_are_unknown_not_calm():
+    rows = st.missing_throttle_rows([{"id": "sense.thermal.hwmon", "state": "verified"}])
+    assert [row["id"] for row in rows] == [
+        "sense.cgroup.mishe-plants.throttle", "sense.cgroup.mishe-lifeline.throttle"]
+    assert all(row["state"] == "unknown" and "not calm" in row["sample"] for row in rows)
+
+
+def test_present_throttle_rows_add_nothing():
+    present = [{"id": "sense.cgroup.mishe-plants.throttle", "state": "verified"},
+               {"id": "sense.cgroup.mishe-lifeline.throttle", "state": "unknown"}]
+    assert st.missing_throttle_rows(present) == []

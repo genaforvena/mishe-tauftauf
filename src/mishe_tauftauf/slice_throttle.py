@@ -149,6 +149,24 @@ def read_slice_throttle(home: Path, cgroup_root: Path | None = None,
     return readings
 
 
+def missing_throttle_rows(observations: list) -> list[dict]:
+    """UNKNOWN rows for each slice throttle sense absent from a scan's observations.
+
+    A scan from a producer that predates this sense, or one whose sense did not
+    run, carries no throttle row at all. Consumers would then show nothing for the
+    slice, which reads as calm. Absence is UNKNOWN: no throttle was measured.
+    """
+    present = {row.get("id") for row in observations if isinstance(row, dict)}
+    rows = []
+    for name in SLICES:
+        sense_id = slice_sense_id(name)
+        if sense_id not in present:
+            rows.append({"id": sense_id, "state": "unknown", "kind": "read",
+                         "sample": (f"{name} throttle absent from the scan: the producer predates "
+                                    "this sense or did not run it; no throttle was measured, not calm")})
+    return rows
+
+
 def _write_state(path: Path, state: dict[str, dict]) -> None:
     """Persist the baseline; a slice that failed this read loses its baseline."""
     try:

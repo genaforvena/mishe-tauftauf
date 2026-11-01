@@ -28,6 +28,7 @@ from .host_radio import (decode_cam_events, decode_cam_manifest, decode_cam_stat
 from . import proc_table
 from .space_text import nonblank
 from .seed import recorded_session
+from .slice_throttle import missing_throttle_rows
 
 
 def _redmi_monitor(home: Path) -> tuple[str, str]:
@@ -307,6 +308,7 @@ def discover(home: Path) -> str:
         observations = snapshot.get("observations", [])
         observations = [item for item in observations if item.get("id") != "sense.space.light"]
         observations.append(_space_light_read(home))
+        observations.extend(missing_throttle_rows(observations))
         unknown = 0
         drift = 0
         settled = 0
@@ -397,6 +399,8 @@ def senses(home: Path) -> str:
                        if str(item.get("id", "")).startswith("sense.")
                        and item.get("id") not in {"sense.space.light", *BODY_SENSE_IDS,
                                                   MULTIBODY_SENSE_ID}]
+        # A throttle sense the scan did not carry is UNKNOWN, never silently absent.
+        senses_rows.extend(missing_throttle_rows(snapshot.get("observations", [])))
         space = _space_light_read(home)
         senses_rows.append(redmi)
         senses_rows.append(redmi_light)

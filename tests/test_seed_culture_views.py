@@ -54,7 +54,7 @@ def test_discover_aggregate_separates_unverified_from_checked_drift(
         {"id": f"sense.fixture.{index}", "kind": "read", "state": state,
          "sample": "fixture"}
         for index, state in enumerate(states)
-    ])
+    ] + _THROTTLE_ROWS)
 
     rendered = discover(home)
 
@@ -485,7 +485,7 @@ def test_senses_drift_only_pane_names_no_unchecked_read(
     _write_scan(home, [
         {"id": "sense.ledger.dv-binding", "state": "drift", "kind": "read",
          "sample": "unbound=applied records=102 bool_dv=57"},
-    ])
+    ] + _THROTTLE_ROWS)
     rendered = senses(home)
     assert "STATE: UNKNOWN — 1 checked readings report drift; no reading is unchecked" in rendered
     assert (home / "observations" / "senses").read_text(
@@ -603,6 +603,15 @@ def current_endpoint(monkeypatch) -> dict:
     current = _endpoint(20_000_000_000, 20_000_000_100)
     monkeypatch.setattr("mishe_tauftauf.seed_culture_views.scan_freshness.endpoint", lambda: current)
     return current
+
+
+# A current-producer scan carries both slice throttle senses; absence reads UNKNOWN.
+_THROTTLE_ROWS = [
+    {"id": "sense.cgroup.mishe-plants.throttle", "kind": "read", "state": "verified",
+     "sample": "mishe-plants.slice window=60.0s ratio=0.1"},
+    {"id": "sense.cgroup.mishe-lifeline.throttle", "kind": "read", "state": "verified",
+     "sample": "mishe-lifeline.slice window=60.0s ratio=0.0"},
+]
 
 
 def _write_scan(home: Path, observations: list[dict], *, acquisition: bool = True,
