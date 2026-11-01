@@ -2283,6 +2283,77 @@ class _MockTar:
         pass
 
 
+def _git_repo(root: Path) -> Path:
+    """A real scratch repo on main with one commit; returns the site dir inside it."""
+    root.mkdir(parents=True)
+    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t", "PATH": os.environ["PATH"]}
+
+    def git(*args: str) -> None:
+        subprocess.run(["git", "-C", str(root), *args], check=True, env=env,
+                       capture_output=True, text=True)
+
+    git("init", "-q", "-b", "main")
+    (root / "base.txt").write_text("base\n")
+    git("add", "base.txt")
+    git("commit", "-q", "-m", "base")
+    site = root / "site"
+    site.mkdir()
+    return site
+
+
+def _git_commit(site: Path, name: str, text: str, message: str) -> None:
+    root = site.parent
+    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t", "PATH": os.environ["PATH"]}
+    (root / name).write_text(text)
+    subprocess.run(["git", "-C", str(root), "add", name], check=True, env=env, capture_output=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-q", "-m", message], check=True,
+                   env=env, capture_output=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_head_rewinds_branch_switch_counts_as_dropped_commit(tmp_path):
+    """Counting rule pin: a commit held only on another ref counts as dropped, with no loss.
+
+    The count says a commit left HEAD; it does not say a reset happened and
+    does not say bytes were lost. Here the commit is on feature and kept there.
+    """
+    site = _git_repo(tmp_path / "repo")
+    root = site.parent
+    subprocess.run(["git", "-C", str(root), "switch", "-q", "-c", "feature"], check=True,
+                   capture_output=True)
+    _git_commit(site, "feature.txt", "feature\n", "feature work")
+    subprocess.run(["git", "-C", str(root), "switch", "-q", "main"], check=True,
+                   capture_output=True)
+    result = discovery._head_rewinds(site)
+    assert result.get("dropped") == 1
+    assert _reading_sample(result).startswith("dropped-commits=1 of last-200-reflog-entries ")
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_head_rewinds_reset_that_drops_no_commit_counts_zero(tmp_path):
+    """Counting rule pin: a reset to the current HEAD leaves no reflog SHA off HEAD."""
+    site = _git_repo(tmp_path / "repo")
+    subprocess.run(["git", "-C", str(site.parent), "reset", "-q", "--hard", "HEAD"], check=True,
+                   capture_output=True)
+    result = discovery._head_rewinds(site)
+    assert result.get("dropped") == 0
+    assert _reading_sample(result).startswith("dropped-commits=0 of last-200-reflog-entries ")
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_head_rewinds_reset_that_leaves_commit_off_head_counts_one(tmp_path):
+    """Counting rule pin: a reset that discards a commit counts it too; the count does not name resets."""
+    site = _git_repo(tmp_path / "repo")
+    _git_commit(site, "second.txt", "second\n", "second")
+    subprocess.run(["git", "-C", str(site.parent), "reset", "-q", "--hard", "HEAD~1"], check=True,
+                   capture_output=True)
+    result = discovery._head_rewinds(site)
+    assert result.get("dropped") == 1
+    assert _reading_sample(result).startswith("dropped-commits=1 of last-200-reflog-entries ")
+
+
 def test_head_rewinds_with_no_dropped_commit_reads_verified(tmp_path, monkeypatch):
     home = tmp_path / "site"
     home.mkdir()

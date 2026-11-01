@@ -3757,6 +3757,18 @@ def _head_rewinds_reading(home: Path) -> dict[str, object]:
     costs a patch check per changed path, bounded by ``_HEAD_REWIND_PATH_LIMIT``.
     The two units are named apart in the sample: the first counts commits,
     the rest count changed paths.
+
+    Counting rule. ``dropped-commits`` is not a reset detector. It counts each
+    distinct commit SHA in the HEAD reflog window (the last
+    ``_HEAD_REWIND_REFLOG_LIMIT`` entries) that HEAD's ancestry no longer
+    reaches. Any operation that leaves a commit off HEAD produces that: a reset,
+    a branch switch away from a commit held only on another ref, a cherry-pick
+    or amend (the pre-amend commit), or a rebase. The count therefore says
+    "a commit left HEAD", not "work was lost". Loss is decided per path by the
+    classification above, never by the count. The window is bounded by reflog
+    retention: unreachable reflog entries are pruned after
+    ``gc.reflogExpireUnreachable`` (30 days by default), so a count is a count
+    inside that window and not a history of the checkout.
     """
     checkout_root = Path(home).resolve().parent
     unknown = {"id": "sense.repo.head-rewinds", "state": "unknown", "kind": "read"}
