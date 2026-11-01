@@ -114,6 +114,12 @@ def dp_composition(
 ) -> dict | None:
     """Sequential composition: (sum epsilon_i, sum delta_i) (Theorem 3.16 p.19).
 
+    Sequential only: this sums the budgets of mechanisms run on the same data.
+    It is not a parallel-composition rule. Parallel composition over disjoint
+    data under bounded DP is max over pairs i!=j of (eps_i + eps_j), not max
+    eps (Guerra-Balboa et al., arXiv:2308.14649 v2, Example II.9, Cor IV.13);
+    no parallel helper exists here and one must take the granularity.
+
     Validates finite non-negative entries; returns {epsilon, delta, k} or None
     on bad input. Linear k is the worst case; advanced composition
     (Theorem 3.20 Sec.3.5.2 p.20) is noted as not used here.
@@ -144,6 +150,12 @@ def dp_composition(
 
 def group_privacy_epsilon(*, epsilon: float, k: int) -> float | None:
     """Group privacy k*epsilon for (epsilon,0)-DP (Theorem 2.2 p.19-20).
+
+    The multiplier k is a record count only under the unbounded neighbouring
+    relation (datasets differ by adding or removing one record). Under other
+    granularities the multiplier is the granularity distance d_G(D,D') between
+    the datasets (Guerra-Balboa et al., arXiv:2308.14649 v2); callers using
+    such a granularity must pass that distance as k, not a record count.
 
     Returns k*epsilon for k>=1 finite epsilon>0 else None. For (epsilon,delta)
     the delta multiplier is k*exp((k-1)epsilon) (fn.1 p.20) — noted, not returned.

@@ -444,3 +444,10 @@ def test_cli_stats_json_output(tmp_path, capsys):
 
 def test_windows_constant():
     assert token_usage.WINDOWS == {"1h": 3600000, "24h": 86400000, "7d": 604800000, "30d": 2592000000, "90d": 7776000000, "all": None}
+
+
+def test_group_privacy_epsilon_assumes_unbounded_record_count():
+    # Pins the unbounded reading: k is a record count. Under other granularities
+    # the multiplier is the granularity distance d_G (arXiv:2308.14649 v2).
+    assert stats_boundary.group_privacy_epsilon(epsilon=0.5, k=3) == 1.5
+    assert stats_boundary.group_privacy_epsilon(epsilon=0.5, k=0) is None
