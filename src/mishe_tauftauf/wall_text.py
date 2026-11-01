@@ -87,3 +87,12 @@ def strip_render_volatile(body: str) -> str:
     """
     body = _RENDER_VOLATILE_AGE.sub(" age=…", body)
     return _RENDER_VOLATILE_CACHE.sub("cached_at=…", body)
+
+
+def names_sender(body: str, sender: str) -> bool:
+    """True when ``body`` names ``sender`` as a whole role token.
+
+    A role inside a longer hyphenated name does not count: ``genome`` is not
+    named by ``genome-2``.
+    """
+    return re.search(rf"(?<![\w-]){re.escape(sender)}(?![\w-])", body) is not None

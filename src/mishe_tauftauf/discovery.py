@@ -61,6 +61,7 @@ from . import store_census
 from .runtime_source import source_for
 from .scan_freshness import age_bounds, aoi_summary, classify_age, endpoint
 from . import patch_text
+from .wall_text import names_sender
 from .spawn_dialect import (script_spawns_site_package,
                             spawns_site_package)
 from .reflog_boundary import (decode_commit_count, decode_commit_sha, decode_reflog_resets,
@@ -6053,9 +6054,8 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
             wall_only_n += 1
         # wall_cited: a later tape outcome by the target names the sender. It
         # is a validity probe beside wall_join, not a change to the credit rule.
-        sender_re = re.compile(rf"(?<![\w-]){re.escape(sender)}(?![\w-])")
         cited_bodies = seq_by_role.get(target, ([], []))
-        if any(role_t > ts and sender_re.search(body)
+        if any(role_t > ts and names_sender(body, sender)
                for role_t, body in zip(*cited_bodies)):
             wall_cited_n += 1
         if disp_time is not None:

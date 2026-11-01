@@ -59,3 +59,10 @@ def test_decode_audit_entries_skips_blank_and_undecodable_lines():
 
 def test_decode_audit_entries_of_empty_text_is_empty():
     assert decode_audit_entries("") == []
+
+
+def test_names_sender_matches_whole_role_token_only():
+    from mishe_tauftauf.wall_text import names_sender
+    assert names_sender("ask genome about it", "genome")
+    assert not names_sender("ask genome-2 about it", "genome")
+    assert not names_sender("ask xgenome about it", "genome")
