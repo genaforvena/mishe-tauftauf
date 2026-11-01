@@ -228,9 +228,50 @@ def test_throttled_workload_pressure_is_retained_without_claiming_ssh_failure():
     assert row["memory_pressure"] == row["io_pressure"] == 90
 
 
-def test_ssh_failure_is_an_independent_immediate_stop():
-    assert guard.reason(sample(ssh_available=False), sample(), None, 10)[0] == "SSH listener unavailable"
+def test_ssh_failure_is_a_suspicion_until_it_persists():
+    # reason() no longer stops on a probe; probe_suspicion() owns the window.
+    assert guard.reason(sample(ssh_available=False), sample(), None, 10) == (None, None)
     assert not guard.clear_to_rearm(sample(ssh_available=False))
+    assert guard.probe_suspicion(sample(ssh_available=False), (None, None), 10) == (None, (10, None))
+    assert guard.probe_suspicion(sample(ssh_available=False), (10, None), 10 + guard.PROBE_SUSPECT_SECONDS - .1) == (
+        None, (10, None))
+    assert guard.probe_suspicion(sample(ssh_available=False), (10, None), 10 + guard.PROBE_SUSPECT_SECONDS) == (
+        "SSH listener unavailable", (10, None))
+
+
+def test_one_failed_io_sample_is_recorded_and_does_not_latch():
+    why, state = guard.probe_suspicion(sample(host_io_available=False), (None, None), 100)
+    assert why is None and state == (100, None)
+    # Only a success run lasting the full window clears the suspicion.
+    why, state = guard.probe_suspicion(sample(), state, 101)
+    assert why is None and state == (100, 101)
+    why, state = guard.probe_suspicion(sample(), state, 101 + guard.PROBE_SUSPECT_SECONDS)
+    assert why is None and state == (None, None)
+
+
+def test_sustained_io_failure_latches_with_the_original_reason():
+    why, state = guard.probe_suspicion(sample(host_io_available=False), (None, None), 100)
+    why, state = guard.probe_suspicion(sample(host_io_available=False), state, 100 + guard.PROBE_SUSPECT_SECONDS)
+    assert why == "host filesystem probe unavailable" and state == (100, None)
+
+
+def test_alternating_probe_failure_accumulates_and_latches():
+    # Witness case: fail/ok every 2 s never trips a per-sample reset. A success
+    # run shorter than the window must not clear the failure interval.
+    state, why, t = (None, None), None, 0.0
+    while why is None and t < 10 * guard.PROBE_SUSPECT_SECONDS:
+        ssh_ok = int(t) % 4 != 0          # fail at t=0,4,8,...; ok in between
+        why, state = guard.probe_suspicion(sample(ssh_available=ssh_ok), state, t)
+        t += 2
+    assert why == "SSH listener unavailable"
+    # The stop lands on the first failing sample at or after the window, not later.
+    assert state[0] == 0.0 and t - 2 == guard.PROBE_SUSPECT_SECONDS
+
+
+def test_probe_suspicion_never_overrides_other_branches():
+    assert guard.probe_suspicion(None, (None, None), 10) == (None, (None, None))
+    assert guard.probe_suspicion(sample(limits_ok=False, ssh_available=False), (0, None), 100) == (
+        None, (None, None))
 
 
 def test_host_filesystem_probe_writes_reads_and_syncs(tmp_path):
@@ -252,8 +293,8 @@ def test_failed_probe_preserves_exit_status_and_stderr():
     assert receipt["code"] == 7 and "cause" in receipt["stderr"]
 
 
-def test_host_io_failure_is_independent_of_listener_and_headroom():
-    assert guard.reason(sample(host_io_available=False), sample(), None, 10)[0] == "host filesystem probe unavailable"
+def test_host_io_failure_still_blocks_rearm_and_is_not_a_reason_at_once():
+    assert guard.reason(sample(host_io_available=False), sample(), None, 10) == (None, None)
     assert not guard.clear_to_rearm(sample(host_io_available=False))
 
 

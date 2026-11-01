@@ -34,6 +34,11 @@ STABLE_SECONDS = 120
 #: the session is in fact live.  A single such sample must not latch the whole
 #: plant off; a session that stays missing does.
 LIFE_MISSING_SECONDS = 20
+#: A failed ssh or host-io probe sample is a suspicion, revisable on the next
+#: sample (Chandra and Toueg 1996, s1 p.226-227).  It stops the plant only when
+#: it persists this long.  Same value as the life-support window, named apart
+#: so it can be tuned from measurement without touching the other.
+PROBE_SUSPECT_SECONDS = LIFE_MISSING_SECONDS
 PLANTS_SLICE = "mishe-plants.slice"
 #: Trailing window for the plants-slice throttle observation (warning only).
 CPU_WINDOW_SECONDS = 60
@@ -234,8 +239,14 @@ def bounded_command(command, *, timeout=1, receipt=None):
 
 def filesystem_probe(directory="/var/tmp"):
     payload = b"mishe host filesystem probe\n"
+    started = time.monotonic()
+    # Markers name the stall phase on an empty-stderr trip: start precedes all work,
+    # opened follows TemporaryFile (the /var/tmp metadata open), then the I/O phases.
+    print(f"phase=start mono={started:.6f} elapsed=0.000000", file=sys.stderr, flush=True)
     try:
         with tempfile.TemporaryFile(dir=directory) as stream:
+            now = time.monotonic()
+            print(f"phase=opened mono={now:.6f} elapsed={now - started:.6f}", file=sys.stderr, flush=True)
             print("phase=write", file=sys.stderr, flush=True)
             stream.write(payload)
             print("phase=flush", file=sys.stderr, flush=True)
@@ -525,10 +536,6 @@ def reason(row, previous, pressured_since, now):
         return "resource observation unavailable", None
     if not row["limits_ok"]:
         return "resource limits changed", None
-    if row.get("ssh_available") is not True:
-        return "SSH listener unavailable", None
-    if row.get("host_io_available") is not True:
-        return "host filesystem probe unavailable", None
     if row["oom_kill"] > (previous or row)["oom_kill"]:
         return "cgroup OOM", None
     if row["disk_free"] < 10 * GIB:
@@ -542,6 +549,38 @@ def reason(row, previous, pressured_since, now):
     if since is not None and now - since >= 10:
         return "sustained resource pressure", since
     return None, since
+
+
+def probe_suspicion(row, state, now):
+    """Return (stop reason or None, state) for ssh and host-io probes.
+
+    state is (missing_since, ok_since). A failed sample starts or continues a
+    missing interval; it is a stop reason once the interval reaches
+    PROBE_SUSPECT_SECONDS. A success does not end the interval: only a
+    continuous success run of PROBE_SUSPECT_SECONDS clears it. So a probe that
+    fails on alternating samples accumulates toward a stop instead of resetting.
+    """
+    missing_since, ok_since = state
+    if row is None or not row["limits_ok"]:
+        return None, (None, None)
+    if row.get("ssh_available") is not True:
+        failed, why = True, "SSH listener unavailable"
+    elif row.get("host_io_available") is not True:
+        failed, why = True, "host filesystem probe unavailable"
+    else:
+        failed, why = False, None
+    if failed:
+        if missing_since is None:
+            missing_since = now
+        stop = why if now - missing_since >= PROBE_SUSPECT_SECONDS else None
+        return stop, (missing_since, None)
+    if missing_since is None:
+        return None, (None, None)
+    if ok_since is None:
+        ok_since = now
+    if now - ok_since >= PROBE_SUSPECT_SECONDS:
+        return None, (None, None)
+    return None, (missing_since, ok_since)
 
 
 def clear_to_rearm(row):
@@ -921,6 +960,7 @@ def watch(config):
         latch(STATE, "sentinel started/restarted: explicit rearm required", None)
     previous = None
     since = None
+    probe_state = (None, None)
     old_warning = False
     last_pressure_record = 0
     cpu_samples = []
@@ -936,6 +976,9 @@ def watch(config):
         with transition(STATE):
             row = observe(config)
             why, since = reason(row, previous, since, time.monotonic())
+            probe_why, probe_state = probe_suspicion(row, probe_state, time.monotonic())
+            if why is None:
+                why = probe_why
             if restoration_expired():
                 why = "staged restoration heartbeat missing, malformed or stale"
                 os.replace(STATE / "restoring", STATE / ("restore-abandoned-" + str(time.time_ns()) + ".json"))
@@ -953,6 +996,9 @@ def watch(config):
             status = dict(at=time.time(), state="TRIPPED" if tripped else "READY",
                           mode="LIFE_SUPPORT" if tripped else "RESTORING" if (STATE / "restoring").exists() else "NORMAL",
                           observation=row, pressured_since=since, clear_since=clear_since,
+                          probe_suspect=None if probe_state[0] is None else dict(
+                              missing_since=probe_state[0], stop=probe_why,
+                              window_seconds=PROBE_SUSPECT_SECONDS),
                           pressure_warning=bool(row and (row["memory_pressure"] >= 10 or row["io_pressure"] >= 25
                               or row.get("probes", {}).get("io", {}).get("seconds", 0) >= 1)))
             warning = status["pressure_warning"]
