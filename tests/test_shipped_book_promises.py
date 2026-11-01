@@ -77,6 +77,25 @@ def test_the_gate_rejects_a_named_command_the_destination_does_not_keep(tmp_path
     assert "wall write" in result.stdout
 
 
+def test_the_gate_rejects_a_promise_wrapped_across_lines(tmp_path):
+    """A promise whose link and phrase wrap onto the next line is a promise.
+
+    The measured page wrapped it: "See the [README](../README.md) ... and
+    [Getting\\nstarted](getting-started.md) for the commands that write a
+    wall".  A segment that splits on lines would cut the phrase from its
+    link, and the defect would pass again.
+    """
+    make_tree(tmp_path, {
+        "docs/mesh.md":
+            "See the [README](../README.md) for an introduction, and [Getting\n"
+            "started](getting-started.md) for the commands that write a wall.\n",
+        "docs/getting-started.md": "# Plant a site\n\nNothing here yet.\n",
+    })
+    result = run_check(tmp_path, REPO / "src")
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "wall write" in result.stdout
+
+
 def test_the_gate_leaves_a_kept_promise_alone(tmp_path):
     """A destination that names the promised command passes."""
     make_tree(tmp_path, {
@@ -95,6 +114,25 @@ def test_the_gate_leaves_a_kept_promise_alone(tmp_path):
     result = run_check(tmp_path, REPO / "src")
     assert result.returncode == 0, result.stdout + result.stderr
     assert "OK" in result.stdout
+
+
+def test_the_gate_rejects_a_table_row_promise(tmp_path):
+    """A table row is a promise too.
+
+    "| Write a wall | [Getting started](docs/getting-started.md) |" puts the
+    capability *before* its link, in a row that no sentence boundary and no
+    blank line separates.  The destination must still carry the command.
+    """
+    make_tree(tmp_path, {
+        "README.md":
+            "| You want to… | Read |\n"
+            "| --- | --- |\n"
+            "| Write a wall | [Getting started](docs/getting-started.md) |\n",
+        "docs/getting-started.md": "# Plant a site\n\nNothing here yet.\n",
+    })
+    result = run_check(tmp_path, REPO / "src")
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "wall write" in result.stdout
 
 
 def test_the_gate_ignores_a_command_that_names_another_clause(tmp_path):

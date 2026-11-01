@@ -69,6 +69,13 @@ LINK = re.compile(r"\[([^\]]*)\]\(([^)]+)\)")
 FENCE = re.compile(r"```.*?```", re.DOTALL)
 INLINE_CODE = re.compile(r"`([^`\n]+)`")
 SENTENCE = re.compile(r"(?<=[.;!?])\s+")
+BLOCK = re.compile(r"\n\s*\n")
+"""A blank-line-separated block of prose.
+
+Blocks are the unit a promise is read in: a wrapped sentence stays whole, and
+a table -- whose rows are separated by newlines but not by blank lines --
+stays a single block whose rows are told apart by their own links.
+"""
 
 BOOK_ROOTS = ("docs/", ".agents/skills/", "skills/")
 BOOK_FILES = ("README.md",)
@@ -91,16 +98,19 @@ CAPABILITY = {
     "writes a wall": "wall write",
     "write the wall": "wall write",
     "writes the wall": "wall write",
+    "writing a wall": "wall write",
     "record an outcome": "wall outcome",
     "records an outcome": "wall outcome",
     "record a contribution": "wall outcome",
     "records a contribution": "wall outcome",
+    "recording an outcome": "wall outcome",
     "settle a wake": "seed yield",
     "settles a wake": "seed yield",
     "settle the wake": "seed yield",
     "settles the wake": "seed yield",
     "settle a turn": "seed yield",
     "settles a turn": "seed yield",
+    "settling a wake": "seed yield",
     "write a message": "wall dm",
     "writes a message": "wall dm",
     "read a wall": "wall show",
@@ -253,31 +263,50 @@ def audit(tree: Path, leaves: list[str]) -> dict:
         # one fenced example is an example, not a claim about the link's
         # destination.
         prose = FENCE.sub("", text_of[page])
-        for sentence in SENTENCE.split(prose):
+        # Segments are blank-line-separated blocks, not sentences.  A sentence
+        # split would cut a wrapped promise from its link, and a line split
+        # would cut a table row from the phrase beside it.  A block keeps both:
+        # "See the [README](../README.md) ... and [Getting\nstarted](...) for
+        # the commands that write a wall" stays whole, and each table row
+        # stays its own row because a table has no blank lines inside it.
+        for segment in BLOCK.split(prose):
+            segment = segment.strip()
+            if not segment:
+                continue
             links = [(match.start(), match.end(), match.group(2))
-                     for match in LINK.finditer(sentence)]
+                     for match in LINK.finditer(segment)]
             if not links:
                 continue
-            # A command belongs to the link it follows.  "read the running
-            # plant with `mishe view`, or read the [Mesh](mesh.md) note"
-            # promises nothing of the Mesh page: the command names the other
-            # clause.  So each link owns the text between it and the next
-            # link, and commands there are what it promises.
+            # A *named command* belongs to the link it follows: "read the
+            # running plant with `mishe view`, or read the [Mesh](mesh.md)
+            # note" promises nothing of the Mesh page, because the command
+            # names the other clause.
+            #
+            # A *capability phrase* binds to the nearest link in either
+            # direction: "the commands that write a wall" qualifies the link
+            # beside it, whether the phrase sits before the link or after it.
             for index, (start, end, target) in enumerate(links):
                 resolved = _resolve(page, target, tree)
                 if resolved is None:
                     continue
-                stop = links[index + 1][0] if index + 1 < len(links) else len(sentence)
-                span_text = sentence[end:stop]
+                stop = (links[index + 1][0] if index + 1 < len(links)
+                        else len(segment))
                 promised: set[str] = set()
-                for span in INLINE_CODE.findall(span_text):
+                for span in INLINE_CODE.findall(segment[end:stop]):
                     promised |= named_commands(span, leaves)
-                # A prose promise names its capability in words.  The words are
-                # matched against the capability table, and the destination
-                # page must then name the command that carries it.
+                # The text before this link, back to the previous link or the
+                # start of its own row, is the other half of the phrase: "| Write
+                # a wall | [Getting started](...) |" puts the capability
+                # before its link.  A row boundary stops the search, so one
+                # table row's phrase cannot reach the next row's link.
+                before = (links[index - 1][1] if index > 0 else 0)
+                row_start = segment.rfind("\n", before, start) + 1
+                before = max(before, row_start)
                 for phrase, command in CAPABILITY.items():
-                    if re.search(r"\b" + re.escape(phrase) + r"\b", span_text,
-                                 re.IGNORECASE):
+                    pattern = r"\b" + re.escape(phrase) + r"\b"
+                    if re.search(pattern, segment[end:stop], re.IGNORECASE):
+                        promised.add(command)
+                    elif re.search(pattern, segment[before:start], re.IGNORECASE):
                         promised.add(command)
                 if not promised:
                     continue
@@ -288,7 +317,7 @@ def audit(tree: Path, leaves: list[str]) -> dict:
                         "file": source,
                         "target": resolved.relative_to(tree).as_posix(),
                         "command": command,
-                        "sentence": " ".join(sentence.split()),
+                        "sentence": " ".join(segment.split()),
                     })
     return {"book_pages": len(pages), "promise_sentences": checked,
             "findings": findings}
