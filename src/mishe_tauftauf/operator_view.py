@@ -280,7 +280,11 @@ def _ensure(home: Path, session: str, window: str, *, package_root: Path | None,
                    " -m mishe_tauftauf.operator_view --home " + shlex.quote(str(home)) + "\n",
                    encoding="utf-8")
     top.chmod(0o755)
-    command = ["env", f"MISHE_SEED_SESSION={session}", f"PYTHONPATH={root}", sys.executable,
+    # The renderer names the site it draws: pain read's field-review lane reports
+    # UNKNOWN "site home unset" when MISHE_SEED_HOME is absent, and releases older than
+    # the cli-side binding (2b241085) never set it.
+    command = ["env", f"MISHE_SEED_SESSION={session}", f"MISHE_SEED_HOME={home.resolve()}",
+               f"PYTHONPATH={root}", sys.executable,
                "-m", "mishe_tauftauf", "--home", str(home), "pain", "watch", window, "--interval", "5"]
     if len(panes) == 1:
         try:

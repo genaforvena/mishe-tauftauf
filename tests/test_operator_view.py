@@ -507,3 +507,22 @@ def test_grace_window_reports_once_per_publisher(tmp_path, monkeypatch):
     monkeypatch.setattr(operator_view, "_pane_pid", lambda *a: "5151")
     third = operator_view.ensure(tmp_path, "owned", "operator", refresh=False)
     assert "still starting" in third
+
+
+def test_ensure_renderer_command_binds_the_site_home_it_draws(tmp_path, monkeypatch):
+    # Regression: the operator dashboard renderer ran without MISHE_SEED_HOME, so the
+    # field-review lane read "site home unset" on the human's own pane.
+    from mishe_tauftauf import operator_view
+    calls = []
+    def tmux(*args, **kwargs):
+        calls.append(args)
+        if args[0] == "list-panes":
+            return CompletedProcess(args, 0, b"%old-shell\n")
+        if args[0] == "split-window":
+            return CompletedProcess(args, 0, b"%dashboard\n")
+        return CompletedProcess(args, 0, b"")
+    monkeypatch.setattr(operator_view, "await_owned", lambda *a: True)
+    monkeypatch.setattr(operator_view, "_tmux", tmux)
+    operator_view.ensure(tmp_path, "owned", "operator")
+    split = next(a for a in calls if a[0] == "split-window")
+    assert f"MISHE_SEED_HOME={tmp_path.resolve()}" in split
