@@ -12,12 +12,16 @@ built so the change is the product.
 
 ## The grid
 
-`fields.json` is the literal grid: 23 fields × 6 angles = 138 cells. The first
-twelve fields are the original grid (72 cells). The last eleven are successor
-fields, added on Genome's decision (DM 139117) after a criterion-2/-3 census
-of the plant's modules; they name the 93 non-plumbing modules that the first
-twelve did not, grouped by subsystem, and put the outcome, recovery and
-verdict-path modules first.
+`fields.json` is the literal grid: 28 fields × 6 angles = 168 cells. The first
+twelve fields are the original grid (72 cells). Twelve successor fields follow,
+added on Genome's decision (DM 139117) after a criterion-2/-3 census of the
+plant's modules; they name the non-plumbing modules that the first twelve did
+not, grouped by subsystem, and put the outcome, recovery and verdict-path
+modules first. Four more successor fields (24 cells) were added on Genome's
+revision decision (DM 154331) for the modules named by exactly one field:
+body_perception, follow_through, stats_boundary and engine_policy. Each carries
+a `census` pointer and a `closure` criterion; the grid is exhausted again when
+all of its cells land and the closure criteria hold.
 
 The original fields are this plant's own subsystems — evidence binding, freshness,
 failure and recovery, coordination, sensing and privacy, publication,
