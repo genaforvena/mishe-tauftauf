@@ -56,6 +56,15 @@ jobs:
       # named one of them; the link gate could not see it, because the link
       # resolved.
       - run: python checks/shipped-book-promises.py --home . --repo .
+      # A page can name a real file, in a real module, with a real function,
+      # and the function can be unreachable: no importer, no CLI leaf, no unit.
+      # The page then reads as a description of the running plant.  Measured
+      # on this plant: docs/model-changes.md described a 60s engine watch
+      # collector that no entry point reaches, and the reason it was dormant
+      # was a decision recorded in chat -- invisible to every reader of the
+      # book.  The link, path and promise gates could not see it, because the
+      # path was real and the page was linked.
+      - run: python checks/shipped-book-runtimes.py --home . --repo .
       - run: python -m pytest -q
 
   tmux:

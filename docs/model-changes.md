@@ -89,9 +89,10 @@ through the site's credential store and shows each account-bound window with its
 remaining fraction, reset time and provider fetch age. Exit status `3` means a
 pool is unconfigured, stale, unattributed or UNKNOWN. Neither command changes a
 launcher, credential or routing decision.
-The installed launcher predates the `engine` subcommand. Until a reviewed snapshot
-carries it, run it from the source tree:
-`PYTHONPATH=src .venv/bin/python -m mishe_tauftauf --home <site home> engine status`.
+The installed launcher carries the `engine` subcommand, so `mishe engine status`
+and `mishe engine accounts` work directly. `engine status` exits `3` when any
+pool is unconfigured, stale, unattributed or UNKNOWN, which is the case while
+`go-b` holds no credential.
 
 Each alias binds to an OMP credential row by id within its `store`, an OMP agent
 directory relative to the site home. The default is `omp-recovery/agent`; a second
@@ -119,7 +120,29 @@ or a file. The flow for an API-key provider in OMP is not verified here: start
 
 Routing, reserves and automatic rotation are not part of this surface.
 
-## Engine watch (supervised)
+## Engine watch (designed, not running)
+
+This section describes a mechanism that **is not wired and does not run**. It
+is not the model-change watcher above: that one is the live unit
+`mishe-self-development-current-model-changes.service`, running `mishe model
+watch` (`model_change.py`) with an independent freshness guard on a 30-second
+timer. Nothing below belongs to it.
+
+The collector described here lives in `engine_watch.py`. Measured on this
+plant: no module in `src/` imports it, it registers no CLI leaf, no systemd
+unit runs it, and the site home holds no `engine/watch-cache.json`. The
+mechanism below is therefore a design that is present in the source and
+absent from the runtime. It is documented so the design is not lost and so
+nobody reads it as a running surface.
+
+Health owns the disposition and keeps it dormant while host capacity is
+`LIMITED`. The named trigger for wiring it is either Genome deciding to
+re-enable model-change monitoring, or a commit touching `engine_watch.py`. On
+that trigger the guard below goes into a sensor with a controlled stale test,
+and this page is corrected in the same change. Until then the mechanism is
+inert: no collector cycle runs, no cache is written, and no alert is routed.
+
+The mechanism, as designed:
 
 Collector cycle every 60s ±10s jitter reads `engine_usage.status(home)` and `token_usage.report(home)`, writes `engine/watch-cache.json` (0600) with `{observed_at, engine_state, stats_state, decisions: {role: policy.decide(...)}, next_reconsider}`. Next reconsider is the earliest `next_reconsider_ms` across roles. Private failures append to `engine/watch-errors.jsonl` (0600).
 
@@ -130,3 +153,7 @@ Service is a supervised restart loop (`serve()` calls `once()`); `once()` is the
 Stale guard is the independent `check()` reading `engine/watch-cache.json` mtime. If missing, stale (>180s), future-dated (<-5s skew), or malformed (unreadable or missing `observed_at`/`decisions`), it returns `UNKNOWN`/`RED` with a reason and appends to the durable Health outbox `health/engine-watch-alert.jsonl` (0600). The outbox is append-only; recovery appends a new record without erasing the original. A broken alert delivery still leaves `UNKNOWN`/`RED` (the alert error is recorded privately). Health detection interval for model-change monitoring is 120s; engine watch uses the 180s failure-detection bound, matching `substrate_watch` and `initiative-watch` staleness.
 
 Tested revert/backout: `rm engine/watch-cache.json` then `once()` reproduces the same `FRESH` state and decisions; guard with missing or stale cache stays `UNKNOWN`/`RED` until a fresh `once()` recovers.
+
+The outbox has no reader while the collector is dormant: nothing in `src/`
+consumes `health/engine-watch-alert.jsonl`, so the two records it holds
+(2026-10-29) are a trace of a manual `check()` and not a routed alert.
