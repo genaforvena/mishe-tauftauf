@@ -251,6 +251,36 @@ def next_cell(cells: list[Cell], covered: dict[str, str]) -> Cell | None:
     return None
 
 
+def newest_review_dates(repo: Path) -> dict[str, str]:
+    """Cell key -> the newest landed review date (ISO text) covering that cell."""
+    newest: dict[str, str] = {}
+    for name in landed_review_names(repo):
+        blob = head_bytes(repo, name)
+        if blob is None:
+            continue
+        matter = front_matter(blob.decode("utf-8", "replace"))
+        field, angle = matter.get("field"), matter.get("angle")
+        if not (field and angle):
+            continue
+        key = f"{field}--{angle}"
+        date = matter.get("date", "")
+        if date > newest.get(key, ""):
+            newest[key] = date
+    return newest
+
+
+def revisit_cell(cells: list[Cell], newest: dict[str, str]) -> Cell | None:
+    """Exhausted-grid rotation: the cell whose newest landed review is oldest.
+
+    A cell never reviewed sorts first (empty date). Ties keep registry order.
+    Used only after next_cell returns None, so uncovered cells always win.
+    """
+    if not cells:
+        return None
+    _, cell = min(((newest.get(c.key, ""), index), c) for index, c in enumerate(cells))
+    return cell
+
+
 def tracked_files(repo: Path) -> list[Path]:
     """Files in the tracked tree that can carry a field keyword."""
     found: list[Path] = []
@@ -709,8 +739,14 @@ def main(argv=None) -> int:
         return 0
     cell = next_cell(cells, covered)
     if cell is None:
-        print("GRID EXHAUSTED — every field x angle cell has a landed review")
-        return 0
+        # Rotation (DM 166093 option a): with no uncovered cell, revisit the
+        # cell whose newest landed review is oldest. The brief says so.
+        cell = revisit_cell(cells, newest_review_dates(repo))
+        if cell is None:
+            print("GRID EMPTY — the registry names no cells")
+            return 0
+        print(f"GRID EXHAUSTED — every cell has a landed review; REVISIT rotation selects"
+              f" {cell.key} (its newest landed review is the oldest)")
     print(render_brief(cell, embodiment_hits(repo, cell.keywords)))
     return 0
 

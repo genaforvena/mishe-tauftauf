@@ -169,6 +169,34 @@ class SelectionTest(unittest.TestCase):
             cells = field_review.load_registry(repo / "research" / "field-review" / "fields.json")
             self.assertIsNone(field_review.next_cell(cells, field_review.covered_cells(repo)))
 
+    def test_exhausted_grid_rotates_to_the_cell_with_the_oldest_newest_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reviews = {}
+            dates = {"alpha--recent": "2026-10-25", "alpha--misread": "2026-10-20",
+                     "beta--recent": "2026-10-30", "beta--misread": "2026-10-28"}
+            for key, date in dates.items():
+                field, angle = key.split("--")
+                reviews[f"{key}--{date}.md"] = GOOD_REVIEW.replace(
+                    "field: alpha", f"field: {field}").replace(
+                    "angle: recent", f"angle: {angle}").replace(
+                    "date: 2026-10-21", f"date: {date}")
+            repo = _repo(Path(tmp), reviews)
+            cells = field_review.load_registry(repo / "research" / "field-review" / "fields.json")
+            covered = field_review.covered_cells(repo)
+            self.assertIsNone(field_review.next_cell(cells, covered))
+            newest = field_review.newest_review_dates(repo)
+            self.assertEqual(newest["alpha--misread"], "2026-10-20")
+            # The fixture grid is exactly these four cells; the oldest newest
+            # review is alpha--misread (2026-10-20).
+            self.assertEqual(field_review.revisit_cell(cells, newest).key, "alpha--misread")
+
+    def test_rotation_never_preempts_an_uncovered_cell(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--recent--2026-10-21.md": GOOD_REVIEW})
+            cells = field_review.load_registry(repo / "research" / "field-review" / "fields.json")
+            covered = field_review.covered_cells(repo)
+            self.assertEqual(field_review.next_cell(cells, covered).key, "alpha--misread")
+
 
 class EmbodimentSweepTest(unittest.TestCase):
     def test_sweep_finds_where_the_plant_already_uses_the_vocabulary(self):
