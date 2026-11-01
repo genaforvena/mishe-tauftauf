@@ -906,6 +906,23 @@ def _ensure_contract_windows(home: Path, session: str, interval: float) -> None:
             _tmux("select-layout", "-t", target, "even-vertical")
 
 
+def _contract_windows_missing(home: Path, session: str) -> bool:
+    """Unlocked pre-check: would _ensure_contract_windows create a window right now?
+
+    Every supervisor calls start() on each interval. Holding the shared seed lock for a repair
+    that is almost never needed starves the seed-lock probe of a clear window. The locked call
+    re-checks each window itself, so this only skips the lock when nothing is missing.
+    """
+    from .proc_table import window_names
+    from .window_manifest import read
+
+    wanted = {name for name in ("ledger", "tail") if name in read(home)}
+    if not wanted:
+        return False
+    current = window_names(_tmux("list-windows", "-t", session, "-F", "#{window_name}").stdout)
+    return bool(wanted - set(current))
+
+
 def start(home: Path, session: str, slug: str, interval: float) -> str:
     from .tmux import TmuxError
 
@@ -997,8 +1014,9 @@ def start(home: Path, session: str, slug: str, interval: float) -> str:
     # cannot be locked must HOLD like the restore path does, since raising out
     # of start is the 2026-10-07T18:15:07Z restart-loop class.
     try:
-        with _lock(home):
-            _ensure_contract_windows(home, session, interval)
+        if _contract_windows_missing(home, session):
+            with _lock(home):
+                _ensure_contract_windows(home, session, interval)
     except (OSError, ValueError, TmuxError) as exc:
         print(f"HOLD seed {slug} contract windows: {exc}", flush=True)
     return f"seed {slug} ready in {session}"
