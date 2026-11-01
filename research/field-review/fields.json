@@ -138,6 +138,14 @@
       "closure": "host_capacity_reading and memory_stat_reading are wired into the running controller with a decision reading against the signals replay rows, or retired with their tests; any cell that cites the replay restates that the replay reads recorded rows through decide_anon, not docstrings",
       "plant_part": "src/mishe_tauftauf/host_capacity_reading.py, src/mishe_tauftauf/memory_stat_reading.py, src/mishe_tauftauf/live_signal.py (unwired from host_capacity.decide)",
       "keywords": ["host_capacity_reading", "memory_stat_reading", "live_signal", "memory.stat", "replay"]
+    },
+    {
+      "id": "unit-psi-reading-verdict",
+      "title": "per-unit pressure verdict from the cgroup sampler JSONL (successor: census wake162657; genome decision by DM 162738)",
+      "census": ".mishe-tauftauf/artifacts/field-review-census-wake162657.md",
+      "closure": "its verdict feeds a recorded sensing or discovery reading, or it is retired with its tests; cells read against the cgroup sampler JSONL rows, not the docstring",
+      "plant_part": "src/mishe_tauftauf/unit_psi_reading.py (imported by discovery.py and tools/unit_psi_attribution.py; LIVE in the 20261101 trace)",
+      "keywords": ["unit_psi_reading", "unit psi", "pressure verdict", "cgroup sampler", "psi"]
     }
   ]
 }
