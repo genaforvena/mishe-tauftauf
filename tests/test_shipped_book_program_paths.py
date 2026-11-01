@@ -143,6 +143,21 @@ def test_a_tree_with_no_ignore_rules_is_unknown_not_a_finding(tmp_path):
     assert "UNKNOWN" in result.stdout
 
 
+def test_a_tree_carrying_its_own_ignore_rules_is_read(tmp_path):
+    """The committed ignore rules travel with the tree.
+
+    A reader who clones has a ``.git``; a reader who unpacks an archive
+    does not.  The rules are the tree's own ``.gitignore``, so both
+    readings must find the same defect -- otherwise the finding would
+    disappear for whoever receives the tree as an archive.
+    """
+    tree = make_tree(tmp_path, {"README.md": EXCLUDED_PROGRAM_PAGE})
+    (tree / ".gitignore").write_text(".venv/\n", encoding="utf-8")
+    result = run_check(tree)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert ".venv/bin/pytest" in result.stdout
+
+
 def test_this_repository_satisfies_the_check_it_ships():
     """The shipped book must satisfy the gate the repository ships.
 

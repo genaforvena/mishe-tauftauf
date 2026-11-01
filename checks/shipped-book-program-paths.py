@@ -239,7 +239,7 @@ def _verdict(program: str, tree: Path, excluded: set[str]) -> tuple[str, str]:
     return "unknown", "the repository never tracked it, so the reader supplies it"
 
 
-def _excluded(repo: Path, candidates: list[str]) -> set[str] | None:
+def _excluded(tree: Path, repo: Path, candidates: list[str]) -> set[str] | None:
     """Which candidate paths the repository's own ignore rules exclude.
 
     The rules are read with ``git check-ignore``, the repository's own
@@ -247,23 +247,42 @@ def _excluded(repo: Path, candidates: list[str]) -> set[str] | None:
     the question about the ignore rules alone: a path the repository still
     tracks is not excluded by them.
 
-    ``None`` means the question cannot be decided: the tree is not a work
-    tree of any repository, so it carries no ignore rules and a path the
-    reader lacks cannot be told apart from a path the reader creates.
+    The rules are read from the **tree under test**, which carries the
+    committed ``.gitignore``, so the answer is the same whether the tree is
+    a clone or the output of ``git archive``.  A tree that is not a work
+    tree of any repository has no ignore rules to read, so the question
+    cannot be decided and the answer is UNKNOWN rather than a finding.
+
+    ``None`` means exactly that: the question cannot be decided.
     """
     if not candidates:
         return set()
-    probe = subprocess.run([GIT, "-C", str(repo), "rev-parse", "--git-dir"],
-                           capture_output=True)
-    if probe.returncode:
-        return None
-    argv = [GIT, "-C", str(repo), "check-ignore", "--no-index", "--stdin"]
-    result = subprocess.run(argv, input="\n".join(candidates).encode("utf-8"),
-                            capture_output=True)
-    if result.returncode not in (0, 1):
-        return None
-    return {line for line in result.stdout.decode("utf-8", "replace").splitlines()
-            if line.strip()}
+    # A bare git directory with the tree as its work tree reads the
+    # committed ignore rules without changing the tree or needing the
+    # tree to be a repository of its own.
+    with tempfile.TemporaryDirectory(prefix="shipped-book-ignore-") as bare:
+        subprocess.run([GIT, "init", "-q", "--bare", bare], capture_output=True)
+        argv = [GIT, "--git-dir", bare, "--work-tree", str(tree),
+                "check-ignore", "--no-index", "--stdin"]
+        result = subprocess.run(argv, input="\n".join(candidates).encode("utf-8"),
+                                capture_output=True)
+        if result.returncode not in (0, 1):
+            return None
+        excluded = {line for line in result.stdout.decode("utf-8", "replace").splitlines()
+                    if line.strip()}
+    if excluded:
+        return excluded
+    # The tree's own rules excluded nothing.  When the repository beside it
+    # does, the repository's answer is the stronger one, because its index
+    # knows which paths the repository still tracks.
+    if repo != tree:
+        argv = [GIT, "-C", str(repo), "check-ignore", "--no-index", "--stdin"]
+        result = subprocess.run(argv, input="\n".join(candidates).encode("utf-8"),
+                                capture_output=True)
+        if result.returncode in (0, 1):
+            return {line for line in result.stdout.decode("utf-8", "replace").splitlines()
+                    if line.strip()}
+    return excluded
 
 
 def _audit(tree: Path, repo: Path) -> dict:
@@ -288,7 +307,7 @@ def _audit(tree: Path, repo: Path) -> dict:
             programs[(relative, program)] = command
             if program not in candidates:
                 candidates.append(program)
-    excluded = _excluded(repo, candidates)
+    excluded = _excluded(tree, repo, candidates)
     for (relative, program), command in programs.items():
         checked += 1
         if excluded is None:
