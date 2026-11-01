@@ -200,3 +200,23 @@ def test_clear_band_still_reholds_at_overload_threshold():
     assert row["limited"] and row["state"] == "LIMITED"
     row = host.decide(row, sample(current=900), now=115, stable_seconds=20)
     assert row["state"] == "LIMITED" and row["clear_since"] is None
+
+
+def test_in_band_plateau_below_overload_keeps_clear_timer_running():
+    # 2026-11-01 measured plateau (six 5 s samples, fraction of high): 0.858 0.863 0.842 0.841 0.857 0.862.
+    # Samples above the 0.85 clear cut but below the 0.9 overload line must not reset a running clear
+    # timer, otherwise the plateau latches LIMITED forever.
+    row = host.decide(None, sample(current=1150), now=100, stable_seconds=120)
+    row = host.decide(row, sample(current=860), now=105, stable_seconds=120)
+    plateau = [.858, .863, .842, .841, .857, .862]
+    now = 110
+    for i in range(60):
+        now += 5
+        row = host.decide(row, sample(current=1000 * plateau[i % len(plateau)]), now=now, stable_seconds=120)
+    assert row["state"] == "NORMAL", row
+
+
+def test_in_band_sample_does_not_start_a_clear_timer():
+    row = host.decide(None, sample(current=1150), now=100, stable_seconds=120)
+    row = host.decide(row, sample(current=860), now=105, stable_seconds=120)
+    assert row["clear_since"] is None

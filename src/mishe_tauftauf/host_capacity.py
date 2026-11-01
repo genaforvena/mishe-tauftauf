@@ -40,10 +40,16 @@ def decide(previous, observation, *, now, stable_seconds=120):
         # so a 0.8 cut reset the stability timer on every ordinary sample (2026-11-01 flap).
         # Overload still re-holds at 0.9*high, leaving a 0.05*high band between clear and overload.
         clear = current < high * .85 and available >= .18 and memory < 1 and io < 10
+        # In-band (0.85-0.9*high, not overloaded): a running clear timer is held, not reset, so a plateau
+        # straddling the clear cut cannot latch LIMITED. A timer is only started by a sample below the cut.
+        in_band = current < high * .9 and available >= .18 and memory < 1 and io < 10
         contiguous = 0 <= now - old.get("checked_at", now) <= 20
         since = old.get("clear_since") if contiguous else None
-        if clear and not overloaded:
-            row["clear_since"] = now if since is None else since
+        if not overloaded:
+            if since is not None and in_band:
+                row["clear_since"] = since
+            elif clear:
+                row["clear_since"] = now
         held = old.get("resource_limited", old.get("limited", False)) and not (
             row["clear_since"] is not None and now - row["clear_since"] >= stable_seconds)
         limited = overloaded or held
