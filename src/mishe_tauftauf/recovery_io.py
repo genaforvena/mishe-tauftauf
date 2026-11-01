@@ -277,10 +277,12 @@ def _holder_fact(handle, why):
         return f"HELD, no flock holder visible in /proc/locks; stamp: {why}"
     facts = []
     for pid in sorted(pids):
+        # Program basename only: full argv can carry secrets and is written into recovery records.
         try:
-            cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode("utf-8", "replace").strip()
+            argv0 = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")[0].decode("utf-8", "replace")
+            program = Path(argv0).name or "unknown"
         except OSError:
-            cmdline = "unreadable"
+            program = "unreadable"
         release = "unreadable"
         try:
             env = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
@@ -288,7 +290,7 @@ def _holder_fact(handle, why):
             release = found[0][len("PYTHONPATH="):] if found else "unset"
         except OSError:
             pass
-        facts.append(f"HELD, holder pid {pid}, stamp: {why}; cmdline={cmdline[:200]!r}; PYTHONPATH={release}")
+        facts.append(f"HELD, holder pid {pid}, program={program!r}, stamp: {why}; PYTHONPATH={release}")
     return "; ".join(facts)
 
 
