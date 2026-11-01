@@ -34,9 +34,24 @@ The rule this check enforces:
 
 The scope is read by **executing** it: the check materialises the committed
 bytes, plants a site against them, gives two monitored roles different activity
-ages, and reads the figure the tree produces for each.  If the figure for one
-role is reset by the *other* role's activity, the scope is plant-wide; if it is
-not, the scope is per-mind.
+ages, and reads the figure the tree renders on the quiet role's own pane.  If
+that figure is reset by the *other* role's activity, the scope is plant-wide;
+if it is near the quiet role's own hour of silence, the scope is per-mind.
+
+Three things this needs, each measured rather than assumed (Docs wake
+152920):
+
+* the figure is read off the role's **frame**, not off ``headline()``.
+  ``headline()`` takes no role argument, so it would report plant-wide for any
+  tree and the check could not tell a per-mind implementation from a
+  plant-wide one;
+* the planted site is bound to **itself** while the frame runs.  A mind
+  process is bound to the site its supervisor named, and the check inherits
+  the environment of whoever ran it -- without this the frame refuses the
+  planted site as a foreign home;
+* the site's "plant start" candidate is moved back past the measured ages.
+  A freshly planted site stamps it at the present moment, which would be the
+  newest action in the plant and would make every figure small.
 
 Scope and limits, named:
 
