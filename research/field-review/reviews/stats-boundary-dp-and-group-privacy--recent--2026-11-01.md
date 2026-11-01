@@ -42,7 +42,7 @@ Neither point is a current defect: nothing in the tree calls either helper with 
 
 ## Application
 
-target: `src/mishe_tauftauf/stats_boundary.py`
+target: src/mishe_tauftauf/stats_boundary.py
 
 Proposal to senses (the owner of this module; field-review did not edit it):
 
