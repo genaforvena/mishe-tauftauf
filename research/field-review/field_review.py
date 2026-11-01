@@ -472,6 +472,47 @@ def realized_commits(repo: Path, target: str, review_date: str) -> str:
     return " ".join(shas)
 
 
+SYMBOL_SPAN_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*)(?:\(\))?`")
+
+
+def proposed_symbols(section: str) -> list[str]:
+    """Backticked snake_case identifiers an Application section names, in order.
+
+    Only names with an underscore and at least four characters qualify, so
+    prose words in backticks do not become checks. This is a lexical proxy.
+    """
+    found: list[str] = []
+    for match in SYMBOL_SPAN_RE.finditer(section):
+        token = match.group(1)
+        if "_" in token and len(token) >= 4 and token not in found:
+            found.append(token)
+    return found
+
+
+def symbol_facts(section: str, target_bytes: bytes | None) -> dict[str, str]:
+    """Whether the symbols an Application section proposes appear in the target.
+
+    PRESENT/PARTIAL/ABSENT report word-boundary text presence at HEAD. They are
+    not realization: a proposal can be realized under another name, and a name
+    can appear without its behaviour. NONE means the section names no symbol.
+    """
+    symbols = proposed_symbols(section)
+    if not symbols:
+        return {"symbols": "", "symbol_state": "NONE"}
+    if target_bytes is None:
+        return {"symbols": " ".join(symbols), "symbol_state": "UNKNOWN"}
+    text = target_bytes.decode("utf-8", "replace")
+    hits = {s for s in symbols if re.search(r"\b" + re.escape(s) + r"\b", text)}
+    if len(hits) == len(symbols):
+        state = "PRESENT"
+    elif not hits:
+        state = "ABSENT"
+    else:
+        state = "PARTIAL"
+    marks = " ".join(f"{s}:{'present' if s in hits else 'absent'}" for s in symbols)
+    return {"symbols": marks, "symbol_state": state}
+
+
 def applied_target_states(repo: Path) -> list[dict[str, str]]:
     """For each landed review with status applied: did its target's bytes change?
 
@@ -505,6 +546,8 @@ def applied_target_states(repo: Path) -> list[dict[str, str]]:
         row = {"review": name, "owner": matter.get("owner", ""), "target": target,
                "landed": "", "state": "UNKNOWN", "commits": "",
                "realized": realized_commits(repo, target, matter.get("date", ""))}
+        row.update(symbol_facts(section_body(text, APPLICATION_HEADING),
+                                head_bytes(repo, target) if target else None))
         landing = _git(repo, ["log", "--diff-filter=A", "--format=%H",
                               "--reverse", "HEAD", "--", name]).decode().split()
         if not target or not landing:
@@ -599,12 +642,19 @@ def main(argv=None) -> int:
             print(f"{row['state']:<9} {row['owner'] or '-':<12} {row['target'] or '-'}"
                   f"  landed={row['landed'] or '-'}  review={row['review']}"
                   + (f"  commits={row['commits']}" if row["commits"] else "")
-                  + (f"  realized={row['realized']}" if row["realized"] else ""))
+                  + (f"  realized={row['realized']}" if row["realized"] else "")
+                  + (f"  symbol_state={row['symbol_state']}"
+                     + (f"  symbols={row['symbols']}" if row["symbols"] else "")))
         realized = sum(1 for row in rows if row["realized"])
         summary = ", ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "none"
+        symbol_counts: dict[str, int] = {}
+        for row in rows:
+            state = row.get("symbol_state", "UNKNOWN")
+            symbol_counts[state] = symbol_counts.get(state, 0) + 1
+        symbol_summary = ", ".join(f"{k}={v}" for k, v in sorted(symbol_counts.items())) or "none"
         print(f"applied reviews: {len(rows)} ({summary}); realized (target commit on/after"
-              f" review date, excluding restore)={realized}; content facts only,"
-              " not dispositions")
+              f" review date, excluding restore)={realized}; symbol presence at HEAD ({symbol_summary});"
+              " content facts only, not dispositions")
         split = landed_status_counts(repo)
         landed_total = split["applied"] + split["discarded"]
         share = (100.0 * split["discarded"] / landed_total) if landed_total else 0.0

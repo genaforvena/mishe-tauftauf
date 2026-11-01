@@ -432,6 +432,51 @@ class AppliedTargetTest(unittest.TestCase):
             self.assertIn("content facts only", result.stdout)
 
 
+class SymbolPresenceTest(unittest.TestCase):
+    """Lexical symbol presence at HEAD: what the applied report may claim."""
+
+    def test_only_underscored_backticked_identifiers_are_proposed_symbols(self):
+        section = "Use `decay_coefficient()` and `retry_after`, not `ok`, `Foo` or `a_b`."
+        self.assertEqual(field_review.proposed_symbols(section),
+                         ["decay_coefficient", "retry_after"])
+
+    def test_section_without_symbols_is_none_not_absent(self):
+        facts = field_review.symbol_facts("Add the coefficient.", b"anything")
+        self.assertEqual(facts, {"symbols": "", "symbol_state": "NONE"})
+
+    def test_missing_target_bytes_is_unknown(self):
+        facts = field_review.symbol_facts("`decay_coefficient`", None)
+        self.assertEqual(facts["symbol_state"], "UNKNOWN")
+
+    def test_presence_is_word_bounded_and_partial_is_reported(self):
+        section = "`decay_coefficient` and `retry_after`"
+        self.assertEqual(field_review.symbol_facts(section, b"x = decay_coefficient_old\n")["symbol_state"],
+                         "ABSENT")
+        facts = field_review.symbol_facts(section, b"decay_coefficient = 1\n")
+        self.assertEqual(facts["symbol_state"], "PARTIAL")
+        self.assertEqual(facts["symbols"], "decay_coefficient:present retry_after:absent")
+        self.assertEqual(field_review.symbol_facts(section, b"decay_coefficient; retry_after\n")["symbol_state"],
+                         "PRESENT")
+
+    def test_applied_row_reports_absent_then_present_after_the_target_lands_it(self):
+        review = GOOD_REVIEW.replace("Add the decay coefficient to the existing reading.",
+                                     "Add `decay_coefficient` to the reading.")
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--recent--2026-10-21.md": review})
+            rows = field_review.applied_target_states(repo)
+            self.assertEqual(rows[0]["symbol_state"], "ABSENT")
+            (repo / "src" / "example.py").write_text("decay_coefficient = 0.5\n", encoding="utf-8")
+            _commit(repo, "land the proposed symbol")
+            rows = field_review.applied_target_states(repo)
+            self.assertEqual(rows[0]["symbol_state"], "PRESENT")
+            self.assertEqual(rows[0]["state"], "CHANGED")
+
+    def test_review_without_symbols_has_none_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--recent--2026-10-21.md": GOOD_REVIEW})
+            self.assertEqual(field_review.applied_target_states(repo)[0]["symbol_state"], "NONE")
+
+
 class CommandTest(unittest.TestCase):
     def test_check_exits_zero_on_a_clean_tree(self):
         with tempfile.TemporaryDirectory() as tmp:
