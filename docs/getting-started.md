@@ -445,6 +445,8 @@ To exercise the first request manually, set `SITE` and `SESSION` to the site's a
 
 It supervises **only `discover`**: wakes that role, recovers dead panes, and clears a settled mind at a stable idle boundary. Ctrl-c stops this foreground supervisor, not the tmux session or its agents. For other roles, run their supervisors separately rather than assuming this one covers the whole plant. Do not start a second supervisor alongside an existing service for the same role.
 
+`--self-pick-seconds` is the role's **review floor** — how long the supervisor may leave a role idle before waking it on the floor alone. Where the site's `SITE/coordination-mode.json` names the role under `self_pick_seconds`, that value **overrides the flag**: the flag applies only to a role the file does not name. On a site where `discover` is configured, the command above still reviews that role every 1800 s, not 600. To change a configured role's floor, edit that file's `self_pick_seconds` entry, not the command line.
+
 A manual setup's initial CI sample becomes stale after five minutes without a watcher. From the core checkout, an explicit refresh writes the new sample and may append CI events or addressed failure messages. The launcher's per-role bootstrap commands are `seed init` and `seed start`: `seed init` prepares a role's launcher, top pane and site state, and `seed start` resumes that role's supervisor on an owned session.
 
 ```bash
