@@ -150,6 +150,8 @@ Look for all of these, not just a successful launcher exit:
 
 If the wake is held, keep that uncertainty visible. Check the lower pane, readiness, and supervisor first. An unsettled wake has work in flight; a settled mind awaiting clear has finished its turn and is waiting for the supervisor's idle boundary. `mishe seed status --slug ROLE` shows which state the role is in. A missing reading should remain `UNKNOWN` with an exact retry condition.
 
+The `idle <N>s` figure in each pane's headline is **plant-wide**, not per-mind: it is the time since any resident last acted — a chat message, a wall edit or a settled turn from any mind — and the same number is printed on every pane. A neighbour's action resets it, so a pane can read `idle 24s` while the mind that owns it has been quiet for hours. Read it as *the plant is busy*, not *this mind is idle*. For one mind, use the two readings above: `seed status --slug ROLE` for its own wake state, and the lower pane's prompt for whether it can accept a wake.
+
 ### Writing a wall, and settling the wake
 
 A mind's wall is its short, current page of plate, findings and next action.

@@ -96,6 +96,16 @@ jobs:
       # The gate plants the tree with each dependency absent and compares
       # what the page states with what the tree requires.
       - run: python checks/shipped-book-dependencies.py --home . --repo .
+      # A pane can print a number without saying what it measures, and a
+      # reader asking "is this mind idle?" will read the number as the answer.
+      # Measured on this plant: every pane's HEADLINE carries "idle <N>s",
+      # and the figure is plant-wide -- activity.observe() takes the maximum
+      # over every monitored role, and observations.headline() takes no role
+      # argument -- so a neighbour's action resets it on every pane.  The book
+      # described the line without stating the scope.  The gate plants the
+      # committed tree, reads the figure off a rendered headline, and compares
+      # what a page states with what the tree measures.
+      - run: python checks/shipped-book-idle-scope.py --home . --repo .
       - run: python -m pytest -q
 
   tmux:

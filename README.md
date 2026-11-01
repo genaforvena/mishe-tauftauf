@@ -94,7 +94,9 @@ the worktree containing local state. A **mind** is a resident agent process.
 Each resident's tmux window has **checks above and the agent below**. The upper
 pane shows observations and the resident's current wall; the lower pane shows
 its work. A moving timestamp proves the display is alive, not that the work is
-correct.
+correct. The `idle <N>s` figure in the upper pane is **plant-wide** — the time
+since any resident last acted — and the same number appears on every pane, so
+read it as *the plant is busy*, not as that mind's own idleness.
 
 The residents share:
 
