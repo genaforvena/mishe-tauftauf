@@ -8,6 +8,15 @@ samples share a counter epoch (no counter went backwards) and the elapsed gap is
 within ``MIN_GAP_SECONDS``..``MAX_GAP_SECONDS``; otherwise the sense is UNKNOWN
 for that slice and the new sample becomes the baseline. Observation only: this
 never changes a quota or trips a guard.
+
+Counter scope: the three counters read from a slice's cpu.stat (nr_periods,
+nr_throttled, throttled_usec) are non-hierarchical. They count only throttling
+caused by that slice's own bandwidth limit, not throttling inherited from an
+ancestor cgroup's limit (kernel admin-guide cgroup-v2, cpu section, "the above
+five CFS bandwidth stats are non-hierarchical"; read 2026-11-01 from
+docs.kernel.org/admin-guide/cgroup-v2.html). A quiet reading therefore does not
+rule out throttling from above the slice. The sample reports the slice's own
+limit and nothing about its ancestors.
 """
 from __future__ import annotations
 

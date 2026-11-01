@@ -79,3 +79,18 @@ def test_unreadable_slice_is_unknown_and_drops_baseline(tmp_path):
     assert "unreadable" in lifeline["sample"]
     state = json.loads((home / "discovery" / st.STATE_NAME).read_text())
     assert "mishe-lifeline.slice" not in state
+
+
+def test_self_limit_throttle_is_verified_reading(tmp_path):
+    # Counter scope (module docstring): the counters are the slice's own limit.
+    # A slice whose own cpu.stat shows throttling reads as verified with that throttle.
+    home = tmp_path / "home"
+    root = tmp_path / "cg"
+    _cgroup(root, 600, 0, 0)
+    st.read_slice_throttle(home, root, now=1000.0)
+    _cgroup(root, 1200, 300, 90_000_000)
+    readings = st.read_slice_throttle(home, root, now=1060.0)
+    plants = next(r for r in readings if r["id"] == "sense.cgroup.mishe-plants.throttle")
+    assert plants["state"] == "verified"
+    assert plants["throttle"]["throttled"] == 300
+    assert plants["throttle"]["ratio"] == 0.5
