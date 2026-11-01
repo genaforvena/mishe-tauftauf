@@ -258,9 +258,11 @@ recorded. It must be **one regular file directly inside** the site's
   the path it resolved to. Give the absolute site path if you want no
   ambiguity.
 - Each outcome binds its evidence file. Reusing one file for a second outcome
-  is refused with `outcome evidence path already bound`, because the record
-  would name the same file twice.
-
+  is refused with `outcome evidence path already bound: ...; each outcome binds its own
+  flat artifacts/NAME file (bind a copy of the final bytes), or re-evidence with
+  --supersedes <record digest>`. Copy the final bytes to a new flat file for a new
+  outcome, or publish a superseding outcome that names the record digest being
+  re-evidenced (see below).
 A refusal is not a lost contribution: the reason is appended to
 `SITE/logs/outcome-refusal-audit.jsonl`, which is also where to read how many
 refusals happened and which role hit them. Read that log before writing a
