@@ -98,3 +98,65 @@ def test_the_window_reads_the_coordination_mode_stamp_on_python310(monkeypatch):
         "started": "2026-10-01T15:33:48.126048Z", "until": "2026-10-02T00:00:00Z"})
     assert start == datetime(2026, 10, 1, 15, 33, 48, 126048, tzinfo=timezone.utc)
     assert until == datetime(2026, 10, 2, tzinfo=timezone.utc)
+
+
+class _Entry:
+    def __init__(self, at, body):
+        self.timestamp = at.isoformat().replace("+00:00", "Z")
+        self.body = body
+        self.source = "test"
+        self.sequence = 0
+
+
+def _placebo_feed(trial_start, per_window, body="seed observation x"):
+    """Entries per placebo window k (window k spans [start-k*10h, start-(k-1)*10h))."""
+    entries = []
+    for k, n in per_window.items():
+        hi = trial_start - timedelta(hours=10) * (k - 1)
+        lo = trial_start - timedelta(hours=10) * k
+        for i in range(n):
+            entries.append(_Entry(lo + (hi - lo) * (i + 1) / (n + 1), body))
+    return entries
+
+
+def test_placebo_excludes_trial_baseline_and_outage_windows(tmp_path):
+    start = datetime(2026, 11, 1, tzinfo=timezone.utc)
+    entries = _placebo_feed(start, {2: 2000, 3: 2500, 4: 10, 5: 3000, 11: 5000})
+    entries += _placebo_feed(start + timedelta(hours=5), {0: 9000}) + _placebo_feed(start, {1: 9000})
+    scale = trial_metrics.placebo_scale(entries, start)
+    assert scale["kept"] == [2, 3, 5, 11] and scale["excluded"] == [4, 6, 7, 8, 9, 10]
+    assert scale["entries"]["4"] == 10 and 0 not in scale["windows"] and 1 not in scale["windows"]
+    # kept windows 2,3,5,11 have observations 2000,2500,3000,5000 -> diffs 500,500,2000
+    assert round(scale["mean_abs_swing"]["observations"], 2) == round((500 + 500 + 2000) / 3, 2)
+
+
+def test_placebo_zero_swing_reads_unknown_not_a_number(tmp_path):
+    start = datetime(2026, 11, 1, tzinfo=timezone.utc)
+    entries = _placebo_feed(start, {2: 2000, 3: 2000, 4: 2000})
+    scale = trial_metrics.placebo_scale(entries, start)
+    assert scale["mean_abs_swing"]["observations"] is None
+    assert scale["mean_abs_swing"]["wakes"] is None
+    lines = trial_metrics._placebo_lines({"counts": {name: 0 for name in trial_metrics.PLACEBO_COUNTS}, "placebo": scale},
+                                          {"counts": {}})
+    assert any(line.startswith("| observations |") and "UNKNOWN (zero scale)" in line for line in lines)
+
+
+def test_report_keeps_original_table_and_adds_scaled_section(tmp_path):
+    directory = tmp_path / "trial"
+    directory.mkdir()
+    baseline = {"counts": {"wakes": 1, "redeliveries": 1, "yields": 1, "observations": 1, "addressed_messages": 1},
+                "post_check_reports": 0, "post_check_refused": 0}
+    sample = {"hours": 10.0, "end": "2026-11-01T10:00:00+00:00",
+              "counts": {"wakes": 3, "redeliveries": 1, "settlements": 1, "observations": 4, "addressed_messages": 1},
+              "post_check_reports": 0, "post_check_refused": 0, "services": {},
+              "outcomes": {"reported": {}, "evidence_unavailable": 0}, "deliveries": {"verified_in_window": [], "applied_without_verification": [], "latency_seconds": {}},
+              "limits": "x",
+              "placebo": {"floor": 1000, "windows": [2], "kept": [2], "excluded": [], "entries": {"2": 5000},
+                          "mean_abs_swing": {"wakes": 2.0, "redeliveries": None, "settlements": 1.0, "observations": 1.5, "addressed_messages": 0.5}}}
+    (directory / "baseline.json").write_text(json.dumps(baseline))
+    trial_metrics.report(tmp_path, directory, sample, {"services": {}})
+    text = (directory / "report.md").read_text()
+    assert "| wakes | 1 | 3 |" in text and "| settlements | 1 | 1 |" in text
+    assert "| wakes | 2 | 2.00 | 1.00 |" in text
+    assert "| redeliveries | 0 | UNKNOWN | UNKNOWN (zero scale) |" in text
+    assert "excluded as feed-coverage gaps: none" in text

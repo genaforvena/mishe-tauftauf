@@ -13,7 +13,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import subprocess
@@ -30,6 +30,54 @@ from .wall_patch import verified_delivery
 
 PREFIXES = {"redeliveries": "seed redeliver ", "observations": "seed observation ",
     "addressed_messages": "[dm]", "legacy_task_transitions": "[task-"}
+
+# Placebo scale: window k spans [trial_start - k*W, trial_start - (k-1)*W).
+# Window 0 is the trial and window 1 the baseline; both stay out of the denominator.
+PLACEBO_WINDOW = timedelta(hours=10)
+PLACEBO_FIRST, PLACEBO_LAST = 2, 11
+# A placebo window with fewer feed entries than this is a feed-coverage gap (outage),
+# not an ordinary window. Chosen by eye from the 2026-10-27..29 outage windows
+# (0-160 entries) against ordinary windows (1087-8894); not tuned to any outcome.
+PLACEBO_ENTRY_FLOOR = 1000
+PLACEBO_COUNTS = ("wakes", "redeliveries", "settlements", "observations", "addressed_messages")
+
+
+def _instant(entry) -> datetime:
+    return datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))
+
+
+def _window_counts(entries) -> dict:
+    counts = {name: sum(e.body.startswith(prefix) for e in entries) for name, prefix in PREFIXES.items()}
+    lifecycle = [control for entry in entries if (control := decode_lifecycle(entry))]
+    counts.update(wakes=sum(control.kind == "wake" for control in lifecycle),
+                  settlements=sum(control.kind == "yield" for control in lifecycle))
+    return counts
+
+
+def placebo_scale(entries, trial_start: datetime, *, floor: int = PLACEBO_ENTRY_FLOOR) -> dict:
+    """Coverage-gated placebo windows and the mean absolute swing per count.
+
+    The swing is the mean |difference| between consecutive kept placebo windows. A window
+    below the entry floor is excluded and listed, so an outage cannot pose as a small swing.
+    A zero swing yields None (UNKNOWN), never a division.
+    """
+    stamped = [(_instant(e), e) for e in entries]
+    windows = []
+    for k in range(PLACEBO_FIRST, PLACEBO_LAST + 1):
+        hi = trial_start - (k - 1) * PLACEBO_WINDOW
+        lo = trial_start - k * PLACEBO_WINDOW
+        inside = [e for at, e in stamped if lo <= at < hi]
+        windows.append((k, len(inside), _window_counts(inside)))
+    kept = [(k, counts) for k, n, counts in windows if n >= floor]
+    swing = {}
+    for name in PLACEBO_COUNTS:
+        series = [counts[name] for _, counts in kept]
+        diffs = [abs(b - a) for a, b in zip(series, series[1:])]
+        total = sum(diffs)
+        swing[name] = total / len(diffs) if diffs and total > 0 else None
+    return {"floor": floor, "windows": [k for k, _, _ in windows],
+            "kept": [k for k, _ in kept], "excluded": [k for k, n, _ in windows if n < floor],
+            "entries": {str(k): n for k, n, _ in windows}, "mean_abs_swing": swing}
 
 
 from typing import Final
@@ -49,11 +97,10 @@ TOP_FACTOR_RETIRED: Final[str] = "2025-discontinued"
 
 def collect(home: Path, start: datetime, *, end=None) -> dict:
     end = end or datetime.now(timezone.utc)
-    entries = [e for e in Feed(home).entries() if start <= datetime.fromisoformat(e.timestamp.replace("Z", "+00:00")) <= end]
-    counts = {name: sum(e.body.startswith(prefix) for e in entries) for name, prefix in PREFIXES.items()}
+    everything = list(Feed(home).entries())
+    entries = [e for e in everything if start <= _instant(e) <= end]
+    counts = _window_counts(entries)
     lifecycle = [control for entry in entries if (control := decode_lifecycle(entry))]
-    counts.update(wakes=sum(control.kind == "wake" for control in lifecycle),
-                  settlements=sum(control.kind == "yield" for control in lifecycle))
     by_source = dict(Counter(e.source for e in entries))
     by_role = {name: dict(Counter(control.role for control in lifecycle if control.kind == kind))
                for name, kind in (("wakes", "wake"), ("settlements", "yield"))}
@@ -107,7 +154,7 @@ def collect(home: Path, start: datetime, *, end=None) -> dict:
         except (OSError, ValueError, KeyError):
             patches[path.stem] = "unknown"
     return {"start": start.isoformat(), "end": end.isoformat(), "hours": (end-start).total_seconds()/3600,
-        "entries": len(entries), "counts": counts, "by_source": by_source, "by_role": by_role,
+        "entries": len(entries), "counts": counts, "placebo": placebo_scale(everything, start), "by_source": by_source, "by_role": by_role,
         "post_check_reports": len(reports), "post_check_refused": sum(r.get("clear") is False for r in reports),
         "services": services, "patch_phases": patches,
         "outcomes": {"reported": dict(outcomes), "evidence_unavailable": unavailable, "references": references},
@@ -193,6 +240,23 @@ def top_factor_score(profile: dict) -> dict:
     return {"score": None, "valid": False, "note": TOP_FACTOR_RETIRED}
 
 
+def _placebo_lines(sample, baseline) -> list[str]:
+    placebo = sample.get("placebo")
+    if not placebo:
+        return ["", "Scaled differences: not computed in this sample (UNKNOWN)."]
+    excluded = ", ".join(str(k) for k in placebo["excluded"]) or "none"
+    lines = ["", f"Scaled differences: (trial − baseline) / mean |Δ| across placebo windows {placebo['kept']} "
+             f"(entry floor {placebo['floor']}; excluded as feed-coverage gaps: {excluded}).", "",
+             "| Count | Trial − baseline | Mean abs Δ placebo | q |", "| --- | ---: | ---: | ---: |"]
+    for name in PLACEBO_COUNTS:
+        diff = sample["counts"][name] - baseline["counts"].get("yields" if name == "settlements" else name, 0)
+        scale = placebo["mean_abs_swing"][name]
+        scale_text = "UNKNOWN" if scale is None else f"{scale:.2f}"
+        q_text = "UNKNOWN (zero scale)" if scale is None else f"{diff / scale:.2f}"
+        lines.append(f"| {name.replace('_', ' ')} | {diff} | {scale_text} | {q_text} |")
+    return lines
+
+
 def report(home, directory, sample, initial):
     baseline = json.loads((directory / "baseline.json").read_text())
     lines = ["# Wall trial — rough observations", "", f"Measured {sample['hours']:.2f} hours; ending {sample['end']}.", "",
@@ -217,6 +281,7 @@ def report(home, directory, sample, initial):
               "Applied without complete recorded verification: " + (", ".join(sample["deliveries"]["applied_without_verification"]) or "none") + ".",
               "Delivery latency seconds: " + json.dumps(sample["deliveries"]["latency_seconds"], sort_keys=True) + ".",
               "Model cost: UNKNOWN — no complete attributed source wired."]
+    lines += _placebo_lines(sample, baseline)
     lines += ["", "These are diagnostic counts. Inspect walls, representative turns and live patch evidence before judging useful work.", "", sample["limits"], "",
         "Final means the ten-hour sampling window ended; it does not certify all in-flight work completed."]
     (directory / "report.md").write_text("\n".join(lines)+"\n")
