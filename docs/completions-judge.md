@@ -164,6 +164,14 @@ text, and `mishe_tauftauf.judges.document` reproduces it byte for byte. The
 report's own `matched` flag covers the controls; a replay row that disagrees
 with its `expected` value is a flip, and it does not change the exit code.
 
+That route closes for the controls, which are built from `controls()` alone.
+It does not close for a row whose document you built with your own
+`question_text`: the report records no trait field, so a style-trait row is
+recognised by the hash of the document you wrote, and only if you kept that
+exact `question_text` string. Keep the trait text with the cases file you
+generated, and record the trait and its hash together in your artifact; a row
+you cannot map to a trait is a row you cannot attribute.
+
 ### Comparing two judges on one question set
 
 One adapter's pass shows that the adapter separates those pairs. It does not
@@ -179,7 +187,10 @@ Both axes are reachable without changing the adapter. A second adapter is a
 second `--model` against the same `--cases` file; each run writes its own
 `identity`, so the two reports group by identity. The style trait is a
 `question_text` you pass to `mishe_tauftauf.judges.document`, which the adapter
-forwards to the provider in place of the default question text.
+forwards to the provider in place of the default question text. The same
+question name carries both traits, so the two documents differ only in their
+instructions; keep the style text with your cases file so each row can be
+attributed, as above.
 
 Two limits are worth keeping in view. Adapters that share an upstream model or
 a prompt template may share the very variance you are trying to measure, so a
