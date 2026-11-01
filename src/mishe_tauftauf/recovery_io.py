@@ -215,16 +215,53 @@ def clear_seed_holder(handle):
         pass
 
 
-def _seed_holder_age(home, now):
-    """Age in seconds of the stamped holder, or None when no valid stamp is readable."""
+def _flock_holder_pids(handle):
+    """Pids holding a BSD flock on this lock file, read from /proc/locks; None when unreadable.
+
+    /proc/locks names the holder of each flock by device and inode; a stamp is trusted only when
+    its pid is exactly this set, so a stale stamp left by a dead or different holder is never read.
+    """
+    try:
+        st = os.fstat(handle.fileno())
+        key = f"{os.major(st.st_dev):02x}:{os.minor(st.st_dev):02x}:{st.st_ino}"
+        lines = Path("/proc/locks").read_text(encoding="utf-8").splitlines()
+    except (OSError, ValueError):
+        return None
+    pids = set()
+    for line in lines:
+        parts = line.split()
+        # "1: FLOCK  ADVISORY  WRITE 3273 fc:00:6819524 0 EOF"
+        if len(parts) >= 6 and parts[1] == "FLOCK" and parts[4].isdigit() and parts[5] == key:
+            pids.add(int(parts[4]))
+    return pids
+
+
+def _judged_holder_age(home, handle, now):
+    """Return (age, None) for the current holder's stamp, or (None, why) when it cannot be trusted.
+
+    Trusted only when the stamp's pid is the one flock holder of this lock file (which also proves it
+    is alive) and its acquisition time is not in the future. The 120 s bound is provisional and
+    the wall clock is used because the stamp is read by another process.
+    """
     try:
         record = json.loads((Path(home) / ".seed.lock").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return None
-    acquired = record.get("acquired_at") if isinstance(record, dict) else None
+        return None, "no readable stamp"
+    if not isinstance(record, dict):
+        return None, "no readable stamp"
+    pid, acquired = record.get("pid"), record.get("acquired_at")
+    if type(pid) is not int or pid <= 0:
+        return None, "stamp names no pid"
     if type(acquired) not in (int, float) or not math.isfinite(acquired):
-        return None
-    return max(0.0, now - acquired)
+        return None, "stamp names no acquisition time"
+    holders = _flock_holder_pids(handle)
+    if holders is None:
+        return None, "flock holder not readable"
+    if holders != {pid}:
+        return None, f"stamp pid {pid} is not the flock holder {sorted(holders)}"
+    if acquired > now + 1.0:
+        return None, "stamp is in the future; wall clock stepped"
+    return max(0.0, now - acquired), None
 
 
 def seed_lock_probe(home, window=SEED_LOCK_WINDOW_SECONDS, poll=0.2, stuck_after=SEED_HOLDER_STUCK_SECONDS):
@@ -246,9 +283,9 @@ def seed_lock_probe(home, window=SEED_LOCK_WINDOW_SECONDS, poll=0.2, stuck_after
                 except BlockingIOError:
                     if time.monotonic() - started >= window:
                         seconds = time.monotonic() - started
-                        age = _seed_holder_age(home, time.time())
+                        age, why = _judged_holder_age(home, handle, time.time())
                         if age is None:
-                            return {"ok": None, "reason": f"seed lock held for {window:.1f}s window; availability not measured",
+                            return {"ok": None, "reason": f"seed lock held for {window:.1f}s window; availability not measured: {why}",
                                     "seconds": seconds}
                         if age > stuck_after:
                             return {"ok": False, "holder_age": age, "seconds": seconds,
