@@ -868,6 +868,35 @@ def reject_stale_staging_anchor(home: Path, role: str, text: str, source_path: P
     )
 
 
+def _find_yield_receipt(home: Path, role: str, wake: int):
+    """Find the yield receipt for ``wake`` by searching backwards in bounded pages.
+
+    A settled wake's receipt is written near the tail of the tape, so a
+    newest-first page search under the seed lock avoids a full-tape read. The
+    search widens geometrically and falls back to the full scan, so the result
+    is identical to the unbounded search.
+    """
+    feed = Feed(home)
+
+    def is_receipt(entry) -> bool:
+        control = decode_lifecycle(entry)
+        return bool(control and control.kind == "yield" and control.role == role
+                    and control.wake == wake)
+
+    tail = feed.tail_sequence()
+    page = 512
+    while tail >= 1:
+        start = max(1, tail - page + 1)
+        for entry in reversed(feed.entries(start=start, limit=tail - start + 1)):
+            if is_receipt(entry):
+                return entry
+        if start == 1:
+            break
+        tail = start - 1
+        page *= 2
+    return next(e for e in reversed(feed.entries()) if is_receipt(e))
+
+
 def settle(home: Path, role: str, wake: int, text: str, continuation: bool, result: str,
            source_path: Path | None = None, source_is_anchor: bool = False) -> str:
     from . import seed
@@ -882,9 +911,7 @@ def settle(home: Path, role: str, wake: int, text: str, continuation: bool, resu
                 handoff_path = home / "handoffs" / f"{role}.md"
                 if not all(path.is_file() and path.read_text() == text for path in (wall_path, handoff_path)):
                     raise ValueError("settled turn notes differ; reconcile instead of attributing a new effect")
-                receipt = next(e for e in reversed(Feed(home).entries())
-                               if (control := decode_lifecycle(e)) and control.kind == "yield"
-                               and control.role == role and control.wake == wake)
+                receipt = _find_yield_receipt(home, role, wake)
                 control = decode_lifecycle(receipt)
                 if control.continue_work != continuation or control.result != result:
                     raise ValueError("settled turn result or continuation differs")
