@@ -21,6 +21,7 @@ from . import dispositions
 from . import seed
 from .activity import roles
 from .feed import Feed
+from .recovery_io import clear_seed_holder, stamp_seed_holder
 from .observations import executable, validate_home, validate_home_binding, validate_slug
 
 
@@ -71,7 +72,11 @@ def _seed_lock(home, wait=None):
                 if time.monotonic() >= deadline:
                     raise LockBusy(f'seed lock held elsewhere for {wait:g}s')
                 time.sleep(0.2)
-        yield
+        stamp_seed_holder(handle)
+        try:
+            yield
+        finally:
+            clear_seed_holder(handle)
 
 
 def inventory(home, selected=None):

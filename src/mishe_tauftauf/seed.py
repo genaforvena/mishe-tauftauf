@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .feed import Feed
+from .recovery_io import clear_seed_holder, stamp_seed_holder
 from .records import payload as record_payload
 from . import discovery
 from .observations import (executable, redact_display_age, redact_redmi_cursor,
@@ -256,7 +257,12 @@ def _lock(home: Path):
     validate_home(home)
     with (home / ".seed.lock").open("a+") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        yield
+        # The stamp lets the recovery seed-lock probe tell a live holder from a stuck one.
+        stamp_seed_holder(handle)
+        try:
+            yield
+        finally:
+            clear_seed_holder(handle)
 
 
 def _require_worktree(home: Path) -> None:

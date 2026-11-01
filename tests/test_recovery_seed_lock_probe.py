@@ -64,3 +64,46 @@ def test_lock_held_for_whole_window_is_unknown_not_failed_or_passed(tmp_path: Pa
 def test_missing_lock_file_is_unknown_not_busy(tmp_path: Path) -> None:
     row = seed_lock_probe(tmp_path, window=0.5)
     assert row["ok"] is None
+
+
+def test_live_stamped_holder_within_bound_passes_stability(tmp_path: Path) -> None:
+    # A turn that stamped its acquisition recently is live: busy for the whole window passes.
+    (tmp_path / ".seed.lock").write_text("")
+    holder = _hold(tmp_path, 30)
+    try:
+        (tmp_path / ".seed.lock").write_text('{"acquired_at": %f}\n' % time.time())
+        row = seed_lock_probe(tmp_path, window=0.5, stuck_after=120.0)
+    finally:
+        holder.kill()
+        holder.wait(timeout=10)
+    assert row["ok"] is True
+    assert 0.0 <= row["holder_age"] < 120.0
+
+
+def test_stuck_stamped_holder_over_bound_fails_not_unknown(tmp_path: Path) -> None:
+    # Controlled failure: a holder that stamped acquisition longer ago than the bound is stuck.
+    (tmp_path / ".seed.lock").write_text("")
+    holder = _hold(tmp_path, 30)
+    try:
+        (tmp_path / ".seed.lock").write_text('{"acquired_at": %f}\n' % (time.time() - 500.0))
+        row = seed_lock_probe(tmp_path, window=0.5, stuck_after=120.0)
+    finally:
+        holder.kill()
+        holder.wait(timeout=10)
+    assert row["ok"] is False
+    assert row["holder_age"] > 120.0
+    assert "stuck holder suspected" in row["reason"]
+
+
+def test_stamp_round_trip_is_read_and_cleared(tmp_path: Path) -> None:
+    from mishe_tauftauf.recovery_io import clear_seed_holder, stamp_seed_holder
+    (tmp_path / ".seed.lock").write_text("")
+    with (tmp_path / ".seed.lock").open("a+") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)  # a real holder takes the lock before stamping
+        stamp_seed_holder(handle, now=1_000.0)
+        assert (tmp_path / ".seed.lock").read_text().split("\n")[0].startswith("{")
+        row_live = seed_lock_probe(tmp_path, window=0.0, stuck_after=120.0)
+        clear_seed_holder(handle)
+    assert (tmp_path / ".seed.lock").read_text() == ""
+    # This handle holds the flock; the stamp from time 1000 is far past the bound, so the holder is stuck.
+    assert row_live["ok"] is False

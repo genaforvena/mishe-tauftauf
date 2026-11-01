@@ -181,15 +181,61 @@ def pressure(proc=Path("/proc")):
 
 
 SEED_LOCK_WINDOW_SECONDS = 10.0
+# Provisional bound on one holder's hold age. Measured holds (health sample
+# artifacts/health-seed-lock-sample-20261101T095149Z/samples.json, 2026-11-01): seed yield 15.8-30.2 s,
+# seed run 0.5-2.1 s, one hold of 86 s. 120 s is the restore's own stability window, so a holder that
+# outlasts it cannot be waited out by restoration. Health confirms or revises this from later samples.
+SEED_HOLDER_STUCK_SECONDS = 120.0
 
 
-def seed_lock_probe(home, window=SEED_LOCK_WINDOW_SECONDS, poll=0.2):
+def stamp_seed_holder(handle, now=None):
+    """Record acquisition time and pid in the seed lock file while the caller holds the lock.
+
+    Best effort: a stamp failure never blocks the lock holder's work. An unstamped busy lock
+    stays UNKNOWN in seed_lock_probe, which is the conservative reading.
+    """
+    record = {"pid": os.getpid(), "argv": list(sys.argv[:4]),
+              "acquired_at": time.time() if now is None else now}
+    try:
+        handle.seek(0)
+        handle.truncate()
+        handle.write(json.dumps(record) + "\n")
+        handle.flush()
+    except (OSError, ValueError):
+        pass
+
+
+def clear_seed_holder(handle):
+    """Remove the holder stamp before the caller releases the lock. Best effort."""
+    try:
+        handle.seek(0)
+        handle.truncate()
+        handle.flush()
+    except (OSError, ValueError):
+        pass
+
+
+def _seed_holder_age(home, now):
+    """Age in seconds of the stamped holder, or None when no valid stamp is readable."""
+    try:
+        record = json.loads((Path(home) / ".seed.lock").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    acquired = record.get("acquired_at") if isinstance(record, dict) else None
+    if type(acquired) not in (int, float) or not math.isfinite(acquired):
+        return None
+    return max(0.0, now - acquired)
+
+
+def seed_lock_probe(home, window=SEED_LOCK_WINDOW_SECONDS, poll=0.2, stuck_after=SEED_HOLDER_STUCK_SECONDS):
     """Availability only: never a claim that settlement succeeded.
 
     A wake holds the seed lock for the length of a turn, which can run for minutes. Busy is
     contention, not failure: the probe waits up to the window for release and passes if the lock
-    frees in time. A lock still held at the end of the window is UNKNOWN (ok None), never a pass
-    and never a claimed failure, because the probe cannot tell a live turn from a stuck holder.
+    frees in time. A lock still busy at the end of the window is judged by its stamped holder age:
+    under ``stuck_after`` it is a live holder and passes stability; over it, the holder is treated as
+    stuck and fails. A busy lock with no readable stamp stays UNKNOWN (ok None): the probe cannot
+    tell a live turn from a stuck holder without the stamp, and it never claims a failure it cannot see.
     """
     started = time.monotonic()
     try:
@@ -199,8 +245,16 @@ def seed_lock_probe(home, window=SEED_LOCK_WINDOW_SECONDS, poll=0.2):
                     fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:
                     if time.monotonic() - started >= window:
-                        return {"ok": None, "reason": f"seed lock held for {window:.1f}s window; availability not measured",
-                                "seconds": time.monotonic() - started}
+                        seconds = time.monotonic() - started
+                        age = _seed_holder_age(home, time.time())
+                        if age is None:
+                            return {"ok": None, "reason": f"seed lock held for {window:.1f}s window; availability not measured",
+                                    "seconds": seconds}
+                        if age > stuck_after:
+                            return {"ok": False, "holder_age": age, "seconds": seconds,
+                                    "reason": f"seed lock holder stamped {age:.1f}s ago exceeds the {stuck_after:g}s bound; stuck holder suspected"}
+                        return {"ok": True, "holder_age": age, "seconds": seconds,
+                                "reason": f"seed lock held by a live holder {age:.1f}s (bound {stuck_after:g}s); stability passing, settlement untested"}
                     time.sleep(poll)
                     continue
                 fcntl.flock(handle, fcntl.LOCK_UN)
