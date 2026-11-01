@@ -149,6 +149,26 @@ def read_slice_throttle(home: Path, cgroup_root: Path | None = None,
     return readings
 
 
+def main(argv: list[str] | None = None) -> int:
+    """Sampler entry point: refresh the throttle baseline between discover scans.
+
+    Discover writes the baseline only when a scan runs, and scans can land 20-30 min
+    apart, past ``MAX_GAP_SECONDS``. A sampler on its own timer (<=15 min) keeps the
+    baseline fresh so the next scan's delta is verified. It reads through the same
+    ``read_slice_throttle`` path, so its verdict rules are unchanged. Observation only.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="python3 -m mishe_tauftauf.slice_throttle")
+    parser.add_argument("--home", required=True, type=Path, help="site home holding discovery/")
+    parser.add_argument("--cgroup-root", type=Path, default=None)
+    args = parser.parse_args(argv)
+    readings = read_slice_throttle(args.home, cgroup_root=args.cgroup_root)
+    for reading in readings:
+        print(f"{reading['id']} {reading['state']}: {reading['sample']}")
+    return 0 if all(reading["state"] in {"verified", "unknown"} for reading in readings) else 1
+
+
 def missing_throttle_rows(observations: list) -> list[dict]:
     """UNKNOWN rows for each slice throttle sense absent from a scan's observations.
 
@@ -175,3 +195,9 @@ def _write_state(path: Path, state: dict[str, dict]) -> None:
         os.replace(temporary, path)
     except OSError:
         pass
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(main())

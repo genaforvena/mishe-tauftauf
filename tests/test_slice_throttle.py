@@ -208,3 +208,25 @@ def test_present_throttle_rows_add_nothing():
     present = [{"id": "sense.cgroup.mishe-plants.throttle", "state": "verified"},
                {"id": "sense.cgroup.mishe-lifeline.throttle", "state": "unknown"}]
     assert st.missing_throttle_rows(present) == []
+
+
+def test_sampler_between_scans_keeps_next_scan_verified(tmp_path, capsys, monkeypatch):
+    # A scan at t=0, a sampler run at t=600 (inside MAX_GAP_SECONDS), then a scan at t=1500.
+    # Without the sampler the scan at 1500 would see a 1500s baseline and read UNKNOWN.
+    home = tmp_path / "home"
+    root = tmp_path / "cg"
+    _cgroup(root, 600, 0, 0)
+    _cgroup(root, 600, 0, 0, slice_name="mishe-lifeline.slice")
+    st.read_slice_throttle(home, root, now=0.0)
+    _cgroup(root, 1200, 60, 6_000_000)
+    _cgroup(root, 1200, 60, 6_000_000, slice_name="mishe-lifeline.slice")
+    monkeypatch.setattr(st.time, "time", lambda: 600.0)
+    assert st.main(["--home", str(home), "--cgroup-root", str(root)]) == 0
+    out = capsys.readouterr().out
+    assert "sense.cgroup.mishe-plants.throttle" in out
+    _cgroup(root, 1800, 120, 12_000_000)
+    _cgroup(root, 1800, 120, 12_000_000, slice_name="mishe-lifeline.slice")
+    readings = st.read_slice_throttle(home, root, now=1500.0)
+    plants = next(r for r in readings if r["id"] == "sense.cgroup.mishe-plants.throttle")
+    assert plants["state"] == "verified"
+    assert plants["throttle"]["window_seconds"] == 900.0
