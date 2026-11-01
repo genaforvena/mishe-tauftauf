@@ -79,9 +79,9 @@ compared.
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -100,25 +100,167 @@ GIT = "/usr/bin/git"
 BOOK_ROOTS = ("docs/", ".agents/skills/", "skills/")
 BOOK_FILES = ("README.md",)
 
+# How a shipped page may state the outcome of a relative evidence path.
+# Each entry is (marker, outcome) where outcome is "refused" or "accepted".
+STATEMENTS = (
+    (re.compile(r"\bis refused\b", re.I), "refused"),
+    (re.compile(r"\bare refused\b", re.I), "refused"),
+    (re.compile(r"\bis accepted\b", re.I), "accepted"),
+    (re.compile(r"\bare accepted\b", re.I), "accepted"),
+    (re.compile(r"\bnames the site'?s\b", re.I), "accepted"),
+)
 
-def _load_sibling(name: str):
-    """Import a sibling check script by path, without importing the package.
+# A sentence is read only where the text is about resolving a relative path:
+# it names the resolution (the working directory, the site home) and states
+# an outcome.
+RELATIVE_RULE = re.compile(
+    r"(resolved|resolves|resolution|names the site'?s|working directory|"
+    r"current working directory)", re.I)
 
-    The committed-tree gate already knows how to find a shipped page's stated
-    outcomes and how to run the real command.  Reading the same rules twice
-    would let the two readings drift apart, so the reading is shared and only
-    the tree under test differs.
+# A sentence that talks about a relative evidence path at all.
+RELATIVE_EVIDENCE = re.compile(
+    r"(--evidence|evidence path|relative path|relative form)", re.I)
+
+BLOCK = re.compile(r"\n\s*\n")
+FENCE = re.compile(r"```.*?```", re.DOTALL)
+
+# A list item, which starts a new rule.
+BULLET = re.compile(r"^\s*([-*+]|\d+\.)\s")
+
+# A sentence, for reading a rule's outcome.  The split keeps the terminating
+# punctuation so a reader can see where the sentence ended.
+SENTENCE = re.compile(r"(?<=[.;:])\s+|\n")
+
+# A sentence that names the relative form whose outcome is being stated.
+RELATIVE_FORM = re.compile(
+    r"(relative path|relative form|`artifacts/|\bNAME\.md\b|--evidence)", re.I)
+
+
+def _book_pages(tree: Path) -> list[Path]:
+    """The pages of the shipped book, in a stable order."""
+    pages = []
+    for path in sorted(tree.rglob("*.md")):
+        name = path.relative_to(tree).as_posix()
+        if name in BOOK_FILES or name.startswith(BOOK_ROOTS):
+            pages.append(path)
+    return pages
+
+
+def _logical_units(block: str) -> list[str]:
+    """The rules a block states, one per bullet or paragraph line."""
+    units = []
+    for line in block.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if BULLET.match(line):
+            units.append(stripped)
+            continue
+        if not units:
+            units.append(stripped)
+        else:
+            units[-1] += " " + stripped
+    return units
+
+
+def _outcome_of_relative_form(unit: str) -> str | None:
+    """The outcome a rule states for the relative form it names.
+
+    A rule can state several outcomes -- the relative form is accepted, and a
+    path eligible under neither form is refused -- and they are about different
+    paths.  So the outcome is read from the sentence that **names the
+    relative form**, not from the rule as a whole: the first outcome that
+    sentence states is the outcome for that path.
+
+    A rule whose sentences name a relative form but state no outcome for it
+    is not read: the page describes the rule without saying what happens.
     """
-    path = Path(__file__).resolve().parent / (name + ".py")
-    spec = importlib.util.spec_from_file_location("sibling_" + name.replace("-", "_"), path)
-    if spec is None or spec.loader is None:
-        raise ValueError("cannot load " + str(path))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    for sentence in SENTENCE.split(unit):
+        sentence = sentence.strip()
+        if not sentence or not RELATIVE_FORM.search(sentence):
+            continue
+        for pattern, outcome in STATEMENTS:
+            if pattern.search(sentence):
+                return outcome
+    return None
 
 
-EVIDENCE = _load_sibling("shipped-book-evidence")
+def _stated_outcomes(page: Path) -> list[dict]:
+    """The outcomes a page states for a relative evidence path.
+
+    A fenced block is an example, not a claim about the rule, so it is not
+    read.
+
+    The unit of reading is the **rule**, not the paragraph and not the
+    sentence.  A bullet list of evidence rules states several rules in one
+    block -- "a nested path is refused", "a relative path resolves against the
+    working directory", "a reused path is refused" -- and those are different
+    rules with different answers.  Reading the block would attach the nested
+    path's refusal to the resolution rule and report a page that is correct
+    about resolution as if it were wrong.
+
+    The sentence is not the unit either: a rule often states its outcome in
+    a later sentence than the one that names the resolution.  The outcome
+    belongs to the rule, so the rule is what is read.
+    """
+    try:
+        text = page.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return []
+    prose = FENCE.sub("", text)
+    found: list[dict] = []
+    for block in BLOCK.split(prose):
+        if not block.strip():
+            continue
+        for unit in _logical_units(block):
+            unit = unit.strip().lstrip("-*").strip()
+            if not unit:
+                continue
+            if not RELATIVE_RULE.search(unit):
+                continue
+            if not RELATIVE_EVIDENCE.search(unit):
+                continue
+            outcome = _outcome_of_relative_form(unit)
+            if outcome is None:
+                continue
+            found.append({"outcome": outcome,
+                          "claim": " ".join(unit.split())[:300]})
+    return found
+
+
+def _package_dir(tree: Path) -> Path | None:
+    """The plant package inside a tree, if the tree carries one."""
+    for path in (tree / "src" / "mishe_tauftauf", tree / "mishe_tauftauf"):
+        if path.is_dir():
+            return path
+    return None
+
+
+def _plant_site(tree: Path, work: Path) -> Path:
+    """Plant a site against the committed tree and return its home.
+
+    The site is planted with the committed bytes on ``PYTHONPATH``, so the
+    CLI it runs is the one a reader who cloned this tree would run.
+    """
+    site_root = work / "site"
+    site_root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", str(site_root)], capture_output=True)
+    home = site_root / ".mishe-tauftauf"
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(tree / "src")
+    env["MISHE_SEED_HOME"] = str(home)
+    subprocess.run([sys.executable, "-m", "mishe_tauftauf", "--home", str(home),
+                    "init"], env=env, capture_output=True, cwd=str(work))
+    for name in ("walls", "artifacts", "records"):
+        (home / name).mkdir(exist_ok=True)
+    # A tape entry and a records directory are what let an outcome publish;
+    # without them the command fails closed for an unrelated reason and the
+    # reading would be UNKNOWN rather than a comparison.
+    subprocess.run([sys.executable, "-m", "mishe_tauftauf", "--home", str(home),
+                    "append", "--source", "docs", "reader notes"],
+                   env=env, capture_output=True, cwd=str(work))
+    return home
+
 
 
 def _committed_tree(repo: Path) -> tuple[Path | None, str]:
@@ -176,7 +318,7 @@ def _observe_against_root(tree: Path, root: Path) -> dict:
     """
     work = Path(tempfile.mkdtemp(prefix="shipped-book-vs-pin-run-"))
     try:
-        home = EVIDENCE._plant_site(tree, work)
+        home = _plant_site(tree, work)
         outside = work / "checkout"
         outside.mkdir(exist_ok=True)
         readings = {}
@@ -225,16 +367,16 @@ def _run_outcome(root: Path, home: Path, cwd: Path, artifact: str) -> str:
 
 def audit(tree: Path, served_root: Path) -> dict:
     """Find pages that state an outcome the served release does not produce."""
-    if EVIDENCE._package_dir(tree) is None:
+    if _package_dir(tree) is None:
         raise ValueError("no plant package in tree")
     served = _observe_against_root(tree, served_root)
     committed = _observe_against_root(tree, tree / "src")
-    pages = EVIDENCE._book_pages(tree)
+    pages = _book_pages(tree)
     findings: list[dict] = []
     checked = 0
     for page in pages:
         source = page.relative_to(tree).as_posix()
-        for statement in EVIDENCE._stated_outcomes(page):
+        for statement in _stated_outcomes(page):
             checked += 1
             # A statement about the relative form is judged against the
             # reading taken from outside the site: that is the position the

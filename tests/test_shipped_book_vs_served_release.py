@@ -217,6 +217,30 @@ def test_a_served_release_without_the_package_reads_unknown(tmp_path):
     assert "UNKNOWN" in result.stdout
 
 
+def test_the_check_runs_alone_with_only_its_own_file(tmp_path):
+    """The check must not depend on a sibling file at run time.
+
+    The plant's observer runner copies **one** check script into its working
+    directory and runs it from there, so a check that imports a neighbouring
+    script fails with a traceback instead of a verdict.  Measured on
+    2026-11-01 (Docs wake 157746): the first version of this check loaded
+    ``shipped-book-evidence.py`` as a sibling and the runner's cycle recorded
+    ``exit=1`` with a ``FileNotFoundError`` for the missing sibling -- the
+    finding was never produced.
+    """
+    alone = tmp_path / "alone"
+    alone.mkdir()
+    shutil.copy(CHECK, alone / CHECK.name)
+    tree = make_tree(tmp_path, {"docs/getting-started.md": CURRENT_PAGE})
+    home = make_home(tmp_path, make_old_release(tmp_path), "0" * 40)
+    result = subprocess.run([sys.executable, str(alone / CHECK.name),
+                              "--home", str(home), "--tree", str(tree)],
+                             capture_output=True, text=True, cwd=str(alone))
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "Traceback" not in result.stderr, result.stderr
+    assert "BOOK vs SERVED RELEASE" in result.stdout
+
+
 def test_this_repository_satisfies_the_check_it_ships():
     """The shipped book must agree with the release this plant actually runs.
 
