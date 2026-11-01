@@ -30,6 +30,7 @@ from pathlib import Path
 from .cpu_stat_text import (
     COUNTERS,
     baseline_text,
+    parse_cpu_max_period,
     parse_cpu_stat,
     parse_cpu_stat_local,
     read_baseline,
@@ -73,7 +74,23 @@ def throttle_verdict(previous: dict, current: dict, now: float) -> dict:
             "periods_per_min": round(periods / minutes, 1),
             "throttled_per_min": round(deltas["nr_throttled"] / minutes, 1),
             "throttled_usec_per_min": round(deltas["throttled_usec"] / minutes, 1),
+            "throttled_cpus": _throttled_cpus(previous, current, deltas),
             "inherited": _inherited_throttle(previous, current, deltas["throttled_usec"], minutes)}
+
+
+def _throttled_cpus(previous: dict, current: dict, deltas: dict) -> dict:
+    """Own throttled time as CPU-equivalents: delta throttled_usec / (delta nr_periods x period_us).
+
+    The ratio ``nr_throttled / nr_periods`` counts throttle events, not time; this is the
+    time-equivalent beside it. ``throttled_usec`` is summed over runqueues (inference from
+    the field-review, not checked in kernel source), so read this as an average CPU count.
+    UNKNOWN when cpu.max is absent or the period changed between samples.
+    """
+    period_us = current.get("period_us")
+    if period_us is None or previous.get("period_us") != period_us:
+        return {"state": "unknown", "reason": "cpu.max period unavailable or changed"}
+    cpus = deltas["throttled_usec"] / (deltas["nr_periods"] * int(period_us))
+    return {"state": "verified", "cpus": round(cpus, 3)}
 
 
 def _inherited_throttle(previous: dict, current: dict, own_usec: int, minutes: float) -> dict:
@@ -111,7 +128,8 @@ def read_slice_throttle(home: Path, cgroup_root: Path | None = None,
                              "sample": f"{name} cpu.stat unreadable", "kind": "read"})
             continue
         local_usec = parse_cpu_stat_local(read_cpu_stat_file(root / name / "cpu.stat.local"))
-        current = {"at": now, **counters, "local_throttled_usec": local_usec}
+        period_us = parse_cpu_max_period(read_cpu_stat_file(root / name / "cpu.max"))
+        current = {"at": now, **counters, "local_throttled_usec": local_usec, "period_us": period_us}
         next_state[name] = current
         previous = previous_state.get(name)
         if not isinstance(previous, dict) or "at" not in previous:

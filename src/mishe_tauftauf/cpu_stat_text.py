@@ -38,6 +38,20 @@ def parse_cpu_stat(text: str | None, counters: tuple[str, ...] = COUNTERS) -> di
     return fields
 
 
+def parse_cpu_max_period(text: str | None) -> int | None:
+    """Period in microseconds from a cpu.max body (``quota period``); None when unparseable."""
+    if not text:
+        return None
+    parts = text.split()
+    if len(parts) != 2:
+        return None
+    try:
+        period = int(parts[1])
+    except ValueError:
+        return None
+    return period if period > 0 else None
+
+
 def slice_sense_id(slice_name: str) -> str:
     """``mishe-plants.slice`` -> ``sense.cgroup.mishe-plants.throttle``."""
     stem = slice_name[: -len(SLICE_SUFFIX)] if slice_name.endswith(SLICE_SUFFIX) else slice_name

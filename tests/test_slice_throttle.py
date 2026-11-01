@@ -146,3 +146,52 @@ def test_read_carries_cpu_stat_local_into_inherited_field(tmp_path):
     readings = st.read_slice_throttle(home, root, now=1060.0)
     lifeline = next(r for r in readings if r["id"] == "sense.cgroup.mishe-lifeline.throttle")
     assert lifeline["throttle"]["inherited"]["state"] == "unknown"
+
+
+def test_throttled_cpus_is_own_throttled_time_over_period_budget():
+    # Field-review sample (2026-11-01, plants 3-CPU quota, 100 ms period): 600 periods,
+    # 153861602 usec throttled -> about 2.564 CPU-equivalents, not the 0.475 event ratio.
+    previous = {"at": 1000.0, "nr_periods": 871811, "nr_throttled": 708921,
+                "throttled_usec": 446053121711, "period_us": 100000}
+    current = {"at": 1060.0, "nr_periods": 872411, "nr_throttled": 709206,
+               "throttled_usec": 446206983313, "period_us": 100000}
+    verdict = st.throttle_verdict(previous, current, 1060.0)
+    assert verdict["ratio"] == 0.475
+    assert verdict["throttled_cpus"] == {"state": "verified", "cpus": 2.564}
+
+
+def test_throttled_cpus_unknown_without_cpu_max_or_on_period_change():
+    base = {"at": 1000.0, "nr_periods": 600, "nr_throttled": 0, "throttled_usec": 0, "period_us": 100000}
+    later = {"at": 1060.0, "nr_periods": 1200, "nr_throttled": 300, "throttled_usec": 90_000_000}
+    no_max = st.throttle_verdict({**base}, {**later, "period_us": None}, 1060.0)
+    assert no_max["throttled_cpus"]["state"] == "unknown"
+    assert "unavailable or changed" in no_max["throttled_cpus"]["reason"]
+    changed = st.throttle_verdict({**base}, {**later, "period_us": 50000}, 1060.0)
+    assert changed["throttled_cpus"]["state"] == "unknown"
+
+
+def test_parse_cpu_max_period():
+    assert st.parse_cpu_max_period("300000 100000\n") == 100000
+    assert st.parse_cpu_max_period("max 100000\n") == 100000
+    assert st.parse_cpu_max_period("100000\n") is None
+    assert st.parse_cpu_max_period("300000 0\n") is None
+    assert st.parse_cpu_max_period(None) is None
+
+
+def test_read_carries_cpu_max_period_into_throttled_cpus(tmp_path):
+    home = tmp_path / "home"
+    root = tmp_path / "cg"
+    _cgroup(root, 600, 0, 0)
+    (root / "mishe-plants.slice" / "cpu.max").write_text("300000 100000\n")
+    st.read_slice_throttle(home, root, now=1000.0)
+    _cgroup(root, 1200, 300, 150_000_000)
+    readings = st.read_slice_throttle(home, root, now=1060.0)
+    plants = next(r for r in readings if r["id"] == "sense.cgroup.mishe-plants.throttle")
+    assert plants["throttle"]["throttled_cpus"] == {"state": "verified", "cpus": 2.5}
+    assert plants["sample"].startswith("mishe-plants.slice window=60.0s ratio=0.5")
+    # cpu.max absent on the next read: the baseline holds no period, so the figure is UNKNOWN.
+    (root / "mishe-plants.slice" / "cpu.max").unlink()
+    _cgroup(root, 1800, 300, 150_000_000)
+    readings = st.read_slice_throttle(home, root, now=1120.0)
+    plants = next(r for r in readings if r["id"] == "sense.cgroup.mishe-plants.throttle")
+    assert plants["throttle"]["throttled_cpus"]["state"] == "unknown"
