@@ -65,7 +65,10 @@ class _LeverageLevel(int):
 
 VERSION = 1
 SOURCE = "sensor/initiative-watch"
-MAX_TAPE_BYTES = 128 * 1024 * 1024
+# chat.log reached 136 MB on 2026-11-01 and the whole tape is read per pass; 128 MiB made the
+# observer UNKNOWN ("evidence exceeds"). Stop-gap ceiling, not a fix: an incremental tape reader
+# is the durable repair; trigger it when chat.log exceeds 75% of this bound.
+MAX_TAPE_BYTES = 512 * 1024 * 1024
 MAX_ENTRIES = 250000
 MAX_STATE_BYTES = 4 * 1024 * 1024
 MAX_EVENT_BYTES = 64 * 1024

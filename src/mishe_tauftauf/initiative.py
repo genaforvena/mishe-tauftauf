@@ -35,7 +35,10 @@ EVIDENCE_BINDING_CLAUSE_TIME = datetime(2026, 10, 6, 16, 22, 11, tzinfo=timezone
 """The write-once outcome clause landed in 3c22087; earlier rows are not bound."""
 
 WINDOW_SECONDS = 86400
-MAX_TAPE_BYTES = 128 * 1024 * 1024
+# chat.log reached 136 MB on 2026-11-01 and the whole tape is read per pass; 128 MiB made the
+# observer UNKNOWN ("evidence exceeds"). Stop-gap ceiling, not a fix: an incremental tape reader
+# is the durable repair; trigger it when chat.log exceeds 75% of this bound.
+MAX_TAPE_BYTES = 512 * 1024 * 1024
 MAX_ENTRIES = 250000
 MAX_PATCHES = 512
 MAX_EVIDENCE_BYTES = 4 * 1024 * 1024
