@@ -106,6 +106,18 @@ jobs:
       # committed tree, reads the figure off a rendered headline, and compares
       # what a page states with what the tree measures.
       - run: python checks/shipped-book-idle-scope.py --home . --repo .
+      # A page can hand the reader a command that answers nothing.  Measured on
+      # this plant: docs/getting-started.md told a reader to confirm the
+      # resident units were active with "systemctl --user list-units
+      # 'SITE-*.service'", where SITE is that page's site *directory*, while a
+      # unit is named SESSION-ROLE.service -- so the pattern matched zero of
+      # the 40 units on the host and the reader's own acceptance check said
+      # "0 loaded units listed" for a healthy plant.  The link, path, promise
+      # and runtime gates could not see it: no path was named and no link was
+      # broken.  The gate plants the committed tree, takes the unit names
+      # from that tree's own planting code, and compares what the page states
+      # with what a unit can be named.
+      - run: python checks/shipped-book-unit-pattern.py --repo .
       - run: python -m pytest -q
 
   tmux:

@@ -162,7 +162,15 @@ Look for all of these, not just a successful launcher exit:
 2. `discover show` reports a fresh scan and a verified `sense.proc.loadavg` sample. The task's artifact points to the actual scan under `SITE/discovery/`, and the live `discover` top pane shows the reading.
 3. The discover wall and tape report the checked finding and evidence; the supervisor records settlement for the actual wake. Read the artifact and live result: settlement alone proves no success.
 4. After settlement and an idle clear, the supervisor records a process rotation. On the next actual wake, the mind receives its charter and reads the live evidence again; its wall carries the next step, and the handoff is not delivered. This last step may not happen immediately; it needs another real wake.
-5. In persistent mode, the resident units named in `SITE/health/services.json` are active. Check them with `systemctl --user list-units 'SITE-*.service'` and read each unit's `FragmentPath` to confirm which site owns it.
+5. In persistent mode, the resident units named in `SITE/health/services.json` are active. The manifest names each unit exactly, so list those units rather than a pattern:
+
+   ```bash
+   systemctl --user list-units --all \
+     $(python3 -c 'import json,sys;print(*json.load(open(sys.argv[1])))' "$SITE/health/services.json")
+   systemctl --user show "$SESSION-docs.service" -p FragmentPath
+   ```
+
+   The `FragmentPath` names the unit file, whose `ExecStart` carries `--home SITE` — the site that unit serves. A unit is named `SESSION-ROLE.service`, where `SESSION` is the session the plant raised (the `$SESSION` above), so `"$SESSION-docs.service"` names the docs unit; read the session from the manifest when the plant was planted under a different one. Do not take the session from `SITE/.seed-raised`: a site home can own more than one session, and that receipt records whichever supervisor wrote last.
 
 If the wake is held, keep that uncertainty visible. Check the lower pane, readiness, and supervisor first. An unsettled wake has work in flight; a settled mind awaiting clear has finished its turn and is waiting for the supervisor's idle boundary. `mishe seed status --slug ROLE` shows which state the role is in. A missing reading should remain `UNKNOWN` with an exact retry condition.
 
