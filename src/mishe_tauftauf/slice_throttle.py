@@ -11,37 +11,20 @@ never changes a quota or trips a guard.
 """
 from __future__ import annotations
 
-import json
 import os
 import time
 from pathlib import Path
+
+from .cpu_stat_text import COUNTERS, baseline_text, parse_cpu_stat, read_baseline, read_cpu_stat_file, slice_sense_id
 
 SLICES = ("mishe-plants.slice", "mishe-lifeline.slice")
 MIN_GAP_SECONDS = 20.0
 MAX_GAP_SECONDS = 900.0
 STATE_NAME = "slice-throttle-prev.json"
-COUNTERS = ("nr_periods", "nr_throttled", "throttled_usec")
 
 
 def default_cgroup_root() -> Path:
     return Path(f"/sys/fs/cgroup/user.slice/user-{os.getuid()}.slice/user@{os.getuid()}.service/mishe.slice")
-
-
-def parse_cpu_stat(text: str | None) -> dict[str, int] | None:
-    """Counters from a cpu.stat body; None unless every counter parses."""
-    if not text:
-        return None
-    fields: dict[str, int] = {}
-    for line in text.splitlines():
-        parts = line.split()
-        if len(parts) == 2 and parts[0] in COUNTERS:
-            try:
-                fields[parts[0]] = int(parts[1])
-            except ValueError:
-                return None
-    if set(fields) != set(COUNTERS):
-        return None
-    return fields
 
 
 def throttle_verdict(previous: dict, current: dict, now: float) -> dict:
@@ -72,29 +55,18 @@ def throttle_verdict(previous: dict, current: dict, now: float) -> dict:
             "throttled_usec_per_min": round(deltas["throttled_usec"] / minutes, 1)}
 
 
-def _read_state(path: Path) -> dict:
-    try:
-        loaded = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return loaded if isinstance(loaded, dict) else {}
-
-
 def read_slice_throttle(home: Path, cgroup_root: Path | None = None,
                         now: float | None = None) -> list[dict]:
     """One ``sense.cgroup.<slice>.throttle`` reading per slice; persists the baseline."""
     root = cgroup_root or default_cgroup_root()
     now = time.time() if now is None else now
     state_path = home / "discovery" / STATE_NAME
-    previous_state = _read_state(state_path)
+    previous_state = read_baseline(state_path)
     next_state: dict[str, dict] = {}
     readings: list[dict] = []
     for name in SLICES:
-        sense_id = f"sense.cgroup.{name.removesuffix('.slice')}.throttle"
-        try:
-            text = (root / name / "cpu.stat").read_text(encoding="utf-8")
-        except OSError:
-            text = None
+        sense_id = slice_sense_id(name)
+        text = read_cpu_stat_file(root / name / "cpu.stat")
         counters = parse_cpu_stat(text)
         if counters is None:
             readings.append({"id": sense_id, "state": "unknown",
@@ -125,7 +97,7 @@ def _write_state(path: Path, state: dict[str, dict]) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(".json.tmp")
-        temporary.write_text(json.dumps(state, sort_keys=True), encoding="utf-8")
+        temporary.write_text(baseline_text(state), encoding="utf-8")
         os.replace(temporary, path)
     except OSError:
         pass
