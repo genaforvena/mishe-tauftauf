@@ -3643,6 +3643,34 @@ def _live_reset_origins(checkout_root: Path) -> list[str] | None:
     return _reset_origin(resets, stashes)
 
 
+def _reverted_at_head(sha: str, path: str, reachable: set[str], run) -> bool | None:
+    """True when a HEAD commit touching ``path`` reverts a HEAD-reachable commit carrying the same change.
+
+    A dropped commit can be the pre-amend twin of a commit HEAD kept: the reflog
+    keeps the twin (same tree, same parent, same per-path diff), HEAD keeps the
+    amend, and a later revert names the amend. Such a path is absent from HEAD
+    by an explicit, checkable decision, not by loss. The match needs both the
+    named SHA on HEAD and an identical per-path diff; a revert that names no
+    commit, or names one with a different diff, stays absent. None when git
+    cannot say.
+    """
+    listing = run("log", "--format=%H%x00%B%x01", "HEAD", "--", path)
+    if listing is None or listing.returncode != 0:
+        return None
+    wanted = run("show", "--format=", sha, "--", path)
+    if wanted is None or wanted.returncode != 0 or not wanted.stdout:
+        return False
+    for named in proc_table.git_revert_named_shas(listing.stdout):
+        if named not in reachable:
+            continue
+        twin = run("show", "--format=", named, "--", path)
+        if twin is None or twin.returncode != 0:
+            return None
+        if twin.stdout == wanted.stdout:
+            return True
+    return False
+
+
 def _rewrite_basis(parents: dict[str, str | None], reachable: set[str]) -> dict[str, int]:
     """Count dropped commits by how they left HEAD's line; a label, not a verdict.
 
@@ -3796,7 +3824,7 @@ def _head_rewinds_reading(home: Path) -> dict[str, object]:
             return None
         return "unexplained" if present.returncode == 0 else "absent-at-head"
 
-    lossless = review = absent = preserved = detracked_local_only = 0
+    lossless = review = absent = preserved = detracked_local_only = reverted = 0
     review_names: list[dict[str, str]] = []
     absent_names: list[dict[str, str]] = []
     local_only_names: list[dict[str, str]] = []
@@ -3841,6 +3869,12 @@ def _head_rewinds_reading(home: Path) -> dict[str, object]:
                         # Intentional de-tracking, not loss: the bytes survive on disk.
                         preserved += 1
                     elif _applies(tree, patch.stdout, reverse=False):
+                        revert_read = _reverted_at_head(sha, path, reachable, run)
+                        if revert_read is None:
+                            return {**unknown, "sample": f"revert history unreadable: {sha[:7]}"}
+                        if revert_read:
+                            reverted += 1
+                            continue
                         absent += 1
                         if len(absent_names) < _HEAD_REWIND_NAMED_PATH_LIMIT:
                             absent_names.append({"commit": sha[:12], "path": path})
@@ -3881,6 +3915,7 @@ def _head_rewinds_reading(home: Path) -> dict[str, object]:
                        f"unexamined-paths={unexamined} "
                        f"lossless-paths={lossless} "
                        f"needs-review-paths={review} absent-paths={absent} "
+                       f"reverted-at-head-paths={reverted} "
                        f"preserved-untracked-paths={preserved} "
                        f"detracked-local-only-paths={detracked_local_only} "
                        f"superseded-paths={basis_counts['superseded']} "
@@ -3901,7 +3936,7 @@ def _head_rewinds_reading(home: Path) -> dict[str, object]:
             "unexamined_paths": unexamined, "patch_landed_commits": landed,
             "reflog_window": _HEAD_REWIND_REFLOG_LIMIT,
             "lossless": lossless,
-            "needs_review": review, "absent": absent,
+            "needs_review": review, "absent": absent, "reverted_at_head": reverted,
             "needs_review_paths": review_names,
             "absent_paths": absent_names,
             "named_paths_omitted": named_omitted,

@@ -365,3 +365,15 @@ class GitAncestryCountTests(unittest.TestCase):
 
     def test_empty_output_counts_zero(self):
         self.assertEqual(proc_table.git_ancestry_count(""), 0)
+
+
+def test_git_revert_named_shas_reads_only_full_named_commits():
+    """Revert messages name the full reverted commit; entries without a name yield nothing."""
+    from mishe_tauftauf import proc_table
+
+    twin = "5" * 40
+    raw = (f"{'9' * 40}\x00Revert \"x\"\n\nThis reverts commit {twin}.\n\x01"
+           f"{'8' * 40}\x00Undo the test change\n\x01"
+           f"{'7' * 40}\x00This reverts commit abc123.\n\x01")
+    assert proc_table.git_revert_named_shas(raw) == [twin]
+    assert proc_table.git_revert_named_shas("") == []

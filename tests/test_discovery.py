@@ -2308,7 +2308,7 @@ def test_head_rewinds_present_change_reads_lossless(tmp_path, monkeypatch):
     assert result["state"] == "verified"
     assert _reading_sample(result) == ("dropped-commits=1 of last-200-reflog-entries "
                                  "classified-commits=1 unexamined-paths=0 lossless-paths=1 "
-                                 "needs-review-paths=0 absent-paths=0 preserved-untracked-paths=0 detracked-local-only-paths=0 superseded-paths=0 "
+                                 "needs-review-paths=0 absent-paths=0 reverted-at-head-paths=0 preserved-untracked-paths=0 detracked-local-only-paths=0 superseded-paths=0 "
                                  "absent-at-head-paths=0 unexplained-paths=0 "
                                  "superseded-intact-paths=0 superseded-rewritten-paths=0 "
                                  "superseded-absent-lines=0/0 patch-landed-commits=0 rewrite-chain-unreachable-commits=0 rewrite-parent-reachable-commits=0 rewrite-root-commits=1 dropped-ancestry-commits=0")
@@ -2326,10 +2326,54 @@ def test_head_rewinds_absent_change_reads_drift(tmp_path, monkeypatch):
     assert result["state"] == "drift"
     assert _reading_sample(result) == ("dropped-commits=1 of last-200-reflog-entries "
                                  "classified-commits=1 unexamined-paths=0 lossless-paths=0 "
-                                 "needs-review-paths=0 absent-paths=1 preserved-untracked-paths=0 detracked-local-only-paths=0 superseded-paths=0 "
+                                 "needs-review-paths=0 absent-paths=1 reverted-at-head-paths=0 preserved-untracked-paths=0 detracked-local-only-paths=0 superseded-paths=0 "
                                  "absent-at-head-paths=0 unexplained-paths=0 "
                                  "superseded-intact-paths=0 superseded-rewritten-paths=0 "
                                  "superseded-absent-lines=0/0 patch-landed-commits=0 rewrite-chain-unreachable-commits=0 rewrite-parent-reachable-commits=0 rewrite-root-commits=1 dropped-ancestry-commits=0")
+
+
+def _fake_revert_run(*, message: str, diffs: dict):
+    """Fake git for the reverted-at-head helper: one HEAD log entry and per-SHA diffs."""
+
+    def fake_run(*args, timeout=10, text=True):
+        if args[0] == "log":
+            return subprocess.CompletedProcess(args, 0, "9" * 40 + "\x00" + message + "\x01", "")
+        if args[0] == "show":
+            return subprocess.CompletedProcess(args, 0, diffs.get(args[2], ""), "")
+        raise AssertionError(f"unexpected git command: {args}")
+
+    return fake_run
+
+
+def test_reverted_at_head_names_reachable_twin_with_same_diff(tmp_path):
+    """A dropped pre-amend twin whose later revert names the HEAD-reachable amend reads as reverted."""
+    dropped, twin = "7" * 40, "5" * 40
+    message = "Revert \"test: restore\"\n\nThis reverts commit " + twin + ".\n"
+    run = _fake_revert_run(message=message, diffs={dropped: "DIFF body\n", twin: "DIFF body\n"})
+    assert discovery._reverted_at_head(dropped, "tests/t.py", {twin}, run) is True
+
+
+def test_reverted_at_head_different_diff_stays_absent(tmp_path):
+    """A revert naming a reachable commit whose diff for the path differs is not the same change."""
+    dropped, twin = "7" * 40, "5" * 40
+    message = "Revert x\n\nThis reverts commit " + twin + ".\n"
+    run = _fake_revert_run(message=message, diffs={dropped: "DIFF a\n", twin: "DIFF b\n"})
+    assert discovery._reverted_at_head(dropped, "tests/t.py", {twin}, run) is False
+
+
+def test_reverted_at_head_unreachable_name_stays_absent(tmp_path):
+    """A revert naming a commit that is not on HEAD cannot explain the absence."""
+    dropped, twin = "7" * 40, "5" * 40
+    message = "Revert x\n\nThis reverts commit " + twin + ".\n"
+    run = _fake_revert_run(message=message, diffs={dropped: "DIFF\n", twin: "DIFF\n"})
+    assert discovery._reverted_at_head(dropped, "tests/t.py", set(), run) is False
+
+
+def test_reverted_at_head_hand_written_revert_stays_absent(tmp_path):
+    """A revert that names no commit is not an explanation the classifier can check."""
+    dropped = "7" * 40
+    run = _fake_revert_run(message="Undo the test change\n", diffs={dropped: "DIFF\n"})
+    assert discovery._reverted_at_head(dropped, "tests/t.py", {"5" * 40}, run) is False
 
 
 def test_head_rewinds_recommitted_change_is_its_own_verdict(tmp_path, monkeypatch):
@@ -2347,7 +2391,7 @@ def test_head_rewinds_recommitted_change_is_its_own_verdict(tmp_path, monkeypatc
     assert result["state"] == "drift"
     assert _reading_sample(result) == ("dropped-commits=1 of last-200-reflog-entries "
                                  "classified-commits=1 unexamined-paths=0 lossless-paths=1 "
-                                 "needs-review-paths=1 absent-paths=0 preserved-untracked-paths=0 detracked-local-only-paths=0 superseded-paths=0 "
+                                 "needs-review-paths=1 absent-paths=0 reverted-at-head-paths=0 preserved-untracked-paths=0 detracked-local-only-paths=0 superseded-paths=0 "
                                  "absent-at-head-paths=0 unexplained-paths=1 "
                                  "superseded-intact-paths=0 superseded-rewritten-paths=0 "
                                  "superseded-absent-lines=0/0 patch-landed-commits=0 rewrite-chain-unreachable-commits=0 rewrite-parent-reachable-commits=0 rewrite-root-commits=1 dropped-ancestry-commits=0")
@@ -2411,7 +2455,7 @@ def test_head_rewinds_ignored_identical_absent_path_is_preserved_on_disk(tmp_pat
     assert result["absent"] == 0
     assert result["preserved_untracked"] == 1
     assert result["state"] == "verified"
-    assert "absent-paths=0 preserved-untracked-paths=1" in _reading_sample(result)
+    assert "absent-paths=0 reverted-at-head-paths=0 preserved-untracked-paths=1" in _reading_sample(result)
 
 
 def test_head_rewinds_not_ignored_identical_absent_path_stays_absent(tmp_path, monkeypatch):
@@ -2604,7 +2648,7 @@ def test_head_rewinds_splits_review_paths_by_later_history(tmp_path, monkeypatch
     assert result["review_basis"] == {"superseded": 1, "absent-at-head": 1, "unexplained": 1}
     assert result["superseded_content"]["intact"] == 0
     assert result["superseded_content"]["rewritten"] == 1
-    assert _reading_sample(result).endswith("needs-review-paths=3 absent-paths=0 preserved-untracked-paths=0 detracked-local-only-paths=0 "
+    assert _reading_sample(result).endswith("needs-review-paths=3 absent-paths=0 reverted-at-head-paths=0 preserved-untracked-paths=0 detracked-local-only-paths=0 "
                                      "superseded-paths=1 absent-at-head-paths=1 "
                                      "unexplained-paths=1 superseded-intact-paths=0 "
                                      "superseded-rewritten-paths=1 superseded-absent-lines=0/0 patch-landed-commits=0 rewrite-chain-unreachable-commits=0 rewrite-parent-reachable-commits=0 rewrite-root-commits=1 dropped-ancestry-commits=0")

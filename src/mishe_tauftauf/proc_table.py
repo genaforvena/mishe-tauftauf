@@ -212,6 +212,25 @@ def git_ancestry_count(raw: str) -> int:
     """Count distinct commit ids in ``git rev-list <shas> ^HEAD`` output (one per line)."""
     return len({line.strip() for line in raw.splitlines() if line.strip()})
 
+_REVERT_NAMES_COMMIT = re.compile(r"This reverts commit ([0-9a-f]{40})")
+
+
+def git_revert_named_shas(raw: str) -> list[str]:
+    """Commit ids named by ``This reverts commit <sha>`` in ``git log --format=%H%x00%B%x01`` output.
+
+    Each entry is a commit id, NUL, then the message, terminated by SOH. Only
+    the full 40-character id a revert message carries is returned; a message
+    that names no commit yields nothing, so a caller never invents a link.
+    """
+    names: list[str] = []
+    for entry in raw.split("\x01"):
+        if "\x00" not in entry:
+            continue
+        message = entry.split("\x00", 1)[1]
+        names.extend(_REVERT_NAMES_COMMIT.findall(message))
+    return names
+
+
 def pane_commands(raw: str) -> list[tuple[str, str, str, str]]:
     """(session, pid, start_command, current_path) from a four-field pane table.
 
