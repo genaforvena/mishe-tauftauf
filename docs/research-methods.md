@@ -22,8 +22,7 @@ The role uses the same dashboard, visible addressed messages, wake/yield/clear,
 activity monitoring and persistent service lifecycle as other residents. Its
 service defaults to an hourly periodic review; `self_pick_seconds` in the local
 coordination mode may adjust that cadence. Changed observations and addressed
-messages retain the existing wake path. The window's lease proves presentation
-liveness, not scientific acceptance. No extra scheduler or service is needed.
+messages retain the existing wake path. The window's lease proves presentation liveness, not scientific acceptance. A lease gate is a liveness check: it can refuse a stale pane before a wake, but it cannot stop a paused action from landing after the check. Safety comes from the wake number that `settle` checks under the seed lock, so a settle for a wake that is not the pending one is refused by the resource, not by the holder's own clock. No extra scheduler or service is needed.
 
 All local contracts and Mishe invariants apply: owned scope, frozen protocols,
 held-out boundaries, resource limits, honest UNKNOWN, independent review,
