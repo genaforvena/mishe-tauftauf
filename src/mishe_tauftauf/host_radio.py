@@ -21,6 +21,19 @@ reported as an explicit error — ``None`` for a value that could not be read, a
 named error for a failed command — so the consumer keeps the reading UNKNOWN
 rather than letting absence read as calm. ``rfkill_unreadable`` exposes the
 switches ``rfkill_switches`` omits, so a short list is not read as "no switch".
+
+Randomized and Changing MAC addresses (RCM, RFC 9797 §§1–4/6.1 Table 1,
+[IEEE_802] U/L=1, IEEE 802.11bh-2024 [IEEE_802.11bh]) are out of scope:
+Personal vs Shared-Service device ([IEEE_802E] §6.2), Full/Selective/Zero trust
+degrees (§4) and OTA vs OTWi observers (§3.2.1 vs §3.2.4) name the boundary
+where MACs are "not encrypted even in networks that implement encryption"
+(RFC 9797 §2.1) so any OTA sniffer can read them before decryption. This
+module does not observe peer MACs, store a peer MAC, or link two U/L=1
+addresses to one device (no IE/sequence fingerprinting, no MAC-keyed
+AAA/802.1X/DHCP/SLAAC/ARP/NDP cache §6.1, no iw/tcpdump/raw-socket scan) — only
+the existing sysfs/``bluetoothctl`` host-state path. Any OTA MAC scan or
+cross-rotation linking is a privacy-boundary change reviewed under
+``docs/protocol-boundaries.md`` and ``docs/how-it-works.md:973``.
 """
 
 from __future__ import annotations
@@ -59,6 +72,36 @@ def wlan_sensing_capability() -> dict[str, bool]:
 def is_host_radio_sensing_only() -> bool:
     """True while the module reads adapter state and never a person's WLAN signal."""
     return not WLAN_SENSING_SUPPORTED
+RCM_LINKING_SUPPORTED: Final[bool] = False
+"""Negative capability: this module does not link Randomized and Changing MACs.
+
+RFC 9797 §§1–4/6.1 Table 1, [IEEE_802] U/L=1, IEEE 802.11bh-2024
+([IEEE_802.11bh]): personal vs shared-service device ([IEEE_802E] §6.2),
+Full/Selective/Zero trust degrees (§4) and OTA vs OTWi observers (§3.2.1 vs
+§3.2.4). MACs are "not encrypted even in networks that implement encryption"
+(§2.1) so any OTA sniffer can read them before decryption. This module does
+not implement OTA/OTWi MAC observation, capture of peer MAC addresses,
+correlation of two locally-administered (U/L=1) addresses to one device,
+IE/sequence-number fingerprinting, or MAC-keyed AAA/802.1X/DHCP/SLAAC/ARP/NDP
+cache (§6.1) — no iw/tcpdump/raw-socket scan, no neighbour-table parse.
+Any such path is a privacy-boundary change (docs/protocol-boundaries.md).
+"""
+
+
+def rcm_linking_capability() -> dict[str, bool]:
+    """Typed statement of what this module does not do. Pure; no I/O."""
+    return {
+        "supported": RCM_LINKING_SUPPORTED,
+        "ota_mac_observation": False,
+        "rcm_linking": False,
+        "peer_mac_store": False,
+    }
+
+
+def is_rcm_linking_free() -> bool:
+    """True while the module never links two randomised MACs to one device."""
+    return not RCM_LINKING_SUPPORTED
+
 
 POWERED = re.compile(r"^[ \t]*Powered:\s+(yes|no)$", re.MULTILINE)
 ACTIVE_INSTANCES = re.compile(r"^[ \t]*ActiveInstances:\s+0x[0-9a-fA-F]+\s+\((\d+)\)$",
