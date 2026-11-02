@@ -171,6 +171,14 @@ def review(home, record):
         evidence["delivery_plan"] = {key: value for key, value in plan.items() if key != "artifacts"}
         evidence["delivery_scripts"] = {name: base64.b64decode(value["bytes"]).decode("utf-8")
                                         for name, value in plan["artifacts"].items()}
+    # Bacchelli §VI.B: rationale ("what changed and why") determines reviewer
+    # understanding; include it when present so the understanding gate can
+    # distinguish low-context from well-described patches.
+    for field in ("description", "rationale"):
+        value = record.get(field)
+        if isinstance(value, str) and value and not value.isspace():
+            evidence["rationale"] = value
+            break
     body = json.dumps(evidence, sort_keys=True)
     reference = "exact scoped patch bytes and test result"
     request = {"version": 1, "input_hash": hashlib.sha256(body.encode()).hexdigest(), "body": "Review the complete scoped patch and test evidence supplied in context.",
