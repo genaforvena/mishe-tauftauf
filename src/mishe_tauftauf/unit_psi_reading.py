@@ -11,12 +11,15 @@ reads UNKNOWN, never calm. Malformed lines are skipped and counted in the sample
 Event deltas use only records inside WINDOW_S of the newest record; with no
 earlier record in the window the delta is reported as unknown, not zero.
 
-Liveness: the sampler should be `active/running`. When its systemd unit is
-deterministically inactive, dead or missing, a fresh tape still reads UNKNOWN
-with a `sampler-not-active` cause instead of `verified`. A stale tape already
-reads `stale` (non-verified) and carries the same sampler text. When the unit
-state cannot be read (no systemctl, timeout, error) the reader keeps the
-tape-derived state and reports `sampler=unknown`.
+Liveness: the sampler should be `active/running`. The sense is a composite
+tape+sampler claim: a fresh tape alone does not prove the recorder is running.
+When the sampler is deterministically inactive, dead or missing, a fresh tape
+reads UNKNOWN with a `sampler-not-active` cause. When the sampler state cannot
+be read (no systemctl, timeout, error) a fresh tape also reads UNKNOWN with a
+`sampler-unknown` cause — missing monitoring stays UNKNOWN. A stale tape already
+reads `stale` (non-verified) and carries the same sampler text. All paths keep
+malformed counts and the original tape signal after the cause so existing
+consumers stay parsable.
 """
 from __future__ import annotations
 
@@ -77,12 +80,10 @@ def _sampler_is_active(props: dict | None) -> bool | None:
         return False
     if props.get("ActiveState") != "active":
         return False
-    # SubState "running" is the expected active sub-state; treat any other
-    # active sub-state as not fully healthy but keep None to avoid false RED.
-    if props.get("SubState") not in ("running",):
-        # still ActiveState=active but not running — report via text, don't
-        # force UNKNOWN on that basis alone.
-        return None
+    if props.get("SubState") != "running":
+        # Active but not running is not healthy; treat as not-active so a
+        # fresh tape does not read verified on a non-running recorder.
+        return False
     return True
 
 
@@ -308,12 +309,17 @@ def read_unit_psi(path, *, now: float) -> dict:
     sampler_active = _sampler_is_active(sampler_props)
 
     def _finalize(state: str, sample: str) -> dict:
-        # Always carry the liveness text; a dead recorder never reads verified.
+        # Always carry the liveness text. A fresh verified tape requires a
+        # deterministically active/running recorder; otherwise the composite
+        # claim is unknown. Stale stays stale to preserve its own evidence;
+        # unknown/missing tape stays unknown. This separates tape freshness
+        # (age) from recorder liveness (systemd state) as steward 200070
+        # requires: fresh data cannot prove the process is running.
         full_sample = f"{sample} {sampler_text}"
-        if state == "verified" and sampler_active is False:
-            # Fresh tape but recorder deterministically not running — not a
-            # current claim. Surface as unknown with named cause, keep the
-            # tape signal after it so existing consumers stay parsable.
+        if state == "verified" and sampler_active is not True:
+            if sampler_active is None:
+                return {**base, "state": "unknown",
+                        "sample": f"sampler-unknown({sampler_text}): {full_sample}"}
             return {**base, "state": "unknown",
                     "sample": f"sampler-not-active({sampler_text}): {full_sample}"}
         return {**base, "state": state, "sample": full_sample}
