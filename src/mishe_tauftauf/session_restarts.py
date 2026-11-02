@@ -95,7 +95,7 @@ def _is_birth(message, session: str) -> bool:
             and all(char in _UNIT_ID_ALPHABET for char in ident))
 
 
-def assess_restarts(entries, session: str, window_minutes=None) -> dict:
+def assess_restarts(entries, session: str, window_minutes=None, absent_minutes=None) -> dict:
     """Assess restart cadence over caller-supplied (epoch_us, message) pairs.
 
     Returns a plain dict: verdict plus births count, gap list, under-30m
@@ -108,6 +108,16 @@ def assess_restarts(entries, session: str, window_minutes=None) -> dict:
     ``window_minutes``, the observed ``births``, and ``exceeded`` (births >
     max_r). Verdict and reason are unchanged; it names the window the count
     clause already assumed and acts on nothing.
+
+    SRE Workbook (ch.2/5) additive measurement, no verdict change:
+    when ``window_minutes`` is supplied and ``intensity`` is present the
+    result also carries ``error_budget`` (allowed=max_r, consumed=births,
+    remaining, percent_consumed) and ``burn_rate`` (births/max_r) over the
+    reported window. When ``absent_minutes`` (from the Brown & Patterson
+    2000 absent-time proposal) is also supplied as a non-negative number,
+    an ``sli`` mapping with good/total/ratio is added; otherwise ``sli`` is
+    omitted rather than synthesised. Multi-window alerting is caller
+    composition (two calls with e.g. 5 and 60).
     """
     base: dict = {"verdict": UNKNOWN, "reason": "unusable-input",
                   "births": 0, "gaps": [], "under_30m": 0}
@@ -135,6 +145,32 @@ def assess_restarts(entries, session: str, window_minutes=None) -> dict:
         max_r = COUNT_DRIFT_THRESHOLD - 1
         base["intensity"] = {"max_r": max_r, "window_minutes": window_minutes,
                              "births": births, "exceeded": births > max_r}
+        # SRE Workbook additive fields — same window, no verdict change.
+        if max_r > 0:
+            percent = births / max_r
+            burn = births / max_r
+        else:
+            percent = None
+            burn = None
+        base["error_budget"] = {"allowed": max_r, "consumed": births,
+                                "remaining": max_r - births,
+                                "percent_consumed": percent}
+        base["burn_rate"] = burn
+        if (absent_minutes is not None
+                and isinstance(absent_minutes, (int, float))
+                and not isinstance(absent_minutes, bool)
+                and absent_minutes >= 0):
+            # Clamp absent to window so good_minutes never negative in report;
+            # caller owns acquisition accuracy.
+            clamped_absent = float(absent_minutes)
+            if clamped_absent > window_minutes:
+                clamped_absent = float(window_minutes)
+            good = float(window_minutes) - clamped_absent
+            total = float(window_minutes)
+            ratio = good / total if total > 0 else None
+            base["sli"] = {"good_minutes": good,
+                           "total_minutes": total,
+                           "ratio": ratio}
     if births == 0:
         base["verdict"] = STEADY
         base["reason"] = "no-births-in-window"

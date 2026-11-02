@@ -134,11 +134,19 @@ def test_intensity_is_additive_and_verdict_unchanged():
     plain = session_restarts.assess_restarts(entries, SESSION)
     timed = session_restarts.assess_restarts(entries, SESSION, 60)
     assert "intensity" not in plain
+    assert "error_budget" not in plain
+    assert "burn_rate" not in plain
     assert timed.pop("intensity") == {"max_r": 2, "window_minutes": 60, "births": 3, "exceeded": True}
+    assert timed.pop("error_budget") == {"allowed": 2, "consumed": 3, "remaining": -1, "percent_consumed": 1.5}
+    assert timed.pop("burn_rate") == 1.5
     assert timed == plain
     empty = session_restarts.assess_restarts([], SESSION, 60)
     assert empty["intensity"]["exceeded"] is False and empty["verdict"] == "steady"
+    assert empty["error_budget"] == {"allowed": 2, "consumed": 0, "remaining": 2, "percent_consumed": 0.0}
+    assert empty["burn_rate"] == 0.0
+    assert "sli" not in empty
     assert "intensity" not in session_restarts.assess_restarts([], "", 60)
+    assert "error_budget" not in session_restarts.assess_restarts([], "", 60)
 
 
 SERVICE_ID = "c6cded82d22e4265852356e45bd3f07c"
@@ -167,3 +175,70 @@ def test_service_shape_requires_hex_id_and_unit_boundary():
     assert not session_restarts._is_birth(short_id, SESSION)
     assert not session_restarts._is_birth(glued, SESSION)
     assert not session_restarts._is_birth(f"Stopped {SESSION}-session-{SERVICE_ID}.service", SESSION)
+
+def test_error_budget_half_spent_no_verdict_change():
+    base = 2_000_000_000_000_000
+    row = session_restarts.assess_restarts([(base, f"Started {SESSION}-session.scope")], SESSION, 60)
+    assert row["verdict"] == "steady" and row["reason"] == "cadence-nominal"
+    assert row["error_budget"] == {"allowed": 2, "consumed": 1, "remaining": 1, "percent_consumed": 0.5}
+    assert row["burn_rate"] == 0.5
+    assert row["intensity"] == {"max_r": 2, "window_minutes": 60, "births": 1, "exceeded": False}
+
+
+def test_error_budget_exceeded_reports_negative_remaining():
+    base = 2_000_000_000_000_000
+    entries = [(base + i * 60_000_000 * 2, f"Started {SESSION}-session.scope") for i in range(3)]
+    row = session_restarts.assess_restarts(entries, SESSION, 60)
+    assert row["verdict"] == "churn"
+    assert row["error_budget"]["remaining"] == -1
+    assert row["error_budget"]["percent_consumed"] == 1.5
+    assert row["burn_rate"] == 1.5
+
+
+def test_window_none_omits_budget_and_burn():
+    base = 2_100_000_000_000_000
+    row = session_restarts.assess_restarts([(base, f"Started {SESSION}-session.scope")], SESSION)
+    assert "error_budget" not in row and "burn_rate" not in row and "intensity" not in row and "sli" not in row
+    # window_minutes=None ignores absent_minutes even when supplied
+    row2 = session_restarts.assess_restarts([(base, f"Started {SESSION}-session.scope")], SESSION, None, absent_minutes=2)
+    assert "error_budget" not in row2 and "sli" not in row2
+
+
+def test_sli_with_absent_minutes():
+    base = 3_000_000_000_000_000
+    row = session_restarts.assess_restarts([(base, f"Started {SESSION}-session.scope")], SESSION, 60, absent_minutes=2)
+    assert row["sli"]["total_minutes"] == 60.0
+    assert abs(row["sli"]["good_minutes"] - 58.0) < 1e-9
+    assert abs(row["sli"]["ratio"] - 58.0 / 60.0) < 1e-9
+    # absent omitted -> no sli, budget still present
+    row_no_absent = session_restarts.assess_restarts([(base, f"Started {SESSION}-session.scope")], SESSION, 60)
+    assert "sli" not in row_no_absent
+    assert "error_budget" in row_no_absent
+
+
+def test_sli_clamps_absent_at_window():
+    base = 3_100_000_000_000_000
+    row = session_restarts.assess_restarts([(base, f"Started {SESSION}-session.scope")], SESSION, 60, absent_minutes=120)
+    assert row["sli"]["good_minutes"] == 0.0 and row["sli"]["ratio"] == 0.0
+    # float absent
+    row2 = session_restarts.assess_restarts([(base, f"Started {SESSION}-session.scope")], SESSION, 60, absent_minutes=2.5)
+    assert abs(row2["sli"]["ratio"] - 57.5 / 60) < 1e-9
+
+
+def test_sli_rejects_bool_and_negative_absent():
+    base = 3_200_000_000_000_000
+    assert "sli" not in session_restarts.assess_restarts([(base, f"Started {SESSION}-session.scope")], SESSION, 60, absent_minutes=True)
+    assert "sli" not in session_restarts.assess_restarts([(base, f"Started {SESSION}-session.scope")], SESSION, 60, absent_minutes=-1)
+    assert "sli" not in session_restarts.assess_restarts([(base, f"Started {SESSION}-session.scope")], SESSION, 60, absent_minutes="2")
+
+
+def test_multi_window_burn_rate_composition():
+    # Workbook approach 6: caller compares short vs long window.
+    base = 4_000_000_000_000_000
+    entries = [(base + i * 60_000_000, f"Started {SESSION}-session.scope") for i in range(3)]
+    r5 = session_restarts.assess_restarts(entries, SESSION, 5)
+    r60 = session_restarts.assess_restarts(entries, SESSION, 60)
+    assert r5["burn_rate"] == 1.5 and r60["burn_rate"] == 1.5  # same births/max_r
+    # different birth counts over same max_r show different spend rates
+    single = [(base, f"Started {SESSION}-session.scope")]
+    assert session_restarts.assess_restarts(single, SESSION, 60)["burn_rate"] == 0.5
