@@ -275,19 +275,47 @@ def receipt(home, change):
     return root, value
 
 
+def _role_window(home, role):
+    """The (session, socket) that holds this role's window, or None.
+
+    A home owns more than one session — the core session and the life-support
+    session both record it as their owner — and the shared ``.seed-raised``
+    receipt is written by whichever supervisor wrote last. Trusting it asks
+    one socket about one session, so a role that lives in the other session
+    reads as a missing window. Enumerating the home's own sessions finds the
+    window wherever it is; the receipt stays a fallback for a home that owns
+    no enumerable session.
+    """
+    from . import seed
+    from . import tmux
+    try:
+        owned = tmux.home_sessions(home)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        owned = []
+    for session, socket in owned:
+        gate = seed._tmux('has-session', '-t', f'{session}:{role}', check=False, socket=socket)
+        if gate.returncode == 0:
+            return session, socket
+    return None
+
+
 def process(home, role):
     from . import seed
     from .tmux import owned_socket
-    session = seed.recorded_session(home)
-    socket = owned_socket(home, session) if session else None
-    if not socket:
-        raise ValueError('owned live session unavailable')
-    # Gate the display-message: it silently falls back to the session's first
-    # window for a missing window, so a wrong-but-live PID would pass the
-    # dead==0 check and misattribute the model. has-session errors instead.
-    gate = seed._tmux('has-session', '-t', f'{session}:{role}', check=False, socket=socket)
-    if gate.returncode != 0:
-        raise ValueError('mind window missing')
+    located = _role_window(home, role)
+    if located is not None:
+        session, socket = located
+    else:
+        session = seed.recorded_session(home)
+        socket = owned_socket(home, session) if session else None
+        if not socket:
+            raise ValueError('owned live session unavailable')
+        # Gate the display-message: it silently falls back to the session's first
+        # window for a missing window, so a wrong-but-live PID would pass the
+        # dead==0 check and misattribute the model. has-session errors instead.
+        gate = seed._tmux('has-session', '-t', f'{session}:{role}', check=False, socket=socket)
+        if gate.returncode != 0:
+            raise ValueError('mind window missing')
     result = seed._tmux('display-message', '-p', '-t', f'{session}:{role}.1', '#{pane_pid} #{pane_dead}', socket=socket)
     fields = result.stdout.decode().split()
     if len(fields) != 2 or not fields[0].isdigit() or fields[1] != '0':
