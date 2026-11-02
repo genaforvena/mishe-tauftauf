@@ -39,6 +39,24 @@ LEASE_AGE_RE = re.compile(
     r"^-- pane live (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z) · refresh ([0-9.]+)s · ticks every frame --$")
 
 
+def _lease_from_pane(session: str, window: str, *, socket: str | None) -> str | None:
+    """Lease line from one window's 0-pane, or None when absent."""
+    argv = ["tmux"]
+    if socket:
+        argv.extend(["-S", socket])
+    argv.extend(["capture-pane", "-p", "-t", f"{session}:{window}.0", "-S", "-5"])
+    try:
+        captured = subprocess.run(argv, capture_output=True, text=True, timeout=2)
+    except (OSError, subprocess.TimeoutExpired):
+        return None  # caller marks unreadable; preserve UNKNOWN semantics
+    if captured.returncode != 0:
+        return None
+    for line in reversed(captured.stdout.splitlines()):
+        if LEASE_AGE_RE.fullmatch(line):
+            return line
+    return None
+
+
 def pane_lease_lines(home: Path) -> tuple[list[str], str]:
     """Name top-pane renderer leases that stopped advancing.
 
@@ -49,9 +67,7 @@ def pane_lease_lines(home: Path) -> tuple[list[str], str]:
     log tail) carries no lease and is not a fault; a renderer whose lease is
     missing or unreadable is UNKNOWN, never silently GREEN.
     """
-    session = os.environ.get("MISHE_SEED_SESSION", "")
-    if not session:
-        return [], "UNKNOWN"
+    from .tmux import home_sessions as _home_sessions
     try:
         expected = json.loads((home / "health" / "windows.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -62,31 +78,63 @@ def pane_lease_lines(home: Path) -> tuple[list[str], str]:
                        if isinstance(window, str) and (home / "top-pains" / window).is_file())
     if not renderers:
         return [], "UNKNOWN"
+    # A home can own several sessions (plant + life-support); merge leases across them
+    # so the 17-window manifest is checked where each window actually lives. Fall
+    # back to MISHE_SEED_SESSION when the home owns nothing (tests / legacy).
+    owned: list[tuple[str, str]] | None
+    try:
+        owned = _home_sessions(home)
+    except Exception:
+        owned = None
+    if not owned:
+        session = os.environ.get("MISHE_SEED_SESSION", "")
+        if not session:
+            return [], "UNKNOWN"
+        owned = [(session, "")]  # empty socket = ambient/default handling in _lease_from_pane
     stale: list[str] = []
     missing: list[str] = []
     unreadable = False
     advancing = 0
     for window in renderers:
-        try:
-            captured = subprocess.run(
-                ["tmux", "capture-pane", "-p", "-t", f"{session}:{window}.0", "-S", "-5"],
-                capture_output=True, text=True, timeout=2)
-        except (OSError, subprocess.TimeoutExpired):
-            unreadable = True
-            continue
-        lease = None
-        if captured.returncode == 0:
+        text: str | None = None
+        saw_error = False
+        for sess, sock in owned:
+            argv = ["tmux"]
+            if sock:
+                argv.extend(["-S", sock])
+            argv.extend(["capture-pane", "-p", "-t", f"{sess}:{window}.0", "-S", "-5"])
+            try:
+                captured = subprocess.run(argv, capture_output=True, text=True, timeout=2)
+            except (OSError, subprocess.TimeoutExpired):
+                saw_error = True
+                continue
+            if captured.returncode != 0:
+                # window not on this session/socket; try next owned pair
+                if "can't find session" in captured.stderr or "can't find window" in captured.stderr or "no server running" in captured.stderr or "No such file" in captured.stderr:
+                    continue
+                saw_error = True
+                continue
             for line in reversed(captured.stdout.splitlines()):
-                match = LEASE_AGE_RE.fullmatch(line)
-                if match:
-                    lease = match
+                if LEASE_AGE_RE.fullmatch(line):
+                    text = line
                     break
-        if lease is None:
+            if text is not None:
+                break
+        if text is None:
+            if saw_error:
+                # At least one probe errored rather than clean miss; treat as unreadable
+                unreadable = True
+                missing.append(window)
+            else:
+                missing.append(window)
+            continue
+        match = LEASE_AGE_RE.fullmatch(text)
+        if match is None:
             missing.append(window)
             continue
         try:
-            stamp = datetime.fromisoformat(lease.group(1).replace("Z", "+00:00"))
-            refresh = float(lease.group(2))
+            stamp = datetime.fromisoformat(match.group(1).replace("Z", "+00:00"))
+            refresh = float(match.group(2))
         except ValueError:
             missing.append(window)
             continue
