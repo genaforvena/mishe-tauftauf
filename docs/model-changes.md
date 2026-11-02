@@ -20,11 +20,13 @@ values and rejects unsupported values. `--effort compatible` permits a lower
 supported value, for example `xhigh` to `high`; `--effort highest` selects the
 target's highest supported value. Each adjustment appears in output.
 
-Without `--fresh-start`, busy minds wait for idle. With it, current wakes are
-marked **abandoned**, their pane output is retained, and the next wake starts
-from durable state. Abandonment does not undo prior actions or certify that they
-succeeded. The next mind receives that uncertainty before repeating external
-actions. The command never restarts a shared tmux server.
+Without `--fresh-start`, busy minds wait for canonical idle before activation.
+Activation still replaces the idle pane process; it is not a no-kill model
+change. With `--fresh-start`, current wakes are marked **abandoned**, their
+pane output is retained, and the next wake starts from durable state.
+Abandonment does not undo prior actions or certify that they succeeded. The next
+mind receives that uncertainty before repeating external actions. The command
+never restarts a shared tmux server.
 
 Every applied request returns a change ID:
 
