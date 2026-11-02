@@ -16,6 +16,7 @@ answers.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 
 #: The rule that picks the rows the live window speaks for.
 EVIDENCE_SELECTION_RULE = "latest-outcome-row-per-role"
@@ -137,6 +138,38 @@ def clopper_pearson_upper(errors: int, rows: int, delta: float) -> float:
         else:
             high = middle
     return (low + high) / 2.0
+
+
+def stratum_coverage_gap(coverages_by_stratum: Mapping[str, float],
+                         nominal: float) -> float | None:
+    """The CovGap of a set of strata, in percentage points.
+
+    Class-conditional coverage (Ding, Angelopoulos, Jordan, Bates, Tibshirani,
+    "Class-Conditional Conformal Prediction with Many Classes", NeurIPS 2023,
+    arXiv:2306.09335, section 3.3) asks each stratum to reach the nominal
+    coverage, and the gap is the mean absolute deviation ``100 * mean |c - nominal|``
+    over the supplied stratum fractions. A marginal figure can sit near nominal
+    while strata split far above and below it; this gap reports that unevenness.
+
+    The gap is a descriptive figure about the strata supplied. It holds only
+    under exchangeability between the sampled rows and the rows it describes,
+    and the reporting distinction between clustered, class-wise and standard
+    strata is a presentation choice; this function does not read it.
+    The source document is recorded at /tmp/ding-2023.pdf,
+    sha256 f4fac9d8415bdbfeca97a76257d9fb7526c835f65699c951bf4f2e157f6c0092.
+
+    Returns None when no stratum is supplied, so an empty reading is not
+    quoted as a zero gap.
+    """
+    if not 0.0 < nominal < 1.0:
+        raise ValueError("the nominal coverage must lie strictly between 0 and 1")
+    values = list(coverages_by_stratum.values())
+    if not values:
+        return None
+    for value in values:
+        if not 0.0 <= value <= 1.0:
+            raise ValueError("a stratum coverage must lie within [0, 1]")
+    return 100.0 * math.fsum(abs(value - nominal) for value in values) / len(values)
 
 
 def coverage_pair(*, population: int, judged: int, judged_violating: int,

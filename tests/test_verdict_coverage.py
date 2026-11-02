@@ -91,3 +91,29 @@ def test_the_strata_are_named_and_defined():
                                                  "post_amendment"}
     for definition in EVIDENCE_STRATUM_DEFINITIONS.values():
         assert definition
+
+
+def test_the_stratum_gap_reports_unevenness_a_marginal_figure_hides():
+    from mishe_tauftauf.verdict_coverage import stratum_coverage_gap
+    # Ding et al. 2023 section 1: a marginal 89.8% can hide a 50.8% / 99.2% split.
+    gap = stratum_coverage_gap({"water_jug": 0.508, "flamingo": 0.992}, nominal=0.9)
+    assert math.isclose(gap, 24.2, abs_tol=1e-9)
+
+
+def test_an_even_split_at_nominal_has_no_gap():
+    from mishe_tauftauf.verdict_coverage import stratum_coverage_gap
+    assert stratum_coverage_gap({"a": 0.9, "b": 0.9}, nominal=0.9) == 0.0
+
+
+def test_no_stratum_is_reported_as_no_gap_not_as_zero():
+    from mishe_tauftauf.verdict_coverage import stratum_coverage_gap
+    assert stratum_coverage_gap({}, nominal=0.9) is None
+
+
+def test_impossible_stratum_inputs_are_refused():
+    import pytest
+    from mishe_tauftauf.verdict_coverage import stratum_coverage_gap
+    with pytest.raises(ValueError):
+        stratum_coverage_gap({"a": 1.2}, nominal=0.9)
+    with pytest.raises(ValueError):
+        stratum_coverage_gap({"a": 0.5}, nominal=1.0)
