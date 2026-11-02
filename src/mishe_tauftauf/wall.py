@@ -1266,6 +1266,30 @@ def _rotated_by_resurrection(session: str, role: str, journal: dict) -> str | No
     return pid or None
 
 
+CLEAR_CAPACITY_MAX_AGE = 300
+
+
+def host_capacity_holds_clear(home: Path, *, now: float | None = None) -> bool:
+    """True only on fresh positive LIMITED/CRITICAL host-capacity evidence.
+
+    A respawn starts a new mind process (~0.5 GB) while the old one exits, so
+    clear rotation under host pressure keeps the cgroup near its high line
+    (health episode 40, artifacts/health-wake209557-clear-churn.md). Missing or
+    stale capacity evidence does not hold: a dead sampler must not freeze
+    rotation indefinitely.
+    """
+    import time
+    try:
+        data = json.loads((home / "recovery" / "host-capacity.json").read_text())
+        checked = float(data["checked_at"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    current = time.time() if now is None else now
+    if current - checked > CLEAR_CAPACITY_MAX_AGE:
+        return False
+    return bool(data.get("limited")) or data.get("state") in {"LIMITED", "CRITICAL"}
+
+
 def clear(home: Path, session: str, role: str, *, expected_wake: int | None = None) -> str:
     from . import seed
     from .post_check import _save
@@ -1276,6 +1300,8 @@ def clear(home: Path, session: str, role: str, *, expected_wake: int | None = No
     settings(home)
     if not owns_session(home, session):
         raise ValueError("session is not owned")
+    if host_capacity_holds_clear(home):
+        return f"held: host capacity limited; {role} not rotated"
     with seed._lock(home):
         _, pending, settled, cleared, *_ = seed._state(home, role)
         if expected_wake is not None and settled != expected_wake:
