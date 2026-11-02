@@ -21,6 +21,30 @@ FOOTER_WAKE_RE = re.compile(r"^-- wake: .* --$")
 FOOTER_LEDGER_LABEL = "ledger"  # Historical frames remain readable.
 FOOTER_LEDGER_RE = re.compile(rf"^-- {re.escape(FOOTER_LEDGER_LABEL)}: .* --$")
 FOOTER_LEASE_RE = re.compile(r"^-- pane live \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z · refresh [0-9.]+s · ticks every frame --$")
+LEASE_LINE_RE = re.compile(
+    r"^-- pane live (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z) · refresh ([0-9.]+)s · ticks every frame --$")
+
+
+def latest_lease_line(text: str) -> str | None:
+    """Latest lease footer in ``text``, or ``None`` when absent."""
+    for line in reversed(text.splitlines()):
+        if LEASE_LINE_RE.fullmatch(line):
+            return line
+    return None
+
+
+def decode_lease_line(line: str) -> tuple[datetime, float] | None:
+    """Decode a lease footer to ``(stamp, refresh)`` or ``None`` on mismatch."""
+    match = LEASE_LINE_RE.fullmatch(line)
+    if match is None:
+        return None
+    try:
+        stamp = datetime.fromisoformat(match.group(1).replace("Z", "+00:00"))
+        refresh = float(match.group(2))
+    except ValueError:
+        return None
+    return stamp, refresh
+
 
 
 @dataclass(frozen=True)

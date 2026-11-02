@@ -41,6 +41,7 @@ LEASE_AGE_RE = re.compile(
 
 def _lease_from_pane(session: str, window: str, *, socket: str | None) -> str | None:
     """Lease line from one window's 0-pane, or None when absent."""
+    from .observations import latest_lease_line
     argv = ["tmux"]
     if socket:
         argv.extend(["-S", socket])
@@ -51,10 +52,7 @@ def _lease_from_pane(session: str, window: str, *, socket: str | None) -> str | 
         return None  # caller marks unreadable; preserve UNKNOWN semantics
     if captured.returncode != 0:
         return None
-    for line in reversed(captured.stdout.splitlines()):
-        if LEASE_AGE_RE.fullmatch(line):
-            return line
-    return None
+    return latest_lease_line(captured.stdout)
 
 
 def pane_lease_lines(home: Path) -> tuple[list[str], str]:
@@ -67,6 +65,7 @@ def pane_lease_lines(home: Path) -> tuple[list[str], str]:
     log tail) carries no lease and is not a fault; a renderer whose lease is
     missing or unreadable is UNKNOWN, never silently GREEN.
     """
+    from .observations import decode_lease_line, latest_lease_line
     from .tmux import home_sessions as _home_sessions
     try:
         expected = json.loads((home / "health" / "windows.json").read_text(encoding="utf-8"))
@@ -114,11 +113,9 @@ def pane_lease_lines(home: Path) -> tuple[list[str], str]:
                     continue
                 saw_error = True
                 continue
-            for line in reversed(captured.stdout.splitlines()):
-                if LEASE_AGE_RE.fullmatch(line):
-                    text = line
-                    break
-            if text is not None:
+            line = latest_lease_line(captured.stdout)
+            if line is not None:
+                text = line
                 break
         if text is None:
             if saw_error:
@@ -128,16 +125,11 @@ def pane_lease_lines(home: Path) -> tuple[list[str], str]:
             else:
                 missing.append(window)
             continue
-        match = LEASE_AGE_RE.fullmatch(text)
-        if match is None:
+        decoded = decode_lease_line(text)
+        if decoded is None:
             missing.append(window)
             continue
-        try:
-            stamp = datetime.fromisoformat(match.group(1).replace("Z", "+00:00"))
-            refresh = float(match.group(2))
-        except ValueError:
-            missing.append(window)
-            continue
+        stamp, refresh = decoded
         age = (datetime.now(timezone.utc) - stamp).total_seconds()
         limit = max(120.0, 6 * refresh)
         if age > limit:
