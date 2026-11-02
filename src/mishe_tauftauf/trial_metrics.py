@@ -8,6 +8,8 @@ Nosek et al. 2015 TOP Guidelines Version 1.0.1 pp.1-5 / Table p.12 eight×three;
   TOP_FACTOR_RETIRED = "2025-discontinued" — COS discontinued TOP Factor cum score for cause (Grant pp.2-3,6: simplistic cumulative score, reliability/validity limits); profile is metric, sum is retired projection.
 Material/data/code availability is per publication, not per repository; Certification requires independent party; verifiability is not rigor (Grant p.6: certified yet false remains false).
 This vocabulary does not change collect() return shape beyond additive transparency fields; quoting window without per-practice levels or quoting TOP Factor sum without 2025-discontinued note is visibly retired metric.
+
+Hicks et al. 2015 Nature 520:429-431 Leiden Manifesto for research metrics — https://doi.org/10.1038/520429a + https://www.nature.com/articles/520429a (244,451 B 2026-11-02) + https://www.leidenmanifesto.org/ (20,656 B) — 10 principles: quantitative-supports-qualitative … scrutinize-regularly; TOP transparency is disclosure, Leiden is responsible use; Principle 8 false-precision (three-decimal JIF example) marks precision>2 as canonical false precision.
 """
 from __future__ import annotations
 import argparse
@@ -96,6 +98,135 @@ TOP_VERIFICATION_PRACTICES: Final[tuple[str, ...]] = ("computational-reproducibi
 
 TOP_FACTOR_RETIRED: Final[str] = "2025-discontinued"
 """Retired cumulative TOP Factor — COS discontinued TOP Factor (Grant pp.2-3,6 simplistic cumulative score). Any sum must carry this note; profile is the metric."""
+
+LEIDEN_PRINCIPLES: Final[tuple[str, ...]] = (
+    "quantitative-supports-qualitative",
+    "measure-against-mission",
+    "protect-locally-relevant",
+    "open-transparent-simple",
+    "allow-verification",
+    "account-for-field-variation",
+    "portfolio-judgement-for-individuals",
+    "avoid-misplaced-concreteness-and-false-precision",
+    "recognize-systemic-effects",
+    "scrutinize-regularly",
+)
+"""Ten Leiden principles per Hicks et al. 2015 Nature 520:429-431."""
+
+LEIDEN_PRINCIPLE_DEFINITIONS: Final[dict[str, str]] = {
+    "quantitative-supports-qualitative": "Quantitative evaluation should support qualitative, expert assessment.",
+    "measure-against-mission": "Measure performance against the research missions of the institution, group, or researcher.",
+    "protect-locally-relevant": "Protect excellence in locally relevant research.",
+    "open-transparent-simple": "Keep data collection and analytical processes open, transparent and simple.",
+    "allow-verification": "Allow those evaluated to verify data and analysis.",
+    "account-for-field-variation": "Account for variation by field in publication and citation practices.",
+    "portfolio-judgement-for-individuals": "Base assessment of individual researchers on a qualitative judgement of their portfolio.",
+    "avoid-misplaced-concreteness-and-false-precision": "Avoid misplaced concreteness and false precision.",
+    "recognize-systemic-effects": "Recognize the systemic effects of assessment and indicators.",
+    "scrutinize-regularly": "Scrutinize indicators regularly and update them.",
+}
+"""Leiden definitions (Nature p.429-431 / leidenmanifesto.org)."""
+
+LEIDEN_MAX_FALSE_PRECISION_DECIMALS: Final[int] = 2
+"""Threshold per Leiden Principle 8: three decimals (e.g. JIF) is false precision."""
+
+
+def leiden_principle_is_valid(principle: object) -> bool:
+    """Membership in LEIDEN_PRINCIPLES."""
+    return principle in LEIDEN_PRINCIPLES
+
+
+def leiden_principles_are_valid(principles: object) -> bool:
+    """Non-empty iterable of valid Leiden principles with no duplicates."""
+    if not isinstance(principles, (list, tuple)):
+        return False
+    if not principles:
+        return False
+    seen: set[str] = set()
+    for p in principles:
+        if p not in LEIDEN_PRINCIPLES:
+            return False
+        if p in seen:
+            return False
+        seen.add(p)
+    return True
+
+
+def leiden_principle_definition(principle: str) -> str | None:
+    """Definition for a Leiden principle or None."""
+    return LEIDEN_PRINCIPLE_DEFINITIONS.get(principle)
+
+
+def leiden_compliance_for(
+    *,
+    quantitative_supports_qualitative: bool,
+    open_transparent_simple: bool,
+    allow_verification: bool,
+    field_variation_accounted: bool,
+    mission_aligned: bool,
+    locally_relevant_protected: bool,
+    portfolio_judgement: bool,
+    false_precision_ok: bool,
+    systemic_effects_acknowledged: bool,
+    scrutiny_current: bool,
+) -> dict:
+    """Compliance profile over 10 Leiden principles — pure, no I/O."""
+    flags: list[tuple[str, bool]] = [
+        ("quantitative-supports-qualitative", bool(quantitative_supports_qualitative)),
+        ("measure-against-mission", bool(mission_aligned)),
+        ("protect-locally-relevant", bool(locally_relevant_protected)),
+        ("open-transparent-simple", bool(open_transparent_simple)),
+        ("allow-verification", bool(allow_verification)),
+        ("account-for-field-variation", bool(field_variation_accounted)),
+        ("portfolio-judgement-for-individuals", bool(portfolio_judgement)),
+        ("avoid-misplaced-concreteness-and-false-precision", bool(false_precision_ok)),
+        ("recognize-systemic-effects", bool(systemic_effects_acknowledged)),
+        ("scrutinize-regularly", bool(scrutiny_current)),
+    ]
+    compliant = [name for name, ok in flags if ok]
+    gaps = [name for name, ok in flags if not ok]
+    return {
+        "compliant_principles": compliant,
+        "gaps": gaps,
+        "compliance_ratio": len(compliant) / len(LEIDEN_PRINCIPLES) if LEIDEN_PRINCIPLES else 0.0,
+        "scrutiny_unknown": not bool(scrutiny_current),
+    }
+
+
+def scrutiny_due(
+    last_scrutinized_at: datetime | None, now: datetime, *, max_age_days: int = 90
+) -> bool:
+    """True when last is None or now - last exceeds max_age_days."""
+    if last_scrutinized_at is None:
+        return True
+    if not isinstance(last_scrutinized_at, datetime) or not isinstance(now, datetime):
+        return True
+    delta = now - last_scrutinized_at
+    return delta > timedelta(days=max_age_days)
+
+
+def false_precision_holds(*args, **kwargs) -> bool:
+    """True when precision exceeds LEIDEN_MAX_FALSE_PRECISION_DECIMALS (3 decimals is the JIF example)."""
+    precision: int | None = None
+    if kwargs:
+        if "precision" in kwargs and isinstance(kwargs["precision"], int):
+            precision = kwargs["precision"]
+        elif "decimals" in kwargs and isinstance(kwargs["decimals"], int):
+            precision = kwargs["decimals"]
+    if precision is None and args:
+        # Support both (precision) and (value, precision) calling conventions
+        if len(args) == 1 and isinstance(args[0], int):
+            precision = args[0]
+        elif len(args) == 2 and isinstance(args[1], int):
+            precision = args[1]
+        elif len(args) == 2 and isinstance(args[0], int):
+            precision = args[0]
+        elif len(args) == 1 and isinstance(args[0], float):
+            return False
+    if not isinstance(precision, int):
+        return False
+    return precision > LEIDEN_MAX_FALSE_PRECISION_DECIMALS
+
 
 
 def collect(home: Path, start: datetime, *, end=None) -> dict:
