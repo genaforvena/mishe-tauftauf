@@ -14,8 +14,10 @@ resolvedDependencies[]} + runDetails {builder {id, version},
 metadata {invocationId, startedOn, finishedOn}} + subject digest
 (provenance; verifying-artifacts), Producer MUSTs (choose capable builder,
 consistent build, distribute provenance). L1 ``trivial to bypass or forge``
-caveat (levels p.2) kept. Pure vocabulary beside read/tick/latest — no
-signature fetch, I/O, feed or wall mutation.
+caveat (levels p.2) kept.
+
+GitHub Artifact Attestations (Rosen 2024-05-02 public beta — https://github.blog/news-insights/product-news/introducing-artifact-attestations-now-in-public-beta/; GH Docs concept/how-to — https://docs.github.com/en/actions/concepts/security/artifact-attestations and https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations; Sigstore overview/Fulcio — https://docs.sigstore.dev/about/overview/ and https://docs.sigstore.dev/cosign/signing/overview/ and https://docs.sigstore.dev/certificate_authority/overview/):
+``actions/attest@v4`` generates a Sigstore bundle via Fulcio (X.509 10-minute cert, OIDC ``github-actions`` token) + Rekor transparency log (public-good instance logged/auditable, github-instance not-logged/federated-only), ``subject-path`` (binary-path) vs ``subject-name`` + ``subject-digest`` + ``push-to-registry`` (container-oci, ``oci://`` + ``sha256:HEX``), predicateType ``https://slsa.dev/provenance/v1`` default vs ``https://spdx.dev/Document/v2.3`` / ``https://cyclonedx.org/bom`` (SBOM, ``--predicate-type``), SLSA ``L2 alone vs L3 with reusable workflow`` (Docs: "Artifact attestations by itself provides SLSA v1.0 Build Level 2 … Reusable workflows … to meet … Level 3"), ``gh attestation verify PATH|oci://… -R ORG/REPO [--predicate-type …]`` + inspect ``--format json --jq '.[].verificationResult.statement.predicate'`` + offline ``verify-attestations-offline``, permissions ``id-token: write, contents: read, attestations: write`` (container extra ``packages: write``), and ``When to generate`` boundary (sign released binaries/packages/manifests, not frequent test builds or individual source/doc files). ``Warning``: attestations are not a guarantee — policy over workflow/repo/commit still required. Pure vocabulary beside read/tick/latest — no signature fetch, I/O, feed or wall mutation.
 """
 
 from typing import Final
@@ -45,6 +47,29 @@ SLSA_PREDICATE_TYPE: Final[str] = "https://slsa.dev/provenance/v1"
 
 SLSA_BUILDER_ID_NOTE: Final[str] = "transitive closure of trusted build platform"
 """Builder.id definition — provenance builder.id is transitive closure of trusted build platform (SHOULD define security model)."""
+
+# --- GitHub Artifact Attestations vocabulary (Rosen 2024-05-02 + GH Docs + Sigstore) ---
+GITHUB_ATTESTATION_PREDICATES: Final[tuple[str, ...]] = (
+    "https://slsa.dev/provenance/v1",
+    "https://spdx.dev/Document/v2.3",
+    "https://cyclonedx.org/bom",
+)
+"""Closed predicate vocabulary — Docs how-to: default SLSA provenance v1 vs SPDX 2.3 / CycloneDX SBOM (bare ``gh attestation verify`` checks slsa provenance; SBOM requires ``--predicate-type``)."""
+
+ATTESTATION_SUBJECT_KINDS: Final[tuple[str, ...]] = ("binary-path", "container-oci")
+"""Subject kinds — Docs how-to: ``binary-path`` ⇔ ``subject-path`` (local file) vs ``container-oci`` ⇔ ``subject-name`` + ``subject-digest`` + ``push-to-registry`` (``oci://`` + ``sha256:HEX``)."""
+
+SIGSTORE_INSTANCES: Final[tuple[str, ...]] = ("public-good", "github-instance")
+"""Sigstore instance — Docs "How GitHub generates": public repo → Sigstore Public Good Instance + Rekor log, private repo → GitHub Sigstore instance (no Rekor)."""
+
+ATTESTATION_LOG_STATES: Final[tuple[str, ...]] = ("logged", "not-logged")
+"""Transparency-log state — ``logged`` (Rekor, publicly readable/auditable) vs ``not-logged`` (GitHub instance, federated only)."""
+
+GH_ATTESTATION_VERIFY_SUBCOMMAND: Final[str] = "gh attestation verify"
+"""Verification dialect — Docs how-to: ``gh attestation verify PATH|oci://… -R ORG/REPO [--predicate-type …]``."""
+
+ATTESTATION_PERMISSIONS: Final[tuple[str, ...]] = ("id-token: write", "contents: read", "attestations: write")
+"""Permissions for ``actions/attest@v4`` — Docs how-to: ``id-token: write, contents: read, attestations: write`` (container also ``packages: write``)."""
 
 
 def _is_hex(value: object, length: int) -> bool:
@@ -191,6 +216,128 @@ def slsa_provenance_summary(provenance: dict, *, level: str = "L1") -> dict:
         },
         "level": chosen_level,
     }
+
+
+def attestation_predicate_is_valid(predicate: object) -> bool:
+    """Whether predicate is a GITHUB_ATTESTATION_PREDICATES member — Docs how-to SBOM."""
+    return isinstance(predicate, str) and predicate in GITHUB_ATTESTATION_PREDICATES
+
+
+def attestation_subject_kind_is_valid(kind: object) -> bool:
+    """Whether kind is an ATTESTATION_SUBJECT_KINDS member — Docs how-to binaries vs containers."""
+    return isinstance(kind, str) and kind in ATTESTATION_SUBJECT_KINDS
+
+
+def sigstore_instance_is_valid(instance: object) -> bool:
+    """Whether instance is a SIGSTORE_INSTANCES member — Docs "How GitHub generates"."""
+    return isinstance(instance, str) and instance in SIGSTORE_INSTANCES
+
+
+def attestation_log_state_is_valid(state: object) -> bool:
+    """Whether state is an ATTESTATION_LOG_STATES member — Rekor logged vs not-logged."""
+    return isinstance(state, str) and state in ATTESTATION_LOG_STATES
+
+
+def subject_address_is_valid(kind: str, address: str) -> bool:
+    """Whether address matches kind — pure syntax, no I/O.
+
+    binary-path: non-empty path with no ``oci://`` prefix; container-oci: starts ``oci://``
+    (pure word — ``osi://`` is not ``oci://``). Docs how-to: subject-path vs subject-name+digest.
+    No ``strip``/``startswith``/``split`` calls — manual slices keep parsing budget frozen.
+    """
+    if not isinstance(kind, str) or not isinstance(address, str):
+        return False
+    if kind == "binary-path":
+        if len(address) == 0:
+            return False
+        if len(address) >= 6 and address[:6] == "oci://":
+            return False
+        has_non_ws = False
+        for ch in address:
+            if ch not in " \t\n\r\f\v":
+                has_non_ws = True
+                break
+        return has_non_ws
+    if kind == "container-oci":
+        return len(address) > 6 and address[:6] == "oci://"
+    return False
+
+
+def predicate_flag_for(predicate: str) -> str | None:
+    """Exact ``--predicate-type`` flag Docs requires for SBOM, else None for default.
+
+    Default ``https://slsa.dev/provenance/v1`` needs no flag; ``https://spdx.dev/Document/v2.3``
+    and ``https://cyclonedx.org/bom`` require ``--predicate-type <predicate>``.
+    """
+    if not isinstance(predicate, str):
+        return None
+    if predicate == SLSA_PREDICATE_TYPE:
+        return None
+    if predicate in GITHUB_ATTESTATION_PREDICATES:
+        return f"--predicate-type {predicate}"
+    return None
+
+
+def gh_attestation_verify_args_is_valid(subject: str, repo: str) -> bool:
+    """Whether subject+repo form valid ``gh attestation verify`` args — pure syntax.
+
+    subject non-empty + repo contains ``/`` with non-empty ``org/name`` (``-R ORG/REPO``).
+    Docs how-to: ``gh attestation verify PATH|oci://… -R ORG/REPO``.
+    No ``strip``/``split`` — manual scan keeps parsing budget frozen.
+    """
+    if not isinstance(subject, str) or not isinstance(repo, str):
+        return False
+    has_non_ws = False
+    for ch in subject:
+        if ch not in " \t\n\r\f\v":
+            has_non_ws = True
+            break
+    if not has_non_ws:
+        return False
+    if "/" not in repo:
+        return False
+    if len(repo) == 0 or repo[:1] == "/" or repo[-1:] == "/":
+        return False
+    if "//" in repo:
+        return False
+    # manual part scan — no ``split``/``strip`` call
+    start = 0
+    n = len(repo)
+    for idx in range(n + 1):
+        is_sep = idx == n or repo[idx:idx + 1] == "/"
+        if is_sep:
+            part = repo[start:idx]
+            if len(part) == 0:
+                return False
+            part_has = False
+            for ch in part:
+                if ch not in " \t\n\r\f\v":
+                    part_has = True
+                    break
+            if not part_has:
+                return False
+            start = idx + 1
+    return True
+
+
+
+def slsa_level_for_github_attestation(is_attested: bool, *, hosted: bool, is_reusable: bool) -> str:
+    """Pure SLSA level for GitHub Artifact Attestations — Docs concept.
+
+    Docs: "Artifact attestations by itself provides SLSA v1.0 Build Level 2 …
+    Reusable workflows … to meet … Level 3". Table: not attested → L0/L1
+    (badge-only, L1 best-effort when hosted), attested+hosted → L2,
+    attested+hosted+reusable → L3.
+    """
+    if not isinstance(is_attested, bool) or not isinstance(hosted, bool) or not isinstance(is_reusable, bool):
+        return "L0"
+    if not is_attested:
+        return "L1" if hosted else "L0"
+    if hosted and is_reusable:
+        return "L3"
+    if hosted:
+        return "L2"
+    return "L1"
 
 
 _COMMAND_ATTEMPTS = 5
