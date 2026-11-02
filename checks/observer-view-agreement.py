@@ -37,9 +37,29 @@ starts. The plant's own check report (``SYSTEM ZERO`` and the role's
 observations file) follows the block; it is the plant's observation, not a
 projection of the reviewed tree, so it is named as outside the block instead of
 being compared as one of its lines.
-
 ``checks/observer-source-identity.py`` answers why the running bytes have no
 commit identity; this check answers what the difference costs.
+
+Second-order cybernetics (von Foerster 1971, "Perception of the Future and the
+Future of Perception," address 1971-03-29, Instr. Sci. 1(1) 1972 pp.31-43, Ch.7
+in _Understanding Understanding_ 2003, pp.05-06; Nizami 2020, "Glanville's Black
+Box" RIFL 14(2) pp.47-52, von Foerster 2003 p.208, Ashby 1961 p.92): a trivial
+machine is a one-to-one invariant input->output, deterministic, predictable,
+analysable and synthesizable; a non-trivial machine's output is determined by
+its previous output via an internal-state shift, so it is deterministic but
+unpredictable; trivialization is the directive to make machines trivial, with
+tests as trivialization devices that succeed by making the student predictable
+and destroy autonomy when applied to humans (legitimate vs illegitimate
+question p.06); whitening a Black Box via input/output (Glanville 1982) can
+turn a trivial observer+Box pair into a white box, but a non-trivial pair is
+never fully whitenable. This check is a trivial machine by construction --
+CHILD rebuilds its import root (plus stdlib, PYTHONPATH_RE) so the
+evidence-block comparison is a function of the tree's bytes, not host state --
+while the published reading it checks is history-dependent (snapshot age,
+published_section, snapshot_age/checked_at) and therefore non-trivial, which
+is why verdict agreement held while the published block was missing (commit
+49bb564). A wall quote of a projection does not make the block carry it: the
+same whitening limit.
 
 Exit status:
   0  the plant's published evidence carries the reviewed tree's projections
