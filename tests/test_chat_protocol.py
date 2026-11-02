@@ -74,3 +74,30 @@ def test_malformed_lifecycle_control_reaches_dashboard_failure_detector(tmp_path
     capsys.readouterr()
     frame, ok = dashboard.read(tmp_path, "docs")
     assert not ok and "STATE: RED" in frame and "malformed lifecycle" in frame
+def test_grounding_ack_returns_hex_digest_and_ignores_nonhex():
+    from mishe_tauftauf.chat_protocol import grounding_ack
+    ok = grounding_ack(entry("hello grounded:d4c0698 world", source="senses"))
+    assert ok == "d4c0698"
+    assert grounding_ack(entry("grounded: nothex", source="senses")) is None
+    assert grounding_ack(entry("no marker here", source="senses")) is None
+
+
+def test_grounding_ack_requires_grounded_prefix():
+    from mishe_tauftauf.chat_protocol import grounding_ack
+    # Embedded hex without prefix must not match.
+    assert grounding_ack(entry("seed wake docs observation=12 d4c0698", source="seed")) is None
+    assert grounding_ack(entry("market announce:foo:requires=bar d4c0698", source="genome")) is None
+    # With prefix it matches even on lifecycle/market-looking entries.
+    assert grounding_ack(entry("seed wake docs observation=12\ngrounded:d4c0698b", source="seed")) == "d4c0698b"
+
+
+def test_grounding_ack_accepts_7_to_40_hex():
+    from mishe_tauftauf.chat_protocol import grounding_ack
+    assert grounding_ack(entry("grounded:abc1234", source="senses")) == "abc1234"
+    assert grounding_ack(entry("grounded:" + "a" * 40, source="senses")) == "a" * 40
+    # 6 chars too short — not a grounded ack
+    assert grounding_ack(entry("grounded:abc123", source="senses")) is None
+    # 41 hex chars: not bounded by \b at 40, so no match (prevents accepting a
+    # longer hex run as a 40-char prefix). Upper-case also not matched.
+    assert grounding_ack(entry("grounded:" + "a" * 41, source="senses")) is None
+    assert grounding_ack(entry("grounded:ABC1234", source="senses")) is None

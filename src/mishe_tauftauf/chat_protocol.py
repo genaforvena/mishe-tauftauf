@@ -25,6 +25,22 @@ _MARKET_LEGACY = {
     "bid": re.compile(r"bid:(?P<identity>[A-Za-z0-9._:-]{1,128}):qual=(?P<qual>[A-Za-z0-9._:-]{1,64}):available=(?P<number>\d+)\Z"),
     "award": re.compile(r"award:(?P<identity>[A-Za-z0-9._:-]{1,128}):winner=(?P<winner>[A-Za-z0-9._/-]{1,64}):bids=(?P<number>\d+)\Z"),
 }
+_GROUNDING_ACK_RE = re.compile(r"grounded:(?P<digest>[0-9a-f]{7,40})\b")
+
+
+def grounding_ack(entry: FeedEntry) -> str | None:
+    """Digest referenced as positive evidence, or None.
+
+    A line containing ``grounded:<digest>`` anywhere in the body counts as an
+    acknowledgment continuer (Clark's form 1). The digest must be hex 7–40
+    chars so a SHA prefix qualifies but free prose does not. The
+    relevant-next-turn case (an outcome/wall edit whose content is the
+    evidence) is not decoded here; it is observed by the next contribution's
+    appropriateness.
+    """
+    m = _GROUNDING_ACK_RE.search(entry.body)
+    return m.group("digest") if m else None
+
 
 
 class ProtocolError(FeedError):
