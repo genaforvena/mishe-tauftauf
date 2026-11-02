@@ -241,7 +241,9 @@ def _report(home: Path, max_age: float, horizon_hours: float, now: datetime) -> 
     # scan receipt publishes scan_window_aoi at top level (prior created
     # stamps as the sawtooth, now = that receipt's created). Emit it
     # beside the threshold lines; warmup (<2 priors) stays UNKNOWN — same
-    # unknown vocabulary as _fresh's Undecidable.
+    # unknown vocabulary as _fresh's Undecidable. When the receipt carries
+    # Kaul-Yates 2012 Eq.4 unfolded terms (mean_age_unfolded,
+    # mean_transport), emit them beside the folded mean_age.
     try:
         _aoi = None
         if isinstance(_ledger_snapshot, dict) and isinstance(_ledger_snapshot.get("scan_window_aoi"), dict):
@@ -251,7 +253,7 @@ def _report(home: Path, max_age: float, horizon_hours: float, now: datetime) -> 
         elif isinstance(observation, dict) and isinstance(observation.get("scan_window_aoi"), dict):
             _aoi = observation.get("scan_window_aoi")
         if isinstance(_aoi, dict):
-            print(
+            _aoi_line = (
                 "aoi       : current=%.1fs mean_age=%.1fs mean_peak=%.1fs p95=%.1fs max=%.1fs min=%.1fs n=%d window=%ds"
                 % (
                     float(_aoi.get("current", 0)),
@@ -264,6 +266,18 @@ def _report(home: Path, max_age: float, horizon_hours: float, now: datetime) -> 
                     int(float(_aoi.get("window_seconds", 0))),
                 )
             )
+            # Additive unfolded row (Kaul-Yates 2012 Eq.4 Q=X·T+X²/2): gap = Σ(X·T)/ΣX
+            if isinstance(_aoi.get("mean_age_unfolded"), (int, float)) and isinstance(
+                _aoi.get("mean_transport"), (int, float)
+            ):
+                _aoi_line += " mean_age_unfolded=%.1fs mean_transport=%.1fs t_median=%.1fs t_p95=%.1fs t_max=%.1fs" % (
+                    float(_aoi.get("mean_age_unfolded", 0)),
+                    float(_aoi.get("mean_transport", 0)),
+                    float(_aoi.get("t_median", 0)),
+                    float(_aoi.get("t_p95", 0)),
+                    float(_aoi.get("t_max", 0)),
+                )
+            print(_aoi_line)
         else:
             print("aoi       : UNKNOWN — warmup (<2 prior scans) or unpublished window")
     except Exception as _aoi_exc:
