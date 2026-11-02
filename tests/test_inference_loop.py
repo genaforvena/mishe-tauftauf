@@ -370,6 +370,79 @@ def test_unresolved_effect_stops_without_retry(status):
     assert json.loads(events[-2]["message"]["content"][0]["text"])["status"] == status
 
 
+def test_unknown_effect_preserves_caller_snapshot_and_resume_does_not_redispatch(tmp_path):
+    """Critique pin: drive_native snapshots context; journal is the resume source."""
+    import copy
+    caller_context = copy.deepcopy(CONTEXT)
+    before = copy.deepcopy(caller_context)
+    path = tmp_path / "snapshot-pin.jsonl"
+    session = Session(turn([CALL]), turn())
+    effects = []
+    with NativeJournal(path) as journal:
+        result = drive_native(
+            session, caller_context, obligation={"source": "owned-event"},
+            max_turns=3, max_calls=2,
+            dispatch=lambda call: effects.append(copy.deepcopy(call)) or {"status": "unknown"},
+            record=journal, phase=lambda call: None,
+            cancelled=lambda: False, authorized=lambda call: True,
+            complete=lambda ctx: False)
+    assert result["status"] == "unknown"
+    assert effects == [CALL]
+    assert caller_context == before
+    state = read_native_journal(path)
+    assert state["status"] == "unknown"
+    assert state["stopped"] is True
+    # Stopped journals are terminal: resume must be refused without dispatch.
+    effects2 = []
+    session2 = Session(turn([CALL]), turn())
+    with pytest.raises(NativeJournalError, match="stopped caller cannot continue"):
+        with NativeJournal(tmp_path / "resume.jsonl") as journal2:
+            drive_native(
+                session2, copy.deepcopy(state["context"]), obligation={"source": "owned-event"},
+                max_turns=state["budgets"]["turns"], max_calls=state["budgets"]["calls"],
+                resume_from=path,
+                dispatch=lambda call: effects2.append(copy.deepcopy(call)) or {"status": "completed"},
+                record=journal2, phase=lambda call: pytest.fail("phase must not run on unknown resume"),
+                cancelled=lambda: False, authorized=lambda call: True,
+                complete=lambda ctx: False)
+    assert effects2 == []
+    assert session2.inputs == []
+    # Unstopped unknown (interrupted before stop): journal is the resume source,
+    # successor returns unknown without redispatch.
+    interrupted_path = tmp_path / "interrupted.jsonl"
+    from mishe_tauftauf.inference_transport import NativeTurn
+    with NativeJournal(interrupted_path) as journal:
+        def record(event):
+            journal(event)
+            if event["kind"] == "tool_result":
+                raise InterruptedError("lost before stop")
+        with pytest.raises(InterruptedError):
+            drive_native(
+                Session(turn([CALL]), turn()), copy.deepcopy(CONTEXT),
+                obligation={"source": "owned-event"}, max_turns=3, max_calls=2,
+                dispatch=lambda call: {"status": "unknown"},
+                record=record, phase=lambda call: None,
+                cancelled=lambda: False, authorized=lambda call: True,
+                complete=lambda ctx: False)
+    interrupted = read_native_journal(interrupted_path)
+    assert interrupted["stopped"] is False
+    assert interrupted["status"] == "unknown"
+    effects3 = []
+    session3 = Session(turn([CALL]), turn())
+    with NativeJournal(tmp_path / "resume2.jsonl") as journal3:
+        resumed = drive_native(
+            session3, copy.deepcopy(interrupted["context"]),
+            obligation={"source": "owned-event"},
+            max_turns=interrupted["budgets"]["turns"], max_calls=interrupted["budgets"]["calls"],
+            resume_from=interrupted_path,
+            dispatch=lambda call: effects3.append(copy.deepcopy(call)) or {"status": "completed"},
+            record=journal3, phase=lambda call: pytest.fail("phase must not run"),
+            cancelled=lambda: False, authorized=lambda call: True,
+            complete=lambda ctx: False)
+    assert resumed["status"] == "unknown"
+    assert effects3 == []
+    assert session3.inputs == []
+
 @pytest.mark.parametrize("calls", [[CALL, CALL], [CALL, {**CALL, "id": "other", "name": "ungranted"}]])
 def test_invalid_selection_rejects_entire_turn(calls):
     result, _, effects = drive(Session(turn(calls)))
