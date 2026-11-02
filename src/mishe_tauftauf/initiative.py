@@ -64,6 +64,21 @@ STAGED_SUBSETS: Final[tuple[int, ...]] = (10, 50, 200)
 STAGED_TRIGGER: Final[float] = 0.40
 """Staged trigger 0.40 from DGM §4.2/Appendix E."""
 
+META_TASK_FAMILIES: Final[tuple[str, ...]] = (
+    "aged-wake",
+    "continuation-review",
+    "producer-stale",
+    "patch-gap",
+    "outcome-gap",
+    "lifecycle-gap",
+)
+"""Current task distribution p(T) estimate over recurring finding kinds (Finn et al. 2017 §2.1 p.2–3 — tasks as training examples). Distinct from the rolling 24 h window."""
+
+MAML_SENSITIVITY_VERSION: Final[int] = 1
+"""Version for the sensitivity helpers."""
+
+MAML_FIRST_ORDER: Final[bool] = True
+"""Whether the plant's cheap analogue uses the first-order approximation (Finn et al. 2017 p.4 Hessian-vector product cost; §5.2 ablation). True = first-order shortcut, no Hessian-vector product."""
 
 def stepping_stone_score(version: dict) -> float:
     """DGM parent-selection weight: score × (1+children_editing), 0 when not editing-capable.
@@ -156,6 +171,70 @@ def is_stepping_stone(candidate: dict, archive: list[dict]) -> bool:
         if cand_id is None and sc > bs:
             return True
     return False
+
+
+def adaptation_gain(before: float | None, after: float | None) -> float | None:
+    """MAML adaptation gain: L(theta) - L(theta_i'); Finn et al. 2017 §1 p.2 sensitivity view.
+
+    Returns before - after when both are finite numbers, else None (plant's
+    existing None-for-unknown idiom). No I/O, no clock, no tape scan.
+    """
+    try:
+        b = float(before) if before is not None else None
+        a = float(after) if after is not None else None
+    except Exception:
+        return None
+    if b is None or a is None:
+        return None
+    if not math.isfinite(b) or not math.isfinite(a):
+        return None
+    return b - a
+
+
+def is_sensitive_initialization(
+    gains: list[float] | None, threshold: float = 0.0
+) -> bool | None:
+    """Whether the initialization is sensitive: median(gains) > threshold (Finn et al. 2017 p.2).
+
+    True when median gain exceeds threshold, False when median <= threshold,
+    None when input is not a non-empty list of finite numbers. No I/O.
+    """
+    if not isinstance(gains, list) or len(gains) == 0:
+        return None
+    try:
+        vals: list[float] = []
+        for g in gains:
+            f = float(g)
+            if not math.isfinite(f):
+                return None
+            vals.append(f)
+        thr = float(threshold)
+        if not math.isfinite(thr):
+            return None
+    except Exception:
+        return None
+    vals.sort()
+    n = len(vals)
+    mid = n // 2
+    if n % 2 == 1:
+        median = vals[mid]
+    else:
+        median = (vals[mid - 1] + vals[mid]) / 2.0
+    return median > thr
+
+
+def maml_requires_second_order(use_second_order: bool | None) -> bool | None:
+    """Whether the MAML meta-gradient needs a Hessian-vector product (Finn et al. 2017 p.4 vs §5.2).
+
+    First-order approximation drops the second derivative (cheap, often
+    sufficient — §5.2 ablation). Returns the bool when given a bool, else None.
+    MAML_FIRST_ORDER=True means the cheap analogue is the default.
+    """
+    if isinstance(use_second_order, bool):
+        return use_second_order
+    return None
+
+
 LIMITS = [
     "Counts describe recorded evidence, not initiative, courage, productivity or bugs fixed.",
     "Settlements are reported turn results; changed and verified are not independent acceptance.",
