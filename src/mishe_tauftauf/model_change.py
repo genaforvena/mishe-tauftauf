@@ -363,6 +363,7 @@ def _status(home, change):
     root, receipt = boundary.receipt(home, change)
     report = {'id': change, 'source': receipt['source'], 'target': receipt['target'],
               'created': receipt['created'], 'checked': now(), 'roles': {}, 'unknown': receipt['unknown']}
+    resting = set(dispositions.parked_roles(home, now=now()))
     for role, row in receipt['roles'].items():
         result = dict(row)
         path = home / 'minds' / role
@@ -377,6 +378,11 @@ def _status(home, change):
                 receipt['source'] if reverting else receipt['target'],
                 root / role / 'revert-run' if reverting else root / role)
             result.update(observed)
+            if observed['state'] == 'unknown' and observed.get('reason') == 'mind window missing' and role in resting:
+                # A parked role is deliberately not running: no window is expected, nothing
+                # to activate or observe. Its launcher is already the desired state and the
+                # next fresh start picks it up. Reported as parked, not as an unknown change.
+                result.update(state='parked', reason='role parked by disposition; no live window expected; launcher holds the desired model')
             if observed['state'] == 'adopted' and row.get('after_process'):
                 # Delivery of the operation is historical after a normal
                 # rotation. Keep it separate from the new process's provider
@@ -396,6 +402,11 @@ def _status(home, change):
                 result['reason'] = row.get('reason', observed.get('reason'))
         report['roles'][role] = result
     states = {r['state'] for r in report['roles'].values()}
+    if states == {'parked'}:
+        report['state'] = 'parked'
+        report['reason'] = role_reason(report['roles']) or receipt.get('reason')
+        return report
+    states -= {'parked'}  # a parked role neither completes nor blocks the others
     report['state'] = ('reverted' if states == {'reverted'} else 'verified' if states == {'verified'}
                        else 'delivered' if states <= {'verified', 'delivered'} and 'delivered' in states
                        else 'unknown' if states & {'unknown', 'conflict', 'activating', 'failed'}
