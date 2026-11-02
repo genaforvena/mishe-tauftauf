@@ -41,6 +41,10 @@ WINDOW_SECONDS = 86400
 MAX_TAPE_BYTES = 512 * 1024 * 1024
 MAX_ENTRIES = 250000
 MAX_PATCHES = 512
+# Raw ceiling for a patch record read. Attribution needs only the small
+# top-level fields; the `files` payload (before/after contents) is elided
+# before parsing. Records above this ceiling still fail closed.
+MAX_PATCH_RECORD_BYTES = 8 * 1024 * 1024
 MAX_EVIDENCE_BYTES = 4 * 1024 * 1024
 MAX_TOTAL_EVIDENCE_BYTES = 128 * 1024 * 1024
 SNAPSHOT_MAX_AGE = 900
@@ -177,6 +181,90 @@ def _time(value):
     return result.astimezone(timezone.utc)
 
 
+def _skip_json_value(data: bytes, start: int) -> int:
+    """Return the index just past the JSON value starting at ``start``."""
+    if data[start:start + 1] in (b"{", b"["):
+        depth, index = 0, start
+        while index < len(data):
+            byte = data[index:index + 1]
+            if byte == b'"':
+                index = _skip_json_string(data, index)
+                continue
+            if byte in (b"{", b"["):
+                depth += 1
+            elif byte in (b"}", b"]"):
+                depth -= 1
+                if depth == 0:
+                    return index + 1
+            index += 1
+        raise ValueError("unterminated JSON container")
+    if data[start:start + 1] == b'"':
+        return _skip_json_string(data, start)
+    index = start
+    while index < len(data) and data[index:index + 1] not in (b",", b"}", b"]", b" ", b"\n", b"\r", b"\t"):
+        index += 1
+    return index
+
+
+def _skip_json_string(data: bytes, start: int) -> int:
+    """Return the index just past the JSON string whose opening quote is at ``start``."""
+    index = start + 1
+    while index < len(data):
+        byte = data[index:index + 1]
+        if byte == b"\\":
+            index += 2
+            continue
+        if byte == b'"':
+            return index + 1
+        index += 1
+    raise ValueError("unterminated JSON string")
+
+
+def elide_member_value(data: bytes, key: str) -> bytes:
+    """Replace every top-level object member ``key`` with ``null``, leaving the rest byte-identical.
+
+    Only depth-one keys are elided; nested keys with the same name are kept.
+    The result is valid JSON when the input was, so callers can still parse
+    phase, verification and test fields from an oversized record.
+    """
+    target = json.dumps(key).encode()
+    spans: list[tuple[int, int]] = []
+    depth, index = 0, 0
+    while index < len(data):
+        byte = data[index:index + 1]
+        if byte == b'"':
+            end = _skip_json_string(data, index)
+            if depth == 1 and data[index:end] == target:
+                cursor = end
+                while data[cursor:cursor + 1].isspace():
+                    cursor += 1
+                if data[cursor:cursor + 1] != b":":
+                    index = end  # a string value equal to the key, not a member
+                    continue
+                cursor += 1
+                while data[cursor:cursor + 1].isspace():
+                    cursor += 1
+                spans.append((cursor, _skip_json_value(data, cursor)))
+                index = spans[-1][1]
+                continue
+            index = end
+            continue
+        if byte in (b"{", b"["):
+            depth += 1
+        elif byte in (b"}", b"]"):
+            depth -= 1
+        index += 1
+    if not spans:
+        return data
+    pieces, previous = [], 0
+    for start, end in spans:
+        pieces.append(data[previous:start])
+        pieces.append(b"null")
+        previous = end
+    pieces.append(data[previous:])
+    return b"".join(pieces)
+
+
 def _read(path, maximum):
     fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
     with os.fdopen(fd, "rb") as stream:
@@ -250,7 +338,7 @@ def _patches(home, now):
         item = {"ref": f"patches/{path.name}", "id": path.stem, "role": None,
                 "attribution": "UNKNOWN"}
         try:
-            record = json.loads(_read(path, MAX_BYTES))
+            record = json.loads(elide_member_value(_read(path, MAX_PATCH_RECORD_BYTES), "files"))
             if not isinstance(record, dict) or not isinstance(record.get("phase"), str):
                 raise ValueError("patch phase unavailable")
             phase = record["phase"]
