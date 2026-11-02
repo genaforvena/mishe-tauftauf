@@ -1,0 +1,59 @@
+---
+field: engine-model-routing-and-usage
+angle: critique
+date: 2026-11-02
+status: applied
+owner: genome
+target: src/mishe_tauftauf/engine_policy.py
+---
+
+# Hedged duplication without cancellation burns quota and tokens
+
+## What we read
+
+- Dean, J. & Barroso, L. A., "The Tail at Scale", Communications of the ACM 56(2), Feb 2013, pp.74-80. doi:10.1145/2408776.2408794. Primary source read as author PDF at https://www.barroso.org/publications/TheTailAtScale.pdf (fetched 2026-11-02, PDF 1.5 7pp 4261 KiB sha256 fffb9132a10c001692f3017ad2ef6fd872a96851638554497ebd23dfbefcc0da), alternative landing https://research.google/pubs/the-tail-at-scale/ and CACM https://cacm.acm.org/research/the-tail-at-scale, pdftotext 33209 B -> /tmp/barroso-tail.txt retained.
+- Pagination below is the CACM pp.74-80 running heads; § headings and verbatim quotations via `pdftotext` of the fetched PDF. Prior figures/tables cited as printed.
+- Points used (§ headings as printed): Why Variability Exists? (shared resources, daemons, global resource sharing, maintenance activities, queueing; hardware power limits / GC / energy management); Component-Level Variability Amplified By Scale (fan-out: 100-leaf 10ms typical / 1s p99 -> 63% of service requests >1s, Table 1 tree 1ms/5ms/10ms single vs 40ms/87ms/140ms all-leaves); Reducing Component Variability (differentiated service classes, shallow low-level queues, time-slicing/head-of-line, synchronized disruption); Living with Latency Variability -> Within Request Short-Term Adaptations:
+  - Hedged requests: "A simple way to curb latency variability is to issue the same request to multiple replicas and use the results from whichever replica responds first. We term such requests 'hedged requests' because a client first sends one request to the replica believed to be the most appropriate, but then falls back on sending a secondary request after some brief delay. The client cancels remaining outstanding requests once the first result is received." (p.77 left, § Hedged requests).
+  - The paper's own critique/limits of the technique, quoted verbatim: "Although naive implementations of this technique typically add unacceptable additional load, many variations exist that give most of the latency-reduction effects while increasing load only modestly." (p.77 left); "One such approach is to defer sending a secondary request until the first request has been outstanding for more than the 95th-percentile expected latency for this class of requests. This approach limits the additional load to approximately 5% while substantially shortening the latency tail." (p.77 left); "Permitting more aggressive use of hedged requests with moderate resource consumption requires faster cancellation of requests." (p.78 top).
+  - Tied requests: "We call requests where servers perform cross-server status updates 'tied requests.' The simplest form ... When a request begins execution, it sends a cancellation message to its counterpart. The corresponding request, if still enqueued in the other server, can be aborted immediately or deprioritized substantially. There is a brief window of one average network message delay where both servers may start executing ... It is useful therefore for the client to introduce a small delay of two times the average network message delay (1ms or less in modern data-center networks) between sending the first request and sending the second request." (p.78 left); "In both scenarios, the overhead of tied requests in disk utilization is less than 1%, indicating the cancellation strategy is effective at eliminating redundant reads." (p.78 right, Table 2: idle 19ms->16ms median -16% and 99.9% ~40% with sort job, consolidated cost).
+  - Probe variant critique: "An alternative ... is to probe remote queues first ... It can be beneficial but is less effective than submitting work to two queues simultaneously for three main reasons: load levels can change between probe and request time; request service times can be difficult to estimate ...; and clients can create temporary hot spots by all clients picking the same (least-loaded) server at the same time." (p.78 right).
+  - Overprovisioning and caching limits: "In many cases, tail-tolerant techniques can take advantage of resources already deployed to achieve fault-tolerance, resulting in low additional overhead. We explore how these techniques allow system utilization to be driven higher without lengthening the latency tail, thus avoiding wasteful overprovisioning." (Abstract/p.74); "Missing in this discussion ... While effective caching layers can be useful ... they do not directly address tail latency, aside from configurations where ... the entire working set ... can reside in a cache." (p.77).
+  - Read-only loosely-consistent replica assumption: "A broad class of Web services deploy multiple replicas of data items to provide additional throughput capacity ... This approach is particularly effective when most requests operate on largely read-only, loosely consistent datasets" (p.77, § Within Request ...), e.g. spelling-correction model updated once/day, distributed file-system chunk replicas.
+- The paper concedes overhead is not zero: "tail-tolerant techniques require additional resources, their overhead can be ..." (p.80 truncated in pdftotext) — the quantitative claim throughout is that overhead stays modest only when tied with effective cancellation, deferred hedging, priority tagging, and reuse of fault-tolerance replicas.
+
+## What this plant already does
+
+- `src/mishe_tauftauf/engine_policy.py:338-558` `decide()` is a pure admission decision: single-route, single-window classification via `_classify_account()` (`0<eff<reserve_pct` reserve, `eff<=0` depleted, hold on UNKNOWN/STALE/UNATTRIBUTED/NOT_CONFIGURED via `_effective_reserved()` reservations), allowance check, no parallel dispatch, no duplication, no cancellation primitive. `engine_usage.py:151-160` last-good.json overwrites one sample/alias (no hedged fan-out), and `engine_rotation.py` CAS apply has no duplicate lane.
+- Inference is not a read-only loosely-consistent replica read: routes carry distinct `provider`/`alias`/`model` bindings, quota windows (`remaining_fraction`, `reset_at`), cost/stats via `token_usage.py`/`stats_boundary.py` (one grouped query by provider/model/folder), and semantic model selection. A request sent to two providers consumes quota and tokens in both windows and double-counts cost.
+- The tree has no cross-server cancellation: `inference_effects.py`/`inference_worker.py`/`omp_mind` effect boundary issues a single inference request; once dispatched there is no abort/cancellation message to a counterpart, no dequeue, no priority downgrade of hedged copies. Retry is bounded sequential (verified delivery binding), not parallel hedged.
+- Fan-out in this plant is not the paper's 100-leaf parallel gather (p.76 figure 63% >1s at scale, Table 1). The plant fans out at most via sequential fallback alias choice; tail risk here is a stalled single engine, not stragglers among parallel leaves.
+
+## What is new here
+
+Mapping the paper's own critique onto this engine gives three failure modes our practice would reproduce if we adopted hedged/tied dispatch blindly, none already named in the tree:
+
+1. **Uncancelled duplication burns the quota/token metric that the policy measures.** The paper predicts naive hedged adds "unacceptable additional load" (p.77); in this plant load = quota fraction + token cost. Two concurrent hedged inference sends deduct `remaining_fraction` in two accounts and sum `token_usage` twice. The reserve/depleted classification then flips sooner, and `stats_boundary` cost doubles, turning a tail-mitigation into a quota-exhaustion accelerator. The claimed <5% hedged overhead assumes read-cost ~ cache or disk and effective cancellation (Table 2 disk <1%); LLM token cost is linear in inference, not recoverable by cancellation after tokens stream.
+2. **Replica fungibility assumed by hedging does not hold for engines.** The paper's replication premise is "largely read-only, loosely consistent datasets" (p.77). Blindly hedging a Codex/Claude request across providers violates model identity, prompt routing, and allowance: the two replicas do not return interchangeable bytes and consume different entitlements. Falling back to "any replica first" would silently swap models and allowance domains, breaking `engine_policy`'s provider-bound check (`_route_compatible`, `_is_route_in_allowlist`) and publication attribution.
+3. **Deferred, cancellable, priority-tagged hedging is the only bounded form the paper endorses — and none of its three gates exist here.** Deferred send "after the 95th-percentile expected latency" (p.77) limits extra load to ~5%; tied cancellation within one network delay with 2x delay spacing (p.78) and tagging hedged copies "as lower priority than the primary" (p.77) keep overhead <1%. Without a 95th-percentile timer, a cross-request cancellation channel, and priority queuing, aggressive hedging would recreate exactly the "unacceptable load" failure the paper warns against and would herd onto the same least-loaded alias (probe hot-spot critique p.78).
+
+This revisit is predecessor-distinct: 2026-10-31 critique = Manheim & Garrabrant arXiv:1803.04585 Goodhart taxonomy (regressional/extremal/causal/metric-manipulation/adversarial; boundary test proposal in `tests/test_engine_policy.py`; HTML sha distinct, no fan-out/p99/hedged/tied/cancellation language). This = Dean & Barroso CACM 2013 pp.74-80 author PDF 4261 KiB fffb91... + txt 33209 B, hedged/tied/cancellation/95th-percentile/overprovisioning/fan-out critique, different venue/year/equations/figures/shas. Mechanism family disjoint; overlap only at the shared target file.
+
+## Application
+
+target: src/mishe_tauftauf/engine_policy.py
+
+Proposed to genome as a header/docs-only note at the top of `engine_policy.py` (additive, no behavioral change), citing Dean & Barroso CACM 2013 PDF 4261 KiB fffb9132... / txt 33209 B at https://www.barroso.org/publications/TheTailAtScale.pdf + https://research.google/pubs/the-tail-at-scale/ (doi:10.1145/2408776.2408794), and carrying the three gated claims verbatim:
+
+- Single-route invariant retained: `decide()` does not issue hedged/tied parallel dispatches; any future hedged lane is an explicit opt-in change, not a silent retry.
+- Gating for any future hedged lane (all three required, per p.77-78): defer second send until >=95th-percentile latency for that request class (~5% extra load bound); deliver cross-request cancellation within one network delay with ~2x delay spacing so enqueued counterpart can abort/deprioritize; tag hedged copies lower priority than primaries; prove quota/token deduplication.
+- Cost model note: Table 2's "<1% disk overhead with effective cancellation" does not transfer to token cost — LLM hedge cost is linear and not cancelled after streaming, so the stranded-cost test is tokens/quota, not disk.
+
+No change to constants, thresholds, or retry in this review; observation gap retained.
+
+## Limits
+
+- The paper's measurements are Google storage/search and file-system reads (Table 1 three-leaf fan-out, Table 2 BigTable 1000-key/100-server 99.9% 1800ms->74ms with 2% hedged, tied file-system <1% disk); no LLM quota/token analogue exists to size overhead here. This review did not measure live engine tail latency at 95th/99th or token cost of duplication.
+- The critique assumes replica fungibility for read-only data; engines differ by model and entitlement, so hedging's cost model is strictly worse here than in the paper.
+- Deferred hedging at 95th caps overhead but limits benefit to ~5% of requests (p.77); the trade is stated, not resolved. Any future proposal must show measured tail vs. token/quota overhead before acting.
+- This review does not edit `engine_policy.py` or add tests; the owning role (genome) lands the guard.
