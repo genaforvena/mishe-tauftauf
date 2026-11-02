@@ -20,8 +20,7 @@ from subprocess import TimeoutExpired as _TimeoutExpired
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
-
-from . import head_rewind_dispositions, host_boot, omp_pane, proc_table, space_text, tmux
+from . import head_rewind_dispositions, host_boot, omp_pane, proc_table, recovery_io, space_text, tmux
 from .body_perception import (read_redmi10, read_redmi10_dense_baseline,
                              read_redmi10_delivery_gaps, read_redmi10_light,
                              read_redmi10_peer_delivery)
@@ -8974,13 +8973,59 @@ def scan_age(home: Path) -> float | None:
     return None if bounds is None else bounds[1] / 1_000_000_000
 
 
+def _host_capacity_defers_scan(home: Path) -> tuple[bool, str]:
+    """Whether host capacity requires deferring a discovery renewal.
+
+    Reads ``recovery/host-capacity.json`` via the recovery boundary.
+    Deferred when the slice is LIMITED/CRITICAL without a sustained clear
+    window. ``stable_seconds`` is 120 (host-config.json). A missing file means
+    no controller evidence — allow the scan so unit tests and fresh sites are
+    not blocked. A readable limited state with ``clear_since`` null or <120s
+    defers. UNKNOWN/limited with no clear window defers (fail-closed).
+    """
+    path = home / "recovery" / "host-capacity.json"
+    try:
+        row = recovery_io.read_json(path)
+    except FileNotFoundError:
+        return False, "no host-capacity file"
+    except ValueError as exc:
+        return False, f"host-capacity unreadable: {exc}"
+    except OSError as exc:
+        return False, f"host-capacity unreadable: {exc}"
+    try:
+        state = row.get("state")
+        limited = row.get("limited")
+        clear_since = row.get("clear_since")
+        checked_at = row.get("checked_at")
+        now = time.time()
+        if not isinstance(checked_at, (int, float)) or not 0 <= now - checked_at <= 20:
+            return True, f"host-capacity stale checked_at={checked_at} now={now:.0f} -> defer"
+        if state not in {"NORMAL", "LIMITED", "CRITICAL", "UNKNOWN"}:
+            return False, f"host-capacity unknown state {state!r}"
+        STABLE = 120.0
+        if limited is True or state in {"LIMITED", "CRITICAL", "UNKNOWN"}:
+            if clear_since is None:
+                return True, f"host-capacity {state} clear_since=null limited={limited} -> defer {STABLE:.0f}s window"
+            if not isinstance(clear_since, (int, float)):
+                return True, f"host-capacity {state} clear_since invalid -> defer"
+            held = now - clear_since
+            if held < STABLE:
+                return True, f"host-capacity {state} clear_since held {held:.0f}s < {STABLE:.0f}s -> defer"
+        return False, f"host-capacity {state} clear_since={clear_since} -> allow"
+    except Exception as exc:
+        return False, f"host-capacity check error {exc} -> allow"
+
 def renew_scan(home: Path, max_age_seconds: float = RENEWAL_MAX_AGE_SECONDS) -> Path | None:
     """Renew a missing or old scan without requiring a resident mind wake.
 
-    Return the new artifact path, or None while the latest scan is fresh.
+    Return the new artifact path, or None while the latest scan is fresh
+    or host capacity requires a hold (LIMITED/CRITICAL without 120s clear).
     scan() updates latest.json and deduplicates unchanged states in the feed.
     """
     bounds = age_bounds(latest(home))
     if classify_age(bounds, max_age_seconds) == "recent":
+        return None
+    defer, reason = _host_capacity_defers_scan(home)
+    if defer:
         return None
     return scan(home)
