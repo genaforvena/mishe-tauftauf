@@ -35,6 +35,21 @@ Defs. 4.1-4.3 pp.10-12, preference costs §5 p.12-13, precision/completeness
 exact — the k symbols below are the typed metric so that any future
 generalisation/suppression proposal is reviewable; citing QI per Def. 2.1 is
 required for a release, not inferred.
+Local longitudinal lens: Erlingsson et al., "RAPPOR: Randomized Aggregatable
+Privacy-Preserving Ordinal Response," ACM CCS '14 (DOI 10.1145/2660267.2660348,
+Figure 1 p.5, Theorem 1 p.8, Lemma 1 p.9, Theorem 2 p.9, §2–4) — client-local
+randomized response before the wall bus (no trusted third party, p.2, vs
+Dwork & Roth curator model stats_boundary.py §2.1). Bloom-encoded signal
+(k=256, h=4, §2, but collision alone is not DP p.9), permanent epsilon
+ε∞ (§2 step 2, Theorem 1), instantaneous epsilon ε1 (§2 step 3, Lemma 1 q*/p*
+and Theorem 2), memoization of B' reused for each stable value v ("Subsequently,
+this B' is memoized and reused …" p.5) to avoid averaging to truth (p.6),
+cohorts m=64 sharding h hash families (§4 p.11) and LASSO decoding over many
+clients, Chrome deployment existence proof (p.3, §5.4). Correlated drift when v
+changes leaks despite memoization (p.3–4); ε∞/ε1 are worst-case over Bloom
+pre-images (p.9). This module stays exact — RAPPOR symbols below are typed
+calibration (f, p, q, k, h, m, ε∞, ε1, q*, p*) so a future local noisy body
+release can be reviewed with visible longitudinal vs one-shot budgets.
 Human-subjects lens: National Commission, The Belmont Report, FR 44:23192
 (1979-04-18) via ORI/HHS — Part A practice vs research (practice: interventions
 solely for individual well-being; research: hypothesis + generalizable knowledge
@@ -1031,6 +1046,25 @@ DENSE_TAIL_BYTES = 262144
 DENSE_WINDOW_ROWS = 2000
 #: Freshness gate for the dense-baseline verdict; matches ``FRESH_SECONDS``.
 DENSE_FRESH_SECONDS = 30.0
+# --- RAPPOR local longitudinal vocabulary (Erlingsson et al., CCS '14) ---
+#: Bloom geometry Figure 1 p.5: B of size k with h hashes; collision alone is
+#: not DP (Theorem 1 note p.9). k=256, h=4 are the paper's example defaults;
+#: ε∞ is not a function of k (p.9). f is longitudinal privacy parameter
+#: (§2 p.5 step 2: 0.5f random 1, 0.5f random 0, 1-f true). p,q are
+#: instantaneous parameters (§2 p.6 step 3: P(S=1|B'=1)=q, P(S=1|B'=0)=p).
+#: m=64 cohorts (§4 p.11) shard h hash families to reduce false positives.
+#: All constants are typed calibration only; no Bloom construction, no hash,
+#: no sampling here. Memoization of B' per stable value v ("Subsequently,
+#: this B' is memoized and reused …" p.5) is required to avoid averaging to
+#: truth (p.6); correlated drift when v changes leaks despite memoization
+#: (p.3–4). Client-local (no trusted third party, p.2) vs curator DP in
+#: stats_boundary.py (§2.1). Chrome deployment p.3 existence proof.
+RAPPOR_K_DEFAULT: Final[int] = 256
+RAPPOR_H_DEFAULT: Final[int] = 4
+RAPPOR_F_DEFAULT: Final[float] = 0.5
+RAPPOR_P_DEFAULT: Final[float] = 0.5
+RAPPOR_Q_DEFAULT: Final[float] = 0.75
+RAPPOR_M_COHORTS_DEFAULT: Final[int] = 64
 # --- k-anonymity disclosure metric (Samarati & Sweeney 1998) ---
 #: Quasi-identifier QI: set of attributes whose release must be controlled
 #: (Def. 2.1 p.3); k-anonymity Def. 2.3 p.4: T satisfies k iff each sequence in
@@ -1230,6 +1264,151 @@ def k_anonymity_distinct_tuples(
     hist = qi_histogram(rows, qi_keys)
     return len(hist)
 
+
+#: RAPPOR helpers are pure and exact; they do not sample, hash, or store B'.
+#: Memoization contract §2 p.5: B' memoized per stable value v avoids averaging
+#: to truth (p.6). Correlated drift when v changes leaks despite memoization
+#: (p.3–4). Bloom collision alone is not DP (Theorem 1 note p.9). Client-local
+#: (no trusted third party, p.2) vs curator DP stats_boundary.py (§2.1).
+#: Cohorts m=64 and decoding (§4) require population >> k; one Redmi not aggregatable.
+def rappor_permanent_epsilon(*, f: float, h: int) -> float | None:
+    """Longitudinal ε∞ for the permanent randomized response (Erlingsson et al. Theorem 1 p.8).
+
+    ε∞ = h·ln((1-0.5·f)/(0.5·f)) when 0<f<1 and h>=1 else None. Returns None on
+    invalid params — UNKNOWN-style deny. Correlated drift limit p.3–4 and
+    Bloom-not-DP caveat p.9 apply; memoization §2 p.5 required.
+    Example f=0.5, h=4 → ε∞≈4.39.
+    """
+    try:
+        ff = float(f)  # type: ignore[arg-type]
+        hh = int(h)  # type: ignore[arg-type]
+    except Exception:
+        return None
+    if not math.isfinite(ff) or ff <= 0.0 or ff >= 1.0:
+        return None
+    if hh < 1:
+        return None
+    try:
+        if int(h) != h:  # type: ignore[arg-type]
+            return None
+    except Exception:
+        return None
+    denom = 0.5 * ff
+    numer = 1.0 - 0.5 * ff
+    if denom <= 0.0 or numer <= 0.0:
+        return None
+    try:
+        return float(hh) * math.log(numer / denom)
+    except Exception:
+        return None
+
+
+def rappor_q_star(*, p: float, q: float, f: float) -> float | None:
+    """Effective P(S=1|B=1) = 0.5·f + (1-f)·q (Lemma 1 p.9, simplified q*).
+
+    Lemma 1 p.9 gives q* = 0.5·f·(p+q) + (1-f)·q and p* = 0.5·f·(p+q) + (1-f)·p;
+    when p+q=1 this reduces to 0.5·f + (1-f)·q / 0.5·f + (1-f)·p, which covers
+    the paper's recommended p=0.5, q=0.75, f=0.5 where q*=0.625, p*=0.5.
+    Returns None when 0<=p<=1, 0<=q<=1, 0<f<1 otherwise.
+    """
+    try:
+        pp = float(p)  # type: ignore[arg-type]
+        qq = float(q)  # type: ignore[arg-type]
+        ff = float(f)  # type: ignore[arg-type]
+    except Exception:
+        return None
+    if not (math.isfinite(pp) and math.isfinite(qq) and math.isfinite(ff)):
+        return None
+    if not (0.0 <= pp <= 1.0 and 0.0 <= qq <= 1.0 and 0.0 < ff < 1.0):
+        return None
+    try:
+        return 0.5 * ff + (1.0 - ff) * qq
+    except Exception:
+        return None
+
+
+def rappor_p_star(*, p: float, q: float, f: float) -> float | None:
+    """Effective P(S=1|B=0) = 0.5·f + (1-f)·p (Lemma 1 p.9, same note as q*).
+
+    See rappor_q_star for validity and reduction. Returns None on invalid params.
+    """
+    try:
+        pp = float(p)  # type: ignore[arg-type]
+        qq = float(q)  # type: ignore[arg-type]
+        ff = float(f)  # type: ignore[arg-type]
+    except Exception:
+        return None
+    if not (math.isfinite(pp) and math.isfinite(qq) and math.isfinite(ff)):
+        return None
+    if not (0.0 <= pp <= 1.0 and 0.0 <= qq <= 1.0 and 0.0 < ff < 1.0):
+        return None
+    try:
+        return 0.5 * ff + (1.0 - ff) * pp
+    except Exception:
+        return None
+
+
+def rappor_epsilon_1(*, p: float, q: float, f: float, h: int) -> float | None:
+    """Instantaneous ε1 for one report (Erlingsson et al. Theorem 2 p.9).
+
+    ε1 = h·ln(q*·(1-p*) / (p*·(1-q*))) with q*,p* from Lemma 1. Returns None
+    when any param invalid or denominator non-positive (UNKNOWN-style deny).
+    Example p=0.5, q=0.75, f=0.5, h=4 → q*=0.625, p*=0.5 → ε1≈2.04.
+    Correlated drift p.3–4 and Bloom-not-DP p.9 limits apply.
+    """
+    try:
+        hh = int(h)  # type: ignore[arg-type]
+    except Exception:
+        return None
+    if hh < 1:
+        return None
+    try:
+        if int(h) != h:  # type: ignore[arg-type]
+            return None
+    except Exception:
+        return None
+    qs = rappor_q_star(p=p, q=q, f=f)
+    ps = rappor_p_star(p=p, q=q, f=f)
+    if qs is None or ps is None:
+        return None
+    if not (0.0 < ps < 1.0 and 0.0 < qs < 1.0 and ps != qs):
+        return None
+    try:
+        ratio = (qs * (1.0 - ps)) / (ps * (1.0 - qs))
+        if ratio <= 0.0 or not math.isfinite(ratio):
+            return None
+        return float(hh) * math.log(ratio)
+    except Exception:
+        return None
+
+
+def is_valid_rappor_params(*, f: float, p: float, q: float, h: int, k: int) -> bool:
+    """Whether (f,p,q,h,k) is a valid RAPPOR calibration (Erlingsson et al. §2–4).
+
+    Requires 0<f<1, 0<=p<=1, 0<=q<=1, h>=1, k>=1, all finite. No sampling;
+    Bloom size k does not affect ε∞/ε1 alone (Theorem 1 note p.9) but is
+    required for geometry. Returns False on any invalid or non-finite input.
+    """
+    try:
+        ff = float(f)  # type: ignore[arg-type]
+        pp = float(p)  # type: ignore[arg-type]
+        qq = float(q)  # type: ignore[arg-type]
+        hh = int(h)  # type: ignore[arg-type]
+        kk = int(k)  # type: ignore[arg-type]
+    except Exception:
+        return False
+    if not (math.isfinite(ff) and math.isfinite(pp) and math.isfinite(qq)):
+        return False
+    if not (0.0 < ff < 1.0 and 0.0 <= pp <= 1.0 and 0.0 <= qq <= 1.0):
+        return False
+    try:
+        if int(h) != h or int(k) != k:  # type: ignore[arg-type]
+            return False
+    except Exception:
+        return False
+    if hh < 1 or kk < 1:
+        return False
+    return True
 
 
 def _read_tail(path: Path, limit: int) -> tuple[str | None, str | None]:
