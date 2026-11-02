@@ -1,7 +1,19 @@
 import json
 
+import mishe_tauftauf.unit_psi_reading as reading
 from mishe_tauftauf.unit_psi_reading import MAX_AGE_S, SENSE_ID, read_unit_psi
 
+def _stub_active_sampler(monkeypatch):
+    monkeypatch.setattr(
+        reading,
+        "_sampler_liveness",
+        lambda unit=reading.SAMPLER_UNIT: {
+            "ActiveState": "active",
+            "SubState": "running",
+            "LoadState": "loaded",
+            "UnitFileState": "enabled",
+        },
+    )
 
 def _record(at, high, some=1.5):
     return {"at": at, "cgroups": {
@@ -32,7 +44,8 @@ def test_no_parseable_record_is_unknown(tmp_path):
     assert "malformed=2" in out["sample"]
 
 
-def test_fresh_record_is_verified_with_window_delta(tmp_path):
+def test_fresh_record_is_verified_with_window_delta(tmp_path, monkeypatch):
+    _stub_active_sampler(monkeypatch)
     path = tmp_path / "p.jsonl"
     _write(path, [_record(900.0, high=10), _record(1000.0, high=13)])
     out = read_unit_psi(path, now=1010.0)
@@ -41,7 +54,6 @@ def test_fresh_record_is_verified_with_window_delta(tmp_path):
     assert "top-high-delta=mishe-plants.slice:+3/100s" in out["sample"]
     assert "plants-some-avg10=1.50" in out["sample"]
     assert "swap-plants=10.0%" in out["sample"]
-
 
 def test_swap_at_cap_states_are_explicit():
     from mishe_tauftauf.unit_psi_reading import swap_at_cap
@@ -62,13 +74,13 @@ def test_sample_carries_at_cap_line(tmp_path):
     assert "swap-plants-at-cap>=0.99=yes" in out["sample"]
 
 
-def test_no_earlier_record_in_window_reports_unknown_delta_not_zero(tmp_path):
+def test_no_earlier_record_in_window_reports_unknown_delta_not_zero(tmp_path, monkeypatch):
+    _stub_active_sampler(monkeypatch)
     path = tmp_path / "p.jsonl"
     _write(path, [_record(1000.0, high=13)])
     out = read_unit_psi(path, now=1000.0)
     assert out["state"] == "verified"
     assert "high-delta=unknown(no-window)" in out["sample"]
-
 
 def test_old_record_is_stale_and_labelled_historical(tmp_path):
     path = tmp_path / "p.jsonl"
@@ -78,13 +90,13 @@ def test_old_record_is_stale_and_labelled_historical(tmp_path):
     assert out["sample"].startswith("historical:")
 
 
-def test_malformed_lines_are_skipped_and_counted(tmp_path):
+def test_malformed_lines_are_skipped_and_counted(tmp_path, monkeypatch):
+    _stub_active_sampler(monkeypatch)
     path = tmp_path / "p.jsonl"
     _write(path, [_record(1000.0, high=5)], extra=["garbage", "{}"])
     out = read_unit_psi(path, now=1001.0)
     assert out["state"] == "verified"
     assert "malformed=2" in out["sample"]
-
 
 def test_empty_cgroups_is_unknown(tmp_path):
     path = tmp_path / "p.jsonl"
@@ -235,3 +247,64 @@ def test_all_zero_some_reports_all_zero_not_first_unit(tmp_path):
     out = read_unit_psi(path, now=1000.0)
     assert "top-some=all-zero" in out["sample"]
     assert "top-stall=none/241s" in out["sample"]
+
+def test_fresh_record_with_unknown_sampler_is_unknown(tmp_path, monkeypatch):
+    monkeypatch.setattr(reading, "_sampler_liveness", lambda unit=reading.SAMPLER_UNIT: None)
+    path = tmp_path / "p.jsonl"
+    _write(path, [_record(1000.0, high=13)])
+    out = read_unit_psi(path, now=1000.0)
+    assert out["state"] == "unknown"
+    assert "sampler-unknown(sampler=unknown)" in out["sample"]
+    assert "sampler=unknown" in out["sample"]
+
+
+def test_fresh_record_with_inactive_sampler_is_unknown(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        reading,
+        "_sampler_liveness",
+        lambda unit=reading.SAMPLER_UNIT: {
+            "ActiveState": "inactive",
+            "SubState": "dead",
+            "LoadState": "loaded",
+            "UnitFileState": "enabled",
+        },
+    )
+    path = tmp_path / "p.jsonl"
+    _write(path, [_record(1000.0, high=13)])
+    out = read_unit_psi(path, now=1000.0)
+    assert out["state"] == "unknown"
+    assert "sampler-not-active(sampler=inactive/dead)" in out["sample"]
+
+
+def test_fresh_record_with_activating_sampler_is_unknown(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        reading,
+        "_sampler_liveness",
+        lambda unit=reading.SAMPLER_UNIT: {
+            "ActiveState": "active",
+            "SubState": "activating",
+            "LoadState": "loaded",
+            "UnitFileState": "enabled",
+        },
+    )
+    path = tmp_path / "p.jsonl"
+    _write(path, [_record(1000.0, high=13)])
+    out = read_unit_psi(path, now=1000.0)
+    assert out["state"] == "unknown"
+    assert "sampler-not-active(sampler=active/activating)" in out["sample"]
+
+
+def test_stale_record_remains_stale_even_with_unknown_sampler(tmp_path, monkeypatch):
+    monkeypatch.setattr(reading, "_sampler_liveness", lambda unit=reading.SAMPLER_UNIT: None)
+    path = tmp_path / "p.jsonl"
+    _write(path, [_record(1000.0, high=13)])
+    out = read_unit_psi(path, now=1000.0 + MAX_AGE_S + 50)
+    assert out["state"] == "stale"
+    assert "sampler=unknown" in out["sample"]
+
+
+def test_missing_file_with_unknown_sampler_stays_unknown(tmp_path, monkeypatch):
+    monkeypatch.setattr(reading, "_sampler_liveness", lambda unit=reading.SAMPLER_UNIT: None)
+    out = read_unit_psi(tmp_path / "absent.jsonl", now=1000.0)
+    assert out["state"] == "unknown"
+    assert "sampler=unknown" in out["sample"]
