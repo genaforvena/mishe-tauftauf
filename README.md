@@ -155,6 +155,16 @@ idle rotation. On the next wake, check that the fresh context can continue from
 its wall. [The first-task walkthrough](docs/getting-started.md#4-give-it-one-real-bounded-task)
 has the commands and acceptance checks.
 
+To investigate host capacity, `mishe discover show` presents the last scan and
+its timestamp. Where available, the plant and lifeline slice throttle readings
+show the share of scheduler periods throttled by each slice's CPU quota; this
+is not the fraction of CPU time lost. Compare them with host CPU and memory
+pressure and, when the producer includes it, `sense.proc.unit-psi` for sampled
+per-cgroup memory pressure. These have different scopes and do not prove a cause
+on their own. Missing, stale or UNKNOWN readings are not evidence of calm.
+Prefer the existing scan: repeated sampling costs resources and can make the
+throttle baseline too recent to interpret.
+
 A launcher exit, an agent saying “done,” or a settled wake is not proof of a
 useful result. Missing CI access must stay `UNKNOWN`; a live renderer must not
 turn a stale reading green. A repair needs a causal explanation, a checked live
