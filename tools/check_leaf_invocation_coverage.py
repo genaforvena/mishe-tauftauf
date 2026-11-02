@@ -126,6 +126,16 @@ DISPOSITIONS: dict[str, str] = {
     "pain watch": "streams one pane's frame; the reader reads a pane with `pain read`",
     "discover scan": "takes a fresh discovery sample; the supervisor takes it, and the reader reads the last scan with `discover show`",
     "tmux start": "raises the plant's tmux session; the launcher does this at plant time, so a reader does not start it",
+    # Guard and disposition-milestone surfaces the operator or the in-plant
+    # ledger drives.  `guard install|restore|revert` (07ae18b4, the
+    # operator-authorized guarded restore) is the operator's own restore
+    # machinery; `disposition clear` removes one disposition record from the
+    # plant's ledger.  No reader page teaches them, and none is a
+    # predict-shaped reader mismatch.
+    "guard install": "operator-authorized guarded-restore steering; a repair operator's surface, not a documented reader step",
+    "guard restore": "operator-authorized guarded-restore steering; a repair operator's surface, not a documented reader step",
+    "guard revert": "operator-authorized guarded-restore steering; a repair operator's surface, not a documented reader step",
+    "disposition clear": "removes one disposition record from the in-plant ledger; an in-plant control, not a reader step",
 }
 
 
