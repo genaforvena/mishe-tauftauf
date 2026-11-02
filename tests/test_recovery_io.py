@@ -397,3 +397,36 @@ def test_guard_row_far_in_future_still_fails_closed(tmp_path, monkeypatch):
     monkeypatch.setattr(recovery, "seed_lock_probe", bogus_clock)
     row = recovery.check(tmp_path, config(), observation=sample(), now=now)
     assert row["checks"]["independent-guard"]["ok"] is None
+
+
+def test_host_capacity_row_written_during_seed_lock_wait_is_fresh_not_future(tmp_path, monkeypatch):
+    # Host-capacity rows arrive every ~5 s; a seed-lock wait of ~3 s lets a fresh row land after the
+    # controller's `now`. Before this fix that row read as a negative age and the pass was UNKNOWN.
+    now = 1000.0
+
+    def busy_seed_lock(home):
+        (Path(home) / "recovery").mkdir(parents=True, exist_ok=True)
+        (Path(home) / "recovery" / "host-capacity.json").write_text(json.dumps({
+            "checked_at": now + 2.5, "max_age": 20, "limited": False, "clear_since": None,
+            "observation": {"current": 1.0e9, "high": 17179869184.0}}))
+        return {"ok": None, "reason": "seed lock held", "seconds": 3.2}
+
+    monkeypatch.setattr(recovery, "seed_lock_probe", busy_seed_lock)
+    row = recovery.check(tmp_path, config(), observation=sample(), now=now)
+    assert row["functions"]["host-pressure"]["state"] != "UNKNOWN"
+    assert row["checks"]["host-pressure"]["ok"] is not None
+
+
+def test_host_capacity_row_far_in_future_still_fails_closed(tmp_path, monkeypatch):
+    now = 1000.0
+
+    def bogus_clock(home):
+        (Path(home) / "recovery").mkdir(parents=True, exist_ok=True)
+        (Path(home) / "recovery" / "host-capacity.json").write_text(json.dumps({
+            "checked_at": now + 500.0, "max_age": 20, "limited": False, "clear_since": None,
+            "observation": {"current": 1.0e9, "high": 17179869184.0}}))
+        return {"ok": True, "reason": "lock available", "seconds": 0.0}
+
+    monkeypatch.setattr(recovery, "seed_lock_probe", bogus_clock)
+    row = recovery.check(tmp_path, config(), observation=sample(), now=now)
+    assert row["checks"]["host-pressure"]["ok"] is None

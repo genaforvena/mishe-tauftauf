@@ -514,18 +514,21 @@ def event(root, payload, *, recipients=()):
     return digest
 
 
-def host_cgroup(root, now):
+def host_cgroup(root, now, lead=0.0):
     """The capacity controller's latest cgroup reading, for the restore policy's memory-high dimension.
 
     A missing, unreadable or stale controller row yields NaN, which the policy classifies UNKNOWN.
     Restoration never reads a fallback NORMAL from pressure alone (2026-11-01 blind spot).
+    The controller writes every ~5 s, and `now` is taken before the seed-lock wait, so a fresh row can
+    be written up to `lead` seconds after `now` (2026-11-02: lead ~3 s put the row in the future and
+    every such pass read UNKNOWN). A row further ahead than the measured wait still fails closed.
     """
     unknown = {"current": math.nan, "high": math.nan}
     try:
         row = read_json(Path(root) / "host-capacity.json")
         observed = row["observation"]
         age = now - row["checked_at"]
-        if not (0 <= age <= row.get("max_age", 20)):
+        if not (-lead <= age <= row.get("max_age", 20)):
             return unknown
         return {"current": float(observed["current"]), "high": float(observed["high"])}
     except (OSError, ValueError, KeyError, TypeError):
@@ -549,7 +552,8 @@ def check(home, config, *, observation=None, now=None):
         obs = pressure() if observation is None else observation
         cap = policy.capacity((previous or {}).get("capacity"), now=now,
                               recover_seconds=cfg["stable_seconds"],
-                              max_gap=cfg["interval"] * 3, **obs, **host_cgroup(root, now))
+                              max_gap=cfg["interval"] * 3, **obs,
+                              **host_cgroup(root, now, lead=float(control.get("seconds") or 0.0) + 1.0))
         checks = {"host-pressure": {"ok": None if cap["state"] == "UNKNOWN" else not cap["limited"], "observation": obs},
                   "seed-lock": control}
         try:
