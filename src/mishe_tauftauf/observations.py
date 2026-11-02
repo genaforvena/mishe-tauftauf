@@ -163,7 +163,7 @@ def executable(path: Path) -> bool:
     return path.is_file() and os.access(path, os.X_OK)
 
 
-AGE_TOKEN_RE = re.compile(r"\bage=[0-9dhms]+|\blast-phone=[0-9T:\+-]+|\bidle [0-9]+s|\boldest=[A-Za-z0-9-]+:[0-9dhms]+")
+AGE_TOKEN_RE = re.compile(r"\bage=[0-9][0-9dhms\.eE+\-]*|\blast-phone=[0-9T:\+-]+|\bidle [0-9]+s|\boldest=[A-Za-z0-9-]+:[0-9][0-9dhms\.eE+\-]*")
 
 
 def redact_display_age(line: str) -> str:

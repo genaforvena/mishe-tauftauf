@@ -75,7 +75,7 @@ def ends_with_newline(text: str) -> bool:
     return text[-1:] == "\n"
 
 
-_RENDER_VOLATILE_AGE = re.compile(r" age=[0-9][0-9.eE+-]*(?=;)")
+_RENDER_VOLATILE_AGE = re.compile(r" age=(?:[0-9]|<age>)[0-9.eE+\-]*(?=;)")
 _RENDER_VOLATILE_CACHE = re.compile(r"cached_at=[0-9][0-9.eE+-]*")
 
 
