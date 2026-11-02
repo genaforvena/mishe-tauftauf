@@ -14,6 +14,13 @@ which runs it for one draft and prints the verdict with the private report path
 names the newest private report; with none configured it exits 1, and only the
 deterministic admission guard is active.
 
+For the Pub DEV site, a separate liveness check is
+`python3 checks/pub-devto-freshness-timer.py --home "$SITE"`. It checks the
+five-minute freshness timer's installed schedule, live systemd state and any
+fresh dashboard contradiction. GREEN means the timer can fire again, not that
+the DEV observations themselves are fresh; missing unit or timer evidence is
+UNKNOWN. This check is not the publication preflight described above.
+
 Without configuration, JSON objects or arrays anywhere in new text and hash-only notices are rejected, but
 semantic questions remain explicitly **untested**. This bootstrap mode establishes
 no semantic clearance. A configured checker has no fail-open override: suspicious,
