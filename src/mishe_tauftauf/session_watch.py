@@ -80,7 +80,10 @@ def pane_verdict(rows: list[str], expected: set[str] | None) -> tuple[bool | Non
     """(panes_live, missing windows, dead panes) from `list-panes` rows.
 
     Each row is ``window.pane:dead``. panes_live is True only when every expected
-    window has a pane and none is dead; it is None when the expectation is unknown.
+    window has a pane and none expected is dead; it is None when the expectation is
+    unknown. A dead pane in a window that is not expected (a parked role's rest,
+    named by its unexpired disposition) does not make the session RED; observe()
+    still names it as resting in the evidence.
     """
     targets = [row.rsplit(":", 1)[0] for row in rows]
     present = {target.rsplit(".", 1)[0] for target in targets}
@@ -88,6 +91,7 @@ def pane_verdict(rows: list[str], expected: set[str] | None) -> tuple[bool | Non
     if expected is None:
         return None, [], dead
     missing = sorted(expected - present)
+    dead = [target for target in dead if target.rsplit(".", 1)[0] in expected]
     return (not missing and not dead), missing, dead
 
 
@@ -122,10 +126,13 @@ def observe(home: Path, session: str) -> dict:
     # returncode 0 with one genuinely dead pane, so every row carries the
     # returncode, the expected and missing windows, and the dead panes'
     # window.pane names. A fixed pane count hid which window was gone.
+    all_dead = [row.rsplit(":", 1)[0] for row in rows if row.endswith(":1")]
+    resting = sorted(set(all_dead) - set(dead)) if expected is not None else []
     evidence = (f"rc={panes.returncode} panes={len(rows)} "
                 f"expected={'unknown' if expected is None else len(expected)} "
                 f"missing={','.join(missing) if missing else 'none'} "
-                f"dead={','.join(dead) if dead else 'none'}")
+                f"dead={','.join(dead) if dead else 'none'}"
+                + (f" resting={','.join(resting)}" if resting else ""))
     return {"identity": identity.stdout.strip() if identity.returncode == 0 else None,
             "available": owner.returncode == 0 and owner.stdout.strip() == str(home.resolve())
                          and identity.returncode == 0 and bool(identity.stdout.strip()),

@@ -358,3 +358,21 @@ def test_absent_or_empty_manifest_is_unknown_not_vacuous_green(tmp_path, monkeyp
 def test_dead_pane_is_still_red_with_expected_windows():
     live, missing, dead = watch.pane_verdict(["discover.0:1", "discover.1:0"], {"discover"})
     assert live is False and dead == ["discover.0"] and missing == []
+
+
+def test_dead_pane_of_a_parked_unexpected_window_is_resting_not_red():
+    # research-methods.1 exited on purpose under its unexpired park; it is not expected.
+    rows = ["discover.0:0", "discover.1:0", "research-methods.0:0", "research-methods.1:1"]
+    live, missing, dead = watch.pane_verdict(rows, {"discover"})
+    assert live is True and missing == [] and dead == []
+
+
+def test_dead_expected_pane_stays_red_beside_a_resting_one():
+    rows = ["discover.0:1", "research-methods.1:1"]
+    live, missing, dead = watch.pane_verdict(rows, {"discover"})
+    assert live is False and dead == ["discover.0"]
+
+
+def test_unknown_expectation_still_reports_every_dead_pane():
+    live, missing, dead = watch.pane_verdict(["research-methods.1:1"], None)
+    assert live is None and dead == ["research-methods.1"]
