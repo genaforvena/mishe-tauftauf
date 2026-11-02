@@ -44,6 +44,8 @@ def test_contended_cycle_spends_one_budget_not_one_per_change(watcher, monkeypat
         time.sleep(lock_wait)
         raise model_change.LockBusy(f"seed lock held elsewhere for {lock_wait:g}s")
 
+    floor = 0.05
+    monkeypatch.setattr(model_change, "RECORD_LOCK_FLOOR", floor)
     monkeypatch.setattr(model_change, "advance", busy_advance)
     started = time.monotonic()
     snapshot = model_change.watch_once(watcher, lock_wait=budget)
@@ -51,9 +53,25 @@ def test_contended_cycle_spends_one_budget_not_one_per_change(watcher, monkeypat
 
     assert len(snapshot["reports"]) == 5, "every change still gets a named deferral"
     assert all("observation deferred" in r["reason"] for r in snapshot["reports"])
-    assert elapsed < budget + 0.5, f"cycle took {elapsed:.2f}s; one budget is {budget}s"
     assert granted[0] == pytest.approx(budget, abs=0.05)
-    assert all(g <= 0.05 for g in granted[1:])
+    # Once the cycle budget is spent, each later record still gets its floor.
+    assert all(g >= floor - 1e-6 for g in granted[1:]), granted
+    assert elapsed < budget + 5 * floor + 0.5, f"cycle took {elapsed:.2f}s"
+
+
+def test_contended_records_after_the_budget_each_get_a_real_attempt(watcher, monkeypatch):
+    # Regression for the starvation seen live (health wake 201667): with the
+    # budget spent, later records must not be handed a zero wait.
+    seen = []
+
+    def busy_advance(home, name, lock_wait, **kwargs):
+        seen.append(lock_wait)
+        raise model_change.LockBusy(f"seed lock held elsewhere for {lock_wait:g}s")
+
+    monkeypatch.setattr(model_change, "advance", busy_advance)
+    model_change.watch_once(watcher, lock_wait=0)
+    assert len(seen) == 5
+    assert all(g >= model_change.RECORD_LOCK_FLOOR for g in seen), seen
 
 
 def test_uncontended_changes_each_observe_with_the_remaining_budget(watcher, monkeypatch):

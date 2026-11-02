@@ -434,6 +434,8 @@ def revert(home, change):
 
 
 LOCK_WAIT_SECONDS = 20
+# Minimum seed-lock attempt per record once the cycle budget is spent.
+RECORD_LOCK_FLOOR = 2.0
 
 
 def watch_once(home, lock_wait=LOCK_WAIT_SECONDS, notify=None):
@@ -456,6 +458,11 @@ def watch_once(home, lock_wait=LOCK_WAIT_SECONDS, notify=None):
     # One wait budget for the whole cycle. Each contended record used to wait
     # the full bound, so N deferred records made a cycle N x bound long, past
     # the 90s freshness window, and check_watch reported stale on every read.
+    # The shared budget alone starved every record after the first: the first
+    # contended record consumed it, the rest got 0s, and each reported a
+    # deferral every cycle, so a healthy watcher escalated four findings it
+    # never observed. Each record keeps a small floor so it gets a real attempt;
+    # a cycle is then bounded by lock_wait + records * floor, inside freshness.
     deadline = time.monotonic() + lock_wait
     for path in sorted(root.iterdir()) if root.exists() else []:
         if not path.is_dir():
@@ -467,7 +474,7 @@ def watch_once(home, lock_wait=LOCK_WAIT_SECONDS, notify=None):
         # earlier finding must never answer it (Witness wake 132060 control).
         fresh_failure = False
         try:
-            report = advance(home, path.name, lock_wait=max(0.0, deadline - time.monotonic()), strict=True)
+            report = advance(home, path.name, lock_wait=max(RECORD_LOCK_FLOOR, deadline - time.monotonic()), strict=True)
         except LockBusy as exc:
             transient = True
             fresh_failure = True
