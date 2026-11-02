@@ -10,18 +10,80 @@ for current claims. A missing file, no parseable record or no cgroup entries
 reads UNKNOWN, never calm. Malformed lines are skipped and counted in the sample.
 Event deltas use only records inside WINDOW_S of the newest record; with no
 earlier record in the window the delta is reported as unknown, not zero.
+
+Liveness: the sampler should be `active/running`. When its systemd unit is
+deterministically inactive, dead or missing, a fresh tape still reads UNKNOWN
+with a `sampler-not-active` cause instead of `verified`. A stale tape already
+reads `stale` (non-verified) and carries the same sampler text. When the unit
+state cannot be read (no systemctl, timeout, error) the reader keeps the
+tape-derived state and reports `sampler=unknown`.
 """
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
 
-from .unit_psi_text import parse_jsonl_records
+from .unit_psi_text import parse_jsonl_records, parse_systemd_show
 
 SENSE_ID = "sense.proc.unit-psi"
 SAMPLE_INTERVAL_S = 60
 MAX_AGE_S = 180
 WINDOW_S = 300
 TAIL_BYTES = 262144
+SAMPLER_UNIT = "mishe-unit-psi-sampler.service"
+
+
+def _sampler_liveness(unit: str = SAMPLER_UNIT) -> dict | None:
+    """Return systemd show properties for `unit`, or None when unreadable.
+
+    A returned dict contains at least ActiveState/SubState/LoadState. None means
+    the check itself is unavailable, not that the sampler is calm — the caller
+    must keep the tape-derived state in that case.
+    """
+    if shutil.which("systemctl") is None:
+        return None
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "show", unit,
+             "--property=ActiveState", "--property=SubState",
+             "--property=LoadState", "--property=UnitFileState"],
+            capture_output=True, text=True, timeout=2,
+        )
+        if result.returncode != 0:
+            return None
+        props = parse_systemd_show(result.stdout)
+        return props if props else None
+    except Exception:
+        return None
+
+
+def _sampler_text(props: dict | None) -> str:
+    if props is None:
+        return "sampler=unknown"
+    load = props.get("LoadState", "")
+    if load == "not-found":
+        return "sampler=missing(no-unit-file)"
+    active = props.get("ActiveState", "unknown")
+    sub = props.get("SubState", "unknown")
+    return f"sampler={active}/{sub}"
+
+
+def _sampler_is_active(props: dict | None) -> bool | None:
+    """True if deterministically active/running, False if deterministically not, None if unknown."""
+    if props is None:
+        return None
+    if props.get("LoadState") == "not-found":
+        return False
+    if props.get("ActiveState") != "active":
+        return False
+    # SubState "running" is the expected active sub-state; treat any other
+    # active sub-state as not fully healthy but keep None to avoid false RED.
+    if props.get("SubState") not in ("running",):
+        # still ActiveState=active but not running — report via text, don't
+        # force UNKNOWN on that basis alone.
+        return None
+    return True
 
 
 def _tail_records(path: Path) -> tuple[list[dict], int]:
@@ -36,7 +98,6 @@ def _tail_records(path: Path) -> tuple[list[dict], int]:
                 handle.readline()  # drop the partial line the seek landed inside
         raw = handle.read()
     return parse_jsonl_records(raw)
-
 
 def _some_avg10(cgroup: dict) -> float | None:
     try:
@@ -242,22 +303,37 @@ def read_unit_psi(path, *, now: float) -> dict:
     source = str(path)
     base = {"id": SENSE_ID, "kind": "read", "source": source,
             "validity_s": MAX_AGE_S}
+    sampler_props = _sampler_liveness()
+    sampler_text = _sampler_text(sampler_props)
+    sampler_active = _sampler_is_active(sampler_props)
+
+    def _finalize(state: str, sample: str) -> dict:
+        # Always carry the liveness text; a dead recorder never reads verified.
+        full_sample = f"{sample} {sampler_text}"
+        if state == "verified" and sampler_active is False:
+            # Fresh tape but recorder deterministically not running — not a
+            # current claim. Surface as unknown with named cause, keep the
+            # tape signal after it so existing consumers stay parsable.
+            return {**base, "state": "unknown",
+                    "sample": f"sampler-not-active({sampler_text}): {full_sample}"}
+        return {**base, "state": state, "sample": full_sample}
+
     path = Path(path)
     try:
         if not path.is_file():
-            return {**base, "state": "unknown", "sample": "sampler output absent"}
+            return _finalize("unknown", "sampler output absent")
         records, malformed = _tail_records(path)
     except OSError as exc:
-        return {**base, "state": "unknown", "sample": f"sampler read failed: {exc.__class__.__name__}"}
+        return _finalize("unknown", f"sampler read failed: {exc.__class__.__name__}")
     if not records:
-        return {**base, "state": "unknown", "sample": f"no parseable record; malformed={malformed}"}
+        return _finalize("unknown", f"no parseable record; malformed={malformed}")
 
     records.sort(key=lambda r: r["at"])
     latest = records[-1]
     age = now - float(latest["at"])
     units = latest["cgroups"]
     if not units:
-        return {**base, "state": "unknown", "sample": "newest record has no cgroup entries"}
+        return _finalize("unknown", f"newest record has no cgroup entries age={age:.0f}s malformed={malformed}")
 
     # Per-unit high-event delta over the window; the newest record must anchor it.
     earlier = [r for r in records[:-1] if float(latest["at"]) - float(r["at"]) <= WINDOW_S]
@@ -284,7 +360,7 @@ def read_unit_psi(path, *, now: float) -> dict:
     unit_rows = [(name, _some_avg10(c)) for name, c in units.items() if isinstance(c, dict)]
     unit_rows = [(n, v) for n, v in unit_rows if v is not None]
     if not unit_rows:
-        return {**base, "state": "unknown", "sample": "no unit carries psi.some.avg10"}
+        return _finalize("unknown", f"no unit carries psi.some.avg10 age={age:.0f}s malformed={malformed}")
 
     inverted = stall_inversions(stall_us)
     if stall_us:
@@ -316,5 +392,5 @@ def read_unit_psi(path, *, now: float) -> dict:
               f"swap-plants-at-cap>={AT_CAP_FRACTION:g}={swap_at_cap(plants)} "
               f"{hierarchy_text} malformed={malformed}")
     if age < 0 or age > MAX_AGE_S:
-        return {**base, "state": "stale", "sample": f"historical: {sample}"}
-    return {**base, "state": "verified", "sample": sample}
+        return _finalize("stale", f"historical: {sample}")
+    return _finalize("verified", sample)

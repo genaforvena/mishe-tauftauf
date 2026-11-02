@@ -4,9 +4,23 @@ The reader (unit_psi_reading) owns the file I/O and the validity rules; this
 module owns the text decoding only, so parsing stays inside an approved
 boundary (see parsing-policy.json).
 """
-from __future__ import annotations
-
 import json
+
+
+def parse_systemd_show(raw: str) -> dict[str, str]:
+    """Decode ``systemctl show --property=...`` text ``KEY=VALUE`` lines.
+
+    Returns a dict of properties found. Malformed or blank lines are ignored.
+    Parsing lives here so callers do not open new parsing sites.
+    """
+    props: dict[str, str] = {}
+    for line in raw.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key:
+            props[key] = value
+    return props
 
 
 def parse_jsonl_records(raw: bytes) -> tuple[list[dict], int]:
