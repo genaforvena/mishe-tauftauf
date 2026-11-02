@@ -401,6 +401,27 @@ def _role_view(row):
 
 
 class Feed:
+    """Observation-driven coordination substrate — Pugachev 2025 CodeCRDT §3.2.
+
+    This feed provides the three substrate requirements for observation-driven
+    coordination (not explicit message passing):
+
+    (i) observable updates — every ``append`` is observed via ``entries()`` /
+        ``role_entries()`` / ``chat.log`` tail (``wall.pane`` / ``wall.context``
+        poll this substrate; ``wall.message()`` DMs are secondary);
+    (ii) deterministic convergence — append-only, sequence-total-ordered per host,
+        digest-normalized via ``_digest`` / ``is_peer_copy``
+        (``wall_text.document_digest`` SHA-256), no merge divergence;
+    (iii) monotonic progress — audit log never rolls back (``_audit_log`` /
+        ``record_dispatch_receipt`` never removes committed entries).
+
+    ``wall.py:publication_lock`` (``threading.RLock`` + ``fcntl.flock``) is the
+    local OT-like centralized arbiter for writers on one host, not SEC; its
+    liveness failure is ``all render slots occupied → LIMITED`` shedding as seen
+    on the dashboard cgroup high. SEC convergence here is character-level (feed
+    frames) — semantic conflicts (duplicate patch lanes, type mismatches) remain
+    5–10% and need reconciliation, per §6.1.
+    """
     def __init__(self, home: Path | str):
         self.home = Path(home)
         # Existing sites retain the old tape until their active writers exit.
@@ -1058,6 +1079,86 @@ class Feed:
             reserved=True, once=True, request=request,
             conflicting=f"wake {opposite} top-pain {slug} for entry {sequence}{suffix}",
         )
+def observation_overhead_estimate(n_agents: int, updates: int) -> int:
+    """O(N×U) observation overhead — Pugachev 2025 §4.2.
+
+    Each of ``U`` CRDT/feed updates triggers callbacks in all ``N`` agents.
+    Returns ``N * U`` for dashboard annotation; not a limit or SLO. Pure, no I/O.
+    """
+    if not isinstance(n_agents, int) or not isinstance(updates, int):
+        raise ValueError("n_agents and updates must be integers")
+    if n_agents < 0 or updates < 0:
+        raise ValueError("n_agents and updates must be non-negative")
+    return n_agents * updates
+
+
+def coupling_score(claims: list[dict]) -> float:
+    """Heuristic coupling — fraction of claims touching shared state, §5.2.1.
+
+    ``coupling = shared_state_claims / total_claims`` where two claims share
+    state if they target the same wall file / same ``target:`` path / same
+    board row. Paper threshold: <30% → parallel wins, >50% → sequential wins.
+    Pure, no I/O. Empty input → 0.0.
+    Operationalizes the paper's post-hoc manual coupling inspection as a
+    target-path overlap gauge; not a static data-flow proof.
+    Example: ``coupling_score([{\"target\":\"a.py\"},{\"target\":\"a.py\"}]) == 0.5``
+    (one duplicate / two claims).
+    """
+    if not claims:
+        return 0.0
+    def _target(claim: dict) -> str | None:
+        if not isinstance(claim, dict):
+            return None
+        for key in ("target", "wall", "path", "board_row", "file", "row"):
+            value = claim.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return None
+    targets = [_target(c) for c in claims]
+    n = len(claims)
+    from collections import Counter
+    counts: Counter = Counter(t for t in targets if t is not None)
+    duplicates = sum(cnt - 1 for cnt in counts.values() if cnt > 1)
+    return duplicates / n if n else 0.0
+
+
+def claim_with_verify(entries: list, todo_id: str, agent: str) -> bool:
+    """Scan–claim–verify LWW — at-most-one claim, Pugachev 2025 §3.5.
+
+    Groups ``entries`` by ``todo_id`` (substring of ``body`` or ``source`` when
+    present; otherwise the caller-passed filtered list is used as-is), picks
+    winner = max ``(sequence, source)`` lexicographic — the paper's
+    ``(logical clock, clientID)`` LWW register — and reports whether ``agent``
+    is that winner. All replicas converge to the same winner deterministically
+    regardless of arrival order; losers retry. Verify delay is 50 ms median,
+    p95 200 ms per paper — caller should re-read after that delay before
+    proceeding iff this returns True. Pure, no I/O, no lock change.
+    Used only for claimable TODO-like lanes (e.g. ``kernel-sync-*``, patch
+    lanes, wall regions marked ``TODO:``), not free-form prose where blanket
+    ``is_peer_copy`` refusal stays.
+    """
+    if not isinstance(todo_id, str) or not todo_id:
+        raise ValueError("todo_id must be non-empty string")
+    if not isinstance(agent, str) or not agent:
+        raise ValueError("agent must be non-empty string")
+    if not entries:
+        return False
+    filtered = [e for e in entries if todo_id in getattr(e, "body", "") or todo_id in getattr(e, "source", "")]
+    pool = filtered if filtered else list(entries)
+    if not pool:
+        return False
+    def _key(entry) -> tuple:
+        seq = getattr(entry, "sequence", 0)
+        src = getattr(entry, "source", "")
+        try:
+            seq_i = int(seq)
+        except (TypeError, ValueError):
+            seq_i = 0
+        return (seq_i, str(src))
+    winner = max(pool, key=_key)
+    return str(getattr(winner, "source", "")) == agent
+
+
 
 
 def read_scan_acquisitions(home: Path, *, window: int = 100) -> list[tuple[datetime, datetime]]:

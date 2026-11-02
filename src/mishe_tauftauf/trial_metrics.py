@@ -140,11 +140,13 @@ def collect(home: Path, start: datetime, *, end=None) -> dict:
             except (OSError, ValueError, KeyError, TypeError):
                 unavailable += 1
     patches = {}
+    patch_records: dict[str, dict] = {}
     verified, incomplete, latency = [], [], {}
     for path in (home / "patches").glob("*.json"):
         try:
             record = json.loads(path.read_text())
             patches[path.stem] = record["phase"]
+            patch_records[path.stem] = record
             if record["phase"] == "applied":
                 if verified_delivery(record):
                     at = datetime.fromisoformat(record["verification"]["at"])
@@ -156,14 +158,42 @@ def collect(home: Path, start: datetime, *, end=None) -> dict:
                     incomplete.append(path.stem)
         except (OSError, ValueError, KeyError):
             patches[path.stem] = "unknown"
+    # Per-1k-char normalization — Pugachev 2025 §6.2 de-confounding volume inflation.
+    # Raw latency conflates coordination cost with 82-189% code-volume inflation in
+    # parallel mode. Callers should log both raw_s and per_1k_chars = raw * 1000 / chars.
+    latency_per_1k: dict[str, float] = {}
+    for stem, seconds in latency.items():
+        record = patch_records.get(stem) or {}
+        chars = record.get("chars") or record.get("diff_chars") or record.get("bytes")
+        if isinstance(chars, int) and chars > 0:
+            latency_per_1k[stem] = seconds * 1000.0 / chars
     return {"start": start.isoformat(), "end": end.isoformat(), "hours": (end-start).total_seconds()/3600,
         "entries": len(entries), "counts": counts, "placebo": placebo_scale(everything, start), "by_source": by_source, "by_role": by_role,
         "post_check_reports": len(reports), "post_check_refused": sum(r.get("clear") is False for r in reports),
         "services": services, "patch_phases": patches,
         "outcomes": {"reported": dict(outcomes), "evidence_unavailable": unavailable, "references": references},
-        "deliveries": {"verified_in_window": verified, "applied_without_verification": incomplete, "latency_seconds": latency},
+        "deliveries": {"verified_in_window": verified, "applied_without_verification": incomplete, "latency_seconds": latency, "latency_per_1k_chars": latency_per_1k, "latency_note": "per_1k_chars = seconds*1000/chars de-confounds 82-189% volume inflation; report raw_s beside per_1k (§6.2)"},
         "model_cost": {"state": "UNKNOWN", "reason": "No complete attributed model usage/cost source is wired; service CPU is not model cost."},
         "limits": "Report mtimes proxy check times. Service counters need start/end deltas and may reset. Supervisor CPU excludes tmux minds and model compute. Settlements and messages are not productivity or verified deliveries. Outcomes are author reports with digest-checked evidence references, not independent semantic acceptance. Patch verification covers the saved scoped delivery exercise, not permanent health. Trial has an added docs role; compare per role and elapsed time."}
+
+def per_1k_chars_seconds(seconds: float, chars: int | None) -> float | None:
+    """Normalize latency per 1k chars — de-confounds volume inflation, §6.2.
+
+    Returns ``seconds * 1000 / chars`` or None when chars is None/0. Pure, no I/O.
+    Use beside raw seconds so an 82-189% volume inflation (Pomodoro +82% etc.)
+    is not mis-charged to coordination. Mirrors the paper's per-1k-char table.
+    """
+    if chars is None:
+        return None
+    try:
+        c = int(chars)
+        s = float(seconds)
+    except (TypeError, ValueError):
+        return None
+    if c <= 0 or not __import__("math").isfinite(s) or s < 0:
+        return None
+    return s * 1000.0 / c
+
 
 
 
