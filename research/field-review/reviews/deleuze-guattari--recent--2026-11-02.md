@@ -11,7 +11,7 @@ target: docs/mesh.md
 
 ## What we read
 
-**Pablo Vila & Edward Avery-Natale — "Assemblages and Identitarian Articulations", *Subjectivity*, Vol. 32, pp. 192–220, published online 8 October 2025, DOI 10.1007/s41286-025-00220-6 (Open Access CC BY 4.0)** — read full primary source at:
+**Pablo Vila & Edward Avery-Natale — "Assemblages and Identitarian Articulations", *Subjectivity*, Vol. 32, pp. 192–220, published online 8 October 2025, DOI 10.1057/s41286-025-00220-6 (Open Access CC BY 4.0)** — read full primary source at:
 
 - <https://doi.org/10.1057/s41286-025-00220-6> (Springer landing)
 - <https://link.springer.com/content/pdf/10.1057/s41286-025-00220-6.pdf> (PDF 849_050 bytes fetched 200 2026-11-02 at /tmp/assemblage_identitarian.pdf, 29 pp., sha256 `d7aaaa3c7bc22931dbe57b909a0af312ee60e82805657e8dbefe447076828f3a`, Creator Springer/Acrobat Distiller 10.1.8, Pages 29, Subject "Subjectivity, https://doi.org/10.1057/s41286-025-00220-6")
