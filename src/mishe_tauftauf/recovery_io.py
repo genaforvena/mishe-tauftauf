@@ -2,6 +2,9 @@
 
 The control loop never reads the chat tape or takes its locks. Notification
 publication is a separate, timed process with an immutable local outbox.
+
+Fencing per Chubby §2.4 and Kleppmann 2016 § "Making the lock safe with fencing"
+(Burrows et al. OSDI '06 PDF sha256 0747c84a49d32744a2744e2f2951b05fb7a0829ce44afb0b700833eb2bb3ecdd, /tmp/chubby-osdi06.pdf 117687 bytes 16 pp., fetched 2026-11-02; Kleppmann HTML 42424 bytes sha256 8cf7f237e65c same date). A sequencer is {lock_name, mode, generation_number} minted on each acquisition and checked by the store: the server accepts a write only if token > highest_seen[token.lock] (Chubby: "contains the name, mode, generation"; "validity can be checked against the most recent sequencer observed"; Kleppmann: "a number that increases every time a client acquires the lock ... the storage server remembers that it has already processed a write with a higher token number (34), and so it rejects [33]"). Chubby doc HTML 141836 bytes sha256 e88e46bf287b same source. Fencing is storage-side validation; lock-delay <=60s is imperfect.
 """
 from __future__ import annotations
 
@@ -466,6 +469,52 @@ def controller_lock(home):
         yield root
 
 
+def fencing_sequencer(lock: str, generation: int, mode: str = "exclusive") -> dict:
+    """Opaque sequencer per Chubby §2.4: {name, mode, generation}. No I/O."""
+    if not isinstance(lock, str) or not lock:
+        raise ValueError("invalid lock name")
+    if type(generation) is not int:
+        raise ValueError("generation must be int")
+    if not isinstance(mode, str) or mode not in {"exclusive", "shared"}:
+        raise ValueError("mode must be exclusive or shared")
+    if generation < 0 or generation >= 2**63:
+        raise ValueError("generation out of range")
+    return {"name": lock, "mode": mode, "generation": int(generation)}
+
+
+def next_generation(prev: int) -> int:
+    """Strictly increasing generation; ValueError on overflow or non-int."""
+    if type(prev) is not int:
+        raise ValueError("prev generation must be int")
+    if prev < -1 or prev >= 2**63 - 1:
+        raise ValueError("generation overflow or out of range")
+    return int(prev) + 1
+
+
+def is_sequencer_valid(token: dict, highest_seen: dict) -> bool:
+    """True iff token.generation > highest_seen.get(token.name, -1) and mode matches."""
+    if not isinstance(token, dict) or not isinstance(highest_seen, dict):
+        raise ValueError("invalid sequencer arguments")
+    name = token.get("name")
+    mode = token.get("mode")
+    gen = token.get("generation")
+    if not isinstance(name, str) or not isinstance(mode, str) or type(gen) is not int:
+        raise ValueError("invalid sequencer token")
+    if mode not in {"exclusive", "shared"}:
+        raise ValueError("invalid sequencer mode")
+    prev = highest_seen.get(name, -1)
+    if type(prev) is not int:
+        raise ValueError("highest_seen value must be int")
+    return gen > prev
+
+
+def check_fencing_token(token_generation: int, highest_seen_generation: int) -> bool:
+    """Kleppmann check: accept iff token > highest_seen. Pure, no files."""
+    if type(token_generation) is not int or type(highest_seen_generation) is not int:
+        raise ValueError("fencing generations must be int")
+    return token_generation > highest_seen_generation
+
+
 def validate_state(row):
     if (not isinstance(row, dict) or row.get("version") != 1 or type(row.get("checked_at")) not in (int, float)
             or not math.isfinite(row["checked_at"]) or not isinstance(row.get("functions"), dict)
@@ -602,16 +651,43 @@ def check(home, config, *, observation=None, now=None):
                                    or old["backup_accepted_at"] != function["backup_accepted_at"])
                     event(root, {"at": now, "function": function, "check": checks[name]},
                           recipients=set(recipients) if significant else ())
+        # Fencing observable: bump controller.generation if present (under controller.lock).
+        # Absent => no fencing field, byte-identical. Does not create a new recovery function.
+        fencing_info = None
+        try:
+            gen_path = root / "controller.generation"
+            if gen_path.exists():
+                raw = read_json(gen_path)
+                if isinstance(raw, dict) and "generation" in raw:
+                    prev = raw["generation"]
+                elif type(raw) is int:
+                    prev = raw
+                else:
+                    prev = None
+                if type(prev) is int and 0 <= prev < 2**63 - 1:
+                    new_gen = next_generation(prev)
+                    save(gen_path, {"generation": new_gen, "at": now})
+                    fencing_info = {"generation": new_gen, "highest_seen": prev}
+                elif prev is not None:
+                    fencing_info = {"reason": "invalid-generation", "prev": str(prev)}
+        except (OSError, ValueError, TypeError, KeyError):
+            fencing_info = None
         states = {r["state"] for r in functions.values()}
         row = {"version": 1, "checked_at": now, "max_age": max(60, cfg["interval"] * 3),
                "state": "UNKNOWN" if "UNKNOWN" in states else "DEGRADED" if states - {"HEALTHY", "RESTORED"} else "GREEN",
                "functions": functions, "checks": checks, "capacity": cap,
                "render_slots": cfg["render_slots"], "render_cooldown": cfg["render_cooldown"],
                "runtime": str(Path(__file__).resolve()), "config_sha256": hashlib.sha256(json.dumps(cfg, sort_keys=True).encode()).hexdigest()}
+        if fencing_info is not None:
+            checks["controller-lock"] = {"fencing": fencing_info}
+            row["checks"] = checks
         save(state_path, row)
         if not (root / "initialized.json").exists():
             save(root / "initialized.json", {"at": now}, immutable=True)
         sample = dict(obs, at=now, control_ok=control["ok"], control_seconds=control["seconds"], limited=cap["limited"])
+        if fencing_info is not None and "generation" in fencing_info:
+            sample["fencing_generation"] = fencing_info["generation"]
+            sample["fencing_highest_seen"] = fencing_info["highest_seen"]
         with (root / "samples.jsonl").open("a") as handle:
             handle.write(json.dumps(sample, allow_nan=False) + "\n")
         return row
