@@ -227,34 +227,30 @@ def report(home: Path) -> dict[str, object]:
     try:
         observed_shas: list[str] | None = None
         observed_ready_seconds: object = None
-        for snap in (home / "health" / "observed-shas.json", home / "health" / "observed.json"):
-            if snap.exists():
-                try:
-                    data = json.loads(snap.read_text(encoding="utf-8"))
-                    if isinstance(data, list):
-                        observed_shas = [str(x) for x in data]
-                    elif isinstance(data, dict) and isinstance(data.get("shas"), list):
-                        observed_shas = [str(x) for x in data["shas"]]
-                        if "ready_for_seconds" in data:
-                            observed_ready_seconds = data["ready_for_seconds"]
-                    break
-                except (OSError, ValueError):
-                    pass
+        # Rollout observation dialect lives in rollout_boundary (protocol-boundary
+        # adapter). Text is opaque content; this file acts on decoded values.
+        try:
+            from .rollout_boundary import read_observed_snapshot, read_rollout_paused
+        except ImportError:
+            read_observed_snapshot = None  # type: ignore[assignment]
+            read_rollout_paused = None  # type: ignore[assignment]
+        if read_observed_snapshot is not None:
+            try:
+                observed_shas, observed_ready_seconds = read_observed_snapshot(home)
+            except (OSError, ValueError):
+                # Malformed snapshot stays explicit: keep original bytes as
+                # evidence by not guessing a rollout; conditions become unknown.
+                observed_shas, observed_ready_seconds = None, None
         if observed_shas is None and isinstance(sites, list):
             observed_shas = [str(s.get("sha") or "") for s in sites if isinstance(s, dict)]
             if not observed_shas:
                 observed_shas = None
         paused = False
-        try:
-            p = home / "health" / "rollout-paused.json"
-            if p.exists():
-                pj = json.loads(p.read_text(encoding="utf-8"))
-                if isinstance(pj, dict) and pj.get("paused") is True:
-                    paused = True
-                elif pj is True:
-                    paused = True
-        except (OSError, ValueError):
-            paused = False
+        if read_rollout_paused is not None:
+            try:
+                paused = bool(read_rollout_paused(home))
+            except (OSError, ValueError):
+                paused = False
         cond = deployment_conditions_for(
             candidate_sha=candidate if len(candidate) == 40 else "",
             ci_state=ci.get("state"),
