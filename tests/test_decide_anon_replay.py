@@ -5,7 +5,7 @@ operator/lifeline-memory.jsonl + recovery/host-samples.jsonl with the item-3 joi
 The builder self-checks that the chained rerun reproduces the item-3 residual tape.
 
 Recorded, not synthetic:
-- the parked-after-storm episode 2026-11-01T17:59:39Z..18:37:08Z: real PSI storm
+- the parked-after-storm episode 2026-11-01T17:58:27Z..18:37:08Z: real PSI storm
   (both rules CRITICAL), then the cgroup parked at the memory.high throttle with
   current/high 0.86-0.97 and anon/high 0.53-0.60, PSI ~0: legacy latches LIMITED with
   CRITICAL flashes at the razor edge; the anon rule reads NORMAL throughout the park.
