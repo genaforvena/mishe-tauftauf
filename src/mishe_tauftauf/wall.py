@@ -949,6 +949,61 @@ def context(home: Path, role: str) -> str:
     return "\n\n".join(sections)
 
 
+def _wall_provenance_line(home: Path, role: str) -> str:
+    """Passive document-based margin for the MIND WALL block (Dourish & Bellotti §5.2).
+
+    Derived from the existing ``logs/wall-write-audit.jsonl`` tail and the
+    wall file's own mtime/digest, not from a new writer field. Reads as
+    UNKNOWN when the file or audit entry is absent so the absence is visible
+    rather than silent. Placed inside the MIND WALL block so the OBSERVATION
+    digest (split at that header) stays byte-identical for unchanged sensors.
+    """
+    from .wall_text import decode_audit_entries, document_digest
+    from .timestamp_text import decode_iso_datetime
+
+    wall_path = home / "walls" / f"{role}.md"
+    if not wall_path.is_file():
+        return f"WALL PROVENANCE: walls/{role}.md — UNKNOWN (no file)"
+    try:
+        text = wall_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return f"WALL PROVENANCE: walls/{role}.md — UNKNOWN (unreadable: {exc})"
+    try:
+        mtime = datetime.fromtimestamp(wall_path.stat().st_mtime, tz=timezone.utc)
+        mtime_iso = mtime.isoformat().replace("+00:00", "Z")
+    except OSError as exc:
+        mtime_iso = f"UNKNOWN ({exc})"
+        mtime = None
+    digest = document_digest(text)
+    short = digest[:12]
+    try:
+        audit_text = (home / "logs" / "wall-write-audit.jsonl").read_text(encoding="utf-8")
+        entries = decode_audit_entries(audit_text)
+    except OSError:
+        entries = []
+    matching = [e for e in entries if e.get("role") == role and e.get("digest") == digest]
+    if matching:
+        entry = matching[-1]
+        ts_str = entry.get("ts") or entry.get("mtime") or "unknown"
+        moment = decode_iso_datetime(ts_str)
+        if moment is None:
+            age_str = "unknown age"
+        else:
+            age_s = (datetime.now(timezone.utc) - moment).total_seconds()
+            if age_s < 0:
+                age_str = f"{age_s:.0f}s (future)"
+            elif age_s < 60:
+                age_str = f"{age_s:.0f}s"
+            elif age_s < 3600:
+                age_str = f"{age_s/60:.1f}m"
+            elif age_s < 86400:
+                age_str = f"{age_s/3600:.1f}h"
+            else:
+                age_str = f"{age_s/86400:.1f}d"
+        return f"WALL PROVENANCE: walls/{role}.md @ {mtime_iso} digest {short} age {age_str} (audit {ts_str}) — persistent record"
+    return f"WALL PROVENANCE: walls/{role}.md @ {mtime_iso} digest {short} — UNKNOWN (no audit entry for this digest)"
+
+
 def wall_skeleton_line(path: Path) -> str:
     """Presentation only: which common headings a wall carries. Never gates admission or content."""
     from . import wall_text
@@ -987,9 +1042,10 @@ def pane(home: Path, role: str) -> str:
     from .follow_through import lines as follow_through_lines
     activity = line(home, entries=shared)
     skeleton = wall_skeleton_line(home / "walls" / f"{role}.md")
+    provenance = _wall_provenance_line(home, role)
     messages_header = (f"\nMESSAGES — last {len(entries)} addressed shown "
                        f"(addressed total not counted; tape {tape} events)\n")
-    return "\nMIND WALL — edited notes; sensor truth is above\n" + "\n".join(follow_through_lines(home)) + "\n" + text + ("" if wall_text.ends_with_newline(text) else "\n") + skeleton + "\n" + transport + messages_header + "\n".join(
+    return "\nMIND WALL — edited notes; sensor truth is above\n" + provenance + "\n" + "\n".join(follow_through_lines(home)) + "\n" + text + ("" if wall_text.ends_with_newline(text) else "\n") + skeleton + "\n" + transport + messages_header + "\n".join(
         f"{e.sequence} {e.source}: {e.body}" for e in entries) + "\n" + chat + "\n" + activity + "\n"
 
 
