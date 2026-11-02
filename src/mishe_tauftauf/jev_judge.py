@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import fcntl
+import math
 import os
 import pathlib
 import re
@@ -46,6 +47,7 @@ import tempfile
 import urllib.error
 import urllib.request
 from datetime import date, datetime, timezone
+from typing import Final
 
 DEFAULT_BASE_URL = "https://api.typesafe.ai"
 DEFAULT_MODEL = "jev-latest"
@@ -57,6 +59,189 @@ USER_AGENT = (
 MAX_STATE_CHARS = 100_000
 TIMEOUT_SECONDS = 60
 MAX_DAILY_CALL_LIMIT = 1000
+
+# Dirichlet calibration vocabulary (Kull et al., arXiv:1910.12656v1, NeurIPS 2019).
+# Defaults are the paper's clipping and binning conventions, not fitted plant values.
+DIRICHLET_CALIBRATION_VERSION: Final[int] = 1
+MULTICLASS_CALIBRATION_DEFINITION: Final[str] = (
+    "Multiclass-calibrated (Kull Def.1): P(Y=i | p(X)=q) = q_i for all q in the simplex and all i. "
+    "Weaker, necessary but not sufficient: classwise-calibrated (Def.2): P(Y=i | p_i(X)=q_i) = q_i; "
+    "confidence-calibrated (Def.3): P(Y=argmax p | max p = c) = c."
+)
+CLASSWISE_ECE_DEFINITION: Final[str] = (
+    "classwise-ECE (Kull Eq.4) = 1/k * sum_j sum_i |B_ij|/n * |ybar_j(B_ij) - pbar_j(B_ij)|, "
+    "binning each class j by its own probability into m equal-width bins (Kull and Guo use m=15). "
+    "Report it beside confidence-ECE and per-class class-j-ECE: a low confidence-ECE can hide a large class-j ECE "
+    "(Kull Fig.1: confidence-ECE 0.0078 with class-2-ECE 0.0098, cwECE 0.1857)."
+)
+DIRICHLET_LINEAR_MAP_DOC: Final[str] = (
+    "Dirichlet linear map (Kull et al. arXiv:1910.12656, NeurIPS 2019, Eq.7): mu(q; W, b) = softmax(W ln q + b), with ln elementwise, "
+    "W a k x k matrix and b a length-k bias, and q clipped to 2.2e-308 before ln. "
+    "Thm.1 (Kull): this family equals the generative Dirichlet form and the canonical form in CANONICAL_INTERPRETATION_DOC. "
+    "Fit W, b only on an exchangeable validation set disjoint from training, with log-loss. "
+    "Needs only p in the simplex, not logits."
+)
+TEMPERATURE_AS_DIRICHLET_DOC: Final[str] = (
+    "Temperature scaling is a special case of the Dirichlet linear map (Kull Prop.1 supplement): "
+    "mu_TempS(q; t) = mu_DirLin(q; (1/t) I, 0). The identity calibrator is W = I, b = 0. "
+    "A single scalar t cannot express the off-diagonal entries of W, which carry the classwise bias."
+)
+CANONICAL_INTERPRETATION_DOC: Final[str] = (
+    "Canonical form (Kull Eq.8 and Thm.1): mu(q; A, c) = softmax(A ln(q / (1/k)) + ln c), with A >= 0 and "
+    "each column of A containing a zero. Conversion: a_ij = w_ij - min_i w_ij and c = softmax(W ln u + b), "
+    "u = (1/k, ..., 1/k). c is the image of the simplex centre. Each column of A governs behaviour near one facet centre, "
+    "so the k+1 interpretation points are the centre and the k facet points. "
+    "a_ij raises the calibrated probability of class i and lowers others, with an effect that depends on the uncalibrated probability of class j."
+)
+ODIR_REGULARIZATION_DOC: Final[str] = (
+    "Off-diagonal and intercept regularization (Kull Sec.3, ODIR): L = log-loss + lambda/(k(k-1)) sum_{i != j} w_ij^2 + "
+    "mu/k sum_j b_j^2. The diagonal is left free so class biases can follow the data. lambda and mu are tuned on validation data, never imported. "
+    "Caveat: ln softmax(z) discards logit magnitude, so matrix scaling on logits can retain an advantage on deep nets."
+)
+
+_DIRICHLET_CLIP = 2.2e-308
+
+
+def _finite_probabilities(probs: object) -> dict[str, float] | None:
+    if not isinstance(probs, dict) or not probs:
+        return None
+    clean: dict[str, float] = {}
+    for key, value in probs.items():
+        if not isinstance(key, str) or isinstance(value, bool):
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(number) or number < 0.0 or number > 1.0:
+            return None
+        clean[key] = number
+    return clean
+
+
+def _softmax(values: list[float]) -> list[float] | None:
+    if not values or any(not math.isfinite(v) for v in values):
+        return None
+    peak = max(values)
+    exps = [math.exp(v - peak) for v in values]
+    total = sum(exps)
+    if total <= 0.0 or not math.isfinite(total):
+        return None
+    return [e / total for e in exps]
+
+
+def _square_matrix(W: object, k: int) -> list[list[float]] | None:
+    if not isinstance(W, (list, tuple)) or len(W) != k:
+        return None
+    rows: list[list[float]] = []
+    for row in W:
+        if not isinstance(row, (list, tuple)) or len(row) != k:
+            return None
+        try:
+            values = [float(v) for v in row]
+        except (TypeError, ValueError):
+            return None
+        if any(not math.isfinite(v) for v in values):
+            return None
+        rows.append(values)
+    return rows
+
+
+def _bias_vector(b: object, k: int) -> list[float] | None:
+    if not isinstance(b, (list, tuple)) or len(b) != k:
+        return None
+    try:
+        values = [float(v) for v in b]
+    except (TypeError, ValueError):
+        return None
+    if any(not math.isfinite(v) for v in values):
+        return None
+    return values
+
+
+def dirichlet_log_transform(probs: dict[str, float], *, eps: float = _DIRICHLET_CLIP) -> dict[str, float] | None:
+    """ln(max(p, eps)) per class; None for empty, invalid or non-finite input."""
+    clean = _finite_probabilities(probs)
+    if clean is None or not math.isfinite(eps) or eps <= 0.0:
+        return None
+    return {key: math.log(max(value, eps)) for key, value in clean.items()}
+
+
+def dirichlet_linear_map(probs: dict[str, float], W: list[list[float]], b: list[float]) -> dict[str, float] | None:
+    """Kull Eq.7: softmax(W ln q + b) over the label order of probs; None on shape or value problems."""
+    logs = dirichlet_log_transform(probs)
+    if logs is None:
+        return None
+    labels = list(logs.keys())
+    k = len(labels)
+    matrix = _square_matrix(W, k)
+    bias = _bias_vector(b, k)
+    if matrix is None or bias is None:
+        return None
+    log_vector = [logs[label] for label in labels]
+    z = [sum(matrix[i][j] * log_vector[j] for j in range(k)) + bias[i] for i in range(k)]
+    out = _softmax(z)
+    if out is None:
+        return None
+    return dict(zip(labels, out))
+
+
+def canonical_params(W: list[list[float]], b: list[float]) -> tuple[list[list[float]], list[float]] | None:
+    """Kull Thm.1 conversion to canonical (A, c): a_ij = w_ij - min_i w_ij, c = softmax(W ln u + b)."""
+    if not isinstance(W, (list, tuple)) or not W:
+        return None
+    k = len(W)
+    matrix = _square_matrix(W, k)
+    bias = _bias_vector(b, k)
+    if matrix is None or bias is None:
+        return None
+    column_min = [min(matrix[i][j] for i in range(k)) for j in range(k)]
+    A = [[matrix[i][j] - column_min[j] for j in range(k)] for i in range(k)]
+    log_uniform = math.log(1.0 / k)
+    c = _softmax([sum(matrix[i][j] * log_uniform for j in range(k)) + bias[i] for i in range(k)])
+    if c is None:
+        return None
+    return A, c
+
+
+def classwise_ece(probs_list: list[dict[str, float]], labels: list[str], *, bins: int = 15) -> float | None:
+    """Kull Eq.4 classwise-ECE; None for empty, mismatched, invalid or unknown-label input."""
+    if not isinstance(bins, int) or isinstance(bins, bool) or bins <= 0:
+        return None
+    if not isinstance(probs_list, list) or not isinstance(labels, list) or not probs_list:
+        return None
+    if len(probs_list) != len(labels):
+        return None
+    cleaned = [_finite_probabilities(p) for p in probs_list]
+    if any(c is None for c in cleaned):
+        return None
+    classes = list(cleaned[0].keys())
+    if any(set(c.keys()) != set(classes) for c in cleaned):
+        return None
+    if any(label not in classes for label in labels):
+        return None
+    n = len(labels)
+    k = len(classes)
+    total = 0.0
+    for j in classes:
+        counts = [0] * bins
+        sums_p = [0.0] * bins
+        sums_y = [0.0] * bins
+        for row, label in zip(cleaned, labels):
+            p = row[j]
+            index = min(int(p * bins), bins - 1)
+            counts[index] += 1
+            sums_p[index] += p
+            sums_y[index] += 1.0 if label == j else 0.0
+        class_error = 0.0
+        for index in range(bins):
+            if counts[index] == 0:
+                continue
+            mean_p = sums_p[index] / counts[index]
+            mean_y = sums_y[index] / counts[index]
+            class_error += counts[index] / n * abs(mean_y - mean_p)
+        total += class_error
+    return total / k
 
 
 def daily_budget_configuration() -> tuple[int, pathlib.Path] | None:
