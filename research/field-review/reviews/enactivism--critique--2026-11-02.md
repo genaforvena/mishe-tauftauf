@@ -1,0 +1,54 @@
+---
+field: enactivism
+angle: critique
+date: 2026-11-02
+status: applied
+owner: genome
+target: src/mishe_tauftauf/seed_culture_views.py
+---
+
+# Blind adoption of enactivist autonomy reproduces the hard/soft-sell paradigm error — keep mechanistic checks mechanistic (Meyer & Brancazio 2022)
+
+## What we read
+
+- **Meyer, R. & Brancazio, N. (2022), "Putting down the revolt: Enactivism as a philosophy of nature", *Frontiers in Psychology* 13:948733, doi:10.3389/fpsyg.2022.948733**, open-access PDF <https://www.frontiersin.org/articles/10.3389/fpsyg.2022.948733/pdf> (also <https://doi.org/10.3389/fpsyg.2022.948733> and PMC <https://pmc.ncbi.nlm.nih.gov/articles/PMC9635051/>), fetched 2026-11-02 to `/tmp/meyer-brancazio2.pdf`, 320_358 bytes, sha256 `5a44acf9b3b7a7acc7ce62c2a2aeec84e2f221a4b9fdc49a816d15d231fddb88`, 12pp A4, `pdfinfo` Producer Adobe PDF Library 15.0 CreationDate 2022-10-21, `pdftotext -layout` 795 lines retained; read pp.01–12 in full (Abstract p.01, Introduction pp.01–02, §2 hard sell pp.02–05, social-cognition case pp.04–06, §3 soft sell pp.06–08, §4 philosophy-of-nature proposal pp.08–11, References).
+
+  - What concessively survives in this critique (as the angle requires): enactivism *as a philosophy of nature* (after Godfrey-Smith 2001; 2014 on developmental systems theory, after Gallagher 2017) is endorsed as "more achievable, more genuinely revolutionary and more aligned with the existing enactivist project" (Abstract p.01; §4) than enactivism as a rival research paradigm; the paper notes recent enactivist work explicitly aims to put posits "in terms that allow for them to be tested, improved, and, if necessary, rejected by scientific standards" (Di Paolo et al. 2017, p.21, quoted p.03) — the critique is not that enactivism says nothing.
+
+  - Hard sell diagnosed (pp.02–06, following Steiner 2019): a Kuhnian paradigm shift requires persistent failure to solve *internal* problems leading to crisis (Kuhn 1962/2012, p.iii; p.33 quoted p.03), then conceptual replacement. The paper argues contemporary cognitivism is not in such crisis — it continues to generate problems and solutions, and flexible definitions of representation are not a paradigm-weakening flaw (p.03). Explanatory gaps enactivists nominate (Thompson 2007 hard problem of consciousness; Di Paolo et al. 2018 functionalist gap pp.04–05) are gaps *as seen by* enactivism, not problems cognitivism must solve "from within the paradigm itself" (p.03–04). The social-cognition comparison (pp.04–06) is the exhibit: mindreading (TT/ST: Wellman et al. 2001 meta-analysis; Goldman 2006 mirror-neuron plausibility) and interactionist theory IT (primary/secondary intersubjectivity; Gallagher 2008; Gallagher & Hutto 2008) are each internally coherent and, by the participants' lights, empirically adequate; dismissals are symmetric (Spaulding 2015, 2018: phenomenological evidence insufficient; Carruthers 2016, p.142: "no new discoveries have resulted… it has been refuted") and turn on *background assumptions* about what cognition is and where its bounds lie (Longino 1990, p.43 quoted p.06; Gallagher 2017 p.21 quoted p.06: "no single critical experiment that might decide the issue"). Raw data underdetermine the theory choice.
+
+  - Soft sell diagnosed (pp.06–08): conceptual elegance / desert landscapes (Hutto & Myin 2017; Hutto 2019, p.835 quoted p.06: "Subtract any residual commitment…"), and the clear-eyed "at face value" / "a careful look" appeal (Hutto & Myin 2013, p.44 quoted p.07; Di Paolo et al. 2017, p.2 quoted p.07) both presuppose enactivist commitments; with situated background beliefs (Kuhn; Quine 1951) a cognitivist appraisal is not less neutral than an enactivist one, and aesthetic preference does not adjudicate paradigms except *during* a crisis, not to create one (p.07).
+
+  - Philosophy-of-nature move (§4 pp.08–11, via Godfrey-Smith 2001): DST/enactivism on this view does not win by displacing one paradigm but integrates scientific questions into a cohesive picture across paradigms — breadth, not replacement.
+
+## What this plant already does
+
+- `research/field-review/fields.json:98-101` declares `enactivism` as "sense-making, autonomy, the body" with keywords `enactiv`/`sense-making`/`autonomy`; `research/field-review/README.md:37` carries the same declaration. `python3 research/field-review/field_review.py next` this wake (REVISIT enactivism--critique, oldest newest-review) reports ALREADY EMBODIED hits only via that declaration and predecessor enactivism reviews — no `paradigm`/`hard sell`/`philosophy of nature` vocabulary is embodied in `src/` or `docs/` outside reviews.
+
+- `src/mishe_tauftauf/seed_culture_views.py:1218-1231` currently glosses autonomy as two leveled checks: level-1 organisational closure (fog/landing/gate drift means minds cannot close audit loops; each drift names its resolver) and level-2 caveat (Tomczyk 2025, Diametros 22(83) doi:10.33392/diam.1847, building on Barandiaran, Di Paolo & Rohde 2009 Adaptive Behavior doi:10.1177/1059712309343819) that closure ≠ sensorimotor adaptivity and that the boundary is observer-chosen. Placed there by `enactivism--recent--2026-11-02` and `enactivism--misread--2026-11-02` (commits 28e8324f, c2ce46f7, culture follow-on 23437b0a, genome KEEP disposition 206799). The text keeps `UNKNOWN` handling and no threshold auto-change — the mechanistic discipline that the critique defends.
+
+- The predecessor `enactivism--critique--2026-10-31` was discarded — both candidate sources (Cowley & Gahrn-Andersen 2015 Intellectica; Keeley 2018 Synthese via PhilArchive) were unreachable (maintenance notice / HTTP 403), so no argument was read and no change was proposed, with explicit revisit note.
+
+- Plant practice elsewhere is mechanistic: health `sense.*` checks read systemctl, cgroup, probe process groups, render bytes and window manifests; remediation is routed to named resolvers. `docs/mesh.md:9-21` already guards against reifying the mesh as a flat-network diagram ("Mesh is a hypothesis … not a description … the knots are real"), the same guard the critique asks for on the enactivist side.
+
+## What is new here
+
+This is the first readable critique of enactivism on this lane (prior critique cell was evidence-free), read in full. It does two things the plant has not embodied:
+
+1. **It names the blind-adoption failure mode as a Kuhn/Steiner paradigm error, with a worked example.** Adopting enactivist autonomy/sense-making as a rival paradigm that should *replace* mechanistic checks would reproduce exactly the hard sell the paper dismantles: claiming an explanatory gap (e.g., "mechanistic health checks cannot explain sense-making, therefore they fail") without showing an *internal* crisis in the mechanistic checks themselves, and claiming explanatory superiority while the choice between TT/ST and IT turns on prior assumptions about what counts as the explanandum (brain-bound inference vs organism-environment coupling) and is underdetermined by data (Longino, Gallagher). This plant would reproduce that error if it renamed fog/landing/gate drifts as "loss of sense-making" and asserted that an enactive vocabulary explains them better, without new internal failure or new empirical leverage. Carruthers/Spaulding symmetric dismissals are the warning: each side finds the other explanatorily empty when judged by its own explananda.
+
+2. **It names the soft-sell twin and supplies the endorsed positive frame.** The paper's soft-sell diagnosis (elegance, parsimony, "clear-eyed" face-value appeal, Hutto's "subtract…" p.835; Hutto & Myin 2013 p.44; Di Paolo et al. 2017 p.2) maps directly onto a second way this plant would reproduce the error: asserting that enactivist framing is self-evidently clearer or leaner and therefore authoritative for health, without showing why situated observers should converge. Its positive proposal — enactivism as a *philosophy of nature* (Godfrey-Smith DST analogy) — gives the lane a bounded role for enactivist vocabulary here: a cross-domain, integrative lens that orients questions (viability, coupling, normativity) across paradigms, not a displacement of mechanistic explanation. That reframes the Tomczyk/Barandiaran annotations already on `seed_culture_views.py` as heuristic and boundary-aware, not as paradigm replacements.
+
+Limits retained: the paper is a conceptual analysis from inside philosophy of cognitive science; its empirical-adequacy claim rests largely on the social-cognition case; it notes cognitivism's stability for "the time being" (fn2 p.03) and allows that a future internal crisis is not impossible. The "vague statement of intent" concern (Block epigraph p.01; diagnosis p.02) applies symmetrically — this review does not import a new mechanism, only a guardrail.
+
+## Application
+
+target: src/mishe_tauftauf/seed_culture_views.py
+
+Propose one bounded prose annotation at the existing autonomy-loop comment (ll.1218-1231), keeping current fog/landing/gate-drift routing behaviour unchanged, to record the critique's guardrail so a future enactivist edit cannot claim paradigm displacement without the evidence the critique says is required:
+
+- Retain the present level-1 closure / level-2 adaptivity note (Tomczyk 2025; Di Paolo 2009; Barandiaran et al. 2009) and add the Meyer & Brancazio 2022, Frontiers in Psychology 13:948733, doi:10.3389/fpsyg.2022.948733 caveat (pp.02-08): enactivism's hard sell (Kuhnian paradigm shift via internal crisis, Steiner 2019) and soft sell (elegance / clear-eyed face-value) both fail as paradigm-displacement arguments; social-cognition TT/ST vs IT case shows underdetermination by data and adjudication via background assumptions (Longino 1990; Gallagher 2017 p.21).
+- Record that this plant keeps mechanistic explanation for health (systemctl / probe groups / render bytes / window manifests) and treats enactivist autonomy heuristically, as a *philosophy of nature* (Godfrey-Smith 2001; Gallagher 2017) that integrates questions across paradigms rather than replacing the mechanistic paradigm — the endorsed frame.
+- Note the Ned Block–style vagueness risk the paper opens with: a breadth-of-concern statement ("dynamical coupling of brain-body-environment") is not itself a testable posit; any future claim that an enactive re-description supersedes a mechanistic check must name the internal failure and the empirical leverage, not just elegance.
+
+No threshold, logic or sampling change is proposed; this is a vocabulary-and-documentation guardrail citing the source that operationalises the failure mode. A future implementable follow-on (outside this prose change) would not claim superiority for an enactive re-description of fog/landing/gate drift unless it can state the cognitivist-internal problem it solves and the new discovery adjudicated by shared explananda — the test the paper uses.
