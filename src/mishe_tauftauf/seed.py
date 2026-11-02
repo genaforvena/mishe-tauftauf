@@ -289,6 +289,11 @@ def _receipt_line(body: str) -> str:
     return body.splitlines()[0]
 
 
+def _observation_match(line: str):
+    """The single observation-receipt match; _state and entries_by_role share it."""
+    return OBS_RE.fullmatch(line)
+
+
 def _state(home: Path, slug: str, *, entries=None) -> tuple[str | None, int | None, int | None, int | None, int | None, int | None, datetime | None, int | None]:
     if entries is None:
         entries = Feed(home).role_entries(slug)
@@ -305,7 +310,7 @@ def _state(home: Path, slug: str, *, entries=None) -> tuple[str | None, int | No
         if entry.source != "seed":
             continue
         line = _receipt_line(entry.body)
-        if match := OBS_RE.fullmatch(line):
+        if match := _observation_match(line):
             if match.group(1) == slug:
                 digest = match.group(2)
                 unresolved_observation = None if digest else entry
@@ -331,6 +336,28 @@ def _state(home: Path, slug: str, *, entries=None) -> tuple[str | None, int | No
     return digest, pending, last_yield, last_clear, last_observation, last_woken_observation, last_wake_at, continue_yield
 
 
+def entries_by_role(entries, roles) -> dict[str, list]:
+    """Group the seed-source tape entries each role's _state would read.
+
+    One pass replaces a full tape scan per role. An observation receipt routes
+    to the role named in its line; a lifecycle control routes to its own role;
+    any other entry is dropped, as _state skips it. Order within a bucket is
+    tape order, so _state over a bucket matches _state over the whole tape.
+    """
+    buckets: dict[str, list] = {role: [] for role in roles}
+    for entry in entries:
+        if entry.source != "seed":
+            continue
+        if match := _observation_match(_receipt_line(entry.body)):
+            role = match.group(1)
+        else:
+            control = decode_lifecycle(entry)
+            if control is None:
+                continue
+            role = control.role
+        if role in buckets:
+            buckets[role].append(entry)
+    return buckets
 
 
 def clear_stalls(entries, *, now: datetime | None = None, timeout: float = 120):

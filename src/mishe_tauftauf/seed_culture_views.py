@@ -752,26 +752,38 @@ def _clear_journal_stalls(home: Path) -> tuple[str, list[str]]:
         return "CLEAR JOURNAL: PASS", []
     # One feed parse for all roles; reuse entries across _state calls.
     turn_by_role: dict[str, tuple[object, object]] = {}
+    # Only plain-text seed lines are read here; an observation digest resolves
+    # and verifies its own record in _state, so the full-tape record verify
+    # (about 25 s of the 44 s measured 2026-11-02) is not needed.
     try:
-        entries = Feed(home).entries()
+        entries = Feed(home).entries(verify_records=False)
     except Exception:
         entries = None
     # Distinct roles from filenames avoid decoding every body just to learn role.
     # Decoding lives in the adapter: clear_journal.role_from_filename is the
     # boundary for this filename grammar (parsing-policy.json).
-    seen_roles: set[str] = set()
-    for path in old_paths:
-        role = clear_journal.role_from_filename(path.name)
-        if role is None:
+    roles = {role for role in (clear_journal.role_from_filename(path.name)
+                               for path in old_paths) if role is not None}
+    # One tape pass groups entries per role; _state over a bucket equals
+    # _state over the whole tape. Without a parsed tape keep the per-role
+    # fallback, which reads the feed for each role itself.
+    buckets: dict[str, list] | None = None
+    if entries is not None:
+        try:
+            buckets = seed.entries_by_role(entries, roles)
+        except Exception:
+            buckets = None
+            for role in roles:
+                turn_by_role[role] = (None, None)
+    for role in sorted(roles):
+        if role in turn_by_role:
             continue
-        if role not in seen_roles:
-            seen_roles.add(role)
-            if role not in turn_by_role:
-                try:
-                    _, _, last_yield, last_clear, *_ = seed._state(home, role, entries=entries)
-                    turn_by_role[role] = (last_yield, last_clear)
-                except Exception:
-                    turn_by_role[role] = (None, None)
+        try:
+            role_entries = entries if buckets is None else buckets[role]
+            _, _, last_yield, last_clear, *_ = seed._state(home, role, entries=role_entries)
+            turn_by_role[role] = (last_yield, last_clear)
+        except Exception:
+            turn_by_role[role] = (None, None)
     for path in old_paths:
         journal = clear_journal.read(path)
         if journal is None:
