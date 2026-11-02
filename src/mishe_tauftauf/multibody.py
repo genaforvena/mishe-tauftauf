@@ -17,6 +17,59 @@ answer: a fused reading needs every body current inside one compatible
 observation window, and it needs each body's clock domain verified, because a
 composite timestamp cannot refresh a stale input and two bodies' clocks are
 not one clock.
+
+Enactive mechanism diagnostic — layering & co-regulation (prose only, no logic/
+threshold change):
+  Froese, T. & Di Paolo, E. A. — "The enactive approach: Theoretical sketches
+  from cell to society," Pragmatics & Cognition 19(1):1–36 (2011),
+  doi:10.1075/pc.19.1.01fro — Fig.1 p.4 layering rule: inner sufficiency
+  includes all outer operational requirements. Autonomy as organizational
+  closure (Varela 1979:55) → Adaptivity as bounded viability set with capacity
+  to monitor trajectory and regulate to compensate, distinct from adaptedness
+  (Di Paolo 2005 §2.2 pp.8–9, fn.4 p.31) → Agency as adaptive regulation of
+  sensorimotor coupling (Barandiaran, Di Paolo & Rohde 2009) → Multi-agent
+  autonomous organization of the interaction process (De Jaegher & Di Paolo
+  2007:493 tier, tightened Froese & Di Paolo §3.1 p.12) → Cognition as
+  hierarchically decoupled NS dynamics, habits (Barandiaran & Moreno 2006/2008)
+  → Socio-cognitive co-regulation (criteria 1–3 §4.3 pp.23–24, giving example
+  Fogel 1993 / Di Paolo 2009c:59–60: opening only completable by other's
+  coordinated regulation).
+  Verbatim for this track:
+    Multi-agent §3.1 p.12: "regulated coupling between at least two adaptive
+    agents, where the regulation is aimed at aspects of the coupling itself so
+    that it constitutes an emergent autonomous organization in the domain of
+    relational dynamics, without destroying the adaptive agency of at least
+    two individuals."
+    Socio-cognitive §4.3 p.23: "co-regulated sensorimotor coupling between at
+    least two cognitive agents, whereby the regulation of each agent is aimed
+    at aspects of the mutual coupling itself such that (1) a new autonomous
+    organization emerges spanning at least two internal and a shared relational
+    domain, (2) cognitive agency of at least two is not destroyed, (3) a
+    cognitive agent's regulation is complemented by the coordinated regulation
+    of at least one other."
+  Discipline: ``read_multibody_coverage`` remains a **liveness/coverage**
+  check (per-body fresh gates + ``_merge_intervals`` overlaps). ``supported``
+  / overlapping windows are necessary for any multi-agent claim but not
+  sufficient for co-regulation — ``supported != co-regulated``. A wall that
+  carries the same tape event and a mind that acts on it will produce an
+  overlap without co-regulation. The paper's own contrasts make the gap
+  observable without moving a bound: Auvray, Lenay & Stewart 2009 perceptual
+  crossing (pp.14–15, 20–21) — collective success without individual
+  discrimination or social phenomenology = multi-agent without co-regulation;
+  corridor mirroring p.14 — interaction process self-sustains despite intent
+  to stop; slime-mold Dictyostelium pp.13–14 — stage-dependent attribution
+  (only some lifecycle stages satisfy agency). Keep UNKNOWN handling and the
+  plant's no-threshold-auto-change rule (body-research wake 113202, genome
+  122590, model_change.py:436–449): the check does not drift a bound, it asks
+  where regulation is aimed and whether completion depends on complement.
+  A future co-regulation claim (outside this prose change) would need to name
+  the ``p ⊂ Q`` modulated over interval ``T`` per Eq.3 (Barandiaran et al.
+  2009 p.372) and show complementary completion (opening → completion after
+  Fogel/Di Paolo 2009c), exercised against the plant's own limits. Limits
+  carried forward: cultural layer still needs clarification Fig.1 caption p.4;
+  language/writing deferred Stewart 2011 §5; other-minds not solved p.22;
+  substrate neutrality not reified as entity fn.2 p.31; do not over-read
+  overlaps as social.
 """
 
 from __future__ import annotations
