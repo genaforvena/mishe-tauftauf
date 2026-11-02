@@ -28,7 +28,9 @@ def test_readiness_requires_clean_core_fresh_ci_and_all_linked_site_shas(tmp_pat
                                    "checked": datetime.now(timezone.utc).isoformat()})
     store(home / "health/linked-sites.json",
           {"version": 1, "sites": [{"sha": candidate, "error": ""}]})
-    assert report(home) == {"state": "READY", "candidate_sha": candidate, "reasons": []}
+    result_ready = report(home)
+    assert result_ready["state"] == "READY" and result_ready["candidate_sha"] == candidate and result_ready["reasons"] == []
+    assert "conditions" in result_ready and "rollout" in result_ready
 
     store(home / "health/linked-sites.json",
           {"version": 1, "sites": [{"sha": "", "error": "sync failed"}]})
@@ -76,7 +78,9 @@ def test_pinned_release_converges_despite_unrelated_development_dirt(tmp_path):
                                                    "checked": datetime.now(timezone.utc).isoformat()}))
     (home / "health/linked-sites.json").write_text(json.dumps({"version": 1, "sites": [{"sha": sha}]}))
     (package / "__init__.py").write_text("unlanded draft")
-    assert report(home) == {"state": "READY", "candidate_sha": sha, "reasons": []}
+    res = report(home)
+    assert res["state"] == "READY" and res["candidate_sha"] == sha and res["reasons"] == []
+    assert "conditions" in res and "rollout" in res
     (release / "src/mishe_tauftauf/__init__.py").write_text("corrupted release")
     assert report(home)["state"] == "HOLD"
     (home / "health/runtime-release.json").write_text("null")
