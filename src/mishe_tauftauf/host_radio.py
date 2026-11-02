@@ -34,6 +34,25 @@ AAA/802.1X/DHCP/SLAAC/ARP/NDP cache §6.1, no iw/tcpdump/raw-socket scan) — on
 the existing sysfs/``bluetoothctl`` host-state path. Any OTA MAC scan or
 cross-rotation linking is a privacy-boundary change reviewed under
 ``docs/protocol-boundaries.md`` and ``docs/how-it-works.md:973``.
+
+Privacy Considerations lens (Cooper et al., RFC 6973, IETF Informational,
+July 2013, ISSN 2070-1721, IAB consensus, not Standards-Track §§1–8): this
+module is the initiator acting on behalf of the operator (the individual whose
+privacy is at risk, §4 p.10); wall subscribers are recipients; delivery buses
+are intermediaries/enablers that may observe (§4 p.11). The nine threats of
+§5 (§5.1 surveillance/stored_data_compromise/intrusion/misattribution +
+§5.2 correlation/identification/secondary_use/disclosure/exclusion), the
+seven entity roles of §3.1 (initiator/recipient/intermediary/enabler/observer/
+attacker/eavesdropper), and the mitigations of §6 (data minimization §6.1
+collection limitation + identifiability reduction, user participation §6.2,
+security §6.3) plus the proportionality guideline of §7 are the reviewable
+checklist for this decoder. Privacy depends on system+implementation+deployment
+(§2 p.5); a considerations section alone does not satisfy privacy. Whether a
+document warrants a section depends on content (§1 Abstract). Eavesdroppers
+exclude by nature (p.17) and secondary-use protection is typically outside IETF
+scope (p.17); this module still names them so a new helper is checklist-bound.
+Anonymity set is the set of individuals indistinguishable to an attacker (§3.3
+p.8). This paragraph is doctrine only — no I/O, no SENSE_ID, no verdict.
 """
 
 from __future__ import annotations
@@ -101,6 +120,80 @@ def rcm_linking_capability() -> dict[str, bool]:
 def is_rcm_linking_free() -> bool:
     """True while the module never links two randomised MACs to one device."""
     return not RCM_LINKING_SUPPORTED
+
+
+#: Privacy Considerations vocabulary — Cooper et al., RFC 6973 §§3–7
+#: (IETF Informational, July 2013, IAB consensus, not Standards-Track).
+#: Nine threats §5: §5.1.1 surveillance (even encrypted traffic leaks type/timing
+#: via traffic analysis), §5.1.2 stored_data_compromise (logging/key-management
+#: retention), §5.1.3 intrusion, §5.1.4 misattribution; §5.2.1 correlation
+#: (persistent identifiers allow tracking, TLS session_id/ticket example p.15),
+#: §5.2.2 identification (direct via SIP/XMPP identifiers or indirect via log
+#: correlation), §5.2.3 secondary_use (reusing Access-Requests to track location),
+#: §5.2.4 disclosure (RFC 6280 geolocation architecture), §5.2.5 exclusion
+#: (eavesdroppers exclude by nature p.17). Threat list is the RFC's checklist,
+#: not a claim these are present in this decoder.
+RFC6973_PRIVACY_THREATS: Final[frozenset[str]] = frozenset({
+    "surveillance", "stored_data_compromise", "intrusion", "misattribution",
+    "correlation", "identification", "secondary_use", "disclosure", "exclusion",
+})
+#: Observer/entity roles — RFC 6973 §3.1 (entity definitions with "$" tags) +
+#: §4 communications model pp.7–12. Initiator acts on behalf of the individual
+#: whose privacy is at risk (§4 p.10); intermediaries/enablers are "at least
+#: tacitly authorized" yet may observe/collect/process/transfer (§4 p.11); role
+#: depends on phase (enabler then recipient). For the wall bus: this decoder is
+#: initiator on behalf of the operator, subscribers are recipients, buses are
+#: intermediaries/enablers, any mind logging sense.body.redmi10 is an observer
+#: that may correlate; eavesdropper/attacker are distinct observers. Seven roles
+#: are the RFC's taxonomy, not a claim every role is present here.
+RFC6973_OBSERVER_ROLES: Final[frozenset[str]] = frozenset({
+    "initiator", "recipient", "intermediary", "enabler", "observer", "attacker", "eavesdropper",
+})
+#: Per-threat mitigation notes for this decoder — RFC 6973 §6 (data minimization
+#: §6.1 collection limitation + identifiability reduction via anonymity/
+#: pseudonymity/identity-confidentiality §3.3, user participation §6.2, security
+#: §6.3) plus §7 proportionality. Notes are where a reviewer checks "which of
+#: these does this new helper enable?" — no GREEN/RED, no verdict.
+RFC6973_MITIGATIONS: Final[dict[str, str]] = {
+    "surveillance": "§6.1 + §6.3: reads only host adapter state (sysfs/bluetoothctl show, 10s bound), no OTA content, no probe/MAC capture; tailnet status is control-plane only",
+    "stored_data_compromise": "§6.1 + §6.3: no persistent peer identifiers stored; publishes only adapter presence/power/rfkill; retention is caller-side, not in this decoder",
+    "intrusion": "§6.1: never mutates a radio — read-only sysfs/bluetoothctl show; no transmit, no actuator",
+    "misattribution": "§6.2: returns raw adapter values (powered/rfkill/operstate), no person binding; misattribution is publisher/consumer responsibility",
+    "correlation": "§6.1 identifiability reduction: no persistent peer identifiers; host adapters only; no peer MAC/BSSID store; no RCM linking; tailnet peer hostname constant only",
+    "identification": "§6.1 anonymity set §3.3 p.8: host-local reads only, no OTA peer observation, no MAC-keyed AAA/802.1X/DHCP/SLAAC/ARP/NDP cache; no person identifier decoded",
+    "secondary_use": "§6.1 + §6.2: wall broadcast is the disclosure path — body fields require CI/Belmont/receipt allow and are not public-by-default; this module publishes no person data",
+    "disclosure": "§6.1 collection limitation: stores no peer IDs, no content, no probe/MAC; disclosure surface is caller's wall publication, not this decoder",
+    "exclusion": "§6.2 user participation: operator is initiator on whose behalf decoder acts (§4 p.10); reads are host-local, auditable, opt-in via installed control; eavesdroppers exclude by nature p.17",
+}
+
+
+def is_host_radio_data_minimized() -> bool:
+    """True while this module satisfies RFC 6973 §6.1 collection limitation.
+
+    Reads only this host's adapter state — sysfs (``/sys/class/bluetooth``,
+    ``/sys/class/rfkill``, ``/sys/class/net``) and ``bluetoothctl show`` —
+    and stores no persistent peer identifiers, no content, no probe/MAC.
+    Pure; no sysfs/daemon I/O. If this invariant ever stops holding, the
+    predicate must change and the privacy considerations require review.
+    """
+    return not WLAN_SENSING_SUPPORTED and not RCM_LINKING_SUPPORTED
+
+
+def host_radio_privacy_considerations() -> dict[str, object]:
+    """Typed RFC 6973 Privacy Considerations checklist for the host-radio decoder.
+
+    Returns ``{"threats": frozenset, "roles": frozenset, "mitigations": dict,
+    "data_minimized": bool}`` over the frozen constants above. Pure view —
+    no I/O, no SENSE_ID, no GREEN/RED/UNKNOWN. A document warrants such a
+    section based on content, not mandate (§1 Abstract, §7); this decoder
+    warrants one because it is the plant's radio-adjacent boundary.
+    """
+    return {
+        "threats": RFC6973_PRIVACY_THREATS,
+        "roles": RFC6973_OBSERVER_ROLES,
+        "mitigations": RFC6973_MITIGATIONS,
+        "data_minimized": is_host_radio_data_minimized(),
+    }
 
 
 POWERED = re.compile(r"^[ \t]*Powered:\s+(yes|no)$", re.MULTILINE)

@@ -1014,19 +1014,48 @@ def read_redmi10_delivery_gaps(home: Path, now: float | None = None) -> dict[str
 DENSE_QUEUE_NAME = "redmi10.observations.log"
 #: Tail bytes read from the dense queue; at ~101 bytes/line this yields ~2500
 #: lines (~3.5 h at the observed 5 s cadence), bounding the analysis window.
+#: This window is canonical sparse high-dimensional micro-data (Narayanan &
+#: Shmatikov, "Robust De-anonymization of Large Datasets," arXiv:cs/0610105v2
+#: 2007 Abstract + §1 p.1 "high dimensionality and sparsity … fat tail," §3 p.3
+#: power law): each row carries rare attributes (e.g., specific ble_scan peer,
+#: very-bright spike, exact wifi_link_rssi_dbm sequence) so Thm 1–3 pp.7–8 give
+#: m = log N / -log(1-delta) random attributes for (1,1-epsilon)-deanonymization
+#: — at N~2500 this is 5–10 auxiliary attributes. Algorithm 1A Score =
+#: min_i Sim(aux_i, r'_i) and 1B wt(i)=1/log|supp(i)| + eccentricity gate (p.6)
+#: are robust to perturbation/imprecision (p.4 "no difference …") and to sample
+#: publication (Thm 4–5 pp.8–9); publishing raw tail rows or exact T[QI]
+#: histograms preserves the sparsity the attack uses, and quoting rows in a wall
+#: outcome is publishing a sample D^ of that tail.
 DENSE_TAIL_BYTES = 262144
 #: Rows retained for the compact summary; at 5 s cadence this is a ~2.8 h window.
 DENSE_WINDOW_ROWS = 2000
 #: Freshness gate for the dense-baseline verdict; matches ``FRESH_SECONDS``.
 DENSE_FRESH_SECONDS = 30.0
 # --- k-anonymity disclosure metric (Samarati & Sweeney 1998) ---
-# Quasi-identifier QI: set of attributes whose release must be controlled
-# (Def. 2.1 p.3); k-anonymity Def. 2.3 p.4: T satisfies k iff each sequence in
-# T[QI] appears >=k times; Assumption 2.1 p.4 correctness of QI is a policy
-# choice handled by contract, not by the metric; MaxSup Def. 4.3 p.11 is the
-# suppression budget; distance vector Def. 3.2 p.7 and minimal generalisation
-# Def. 3.3 p.8-9 not implemented here — this module stays exact. Precision =
-# 1 - level/height and completeness = 1 - suppressed/|PT| (§7 pp.15-17).
+#: Quasi-identifier QI: set of attributes whose release must be controlled
+#: (Def. 2.1 p.3); k-anonymity Def. 2.3 p.4: T satisfies k iff each sequence in
+#: T[QI] appears >=k times; Assumption 2.1 p.4 correctness of QI is a policy
+#: choice handled by contract, not by the metric; MaxSup Def. 4.3 p.11 is the
+#: suppression budget; distance vector Def. 3.2 p.7 and minimal generalisation
+#: Def. 3.3 p.8-9 not implemented here — this module stays exact. Precision =
+#: 1 - level/height and completeness = 1 - suppressed/|PT| (§7 pp.15-17).
+#: Critique — Narayanan & Shmatikov arXiv:cs/0610105v2 (2007) §§2–5:
+#: k-anonymity "completely fails on high-dimensional datasets" [2] cited §2 p.2
+#: (Aggarwal [2]); adversary Aux is "an arbitrary probabilistic function" over
+#: any subset of (possibly imprecise) attribute values, not a fixed a priori QI
+#: set (Abstract, §2 p.2, §3 pp.3–4) — if the adversary knows a value it becomes
+#: "an identifier (but only for this individual's record)" (p.4). QI_DEFAULT_KEYS
+#: is therefore a policy/display choice, not an adversary bound. Metric here is
+#: measurement only at exact DV=[0,…,0]; k_anonymity_is_k_anonymous(...) is
+#: True does not imply safe to broadcast. Any histogram/sequence release derived
+#: from DENSE_TAIL_BYTES that leaves the consented recipients
+#: {senses, health, body-research, inference-research} (CI _CI_FLOWS
+#: "human-consented-personal-analysis") must be reviewed as a DP release under
+#: src/mishe_tauftauf/stats_boundary.py (Dwork & Roth Def. 2.4 epsilon/delta,
+#: Thm 3.6 Laplace scale, Thm 3.16 composition, Thm 2.2 group privacy) with
+#: explicit epsilon/delta/composition, or as a revisited per-type consent
+#: receipt — not as "k>=2 therefore safe." Perturbation and sample publication
+#: do not mitigate (1A/1B robustness p.4, p.6 wt/Score + eccentricity, Thm 4–5).
 QI_DEFAULT_KEYS: Final[tuple[str, ...]] = ("light_class",)
 K_ANONYMITY_DEFAULT_K: Final[int] = 2
 K_ANONYMITY_MAX_SUP: Final[int | None] = None
@@ -1083,6 +1112,15 @@ def k_anonymity_k(
     sequences needs a separate check or differential privacy, not this value.
     Revisit this note against the paper.
 
+    Critique — Narayanan & Shmatikov arXiv:cs/0610105v2 (2007) §§2–5 Thm 1–3:
+    on sparse micro-data 5–10 auxiliary attributes suffice for
+    (1,1-epsilon)-deanonymization; QI_DEFAULT_KEYS is not an adversary bound
+    (Aux is any subset of possibly imprecise attribute values, p.4). Any
+    linkable column (e.g., ble_scan peer, wifi rssi sequence) becomes an
+    identifier for that record. This k is measurement at DV=[0,…,0] only and
+    does not bound that linkage. Robust to perturbation/sample (Algo 1A Score
+    = min Sim, 1B wt=1/log|supp| + eccentricity, Thm 4–5).
+
     Blind spot, homogeneity and background knowledge: k counts rows per QI
     class and never reads the sensitive values inside a class. A class of
     size k whose rows all share one sensitive value passes k-anonymity and
@@ -1106,7 +1144,13 @@ def k_anonymity_is_k_anonymous(
     Returns ``None`` on empty table (no histogram) or bad ``k`` (non-int or
     ``k<1``); otherwise ``True`` iff ``min(hist.values()) >= k``.
     Sufficiency per Def. 2.3: when Assumption 2.1 holds and each identity
-    contributes at most one tuple.
+    contributes at most one tuple. Measurement only — does not imply safe to
+    broadcast sparse high-dimensional micro-data (Narayanan & Shmatikov
+    arXiv:cs/0610105v2 §§2–5: QI is a policy choice not an adversary bound;
+    5–10 auxiliary attributes suffice on DENSE_TAIL_BYTES; robust to
+    perturbation and to sample D^, Thm 4–5; any release leaving
+    {senses,health,body-research,inference-research} needs DP/consent review
+    under stats_boundary.py, not k>=2).
     """
     try:
         kk = int(k)  # type: ignore[arg-type]
