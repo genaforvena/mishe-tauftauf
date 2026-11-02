@@ -1279,8 +1279,9 @@ def host_capacity_holds_clear(home: Path, *, now: float | None = None) -> bool:
     rotation indefinitely.
     """
     import time
+    from .recovery_io import read_json
     try:
-        data = json.loads((home / "recovery" / "host-capacity.json").read_text())
+        data = read_json(home / "recovery" / "host-capacity.json")
         checked = float(data["checked_at"])
     except (OSError, ValueError, KeyError, TypeError):
         return False
