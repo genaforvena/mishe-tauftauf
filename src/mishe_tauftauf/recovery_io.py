@@ -388,6 +388,24 @@ def event(root, payload, *, recipients=()):
     return digest
 
 
+def host_cgroup(root, now):
+    """The capacity controller's latest cgroup reading, for the restore policy's memory-high dimension.
+
+    A missing, unreadable or stale controller row yields NaN, which the policy classifies UNKNOWN.
+    Restoration never reads a fallback NORMAL from pressure alone (2026-11-01 blind spot).
+    """
+    unknown = {"current": math.nan, "high": math.nan}
+    try:
+        row = read_json(Path(root) / "host-capacity.json")
+        observed = row["observation"]
+        age = now - row["checked_at"]
+        if not (0 <= age <= row.get("max_age", 20)):
+            return unknown
+        return {"current": float(observed["current"]), "high": float(observed["high"])}
+    except (OSError, ValueError, KeyError, TypeError):
+        return unknown
+
+
 def check(home, config, *, observation=None, now=None):
     now = time.time() if now is None else now
     cfg = validate_config(config)
@@ -405,7 +423,7 @@ def check(home, config, *, observation=None, now=None):
         obs = pressure() if observation is None else observation
         cap = policy.capacity((previous or {}).get("capacity"), now=now,
                               recover_seconds=cfg["stable_seconds"],
-                              max_gap=cfg["interval"] * 3, **obs)
+                              max_gap=cfg["interval"] * 3, **obs, **host_cgroup(root, now))
         checks = {"host-pressure": {"ok": None if cap["state"] == "UNKNOWN" else not cap["limited"], "observation": obs},
                   "seed-lock": control}
         try:

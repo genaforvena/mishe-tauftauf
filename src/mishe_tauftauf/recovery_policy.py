@@ -57,16 +57,29 @@ def accept(row, *, owner, now):
 
 def capacity(previous, *, memory_full, io_full, available_ratio, now,
              recover_seconds, memory_high=10, io_high=40, available_low=.08,
-             max_gap=90):
+             max_gap=90, current=None, high=None):
     values = (memory_full, io_full, available_ratio)
     if (any(v is None or not math.isfinite(v) or v < 0 for v in values)
             or memory_full > 100 or io_full > 100 or available_ratio > 1):
         return {"state": "UNKNOWN", "limited": True, "clear_since": None,
                 "checked_at": now}
-    overloaded = memory_full >= memory_high or (io_full >= io_high and available_ratio < available_low)
-    clear = memory_full < memory_high / 2 and io_full < io_high / 2 and available_ratio >= available_low * 1.5
+    # The cgroup memory high-water mark is a separate dimension: PSI memory_full stays near zero
+    # while memory.current sits at memory.high (2026-11-01). Bands match host_capacity.decide:
+    # overload at 0.9*high, clear below 0.85*high, and a running clear timer held in between.
+    cgroup = current is not None or high is not None
+    if cgroup and not (current is not None and high is not None and math.isfinite(current)
+                       and math.isfinite(high) and current >= 0 and 0 < high):
+        return {"state": "UNKNOWN", "limited": True, "clear_since": None,
+                "checked_at": now}
+    at_high = cgroup and current >= high * .9
+    cgroup_clear = not cgroup or current < high * .85
+    cgroup_in_band = not cgroup or current < high * .9
+    overloaded = memory_full >= memory_high or (io_full >= io_high and available_ratio < available_low) or at_high
+    pressure_clear = memory_full < memory_high / 2 and io_full < io_high / 2 and available_ratio >= available_low * 1.5
+    clear = pressure_clear and cgroup_clear
+    in_band = pressure_clear and cgroup_in_band
     limited = overloaded or (previous or {}).get("limited", False)
-    clear_since = (previous or {}).get("clear_since") if clear else None
+    clear_since = (previous or {}).get("clear_since") if (clear or in_band) else None
     if previous and not 0 <= now - previous["checked_at"] <= max_gap:
         clear_since = None
     if clear and clear_since is None:
