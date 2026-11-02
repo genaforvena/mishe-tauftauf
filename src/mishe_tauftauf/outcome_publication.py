@@ -56,6 +56,24 @@ prose; embedding is external manifest per ``Ch. 11.4-11.5 pp.55-56`` not JUMBF
 in markdown. No X.509/COSE signing, JUMBF, watermark, trust-list fetch or
 assertion redaction is implemented here; the vocabulary only makes
 “published = authentic” checkable from bytes.
+
+Verifiable Credentials Data Model 2.0 (W3C Recommendation REC-vc-data-model-2.0-20250515, https://www.w3.org/TR/vc-data-model-2.0/) — additive:
+typed, pure, verdict-free data-model facts beside C2PA so a wall outcome can name
+who asserted, who holds, who decides to rely, and that verifiable ≠ true, without
+changing any ``Feed.append`` or tape shape.
+``§1.1 verifiable credential/presentation definitions & verifiable does not imply truth``:
+"verifiability does not imply truth — upon establishing authenticity and currency a
+verifier validates claims using their own business rules before relying";
+``§1.2 ecosystem issuer/holder/verifier & holder may be distinct from subject``
+(parent holds child's credential — holder ≠ subject is a typed distinction);
+``§1.3 conformance: a conforming document MUST be application/vc (credential) or
+application/vp (presentation) and MUST be secured by at least one securing mechanism
+(§4.12)``; ``§4.10 credentialStatus (e.g. BitstringStatusListEntry)`` with status-list
+without stripping the credential; ``§4.12 securing mechanism (DataIntegrityProof /
+JsonWebSignature2020 / Ed25519Signature2020)``; ``§5.2 Extensibility / §5.3 Integrity
+of Related Resources / §5.5 termsOfUse (DoNotArchive, PresentationSharingRestricted)``.
+No DID issuance/resolution, wallet, status-list fetch, JOSE signing, selective disclosure
+is a data model for issuer/holder/verifier ecosystems, not a git publishing manual.
 """
 from __future__ import annotations
 
@@ -101,6 +119,28 @@ PROVENANCE_REVOCATION_STATES: Final[tuple[str, ...]] = ("revoked", "not-revoked"
 
 PROVENANCE_FILE_INTEGRITY_LEVELS: Final[tuple[str, ...]] = ("weak", "strong")
 """File-integrity levels per Golaszewski p.4 Fig.3 — weak (excluded bytes ignored) vs strong (every byte protected)."""
+# --- Verifiable Credentials vocabulary (W3C REC-vc-data-model-2.0-20250515) — §1.1 verifiable≠true, §1.2 issuer/holder/verifier, §1.3 application/vc|vp, §4.10 credentialStatus, §4.12 securing, §5.5 termsOfUse ---
+VC_ROLES: Final[tuple[str, ...]] = ("issuer", "holder", "verifier")
+"""VC roles per §1.2 — issuer asserts claims, holder stores/presents, verifier decides to rely."""
+
+VC_DOCUMENT_TYPES: Final[tuple[str, ...]] = ("credential", "presentation")
+"""VC document types per §3.2/3.3 — credential (issued) vs presentation (holder-derived)."""
+
+VC_MEDIA_TYPES: Final[tuple[str, ...]] = ("application/vc", "application/vp")
+"""VC media types per §1.3 Conformance MUST — application/vc (credential) or application/vp (presentation)."""
+
+VC_STATUS_TYPES: Final[tuple[str, ...]] = ("BitstringStatusListEntry", "RevocationList2020Status", "StatusList2021Entry")
+"""VC status types per §4.10 example + extensions — credentialStatus without stripping credential."""
+
+VC_SECURING_MECHANISMS: Final[tuple[str, ...]] = ("DataIntegrityProof", "JsonWebSignature2020", "Ed25519Signature2020")
+"""VC securing mechanisms per §4.12 — securing required, distinct from claims."""
+
+VC_TRUTH_IMPLIED_BY_VERIFIABLE: Final[bool] = False
+"""VC §1.1 literal: verifiability does not imply truth of claims."""
+
+VC_TERMS_OF_USE: Final[tuple[str, ...]] = ("DoNotArchive", "PresentationSharingRestricted")
+"""VC termsOfUse placeholder per §5.5 — verifier-checked usage constraints, distinct from disclosure."""
+
 EVIDENCE_REMEDY_SUFFIX = re.compile(r'^(?P<stem>.+?)-(?P<sfx>v\d+|final|final-v\d+)$')
 """The clause's own remedy-naming convention, read as an artifact's name.
 
@@ -597,3 +637,68 @@ def provenance_is_stripped(manifest_bytes: bytes | None) -> bool:
 def provenance_disclosure_is_valid(level: object) -> bool:
     """Whether the disclosure level is a C2PA Ch.16.3 value — minimal|standard|full."""
     return isinstance(level, str) and level in DISCLOSURE_LEVELS
+
+
+def vc_role_is_valid(role: object) -> bool:
+    """Whether role is a VC_ROLES member — §1.2 issuer/holder/verifier."""
+    return isinstance(role, str) and role in VC_ROLES
+
+
+def vc_document_type_is_valid(doc_type: object) -> bool:
+    """Whether doc_type is a VC_DOCUMENT_TYPES member — §3.2/3.3 credential vs presentation."""
+    return isinstance(doc_type, str) and doc_type in VC_DOCUMENT_TYPES
+
+
+def vc_media_type_is_valid(media: object) -> bool:
+    """Whether media is a VC_MEDIA_TYPES member — §1.3 application/vc|application/vp."""
+    return isinstance(media, str) and media in VC_MEDIA_TYPES
+
+
+def vc_status_type_is_valid(status_type: object) -> bool:
+    """Whether status_type is a VC_STATUS_TYPES member — §4.10 credentialStatus."""
+    return isinstance(status_type, str) and status_type in VC_STATUS_TYPES
+
+
+def vc_securing_mechanism_is_valid(mechanism: object) -> bool:
+    """Whether mechanism is a VC_SECURING_MECHANISMS member — §4.12."""
+    return isinstance(mechanism, str) and mechanism in VC_SECURING_MECHANISMS
+
+
+def is_verifiable_credential_with_status(doc_type: str, status_type: str | None) -> bool:
+    """Whether doc_type+status_type forms a verifiable-credential-with-status shape — §4.10.
+
+    True when doc_type == "credential" and status_type is either None (no status
+    check — attacker analogue to C2PA unchecked) or a member of VC_STATUS_TYPES.
+    Pure predicate, no status-list fetch.
+    """
+    if not isinstance(doc_type, str) or doc_type != "credential":
+        return False
+    if status_type is None:
+        return True
+    return isinstance(status_type, str) and status_type in VC_STATUS_TYPES
+
+
+def is_holder_subject_distinct(holder: str, subject: str) -> bool:
+    """Whether holder and subject are distinct — §1.2 Note holder≠subject.
+
+    Parent holds child's credential — True when holder != subject, pure string compare.
+    """
+    if not isinstance(holder, str) or not isinstance(subject, str):
+        return False
+    return holder != subject
+
+
+def credential_truth_implies_verifiable(is_verifiable: bool, is_true: bool) -> bool:
+    """Whether truth implies verifiable holds — §1.1 verifiable≠true boundary.
+
+    Documents: verifiable=False ⇒ reliance False is required; verifiable=True
+    does not imply is_true. Material implication: is_true -> is_verifiable,
+    i.e. truth requires verifiability, but verifiability does not require truth.
+    Pure logic, no I/O.
+    """
+    if not isinstance(is_verifiable, bool) or not isinstance(is_true, bool):
+        return False
+    # truth implies verifiable: ¬truth ∨ verifiable
+    if is_true and not is_verifiable:
+        return False
+    return True
