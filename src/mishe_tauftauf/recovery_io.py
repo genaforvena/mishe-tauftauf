@@ -26,6 +26,132 @@ from . import recovery_policy as policy
 MAX_BYTES = 4 * 1024 * 1024
 STATES = {"HEALTHY", "FAILED", "MITIGATED", "RECOVERING", "RESTORED", "UNKNOWN"}
 
+# SRE Ch.6 histogram: exponential boundaries ~×3 scaled to recovery seconds
+# covering observed 0.5-86s holds (see SEED_HOLDER_STUCK_SECONDS comment).
+DEFAULT_HISTOGRAM_BOUNDARIES = (0.5, 1.5, 5, 15, 30, 90, 120, 300)
+
+
+def histogram_buckets(samples, boundaries=None):
+    """Bucket counts for latency samples per SRE Ch.6 exponential histogram.
+
+    ``boundaries`` are strictly increasing upper edges in seconds. Bucket i holds
+    count of samples with boundaries[i-1] <= t < boundaries[i] (i=0 uses 0).
+    Overflow bucket len(boundaries) holds t >= boundaries[-1]. Returned dict has
+    ``counts`` (bucket_index -> count), ``total`` and ``boundaries``.
+    Pure function, no I/O. Retains sorted samples for exact tail percentile
+    so p95/p99 do not average the 86 s excursion away when n is small.
+    """
+    if boundaries is None:
+        boundaries = DEFAULT_HISTOGRAM_BOUNDARIES
+    boundaries = tuple(float(b) for b in boundaries)
+    if not boundaries or any(not math.isfinite(b) or b <= 0 for b in boundaries):
+        raise ValueError("invalid histogram boundaries")
+    if any(boundaries[i] >= boundaries[i + 1] for i in range(len(boundaries) - 1)):
+        raise ValueError("histogram boundaries must be strictly increasing")
+    # Validate samples are finite numbers; reject NaN/inf so percentiles are honest.
+    for s in samples:
+        if type(s) not in (int, float) or not math.isfinite(float(s)):
+            raise ValueError(f"invalid histogram sample: {s!r}")
+        if float(s) < 0:
+            raise ValueError(f"negative histogram sample: {s!r}")
+    counts: dict[int, int] = {}
+    sorted_samples = sorted(float(s) for s in samples)
+    for s in samples:
+        v = float(s)
+        idx = 0
+        for b in boundaries:
+            if v < b:
+                break
+            idx += 1
+        counts[idx] = counts.get(idx, 0) + 1
+    return {"counts": counts, "total": len(samples), "boundaries": boundaries, "samples": sorted_samples}
+
+
+def latency_histogram_summary(histogram, *, boundaries=None):
+    """Derive p50/p75/p95/p99 from histogram; tail-visible without hiding 86 s.
+
+    ``histogram`` is the dict returned by :func:`histogram_buckets`. When
+    ``samples`` are retained, percentiles are exact via sorted samples using
+    ``ceil(p*n)-1`` (matching ``scan_freshness.aoi_summary``). Buckets remain
+    the published SRE view so the distribution is visible; the percentiles are
+    not bucket-edge approximations that would map the 86 s tail to 30 s.
+    Returns ``{"n", "p50", "p75", "p95", "p99", "buckets", "boundaries", "reason"}``.
+    """
+    if isinstance(histogram, dict) and "counts" in histogram:
+        counts = dict(histogram["counts"])
+        total = int(histogram["total"])
+        bnds = tuple(histogram.get("boundaries", boundaries or DEFAULT_HISTOGRAM_BOUNDARIES))
+        samples = histogram.get("samples")
+    else:
+        raise ValueError("histogram must be result of histogram_buckets")
+    if boundaries is not None:
+        bnds = tuple(float(b) for b in boundaries)
+    n = total
+    if n == 0:
+        return {"n": 0, "p50": None, "p75": None, "p95": None, "p99": None,
+                "buckets": counts, "boundaries": bnds, "reason": "no samples"}
+    # Exact percentiles when samples retained; bucket edges otherwise.
+    if isinstance(samples, (list, tuple)) and len(samples) == n:
+        sorted_s = sorted(float(s) for s in samples)
+        def pct(p):
+            idx = math.ceil(p * n) - 1
+            idx = max(0, min(idx, n - 1))
+            return sorted_s[idx]
+        p50, p75, p95, p99 = pct(0.50), pct(0.75), pct(0.95), pct(0.99)
+    else:
+        edges = [0.0] + list(bnds)
+        max_idx = max(counts) if counts else -1
+        upper = max(max_idx, len(bnds))
+        cumul = 0
+        p_targets = {0.50: None, 0.75: None, 0.95: None, 0.99: None}
+        thresholds = {p: math.ceil(p * n) for p in p_targets}
+        for idx in range(upper + 1):
+            cumul += counts.get(idx, 0)
+            for p in list(p_targets):
+                if p_targets[p] is None and cumul >= thresholds[p]:
+                    p_targets[p] = edges[idx] if idx < len(edges) else edges[-1]
+        for p in p_targets:
+            if p_targets[p] is None:
+                p_targets[p] = edges[max_idx] if max_idx >= 0 else 0.0
+        p50, p75, p95, p99 = p_targets[0.50], p_targets[0.75], p_targets[0.95], p_targets[0.99]
+    reason = "ok" if n >= 10 else f"small N={n}; p99 = max(bucket) edge-aware, buckets published"
+    return {"n": n, "p50": p50, "p75": p75, "p95": p95, "p99": p99,
+            "buckets": counts, "boundaries": bnds, "reason": reason}
+
+
+def slo_check(histogram, *, p=0.95, limit=30.0):
+    """Evaluate percentile against limit; extra observability, not a second latch.
+
+    Returns ``(ok, reason)`` like guard's vocabulary: ok True when percentile
+    is below limit, False when at or above, None when no samples or unknown.
+    Does not change deadline/stable_seconds thresholds.
+    """
+    if type(p) not in (int, float) or not 0 < p < 1:
+        raise ValueError("p must be in (0,1)")
+    if type(limit) not in (int, float) or not math.isfinite(limit) or limit <= 0:
+        raise ValueError("invalid limit")
+    summary = latency_histogram_summary(histogram)
+    if summary["n"] == 0:
+        return (None, "no samples; SLO not evaluated")
+    key = {0.50: "p50", 0.75: "p75", 0.95: "p95", 0.99: "p99"}.get(round(float(p), 2))
+    if key is not None:
+        percentile = summary[key]
+    else:
+        # exact quantile from retained samples at arbitrary p
+        samples = histogram.get("samples") if isinstance(histogram, dict) else None
+        if isinstance(samples, (list, tuple)) and len(samples) == summary["n"]:
+            sorted_s = sorted(float(s) for s in samples)
+            idx = math.ceil(float(p) * summary["n"]) - 1
+            idx = max(0, min(idx, summary["n"] - 1))
+            percentile = sorted_s[idx]
+        else:
+            percentile = summary["p95"] if summary["p95"] is not None else None
+    if percentile is None:
+        return (None, "percentile unavailable; small N")
+    if percentile < float(limit):
+        return (True, f"p{int(round(p*100))}={percentile:g}s < limit {limit:g}s n={summary['n']} buckets={summary['buckets']}")
+    return (False, f"p{int(round(p*100))}={percentile:g}s >= limit {limit:g}s n={summary['n']} buckets={summary['buckets']}")
+
 
 def read_json(path):
     path = Path(path)
