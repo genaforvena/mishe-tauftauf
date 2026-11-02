@@ -8939,10 +8939,14 @@ def scan_window_aoi(home: Path, *, now=None, window: int = 100) -> dict | None:
     if pairs and pairs[-1][1].astimezone(timezone.utc) == now.astimezone(timezone.utc):
         pairs = pairs[:-1]
     pairs = pairs[-window:] if window and window > 0 else pairs
-    stamps = [started for started, _created in pairs]
-    if len(stamps) < 2:
+    if len(pairs) < 2:
         return None
-    return aoi_summary(stamps, now=now)
+    stamps = [started for started, _created in pairs]
+    lags = [(created - started).total_seconds() for started, created in pairs]
+    # Negative lags are incompatible receipts; drop to UNKNOWN rather than clamp.
+    if any(lag < 0 for lag in lags):
+        return None
+    return aoi_summary(stamps, now=now, lags=lags)
 
 
 def scan_initial_age(home: Path, *, window: int = 100) -> dict | None:

@@ -329,3 +329,68 @@ def test_windowed_aoi_warmup_and_legacy_receipts_stay_unknown(tmp_path) -> None:
     _receipt(tmp_path, "scan-000.json", t0, None)
     _receipt(tmp_path, "scan-001.json", t0 + timedelta(seconds=10), None)
     assert discovery.scan_window_aoi(tmp_path, now=t0 + timedelta(seconds=20)) is None
+def test_aoi_summary_unfolds_transport_term_per_kaul_yates_eq4(tmp_path) -> None:
+    """Kaul-Yates 2012 Eq.4: Q=X·T+X²/2. The folded mean underprices transport.
+
+    Live receipts (n=100, median lag ~64 s) had folded 336.4 s vs unfolded
+    412.3 s (gap 75.9 = Σ(X·T)/ΣX). This test pins the correction on a
+    deterministic synthetic window so it survives receipt drift, plus a
+    minimal 3-receipt integration through scan_window_aoi.
+    """
+    from mishe_tauftauf import discovery
+
+    t0 = datetime(2026, 11, 1, 0, 0, tzinfo=timezone.utc)
+    # Steady publisher: 100 intervals of 600 s, now 5 s after last stamp.
+    stamps = [t0 + timedelta(seconds=600 * i) for i in range(101)]
+    now = t0 + timedelta(seconds=600 * 100 + 5)
+
+    folded = freshness.aoi_summary(stamps, now=now)
+    assert folded is not None
+    assert folded["mean_age"] == pytest.approx(300.0)
+    assert "mean_age_unfolded" not in folded
+    assert folded["current"] == pytest.approx(5.0)
+    assert folded["mean_peak"] == pytest.approx(600.0)
+
+    # Same stamps with T=0 gives zero transport gap; T=40 gives gap 40 s.
+    lags0 = [0.0] * 101
+    lags40 = [40.0] * 101
+    unfolded0 = freshness.aoi_summary(stamps, now=now, lags=lags0)
+    unfolded40 = freshness.aoi_summary(stamps, now=now, lags=lags40)
+    assert unfolded0 is not None and unfolded40 is not None
+    assert unfolded0["mean_age"] == pytest.approx(300.0)
+    assert unfolded0["mean_age_unfolded"] == pytest.approx(300.0)
+    assert unfolded0["mean_transport"] == pytest.approx(0.0)
+    assert unfolded40["mean_age"] == pytest.approx(300.0)
+    assert unfolded40["mean_age_unfolded"] == pytest.approx(340.0)
+    assert unfolded40["mean_transport"] == pytest.approx(40.0)
+    # Folded keys unchanged by unfolding.
+    assert unfolded40["current"] == pytest.approx(folded["current"])
+    assert unfolded40["mean_peak"] == pytest.approx(folded["mean_peak"])
+    assert unfolded40["n"] == folded["n"]
+    assert unfolded40["window_seconds"] == pytest.approx(folded["window_seconds"])
+    # Pair form (stamp, T) is equivalent to lags form.
+    pairs = list(zip(stamps, lags40))
+    via_pairs = freshness.aoi_summary(pairs, now=now)  # type: ignore[arg-type]
+    assert via_pairs is not None
+    assert via_pairs["mean_age_unfolded"] == pytest.approx(340.0)
+    # Ambiguous double source and invalid lags are unknown.
+    assert freshness.aoi_summary(pairs, now=now, lags=lags40) is None  # type: ignore[arg-type]
+    assert freshness.aoi_summary(stamps, now=now, lags=[0.0] * 100) is None
+    assert freshness.aoi_summary(stamps, now=now, lags=[-1.0] * 101) is None
+    assert freshness.aoi_summary(stamps, now=now, lags=[float("nan")] * 101) is None
+
+    # Minimal scan_window_aoi integration: 3 receipts, each lag 40 s, gap 500 s.
+    for index in range(3):
+        created = t0 + timedelta(seconds=500 * index)
+        started_ns = int((created - timedelta(seconds=40)).timestamp() * 1_000_000_000)
+        _receipt(tmp_path, f"scan-u-{index:03d}.json", created, started_ns)
+    aoi = discovery.scan_window_aoi(tmp_path, now=t0 + timedelta(seconds=1500))
+    assert aoi is not None
+    # Folded mean for two 500 s intervals is 250 s; unfolded adds T=40 s.
+    assert aoi["mean_age"] == pytest.approx(250.0)
+    assert aoi["mean_age_unfolded"] == pytest.approx(290.0)
+    assert aoi["mean_transport"] == pytest.approx(40.0)
+    assert aoi["t_median"] == pytest.approx(40.0)
+    assert aoi["t_max"] == pytest.approx(40.0)
+    assert aoi["t_min"] == pytest.approx(40.0)
+

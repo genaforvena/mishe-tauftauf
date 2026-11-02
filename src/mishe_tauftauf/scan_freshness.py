@@ -147,7 +147,7 @@ def classify_age(bounds: tuple[int, int] | None, max_age_seconds: float) -> str:
         return "stale"
     return "unknown"
 
-def aoi_summary(stamps: list, *, now) -> dict | None:
+def aoi_summary(stamps: list, *, now, lags: list[float] | None = None) -> dict | None:
     """Windowed Age-of-Information summary for a stamp sequence.
 
     Yates et al. 2020 §II: monitor age ``Δ(t)=t−u(t)`` sawtooth with
@@ -158,20 +158,47 @@ def aoi_summary(stamps: list, *, now) -> dict | None:
 
     * ``stamps`` — ordered window of prior publish instants, earliest first
       (pane footer ``-- pane live <utc>``, scan ``created``, report
-      ``generated_at``). Caller chooses ``WS`` (``100`` ~ 8 min at 5 s/frame
+      ``generated_at``), or per-receipt pairs ``(stamp, T)`` where ``T`` is
+      the age of the update at receipt (Kaul-Yates 2012 Eq. 4: ``Q=X·T+X²/2``).
+      Passing pairs and passing ``lags`` are equivalent; ``lags`` is preferred
+      for explicit call sites. Caller chooses ``WS`` (``100`` ~ 8 min at 5 s/frame
       for peaks, ``1000`` ~ 83 min for ϕ validation per review).
     * ``now`` — current time for ``Δ(t)=now−stamps[-1]``.
+    * ``lags`` — optional per-receipt transport ages ``T`` aligned to
+      ``stamps``. When provided the folded ``Q=D²/2`` mean is kept as
+      ``mean_age`` and the unfolded ``Q=X·T+X²/2`` mean is published as
+      ``mean_age_unfolded`` (gap ``Σ(X·T)/ΣX``).
 
     Returns ``None`` (unknown) on warmup (<2 stamps), incompatible or
     invalid stamps, or ``now`` preceding the window. Otherwise returns a
     dict with ``current``, ``mean_peak`` (``E[A]≈E[D]``), ``mean_age``
     (``E[Q]/E[D]`` with ``Q=D²/2`` when ``T`` folded, Eq. 2), ``p95``,
     ``max``, ``min``, ``n``, ``window_seconds`` — all in seconds as float.
-    ``None`` uses the same unknown vocabulary as ``classify_age`` and
+    When ``lags``/pairs are given also ``mean_age_unfolded``,
+    ``mean_transport`` (=``Σ(X·T)/ΣX``), ``t_median``, ``t_p95``, ``t_max``,
+    ``t_min``. ``None`` uses the same unknown vocabulary as ``classify_age`` and
     ``coverage-window-expiry._fresh`` (``Undecidable``): warmup does not
     become ``recent``/``stale``.
     """
     from datetime import datetime, timezone
+
+    # Allow per-receipt pairs ``(stamp, T)`` as stamps elements for callers
+    # that already have the pairs (review wording). Prefer explicit ``lags``.
+    _pair_lags: list[float] | None = None
+    if stamps and isinstance(stamps[0], (list, tuple)) and len(stamps[0]) == 2:
+        try:
+            _maybe_dt = stamps[0][0]
+            if isinstance(_maybe_dt, datetime) and isinstance(stamps[0][1], (int, float)) and not isinstance(stamps[0][1], bool):
+                _pair_lags = [float(p[1]) for p in stamps]  # type: ignore[arg-type]
+                stamps = [p[0] for p in stamps]  # type: ignore[arg-type]
+            # else: not a pair mode, treat as plain stamps list
+        except Exception:
+            return None
+    if lags is None:
+        lags = _pair_lags
+    elif _pair_lags is not None:
+        # Both sources supplied — ambiguous.
+        return None
 
     if not isinstance(stamps, list) or len(stamps) < 2:
         return None
@@ -196,6 +223,19 @@ def aoi_summary(stamps: list, *, now) -> dict | None:
             return None
     if now_utc < normalized[-1]:
         return None
+    # Validate optional lags aligned to stamps.
+    norm_lags: list[float] | None = None
+    if lags is not None:
+        if not isinstance(lags, list) or len(lags) != len(normalized):
+            return None
+        norm_lags = []
+        for v in lags:
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                return None
+            fv = float(v)
+            if not math.isfinite(fv) or fv < 0:
+                return None
+            norm_lags.append(fv)
     # Inter-stamp peaks A_n ≈ D_n (Eq. II-B with T folded).
     peaks: list[float] = []
     for i in range(1, len(normalized)):
@@ -221,7 +261,7 @@ def aoi_summary(stamps: list, *, now) -> dict | None:
     p95_index = math.ceil(0.95 * n) - 1
     p95_index = max(0, min(p95_index, n - 1))
     p95 = float(sorted_peaks[p95_index])
-    return {
+    result: dict[str, float | int] = {
         "current": float(current),
         "mean_peak": float(mean_peak),
         "mean_age": float(mean_age),
@@ -231,6 +271,27 @@ def aoi_summary(stamps: list, *, now) -> dict | None:
         "n": int(n),
         "window_seconds": float(window_seconds),
     }
+    if norm_lags is not None:
+        # Eq. 4 unfolded: Q_i = X_i·T_i + X_i²/2 where T_i is age at receipt
+        # of the later update (interval i between stamps[i-1] and stamps[i]).
+        sum_xt = 0.0
+        for i in range(len(peaks)):
+            sum_xt += peaks[i] * norm_lags[i + 1]
+        mean_age_unfolded = (sum_d2 / 2.0 + sum_xt) / sum_d
+        mean_transport = sum_xt / sum_d
+        # T statistics over the window's receipts (all aligned lags)
+        ordered_t = sorted(norm_lags)
+        middle = len(ordered_t) // 2
+        t_median = ordered_t[middle] if len(ordered_t) % 2 else (ordered_t[middle - 1] + ordered_t[middle]) / 2
+        tp95_idx = math.ceil(0.95 * len(ordered_t)) - 1
+        tp95_idx = max(0, min(tp95_idx, len(ordered_t) - 1))
+        result["mean_age_unfolded"] = float(mean_age_unfolded)
+        result["mean_transport"] = float(mean_transport)
+        result["t_median"] = float(t_median)
+        result["t_p95"] = float(ordered_t[tp95_idx])
+        result["t_max"] = float(max(norm_lags))
+        result["t_min"] = float(min(norm_lags))
+    return result
 
 
 def utc_consistency(snapshot: dict) -> str:
