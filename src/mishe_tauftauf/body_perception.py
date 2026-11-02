@@ -50,6 +50,7 @@ changes leaks despite memoization (p.3–4); ε∞/ε1 are worst-case over Bloom
 pre-images (p.9). This module stays exact — RAPPOR symbols below are typed
 calibration (f, p, q, k, h, m, ε∞, ε1, q*, p*) so a future local noisy body
 release can be reviewed with visible longitudinal vs one-shot budgets.
+Diversity lens: Machanavajjhala et al., "l-Diversity: Privacy Beyond k-Anonymity," ICDE 2006 / TKDD 2007 (DOI 10.1145/1217299.1217302, Figures 1-2 p1, homogeneity/background attacks §1.1 p2, Theorem 3.1 Eq1 p5, Definitions 3.1-3.2 p4, Principle 2 p7, Definition 4.1 entropy p7, Definition 4.2 recursive p8, Def 4.5 multi-attribute p8) — sensitive vs QI partition, per-class sensitive histogram, entropy ≥ log ℓ or recursive r1 < c·tail, syntactic not semantic, single-attribute check, multi-attribute needs Q∪{other Si} expansion. This module stays exact — l-diversity helpers below are typed measurement at DV=[0,…,0]; k-True does not imply diverse; ℓ/c are policy choices not inferred, no f/α/β estimation, no DGH/VGH generalisation.
 Human-subjects lens: National Commission, The Belmont Report, FR 44:23192
 (1979-04-18) via ORI/HHS — Part A practice vs research (practice: interventions
 solely for individual well-being; research: hypothesis + generalizable knowledge
@@ -1093,6 +1094,18 @@ RAPPOR_M_COHORTS_DEFAULT: Final[int] = 64
 QI_DEFAULT_KEYS: Final[tuple[str, ...]] = ("light_class",)
 K_ANONYMITY_DEFAULT_K: Final[int] = 2
 K_ANONYMITY_MAX_SUP: Final[int | None] = None
+#: l-diversity sensitive-diversity vocabulary (Machanavajjhala et al., ICDE 2006 / TKDD 2007)
+#: Principle 2 p7: q*-block is ℓ-diverse if at least ℓ well-represented values for sensitive S.
+#: Table is ℓ-diverse if every q*-block is. Entropy Definition 4.1 p7: entropy(q*) = -Σ p log p ≥ log ℓ.
+#: Recursive Definition 4.2 p8: r1 ≥ r2 … sorted, r1 < c·(rℓ+…+rm). 1-diversity always holds.
+#: Sensitive vs QI partition §1-2: QI nonsensitive linkable vs sensitive must stay secret.
+#: Placeholder L_DIVERSITY_SENSITIVE_KEY documents the sensitive attribute is a policy/content
+#: choice reviewed under docs/protocol-boundaries.md, not inferred. No DGH/VGH here.
+#: Syntactic not semantic: distinct but close values still pass; t-closeness EMD not implemented.
+#: Multi-attribute Definition 4.5 p8 requires Q∪{other Si} as QI — cost grows.
+L_DIVERSITY_DEFAULT_L: Final[int] = 2
+L_DIVERSITY_DEFAULT_C: Final[float] = 2.0
+L_DIVERSITY_SENSITIVE_KEY: Final[str | None] = None
 
 
 def qi_histogram(
@@ -1263,6 +1276,175 @@ def k_anonymity_distinct_tuples(
     """
     hist = qi_histogram(rows, qi_keys)
     return len(hist)
+
+
+#: l-diversity helpers are pure and exact; they do not generalise, suppress, or estimate f.
+#: k-anonymous table can still be ℓ=1 (Figure 2 homogeneous block p2). Entropy ≥ log ℓ does not
+#: imply protection against t-closeness/EMD skew or semantic similarity. No instance-level
+#: background knowledge ("Bob does not have diabetes" p6). Multi-attribute check not in this commit.
+def qi_sensitive_histogram(
+    rows: list[dict], qi_keys: tuple[str, ...] | list[str], sensitive_key: str
+) -> dict[tuple, dict[object, int]]:
+    """Per-class sensitive histogram n(q*,s) per QI projection (Machanavajjhala Def 4.1-4.2 p7-8).
+
+    Projects each row onto ``qi_keys`` for the key and counts ``sensitive_key`` values
+    per class. Missing sensitive field becomes distinct ``None`` bucket so counting is
+    strict. Empty input returns empty dict \u2014 UNKNOWN-style denier is ``None`` in the
+    \u2113 wrappers. No Path/clock/json I/O; caller supplies already-held rows.
+    """
+    try:
+        keys = tuple(qi_keys)  # type: ignore[arg-type]
+    except Exception:
+        return {}
+    if not keys:
+        return {}
+    try:
+        skey = str(sensitive_key)  # type: ignore[arg-type]
+    except Exception:
+        return {}
+    if not isinstance(sensitive_key, str) or not skey:
+        return {}
+    try:
+        iterable = list(rows)  # type: ignore[arg-type]
+    except Exception:
+        return {}
+    hist: dict[tuple, dict[object, int]] = {}
+    for row in iterable:
+        if not isinstance(row, dict):
+            continue
+        key = tuple(row.get(k) for k in keys)
+        # strict: row.get(skey) is None when missing \u2014 distinct bucket
+        try:
+            sval = row.get(skey)
+        except Exception:
+            sval = None
+        inner = hist.get(key)
+        if inner is None:
+            inner = {}
+            hist[key] = inner
+        inner[sval] = inner.get(sval, 0) + 1
+    return hist
+
+
+def entropy_of_q_star(counts: dict[object, int]) -> float:
+    """Shannon entropy -\u03a3 p log p for one q*-block (Machanavajjhala Definition 4.1 p7).
+
+    Let p(q*,s)=n(q*,s)/\u03a3 n(q*,s'). Returns 0.0 on empty or total 0. Natural log,
+    same as paper p7 Figure 3 note "actually 2.8-diverse". No I/O.
+    """
+    try:
+        if not isinstance(counts, dict) or not counts:
+            return 0.0
+        total = 0
+        for v in counts.values():
+            try:
+                total += int(v)  # type: ignore[arg-type]
+            except Exception:
+                return 0.0
+        if total <= 0:
+            return 0.0
+        entropy = 0.0
+        for v in counts.values():
+            try:
+                c = int(v)  # type: ignore[arg-type]
+            except Exception:
+                return 0.0
+            if c <= 0:
+                continue
+            p = c / total
+            if p <= 0.0 or p > 1.0:
+                continue
+            try:
+                entropy -= p * math.log(p)
+            except Exception:
+                return 0.0
+        if not math.isfinite(entropy):
+            return 0.0
+        return float(entropy)
+    except Exception:
+        return 0.0
+
+
+def is_entropy_l_diverse(
+    rows: list[dict], qi_keys: tuple[str, ...] | list[str], sensitive_key: str, ell: int
+) -> bool | None:
+    """Whether every q*-block satisfies entropy \u2265 log \u2113 (Machanavajjhala Definition 4.1 p7).
+
+    Returns ``None`` on invalid ``ell<1``, non-finite, empty input, or missing
+    ``sensitive_key`` when rows nonempty \u2014 typed deny analogous to k helpers.
+    Whole-table entropy \u2265 log \u2113 is then necessary (concavity note p7).
+    Conservative when domain(S) skewed; syntactic not semantic.
+    """
+    try:
+        kk = int(ell)  # type: ignore[arg-type]
+    except Exception:
+        return None
+    if kk < 1:
+        return None
+    try:
+        hist = qi_sensitive_histogram(rows, qi_keys, sensitive_key)  # type: ignore[arg-type]
+    except Exception:
+        return None
+    if not hist:
+        return None
+    try:
+        threshold = math.log(kk)
+    except Exception:
+        return None
+    if not math.isfinite(threshold):
+        return None
+    for block_counts in hist.values():
+        ent = entropy_of_q_star(block_counts)
+        if ent + 1e-12 < threshold:  # tiny epsilon for float
+            return False
+    return True
+
+
+def is_recursive_c_l_diverse(
+    rows: list[dict], qi_keys: tuple[str, ...] | list[str], sensitive_key: str, ell: int, c: float
+) -> bool | None:
+    """Whether every q*-block satisfies r1 < c\u00b7(rℓ+…+rm) (Machanavajjhala Definition 4.2 p8).
+
+    Sorted descending r1\u2265r2\u2026rm. 1-diversity always True p8. Returns ``None`` on
+    invalid ``ell<1``, non-finite ``c``, empty input etc. Less conservative than entropy.
+    Constant ``c`` bounds r1 against tail \u2014 tuning knob \u00a75.
+    """
+    try:
+        kk = int(ell)  # type: ignore[arg-type]
+        cc = float(c)  # type: ignore[arg-type]
+    except Exception:
+        return None
+    if kk < 1:
+        return None
+    if not math.isfinite(cc) or cc <= 0.0:
+        return None
+    try:
+        hist = qi_sensitive_histogram(rows, qi_keys, sensitive_key)  # type: ignore[arg-type]
+    except Exception:
+        return None
+    if not hist:
+        return None
+    if kk == 1:
+        return True
+    for block_counts in hist.values():
+        try:
+            sorted_counts = sorted(block_counts.values(), reverse=True)  # type: ignore[arg-type]
+        except Exception:
+            return None
+        m = len(sorted_counts)
+        if m < kk:
+            return False
+        # validate ints
+        try:
+            r1 = int(sorted_counts[0])  # type: ignore[arg-type]
+            tail = sum(int(x) for x in sorted_counts[kk - 1 :])  # type: ignore[arg-type]
+        except Exception:
+            return None
+        if not (r1 < cc * tail - 1e-12):  # need strict < ; tiny epsilon
+            # also handle floating c
+            if not (r1 < cc * tail):
+                return False
+    return True
 
 
 #: RAPPOR helpers are pure and exact; they do not sample, hash, or store B'.
