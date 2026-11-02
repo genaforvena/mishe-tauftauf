@@ -1,0 +1,90 @@
+---
+field: model-judgment
+angle: transfer
+date: 2026-11-02
+status: applied
+owner: genome
+target: src/mishe_tauftauf/judges.py
+---
+
+# Defer, don't just threshold — a consistent rejector that learns when the expert beats the model
+
+## What we read
+
+**Hussein Mozannar and David Sontag — "Consistent Estimators for Learning to Defer to an Expert", arXiv:2006.01862v3 [cs.LG] 25 Jan 2021 (ICML 2020)** — read full primary source at:
+
+- <https://arxiv.org/abs/2006.01862> (arXiv abstract, v3 25 Jan 2021)
+- <https://arxiv.org/pdf/2006.01862.pdf> (PDF 1_342_596 bytes fetched 200 2026-11-02 at /tmp/mozannar20.pdf, 43 pp., sha256 b38a2b5aaff66903346d46f70ed34a9ea72cc790641e6502db3147c8bd587a28, Creator pdfTeX-1.40.21, 43 pages, LaTeX with hyperref)
+
+The paper formalizes the system the plant actually runs — a model plus a downstream expert — and gives a trainable rejector with consistency guarantees, with CIFAR-10/100 (synthetic + CIFAR10H human experts), hate-speech and chest X-ray experiments.
+
+Four passages carry the mechanism this plant can borrow without lifting its theorems — pagination is v3 page numbers, quotations via `pdftotext`:
+
+1. **The system loss, not the classifier loss — predictor Ŷ: X → Y ∪ {⊥} (§3 p.3, Eqs.1–3, Fig.1).** The joint cost is `L(Ŷ)=E[l(x,y,Ŷ(x))·1{Ŷ≠⊥} + l_exp(x,y,m)·1{Ŷ=⊥}]` (1) decomposed as `L(h,r)=E[l(x,y,h(x))·1{r=0} + l_exp(x,y,m)·1{r=1}]` (2) for classifier `h: X→Y` and rejector `r: X→{0,1}`. The 0–1 version the analysis uses is `L_{0-1}(h,r)=E[1{h≠y}·1{r=0} + 1{m≠y}·1{r=1}]` (3). Motivation (§1 p.1–2): Facebook content moderation triage, ICU risk scores, radiology triage where the expert may have side information Z∋ privacy-protected signals unavailable to X — the hard case is deciding deferral without seeing Z, given only samples `(x_i,y_i,m_i)`.
+
+2. **Bayes optimal deferral — when to let the expert decide (§4 pp.4–5, Prop.2 Eq.6).** With `η_y(x)=P(Y=y|X=x)`: `h^B(x)=argmax_{y∈Y} η_y(x)` and `r^B(x)=1{max_y η_y(x) ≤ P(Y=M|X=x)}` (6). In words: predict if your best class beats the expert's correctness probability, otherwise defer — even if `h^B` is confident, defer when the expert is more likely to be right on this x. Proof in Appx C. This is the decision rule the plant's `classify()` thresholds `0.2/0.8` approximate without the right-hand side.
+
+3. **A consistent, convex surrogate that is just cross-entropy with an extra logit — L_CE (7) and L^~_CE (4) (§4 pp.5–6, Prop.1, Thm.1).** Introduce `Y^⊥=Y∪{⊥}` and scores `g_1…g_{K+1}` with `h=argmax_{y∈Y} g_y`, `r=1{max_{y∈Y} g_y ≤ g_⊥}`. Cost-sensitive surrogate `L^~_{CE}=−Σ_i (max_j c(j)−c(i)) log softmax(g_i)` (4) upper-bounds cost-sensitive loss and is consistent (Prop.1). For `L_{0-1}`: `L_{CE}=−log softmax(g_y) − 1{m=y}·log softmax(g_⊥)` (7) — exactly cross-entropy on `K+1` classes with a second term when the expert is correct. Theorem 1: convex in g, upper bounds (3), consistent — `inf L_{CE}` attained at `(h*,r*)` with `h*=h^B, r*=r^B`. Implementation cost: one extra output unit, swap loss. Parameterized variant `L^α_{CE}` (10) weights expert-correct examples by α≥0 to tune deferral rate.
+
+4. **Why confidence baselines fail, and what consistency buys (§5 pp.6–7, §5.1, experiments §6).** Confidence method: train classifier, train `P(Y=M|X)` model, defer if classifier confidence < expert confidence — consistent for (h,r) per Rajan et al. but requires two calibrated models and side-information estimation; Mozannar shows `L_{CE}` dominates it on CIFAR with synthetic experts of varying strength (Table 2) and on CIFAR10H human noise (Table 3), because the joint loss lets the classifier specialize on the non-deferred region. Baselines compared: selective classification (Geifman et al. 2019), mixture-of-experts loss (Madras et al. 2018), and confidence-thresholding — all inconsistent or non-adaptive to the expert. Fig. in §6 and Table 4 show α tunes coverage vs system accuracy without retraining the expert.
+
+**Limits the source states and this review keeps.** Consistency assumes i.i.d. `(x,y,m)~P×M` and access to expert decisions or deferral costs; expert side information Z is never observed by the learner — the learner must infer deferral from X alone. No claim imported about CIFAR accuracy numbers, hate-speech F1, or a specific α — those are dataset/expert-specific. The K=2 vs K>2 distinction matters only for the binary rejector extension in Appx C. Fairness and RL deferral extensions (cited §2) are not imported. The paper explicitly does not solve the reverse setting where the expert decides to accept/reject the model.
+
+**Why this source, for this cell.** `model-judgment--transfer` asks for a cross-domain transfer of model judgment onto a plant part. Learning-to-defer is a *decision-theory-to-ML* transplant: the Bayes rule (6) and the consistent loss (7) transplant cost-sensitive learning onto the plant's judge surface that today thresholds a single `P(yes)` at `0.2/0.80` with no expert model. The plant's `model-judgment` field currently calibrates a point probability (`completions_judge` Wang invert, `jev_judge` Guo ECE/Nixon GCE, `judges.py` Farquhar semantic entropy) — all still map `P→yes/no/unknown` without the `P(Y=M|X)` comparator the Bayes rule requires. Mozannar supplies the missing comparator and the loss that makes it learnable.
+
+## What this plant already does
+
+*The plant asks one question at one threshold and keeps the expert out of the loss.*
+
+- **judges.py — single-sample threshold map with an unmodeled expert.** `QUESTIONS:10` are yes/no probes, `classify(question, probability)->str` bins at `0.20/0.80` (`publish/relevance` at `0.20`), `run_external` parses one `probability <float>` or `unknown <reason>` line (`RESULT_RE`/`UNKNOWN_RE:18–19`), `run_external_batch` does one JSON-lines call for several questions over one state, `conservative_unknown` returns `probability=None` when no adapter is selected, `controls():147` smoke-tests 12 categorical agreements. `unknown` is the plant's word for "defer", but `classify` has no `P(Y=M|X=x)` term — the threshold is constant, not `r^B=1{max η ≤ P(M correct|x)}`, and no file estimates `P(M correct|x)` or scores the joint system (3). A `0.82` on a hard case and a `0.82` on an easy one defer differently only if the expert does; the current code cannot tell.
+
+- **jev_judge.py / completions_judge.py — same single-threshold contract.** `jev_judge.py:2–33` "reference adapter, not a calibration claim … never takes one as proof", `evaluate(document)→(float|None,str)` with `MAX_STATE_CHARS=100_000/TIMEOUT_SECONDS=60/MAX_DAILY_CALL_LIMIT=1000` and `reserve_daily_call`; `completions_judge.py:4` "Categorical yes/no map to 1/0 … not calibrated", `Result.probability∈{1,0,None}`, `SYSTEM_PROMPT:31` JSON verdict. The retrofit proposals add calibration measurement (Guo ECE `M=15`, Nixon GCE, Wang `invert_softmax_logits`/`τ`, Gneiting proper scores) and meaning-level uncertainty (Farquhar SE), plus conformal sets (Angelopoulos `q̂`) and ensembles (Lakshminarayanan `M⁻¹Σp_m`) — all still `P(Y|X)`-only, no `P(Y=M|X)` and no `L(h,r)`.
+
+- **docs/decision-models.md + docs/completions-judge.md — four judges but no deferral.** `decision-models.md:60–103` lists Jev 1.13/Nimble 9B/Tev1/Clef as alternatives and says "Atomic yes/no/unknown questions", each signal one call; `:41–48` calibration is a vendor caveat. `completions-judge.md:30` "Exit 0 means all twelve categorical answers matched; this is not a calibration ..." — the discipline is to not overclaim, but `unknown` is still a word, not a rejector with a level and a system loss.
+
+- **What the sweep found.** `field_review.py next` for `model-judgment--transfer` reports 44 hits on `model/judge/calibration` in checks/decision/judge plumbing — occurrence, not a mechanism. No existing symbol computes `max η_y`, `P(Y=M|X)`, `1{max η ≤ P(M correct)}`, `L_{0-1}(h,r)` or `L_{CE}`; no helper carries `K+1`-way softmax with a defer logit `g_⊥`.
+
+- **Cost of staying threshold-only.** A fixed `0.80` that is right on average is wrong exactly where the expert is strong: a `P(yes)=0.78` case the model would mark `uncertain` should be *predicted* if `P(M correct|x)=0.55`, and a `P(yes)=0.92` case the model would mark `yes` should be *deferred* if `P(M correct|x)=0.98` with side information. Triage quality is system accuracy (model ∪ expert), not classifier accuracy — optimizing the wrong loss leaves accuracy on the table even when per-question ECE looks good.
+
+## What is new here
+
+**Replace "threshold the model's probability" with "compare it to the expert's correctness probability and learn the comparison" — Bayes rule (6) for the decision, L_CE (7) for learning, cost-sensitive view (4) for the generalization.**
+
+1. **From fixed threshold to Bayes deferral — `r^B(x)=1{max_y η_y(x) ≤ P(Y=M|X=x)}` (Mozannar §3–4, Prop.2 Eq.6).** The plant's `classify(question, p)→{yes,no,uncertain}` becomes `decide(p, p_expert_correct)→{predict,defer}` where `p=max η` is the model's best-class mass and `p_expert_correct` is the estimated `P(Y=M|X=x)`. No new state word is needed: `unknown` remains the surface word, but its condition gains the comparator the paper proves optimal for (3). For `K=2` (`yes/no`) the rule is `defer iff p ≤ p_expert_correct`; for `K=3` with `unknown` as abstain the same form holds on `Y={yes,no}` plus defer as third action. The expert may have Z, so `P(Y=M|X)` is learnable from `(x,m,y)` samples without observing Z.
+
+2. **Joint loss for the system, not just the classifier — `L_{0-1}(h,r)` (3) and its convex surrogate `L_{CE}` (7).** `L_{CE}(g,x,y,m)=−log softmax(g_y) − 1{m=y}·log softmax(g_⊥)` on `Y^⊥` is cross-entropy with an extra defer logit `g_⊥`. It upper-bounds (3) and is consistent (Thm.1): minimizing it recovers `(h^B,r^B)`. Practically this is one extra logit and a loss swap — no new model family, no confidence-of-expert pre-training. The α-variant `L^α_{CE}` (10) multiplies the second term's weight on expert-correct examples by α to tune deferral rate without touching the model.
+
+3. **Cost-sensitive reduction as the general transfer — `L^~_{CE}(g,x,c)` (4) with `(max_j c(j)−c(i))` weighting (Prop.1).** When deferral cost is not 0–1 but `c_exp(x,y,m)=1{m≠y}+c_query(x)` and classifier cost is task loss `l(x,y,i)`, the same loss with cost gap weighting is consistent for `E[c(h(x))]`. This lets a future plant change from misclassification to asymmetric costs (false `yes` vs false `no`) by supplying `c(i)` without changing the learning code — the Brier/log scoring discussion in Gneiting maps onto `c` here.
+
+4. **What is not imported.** No CIFAR number, no α value, no `M=5` ensemble size is hardcoded — `p_expert_correct`, `α` and `K` are caller-stated, fit to the plant's own held-out `(evidence, expected, expert_decision)` triples. Confidence-baseline results are cited as motivation, not as a plant threshold. Selective classification (`GEY17`) at fixed rejection budget is kept as related work, not as the deployed rule — Mozannar's budget is a cost, not a percentile.
+
+**Limits the review keeps from the source.** Exchangeability of `(x,y,m)` required; expert side information Z is never observed. Consistency is asymptotic — finite-sample excess risk needs the `n≈500` calibration-size caution already in Angelopoulos. No claim that the expert is always better; gains are largest when coverage is limited and expert has complementary strength (§1). The `K+1`-way softmax assumes deferral is a single action; multiple experts are the cited extension, not the default.
+
+## Application
+
+target: src/mishe_tauftauf/judges.py
+
+**Make deferral to an expert visible beside the existing single-sample threshold adapter — additive vocabulary and pure deferral helpers over caller-held probabilities; no transport/CLI/Feed/checks change, no new `checks/*.json` shape, no threshold move, same `unknown` (None) for incomplete input.**
+
+1. **Add module-level deferral vocabulary beside `QUESTIONS:10 / RESULT_RE:18 / UNKNOWN_RE:19` and beside the `SEMANTIC_*` symbols proposed in `model-judgment--recent` on `judges.py` in `src/mishe_tauftauf/judges.py`.** New symbols (names illustrative, additive only): `LEARNING_TO_DEFER_VERSION: Final[int] = 1` citing Mozannar & Sontag arXiv:2006.01862v3 §3–4 Props.1–2 Thm.1; `DEFERRAL_SYSTEM_LOSS_DOC: Final[str]` with (1)–(3) `L(Ŷ)`, `L(h,r)`, `L_{0-1}` and Fig.1 pipeline note; `BAYES_DEFERRAL_RULE_DOC: Final[str]` with (6) `h^B=argmax η_y`, `r^B=1{max η ≤ P(Y=M|X)}` and `η_y(x)=P(Y=y|X)`; `CONSISTENT_SURROGATE_DOC: Final[str]` with (7) `L_{CE}=−log softmax(g_y)−1{m=y}log softmax(g_⊥)` on `Y^⊥=Y∪{⊥}` plus α-variant (10) and convexity/consistency claim; `COST_SENSITIVE_DOC: Final[str]` with (4) `L^~_{CE}=−Σ_i(max_j c(j)−c(i))log softmax(g_i)` and reduction note. Docstrings cite `arXiv:2006.01862` and page numbers and note `Y∈{yes,no}` plus `⊥=defer→unknown`.
+
+2. **Add four pure, deterministic helpers that implement the transfer — no HTTP, no file read, only caller-held floats/dicts; `None` for empty/invalid/degenerate (plant's `unknown` idiom).** `bayes_optimal_defer(max_eta: float, p_expert_correct: float) -> bool | None` — Mozannar Prop.2 Eq.6: `True` iff `max_eta ≤ p_expert_correct` (defer), `False` iff `>` (predict), `None` for non-finite or out-of-`[0,1]` inputs. `deferral_system_loss(deferred: bool, classifier_correct: bool | None, expert_correct: bool | None) -> int | None` — 0–1 system loss (3): `0` if the chosen agent is correct, `1` if wrong, `None` if the needed correctness is `None` or `deferred` is non-bool. `lce_surrogate_loss(prob_true: float, prob_defer: float, expert_correct: bool) -> float | None` — scalar `L_{CE}` contribution (7) as `−log prob_true − (1 if expert_correct else 0)·log prob_defer` in nats, `None` for `prob_*≤0`/`>1`/non-finite/non-bool. `cost_sensitive_weights(costs: dict[str,float]) -> dict[str,float] | None` — gap weights `w(i)=max_j c(j)−c(i)` from (4) for `L^~_{CE}`, `None` for empty/non-finite. All helpers validate `[0,1]` and finiteness and return `None` on violation, matching `judges.py` `None→unknown` discipline.
+
+3. **Keep plant's existing vocabulary and keep contract intensive.** No new `state` word, no `classify()` threshold change, no `run_external`/`run_external_batch` signature change, no CLI flag, no `document()` format change. `python tools/check_parsing.py` stays `PASS` because `judges.py` is not a `parsing-policy.json` boundary file and new symbols add no literal-boundary bytes. Reports that already contain `probability`/`unknown` remain valid; a future report may optionally carry additive `deferral: {p_expert_correct, deferred, system_loss}` diagnostic beside, not instead of, the categorical outcome — the set is the expert-conditioned paraphrase of `unknown`. Existing `controls()` still smoke categorical agreement; deferral is reported, not gated.
+
+**Acceptance (deterministic, runnable at HEAD plus this additive patch):**
+
+- `python -m py_compile src/mishe_tauftauf/judges.py` and `python tools/check_parsing.py` still exit 0 — additive only, no signature change to `Judgment`/`document`/`classify`/`run_external`.
+- `python -c "import mishe_tauftauf.judges as j; assert j.LEARNING_TO_DEFER_VERSION==1; assert '2006.01862' in j.CONSISTENT_SURROGATE_DOC or 'Mozannar' in j.CONSISTENT_SURROGATE_DOC; assert 'r^B' in j.BAYES_DEFERRAL_RULE_DOC or 'max' in j.BAYES_DEFERRAL_RULE_DOC"`
+- `python -c "import mishe_tauftauf.judges as j; assert j.bayes_optimal_defer(0.78, 0.55)==False; assert j.bayes_optimal_defer(0.60, 0.90)==True; assert j.bayes_optimal_defer(0.9, float('nan')) is None; assert j.bayes_optimal_defer(1.5, 0.5) is None"`
+- `python -c "import mishe_tauftauf.judges as j; assert j.deferral_system_loss(True, None, True)==0; assert j.deferral_system_loss(True, None, False)==1; assert j.deferral_system_loss(False, True, None)==0; assert j.deferral_system_loss(False, False, None)==1; assert j.deferral_system_loss(True, None, None) is None"`
+- `python -c "import mishe_tauftauf.judges as j, math; v=j.lce_surrogate_loss(0.8, 0.6, True); assert v is not None and abs(v - (-math.log(0.8)-math.log(0.6)))<1e-9; assert j.lce_surrogate_loss(0.8, 0.6, False)==-math.log(0.8); assert j.lce_surrogate_loss(0.0, 0.5, True) is None"`
+- `python -c "import mishe_tauftauf.judges as j; w=j.cost_sensitive_weights({'yes':0.2,'no':0.8,'defer':0.5}); assert w is not None and abs(w['yes']-0.6)<1e-9 and abs(w['no']-0.0)<1e-9; assert j.cost_sensitive_weights({}) is None"`
+- Compatibility: existing smoke `controls()` still passes (pure helpers, no fixture), and `python3 research/field-review/field_review.py check` is `PASS` for this review plus all landed predecessors.
+
+**Ownership.** `src/mishe_tauftauf/judges.py` is the plant's question adapter surface (`QUESTIONS`/`classify`/`run_external`/`conservative_unknown`) that `fields.json` names as `model-judgment` plant part ("decision models, completion judge, local model adapters") alongside `completions_judge.py`/`jev_judge.py`. `genome` owns shared source, CI and wall coordination (AGENTS.md genome charter; `docs/wall-coordination.md` push ownership) and the judge surface, as `model-judgment--recent/transfer/mechanism/metric` already routed.
+
+**One thing this review does not ask for.** It does not change `classify()` thresholds, wire `bayes_optimal_defer` into `check()` or CI PASS/FAIL, claim a tuned `α` or `p_expert_correct`, or replace confidence estimation — it only publishes the Bayes comparator, the system loss, and the consistent surrogate the held-out triples justify, with Mozannar's caveat that gains depend on the expert's complementary strength and on `P(Y=M|X)` quality.
+
+**Limits the review keeps from the source.** No `α` or `P(Y=M|X)` is hardcoded as "the" setting — those are always fit to the plant's own held-out `(evidence, expected, expert_decision)` triples. No CIFAR/hate-speech number is imported. Two-head vs single-model architecture is kept as docs, not as default. Madras/Geifman/Rajan baselines are cited as related work, not re-argued.
+
