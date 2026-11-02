@@ -1,4 +1,43 @@
-"""Free-form resident walls and addressed chat; no task ledger or receipt judge."""
+"""Free-form resident walls and addressed chat; no task ledger or receipt judge.
+
+ICMJE Recommendations for the Conduct, Reporting, Editing, and Publication of
+Scholarly Work in Medical Journals, Section II.A Defining the Role of Authors
+and Contributors (updated January 2026) —
+https://www.icmje.org/recommendations/browse/roles-and-responsibilities/defining-the-role-of-authors-and-contributors.html
++ https://www.icmje.org/icmje-recommendations.pdf (+ §V Use of AI) —
+https://www.icmje.org/recommendations/browse/artificial-intelligence/ai-use-by-authors.html
+— four ANDED criteria ``substantial-contribution AND drafting-or-critical-review
+AND final-approval AND accountability`` (II.A.1 boxed list: "Substantial
+contributions to the conception or design of the work; or the acquisition,
+analysis, or interpretation of data for the work; AND Drafting the work or
+reviewing it critically for important intellectual content; AND Final approval
+of the version to be published; AND Agreement to be accountable for all aspects
+of the work ..."); ``author`` when all four hold else ``acknowledged-contributor``
+when at least one holds else ``unknown`` (II.A.1 all-and-only + II.A.3
+"those who do not meet all four ... should be acknowledged");
+``ACKNOWLEDGMENT_ONLY_ACTIVITIES`` that alone never qualify — "acquisition of
+funding; general supervision ...; writing assistance, technical editing, language
+editing, and proofreading" (II.A.3); accountability as "can identify which
+co-authors are responsible for specific other parts ... confidence in the
+integrity of the contributions" (II.A.1 para.2); corresponding author as "one
+individual who takes primary responsibility ... should be available throughout ...
+and after publication to respond to critiques ... obtain written permission to be
+acknowledged" (II.A.1 para.4); AI-assisted technology: "Chatbots (such as
+ChatGPT) should not be listed as authors because they cannot be responsible ..."
+and disclosure in acknowledgment (writing assistance) or methods (data collection/
+analysis/figure generation) plus cover letter (II.A.4 / §V.A January 2026).
+
+CRediT Contributor Roles Taxonomy — https://credit.niso.org/ +
+https://credit.niso.org/contributor-roles-defined/ (55,480 B, 200 2026-11-02) +
+per-role https://credit.niso.org/contributor-roles/<slug>/ + ANSI/NISO
+Z39.104-2022 + Brand et al. 2015 Learned Publishing 28:151-155
+doi:10.1087/20150211 — 14 closed roles ``conceptualization ... writing-review-
+editing`` complementary to ICMJE four-criteria authorship; ``Funding acquisition
+/ Resources / Supervision / Project administration`` alone → ``acknowledged-
+contributor`` under ICMJE; multiple roles per contributor, multiple contributors
+per role; machine-readable JATS/NISO intent; verdict-free (role ≠ correctness,
+cf. C2PA Ch.1 box p.2).
+"""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -9,6 +48,7 @@ import math
 from pathlib import Path
 import re
 import shlex
+from typing import Final
 
 from .feed import Feed, publication_lock
 from .chat_protocol import decode_lifecycle
@@ -28,6 +68,221 @@ The writer's refusals are the plant's only direct evidence that the outcome
 instrument denied a role; without them a plant-wide denial is indistinguishable
 from a plant that produced nothing.
 """
+
+# --- ICMJE authorship vocabulary (ICMJE Recommendations II.A, updated January 2026) ---
+ICMJE_AUTHORSHIP_CRITERIA: Final[tuple[str, ...]] = (
+    "substantial-contribution",
+    "drafting-or-critical-review",
+    "final-approval",
+    "accountability",
+)
+"""Four ANDED criteria per ICMJE II.A.1 (substantial-contribution glosses the inner OR over conception/design/acquisition/analysis/interpretation)."""
+
+CONTRIBUTORSHIP_STATUSES: Final[tuple[str, ...]] = ("author", "acknowledged-contributor", "unknown")
+"""Contributorship per ICMJE II.A.1 all-and-only + II.A.3 acknowledged."""
+
+ACKNOWLEDGMENT_ONLY_ACTIVITIES: Final[tuple[str, ...]] = (
+    "acquisition-of-funding",
+    "general-supervision-or-administrative-support",
+    "writing-assistance-or-technical-or-language-editing-or-proofreading",
+)
+"""Activities that alone (without other contributions) do not qualify per ICMJE II.A.3."""
+
+CORRESPONDING_AUTHOR_DUTIES: Final[tuple[str, ...]] = (
+    "ensure-administrative-requirements",
+    "remain-reachable-in-review",
+    "remain-reachable-after-publication",
+    "handle-permission-for-acknowledgments",
+)
+"""Corresponding-author duties per ICMJE II.A.1 para.4 (one reachable individual through review and after publication, permission for acknowledgments)."""
+
+AI_USE_DISCLOSURE_LOCATIONS: Final[tuple[str, ...]] = ("acknowledgment", "methods", "cover-letter")
+"""Disclosure locations per ICMJE II.A.4 / §V.A (writing assistance → acknowledgment; data/analysis/figure → methods; always cover-letter-advised)."""
+
+AI_CANNOT_BE_AUTHOR: Final[bool] = True
+"""Chatbots should not be listed as authors because they cannot be responsible per ICMJE II.A.4 January 2026."""
+
+# --- CRediT vocabulary (ANSI/NISO Z39.104-2022) ---
+CREDIT_ROLES: Final[tuple[str, ...]] = (
+    "conceptualization",
+    "data-curation",
+    "formal-analysis",
+    "funding-acquisition",
+    "investigation",
+    "methodology",
+    "project-administration",
+    "resources",
+    "software",
+    "supervision",
+    "validation",
+    "visualization",
+    "writing-original-draft",
+    "writing-review-editing",
+)
+"""14 CRediT roles per https://credit.niso.org/contributor-roles-defined/ (NISO Z39.104-2022)."""
+
+CREDIT_ROLE_DEFINITIONS: Final[dict[str, str]] = {
+    "conceptualization": "Ideas; formulation or evolution of overarching research goals and aims.",
+    "data-curation": "Management activities to annotate (produce metadata), scrub data and maintain research data (including software code, where it is necessary for interpreting the data itself) for initial use and later re-use.",
+    "formal-analysis": "Application of statistical, mathematical, computational, or other formal techniques to analyze or synthesize study data.",
+    "funding-acquisition": "Acquisition of the financial support for the project leading to this publication.",
+    "investigation": "Conducting a research and investigation process, specifically performing the experiments, or data/evidence collection.",
+    "methodology": "Development or design of methodology; creation of models.",
+    "project-administration": "Management and coordination responsibility for the research activity planning and execution.",
+    "resources": "Provision of study materials, reagents, materials, patients, laboratory samples, animals, instrumentation, computing resources, or other analysis tools.",
+    "software": "Programming, software development; designing computer programs; implementation of the computer code and supporting algorithms; testing of existing code components.",
+    "supervision": "Oversight and leadership responsibility for the research activity planning and execution, including mentorship external to the core team.",
+    "validation": "Verification, whether as a part of the activity or separate, of the overall replication/reproducibility of results/experiments and other research outputs.",
+    "visualization": "Preparation, creation and/or presentation of the published work, specifically visualization/data presentation.",
+    "writing-original-draft": "Preparation, creation and/or presentation of the published work, specifically writing the initial draft (including substantive translation).",
+    "writing-review-editing": "Preparation, creation and/or presentation of the published work by those from the original research group, specifically critical review, commentary or revision \u2013 including pre- or post-publication stages.",
+}
+"""CRediT definitions verbatim from contributor-roles-defined (per-role pages same)."""
+
+ACKNOWLEDGMENT_ONLY_CREDIT_ROLES: Final[tuple[str, ...]] = (
+    "funding-acquisition",
+    "resources",
+    "project-administration",
+    "supervision",
+)
+"""CRediT roles that alone correspond to ICMJE II.A.3 acknowledgment-only activities."""
+
+
+def icmje_criterion_is_valid(criterion: object) -> bool:
+    """Membership in ICMJE_AUTHORSHIP_CRITERIA."""
+    return criterion in ICMJE_AUTHORSHIP_CRITERIA
+
+
+def contributorship_status_is_valid(status: object) -> bool:
+    """Membership in CONTRIBUTORSHIP_STATUSES."""
+    return status in CONTRIBUTORSHIP_STATUSES
+
+
+def acknowledgment_only_activity_is_valid(activity: object) -> bool:
+    """Membership in ACKNOWLEDGMENT_ONLY_ACTIVITIES."""
+    return activity in ACKNOWLEDGMENT_ONLY_ACTIVITIES
+
+
+def ai_disclosure_location_is_valid(location: object) -> bool:
+    """Membership in AI_USE_DISCLOSURE_LOCATIONS."""
+    return location in AI_USE_DISCLOSURE_LOCATIONS
+
+
+def authorship_criteria_met(
+    *, substantial: bool, drafting_or_review: bool, final_approval: bool, accountability: bool
+) -> bool:
+    """Four-way AND per ICMJE II.A.1 — True only when all four hold (3 of 4 is not author)."""
+    return bool(substantial and drafting_or_review and final_approval and accountability)
+
+
+def contributorship_status_for(
+    *, substantial: bool, drafting_or_review: bool, final_approval: bool, accountability: bool
+) -> str:
+    """Map four booleans -> author if all four else acknowledged-contributor if at least one else unknown."""
+    if authorship_criteria_met(
+        substantial=substantial,
+        drafting_or_review=drafting_or_review,
+        final_approval=final_approval,
+        accountability=accountability,
+    ):
+        return "author"
+    if any((substantial, drafting_or_review, final_approval, accountability)):
+        return "acknowledged-contributor"
+    return "unknown"
+
+
+def accountability_holds(*, can_identify_parts: bool, confidence_in_coauthors: bool) -> bool:
+    """Both required per ICMJE II.A.1 para.2 (identifiability + confidence)."""
+    return bool(can_identify_parts and confidence_in_coauthors)
+
+
+def corresponding_author_is_responsible(*, corresponding: str, authors: list[str]) -> bool:
+    """One non-empty non-whitespace single role present in authors list (the one individual rule)."""
+    if not isinstance(corresponding, str) or not corresponding:
+        return False
+    for ch in corresponding:
+        if ch.isspace():
+            return False
+    if not isinstance(authors, (list, tuple)):
+        return False
+    return corresponding in authors
+
+
+def is_ai_author_allowed() -> bool:
+    """Chatbots should not be listed as authors per ICMJE II.A.4 — always False."""
+    return False
+
+
+def ai_disclosure_location_for(kind: str) -> str | None:
+    """Map AI use kind to disclosure location (writing-assistance -> acknowledgment, data/analysis/figure -> methods)."""
+    if kind == "writing-assistance":
+        return "acknowledgment"
+    if kind == "data-collection-or-analysis-or-figure-generation":
+        return "methods"
+    return None
+
+
+def credit_role_is_valid(role: object) -> bool:
+    """Membership in CREDIT_ROLES."""
+    return role in CREDIT_ROLES
+
+
+def credit_role_definition(role: str) -> str | None:
+    """Definition for a CRediT role or None."""
+    return CREDIT_ROLE_DEFINITIONS.get(role)
+
+
+def normalize_credit_role(value: object) -> str | None:
+    """Normalize a CRediT role display name to its hyphen slug (e.g. Writing - review & editing -> writing-review-editing)."""
+    if not isinstance(value, str):
+        return None
+    lowered = value.lower()
+    out: list[str] = []
+    prev_hyphen = False
+    for ch in lowered:
+        is_alnum = ("a" <= ch <= "z") or ("0" <= ch <= "9")
+        if is_alnum:
+            out.append(ch)
+            prev_hyphen = False
+        else:
+            if not prev_hyphen and out:
+                out.append("-")
+                prev_hyphen = True
+            elif not out:
+                # leading non-alnum -> skip (trims leading hyphens)
+                prev_hyphen = True
+            else:
+                prev_hyphen = True
+    if out and out[-1] == "-":
+        out.pop()
+    normalized = "".join(out)
+    return normalized if normalized else None
+
+def credit_roles_are_valid(roles: object) -> bool:
+    """Non-empty iterable of valid CRediT roles with no duplicates."""
+    if not isinstance(roles, (list, tuple)):
+        return False
+    if not roles:
+        return False
+    seen: set[str] = set()
+    for r in roles:
+        if not isinstance(r, str) or r not in CREDIT_ROLES:
+            return False
+        if r in seen:
+            return False
+        seen.add(r)
+    return True
+
+
+def contribution_is_acknowledgment_only(roles: list[str]) -> bool:
+    """True when every supplied CRediT role is in ACKNOWLEDGMENT_ONLY_CREDIT_ROLES (ICMJE II.A.3)."""
+    if not isinstance(roles, (list, tuple)) or not roles:
+        return False
+    for r in roles:
+        if r not in ACKNOWLEDGMENT_ONLY_CREDIT_ROLES:
+            return False
+    return True
+
 
 
 class BoundSetUnavailable(ValueError):
