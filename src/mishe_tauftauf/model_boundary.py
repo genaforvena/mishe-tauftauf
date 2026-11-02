@@ -400,18 +400,40 @@ def observe(home, role, change, target, directory):
             return {'state': 'queued', 'reason': 'running selection differs', 'process': proc}
         if proc['marker'] != change:
             return {'state': 'adopted', 'reason': 'model retained after canonical rotation; current provider completion not bound to this change', 'process': proc}
-        state = completion(directory, target, proc['started'])
+        state = completion(directory, target, proc['started'], pid=proc['pid'])
         return {'state': state, 'reason': 'resident provider completion observed' if state == 'verified' else 'resident provider failure' if state == 'failed' else 'waiting for resident provider completion', 'process': proc}
     except (OSError, ValueError, KeyError, IndexError, subprocess.SubprocessError) as exc:
         return {'state': 'unknown', 'reason': str(exc)}
 
 
-def completion(directory, target, started):
+def open_sessions(pid):
+    # The canonical launcher writes no --session-dir, so the live process's own
+    # open session files are the only binding left. Restricted to .jsonl files.
+    if pid is None:
+        return []
+    found = set()
+    fds = Path(f'/proc/{pid}/fd')
+    try:
+        entries = list(fds.iterdir())
+    except OSError:
+        return []  # gone or unreadable: no binding, so the change stays activated, never verified
+    for fd in entries:
+        try:
+            target = os.readlink(fd)
+        except OSError:
+            continue
+        if target.endswith('.jsonl'):
+            found.add(Path(target))
+    return sorted(found)
+
+
+def completion(directory, target, started, pid=None):
     # Each activated process gets its own session directory, so another
     # role, old context or the synthetic preflight cannot satisfy this.
+    # A process that holds its own session file open is also bound to it.
     provider, _, model = target.partition('/')
     completed = False
-    logs = list((directory / 'sessions').rglob('*.jsonl'))
+    logs = sorted(set(list((directory / 'sessions').rglob('*.jsonl')) + open_sessions(pid)))
     if len(logs) > 100:
         raise ValueError('session evidence exceeds bounded inventory')
     for path in logs:

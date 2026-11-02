@@ -352,7 +352,7 @@ def _superseded_activation(home, root, role, row, change, target):
         return {'state': 'activating', 'reason': 'interrupted activation; live process does not select the target'}
     if activated is None or not proc['started'] > activated:
         return {'state': 'activating', 'reason': 'interrupted activation; live process predates activation'}
-    state = boundary.completion(root / role, target, proc['started'])
+    state = boundary.completion(root / role, target, proc['started'], pid=proc['pid'])
     if state == 'verified':
         return {'state': 'delivered', 'current_provider': 'unknown', 'superseded_process': proc,
                 'reason': 'interrupted activation superseded by canonical rotation; live process completed a provider turn on the target'}

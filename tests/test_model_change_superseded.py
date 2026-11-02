@@ -32,7 +32,7 @@ def _patch(monkeypatch, proc=None, error=None, completion="verified"):
         return ("sess", proc)
 
     monkeypatch.setattr(boundary, "process", fake_process)
-    monkeypatch.setattr(boundary, "completion", lambda directory, target, started: completion)
+    monkeypatch.setattr(boundary, "completion", lambda directory, target, started, **kwargs: completion)
 
 
 def _reconcile(root: Path = Path("/nonexistent")):
