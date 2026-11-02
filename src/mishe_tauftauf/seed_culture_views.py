@@ -1215,10 +1215,19 @@ def _health_publish(home: Path) -> str:
             causes.append("server-keeper=" + _clip_sample(str(keeper.get("sample", "drift")), 160))
     except (OSError, ValueError, AttributeError):
         pass
-    # Autonomy loop health: fog/landing/gate drift means minds cannot close
-    # their own audit loops. Surface each as a named cause so the wake routes
-    # to the owning resolver (genome for landing, witness for gates) instead
-    # of stalling silently until the operator window intervenes.
+    # Autonomy loop health, level 1 (organizational closure): fog/landing/gate
+    # drift means minds cannot close their own audit loops. This is closure
+    # only; it says nothing about whether a loop is adaptive. Surface each as a
+    # named cause so the wake routes to the owning resolver (genome for
+    # landing, witness for gates) instead of stalling silently until the
+    # operator window intervenes.
+    # Level 2 (sensorimotor adaptivity, not yet measured here): Tomczyk 2025
+    # (Diametros 22(83), doi:10.33392/diam.1847) argues closure is not enough;
+    # adaptive regulation is viability-relative under precariousness (Di Paolo
+    # 2009; Beer & Di Paolo 2023). Whole-system attribution needs continuous
+    # reciprocal coupling (Barandiaran et al. 2009). The boundary is chosen by
+    # the observer: this check judges the mind alone, not a mind-plus-records
+    # extended system. No threshold is set here; UNKNOWN stays UNKNOWN.
     try:
         snapshot = latest(home)
         observations = snapshot.get("observations", []) if snapshot else []
