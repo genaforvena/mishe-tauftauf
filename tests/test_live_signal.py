@@ -84,3 +84,11 @@ def test_rate_limit_deterministic_clock():
     assert ls.rate_limit(None, now=5.0, min_interval=10.0)
     assert not ls.rate_limit(0.0, now=9.9, min_interval=10.0)
     assert ls.rate_limit(0.0, now=10.0, min_interval=10.0)
+
+
+def test_rate_limit_clock_stepped_back_emits_and_does_not_stall():
+    # now < last_emit: the interval cannot be trusted, so emit rather than
+    # suppress for the length of the backward step.
+    assert ls.rate_limit(100.0, now=40.0, min_interval=10.0) is True
+    # Once the caller records the new time, normal spacing resumes.
+    assert ls.rate_limit(40.0, now=41.0, min_interval=10.0) is False

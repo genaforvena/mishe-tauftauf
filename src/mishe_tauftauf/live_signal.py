@@ -107,7 +107,13 @@ def changed(previous: Any, sig: Signal) -> bool:
 
 
 def rate_limit(last_emit: float | None, now: float, min_interval: float) -> bool:
-    """True when an emission is allowed: first emission, or min_interval elapsed."""
-    if last_emit is None:
+    """True when an emission is allowed: first emission, or min_interval elapsed.
+
+    A clock that stepped back (now < last_emit) is not trusted to measure the
+    interval. It returns True, so emission resumes instead of being suppressed
+    for the length of the step. The caller then records ``now`` as the new
+    last_emit, which restores normal spacing.
+    """
+    if last_emit is None or now < last_emit:
         return True
     return now - last_emit >= min_interval
