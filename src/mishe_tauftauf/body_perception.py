@@ -35,6 +35,23 @@ Defs. 4.1-4.3 pp.10-12, preference costs §5 p.12-13, precision/completeness
 exact — the k symbols below are the typed metric so that any future
 generalisation/suppression proposal is reviewable; citing QI per Def. 2.1 is
 required for a release, not inferred.
+Human-subjects lens: National Commission, The Belmont Report, FR 44:23192
+(1979-04-18) via ORI/HHS — Part A practice vs research (practice: interventions
+solely for individual well-being; research: hypothesis + generalizable knowledge
++ formal protocol; any element of research in an activity means the activity
+should undergo review); Part B principles respect-for-persons (autonomy +
+protection, comprehension/voluntariness, periodically reevaluated), beneficence
+(do-not-harm + maximize benefit/minimize harm with systematic probability/
+magnitude), justice (fairness in distribution + selection anti-bias, 5 formulas);
+Part C applications informed-consent (information + comprehension + voluntariness,
+reasonable-volunteer, withdrawal), risk/benefit assessment, selection. Any
+redistribution of sense.body.redmi10 that contributes to generalizable knowledge,
+or any new BODY_INFORMATION_TYPES member ("including new not-yet-developed ones"
+does not auto-extend), is a practice/research boundary change reviewed under
+docs/protocol-boundaries.md and .mishe-tauftauf/research/shared/personal-
+multibody-analysis-20261015.md. Blanket disclosure alone does not satisfy
+Belmont — vocabulary below makes comprehension, voluntariness, re-consent and
+per-type risk/benefit/alternative reviewable without new I/O or verdict.
 """
 
 from datetime import datetime, timezone
@@ -203,6 +220,109 @@ PERSONAL_CONSENT_RECEIPTS: Final[dict[str, dict[str, object]]] = {
     },
 }
 
+#: Belmont Report (FR 44:23192, 1979-04-18) via ORI/HHS — practice vs research
+#: and three principles. Pure vocabulary beside PERSONAL_CONSENT_RECEIPTS;
+#: no verdict, no I/O, no sensor. Practice = interventions solely for the
+#: well-being of this deployment with reasonable expectation of success;
+#: research = activity designed to test a hypothesis, permit conclusions, and
+#: contribute to generalizable knowledge (formal protocol/review). Any element
+#: of research in an activity means the activity should undergo review (Part A).
+#: The 2026-10-15 mandate's "including new not-yet-developed ones" does not
+#: auto-extend this vocabulary either — a new BODY_INFORMATION_TYPES member is
+#: a practice/research boundary change reviewed under docs/protocol-boundaries.md
+#: and .mishe-tauftauf/research/shared/personal-multibody-analysis-20261015.md.
+#: Blanket disclosure alone does not satisfy Belmont; the per-type assessment
+#: makes information+comprehension+voluntariness, risk/benefit and selection
+#: reviewable (Parts B+C).
+BELMONT_PRINCIPLES: Final[frozenset[str]] = frozenset({
+    "respect-for-persons",
+    "beneficence",
+    "justice",
+})
+BELMONT_APPLICATIONS: Final[frozenset[str]] = frozenset({
+    "informed-consent",
+    "risk-benefit-assessment",
+    "selection",
+})
+PRACTICE_VS_RESEARCH: Final[frozenset[str]] = frozenset({
+    "practice",
+    "research",
+})
+#: Per-type Belmont assessment — non-normative, additive, closed-world. Each
+#: BODY_INFORMATION_TYPES member maps to {purpose, is_research, risks,
+#: benefits, less_burdensome_alternative, information, comprehension,
+#: voluntariness, withdrawal_path, reconsent_due}. is_research marks whether
+#: the current use draws generalizable knowledge (Part A any-element rule);
+#: information/comprehension/voluntariness + withdrawal_path encode Part C.1
+#: (reasonable-volunteer, no coercion/undue influence, opportunity to ask
+#: and to withdraw). reconsent_due marks whether the dated receipt is stale
+#: without periodic reevaluation (Part B.1). Risks/benefits use Belmont B.2
+#: systematic probability/magnitude; less_burdensome_alternative enforces
+#: beneficence minimization; selection/justice is captured in purpose and
+#: recipient scope (B.3). Unlisted types have no stanza and fail completeness.
+BELMONT_PER_TYPE_ASSESSMENT: Final[dict[str, dict[str, object]]] = {
+    "battery": {
+        "purpose": "operational liveness of carried body (panel freshness, bounded recovery); retained history contributes to validity-window and carrying-context generalizable knowledge",
+        "is_research": True,
+        "risks": "low probability re-identification from battery+time sequences; git retention increases linkability; magnitude limited to level/charging",
+        "benefits": "visible freshness for operator decisions; delivery-gap diagnostics",
+        "less_burdensome_alternative": "coarser battery polling interval; host-only fallback when body unavailable",
+        "information": True,
+        "comprehension": True,
+        "voluntariness": True,
+        "withdrawal_path": "revoke per-type receipt or remove linked-site; no coercion per 2026-10-15 mandate",
+        "reconsent_due": False,
+    },
+    "light": {
+        "purpose": "operational panel freshness and delivery diagnostics; retained lux history contributes to validity-window and carrying-context generalizable knowledge",
+        "is_research": True,
+        "risks": "low probability re-identification from light+accel sequences; git retention increases linkability; magnitude limited to ambient lux bucket",
+        "benefits": "visible Unknown/verified freshness for operator; bounded recovery detection",
+        "less_burdensome_alternative": "coarser light bucket or longer polling interval; host-radio fallback when body unavailable",
+        "information": True,
+        "comprehension": True,
+        "voluntariness": True,
+        "withdrawal_path": "revoke per-type receipt or remove linked-site; no coercion per 2026-10-15 mandate",
+        "reconsent_due": False,
+    },
+    "acceleration": {
+        "purpose": "operational motion-leg availability for freshness framing; retained accel history contributes to carrying-context generalizable knowledge",
+        "is_research": True,
+        "risks": "moderate probability of activity inference from accel sequences incl. gravity; git retention increases linkability",
+        "benefits": "distinguish moving vs unavailable vs stale for honest Unknown; supports dense-baseline windowing",
+        "less_burdensome_alternative": "publish motion-leg-absent with producer reason instead of raw accel; increase polling interval",
+        "information": True,
+        "comprehension": True,
+        "voluntariness": True,
+        "withdrawal_path": "revoke per-type receipt or remove linked-site; no coercion per 2026-10-15 mandate",
+        "reconsent_due": False,
+    },
+    "wifi_link_rssi_dbm": {
+        "purpose": "operational radio context for recovery diagnostics; retained rssi history contributes to link-quality generalizable knowledge",
+        "is_research": True,
+        "risks": "low probability inference of proximity from rssi; git retention linkability low magnitude",
+        "benefits": "bounded recovery and delivery-gap diagnosis when body link degrades",
+        "less_burdensome_alternative": "omit rssi and rely on delivery-gaps + peer-delivery senses; redact on publication",
+        "information": True,
+        "comprehension": True,
+        "voluntariness": True,
+        "withdrawal_path": "revoke per-type receipt or remove linked-site; no coercion per 2026-10-15 mandate",
+        "reconsent_due": False,
+    },
+    "ble_scan": {
+        "purpose": "operational auxiliary radio scan for diagnostics; retained scan history contributes to environment-context generalizable knowledge",
+        "is_research": True,
+        "risks": "low probability of environment fingerprinting from scan results; auxiliary channel, not host-radio",
+        "benefits": "auxiliary evidence that body is carried in a radio environment; supports peer-delivery correlation",
+        "less_burdensome_alternative": "disable ble_scan channel or publish error-only summary; keep host-radio separate",
+        "information": True,
+        "comprehension": True,
+        "voluntariness": True,
+        "withdrawal_path": "revoke per-type receipt or remove linked-site; no coercion per 2026-10-15 mandate",
+        "reconsent_due": False,
+    },
+}
+
 
 
 def is_body_info_appropriate_for_context(context: str, info_type: str) -> bool:
@@ -350,6 +470,62 @@ def personal_consent_allows(
         info_type=info_type,
         transmission_principle=transmission_principle,
     )
+
+
+def is_belmont_informed_consent_complete(info_type: str) -> bool:
+    """Whether Belmont C.1 informed consent is complete for ``info_type``.
+
+    Belmont Report FR 44:23192 Parts B.1 + C.1: informed consent requires
+    three elements — information, comprehension and voluntariness — plus
+    the opportunity to ask and to withdraw at any time (reasonable-volunteer
+    standard, no coercion/undue influence, periodically reevaluated). This
+    predicate is the typed completeness check: a dated per-type receipt must
+    exist and the :data:`BELMONT_PER_TYPE_ASSESSMENT` stanza for that type
+    must record that information, comprehension and voluntariness have been
+    addressed with an explicit withdrawal path and that re-consent is not
+    due (non-stale). Unlisted types without a receipt and without a stanza
+    fail completeness (closed-world deny). Pure view over
+    :data:`PERSONAL_CONSENT_RECEIPTS` and :data:`BELMONT_PER_TYPE_ASSESSMENT`;
+    no I/O, no ``sense.*`` verdict.
+    """
+    if info_type not in PERSONAL_CONSENT_RECEIPTS:
+        return False
+    assessment = BELMONT_PER_TYPE_ASSESSMENT.get(info_type)
+    if assessment is None:
+        return False
+    if not assessment.get("information"):
+        return False
+    if not assessment.get("comprehension"):
+        return False
+    if not assessment.get("voluntariness"):
+        return False
+    withdrawal = assessment.get("withdrawal_path")
+    if not isinstance(withdrawal, str) or not withdrawal:
+        return False
+    if assessment.get("reconsent_due"):
+        return False
+    return True
+
+
+def belmont_requires_review(info_type: str) -> bool:
+    """Whether Belmont Part A requires review for ``info_type``.
+
+    Belmont FR 44:23192 Part A: practice vs research — if there is any
+    element of research (hypothesis + generalizable knowledge + formal
+    protocol) in an activity, the activity should undergo review. This
+    predicate returns ``True`` when the :data:`BELMONT_PER_TYPE_ASSESSMENT`
+    stanza for ``info_type`` marks ``is_research`` as true — i.e., the
+    current purpose draws generalizable knowledge beyond operational
+    well-being of this deployment. Sense.body.redmi10 retained in git,
+    counted in reviews, or used for validity-window tuning is research by
+    that rule. Unlisted types without a stanza return ``False``
+    (closed-world: no assessment, no reviewable element typed). Pure view;
+    no I/O, no verdict.
+    """
+    assessment = BELMONT_PER_TYPE_ASSESSMENT.get(info_type)
+    if assessment is None:
+        return False
+    return bool(assessment.get("is_research"))
 
 
 def _unknown(reason: str) -> dict[str, object]:
