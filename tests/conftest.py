@@ -1,8 +1,42 @@
 """Every integration test uses a disposable tmux socket, never the live plant."""
 import os
 import subprocess
+from pathlib import Path
 
 import pytest
+
+LIFELINE_SLICE = "mishe-lifeline.slice"
+
+
+def lifeline_refusal(cgroup_text):
+    """Return a refusal message when a process cgroup sits in the lifeline slice.
+
+    A pytest run inherits its cgroup, and so does every tmux server and pain-watch
+    worker it forks. A run started from life-support placed ~12 workers and a test
+    tmux server inside mishe-lifeline.slice (memory.max 3 GiB) and tripped the
+    guard by cgroup OOM on 2026-11-02. The session therefore refuses to start there
+    before any fixture forks, so the test tree can only land in a non-lifeline slice.
+    Returns None when the cgroup text names no lifeline slice.
+    """
+    for line in str(cgroup_text).splitlines():
+        if not line.startswith("0::"):
+            continue
+        if LIFELINE_SLICE in line[3:].split("/"):
+            return ("UNKNOWN test session started inside " + LIFELINE_SLICE
+                    + "; refusing before forking tmux or workers. Run pytest from a"
+                    " non-lifeline shell.")
+    return None
+
+
+def refuse_lifeline_run():
+    """Stop the session before any fixture forks tmux or a worker."""
+    try:
+        cgroup_text = Path("/proc/self/cgroup").read_text()
+    except OSError:
+        return
+    message = lifeline_refusal(cgroup_text)
+    if message is not None:
+        pytest.exit(message, returncode=3)
 
 
 @pytest.fixture(autouse=True)
@@ -112,6 +146,7 @@ def receipt_recovery_case():
 
 @pytest.fixture(scope="session", autouse=True)
 def private_tmux_server(tmp_path_factory):
+    refuse_lifeline_run()
     root = tmp_path_factory.mktemp("mishe-test-tmux")
     patch = pytest.MonkeyPatch()
     patch.delenv("TMUX", raising=False)
