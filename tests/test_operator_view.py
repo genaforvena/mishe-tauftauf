@@ -526,3 +526,26 @@ def test_ensure_renderer_command_binds_the_site_home_it_draws(tmp_path, monkeypa
     operator_view.ensure(tmp_path, "owned", "operator")
     split = next(a for a in calls if a[0] == "split-window")
     assert f"MISHE_SEED_HOME={tmp_path.resolve()}" in split
+def test_sus_score_composite_0_to_100_and_validation():
+    from mishe_tauftauf.operator_view import SUS_ITEMS, sus_score
+
+    assert len(SUS_ITEMS) == 10
+    assert SUS_ITEMS[0].startswith("I think")
+    assert SUS_ITEMS[1] == "I found the system unnecessarily complex"
+    # Brooke p.5-6: odd r-1 / even 5-r sum*2.5; per-item not meaningful
+    assert sus_score([3] * 10) == 50  # all neutral (centre 3)
+    assert sus_score([1, 5, 1, 5, 1, 5, 1, 5, 1, 5]) == 0
+    assert sus_score([5, 1, 5, 1, 5, 1, 5, 1, 5, 1]) == 100
+    assert sus_score([4, 2, 4, 1, 4, 2, 4, 2, 5, 2]) == 80
+    # Worked total 22 -> 55 per Brooke p.6 (22*2.5); e.g. neutral-ish 22 total
+    # constructed to exercise mixed polarity (not asserting a specific fixture
+    # beyond the formula already covered).
+    with pytest.raises(ValueError, match="exactly 10"):
+        sus_score([3] * 9)
+    with pytest.raises(ValueError, match="exactly 10"):
+        sus_score([3] * 11)
+    with pytest.raises(ValueError, match="1..5"):
+        sus_score([0] + [3] * 9)
+    with pytest.raises(ValueError, match="1..5"):
+        sus_score([6] * 10)
+

@@ -1,5 +1,14 @@
-"""Human operator dashboard and its owned tmux presentation boundary."""
-from __future__ import annotations
+"""Human operator dashboard and its owned tmux presentation boundary.
+
+SUS adaptation (Brooke 1986, DEC 1986; Jordan et al. 1996): the ten SUS items
+are administered after the operator has used the dashboard for one wake but
+before any debrief, immediate response, all ten checked (neutral 3 if an item
+cannot be answered). ``system`` = the operator dashboard (top pane + lower
+operator shell + brief/commands docs). 0–100 is a composite (sum 0–40 × 2.5),
+not a percent; per-item scores are not meaningful. Comparison across different
+operators/tasks/environments is apples-and-oranges per Brooke's
+context-specificity warning (see ``SUS_ITEMS``/``sus_score``).
+"""
 
 import argparse
 import fcntl
@@ -27,6 +36,43 @@ from .tmux import _pane_stopped_or_dead, _tmux, await_owned
 # respawned as before; the detector keeps its coverage because the respawn path
 # and the stale-publication path are both retained.
 PUBLISHER_GRACE_SECONDS = 90.0
+
+# Brooke 1986 SUS — global subjective usability, 10 items alternating +/−.
+# Not diagnostic; single 0–100 composite only; per-item scores not meaningful.
+# Source: hell.meiert.org/core/pdf/sus.pdf 153289 B sha256
+# c04fe6139b1f2c3650f497e3d139e7b0f9b112c79beec7c53f7573e9c9a003a4, 7 pp, and
+# https://digital.gov/topics/usability/ 92266 B (fetched 2026-11-02).
+SUS_ITEMS = (
+    "I think that I would like to use this system frequently",  # + (1)
+    "I found the system unnecessarily complex",  # − (2)
+    "I thought the system was easy to use",  # + (3)
+    "I think that I would need the support of a technical person to be able to use this system",  # − (4)
+    "I found the various functions in this system were well integrated",  # + (5)
+    "I thought there was too much inconsistency in this system",  # − (6)
+    "I would imagine that most people would learn to use this system very quickly",  # + (7)
+    "I found the system very cumbersome to use",  # − (8)
+    "I felt very confident using the system",  # + (9)
+    "I needed to learn a lot of things before I could get going with this system",  # − (10)
+)
+
+
+def sus_score(responses: list[int]) -> int:
+    """Brooke SUS 0–100 composite from 10 Likert responses in 1..5.
+
+    Odd items (1,3,5,7,9): contribution = r-1. Even items (2,4,6,8,10): 5-r.
+    Sum 0–40 × 2.5 → 0–100. Single number only; individual items not meaningful.
+    Validates length 10 and each r in 1..5; neutral 3 if respondent cannot answer
+    one item (Brooke p.5: mark centre point).
+    """
+    if len(responses) != 10:
+        raise ValueError("SUS needs exactly 10 responses")
+    if any(not 1 <= r <= 5 for r in responses):
+        raise ValueError("each SUS response must be 1..5")
+    total = 0
+    for i, r in enumerate(responses, start=1):
+        total += (r - 1) if i % 2 == 1 else (5 - r)
+    return int(total * 2.5)
+
 
 
 def _pane_pid(session: str, window: str) -> str | None:
