@@ -87,6 +87,86 @@ class FeedTests(unittest.TestCase):
             parse_feed(data)
         self.assertIn("position " + str(len(data) - 1), str(error.exception))
 
+    def test_role_view_streams_the_tape_instead_of_reading_it_whole(self):
+        # A resident supervisor re-read the role view every tick. The reader
+        # held the whole tape and every decoded copy at once, so its peak grew
+        # with the tape: a 184 MB tape cost 466 MB of peak RSS on this plant
+        # (2026-11-03), and two such supervisors sharing the 3 GiB lifeline
+        # slice were killed by the cgroup OOM. The reader must keep its peak
+        # bounded by the chunk it holds, not by the tape's length.
+        import tracemalloc
+
+        def peak_for(entries_count: int, chunk: int) -> tuple[int, int]:
+            with tempfile.TemporaryDirectory() as directory:
+                home = Path(directory)
+                # The entries the role projection does not keep: a noise
+                # source keeps only its latest entry, so the reader's peak
+                # is the chunk it holds, not the entries it parsed.
+                entries = [feed_module._encode_entry(n, "2026-10-23T18:00:00Z",
+                                                       "sensor/noise", "x" * 4096)
+                           for n in range(1, entries_count + 1)]
+                data = b"".join(entries)
+                del entries
+                home.joinpath("chat.log").write_bytes(data)
+                feed = Feed(home)
+                # The checkpoint the reader would find on a live tape. Its
+                # metadata must name the exact revision on disk, or the
+                # reader rebuilds it and parses the whole tape instead.
+                with feed.path.open("rb") as handle:
+                    metadata = list(Feed._metadata(handle))
+                feed._publish_checkpoint(
+                    {"version": 1, "sequence": entries_count, "tail_offset": len(data),
+                     "checkpoints": [[n + 1, n * len(feed_module._encode_entry(
+                         n + 1, "2026-10-23T18:00:00Z", "sensor/noise", "x" * 4096))]
+                         for n in range(0, entries_count, feed_module.INDEX_STRIDE)]},
+                    metadata)
+                with patch.object(feed_module, "STREAM_CHUNK_BYTES", chunk):
+                    tracemalloc.start()
+                    try:
+                        view = feed.role_entries("genome")
+                        _, peak = tracemalloc.get_traced_memory()
+                    finally:
+                        tracemalloc.stop()
+                # The projection keeps twelve recent entries plus the latest
+                # per source, not one entry per tape entry.
+                self.assertLessEqual(len(view), 13)
+                return peak, len(data)
+
+        chunk = 64 * 1024
+        small_peak, small_size = peak_for(64, chunk)
+        large_peak, large_size = peak_for(512, chunk)
+        self.assertLess(large_peak, large_size,
+                        "the role view must not retain a whole tape's worth of memory")
+        # The property that matters: the peak tracks the chunk, not the tape.
+        # Doubling the tape must not double the peak.
+        self.assertLess(large_peak, small_peak * 2,
+                        "the peak must not grow with the tape's length")
+
+    def test_streamed_frame_offsets_match_the_whole_tape_scan(self):
+        # The checkpoint's frame list is rebuilt by this scan when the
+        # checkpoint does not describe the current revision. It must equal the
+        # list the whole-tape scan produces, or the checkpoint records a frame
+        # index the canonical parser disagrees with. A frame that straddles a
+        # chunk boundary is reported by the window that holds all of it, and
+        # by no other.
+        header = feed_module._encode_entry(1, "2026-10-23T18:00:00Z", "seed", "hello")
+        for chunk in (16, 32, 64, 128, 256):
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "chat.log"
+                blob = bytearray()
+                for target in (chunk - 10, 2 * chunk - 5, 3 * chunk + 7):
+                    while len(blob) < target:
+                        blob += b"x\n"
+                    blob += header
+                path.write_bytes(bytes(blob))
+                whole = [m.start() for m in
+                         feed_module.FRAME_START_RE.finditer(bytes(blob))]
+                with patch.object(feed_module, "STREAM_CHUNK_BYTES", chunk):
+                    with path.open("rb") as handle:
+                        streamed = feed_module._frame_offsets(handle, 0, len(blob))
+                self.assertEqual(whole, streamed,
+                                 f"frame offsets differ at chunk size {chunk}")
+
     def test_role_view_preserves_state_messages_recent_chat_and_global_activity(self):
         from mishe_tauftauf import seed, wall, activity
         from datetime import datetime, timezone
@@ -123,16 +203,20 @@ class FeedTests(unittest.TestCase):
             first = feed.role_entries("health")
             self.assertEqual(first[-1].sequence, 60)
             feed.append("operator", "[dm] to=health\nNew evidence")
-            parsed = []
-            original = feed_module._iter_parsed_feed
-            def measured(data, **kwargs):
-                parsed.append(len(data))
-                return original(data, **kwargs)
-            with patch.object(feed_module, "_iter_parsed_feed", measured):
+            read = []
+            original = feed_module._iter_streamed_feed
+            def measured(handle, **kwargs):
+                offset = kwargs.get("offset", 0)
+                size = kwargs.get("size")
+                read.append(size - offset)
+                return original(handle, **kwargs)
+            with patch.object(feed_module, "_iter_streamed_feed", measured):
                 second = feed.role_entries("health")
             self.assertEqual(second[-1].sequence, 62)
             self.assertEqual(first[0], second[0])
-            self.assertLess(max(parsed), 1000)
+            # The second read starts at the canonical tail, so it parses only
+            # the bytes appended since the cached revision, not the tape.
+            self.assertLess(max(read), 1000)
             self.assertNotIn(str(feed.path), feed_module._ENTRIES_CACHE)
 
     def test_role_view_verifies_discarded_records_and_refuses_corruption(self):

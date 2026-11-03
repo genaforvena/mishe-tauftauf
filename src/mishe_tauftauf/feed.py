@@ -20,6 +20,10 @@ HEADER_RE = re.compile(r"(?:v1 )?(\d{20}) (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?
 FRAME_START_RE = re.compile(rb"(?m)^(?:v1 )?\d{20} \d{4}-\d{2}-\d{2}T[^\n]+ [A-Za-z0-9._/-]+ ::\n")
 RECEIPT_RE = re.compile(r"wake (?:delivered|refused) top-pain [a-z0-9-]+ for entry [1-9][0-9]*(?: generation=[1-9][0-9]*)?(?: request-id=[A-Za-z0-9._:-]{1,128})?\Z")
 INDEX_STRIDE = 128
+STREAM_CHUNK_BYTES = 1024 * 1024
+"""The block a streaming reader holds at once, independent of the tape length."""
+_FRAME_START_TAIL = 256
+"""The bytes a frame start can straddle, kept between streaming chunks."""
 RESERVED_EXACT = {"mishe-tauftauf"}
 RESERVED_PREFIXES = ("prediction/", "observation/")
 TASK_CONTROL_TAGS = ("task-state", "task-event", "task-claim", "task-add", "task-close", "task-reopen", "landing")
@@ -136,6 +140,88 @@ def entry_timestamp(entry: object) -> datetime | None:
 
 def parse_feed(data: bytes, *, start_sequence: int = 1, home: Path | str | None = None) -> list[FeedEntry]:
     return list(_iter_parsed_feed(data, start_sequence=start_sequence, home=home))
+
+
+def _iter_streamed_feed(handle, *, start_sequence: int = 1, home=None,
+                         offset: int = 0, size: int | None = None):
+    """Yield the tape's entries from a byte range without holding the range.
+
+    ``iter_feed_file`` streams a whole file; this variant streams one byte
+    range, so a reader that resumes from a cached offset parses only the
+    bytes it has not seen. The range ends at the size the caller observed
+    under the tape's shared lock, so a writer appending during the parse
+    cannot shift the bytes this reader sees.
+
+    The bytes come from the caller's open handle, not from the path. A handle
+    names the file the caller captured, so a tape replaced at the path while
+    this reader parses cannot be read in its place; the caller holds the
+    inode it observed under the lock.
+    """
+    if size is None:
+        size = os.fstat(handle.fileno()).st_size
+    handle.seek(offset)
+
+    def chunks():
+        decoder = codecs.getincrementaldecoder("utf-8")()
+        remaining = max(0, size - offset)
+        while remaining > 0:
+            chunk = handle.read(min(STREAM_CHUNK_BYTES, remaining))
+            if not chunk:
+                break
+            remaining -= len(chunk)
+            yield decoder.decode(chunk)
+        yield decoder.decode(b"", final=True)
+
+    try:
+        for entry in iter_feed_entries(_iter_text_lines(chunks()),
+                                       start_sequence=start_sequence, home=home):
+            yield entry
+    except UnicodeDecodeError as exc:
+        raise FeedError(f"feed is not UTF-8: {exc}") from exc
+
+
+def _frame_offsets(handle, offset: int, size: int) -> list[int]:
+    """The byte offsets of every entry frame in a range, read as a stream.
+
+    The frame index the checkpoint records is the list of entry starts. It is
+    rebuilt only when the checkpoint does not describe the current revision,
+    and it must be the same list the whole-tape reader produced, so it is
+    gathered by the same scan over the same bytes.
+
+    A frame start can straddle a chunk boundary, so the tail of each chunk is
+    carried into the next. The carried tail is the overlap between two
+    windows, and it holds the opening bytes of a frame that the previous
+    window could not complete.
+
+    A frame is reported by the first window that holds all of its bytes, and
+    by no other: a frame the previous window already held ends before that
+    window's end, so it is skipped here, while a frame that straddles the
+    boundary ends after it and is complete here. Reporting on that rule
+    rather than on the position of the match alone is what keeps the
+    checkpoint's frame list equal to the whole-tape reader's list.
+    """
+    offsets: list[int] = []
+    handle.seek(offset)
+    position = offset
+    remainder = b""
+    previous_end = offset
+    while position < size:
+        chunk = handle.read(min(STREAM_CHUNK_BYTES, size - position))
+        if not chunk:
+            break
+        window = remainder + chunk
+        base = position - len(remainder)
+        for match in FRAME_START_RE.finditer(window):
+            if match.end() > len(window):
+                continue  # the frame continues past this window
+            absolute = base + match.start()
+            if absolute + (match.end() - match.start()) <= previous_end:
+                continue  # the previous window already held this frame
+            offsets.append(absolute)
+        previous_end = position + len(chunk)
+        remainder = window[-_FRAME_START_TAIL:]
+        position += len(chunk)
+    return offsets
 
 
 def _iter_parsed_feed(data: bytes, *, start_sequence: int = 1, home=None):
@@ -764,48 +850,65 @@ class Feed:
         key = (str(self.path), role)
         if not self.path.exists():
             return _role_view(_role_fold(None, self.entries(), role))
-        with self.path.open("rb") as handle:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
-            self._assert_locked_path(handle)
-            checkpoint = self._read_checkpoint()
-            metadata = tuple(self._metadata(handle))
-            valid = checkpoint is not None and tuple(checkpoint["metadata"]) == metadata
-            with _ENTRIES_CACHE_LOCK:
-                cached = _ROLE_ENTRIES_CACHE.get(key) if not _force_full else None
-                if cached is not None and valid and cached["metadata"] == metadata:
-                    _ROLE_ENTRIES_CACHE.move_to_end(key)
-                    full = _ENTRIES_CACHE.get(str(self.path))
-                    if full and tuple(full[0]) == metadata:
-                        _ENTRIES_CACHE.pop(str(self.path), None)
-                    return list(cached["view"])
-            extending = (cached is not None and valid and cached["metadata"][0] == metadata[0]
-                         and cached["metadata"][1] < metadata[1])
-            handle.seek(cached["metadata"][1] if extending else 0)
-            data = handle.read()
-        start = cached["tail"] + 1 if extending else 1
-        tail = start - 1
-
-        def verified():
-            nonlocal tail
-            for entry in _iter_parsed_feed(data, start_sequence=start, home=self.home):
-                self._verify_records((entry,))
-                tail = entry.sequence
-                yield entry
+        handle = self.path.open("rb")
         try:
-            projection = _role_fold(cached["projection"] if extending else None, verified(), role)
-        except FeedError:
-            if extending:
-                return self.role_entries(role, _force_full=True)
-            raise
-        if valid and tail != checkpoint["sequence"]:
-            raise FeedError("role view disagrees with canonical checkpoint")
-        if not valid:
-            offsets = [match.start() for match in FRAME_START_RE.finditer(data)]
-            if len(offsets) != tail:
-                raise FeedError("role view frame index disagrees with canonical parser")
-            index = {"version": 1, "sequence": tail, "tail_offset": offsets[-1] if offsets else 0,
-                     "checkpoints": [[n + 1, offsets[n]] for n in range(0, tail, INDEX_STRIDE)]}
-            self._publish_checkpoint(index, list(metadata))
+            fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
+            try:
+                self._assert_locked_path(handle)
+                checkpoint = self._read_checkpoint()
+                metadata = tuple(self._metadata(handle))
+                valid = checkpoint is not None and tuple(checkpoint["metadata"]) == metadata
+                with _ENTRIES_CACHE_LOCK:
+                    cached = _ROLE_ENTRIES_CACHE.get(key) if not _force_full else None
+                    if cached is not None and valid and cached["metadata"] == metadata:
+                        _ROLE_ENTRIES_CACHE.move_to_end(key)
+                        full = _ENTRIES_CACHE.get(str(self.path))
+                        if full and tuple(full[0]) == metadata:
+                            _ENTRIES_CACHE.pop(str(self.path), None)
+                        return list(cached["view"])
+                extending = (cached is not None and valid and cached["metadata"][0] == metadata[0]
+                             and cached["metadata"][1] < metadata[1])
+                start = cached["tail"] + 1 if extending else 1
+                offset = cached["metadata"][1] if extending else 0
+                size = metadata[1]
+            finally:
+                # The lock covers the capture only. The bytes this reader
+                # parses are bounded by the size it captured, so a writer
+                # appending now cannot shift them.
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            tail = start - 1
+            # The tape is read as a bounded stream, not as one string. Reading
+            # it whole held the raw bytes and every decoded copy alive at
+            # once, so a resident supervisor's peak grew with the tape: a
+            # 184 MB tape cost 21 s and 466 MB of peak RSS on this plant, and
+            # two such supervisors sharing the 3 GiB lifeline slice were
+            # killed by the cgroup OOM (2026-11-03 13:53Z, oom_kill 47->48).
+            # The stream keeps one chunk and one entry at a time, so the peak
+            # depends on the chunk size rather than the tape length.
+            def verified():
+                nonlocal tail
+                for entry in _iter_streamed_feed(handle, start_sequence=start, home=self.home,
+                                                 offset=offset, size=size):
+                    self._verify_records((entry,))
+                    tail = entry.sequence
+                    yield entry
+            try:
+                projection = _role_fold(cached["projection"] if extending else None, verified(), role)
+            except FeedError:
+                if extending:
+                    return self.role_entries(role, _force_full=True)
+                raise
+            if valid and tail != checkpoint["sequence"]:
+                raise FeedError("role view disagrees with canonical checkpoint")
+            if not valid:
+                offsets = _frame_offsets(handle, offset, size)
+                if len(offsets) != tail:
+                    raise FeedError("role view frame index disagrees with canonical parser")
+                index = {"version": 1, "sequence": tail, "tail_offset": offsets[-1] if offsets else 0,
+                         "checkpoints": [[n + 1, offsets[n]] for n in range(0, tail, INDEX_STRIDE)]}
+                self._publish_checkpoint(index, list(metadata))
+        finally:
+            handle.close()
         view = tuple(_role_view(projection))
         with _ENTRIES_CACHE_LOCK:
             current = _ROLE_ENTRIES_CACHE.get(key)
