@@ -151,14 +151,50 @@ MAX_SEQUENCE = 9007199254740991
 #: here and re-check this note. Complements (not edits) the existing
 #: sequence-accounting note and the 2026-11-01 imputation discard ("gap stays
 #: gap"). Revertible by git revert; no verdict/behaviour change.
+#: Partial vs total ordering — Lamport, "Time, Clocks, and the Ordering of
+#: Events in a Distributed System," CACM 21(7):558–565 (July 1978) DOI
+#: 10.1145/359545.359563 via https://lamport.azurewebsites.net/pubs/time-clocks.pdf
+#: (2026-11-03 misread REVISIT for body-perception-spool-readings-and-gaps,
+#: complements Li et al. 2504.19507 AoI note). Definition p.558: happened-before
+#: "→" is the smallest relation closed under (1) same-process order, (2)
+#: send→receipt, (3) transitivity; irreflexive partial order; concurrent iff
+#: a↛b ∧ b↛a. Clock Condition p.559: a→b ⇒ C(a)<C(b) with converse false
+#: ("cannot expect the converse … concurrent events must occur at the same time").
+#: C1/C2 p.559 + IR1/IR2 p.559 as the only timestamp discipline that guarantees
+#: the condition: C1 tick line between successive events on a process line; C2
+#: every message line crosses a tick line; IR1 Ci increments between successive
+#: local events; IR2(a) Tm=Ci(a) on send, (b) receiver sets Ci ≥ present value
+#: and > Tm after receipt (receipt event after clock advance) — IR1∧IR2 ⇒ Clock
+#: Condition. Total order "⇒" p.560: a⇒b iff Ci(a)<Cj(b) ∨ (Ci(a)=Cj(b) ∧ Pi≺Pj)
+#: for tie-break ≺; if a→b then a⇒b, but ⇒ completes → and different clocks
+#: yield different ⇒. Anomalous behavior p.558/p.561 and physical clocks Ci(t)
+#: p.561 Newtonian coordinate with drift rate κ, message delay μ, sync interval τ
+#: and a synchrony bound ε(τ,μ,κ) — logical clocks alone can order b before a
+#: while external observer perceives a before b.
+#: This module currently treats phone "epoch" (second column of the dense queue,
+#: phone physical clock Ci(t)) and host "now" (host wall clock, time.time()) as a
+#: common C without that discipline: no Tm is carried on the spool file as the
+#: Lamport message, no IR1/IR2 invariant is stated for the phone-side producer,
+#: and break_seconds = now - last_epoch, window_seconds = last_epoch -
+#: first_epoch, and run spans max(run_last_epoch-run_first_epoch,0) are computed
+#: in host sequence order while compared as epoch order. Measured consequence
+#: (mechanism 2026-11-01): 512/2000 rows (25.6%) behind high-water, max lag 100 s,
+#: so anchoring freshness on the final sequence row can flip a live queue to
+#: "stale" by up to 100 s and max(…,0) can truncate runs — a documented instance
+#: of Lamport's partial-vs-total divergence and anomalous behavior. No
+#: |C_phone(t) - C_host(t)| drift budget is typed; FRESH_SECONDS=30.0 therefore
+#: cannot be read as a cross-process guarantee and "fresh-clock-conditional"
+#: already encodes that "fresh" is wall-clock-conditional, not →-proven; a
+#: receipt of a spool row does not satisfy C2 by construction. Distinct from the
+#: 2026-11-01 MCAR/MAR discard (loss ignorability, no imputation) and complementary
+#: to the Li Δ(t) note (sampling-dependent staleness): this note is about what
+#: comparing two clocks means, the other about how stale data should drive
+#: sampling. If a logical clock Tm is ever carried on spool rows, or a
+#: physical-clock synchrony bound (κ,μ,τ,ε) is ever measured and stated, or
+#: freshness is re-anchored on high_water = max(epochs) per the mechanism
+#: proposal, name the timestamp field, bound, and caller here and re-check this
+#: note. Revertible by git revert; no verdict/behaviour change.
 #: Contextual-integrity vocabulary — Nissenbaum 2004 §§III–III.B (Walzer
-#: Spheres of Justice) + Barth et al. 2006 §2; hardened per Diamantis BEQ
-#: 2025 §§3.2–3.6 ("The Danger of Contextual Integrity"). Five parameters:
-#: context, subject/sender/recipient, information type, transmission
-#: principle. Either appropriateness *or* flow violation is a breach.
-#: Closed-world: any (context, info_type) or (context, principle,
-#: recipient) not listed is denied; no "arenas not governed by norms"
-#: licence to add norms by assertion.
 PERSONAL_CONTEXTS: Final[frozenset[str]] = frozenset({
     "personal-carrying",
     "health-diagnosis",
