@@ -1,4 +1,24 @@
-"""Read-only local frontier scan; values are evidence, not authority."""
+"""Read-only local frontier scan; values are evidence, not authority.
+
+A missing value is not one thing (RFC 2308 §1–2 — Negative Caching of DNS
+Queries, https://www.rfc-editor.org/rfc/rfc2308.txt). NXDOMAIN analogue: no
+entity of that name exists at this producer (QNAME absent) — e.g., no unit
+matching SITE_UNIT_PREFIX, no sense emitter sense.* in this pin's
+plant_part. NODATA analogue: entity exists but has no records of the
+requested type — e.g., worktree present but ghost-path count zero, disk
+sample present but read_scan_series returns no verified integer. A negative
+answer MUST carry its authority (acquisition [start,end] + producer_label
+pin, cf. scan_freshness endpoint/age_bounds) per RFC 2308 §3; without
+authority (SOA analogue) it MUST NOT be cached — §5 loop guard. Negative TTL
+is separate from positive TTL, MUST be min(MINIMUM, SOA TTL) per §3, MUST
+decrement on every cache hit per §6, SHOULD be 1–3 h tunable and never exceed
+positive TTL per §5. Host reboot (boot_id via scan_freshness._compatible)
+invalidates authority even if TTL remains — additional invalidation RFC 2308
+does not name. Only discovery.py:4158-4160 branch-inventory distinguishes
+absent (fact) vs unreadable (fault); ~70 string-sample senses collapse both
+into bare unknown. Limits: RFC 2308 §7 SERVFAIL/forwarders, NXT/SIG replication
+not transferred; forwarder graph/RCODE absent on host.
+"""
 
 from __future__ import annotations
 import bisect
@@ -73,7 +93,35 @@ from .unit_properties import SITE_UNIT_PREFIX, is_site_unit
 COMMANDS = ("rg", "git", "tmux", "python3", "systemctl", "journalctl", "ps", "df",
             "lsusb", "lspci", "bluetoothctl", "sensors", "upower", "evtest", "tailscale")
 
+
 SENSOR_ID = re.compile(r"^sense\.[a-z0-9]+(?:\.[a-z0-9-]+)+$")
+
+# RFC 2308 — Negative caching; typed absence vs present-but-empty
+# https://www.rfc-editor.org/rfc/rfc2308.txt §1, §3–6
+NEGATIVE_TTL_HINT_SECONDS = 3600  # §5 default 1–3 h, tunable, < positive TTL
+NEGATIVE_CACHE_KEYS = ("nxdomain", "nodata")  # §5: <QNAME,QCLASS> vs <QNAME,QTYPE,QCLASS>
+
+
+def negative_answer_ttl(minimum_ttl_s: float, soa_ttl_s: float) -> float:
+    """Negative answer TTL per RFC 2308 §3: min(MINIMUM, SOA TTL).
+
+    Pure arithmetic, no I/O. Caller supplies the zone's MINIMUM analogue
+    (the maximum time an absence may be remembered) and the SOA record's
+    own TTL. Returns min(minimum_ttl_s, soa_ttl_s). Does not decide
+    whether to cache — §5 forbids caching without authority.
+    """
+    return minimum_ttl_s if minimum_ttl_s < soa_ttl_s else soa_ttl_s
+
+
+def is_cacheable_negative(authority_present: bool) -> bool:
+    """Whether a negative answer may be cached per RFC 2308 §5 loop guard.
+
+    A negative without SOA/authority MUST NOT be cached (would loop
+    between forwarders). Pure predicate, no I/O.
+    """
+    return bool(authority_present)
+
+
 
 def _thermal_slots(root: Path) -> list[Path]:
     try:
