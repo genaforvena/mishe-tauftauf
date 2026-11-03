@@ -312,6 +312,35 @@ PERSONAL_CONSENT_RECEIPTS: Final[dict[str, dict[str, object]]] = {
         "scope_note": "personal-carrying ble_scan; auxiliary, collected as personal-carrying not host-radio; sticky-policy scope",
     },
 }
+#: Verifiable-Credential receipt shape — W3C Verifiable Credentials Data Model
+#: v2.0 REC 2025-05-15 §1.1/§1.2/§3/§4.7/§4.8/§4.10/§4.12/§5.1/§7.1/§8 via
+#: https://www.w3.org/TR/vc-data-model-2.0/ (2026-11-03 transfer REVISIT
+#: complements Kaye EJHG 2015 sticky policy + 2026-11-01 GDPR Art.7/Kantara
+#: discard + 2026-11-03 Pufferfish TODS correlated-record note at
+#: DENSE_TAIL_BYTES). VC data model: verifiable credential expresses issuer
+#: claims about a credentialSubject secured by a proof, in an
+#: issuer–holder–verifier ecosystem with a verifiable data registry for
+#: identifiers and revocation (§1.2/§5.1). Mapping onto
+#: PERSONAL_CONSENT_RECEIPTS: issuer (§4.7 MUST URL, RECOMMENDED
+#: dereferenceable controlled identifier document) vs current ``origin`` file
+#: path; credentialSubject (§4.8 property-value claim about the subject per
+#: BODY_INFORMATION_TYPES type) vs current bare dict; validity
+#: (validFrom/validUntil §4.9) + credentialStatus (§4.10 e.g.
+#: BitstringStatusListEntry) vs no expiry/revocation; proof/securing
+#: mechanism (§4.12, §7.1 verification) vs tamper-invisible constant; holder
+#: = reading carrying the sticky policy, verifier = recipient caller in
+#: _CI_FLOWS/personal_consent_allows, registry = status publisher (§1.2/§5.1).
+#: PERSONAL_CONSENT_RECEIPTS is not a VC: no issuer URL/identifier document,
+#: no proof, no status list, no verifier check; demonstration therefore rests
+#: on the static source note, not on a verifiable presentation — re-stating the
+#: 2026-11-01 demonstrability/withdrawal-parity gap in VC vocabulary without
+#: wiring withdrawal. Privacy caution §8.11/§8.4 identifier-correlation and
+#: §8.13 aggregation: making receipts verifiable must not add a linkable
+#: long-lived identifier without correlation analysis; correlation across
+#: DENSE_TAIL_BYTES windows (Pufferfish) and aggregation remain separate risks
+#: not solved by VC shape alone. Keeps Kaye revisability and Pufferfish
+#: correlation notes as complements; revertible by git revert, no behaviour
+#: change.
 
 #: Belmont Report (FR 44:23192, 1979-04-18) via ORI/HHS — practice vs research
 #: and three principles. Pure vocabulary beside PERSONAL_CONSENT_RECEIPTS;
@@ -1149,6 +1178,43 @@ DENSE_FRESH_SECONDS = 30.0
 #: choosing a different t does not solve correlation. Keeps 2026-11-01
 #: homogeneity/background-knowledge note and Narayanan & Shmatikov sparsity note
 #: as complements; revertible by git revert, no behaviour change.
+#: Pufferfish mechanisms for correlated data — Song, Wang, Chaudhuri,
+#: "Pufferfish Privacy Mechanisms for Correlated Data," SIGMOD '17 /
+#: arXiv:1603.03977v3 §1/§2/§3/§4 via https://arxiv.org/abs/1603.03977
+#: (2026-11-03 mechanism REVISIT, operational complement to TODS 2014
+#: critique and to T-closeness §8 discard). Time-series setting §1 p.2:
+#: one subject, correlated measurements across time, hide activity a vs b at
+#: time t (physical-activity example) — entry-privacy ≈1 noise
+#: insufficient, group DP O(T) destroys utility; Pufferfish interpolates
+#: when "average amount" of correlation is low. Triple (Def 2.1) S
+#: (secrets), Q⊆S×S (pairs to keep indistinguishable), Θ (class of
+#: data-generating distributions / Markov Chains over activities §1 p.2);
+#: privacy = Q indistinguishable under every θ∈Θ. Wasserstein Mechanism
+#: (Algorithm 1, Def 3.1 ∞-Wasserstein W∞, Theorems 3.2–3.3): for
+#: L-Lipschitz query F add Laplace noise scale W/ε with
+#: W = sup_{(s_i,s_j)∈Q, θ∈Θ} W∞(μ_{i,θ}, μ_{j,θ}) over output
+#: distributions; general but inefficient, reduces to Laplace under
+#: independent Θ (Thm 3.3). Markov Quilt Mechanism (Def 4.1 max-influence
+#: e_Θ(X_Q|Xi), Def 4.2 quilt (X_N,X_Q,X_R) with X_R⊥Xi|X_Q under Θ,
+#: Algorithm 2, Theorem 4.3): search S_{Q,i} picking quilt minimizing
+#: |X_Q|/(ε−e_Θ), composition via active quilt (Def 4.5, Theorem 4.4) when
+#: stable; efficient chain variant Lemma 4.6 O(T²), Lemma 4.9 ═4a*,
+#: Algorithm 4 MQMApprox, Theorem 4.10; Θ-misspecification bound Theorem
+#: 2.4. Map: DENSE_TAIL_BYTES (~2500 rows, ~3.5 h at 5 s) is that
+#: time-series shape; QI_DEFAULT_KEYS=("light_class",)/k=2 and exact
+#: T[QI]/qi_sensitive_histogram are not such mechanisms — group DP would
+#: be O(T) noise while Wasserstein/MQM calibrate to W / quilt size under
+#: declared Θ. This plant declares no S/Q/Θ (L_DIVERSITY_SENSITIVE_KEY=None,
+#: no Spairs, no D) so neither mechanism is instantiated; quoting raw tail
+#: rows or exact histograms in wall outcomes remains a correlated-row
+#: release absent a Pufferfish triple or stats_boundary.py Def 2.4
+#: ε/δ/composition disclosure. Distinct from t-closeness EMD: that
+#: compares per-class vs whole-table distributions with uncalibrated t;
+#: Wasserstein/MQM compare output distributions under two secrets via W∞ /
+#: max-influence and calibrate Laplace noise — replaces §8 threshold
+#: ambiguity with explicit Θ-misspecification/utility conditions. Keeps
+#: Narayanan sparsity + k-anonymity metric + Pufferfish absence + t-closeness
+#: §8 notes as complements; revertible by git revert, no behaviour change.
 # --- RAPPOR local longitudinal vocabulary (Erlingsson et al., CCS '14) ---
 #: Bloom geometry Figure 1 p.5: B of size k with h hashes; collision alone is
 #: not DP (Theorem 1 note p.9). k=256, h=4 are the paper's example defaults;
@@ -1196,6 +1262,44 @@ RAPPOR_M_COHORTS_DEFAULT: Final[int] = 64
 QI_DEFAULT_KEYS: Final[tuple[str, ...]] = ("light_class",)
 K_ANONYMITY_DEFAULT_K: Final[int] = 2
 K_ANONYMITY_MAX_SUP: Final[int | None] = None
+#: Prosecutor/journalist risk and k-map — El Emam & Dankar,
+#: "Protecting Privacy Using k-Anonymity," JAMIA 15(5):627–637, 2008,
+#: DOI 10.1197/jamia.M2716, PMCID PMC2528029 via
+#: https://pmc.ncbi.nlm.nih.gov/articles/PMC2528029/ §§Background/Proposed
+#: Improvements/Results (2026-11-03 metric REVISIT, complements
+#: Narayanan sparsity + Pufferfish S/Spairs/D absence + Wasserstein/MQM
+#: mechanism). Two re-identification scenarios §Background pp.628–630:
+#: prosecutor (specific VIP known in anonymised file F', risk 1/f_j where f_j
+#: is VIP class size in F', worst case 1/k when min f_j≥k) vs journalist
+#: (arbitrary individual, intruder holds identification database Z of
+#: population U, risk 1/F_j where F_j is population class size in Z, smart
+#: intruder actual 1/min_j F_j). k-map property: each record in F' has ≥k
+#: matches in Z' (k-anonymised Z); Fig.2 attains threshold with less loss than
+#: baseline k-anonymity Fig.1 (2-anonymised F' min f_j=2 yet min F_j=4 so
+#: actual 0.25 vs threshold 0.5, 3 rows suppressed, 10-year bins vs Z' 5-year
+#: bins, zero suppression). Baseline D1 (f_j≥k) over-anonymises at small
+#: sampling fractions n/N (gap most pronounced there, Abstract/Fig.3;
+#: disappears as n/N→1); D2 (direct 1/F_j estimator), D3 (Poisson hypothesis
+#: test, k' s.t. f_j≥k'⇒F_j≥k at α), D4 (truncated-at-zero Poisson, f_j≠0)
+#: approximate k-map from sample with D4 staying ≤threshold with lower
+#: discernability C_DM and suppression (Figs.4–5). C_DM (Bayardo &
+#: Agrawal 2005, cost of global-optimization k-anonymiser): unsuppressed
+#: tuple penalised by its class size, suppressed by |D|. Map:
+#: DENSE_TAIL_BYTES (~2500 rows, ~3.5 h at 5 s) is a sample whose n/N vs its
+#: notional population (all windows the phone could produce) is undefined;
+#: current helpers qi_histogram/k_anonymity_k/is_k_anonymous/suppressed_count
+#: /completeness/distinct_tuples report sample f_j and prosecutor 1/k only —
+#: no Z, no F_j, no n/N, no C_DM, no k'/D4. Hence
+#: k_anonymity_is_k_anonymous(...,k=2) true on ("light_class",) reports
+#: min f_j≥2 (prosecutor ≤0.5) but not journalist actual 1/min F_j, and
+#: quoting raw tail rows or exact T[QI]/qi_sensitive_histogram slices in wall
+#: outcomes is a Z-aware disclosure whose F_j is unmeasured. Premise for
+#: either metric/mechanism — declared Z/N/QI set for this metric, declared
+#: S/Q/Θ for Wasserstein/MQM — remains absent (L_DIVERSITY_SENSITIVE_KEY=None,
+#: no Spairs, no D/Θ), so neither is instantiated. Keeps Narayanan +
+#: k-anonymity disclosure-metric + Pufferfish absence + t-closeness §8 +
+#: Wasserstein/MQM notes as complements; revertible by git revert, no
+#: behaviour change.
 #: l-diversity sensitive-diversity vocabulary (Machanavajjhala et al., ICDE 2006 / TKDD 2007)
 #: Principle 2 p7: q*-block is ℓ-diverse if at least ℓ well-represented values for sensitive S.
 #: Table is ℓ-diverse if every q*-block is. Entropy Definition 4.1 p7: entropy(q*) = -Σ p log p ≥ log ℓ.
