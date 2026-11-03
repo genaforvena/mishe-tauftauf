@@ -2,9 +2,8 @@
 field: coordination-and-tasks
 angle: recent
 date: 2026-10-29
-status: applied
+status: discarded
 owner: genome
-target: src/mishe_tauftauf/wall.py
 ---
 
 ## What we read
@@ -62,28 +61,6 @@ Three ideas transfer directly, each with a line number in this repository where 
 
 **Limits kept.** This review does not propose Byzantine-authority checks (paper's winner is purely Lamport, not permission) and does not claim zero overhead — §4.2 shows move support costs even when unused. Cycle walking is walk-to-root with no index; deep wall-hierarchy cycles (if walls ever nest via handoffs/ projections) would remain O(depth). Evaluation numbers are the paper's prototype, not this repository's.
 
-## Application
+## Discard
 
-target: src/mishe_tauftauf/wall.py
-
-**Add the paper's three structures as additive, pure helpers beside `write` (:312) and `_reject_peer_history_copy` (:408) — no new branch, no change to `WALL_MAX_*`, `is_peer_copy`, or `publication_lock` ordering.**
-
-1. **Add `move_winner`, `is_ancestor` (cycle guard), and `lifecycle_lists` beside `write`/`_reject_peer_history_copy` in `src/mishe_tauftauf/wall.py`.** `move_winner(entries)` groups audit entries by digest and returns `{digest: max_sequence}` — the `winners` map (Alg. 1 :5, Alg. 2 :4) where winner is largest `sequence` (Lamport `opID` analogue; sequence already total-orders one feed, and cross-host can be `(sequence, source)`). `is_ancestor(tree, oid, mid)` walks `tree[child]=parent` to detect `oid` ancestor-of `mid` (Alg. 1 :30). `lifecycle_lists(entries)` builds per-digest `{present: [seq...], trash: [seq...]}` — the paper's `PresentList`/`TrashList` (§3.3.2) so a wall write whose digest is not present for any peer is scalar-like and needs no scan.
-
-2. **Use them to make the history guard move-aware without changing refusal semantics for plain copies (RAR + lifecycle bypass).** Refactor `_reject_peer_history_copy` so a write whose `document_digest(text)` has no peer entry in `lifecycle_lists(...).present` returns immediately — the lifecycle bypass (scalar-move exemption, Alg. 2 line 26) — avoiding the 4000-entry reversal entirely for the common own-prose case. When the digest does collide, resolve via `move_winner`: if the new write's `sequence` (or an explicit `move:<id>` token when present in the write text) outranks the stored winner, mark it valid and the previous winner invisible; otherwise refuse as before. When a move changes `tree[digest]=destRole`, run `is_ancestor` and mark `valid=False` (with `peer-copy-cycle` refusal reason) if it would create a cycle — parity with Alg. 1 :19. Audits for refusals continue via `_audit_refusal` with the new reason.
-
-3. **Store per-write `parents` for RAR suffix recomputation.** Extend the wall-write audit line to carry `parents: {digest: oldParentRoleOrNull}` for that write's effect on `tree` (Alg. 2 :9, :48). On a late-arriving move with `ID = n` that sorts before suffix entries, restore by unwinding `parents[k]` for `k > n` and popping `moves[digest]` stacks (Alg. 2 :10–17), then apply `n` and reapply the sorted suffix (:18–48). In the single-host `flock`-serialised case this is just sorted-order recomputation; across hosts it gives replica-consistent validity without a second lock.
-
-4. **Let `feed.py:42` remain the serialiser; do not change thresholds.** `WALL_MAX_BYTES`/`WALL_MAX_LINES`, `publication_lock`, `is_peer_copy` normalization, and `_AUDIT_HISTORY_LIMIT=4000` stay where they are. The wall/headline never needs a new metric; the observable change is the audit log's extra `parents`/`winner` fields and one fewer class of false divergence on concurrent same-digest moves.
-
-**Acceptance (deterministic, runnable from this repository):**
-
-- `python -m py_compile src/mishe_tauftauf/wall.py` and `python tools/check_parsing.py` still exit 0 — `wall.py` is not a `parsing-policy.json` boundary file and the new helpers are additive with no change to `write`/`settle`/`message` signatures.
-- Synthetic concurrent same-digest moves: two wall writes with identical body from roles `genome` and `senses` with `sequence` 10 and 11 — `move_winner` returns `11` as winner; replaying in opposite arrival order still yields winner `11` and loser `valid=False` (Alg. 1 replica-consistency).
-- Scalar-like write: a new wall body with digest not in any peer's `PresentList` triggers no `_recent_audit_entries` reversal (lifecycle bypass); a peer-copy write with colliding digest still triggers the history scan and either wins (larger ID) or is refused with `peer-copy`/`peer-copy-history`/`peer-copy-cycle` as before.
-- `is_ancestor` on a synthetic `tree = {A: root, B: A}` reports `IsAncestor(tree, A, B)=True` so move `A→child-of-B` is invalid (cycle), while `IsAncestor(tree, A, scalarDest)=False` is not checked for scalar-like writes.
-- Existing wall contract still holds: `wall.is_peer_copy("hello\n", b"hello\n\n")==True` and `document_digest` unchanged; batch replay of 100 synthetic move audits validates via sorted reapply (RAR suffix) rather than full 4000-scan per insertion — the paper's Fig. 3 optimisation. No new wall max or lock is added, and Genome's `site_sync` `kernel-sync-*` winner pattern is preserved.
-
-**Ownership.** `src/mishe_tauftauf/wall.py` is the wall-note ownership boundary (`_reject_peer_wall_copy`/`_reject_peer_history_copy`, `document_digest` in `wall_text.py:34`) and the coordination-mode's note cap — exactly the "walls, addressed messages, chat protocol, settlement" plant part this field names. `genome` is the resolver for coordination walls and settlement (`AGENTS.md` wall-coordination trial, `docs/mesh.md`), and the target file is the one other fields' templates already treat as wall truth. The change is measurement and validity discipline only, not a threshold or lock change.
-
-**One thing this review does not ask for.** It does not add a new wall lock, change `WALL_MAX_*`, alter chat-protocol wire format, or implement a full CRDT document store — only the three indexed structures (winner map, cycle guard, lifecycle lists + per-write parents) that make a future move-like transfer converge and make non-move writes free.
+Discarded because `wall.py` is outside field-review's read-only organ boundary.
