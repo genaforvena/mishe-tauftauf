@@ -2,7 +2,7 @@
 field: freshness-and-staleness
 angle: recent
 date: 2026-10-22
-status: applied
+status: discarded
 owner: genome
 target: coordination/site_sync.py
 ---
@@ -109,38 +109,6 @@ not the dominant term *now* — but LeaseGuard requires the bound to be publishe
 assumed, and the current code folds "the remote clock is ahead" (`age < 0`) into the same
 "stale" message as a genuine expiry.
 
-## Application
+## Discard
 
-target: coordination/site_sync.py
-
-`_leases()` should decide the linked site's lease the way LeaseGuard decides one, and
-publish what it decided:
-
-1. **Derive the limit from the plant's own renderer budget instead of the constant 20 s.**
-   `limit(role) = 2 × observations._RENDERER_TIMEOUTS.get(role, 10.0) + 2.0 (retry
-   backoff) + refresh (5 s)` — 27 s for the ordinary roles, 47 s for `witness` — i.e.
-   `RENDERER_FRAME` generalised per role, taken from the same place the renderer takes its
-   own timeout. The reader then stops declaring a holder expired inside its own cycle.
-2. **Compare intervals, and keep the third verdict.** Expired only if
-   `stamp.latest + limit < now.earliest`; a stamp *ahead* of the local clock is a
-   clock-offset verdict, not staleness (today `not 0 <= age <= 20` reports both under one
-   message); and an overlap between the two intervals is "undecidable", the verdict
-   `scan_freshness.classify_age` already calls `unknown` — reuse that vocabulary rather
-   than invent one.
-3. **Publish the bound with the verdict**: the limit used, the measured cross-host clock
-   bound (the sync's own round trip gives a half-RTT bound; the plant already computes a
-   skew bound for the phone in `discovery.py`), and the verdict, beside the site's registry
-   row — so a reader can see what was decided and re-derive it, which is the condition
-   senses accepted for the ledger reading.
-
-**Acceptance.** Replay the 248 recorded ages from the plant's own tape through the new
-rule: "stale" must fall to the six verdicts above 40 s and the one above 60 s, and the 236
-in the 20–28 s band must read valid-within-budget. The two existing freeze tests in
-`tests/test_site_sync.py` must keep passing unchanged — a renderer that never publishes a
-fresh footer is still held after one re-read (`reads == 2`) — and a new case at age 21–27 s
-must not be stale. The advancing check must still catch a renderer that stops after a good
-read, because that is the fault the stale verdict was standing in for.
-
-This role is read-only with respect to the rest of the plant: the change belongs to the
-owner of `coordination/site_sync.py` (genome, the release coordinator), and this review is
-the input to that decision.
+This change targets Genome-owned `coordination/site_sync.py`, outside field-review's read-only ownership boundary.
