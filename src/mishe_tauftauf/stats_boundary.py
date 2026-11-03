@@ -18,6 +18,27 @@ so that adding Lap(Delta/epsilon) later is a reviewed privacy change.
 Exact aggregates released before any noisy release are outside the epsilon
 budget, and composition over the noisy release does not cover them (Pufferfish
 TODS §6.3.2); a noisy release needs a ledger that includes prior exact releases.
+Organisation-scale multi-release lens (Küchler, Viand, Lycklama, Hithnawi,
+"DPolicy: Managing Privacy Risks Across Multiple Releases with Differential
+Privacy", arXiv:2505.06747 v1 10 May 2025, https://arxiv.org/abs/2505.06747,
+retained /tmp/dpolicy-2505.06747.pdf 652,679 bytes / .txt 1,278 lines):
+a guarantee across >1 release is not one (epsilon,delta) but a policy set
+generating rules r=(phi,U,B) — scope predicate phi, privacy unit U, budget B
+— over labelled mechanisms (Sec.4.1) with per-attribute/per-category scopes
+and context extensions (Sec.4.2 Fig.1: global User epsilon 10 co-exists with
+HR epsilon 3 / LR epsilon 7 and standard vs black-box context). Checking a
+future noisy release means a stateful ledger / privacy filter over the
+sequence of matching mechanisms (Sec.5.2), not a scalar budget; prior exact
+aggregates are already-consumed budget under incremental rollout (Sec.5.3),
+same debt as Pufferfish §6.3.2. With |R|=|Unit|*(1+|Attr|+...)*|Ext| rules
+(p.9) pruning uses r1 <= r2 iff phi1 ⊑ phi2 && U1 <= U2 (Eq.5) and
+Theorem 5.1: ri <= rj && Bi >= Bj => ri non-constraining (Sec.5.1, Alg.2,
+Fig.2); any pruning helper must cite this, not a budget heuristic.
+Disjoint-data tightening is block composition with explicit partitioning
+attributes (PAs) and time-step interval segmentation (pp.11-12), not scalar
+parallel max. Group privacy for (epsilon,delta)/zCDP is not k*epsilon nor
+k^2 rho (Sec.2 p.3); this module keeps k*epsilon for pure (epsilon,0)-DP
+only — no (epsilon,delta)/zCDP helper is added.
 """
 from __future__ import annotations
 
