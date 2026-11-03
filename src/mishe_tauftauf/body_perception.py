@@ -203,6 +203,43 @@ _CI_FLOWS: Final[dict[tuple[str, str], frozenset[str]]] = {
         "health", "senses", "genome",
     }),
 }
+#: Barth et al. 2006 positive/negative duality — Figure 1 / Formula (1)
+#: boundary note (2026-11-03 misread REVISIT, complements 2026-11-01
+#: context/principle collapse + static-grant + unenforced predicates).
+#: Barth Abstract/§1/§3 define two duals: positive norms permit
+#: communication if their temporal condition holds (disjunction over
+#: norms+(c)), negative norms permit only if their condition holds
+#: (conjunction over norms-(c)). Formula (1) Fig.1 p.5-6: a trace σ
+#: satisfies the norms of context c iff it is allowed by at least one
+#: positive *and* respects all negatives. Doctor/researcher dual §3.3
+#: p.6: the same confidentiality ("if Alice tells Bob under
+#: confidentiality then in the future Bob must not disclose") as a
+#: positive is bypassable by another positive; as a negative it binds
+#: "regardless of how he obtained them from Alice" — surviving alternative
+#: authorization. This module currently encodes only positive norms as
+#: allow-lists (_APPROPRIATENESS for appropriateness, _CI_FLOWS for
+#: distribution); deny is closed-world absence ("not listed is denied,"
+#: Diamantis BEQ p.9 hardened), not an explicit negative norm. No
+#: negative norm with a future temporal obligation ψ (e.g., Barth §3.3
+#: confidentiality future "must not disclose") is typed;
+#: "confidential-to-operator" is a positive label permitting flow to
+#: {senses, operator} under that principle, not a surviving negative
+#: obligation. sender/subject are carried in
+#: contextual_integrity_allows(context, sender, recipient, subject,
+#: info_type, transmission_principle) for the five-parameter shape (§2)
+#: but are not enforced by either table — psychiatrist-vs-HR role
+#: distinction and any inrole(p,r)/incontext(p,c) check are absent; no
+#: role-generalization closure ("if (Alice, psychiatrist)∈ρ then
+#: (Alice, doctor)∈ρ" p.4) and no data-hierarchy closure under
+#: computation rules I ("postal address → postal code" p.4,
+#: content(m) closed under I, BODY_INFORMATION_TYPES flat). Predicates
+#: remain pointwise, atemporal booleans over one proposed flow; no trace
+#: σ, no past/future operator evaluation. Per 2026-11-01 still unenforced
+#: (no caller in src/tests/tools as of 2026-11-03). Do not describe the
+#: tables as enforcing Barth's Formula (1) until a negative norm and a
+#: trace check exist; when either lands name the norm and caller here and
+#: re-check this note. Revertible by git revert; no verdict/behaviour
+#: change.
 #: Consent receipts — Kaye et al., "Dynamic consent: a patient interface for
 #: twenty-first century research networks," EJHG 23, 141-146 (2015) Boxes 1-3.
 #: "machine-readable disclosure policies or 'sticky policies' that attach to
