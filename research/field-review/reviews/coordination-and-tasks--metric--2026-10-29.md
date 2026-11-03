@@ -2,7 +2,7 @@
 field: coordination-and-tasks
 angle: metric
 date: 2026-10-29
-status: applied
+status: discarded
 owner: genome
 target: src/mishe_tauftauf/coordination_checks.py
 ---
@@ -55,25 +55,6 @@ Four passages carry the metric this plant lacks.
 
 4. **Limits kept from the sources, stated as non-threshold measurement.** The helpers publish no verdict word (`GREEN`/`RED`/`UNKNOWN`) and set no bound: as with the source, congruence is a regression covariate (with controls for size, priority, load, experience) not a threshold. `log(resolution_time)` is not part of the helper; the plant's analogue is time from `task-add` to `task-close` per identity, left to caller analysis. The paper's skew, window choice, proxy limitations, and "communication ≠ coordination" caveat become docstring limits. This matters because `coordination_checks.checks` are findings; congruence is their denominator.
 
-## Application
+## Discard
 
-target: src/mishe_tauftauf/coordination_checks.py
-
-**Add pure, additive congruence helpers beside `anomalies()`/`project()` in `src/mishe_tauftauf/coordination_checks.py` — no change to `publication_lock` ordering, no new probe, no verdict or threshold change.**
-
-1. **Add matrices and congruence as pure functions over `entries` in `src/mishe_tauftauf/coordination_checks.py`.** New symbols beside `AnomalyPayloads` :20 and `anomalies()` :98: `_task_dependency_matrix(entries, *, kind="logical") -> dict[(str,str), int]` (logical: `retry_task`/`parent`/`depends_on` edges plus co-occurrence of tasks whose `[task-*]` payloads share a window and an `evidence` stem; syntactic: stub returning `{}` when call-graph is unavailable, preserving the paper's two-D split), `_coordination_requirements(entries, *, window=...) -> set[tuple[str,str]]` as dichotomized `(A·D)·Aᵀ`, `_actual_coordination(entries, *, channel="report") -> set[tuple[str,str]]` (structural/geographic/report/dm as above, each pure), and `congruence(entries, *, d="logical", ca="report") -> float | None` as `len(CR∩CA)/len(CR)` when nonempty else `None`. All read `registry()`/:140 and `TaskState` fields already on the feed; they add no `fcntl.flock`, no `WALL_MAX_*`, no wire-format change.
-
-2. **Add volatility/denominator telemetry without a check.** `congruence_report(entries, history=None) -> dict|None` returns `{congruence, |CR|, |CA|, diff:|CR∩CA|, volatility: jaccard_delta, out_group_share}` or `None` when `|CR|==0` (UNKNOWN). A caller (board, dashboard, or a future `checks/congruence-report.py` read-only reporter) can log the scalar and the denominators, reproducing CSCW Fig. 1 without changing threshold enforcement. The existing `anomalies()` findings are unchanged; a future scheduled check that regresses congruence against resolution time can reuse the same pure helpers.
-
-3. **Keep the intensive, not-extensive, contract visible in docstrings.** Each helper documents: interval is the entries slice/window (mirrors the paper's per-MR unit of analysis); logical vs syntactic D is explicit; zero-denominator returns `None` not 0; actual channels are approximate (comment/signal ≠ coordination proof, CC/BCC over-counts); skew and window sensitivity remain caller concerns. This preserves the paper's §6 cautions and prevents the metric from being misread as a verdict.
-
-**Acceptance (deterministic, runnable from this repository at HEAD plus this additive patch):**
-
-- `python -m py_compile src/mishe_tauftauf/coordination_checks.py` and `python tools/check_parsing.py` still exit 0 — `coordination_checks.py` is not a `parsing-policy.json` boundary file and the new symbols are additive with no change to `anomalies`/`project` signatures or to `TaskState`/`Feed`/`wall` bytes.
-- Synthetic fixture: `entries` with three tasks `A→B` (prerequisite), owners alice owns A, bob owns B, carol owns unrelated C; `window` covering all three. `_coordination_requirements` ⇒ `|CR| == 1` (alice,bob) or 2 with symmetry (implementation documents whether ordered vs unordered); `congruence(..., d="logical", ca="report")` is `1.0` when bob's `signal`/comment entry for B is present in the window co-occurring with alice's entry for A and `0.0` when absent; when no prerequisite edge exists, `congruence` is `None` (UNKNOWN, not 0).
-- Volatility fixture: two successive windows where `CR_t = {(a,b),(a,c)}` and `CR_{t-1} = {(a,b)}` ⇒ `jaccard_delta = 1/2`, `out_group_share` reflects cross-team share when `candidates()` eligibility is split across owners, matching CSCW Fig. 1 shape without inventing a threshold.
-- Compatibility: `anomalies(entries)` count is unchanged by the additive helpers; a task whose `dependency == "prerequisite"` and `depends_on` is unfinished is still flagged `missing-producer`/`completed-producer` as before — congruence only adds the denominator that lets those counts be compared intensively. `rg -n "congruence|_coordination_requirements|_actual_coordination" src/mishe_tauftauf/coordination_checks.py` shows only this file; `rg -n "congruence" docs/wall-coordination.md` is unchanged at first — follow-on doc can cite the metric without changing mechanism bytes.
-
-**Ownership.** `src/mishe_tauftauf/coordination_checks.py` is the coordination-findings boundary (`project` :43, `anomalies` :98, `_semantic` :183) for the "coordination: addressed messages, walls and settlement" plant part this field names — the place Malone's Table 1 processes and Herbsleb/Cataldo's CR/CA fit must be computed. `genome` is the resolver for coordination walls and settlement (`AGENTS.md` wall-coordination trial, `docs/mesh.md`) and the owning role for this field in the grid. No new lock, no `WALL_MAX_*` change, no chat-protocol wire-format change — only typed tape reads through `registry`/`decode_lifecycle`/`lines` and the `|CR∩CA|/|CR|` ratio the literature shows covaries with resolution time. A follow-on scheduled reporter that logs congruence per wake and correlates it with `task-close` latency can be proposed separately once this intensive vocabulary is landed.
-
-**One thing this review does not ask for.** It does not replace `anomalies()` findings with congruence, add a scheduled `checks/congruence-threshold.py` verdict, change `candidates()` ordering, or set a `congruence >= 0.7` gate — it only adds the pure matrices and the intensive 0–1 statistic Cataldo et al. use to state whether coordination activity matched volatile requirements, so that any threshold or regression remains an explicit follow-on choice comparison, not an implicit lock-order effect.
+Discarded because the target is a Genome-owned organ, which this role is chartered to leave read-only.
