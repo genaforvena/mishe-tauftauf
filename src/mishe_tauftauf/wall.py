@@ -1465,6 +1465,57 @@ def clear(home: Path, session: str, role: str, *, expected_wake: int | None = No
 
 
 RETRY_HOLD_SECONDS = 1800
+# --- Transactional outbox vocabulary (Richardson microservices.io) — Context/Problem/Forces/Solution/Result ---
+# UNACTIVATED: no new table, no relay process, no 2PC — vocabulary only, citing
+# https://microservices.io/patterns/data/transactional-outbox.html
+# Context: service must update aggregate AND publish event. Forces: 2PC not viable,
+# commit => must send, rollback => must not send, ordering T1->E1 before T2->E2
+# across instances. Solution: Sender writes to Message outbox inside the same
+# DB transaction as aggregate update; Message relay later publishes to broker.
+# Result: no 2PC, guaranteed send iff commit, ordered. Drawback: forgetting to
+# outbox after update. File-system analogue: aggregate = evidence snapshot+mode,
+# outbox = durable intent row, relay = recovery_io-style outbox scan.
+TRANSACTIONAL_OUTBOX_STATES: Final[tuple[str, ...]] = ("pending", "sent", "failed")
+"""Outbox row lifecycle per Richardson Solution — pending (written with aggregate) -> sent (relay published) -> failed (relay gave up). Distinct from Wall outcome kinds; this is the delivery attempt, not the illocutionary force."""
+
+MESSAGE_RELAY_MODES: Final[tuple[str, ...]] = ("polling", "log-tailing")
+"""Relay implementation choices per Richardson Implementation notes — polling the outbox table vs tailing the transaction log (file analogue: polling outbox/*.json vs tailing chat.log). No behavior change here."""
+
+OUTBOX_ORDERING: Final[str] = "send-order"
+"""Ordering guarantee per Richardson Forces — T1->E1 before T2->E2 across instances updating same aggregate, preserved by relay in send order."""
+
+
+def outbox_state_is_valid(value: object) -> bool:
+    """Whether *value* is a TRANSACTIONAL_OUTBOX_STATES member."""
+    return isinstance(value, str) and value in TRANSACTIONAL_OUTBOX_STATES
+
+
+def relay_mode_is_valid(value: object) -> bool:
+    """Whether *value* is a MESSAGE_RELAY_MODES member."""
+    return isinstance(value, str) and value in MESSAGE_RELAY_MODES
+
+
+def outbox_ordering_holds(candidates: list[dict]) -> bool:
+    """Whether a candidate relay order respects send-order — T1 before T2 implies E1 before E2.
+
+    Pure predicate over sequence numbers, never raises ProtocolError and never
+    gates _publish_outcome. Each candidate is expected to carry a numeric
+    ``seq`` (or ``sequence``) key; missing or non-numeric entries make the
+    ordering not hold. Empty list holds vacuously.
+    """
+    if not isinstance(candidates, list):
+        return False
+    seqs: list[int | float] = []
+    for item in candidates:
+        if not isinstance(item, dict):
+            return False
+        raw = item.get("seq", item.get("sequence"))
+        if not isinstance(raw, (int, float)) or isinstance(raw, bool):
+            return False
+        seqs.append(raw)
+    return seqs == sorted(seqs)
+
+
 def _pending_body(home: Path, wake: int) -> str:
     """The wake receipt's own body, minus its receipt line.
 

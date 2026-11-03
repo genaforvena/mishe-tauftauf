@@ -101,6 +101,106 @@ def is_conversation_annotation_required(value: object) -> bool:
     """
     return False
 
+# PARADISE metric vocabulary — Walker et al. 1997 P97-1035 §2.2-§2.4
+# PARADISE: A Framework for Evaluating Spoken Dialogue Agents (ACL/EACL 1997,
+# https://aclanthology.org/P97-1035.pdf) — Kappa success, ci costs over
+# (sub)dialogues via AVM tagging, Z-score N(x), Performance=alpha N(K)-sum wi N(ci)
+# with US regression; single confusion matrix inflates K when cross-attribute
+# confusions few (p.274 fn.8). Added beside AutoGen/Suchman blocks as advisory
+# vocabulary, same posture — no decoder gate, no emitted bytes until a future
+# consumer (trial_metrics report or operator view) opts in. UNACTIVATED.
+PARADISE_KAPPA_FORMULA: Final[str] = "K=(P(A)-P(E))/(1-P(E))"
+"""Kappa per PARADISE §2.2 (Carletta 1996; Siegel & Castellan 1988) — chance-corrected agreement."""
+
+PARADISE_COST_MEASURES: Final[tuple[str, ...]] = ("utterances", "repair_utterances", "elapsed_time", "inappropriate_utterances")
+"""Example ci per PARADISE §2.3 — each ci(D) applicable to whole dialogue or subdialogue via AVM tagging; 1/N split for multi-attribute utterances."""
+
+PARADISE_PERFORMANCE_SPEC: Final[str] = "Performance=alpha\u00b7N(K)-sum wi\u00b7N(ci)"
+"""Performance per §2.4 — N(x)=(x-x_bar)/sigma, weights via regression on user satisfaction US; subdialogue-capable per §2.5."""
+
+
+def paradise_kappa(*, agreements: int, total: int, chance: float) -> float | None:
+    """K from P(A)=agreements/total and P(E)=chance; None when total==0 or chance==1.
+
+    K=(P(A)-P(E))/(1-P(E)) per PARADISE §2.2. Pure, advisory; returns None on
+    degenerate inputs (total 0, chance 1, type mismatch, agreements out of range).
+    """
+    if not isinstance(agreements, int) or isinstance(agreements, bool):
+        return None
+    if not isinstance(total, int) or isinstance(total, bool):
+        return None
+    if not isinstance(chance, (int, float)) or isinstance(chance, bool):
+        return None
+    if total == 0 or float(chance) == 1.0:
+        return None
+    if agreements < 0 or total < 0 or agreements > total:
+        return None
+    pe = float(chance)
+    if pe < 0 or pe > 1:
+        return None
+    pa = agreements / total
+    denom = 1 - pe
+    if denom == 0:
+        return None
+    return (pa - pe) / denom
+
+
+def paradise_normalize(value: float, mean: float, sd: float) -> float | None:
+    """N(x)=(x-mean)/sd; None when sd==0.
+
+    Z-score normalization per PARADISE §2.4 to put K and ci on comparable scale
+    before weighting. Pure.
+    """
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    if not isinstance(mean, (int, float)) or isinstance(mean, bool):
+        return None
+    if not isinstance(sd, (int, float)) or isinstance(sd, bool):
+        return None
+    if float(sd) == 0:
+        return None
+    return (float(value) - float(mean)) / float(sd)
+
+
+def paradise_performance(*, kappa_norm: float, cost_norms: dict[str, float], weights: dict[str, float]) -> float | None:
+    """alpha N(K) - sum wi N(ci); None on missing weight; pure, advisory.
+
+    Per PARADISE §2.4 Performance = alpha·N(K) - sum wi·N(ci). weights dict
+    carries ``alpha`` (or ``kappa`` alias) for K and wi keyed by cost name
+    for each entry in cost_norms. Returns None if any required weight missing
+    or types invalid. Pure.
+    """
+    if not isinstance(kappa_norm, (int, float)) or isinstance(kappa_norm, bool):
+        return None
+    if not isinstance(cost_norms, dict) or not isinstance(weights, dict):
+        return None
+    alpha = weights.get("alpha", weights.get("kappa"))
+    if not isinstance(alpha, (int, float)) or isinstance(alpha, bool):
+        return None
+    result = float(alpha) * float(kappa_norm)
+    for name, cn in cost_norms.items():
+        if not isinstance(cn, (int, float)) or isinstance(cn, bool):
+            return None
+        wi = weights.get(name)
+        if not isinstance(wi, (int, float)) or isinstance(wi, bool):
+            return None
+        result -= float(wi) * float(cn)
+    return result
+
+
+def paradise_cost_for_subdialogue(cost_full: float, attributes_in_utterance: int) -> float:
+    """1/N split per §2.3 — utterance contributing to N attributes counts 1/N per attribute.
+
+    Pure. Returns 0.0 on invalid inputs; when N<=0 returns cost_full unchanged
+    (degenerate, no split).
+    """
+    if not isinstance(cost_full, (int, float)) or isinstance(cost_full, bool):
+        return 0.0
+    if not isinstance(attributes_in_utterance, int) or isinstance(attributes_in_utterance, bool):
+        return float(cost_full)
+    if attributes_in_utterance <= 0:
+        return float(cost_full)
+    return float(cost_full) / float(attributes_in_utterance)
 
 
 def grounding_ack(entry: FeedEntry) -> str | None:
