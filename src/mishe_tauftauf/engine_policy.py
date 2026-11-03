@@ -401,8 +401,8 @@ def decide(*args, **kwargs) -> dict:
     # --- current route hysteresis: stay while eligible ---
     current_alias = _alias_of(current_route) if isinstance(current_route, dict) else None
     current_healthy = False
+    current_hold = False
     current_reason = ""
-    current_eids: list[str] = []
     if current_alias and current_alias in health_by_alias:
         h, r, e = health_by_alias[current_alias]
         current_reason = r
@@ -416,11 +416,11 @@ def decide(*args, **kwargs) -> dict:
             if h == "healthy":
                 current_healthy = True
             elif h == "reserve":
-                # reserve handling depends on policy: auto => ineligible (force switch), fail-closed => queue (stay? actually hold/queue)
-                if reserve_policy == "auto":
-                    current_healthy = False
-                else:
-                    current_healthy = False
+                # Reserve handling depends on policy: both modes may switch to a healthy alternative.
+                current_healthy = False
+            elif h == "hold":
+                # Unconfirmed health cannot prove depletion; keep the in-flight route.
+                current_hold = True
             else:
                 current_healthy = False
     elif current_route is not None:
@@ -447,6 +447,15 @@ def decide(*args, **kwargs) -> dict:
             "evidence_ids": current_eids,
             "next_reconsider_ms": now_ms + min_hold_ms,
         }
+    if current_hold:
+        return {
+            "decision": "stay",
+            "selected": current_route,
+            "reason": f"current {current_alias} unconfirmed: {current_reason}",
+            "evidence_ids": current_eids,
+            "next_reconsider_ms": now_ms + min_hold_ms,
+        }
+
 
     # Current not healthy or no current: need to select alternative
     # Try same-provider alias first

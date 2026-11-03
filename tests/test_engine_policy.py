@@ -385,6 +385,54 @@ def test_unattributed_and_not_configured_hold():
     assert r["decision"] == "hold"
 
 
+
+def test_current_route_stays_on_one_stale_read_then_recovers():
+    allow = {"default": [route("go-a", "opencode-go"), route("go-b", "opencode-go")]}
+    current = route("go-a", "opencode-go")
+    stale = status({
+        "go-a": account("go-a", "opencode-go", state="STALE", windows=[window(remaining=0.80)], reason="stale"),
+        "go-b": account("go-b", "opencode-go", windows=[window(remaining=0.80)]),
+    })
+
+    first = policy.decide(role="default", status=stale, allowlist=allow, current_route=current, now_ms=NOW)
+    assert first["decision"] == "stay"
+    assert first["selected"]["alias"] == "go-a"
+    assert first["next_reconsider_ms"] == NOW + MIN_HOLD
+
+    recovered = status({
+        "go-a": account("go-a", "opencode-go", windows=[window(remaining=0.80)]),
+        "go-b": account("go-b", "opencode-go", windows=[window(remaining=0.90)]),
+    })
+    second = policy.decide(role="default", status=recovered, allowlist=allow, current_route=current, now_ms=NOW + 1_000)
+    assert second["decision"] == "stay"
+    assert second["selected"]["alias"] == "go-a"
+
+
+def test_alternating_stale_accounts_do_not_switch_current_route():
+    allow = {"default": [route("go-a", "opencode-go"), route("go-b", "opencode-go")]}
+    current = route("go-a", "opencode-go")
+    for stale_alias in ("go-a", "go-b"):
+        accounts = {
+            alias: account(
+                alias,
+                "opencode-go",
+                state="STALE" if alias == stale_alias else "FRESH",
+                windows=[window(remaining=0.80)],
+                reason="stale" if alias == stale_alias else None,
+            )
+            for alias in ("go-a", "go-b")
+        }
+        result = policy.decide(
+            role="default",
+            status=status(accounts),
+            allowlist=allow,
+            current_route=current,
+            now_ms=NOW,
+            min_hold_ms=MIN_HOLD,
+        )
+        assert result["decision"] == "stay"
+        assert result["selected"]["alias"] == "go-a"
+
 def test_unknown_hold_with_in_flight_current():
     # UNKNOWN does not mean exhausted; keep in-flight (hold) not queue
     allow = {"default": [route("go-a", "opencode-go"), route("go-b", "opencode-go")]}
@@ -394,10 +442,10 @@ def test_unknown_hold_with_in_flight_current():
     })
     cur = route("go-a", "opencode-go")
     r = policy.decide(role="default", status=st, allowlist=allow, current_route=cur, now_ms=NOW)
-    assert r["decision"] in ("hold", "queue")
-    # spec says UNKNOWN => hold (keep in-flight, no reassignment)
-    # our implementation returns hold when no gated pools, queue when gated; with all UNKNOWN there are no gated => hold
-    assert r["decision"] == "hold"
+    assert r["decision"] == "stay"
+    assert r["selected"]["alias"] == "go-a"
+
+
 
 
 # ---------------------------------------------------------------------------
