@@ -245,7 +245,7 @@ class VerifiedStore:
             raise ValueError("record is not a regular file")
         return (info.st_ino, info.st_size, info.st_ctime_ns, info.st_mtime_ns)
 
-    def lookup(self, digest: str, directory: int, now: float) -> dict | None:
+    def lookup(self, digest: str, directory: int, now: float, *, verify_only: bool = False) -> dict | bool | None:
         with self._lock:
             connection = self._connect()
             if connection is None:
@@ -265,6 +265,8 @@ class VerifiedStore:
             return None
         if current != tuple(row[:4]):
             return None
+        if verify_only:
+            return True
         try:
             payload = json.loads(zlib.decompress(row[5]))
         except (ValueError, zlib.error):
@@ -295,13 +297,16 @@ def verified_store(home: Path | str) -> VerifiedStore:
         return store
 
 
-def cached_payload(entry, pending: dict, store: VerifiedStore | None = None) -> dict:
+def cached_payload(entry, pending: dict, store: VerifiedStore | None = None, *,
+                   verify_only: bool = False) -> dict | None:
     """Return the payload of a single-reference entry, serving verified hits.
 
     Anything other than one well-formed reference, a legacy JSON control line, or
     a missing site context takes the uncached payload() path, which raises as before.
     A miss runs envelope() in full; its identity is captured before the read so a
     record rewritten mid-read cannot be recorded with a newer identity.
+    With verify_only, a fresh matching identity is sufficient: no caller uses the
+    cached payload. Payload readers still decode it and reverify on cache damage.
     """
     lines = entry.body.splitlines()
     refs = [line for line in lines if line.lstrip().startswith("[record]")]
@@ -313,6 +318,8 @@ def cached_payload(entry, pending: dict, store: VerifiedStore | None = None) -> 
     digest = match.group(1)
     if digest in pending:
         # Same record referenced again in this pass: decode the blob already verified.
+        if verify_only:
+            return None
         return json.loads(zlib.decompress(pending[digest][-1]))
     store = store or verified_store(entry.home)
     now = time.time()
@@ -321,9 +328,9 @@ def cached_payload(entry, pending: dict, store: VerifiedStore | None = None) -> 
     except OSError:
         return payload(entry)
     try:
-        hit = store.lookup(digest, directory, now)
+        hit = store.lookup(digest, directory, now, verify_only=verify_only)
         if hit is not None:
-            return hit
+            return None if verify_only else hit
         try:
             before = store._identity(directory, digest + ".json")
         except (OSError, ValueError):

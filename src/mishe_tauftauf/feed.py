@@ -749,7 +749,7 @@ class Feed:
             if any(line.lstrip().startswith("[record]") for line in entry.body.splitlines()):
                 if store is None and entry.home is not None:
                     store = verified_store(entry.home)
-                data = cached_payload(entry, pending, store)
+                data = cached_payload(entry, pending, store, verify_only=sink is None)
                 if sink is not None:
                     sink[entry.sequence] = data
                 if store is not None and len(pending) >= VERIFIED_FLUSH_ROWS:

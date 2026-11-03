@@ -57,6 +57,21 @@ def test_hit_is_served_from_store_without_envelope(tmp_path, monkeypatch):
     assert seen == []  # every identity still matches the stored verification
 
 
+def test_verification_only_does_not_decode_cached_payload(tmp_path, monkeypatch):
+    entries = _seed(tmp_path).entries()
+    monkeypatch.setattr(records.zlib, "decompress", lambda _: pytest.fail("unneeded payload decode"))
+    Feed._verify_records(entries)
+
+
+def test_verification_only_still_detects_changed_record(tmp_path):
+    entries = _seed(tmp_path).entries()
+    path, _ = _record_file(tmp_path, entries[0])
+    path.chmod(0o600)
+    path.write_bytes(b"changed")
+    with pytest.raises(ValueError, match="checksum|record"):
+        Feed._verify_records(entries)
+
+
 def test_in_place_rewrite_is_detected(tmp_path):
     entries = _seed(tmp_path).entries()
     for e in entries:
