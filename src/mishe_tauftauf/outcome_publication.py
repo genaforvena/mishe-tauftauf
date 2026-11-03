@@ -940,3 +940,73 @@ def cfa_grounding_required(state: str, breakdown: bool) -> bool:
     if not isinstance(state, str) or not isinstance(breakdown, bool):
         return False
     return state == "assert" and breakdown
+
+
+# --- CloudEvents vocabulary (CNCF CloudEvents v1.0 2019-10-26) — §Context Attributes / §REQUIRED / §OPTIONAL / §Message ---
+# Additive typed vocabulary beside OUTCOME_KINDS so a wall-outcome publication
+# can be named as a CloudEvent context without changing header regex, decoder
+# return type or accepted body shape. Mirrors the C2PA/VC/PROV/SLSA/Austin/AutoGen
+# advisory blocks: vocabulary only, decoders stay tolerant prose. Context vs
+# Data separation (§Context Attributes) — context inspectable without
+# deserializing data — source+id uniqueness invariant (§REQUIRED), specversion
+# MUST be "1.0" (§REQUIRED), subject as filter-without-parse (§OPTIONAL),
+# structured vs binary as rendering note (§Message/Event Format/Protocol
+# Binding). Spec: https://raw.githubusercontent.com/cloudevents/spec/v1.0/spec.md
+# (viewer https://github.com/cloudevents/spec/blob/v1.0/spec.md).
+# UNACTIVATED: no caller in running pin, no decoder gate, no new bytes until
+# a dashboard or store-Census consumer opts in via explicit import.
+CLOUDEVENTS_REQUIRED: Final[tuple[str, ...]] = ("id", "source", "specversion", "type")
+"""REQUIRED context attributes per CloudEvents §Context Attributes / §REQUIRED —
+id (unique in producer), source (URI-reference), specversion (MUST be "1.0"),
+type (reverse-DNS SHOULD, producer-defined). source+id MUST be unique."""
+
+CLOUDEVENTS_OPTIONAL: Final[tuple[str, ...]] = ("datacontenttype", "dataschema", "subject", "time")
+"""OPTIONAL context attributes per CloudEvents §OPTIONAL — datacontenttype
+(RFC 2046), dataschema (URI), subject (in-source subject for suffix filter),
+time (RFC 3339). Consumer MAY ignore."""
+
+CLOUDEVENT_PUBLICATION_SPEC_VERSION: Final[str] = "1.0"
+"""Publication dialect version per CloudEvents §specversion MUST be "1.0"."""
+
+
+def cloudevent_required_is_valid(value: object) -> bool:
+    """Whether *value* is a CLOUDEVENTS_REQUIRED member — id/source/specversion/type."""
+    return isinstance(value, str) and value in CLOUDEVENTS_REQUIRED
+
+
+def cloudevent_optional_is_valid(value: object) -> bool:
+    """Whether *value* is a CLOUDEVENTS_OPTIONAL member — datacontenttype/dataschema/subject/time."""
+    return isinstance(value, str) and value in CLOUDEVENTS_OPTIONAL
+
+
+def publication_context(*, source: str, type: str, id: str, specversion: str = "1.0", subject: str | None = None, time: str | None = None) -> dict[str, str] | None:
+    """Map wall-outcome header fields to CloudEvents context for typing/forwarding only.
+
+    source≈role wall, type≈OUTCOME_KINDS kind, id≈digest prefix; subject
+    future-names the addressed wall item, time is RFC 3339. Returns None on
+    REQUIRED miss; never raises ProtocolError and never gates decode_*.
+    Pure, UNACTIVATED — no decoder caller until a dashboard/store-Census
+    consumer opts in via explicit import (same posture as Austin/AutoGen blocks).
+    """
+    if not isinstance(source, str) or not source:
+        return None
+    if not isinstance(type, str) or type not in OUTCOME_KINDS:
+        return None
+    if not isinstance(id, str) or not id:
+        return None
+    if specversion != CLOUDEVENT_PUBLICATION_SPEC_VERSION:
+        return None
+    ctx: dict[str, str] = {"source": source, "type": type, "id": id, "specversion": specversion}
+    if subject is not None:
+        if not isinstance(subject, str) or not subject:
+            return None
+        ctx["subject"] = subject
+    if time is not None:
+        if not isinstance(time, str) or not time:
+            return None
+        try:
+            decode_timestamp(time)
+        except Exception:
+            return None
+        ctx["time"] = time
+    return ctx

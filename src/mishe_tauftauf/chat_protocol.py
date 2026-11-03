@@ -71,6 +71,37 @@ AUTO_REPLY_LIMIT_DEFAULT: Final[int] = 10
 auto replies before termination; same kind as human_input_mode NEVER/ALWAYS
 but numeric."""
 
+# Suchman 1994 guardrail on conversation-programming vocabulary — advisory, not required
+# Suchman CSCW 2:177-190 "Do categories have politics?" §2-§4 (Springer
+# https://link.springer.com/content/pdf/10.1007/BF00749015.pdf / LRI
+# https://www.lri.fr/~mbl/ENS/CSCW/2017/papers/Suchman-JCSCW94.pdf),
+# Bowers & Churcher 1988; Schegloff 1982/1988; Sacks 1979; Foucault 1979;
+# Lynch 1990. Failure mode if categories taken as canonical/mandated:
+# agenda of discipline/control, radical indeterminacy of illocutionary force,
+# Lynch display of rationalistic commitments in Fig.5.1, field-observed
+# selective ad-hoc appropriation (Johnson et al. 1986; Bullen & Bennett
+# 1990). Disposition: CONVERSATION_*/AGENT_CAPABILITIES/TERMINATE vocabulary
+# is advisory; decoders stay tolerant of uncategorized prose and must not
+# coerce speakers to tag illocutionary force (cf. THE COORDINATOR enrolment).
+# UNACTIVATED: no decoder gate change, no new runtime.
+CHAT_VOCABULARY_POLICY: Final[str] = "advisory"
+"""Suchman 1994 guardrail — the CONVERSATION_*/AGENT_CAPABILITIES/TERMINATE
+vocabulary names optional annotations on the tape; decoders must remain tolerant
+of uncategorized prose and must not coerce speakers to tag illocutionary force
+(cf. THE COORDINATOR enrolment, Bowers & Churcher indeterminacy, field
+selective appropriation)."""
+
+
+def is_conversation_annotation_required(value: object) -> bool:
+    """Whether a conversation annotation is required for decoding — always False.
+
+    Suchman 1994 §2-§4: mandating universal speech-act categories coerces users
+    facing radical indeterminacy of unfolding interaction; COORDINATOR field
+    trials show ad-hoc selective ignoring. The tape stays advisory.
+    """
+    return False
+
+
 
 def grounding_ack(entry: FeedEntry) -> str | None:
     """Digest referenced as positive evidence, or None.
