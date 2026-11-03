@@ -1295,6 +1295,47 @@ DENSE_FRESH_SECONDS = 30.0
 #: inside window), Lamport 1978 misread (partial vs total clock ordering),
 #: and Li 2504.19507 recent (freshness ≠ effectiveness); complements them.
 #: Revertible by git revert; no verdict/behaviour change.
+#: QUIC loss detection — RFC 9002 "QUIC Loss Detection and Congestion Control"
+#: (Iyengar & Swett eds., May 2021) via https://www.rfc-editor.org/rfc/rfc9002.txt
+#: (2026-11-03 transfer REVISIT for body-perception-spool-readings-and-gaps,
+#: complements RFC 3550 Appendix A.3 span, Akidau watermark, Lamport 1978
+#: partial-vs-total ordering, Li 2504.19507 AoI, and Dean & Barroso Tail at
+#: Scale 95%-vs-100% notes). §§6.1.1/6.1.2 dual thresholds, §6.2/§4.7 PTO probe,
+#: App. A.2/A.10, §§4.2–4.3/§5 RTT.
+#: RFC 9002 declares loss by two independent rules: packet threshold
+#: kPacketThreshold=3 packets beyond (§6.1.1, App. A.2) and time threshold
+#: 9/8×max(smoothed_rtt, latest_rtt) after ack-delay correction (§§6.1.2/4.6/5,
+#: kTimeThreshold=9/8) — packet-count vs time-based reordering bounds.
+#: This module reports expected/received/lost/dup/steps_back per RFC 3550
+#: span in _dense_sequence_accounting without either threshold; a lost=1 with
+#: many later arrivals (threshold met) vs a tail lost=1 with none are not
+#: distinguished, and steps_back alone encodes neither threshold, reproducing
+#: TCP's single-threshold conflation that RFC 9002 §6.1 splits.
+#: Wall-minus-epoch (now - last_epoch, last_epoch - first_epoch) is not RTT
+#: (§5 smoothed_rtt/rttvar/min_rtt from newly-acknowledged largest packet
+#: corrected for ack delay); without a measured smoothed_rtt/rttvar/ack-delay,
+#: a time threshold built from break_seconds/window_seconds would reproduce
+#: the Lamport C1/C2 100 s / 25.6% high-water divergence already typed
+#: beside FRESH_SECONDS/DENSE_FRESH_SECONDS.
+#: Silent tail after the last sequence is invisible to both thresholds
+#: (§4.7/§6.2: "single packet loss at the tail does not indicate persistent
+#: congestion" and needs PTO, not a window widening). No PTO/probe analogue
+#: exists here; _gap_records/_worst_batch_delay observe halts exogenously
+#: after the fact, and enlarging DENSE_TAIL_BYTES does not make a tail loss
+#: detectable — it would require a bounded re-poll after RTT+max_ack_delay
+#: as a probe with explicit non-collapse semantics (§§6.2.4/7.6, may exceed
+#: cwnd without collapse, collapse only on persistent congestion §7.6).
+#: Not wired.
+#: Loss-epoch discipline (§4.3) absent: QUIC epoch starts on loss and ends
+#: when any packet sent after the start is acknowledged (one cwnd reduction
+#: per RTT with loss vs TCP's one across multiple RTTs); this module is
+#: per-window, stateless, with no epoch start/end, so multi-window
+#: reordering/loss has no single-epoch suppression analogue. If a re-read
+#: probe or a threshold declaration is ever wired, name the
+#: kPacketThreshold/kTimeThreshold/PTO values, the RTT source, and the
+#: caller here (read_redmi10_dense_baseline/_dense_sequence_accounting/
+#: read_redmi10_delivery_gaps) and re-check this note. Revertible by
+#: git revert; no verdict/behaviour change.
 #: --- Pufferfish correlated-record limit (Kifer & Machanavajjhala, TODS 39(1) 2014) ---
 #: §1 p.A2 "GPS traces ... correlated records": record-level definitions
 #: (k-anonymity, ℓ-diversity, ε-DP under independent-record D) do not bound
