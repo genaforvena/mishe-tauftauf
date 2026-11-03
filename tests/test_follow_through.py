@@ -94,9 +94,11 @@ def test_relative_home_observes_the_same_valid_cache(tmp_path, monkeypatch):
     assert substrate_watch.snapshot_lines("site", now=now) == substrate_watch.snapshot_lines(home, now=now)
 
 
-def test_routing_reminder_is_discipline_not_domination():
-    # A reminder restricts no response option, so it is not the source's domination case.
-    assert follow_through.follow_through_power_form(stage="reminder") == "discipline"
+def test_routing_reminder_is_influence_not_domination():
+    # A reminder re-presents a finding and restricts no option; under Lawrence 2005 p.185
+    # it is influence (episodic, costs/benefits) not discipline (systemic p.188) nor domination.
+    assert follow_through.follow_through_power_form(stage="reminder") == "influence"
+    assert follow_through.follow_through_mode_for_form("influence") == "episodic"
     assert follow_through.follow_through_mode_for_form("discipline") == "systemic"
     assert follow_through.follow_through_power_form(stage="escalation") == "force"
     assert follow_through.follow_through_power_form(stage="unknown-stage") is None
