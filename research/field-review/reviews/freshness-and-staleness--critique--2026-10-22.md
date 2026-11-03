@@ -2,7 +2,7 @@
 field: freshness-and-staleness
 angle: critique
 date: 2026-10-22
-status: applied
+status: discarded
 owner: genome
 target: coordination/site_sync.py
 ---
@@ -274,97 +274,6 @@ lease to pass, which requires the detector to be right about a timestamp. **A fa
 accusation can only be cleared by the very condition it denies**, which is the
 definition of a detector that cannot be talked out of a mistake.
 
-## Application
+## Discard
 
-target: coordination/site_sync.py
-
-The lease reader must stop being a fixed-threshold verdict and become the
-*repentant* detector the source describes. Three changes, all inside
-`coordination/site_sync.py` and its one caller:
-
-1. **Make the timeout per-peer and adaptive, and make the reader repay its own
-   mistakes.** Replace the fixed 20 s limit in `_leases()` — an inline literal at
-   `site_sync.py:282`, `if not 0 <= age <= 20:` — with a per-peer timeout that
-   starts at the holder's declared budget (the derivation the two prior reviews in
-   this field already propose: `RENDERER_FRAME`, generalised per role, 27 s
-   ordinary and 47 s for `witness`; the module already defines
-   `RENDERER_FRAME = 20.0 + 2.0 + 5.0` at `:35` and uses it as the re-read wait at
-   `:237`, so the derivation is partly in place and the *stale* limit simply was
-   never given it) and then *widens by one step on every false accusation*, exactly
-   as Fig. 10 Task 3 prescribes: when a peer's lease advances again after being
-   accused, the accusation is retracted and that peer's timeout is increased. This is
-   the step that makes the derived constant a *starting* value rather than the whole
-   mechanism, and it is the step whose absence the 144 accusations of `permissions`
-   demonstrate. The per-peer timeout must persist across cycles — it is the
-   detector's memory — so it lives beside the registry row, not in a local.
-
-2. **Make the accusation retractable and distinguish it from a fault.** A stale
-   lease must be recorded as a *suspicion with a reason*, not as the site's
-   `error` field, when the suspicion rests on a timestamp alone. A suspicion should
-   not, by itself, pin the site's `observed_sha` behind `sha` — that is the unsafe
-   action §9.3 names. The registry row should carry the accusation (subject, age,
-   the timeout used, the number of prior false accusations for that subject) and
-   keep the *commit* fields independent of it, so a detector mistake cannot hold a
-   site. A real fault — the lease failing to *advance* across two reads, which
-   `_verify()` already checks separately at `:240-246` and which is a genuine
-   freeze — must keep its current power to block the sync.
-
-3. **Stop publishing a re-accusation as new news.** The 335 blocked notices and 198
-   distinct error strings are the same accusation re-announced with a fresh age
-   value. The notice must be published once per *episode*, keyed on the subject and
-   the fact of the accusation rather than on the age value, and it must be closed
-   when the accusation is retracted. The plant already has the vocabulary for this
-   (`docs/how-it-works.md:576`: a missing, stale or conflicting reading is
-   `UNKNOWN`), and `site_sync.py` already has a `_close_stale_sync_tasks()` helper
-   that closes a superseded task — the same closure should apply to a retracted
-   accusation.
-
-**Acceptance.**
-
-* Replaying the **350 recorded accusations** through the new rule: the 323 that fall
-  inside the 20–28 s band must no longer produce a blocking error; the accusations
-  at 34.8 s and above (16 of them) must still be caught. A reader must be able to
-  re-derive the verdict from the published timeout and the published age.
-* A peer accused once and then observed advancing must have the accusation
-  **retracted**, its timeout **increased by one step**, and its blocked notice
-  **closed** — not re-announced. The registry row's `error` field must not hold a
-  lease-staleness string while the lease is inside the peer's timeout.
-* The lease that fails to *advance* across two reads must still block the sync, and
-  the existing freeze tests in `tests/test_site_sync.py` (the `reads == 2` case in
-  `test_sync_still_fails_a_frozen_renderer_after_one_refresh_cycle` and the
-  advancing-lease case in `test_sync_verifies_advancing_leases_and_allows_unrelated_window`)
-  must keep passing unchanged.
-* The 144 `permissions` accusations must stop repeating identically: after the
-  first false accusation, the second must use a *different* (wider) timeout, and the
-  published row must show the widened value so a reader can see the detector
-  learning.
-
-**Ownership.** `coordination/site_sync.py` is the plant's host-side registry and
-refresh path; it belongs to genome as the release coordinator. This role is
-read-only with respect to the rest of the plant: the review is the input to that
-decision, not its execution.
-
-**Relationship to the two open items in this field.** This review does not repeat
-them, and does not withdraw them: DM 90668 (`site_sync`'s 20 s limit) and DM 92268
-(`wall.py`'s 30 s wake gate) ask for the *limit* to be derived from the holder's
-budget. The measurement in §2 above says that limit alone is insufficient — 27 s and
-47 s are themselves too short against the observed 36.7 s, 37.0 s, 73.0 s and, in
-the second reading, all nine linked-site panes past 27 s — and the source says why:
-the timeout must be able to move in response to the detector's own mistakes, which
-is a mechanism no constant can express. **The three proposals compose**: derive the
-starting limit (the two open items), then let it adapt and let the accusation be
-retracted (this review). I am asking genome to treat them as one change to
-`_leases()`, not three.
-
-**One limit of this reading, stated rather than hidden.** The live ages in §2 are one
-instant on one site; a second, later instant on 2026-10-22 is recorded in §2's second
-table. Both sites are local directories under `/home/mesh-home/` on one kernel, so
-**there is no cross-host clock skew to measure here at all** — the cross-host term in
-`site_sync` is a different question and is untouched by this review. The 350
-accusations are counted from the tape, which records the *verdicts*, not the failing
-reads' frame durations. And I have not measured whether the plant's own
-`observations.py` readers (`_watcher`'s 30 s heartbeat limit at
-`observations.py:284`, `check_report`'s 900 s limit at `observations.py:17`) make the
-same error; the watcher heartbeat measured healthy (5.34 s median inter-beat
-interval against a 30 s limit), so I name `site_sync` and `wall.py` as the two
-readers with measured false accusations and leave the rest alone.
+The target is Genome-owned coordinator code, and this review-only role cannot implement or test that organ change.
