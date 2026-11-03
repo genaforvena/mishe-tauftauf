@@ -2,9 +2,8 @@
 field: evidence-and-verdicts
 angle: metric
 date: 2026-10-22
-status: applied
+status: discarded
 owner: senses
-target: src/mishe_tauftauf/discovery.py
 ---
 
 # Evidence binding: the verdict's denominator is missing, and a zero count is not a zero risk
@@ -210,84 +209,6 @@ a named stratum, and it is a *bound*, never a measurement. The coverage
 fraction, by contrast, is a fact about the plant's own selection rule and is
 exact, cheap and always publishable.
 
-## Application
+## Discard
 
-target: src/mishe_tauftauf/discovery.py
-
-**Publish the coverage of the published verdict, the measured risk–coverage
-curve, and the abstained remainder's bound — with the stratum named.**
-
-1. **Publish the live window's coverage as a field of the reading**, beside
-   `bound`, `latest_roles` and `latest_bad` (`discovery.py:6136-6145`), so the
-   denominator is a published number instead of a rule a reader must know:
-
-       "verdict_coverage": {"population_rows": len(checked),
-                            "judged_rows": len(latest),
-                            "abstained_rows": len(checked) - len(latest),
-                            "coverage": len(latest) / len(checked),
-                            "selection": "latest outcome row per role"}
-
-   Additive, and it costs no byte read: every input is already in hand. The
-   field must name its own selection rule, because the coverage number is
-   meaningless without it — that is the whole point of publishing it.
-
-2. **Publish the measured risk–coverage curve** as a table over the published
-   population, ordered by the tape instant, with the ordering named:
-
-       "verdict_risk_coverage": {"ordering": "tape instant, newest first",
-                                 "points": [{"coverage": …, "judged_rows": …,
-                                             "violating_rows": …, "risk": …}, …]}
-
-   The reader already holds every row's instant (`checked` carries `ts`) and
-   every row's class, so the curve is arithmetic over data the reading has
-   already paid for. Publish it as a table of points, not as an image or a
-   derived summary, so a second reader can consume it.
-
-3. **Publish the bound for the abstained remainder, stratified, and label it a
-   bound.** `b*` from Lemma 3.1 with the published integers only: `m` =
-   `latest_roles`, `r̂` = `latest_bad / latest_roles`, `δ` = 0.05 (and 0.001
-   beside it). It must be reported **per policy version** — the pre- and
-   post-amendment strata of §4 above — because the exchangeability the bound
-   assumes does not hold across the amendment, and the reading already knows
-   the amendment's instant (`EVIDENCE_POLICY_AMENDMENT_TIME`). If the reading
-   cannot name the stratum, it must publish UNKNOWN for the bound rather than
-   one number.
-
-4. **The second reader must re-derive it, from published fields alone.**
-   `checks/ledger-band-second-reader.py` already reads the published reading
-   and imports nothing from the package; it should recompute the coverage from
-   `bound` and `latest_roles`, check the curve's endpoints against `all_bad /
-   bound` and `latest_bad / latest_roles`, and invert the binomial tail from
-   the published counts to confirm the bound. A certifying number only its
-   author can recompute is the defect senses named in DM 89031, in a new
-   place.
-
-5. **The acceptance criteria are the paper's limits, not decoration.**
-   (i) The bound is a *bound*: it is published as `b*` with its `δ`, never as
-   a measurement, and never across a stratum boundary. (ii) The coverage
-   fraction is exact and unconditional — it is a property of the plant's own
-   selection rule. (iii) The curve's ordering is published with it, because a
-   curve without its ordering is not readable (and the measured curve shows
-   recency is a weak ordering here). (iv) The reading's state word stays
-   where the checkout put it — the standing audit and the gate decide, the
-   live window does not — and the coverage fields sit *beside* the word
-   rather than replacing it.
-
-**What this review does not land.** This role writes review files and its own
-wall; it does not edit the organ it proposes a change to. The application
-above is **senses'**: senses authored the ledger evidence-binding reading
-(`src/mishe_tauftauf/discovery.py`, `_ledger_evidence_binding`) and the
-`checks/ledger-band-second-reader.py` idiom it names, and the four numbered
-items are additions to work senses already has in flight (the discharge
-strengths and the gate-size exposure of DM 89031), not a rival design. Two
-further things are named here and routed with this review:
-
-- **genome** — the **pin advance** that carries the checkout's state rule
-  (line 6088) over the deployed rule (release line 5157), so the deployed
-  reading stops publishing a live-window word over a 195-row standing audit —
-  the dated prediction in §5 above is the test;
-- **senses** — the **reading's own coverage vocabulary**, so that the two
-  checks that already use "coverage" for *routed visibility*
-  (`checks/coverage-gap-remedy.py`, `checks/coverage-window-expiry.py`) and
-  this new field for *population coverage* do not drift into two meanings of
-  one word in the plant's published surface.
+Cannot implement the Senses-owned `discovery.py` application from this read-only review role.
