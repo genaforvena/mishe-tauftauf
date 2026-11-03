@@ -1124,6 +1124,31 @@ DENSE_TAIL_BYTES = 262144
 DENSE_WINDOW_ROWS = 2000
 #: Freshness gate for the dense-baseline verdict; matches ``FRESH_SECONDS``.
 DENSE_FRESH_SECONDS = 30.0
+#: --- Pufferfish correlated-record limit (Kifer & Machanavajjhala, TODS 39(1) 2014) ---
+#: §1 p.A2 "GPS traces ... correlated records": record-level definitions
+#: (k-anonymity, ℓ-diversity, ε-DP under independent-record D) do not bound
+#: inference when rows are correlated — attacker with correlated prior learns
+#: from neighbours even when k=2 and ℓ-diversity hold (cf. §6 Thm 6.1/6.2).
+#: DENSE_TAIL_BYTES ~2500 rows (~3.5 h at 5 s) is that GPS-trace shape; temporal
+#: correlation (dark↔sleep, consecutive rows predictive) is not represented in
+#: QI_DEFAULT_KEYS=("light_class",) or any per-class diversity count. Framework
+#: triple §3 p.A5 / Def 3.4 p.A7: privacy claim requires S (potential secrets),
+#: Spairs⊆S×S (which pairs must stay indistinguishable), and D (plausible
+#: data-generating distributions / attacker priors incl. correlations). This
+#: plant declares none: L_DIVERSITY_SENSITIVE_KEY=None, no Spairs, no D.
+#: Without D, Pufferfish "no assumptions" D is all distributions (too strong for
+#: utility); §6 independent-record D that recovers ε-DP (Thm 6.1) is not the
+#: dense queue's D (Thm 6.2 leaks under correlated D). Hence
+#: k_anonymity_is_k_anonymous==True or "ℓ-diverse" does not bound correlated
+#: time-series disclosure; raw tail rows, exact T[QI]/qi_sensitive_histogram
+#: slices, or wall outcomes quoting tail rows are releases over correlated rows
+#: requiring explicit D (or consent-receipt/DP handling via
+#: src/mishe_tauftauf/stats_boundary.py Def 2.4 with explicit ε/δ/composition),
+#: not "k>=2 safe". T-closeness §8 EMD calibration ("relationship between t and
+#: information gain is unclear") is a separate still-open threshold problem;
+#: choosing a different t does not solve correlation. Keeps 2026-11-01
+#: homogeneity/background-knowledge note and Narayanan & Shmatikov sparsity note
+#: as complements; revertible by git revert, no behaviour change.
 # --- RAPPOR local longitudinal vocabulary (Erlingsson et al., CCS '14) ---
 #: Bloom geometry Figure 1 p.5: B of size k with h hashes; collision alone is
 #: not DP (Theorem 1 note p.9). k=256, h=4 are the paper's example defaults;
