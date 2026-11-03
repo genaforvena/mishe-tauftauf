@@ -2,7 +2,7 @@
 field: coordination-and-tasks
 angle: misread
 date: 2026-10-29
-status: applied
+status: discarded
 owner: genome
 target: src/mishe_tauftauf/feed.py
 ---
@@ -54,25 +54,6 @@ The paper's limits it states: logical clocks give only `—>`-consistent order, 
 
 - **This misread anti-correlates with correctness even as timestamps get finer.** Moving from seconds to microseconds (as `utc_now` does) narrows apparent races but widens anomaly risk per Lamport: finer physical granularity without a drift bound makes the false confidence finer, not better. The paper's message is that precision without `C1∧C2` and without a stated synchrony bound does not approach correctness; the plant's header treats microsecond UTC as if it did.
 
-## Application
+## Discard
 
-target: src/mishe_tauftauf/feed.py
-
-**Make the tape Lamport-aware: keep `sequence` and `timestamp` for local audit and human display, but add the logical clock that actually defines `—>` — additive, pure helpers beside `_encode_entry`/:139 and `entry_timestamp`/:147, with no change to `WALL_MAX_*`, `publication_lock`, or `HEADER_RE`'s acceptance of old entries.**
-
-1. **Add a per-source logical clock and carry `T_m` on addressed messages.** Introduce `lamport_tick(source) -> int` (the local `C_i`, incremented on every *local* event — each `_append`, each `message`, each `settle` — so `C1` holds) and `lamport_update(source, remote_Tm)` that sets `C_source := max(C_source, remote_Tm) + 1` on receipt before the next local event, i.e. `IR1`/`IR2` literally. Persist `C_i` beside the existing feed checkpoint (`feed.index_path` alongside `sequence`/`tail_offset`) so it survives restarts without reconstructing a second clock. Existing `publication_lock` already serialises the increment; cross-plant DMs sent via unbound caller include `T_m` in the body prefix (e.g. `[lm T=<int>]`), and the receiver's `wall.message`/`Feed._append` calls `lamport_update` before allocating `sequence`.
-
-2. **Define the Clock Condition checker and the total-order `=>`.** Add `clock_condition_holds(entries) -> bool` that verifies `C1` (monotonic `C` per `source`) and `C2` (for each `send` with `T_m`, every causally-later receipt has larger `C`) and `total_order(entries) -> list[FeedEntry]` that sorts by `(C, source)` — Lamport's `=>` with process tie-break — as the causal-respecting order (distinct from arrival `sequence` order). Both are pure views over `parse_feed` output; they do not rewrite the tape.
-
-3. **Name the anomalous-behavior gap and bound physical time.** Extend the module docstring/header comment to state the paper's boundary: `timestamp` remains a human/physical display value with `utc_now()` precision, but its `κ`/`ε` are *unstated* on this host — so `timestamp` is not to be used to decide "who happened first" between concurrent entries. Consumers that need causal before must use `C`/`=>`; where `timestamp` order and `=>` order disagree, the disagreement itself is the anomaly signal. A new check `checks/feed-lamport-clock.py` (parallel to `checks/evidence-binding-verdict-consistency.py`) enumerates the tape, verifies `C1∧C2`, and exits 2 when the Clock Condition is violated or when a batch of recent concurrent entries would have reversed under physical-time sorting — the continuing detector for the class.
-
-**Acceptance (deterministic, runnable from this repository):**
-
-- `python -m py_compile src/mishe_tauftauf/feed.py` and `python tools/check_parsing.py` still exit 0 — `feed.py` is not a `parsing-policy.json` legacy-budget file, and the new symbols are additive; `HEADER_RE` still parses old tape entries with no `C` present (backward-compatible display; old entries treat absent `C` as not-checked, never verified).
-- Synthetic `—>` fixture: `P1` sends `[dm] to=P2` carrying `T=5`; `P2` receives then appends. After replay, `C(P2,receipt) > 5` and `clock_condition_holds` is true; `total_order` places send `=>` receipt regardless of which `utc_now()` value the host happened to stamp. Today `C2` is not checked.
-- Concurrent fixture: two wall writes by different `source` with wall-clocks 20 ms apart but no message between them — `clock_condition_holds` is true, `total_order` tie-break is by `source` string (arbitrary but deterministic), and a checker that sorted by `timestamp` would have produced the opposite order — the anomaly detector reports the divergence without changing `sequence`.
-- Cross-host fixture: a foreign DM with `T=100` arriving at a host whose local `C=3` — after `lamport_update`, the next local append carries `C=101`, not `4`; replay in opposite capture order still yields the same `=>` total order.
-
-**Ownership.** `src/mishe_tauftauf/feed.py` is the tape's literal boundary (`HEADER_RE`, `utc_now`, `_encode_entry`, `entry_timestamp`, `publication_lock`) — exactly the "walls, addressed messages, chat protocol, settlement" plant part this field names. `genome` is the resolver for coordination walls and settlement (`AGENTS.md` wall-coordination trial, `docs/mesh.md`) and the target file is the one other fields already treat as wall/tape truth. `checks/feed-lamport-clock.py` is the same pattern as this plant's other `checks/*` verdict-consistency detectors and is owned by the same resolver.
-
-**One thing this review does not ask for.** It does not replace `sequence` or `timestamp`, change `WALL_MAX_*`, alter `wall.py`'s copy guards, or implement vector clocks or full physical-clock synchronization (`κ, μ, ε` Theorem 2) — only the two logical-clock rules (`IR1`/`IR2`) and the `=>` total order that Lamport shows are sufficient to stop treating arrival time as causality.
+This proposal targets `src/mishe_tauftauf/feed.py`, a Genome-owned plant organ outside this role's read-only boundary; no source or test changes are authorized here.
