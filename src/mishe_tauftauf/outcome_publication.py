@@ -141,6 +141,35 @@ VC_TRUTH_IMPLIED_BY_VERIFIABLE: Final[bool] = False
 VC_TERMS_OF_USE: Final[tuple[str, ...]] = ("DoNotArchive", "PresentationSharingRestricted")
 """VC termsOfUse placeholder per §5.5 — verifier-checked usage constraints, distinct from disclosure."""
 
+# --- PROV-DM vocabulary (W3C REC-prov-dm-20130430 — 2013-04-30) — §5.1.1 Entity / §5.1.2 Activity / §5.2 Agent, Table 2 Relations, §5.2/§6.1 Derivation subtypes, §5.4 Bundles ---
+# Additive typed vocabulary beside C2PA and VC so an evidence file (Entity) can be
+# related to the activity that generated it and the agent it is attributed to, without
+# conflating bytes, act and responsibility. No emitted path or feed shape changes.
+PROV_TYPES: Final[tuple[str, ...]] = ("Entity", "Activity", "Agent")
+"""PROV-DM types per §5.1.1 Entity / §5.1.2 Activity / §5.2 Agent (p.5 §1 six components)."""
+
+PROV_RELATIONS: Final[tuple[str, ...]] = ("wasGeneratedBy", "wasDerivedFrom", "wasAttributedTo", "wasAssociatedWith", "used", "wasInformedBy", "actedOnBehalfOf", "hadMember", "specializationOf", "alternateOf")
+"""PROV-DM relations per Table 2 §2.1 + §5.3/§5.4 — wasGeneratedBy / wasDerivedFrom / wasAttributedTo / wasAssociatedWith / used / wasInformedBy / actedOnBehalfOf / hadMember / specializationOf / alternateOf. Evidence binding uses at least the first eight."""
+
+PROV_DERIVATION_SUBTYPES: Final[tuple[str, ...]] = ("Revision", "Quotation", "PrimarySource")
+"""Subtypes of wasDerivedFrom per §5.2 / §6.1 — Revision, Quotation, PrimarySource; remedy naming is Revision (prov:type="revision")."""
+
+
+def prov_type_is_valid(value: object) -> bool:
+    """Whether value is a PROV_TYPES member — Entity/Activity/Agent."""
+    return isinstance(value, str) and value in PROV_TYPES
+
+
+def prov_relation_is_valid(value: object) -> bool:
+    """Whether value is a PROV_RELATIONS member — e.g. wasGeneratedBy."""
+    return isinstance(value, str) and value in PROV_RELATIONS
+
+
+def prov_derivation_subtype_is_valid(value: object) -> bool:
+    """Whether value is a PROV_DERIVATION_SUBTYPES member — Revision/Quotation/PrimarySource."""
+    return isinstance(value, str) and value in PROV_DERIVATION_SUBTYPES
+
+
 EVIDENCE_REMEDY_SUFFIX = re.compile(r'^(?P<stem>.+?)-(?P<sfx>v\d+|final|final-v\d+)$')
 """The clause's own remedy-naming convention, read as an artifact's name.
 
