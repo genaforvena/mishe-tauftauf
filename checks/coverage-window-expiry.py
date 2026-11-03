@@ -126,7 +126,18 @@ def _time(value: object) -> datetime | None:
 
 
 def _fresh(path: Path, max_age: float, now: datetime) -> dict:
-    """A published reading that is present, readable and fresh enough to use."""
+    """A published reading that is present, readable and fresh enough to use.
+
+    Validity condition (Lamport 1978 §Physical Clocks, p. 563): the
+    ``now − generated`` comparison is valid only when publisher and checker
+    share a clock domain with bounded skew ε ≪ max_age (ε/(1−κ) ≤ μ). On
+    one host with DEFAULT_MAX_AGE 900 s this holds; across hosts
+    (e.g. android-body vs core) age < 0 is concurrent/unknown, not stale.
+    When the receipt carries acquisition/bounds_ns, prefer the interval
+    verdict via scan_freshness.classify_age (age_bounds) — see
+    _fresh_interval stub. Source:
+    https://lamport.azurewebsites.net/pubs/time-clocks.pdf.
+    """
     payload = _read_json(path)
     generated = _time(payload.get("generated_at") or payload.get("created"))
     if generated is None:
@@ -135,6 +146,42 @@ def _fresh(path: Path, max_age: float, now: datetime) -> dict:
     if age > max_age:
         raise Undecidable("%s is stale (%ds old)" % (path.name, int(age)))
     return payload
+
+
+def _fresh_interval(path: Path, max_age: float, now: datetime) -> dict | None:
+    """Interval freshness via scan_freshness.age_bounds + classify_age.
+
+    When the receipt carries acquisition (scan receipts do), prefer
+    this path over UTC subtraction: it returns recent/stale/unknown per
+    scan_freshness.classify_age and treats clock-ahead (age < 0) as
+    unknown rather than stale. Returns None when acquisition bounds are
+    absent, so callers fall back to _fresh's point check.
+    See scan_freshness.py:62 _compatible / :124 classify_age.
+    Source: https://lamport.azurewebsites.net/pubs/time-clocks.pdf.
+    """
+    try:
+        from mishe_tauftauf.scan_freshness import age_bounds, classify_age, endpoint
+        import json as _json
+        from datetime import timezone as _tz
+        # Reuse _read_json / _time via local import to avoid circular deps.
+        payload = _read_json(path)
+        # Snapshot is the scan receipt itself (has acquisition + created).
+        bounds = age_bounds(payload, endpoint())
+        # age_bounds yields (min,max) ns; classify_age maps to recent/stale/unknown.
+        verdict = classify_age(bounds, max_age) if bounds is not None else None
+        if verdict is None or verdict == "unknown" and bounds is None:
+            return None
+        # Caller decides staleness; here we just publish the interval verdict.
+        # Keep Undecidable vocabulary for stale, unknown for concurrent case.
+        if verdict == "stale":
+            raise Undecidable("%s is stale (interval %s > %ss)" % (path.name, bounds, int(max_age)))
+        if verdict == "unknown":
+            raise Undecidable("%s is unknown (interval straddles threshold or cross-domain)" % path.name)
+        return payload
+    except Undecidable:
+        raise
+    except Exception:
+        return None
 
 
 def _ledger_reading(home: Path, max_age: float, now: datetime) -> tuple[dict, dict]:
@@ -238,6 +285,15 @@ def _report(home: Path, max_age: float, horizon_hours: float, now: datetime) -> 
 
     published = _published_rows(report)
     # Windowed AoI (Yates Eq.2-3 / §II-B) beside the point _fresh check:
+    # Lamport 1978 §Physical Clocks (p. 563) anomalous-behavior condition
+    # ε/(1−κ) ≤ μ: point age = now − generated is Lamport-concurrent without
+    # an explicit bounded-skew ε. On one host DEFAULT_MAX_AGE 900 s easily
+    # exceeds ε (local clock skew) vs μ (filesystem latency), so valid. Across
+    # hosts age < 0 (publisher ahead of checker) is not "stale" but "unknown"
+    # (clock disagreement) in scan_freshness.classify_age's sense.
+    # When receipt carries acquisition/bounds_ns prefer
+    # scan_freshness.age_bounds + classify_age interval; see _fresh_interval
+    # below. Source: https://lamport.azurewebsites.net/pubs/time-clocks.pdf.
     # scan receipt publishes scan_window_aoi at top level (prior created
     # stamps as the sawtooth, now = that receipt's created). Emit it
     # beside the threshold lines; warmup (<2 priors) stays UNKNOWN — same

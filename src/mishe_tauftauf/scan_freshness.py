@@ -2,6 +2,12 @@
 
 Domain equality is compatibility evidence, not authentication of a boot or
 namespace lifetime. UTC is diagnostic only and never establishes recency.
+
+Freshness (AoI) does not imply decision effectiveness (Li et al.
+arXiv:2504.19507v3 \u00a7I, Thm. 9). The module measures age and windowed AoI;
+the consumer's cost C(X_t,a_t) is not modeled here. There exists a
+threshold rate fmax^T beyond which additional sampling yields no reduction
+in optimal decision cost; the AoI line is descriptive, not the objective.
 """
 from __future__ import annotations
 
@@ -18,6 +24,38 @@ _ENDPOINT_KEYS = {"clock", "bounds_ns", "boot_id", "time_namespace", "offsets", 
 _OFFSET_KEYS = {"monotonic", "boottime"}
 _BOOT_ID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 _TIME_NAMESPACE = re.compile(r"time:\[(?:0|[1-9][0-9]*)\]")
+
+
+# Li et al. 2026 \u2014 goal-oriented sampling; AoI vs effectiveness
+# https://arxiv.org/abs/2504.19507 (v3 6 Feb 2026) Thm. 9 fmax^T=1/F(\u03c1*)
+SAMPLING_EFFECTIVENESS_DEFINITION = "h* independent of fmax when fmax >= fmax^T = 1/F(rho*) (Thm.9)"
+
+
+def sampling_frequency_threshold_hint(
+    current_interval_s: float, fmax_T_hint: float | None = None
+) -> dict:
+    """Return whether current sampling rate is beyond the effectiveness threshold.
+
+    Li et al. Thm.9: if fmax >= fmax^T, extra sampling does not reduce h*.
+    This stub publishes the comparison without fitting rho*/F(); caller supplies
+    fmax_T_hint when measured. Returns {fmax, fmax_T_hint, beyond_threshold: bool|None}.
+    Pure arithmetic, no I/O. Source: https://arxiv.org/pdf/2504.19507.pdf \u00a7I, Thm.9.
+    """
+    import math as _math
+    fmax: float | None = None
+    if isinstance(current_interval_s, bool):
+        fmax = None
+    elif isinstance(current_interval_s, (int, float)) and _math.isfinite(float(current_interval_s)) and float(current_interval_s) > 0:
+        fmax = 1.0 / float(current_interval_s)
+    hint: float | None = None
+    if isinstance(fmax_T_hint, bool):
+        hint = None
+    elif isinstance(fmax_T_hint, (int, float)) and _math.isfinite(float(fmax_T_hint)) and float(fmax_T_hint) > 0:
+        hint = float(fmax_T_hint)
+    beyond: bool | None = None
+    if fmax is not None and hint is not None:
+        beyond = fmax >= hint
+    return {"fmax": fmax, "fmax_T_hint": hint, "beyond_threshold": beyond}
 
 
 def _integer(value: object) -> bool:
