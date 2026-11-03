@@ -38,6 +38,37 @@ implements KM storage (refusal audit with REFUSAL_AUDIT_MAX_BYTES) and applicati
 culture/people measure. Any future wiring of those processes would need per-role
 attribution and a culture guard. Qualitative descriptive synthesis only (46 sources
 via Google Scholar relevance); no measured effect; categories emergent not exclusive.
+
+Rekhter, Li & Hares (eds.) BGP-4, RFC 4271 (IETF, Jan 2006) — §§5–5.1.5 path
+attributes incl. AS_PATH construction (§5.1.2 EBGP prepend, empty on IBGP), §9.1–9.3
+Decision Process Phases 1–3 + tie-breaking (§9.1.2.2, §9.3) and App. F.2 route flap
+damping; intro pp.1–2 AS connectivity graph from which loops may be pruned.
+Transfer as concrete invariants: (a) walk through routing stages
+(initial/changed/escalation/reminder with resolver handoffs health→genome→witness)
+is AS_PATH; re-advertisement of the same chat.log#sequence without state progress
+is a loop to be pruned (§5.1.2, p.1 graph), not fresh evidence; (b) producer-freshness
+selection should be phased as Decision Process — Phase 1 degree of preference among
+producers, Phase 2 deterministic tie-break among resolvable problems, Phase 3
+disseminate only the selected route (cf. §9.1.1–9.1.3); (c) flap damping bounds
+fresh↔stale alternation with decaying penalty distinct from current alert_key
+suppression (one hash per distinct problem set, §F.2). Analogical only: no AS
+numbers, CIDR or TCP/179; mapping is vocabulary for loop, preference and damping.
+
+Beyer, Jones & Petoff (eds.) Site Reliability Engineering (O'Reilly, 2016) Ch.15
+"Postmortem Culture: Learning from Failure" (Lunney & Lueder) and App. D "Example
+Postmortem" (Shakespeare Sonnet++ #465) — https://sre.google/sre-book/postmortem-culture/
+and https://sre.google/sre-book/example-postmortem/ (fetched 2026-11-03, retained
+/tmp/postmortem-culture-20261103.html, /tmp/example-postmortem-20261103.html).
+Operational mechanism follow-through lacks: blameless written record with
+Summary/Impact/Root Cause(s)/Trigger/Resolution/Detection, Action Items typed
+mitigate|prevent|process with Owner/Bug/Status (DONE/TODO) per App. D, Lessons
+Learned as What went well / What went wrong / Where we got lucky, and Timeline
+anchored to chat.log#sequence. Objective triggers (user-visible downtime,
+data loss, on-call intervention, resolution-time threshold, monitoring failure +
+stakeholder discretion, Ch.15) map to health() UNKNOWN episodes and refusal-class
+thresholds; blamelessness here = fix guard/projection rules and paths, not authors
+(healthcare/avionics origin noted Ch.15). Complements Ashby regulator; no measured
+effect claimed.
 """
 from __future__ import annotations
 
