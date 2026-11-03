@@ -85,6 +85,185 @@ def placebo_scale(entries, trial_start: datetime, *, floor: int = PLACEBO_ENTRY_
             "entries": {str(k): n for k, n, _ in windows}, "mean_abs_swing": swing}
 
 
+def _maturation_trend(series: list[int | float]) -> str:
+    """Monotone trend across kept placebo windows — pure, no I/O.
+
+    Returns flat/rising/falling/UNKNOWN. UNKNOWN when <3 points.
+    """
+    if not isinstance(series, list) or len(series) < 3:
+        return "UNKNOWN"
+    try:
+        nums = [float(x) for x in series]
+    except (TypeError, ValueError):
+        return "UNKNOWN"
+    if any(not __import__("math").isfinite(v) for v in nums):
+        return "UNKNOWN"
+    ups = sum(1 for a, b in zip(nums, nums[1:]) if b > a)
+    downs = sum(1 for a, b in zip(nums, nums[1:]) if b < a)
+    n = len(nums) - 1
+    if ups == n:
+        return "rising"
+    if downs == n:
+        return "falling"
+    if ups >= 0.6 * n and downs == 0:
+        return "rising"
+    if downs >= 0.6 * n and ups == 0:
+        return "falling"
+    if ups == 0 and downs == 0:
+        return "flat"
+    return "flat"
+
+
+def campbell_design2_audit(sample, baseline, placebo, *, history_events=None, prefixes=None) -> dict:
+    """Campbell & Stanley Design 2 (O1 X O2) audit — pure, no I/O.
+
+    History and maturation are UNCONTROLLED by design (Table 1 minuses for
+    Design 2, p.8). This helper never returns "controlled" for those.
+    """
+    design = "O1 X O2 (Design 2)"
+    history = "UNCONTROLLED"
+    maturation = "UNCONTROLLED"
+    if placebo is None:
+        instrumentation = "UNKNOWN"
+    elif prefixes is not None:
+        try:
+            instrumentation = "mismatch" if dict(prefixes) != dict(PREFIXES) else "ok"
+        except Exception:
+            instrumentation = "UNKNOWN"
+    else:
+        instrumentation = "ok"
+    if isinstance(placebo, dict) and "excluded" in placebo:
+        try:
+            selection_excluded = list(placebo.get("excluded") or [])
+        except Exception:
+            selection_excluded = "UNKNOWN"
+    else:
+        selection_excluded = "UNKNOWN"
+    regression: dict[str, str] = {}
+    maturation_trend: dict[str, str] = {}
+    if isinstance(placebo, dict) and "kept" in placebo and isinstance(sample, dict) and isinstance(baseline, dict):
+        try:
+            per_window = placebo.get("_window_counts")
+            for name in PLACEBO_COUNTS:
+                if per_window and name in per_window and isinstance(per_window[name], list) and len(per_window[name]) >= 3:
+                    maturation_trend[name] = _maturation_trend(per_window[name])
+                elif per_window and name in per_window:
+                    maturation_trend[name] = "UNKNOWN"
+                else:
+                    maturation_trend[name] = "UNKNOWN"
+                try:
+                    b_counts = baseline.get("counts") if isinstance(baseline.get("counts"), dict) else baseline
+                    b_val = b_counts.get(name) if isinstance(b_counts, dict) else None
+                    if b_val is None and isinstance(b_counts, dict):
+                        b_val = b_counts.get("yields" if name == "settlements" else name)
+                        if b_val is None:
+                            b_val = b_counts.get(name)
+                    if per_window and name in per_window and b_val is not None:
+                        series = per_window[name]
+                        if series and (b_val == min(series) or b_val == max(series)):
+                            regression[name] = "baseline is extreme (possible regression)"
+                        else:
+                            regression[name] = "baseline not extreme"
+                    else:
+                        regression[name] = "UNKNOWN"
+                except Exception:
+                    regression[name] = "UNKNOWN"
+        except Exception:
+            for name in PLACEBO_COUNTS:
+                regression[name] = "UNKNOWN"
+                maturation_trend[name] = "UNKNOWN"
+    else:
+        for name in PLACEBO_COUNTS:
+            regression[name] = "UNKNOWN"
+            maturation_trend[name] = "UNKNOWN"
+    flat_trends = set(maturation_trend.values()) if maturation_trend else set()
+    if len(flat_trends) == 1 and "UNKNOWN" not in flat_trends:
+        global_trend = next(iter(flat_trends))
+    elif all(v == "UNKNOWN" for v in maturation_trend.values()):
+        global_trend = "UNKNOWN"
+    else:
+        global_trend = "UNKNOWN"
+    return {
+        "design": design,
+        "history": history,
+        "maturation": maturation,
+        "instrumentation": instrumentation,
+        "selection": {"excluded": selection_excluded},
+        "regression": regression,
+        "maturation_trend": maturation_trend,
+        "maturation_trend_global": global_trend,
+        "history_events": list(history_events) if isinstance(history_events, list) else None,
+    }
+
+
+def huang_checks(placebo, sample, baseline, *, prefixes=None, publication=None) -> dict:
+    """Huang et al. 2024 intrinsic self-correction audit — pure, no I/O."""
+    def _extract(obj):
+        if isinstance(obj, dict) and "counts" in obj and isinstance(obj["counts"], dict):
+            return obj["counts"], obj.get("hours")
+        if isinstance(obj, dict):
+            return obj, None
+        return {}, None
+    sample_counts, sample_hours = _extract(sample)
+    baseline_counts, baseline_hours = _extract(baseline)
+    if sample_hours is None and isinstance(sample, dict) and isinstance(sample.get("hours"), (int, float)):
+        sample_hours = sample.get("hours")
+    if baseline_hours is None and isinstance(baseline, dict) and isinstance(baseline.get("hours"), (int, float)):
+        baseline_hours = baseline.get("hours")
+    if placebo is None:
+        decoder_parity = "UNKNOWN"
+    elif prefixes is not None:
+        try:
+            decoder_parity = "mismatch" if dict(prefixes) != dict(PREFIXES) else "ok"
+        except Exception:
+            decoder_parity = "UNKNOWN"
+    else:
+        decoder_parity = "ok"
+    per_count: dict[str, dict] = {}
+    for name in PLACEBO_COUNTS:
+        try:
+            sv = sample_counts.get(name) if isinstance(sample_counts, dict) else None
+            bv = None
+            if isinstance(baseline_counts, dict):
+                bv = baseline_counts.get(name if name != "settlements" else "yields")
+                if bv is None:
+                    bv = baseline_counts.get(name)
+            scale = None
+            if isinstance(placebo, dict):
+                scale = (placebo.get("mean_abs_swing") or {}).get(name)
+            raw_q = None
+            if isinstance(sv, (int, float)) and isinstance(bv, (int, float)) and isinstance(scale, (int, float)) and scale not in (None, 0):
+                raw_q = (sv - bv) / scale if scale != 0 else None
+        except Exception:
+            raw_q = None
+        cost_q = None
+        try:
+            if isinstance(sv, (int, float)) and isinstance(bv, (int, float)) and isinstance(placebo, dict):
+                scale = (placebo.get("mean_abs_swing") or {}).get(name)
+                if scale is not None and scale != 0 and isinstance(sample_hours, (int, float)) and isinstance(baseline_hours, (int, float)) and sample_hours > 0 and baseline_hours > 0:
+                    swing_per_hour = scale / 10.0 if 10.0 != 0 else None
+                    if swing_per_hour and swing_per_hour != 0:
+                        diff_rate = sv / sample_hours - bv / baseline_hours
+                        cost_q = diff_rate / swing_per_hour if swing_per_hour != 0 else None
+                elif scale is not None and scale != 0 and (sample_hours is None or baseline_hours is None):
+                    cost_q = raw_q
+        except Exception:
+            cost_q = None
+        per_count[name] = {
+            "oracle_free": True,
+            "decoder_parity": decoder_parity,
+            "raw_q": raw_q,
+            "cost_parity_q": cost_q,
+        }
+    if publication is not None and isinstance(publication, dict):
+        ind = publication.get("independent_digest")
+        if isinstance(ind, str) and len(ind) == 64 and all(c in "0123456789abcdefABCDEF" for c in ind):
+            per_count["publication"] = {"oracle_free": False, "decoder_parity": decoder_parity, "raw_q": None, "cost_parity_q": None}
+        elif ind is not None:
+            per_count["publication"] = {"oracle_free": False, "decoder_parity": decoder_parity, "raw_q": None, "cost_parity_q": None}
+    return per_count
+
+
 from typing import Final
 
 TOP_RESEARCH_PRACTICES: Final[tuple[str, ...]] = ("study-registration", "study-protocol", "analysis-plan", "reporting-transparency", "materials-transparency", "data-transparency", "code-transparency")
@@ -423,6 +602,66 @@ def _placebo_lines(sample, baseline) -> list[str]:
     return lines
 
 
+def _campbell_lines(sample, baseline) -> list[str]:
+    placebo = sample.get("placebo") if isinstance(sample, dict) else None
+    try:
+        audit = campbell_design2_audit(sample, baseline, placebo)
+    except Exception:
+        return ["", "Campbell Design 2 audit (O1 X O2): UNKNOWN — audit failed."]
+    history = audit.get("history", "UNKNOWN")
+    maturation = audit.get("maturation", "UNKNOWN")
+    instr = audit.get("instrumentation", "UNKNOWN")
+    excluded = audit.get("selection", {}).get("excluded", "UNKNOWN") if isinstance(audit.get("selection"), dict) else "UNKNOWN"
+    if isinstance(excluded, list):
+        excluded_text = ", ".join(str(k) for k in excluded) or "none"
+    else:
+        excluded_text = str(excluded)
+    regression = audit.get("regression", {})
+    maturation_trend = audit.get("maturation_trend", {})
+    lines = ["", "Campbell Design 2 audit (O1 X O2): "
+             f"history={history} — single O1 vs single O2 shares history between measures; "
+             f"maturation={maturation} — time-series not collected (see Design 7); "
+             f"instrumentation={instr}; selection=excluded k={excluded_text}."]
+    for name in PLACEBO_COUNTS:
+        reg = regression.get(name, "UNKNOWN") if isinstance(regression, dict) else "UNKNOWN"
+        trend = maturation_trend.get(name, "UNKNOWN") if isinstance(maturation_trend, dict) else "UNKNOWN"
+        lines.append(f"- {name.replace('_', ' ')}: regression={reg}; maturation_trend={trend}")
+    lines.append("Limit: this audit labels threats per Table 1; it does not estimate a causal effect and placebos remain autocorrelated shared-regime windows, not exchangeable controls.")
+    return lines
+
+
+def _huang_lines(sample, baseline) -> list[str]:
+    placebo = sample.get("placebo") if isinstance(sample, dict) else None
+    try:
+        checks = huang_checks(placebo, sample, baseline)
+    except Exception:
+        return ["", "Huang audit: UNKNOWN — audit failed."]
+    lines = ["", "Huang audit (intrinsic self-correction, cost/prompt parity):"]
+    for name in PLACEBO_COUNTS:
+        entry = checks.get(name, {}) if isinstance(checks, dict) else {}
+        oracle = entry.get("oracle_free", "UNKNOWN")
+        if isinstance(oracle, bool):
+            oracle_text = "yes" if oracle else "no"
+        else:
+            oracle_text = str(oracle)
+        decoder = entry.get("decoder_parity", "UNKNOWN")
+        raw_q = entry.get("raw_q")
+        cost_q = entry.get("cost_parity_q")
+        raw_text = f"{raw_q:.2f}" if isinstance(raw_q, (int, float)) else "UNKNOWN"
+        cost_text = f"{cost_q:.2f}" if isinstance(cost_q, (int, float)) else "UNKNOWN"
+        lines.append(f"- {name.replace('_', ' ')}: oracle_free={oracle_text} cost_parity_q={cost_text} decoder_parity={decoder} (raw_q={raw_text})")
+    if "publication" in checks:
+        pub = checks["publication"]
+        oracle = pub.get("oracle_free", "UNKNOWN")
+        oracle_text = "no" if oracle is False else ("yes" if oracle is True else str(oracle))
+        decoder = pub.get("decoder_parity", "UNKNOWN")
+        lines.append(f"- publication: oracle_free={oracle_text} decoder_parity={decoder}")
+    lines.append("Limit: Huang audit labels bias (oracle/cost/prompt), not capability; cost via per-hour rate when hours available.")
+    return lines
+
+
+
+
 def report(home, directory, sample, initial):
     baseline = json.loads((directory / "baseline.json").read_text())
     lines = ["# Wall trial — rough observations", "", f"Measured {sample['hours']:.2f} hours; ending {sample['end']}.", "",
@@ -448,6 +687,8 @@ def report(home, directory, sample, initial):
               "Delivery latency seconds: " + json.dumps(sample["deliveries"]["latency_seconds"], sort_keys=True) + ".",
               "Model cost: UNKNOWN — no complete attributed source wired."]
     lines += _placebo_lines(sample, baseline)
+    lines += _campbell_lines(sample, baseline)
+    lines += _huang_lines(sample, baseline)
     lines += ["", "These are diagnostic counts. Inspect walls, representative turns and live patch evidence before judging useful work.", "", sample["limits"], "",
         "Final means the ten-hour sampling window ended; it does not certify all in-flight work completed."]
     (directory / "report.md").write_text("\n".join(lines)+"\n")
