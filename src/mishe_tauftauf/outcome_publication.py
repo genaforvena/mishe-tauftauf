@@ -813,3 +813,130 @@ def credential_truth_implies_verifiable(is_verifiable: bool, is_true: bool) -> b
     if is_true and not is_verifiable:
         return False
     return True
+
+# --- Austin 1962 speech-act vocabulary — Lect.I/II/VII/VIII; Searle 1975 via Winograd 1986 Ch.5 ---
+# UNACTIVATED: no header emission, no ProtocolError change — vocabulary only.
+# Austin 1962 Lect.I p.6 performative vs constative; Lect.II pp.14-16 six
+# rules A.1 A.2 B.1 B.2 Γ.1 Γ.2 misfire/abuse/misinvocation/misexecution/flaw/hitch;
+# Lect.VII pp.67-69 abandonment; Lect.VIII pp.94-109 locutionary
+# (phonetic/phatic/rhetic) vs illocutionary vs perlocutionary, force vs
+# meaning, conventional act p.100; Searle 1975 five points via Winograd 1986
+# pp.58-59; Winograd & Flores 1986 Fig.5.1 CfA Request→Promise→Assert→Declare
+# + grounding p.69. Cf. outcome_publication.py header/decoder as locutionary
+# well-formedness, publication_lock+fsync as conventional ratification.
+
+AUSTIN_FELICITY_CONDITIONS: Final[tuple[str, ...]] = ("A.1", "A.2", "B.1", "B.2", "\u0393.1", "\u0393.2")
+"""Six felicity rules per Austin Lect.II p.14 — A.1 conventional procedure
+with conventional effect, A.2 appropriate persons/circumstances, B.1
+correctly, B.2 completely, \u0393.1 requisite thoughts/feelings/intentions + intention
+to so conduct, \u0393.2 actually so conduct subsequently."""
+
+AUSTIN_INFELICITY_CLASSES: Final[tuple[str, ...]] = ("misfire", "abuse", "misinvocation", "misapplication", "misexecution", "flaw", "hitch")
+"""Infelicity classes per Austin Lect.II pp.14-16 — misfire (A/B, act void)
+vs abuse (\u0393, act hollow) (p.16 l.557); subdivision: misinvocation (A) incl.
+misapplication (A.2) vs misexecution (B) incl. flaw (B.1)/hitch (B.2)."""
+
+AUSTIN_LOCUTIONARY_LEVELS: Final[tuple[str, ...]] = ("phonetic", "phatic", "rhetic")
+"""Locutionary sub-acts per Austin Lect.VIII p.95 — phonetic (noises),
+phatic (vocables+grammar), rhetic (sense+reference)."""
+
+AUSTIN_ILLOCUTIONARY_FORCES_AUSTIN: Final[tuple[str, ...]] = ("verdictive", "exercitive", "commissive", "behabitive", "expositive")
+"""Austin's five illocutionary classes, Lect.XII p.150ff — verdictive (giving
+a verdict), exercitive (exercising power), commissive (committing),
+behabitive (attitude), expositive (exposition)."""
+
+ILLOCUTIONARY_POINTS_SEARLE: Final[tuple[str, ...]] = ("assertive", "directive", "commissive", "expressive", "declaration")
+"""Searle's five illocutionary points via Winograd 1986 p.59 (1975 taxonomy)
+— assertive/directive/commissive/expressive/declaration; maps OUTCOME_KINDS
+to forces without changing kinds."""
+
+SPEECH_ACT_LEVELS: Final[tuple[str, ...]] = ("locutionary", "illocutionary", "perlocutionary")
+"""Three levels per Austin Lect.VIII pp.94-109 — saying something
+(locutionary), in saying something (illocutionary, conventional), by saying
+something (perlocutionary, consequential)."""
+
+CFA_STATES: Final[tuple[str, ...]] = ("request", "promise", "counter", "decline", "assert", "declare", "cancel", "withdraw")
+"""Conversation-for-action states per Winograd & Flores Fig.5.1 p.63 (basic
+CfA + negotiation/withdrawal branches) — maps task-announce \u2192 promise \u2192 assert
+\u2192 declare with breakdown loops."""
+
+CFA_BREAKDOWN_SIGNALS: Final[tuple[str, ...]] = ("breakdown", "grounding")
+"""CfA breakdown vocabulary per Winograd Ch.5 pp.63-68 — breakdown as
+anticipation failure, grounding as the committed follow-up speech act
+(p.69 l.3650)."""
+
+
+def austin_felicity_condition_is_valid(value: object) -> bool:
+    """Whether *value* is an AUSTIN_FELICITY_CONDITIONS member."""
+    return isinstance(value, str) and value in AUSTIN_FELICITY_CONDITIONS
+
+
+def austin_infelicity_class_is_valid(value: object) -> bool:
+    """Whether *value* is an AUSTIN_INFELICITY_CLASSES member."""
+    return isinstance(value, str) and value in AUSTIN_INFELICITY_CLASSES
+
+
+def locutionary_level_is_valid(value: object) -> bool:
+    """Whether *value* is an AUSTIN_LOCUTIONARY_LEVELS member."""
+    return isinstance(value, str) and value in AUSTIN_LOCUTIONARY_LEVELS
+
+
+def searle_point_is_valid(value: object) -> bool:
+    """Whether *value* is an ILLOCUTIONARY_POINTS_SEARLE member."""
+    return isinstance(value, str) and value in ILLOCUTIONARY_POINTS_SEARLE
+
+
+def speech_act_level_is_valid(value: object) -> bool:
+    """Whether *value* is a SPEECH_ACT_LEVELS member."""
+    return isinstance(value, str) and value in SPEECH_ACT_LEVELS
+
+
+def cfa_state_is_valid(value: object) -> bool:
+    """Whether *value* is a CFA_STATES member."""
+    return isinstance(value, str) and value in CFA_STATES
+
+
+def outcome_illocutionary_point(kind: str) -> str | None:
+    """Map OUTCOME_KINDS to Searle point — accepted/hypothesis-changed→assertive.
+
+    Pure, no I/O. ``accepted`` and ``hypothesis-changed`` map to
+    ``assertive``/``expressive`` (verdictive), ``blocker-resolved``/
+    ``blocker-retired`` to ``declaration``/``commissive``. ``None`` when
+    *kind* not in ``OUTCOME_KINDS``.
+    """
+    if not isinstance(kind, str) or kind not in OUTCOME_KINDS:
+        return None
+    if kind in ("accepted", "hypothesis-changed"):
+        return "assertive"
+    return "declaration"
+
+
+def classify_outcome_felicity(*, header_ok: bool, reference_complete: bool, procedure_exists: bool, persons_appropriate: bool, sincere: bool | None = None, subsequently_honoured: bool | None = None) -> str | None:
+    """Classify a wall-outcome publication against Austin A/B/\u0393.
+
+    Returns ``misfire``/``abuse``/``happy`` or ``None`` when locutionary
+    check alone is insufficient to judge (\u0393 needs subsequent conduct).
+    Pure; does not raise. Mapping: !header_ok/\u2192B.1 flaw (misfire);
+    !reference_complete\u2192B.2 hitch (misfire); !procedure_exists\u2192A.1
+    misinvocation; !persons_appropriate\u2192A.2 misapplication; sincere is
+    False\u2192\u0393.1 abuse; subsequently_honoured is False\u2192\u0393.2 abuse; else happy
+    or None when \u0393 is None.
+    """
+    if not header_ok or not reference_complete or not procedure_exists or not persons_appropriate:
+        return "misfire"
+    if sincere is False or subsequently_honoured is False:
+        return "abuse"
+    if sincere is None or subsequently_honoured is None:
+        return None
+    return "happy"
+
+
+def cfa_grounding_required(state: str, breakdown: bool) -> bool:
+    """Whether CfA requires grounding — per Winograd p.69 l.3650.
+
+    An ``assert`` (statement) in breakdown commits the speaker to a further
+    grounding speech act. Pure.
+    """
+    if not isinstance(state, str) or not isinstance(breakdown, bool):
+        return False
+    return state == "assert" and breakdown
