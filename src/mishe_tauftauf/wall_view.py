@@ -64,6 +64,53 @@ def pane_lease_lines(home: Path) -> tuple[list[str], str]:
     advertised refresh. A window with no renderer script (the operator shell, the
     log tail) carries no lease and is not a fault; a renderer whose lease is
     missing or unreadable is UNKNOWN, never silently GREEN.
+
+    Freshness critique — Burrows OSDI '06 Chubby (https://static.googleusercontent.com/media/research.google.com/en//archive/chubby-osdi06.pdf):
+    Chubby is "intended to provide coarse-grained locking" (§2.1, p.1-2; l.5,164,188) — a
+    lease safe at coarse grain becomes a load amplifier when polled fine-grained.
+    The top-pane footer ``-- pane live ... ticks every frame --`` (observations.py:23
+    FOOTER_LEASE_RE) is presentation liveness (docs/how-it-works.md:27 "evidence that
+    the renderer is running, not that the system being checked is healthy"; AGENTS.md
+    "tmux and its lease establish presentation liveness only"), not a fine-grained
+    correctness lease. Scaling rule §3, p.8 l.921-929: "The master may increase lease
+    times from the default 12 s up to around 60 s when it is under heavy load, so it
+    need process fewer KeepAlive RPCs" — KeepAlives are dominant and "failure to
+    process them in time is the typical failure mode of an overloaded server."
+    Hence ``limit = max(120.0, 6*refresh)`` at :134 is the unloaded bound; when
+    host_capacity is LIMITED/CRITICAL (checks/host_capacity.py / wall:host_capacity_holds_clear
+    as load signal, dashboard "host-capacity LIMITED") the correct Chubby interpretation
+    is jeopardy, not immediate RED.
+
+    Jeopardy vs expired — §2.7-2.8, p.6-8, l.595-682: each session has a lease end called
+    "session lease timeout" (l.611) advanced on KeepAlive (l.616, default 12 s l.621,
+    piggybacking events/invalidations l.627). The client keeps a conservative local
+    approximation (l.635-640); on local-timeout expiry "its session is in jeopardy.
+    The client empties and disables its cache" and waits a grace period (l.642-651,
+    grace begins via jeopardy event l.719, blocks API l.765). Only grace expiry tears
+    down. This plant today has no jeopardy band: ``age > limit`` at :135 is RED stale;
+    the Chubby-correct band would be ``age`` past ``6*refresh`` but within the
+    host-shed window → UNKNOWN jeopardy (flush presentation trust without paging
+    health/genome as RED); only beyond-grace becomes RED. Pure verdict refinement;
+    no new RPC or lease store. See also Lamport ε/(1-κ)≤μ validity and UNKNOWN third
+    verdict in checks/coverage-window-expiry.py:1-4,:240-281 and Yates AoI display.
+
+    Polling vs invalidation — §4.3, p.10, l.1109-1197: DNS TTL caching "discarded when
+    ... not been refreshed within that period" (l.1109) overloads at small TTL
+    (3k clients → 150k lookups/s vs 50k/s Xeon l.1190). "In contrast, Chubby's caching
+    uses explicit invalidations so a constant rate of session KeepAlive requests can
+    maintain an arbitrary number of cache entries indefinitely ... in the absence of
+    changes" (l.1197); KeepAlive reply piggybacks invalidations (§2.8) and proxy
+    reduces traffic by Nproxy (~10k l.951). ``capture-pane -p -S -5`` per-window polling
+    at :104 every diagnostic compose is the DNS-TTL analogue even when no window
+    changed; an invalidation-style notification (renderer-broadcast event or cached
+    latest_lease_line reuse within one tick) would be the Chubby alternative — named
+    here as debt, no behavioural change.
+
+    Sequencer analogue — §2.4, p.4, l.369-424: lock holder may request a sequencer
+    checked via CheckSequencer (l.410-421); without it the fallback is cache flush on
+    release (l.424). wall_view has no sequencer — a stale reader cannot tell whether
+    prior pane writes remain valid; wall.py:323-371 seen_ticks/lamport is the fencing
+    token for walls, pane leases have none. Out of scope for this header, noted as risk.
     """
     from .observations import decode_lease_line, latest_lease_line
     from .tmux import home_sessions as _home_sessions
