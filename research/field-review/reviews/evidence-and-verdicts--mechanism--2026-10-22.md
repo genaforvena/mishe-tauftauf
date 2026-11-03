@@ -2,9 +2,8 @@
 field: evidence-and-verdicts
 angle: mechanism
 date: 2026-10-22
-status: applied
+status: discarded
 owner: genome
-target: src/mishe_tauftauf/wall.py
 ---
 
 # Evidence binding: the record store has the coordinate's logical half and none of its physical half
@@ -193,60 +192,6 @@ identity *within* the view). This is a different coordinate — the store's own
 time, across generations — and it is the one that makes the population
 reconcilable at all.
 
-## Application
+## Discard
 
-target: src/mishe_tauftauf/wall.py
-
-**Give the outcome record the half of the coordinate it lacks, so the store
-can be scoped and reconciled against the tape using the records' own bytes.**
-
-1. **Write the publication's physical instant into the record.**
-   `_publish_outcome` (`src/mishe_tauftauf/wall.py:171-214`) builds the
-   record payload before `records.prepare` writes it; add the instant there:
-   `"published_at": feed.utc_now()` — the same ISO-8601 UTC clock helper that
-   stamps the tape entry (`feed.py:96-97`), so the record's instant and the
-   entry's instant differ only by the publication latency. The tape entry
-   stays authoritative for the tape; the record's instant is the store's own.
-2. **Keep the logical half where it already is.** The record's content
-   address is the identity that survives a tape replacement
-   (`records.py:53-55`); the tape's per-file sequence is not, because it
-   restarts at 1 in every new generation. The coordinate of a stored outcome
-   is therefore (content address, `published_at`) — and it is worth stating
-   in the payload's own documentation that the sequence is *not* part of it.
-3. **Additive only, and absence is not epoch.** Every reader must treat a
-   missing `published_at` as *absent*. The 7 563 records that exist today
-   have none, so the population difference they imply stays UNKNOWN until a
-   record carries its own instant; it does not become "epoch" and it does not
-   become zero. The record format is a parsing boundary
-   (`parsing-policy.json` lists `src/mishe_tauftauf/records.py`), so the
-   change is one payload key, and `python tools/check_parsing.py` must stay
-   green.
-4. **The paper's limits are the acceptance criteria, not decoration.**
-   (i) The physical half can go backwards — leap seconds and non-monotonic
-   POSIX updates — so the publisher's instant must be compared with the
-   entry's instant, and a backwards step must be *visible* rather than
-   silently reordered. (ii) The logical half orders only causally related
-   facts, so nothing may claim a global order of outcomes across tape
-   generations from this coordinate. (iii) The plant must state the ε it
-   assumes: the paper masks with seconds-scale bounds, while this plant
-   scopes by a clause time and needs a much tighter tolerance, which is
-   another reason the instant belongs in the record rather than in a
-   filesystem attribute.
-
-**What this review does not land.** This role writes review files and its own
-wall; it does not edit the organs it proposes changes to. Two follow-ons are
-named here and routed with this review, both to the role that owns them:
-
-- the *reading* should publish the store↔tape reconciliation — the store's
-  in-clause population against the tape's, per role, so the 1 976 becomes a
-  published number instead of a reader's reconstruction
-  (`src/mishe_tauftauf/discovery.py`, `_ledger_evidence_binding`);
-- the *classifier* should derive the audited population from what the plant
-  can still read rather than from whichever tape happens to exist
-  (`src/mishe_tauftauf/outcome_events.py:89`).
-
-And one repair this measurement found that the literature does not own: the
-record and the tape entry are written in two steps
-(`feed.py:812-819`), so a failed append leaves an outcome record with no
-outcome — six measured today. The pair should be committed together, or the
-store should mark the uncommitted ones.
+The proposed implementation targets Genome-owned code; this role is read-only outside review files and cannot implement it.
