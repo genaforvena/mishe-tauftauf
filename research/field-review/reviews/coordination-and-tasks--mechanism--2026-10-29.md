@@ -2,9 +2,9 @@
 field: coordination-and-tasks
 angle: mechanism
 date: 2026-10-29
-status: applied
+status: discarded
+
 owner: genome
-target: src/mishe_tauftauf/task_state.py
 ---
 
 ## What we read
@@ -53,25 +53,6 @@ Four passages carry the operational mechanism this plant mis-implements as lock 
 
 4. **Limits kept.** This does not replace `publication_lock` ordering or add a new lock — bids and the award are ordinary tape entries under the same `flock`; total order remains arrival. It does not claim an optimal mechanism — the paper insists "one question that arises immediately is how to categorize these dependencies and coordination processes" and that lists are not exhaustive; the transfer is the handbook entry, not a theorem. It does not model incentives (Turoff bidding for internal projects §2.2.1) or common-knowledge formation (§2.4.2); those remain §2.4 concerns composable later. Production/coordination/vulnerability numbers from §2.3.2 are reported as counts/durations on the tape (bids sent, time announcement→award, lock wait), not as queueing-theory closed forms.
 
-## Application
+## Discard
 
-target: src/mishe_tauftauf/task_state.py
-
-**Add the Smith & Davis announcement → bid → award protocol as additive, pure helpers beside `states`/`candidates`/`claim`/`eligible` — no change to `publication_lock` ordering, no new branch, no threshold change.**
-
-1. **Add typed helpers `announcement`, `bid`, `award` and `bid_cost` beside `candidates`/`select_task` in `src/mishe_tauftauf/task_state.py`.** Each is a pure function over `list[FeedEntry]` and a tape-derived index: `task_announcements(entries) -> dict[identity, FeedEntry]` reads entries whose body carries `announce:<task>:requires=<qual>` (control tag `task-announce`); `task_bids(entries, identity) -> list[Bid]` reads `bid:<task>:qual=<qual>:available=<wake>` (`task-bid`); `award_task(entries, identity) -> Award | None` reads `award:<task>:winner=<role>:bids=N` (`task-award`). `Bid` is `NamedTuple(identity, bidder, qual, available_wake, sequence)` ordered by `sequence` (arrival tie-break); award selection is deterministic "lowest `bid_cost` then lowest `sequence`" where `bid_cost(bid) -> tuple` encodes the paper's tradeoff in tape terms: `coordination = bids_seen`, `production = qualifier mismatch penalty`, `vulnerability = host staleness (observations age)`. Validate with `validate_control`/`EVENT_RE`/`validate_slug` as `validate_control` (:76) already does.
-
-2. **Wire `eligible`/`candidates` as a view of the market without changing refusal semantics.** Extend `eligible(state, entries, now)` to deny a task whose `depends_on` prerequisite is unawarded (the transfer review's `depends_on` field) and whose `announcement` exists but no `award` yet covers `owner` — i.e. a task is eligible for non-bidders only when no market exists; once an `announcement` exists, only bidding servers are eligible until the `award` closes the round. `candidates`/`select_task` remain as the bidding-client path: a bidder's `select_task` prefers its own `award`s, then tasks where its `bid` is winning, then classical `candidates` — the paper's decentralized market beside the product hierarchy. No `WALL_MAX_*`, `HEADER_RE`, `publication_lock`, or audit digest changes.
-
-3. **Publish one cost telemetry helper, no daemon.** `announcement_cost(entries, identity) -> dict{coordination, production, vulnerability, latency}` computes from the award entry: `coordination = len(bids)`, `production = sum(mismatch penalties)`, `vulnerability = max host age at bid time`, `latency = award.sequence - announcement.sequence`. This is the `production/coordination/vulnerability` triple Malone & Smith analyse, read from the tape.
-
-**Acceptance (deterministic, runnable from this repository at HEAD 2ec7496 plus this additive patch):**
-
-- `python -m py_compile src/mishe_tauftauf/task_state.py` and `python tools/check_parsing.py` still exit 0 — `task_state.py` is not a `parsing-policy.json` boundary file and the new symbols are additive with no change to `claim`/`set_step`/`wait_for`/`finish` signatures.
-- Synthetic market: create entries `announce:task-A` (seq 10, source alice), `bid:task-A` by bob q=qualified avail=100 and by carol q=qualified avail=101, award to bob — `task_announcements` has 1, `task_bids(task-A)` sorted is [bob@11, carol@12], `award_task(task-A).winner == "bob"` and `announcement_cost(task-A).coordination == 2`; replaying `announce/bids/award` in opposite arrival order still yields winner bob (lowest cost tie-break then sequence, as with table's market bidding when costs are explicit).
-- Compatibility: a task with no announcement is still claimable via the existing `candidates` → `claim` path; a task whose `dependency == "prerequisite"` and `depends_on` points to an unfinished task is ineligible for bidding consumers even when non-dependent `candidates` still appear — the transfer review's prerequisite-aware `eligible` composed with this market.
-- `rg -n "announcement|task_bids|award_task|bid_cost" src/mishe_tauftauf/task_state.py` shows only this file; `rg -n "announcement" docs/wall-coordination.md` unchanged at first — follow-on doc can cite the helpers without changing mechanism bytes.
-
-**Ownership.** `src/mishe_tauftauf/task_state.py` is the task lifecycle boundary (`registry` :140, `states` :241, `eligible` :255, `candidates` :294, `claim` :429, `select_task` :503) — exactly the "walls, addressed messages, chat protocol, settlement" plant part this field names. `genome` is the resolver for coordination walls and settlement (`AGENTS.md` wall-coordination trial, `docs/mesh.md`) and the owning role for this field in the grid. No new lock, no `WALL_MAX_*` change, no chat-protocol wire-format change — only typed tape entries (`task-announce`/`task-bid`/`task-award`) read through `validate_control`/`EVENT_RE`.
-
-**One thing this review does not ask for.** It does not replace `publication_lock`/`flock` with a central scheduler, add a market-price or budget allocation process, or model incentives/Turoff bidding, nor implement a new `checks/task-market.py` detector — only the three typed messages and the `production/coordination/vulnerability` cost view Malone & Smith show are needed to state which mechanism the plant is using and what it costs. A follow-on check that audits award-vs-claim contention could be proposed separately once this vocabulary is landed.
+The proposed application edits Genome-owned `src/mishe_tauftauf/task_state.py`; this review-only role cannot implement or test that organ change.
