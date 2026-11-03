@@ -358,6 +358,29 @@ def _bind_renderer_home(home: Path) -> None:
     os.environ.setdefault("MISHE_SEED_HOME", str(Path(home).resolve()))
 
 
+def _held_delivery_status(home: Path, role: str, pending: int | None) -> str | None:
+    """Expose an exhausted delivery only while its wake is still pending."""
+    if pending is None:
+        return None
+    path = home / "checks" / f"wall-send-{role}-{pending}.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    attempts = data.get("attempts") if isinstance(data, dict) else None
+    if not isinstance(attempts, int) or isinstance(attempts, bool) or attempts < 2:
+        return None
+    at = data.get("at")
+    if not isinstance(at, str):
+        return f"delivery=HELD wake={pending} since=UNKNOWN"
+    from datetime import datetime
+    try:
+        datetime.fromisoformat(at)
+    except ValueError:
+        return f"delivery=HELD wake={pending} since=UNKNOWN"
+    return f"delivery=HELD wake={pending} since={at}"
+
+
 def cmd_pain_watch(args) -> int:
     validate_slug(args.slug)
     _bind_renderer_home(args.home)
@@ -373,6 +396,9 @@ def cmd_pain_watch(args) -> int:
                 from .seed import _state
                 _, pending, settled, cleared, *_ = _state(args.home, args.slug, entries=entries)
                 status = f"pending={pending or 'none'} yield={settled or 'none'} clear={cleared or 'none'}"
+                held = _held_delivery_status(args.home, args.slug, pending)
+                if held:
+                    status += f" {held}"
                 body = rendered.body
                 if not body.endswith("\n"):
                     body += "\n"

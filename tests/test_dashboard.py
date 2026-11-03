@@ -18,6 +18,35 @@ def test_watcher_and_mind_share_complete_frame_without_terminal_clipping(tmp_pat
     assert capsys.readouterr().out == displayed
 
 
+def test_dashboard_reports_retry_exhaustion_for_the_pending_wake_only(tmp_path, monkeypatch, capsys):
+    from mishe_tauftauf import seed
+    from mishe_tauftauf.observations import RenderedPain
+
+    home = tmp_path
+    held_at = "2026-11-03T15:40:00+00:00"
+    send = home / "checks" / "wall-send-genome-42.json"
+    send.parent.mkdir()
+    send.write_text('{"attempts": 2, "at": "' + held_at + '", "phase": "delivered"}')
+    state = {"pending": 42}
+    monkeypatch.setattr(seed, "_state", lambda *a, **k: ("digest", state["pending"], None, None))
+    monkeypatch.setattr(cli, "compose_frame",
+                        lambda *a: RenderedPain("genome", "STATE: GREEN\n", True))
+    monkeypatch.setattr(cli.time, "sleep", lambda _: (_ for _ in ()).throw(KeyboardInterrupt()))
+
+    def render():
+        assert cli.cmd_pain_watch(
+            Namespace(home=home, slug="genome", timeout=1, interval=5)) == 0
+        capsys.readouterr()
+        return dashboard.read(home, "genome")[0]
+
+    frame = render()
+    assert "delivery=HELD wake=42 since=2026-11-03T15:40:00+00:00" in frame
+
+    state["pending"] = None
+    frame = render()
+    assert "delivery=HELD" not in frame
+
+
 def test_publish_landing_during_read_is_not_refused_as_future(tmp_path, monkeypatch):
     clock = datetime(2026, 9, 30, tzinfo=timezone.utc)
     dashboard.publish(tmp_path, "genome", "frame", True, now=clock)
