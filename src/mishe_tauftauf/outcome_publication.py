@@ -170,6 +170,88 @@ def prov_derivation_subtype_is_valid(value: object) -> bool:
     return isinstance(value, str) and value in PROV_DERIVATION_SUBTYPES
 
 
+# --- TSP vocabulary (IETF RFC 3161 §2.4.1 MessageImprint / §2.4.2 TSTInfo / Accuracy / §3 nonce) ---
+# Additive typed vocabulary beside C2PA / VC / PROV / SLSA so an evidence digest
+# can be named as a MessageImprint (hashAlgorithm + hashedMessage together, not
+# separate optional fields) and a timestamp can be named as genTime + Accuracy
+# (seconds/millis/micros) with nonce freshness, without conflating a local
+# clock instant with a TSA-asserted time. No emitted path or feed shape changes.
+# UNACTIVATED: no TSA, no X.509/CMS SignedData, no trust anchor, no network
+# fetch — vocabulary only, citing RFC 3161 §1 proof-of-existence / §2.4.1
+# MessageImprint (hashAlgorithm + hashedMessage) / §2.4.2 TSTInfo (version,
+# policy, messageImprint, serialNumber, genTime, accuracy, ordering, nonce,
+# tsa) / Accuracy (seconds/millis/micros) / §3 nonce freshness.
+TSP_HASH_ALGS: Final[tuple[str, ...]] = ("sha256", "sha384", "sha512")
+"""Hash algorithms for MessageImprint.hashAlgorithm per RFC 3161 §2.4.1 (cf. C2PA Sec.13.1 p.58)."""
+
+TSP_TSTINFO_FIELDS: Final[tuple[str, ...]] = ("version", "policy", "messageImprint", "serialNumber", "genTime", "accuracy", "ordering", "nonce", "tsa")
+"""TSTInfo SEQUENCE members per RFC 3161 §2.4.2 l.416-430 (evidence binding uses at least messageImprint/genTime/accuracy/nonce/policy/serialNumber)."""
+
+TSP_ACCURACY_UNITS: Final[tuple[str, ...]] = ("seconds", "millis", "micros")
+"""Accuracy SEQUENCE members per RFC 3161 §2.4.2 l.530 (seconds/millis/micros) — per-token stated looseness."""
+
+TSP_MESSAGE_IMPRINT_VERSION: Final[int] = 1
+"""TSTInfo.version per RFC 3161 §2.4.2 l.416 (version INTEGER { v1(1) })."""
+
+
+def tsp_hash_alg_is_valid(value: object) -> bool:
+    """Whether value is a TSP_HASH_ALGS member — sha256/sha384/sha512."""
+    return isinstance(value, str) and value in TSP_HASH_ALGS
+
+
+def tsp_accuracy_is_valid(value: object) -> bool:
+    """Whether value is a TSP Accuracy dict — optional int keys seconds/millis/micros, each 0 <= v < 1000, at least one present."""
+    if not isinstance(value, dict):
+        return False
+    if not value:
+        return False
+    allowed = set(TSP_ACCURACY_UNITS)
+    for k, v in value.items():
+        if k not in allowed:
+            return False
+        if not isinstance(v, int) or isinstance(v, bool):
+            return False
+        if not (0 <= v < 1000):
+            return False
+    return True
+
+
+_TSP_HEX = re.compile(r"[0-9a-f]+\Z")
+
+
+def tsp_message_imprint_is_valid(value: object) -> bool:
+    """Whether value is a MessageImprint dict — hashAlgorithm in TSP_HASH_ALGS and hashedMessage hex of that alg's length (sha256→64, sha384→96, sha512→128)."""
+    if not isinstance(value, dict):
+        return False
+    alg = value.get("hashAlgorithm")
+    digest = value.get("hashedMessage")
+    if not isinstance(alg, str) or alg not in TSP_HASH_ALGS:
+        return False
+    if not isinstance(digest, str):
+        return False
+    expected_len = {"sha256": 64, "sha384": 96, "sha512": 128}[alg]
+    if len(digest) != expected_len:
+        return False
+    return bool(_TSP_HEX.fullmatch(digest))
+
+
+def tsp_tstinfo_holds(*, message_imprint: object, gen_time: object, accuracy: object | None = None, nonce: object | None = None) -> bool:
+    """Whether a TSTInfo-shaped binding holds — MessageImprint valid, genTime parseable, accuracy valid when present (RFC 3161 §2.4.1/§2.4.2/§3)."""
+    if not tsp_message_imprint_is_valid(message_imprint):
+        return False
+    if not isinstance(gen_time, str):
+        return False
+    try:
+        decode_timestamp(gen_time)
+    except Exception:
+        return False
+    if accuracy is not None and not tsp_accuracy_is_valid(accuracy):
+        return False
+    if nonce is not None and not isinstance(nonce, int):
+        return False
+    return True
+
+
 EVIDENCE_REMEDY_SUFFIX = re.compile(r'^(?P<stem>.+?)-(?P<sfx>v\d+|final|final-v\d+)$')
 """The clause's own remedy-naming convention, read as an artifact's name.
 
