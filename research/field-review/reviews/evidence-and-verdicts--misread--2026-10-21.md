@@ -2,9 +2,8 @@
 field: evidence-and-verdicts
 angle: misread
 date: 2026-10-21
-status: applied
+status: discarded
 owner: senses
-target: src/mishe_tauftauf/discovery.py
 ---
 
 # Evidence binding: the instances must be the whole population, not the index's projection
@@ -167,89 +166,6 @@ that holds only conformations does not decide the question.
   is missing is the one fact Bacon says an induction cannot do without: the
   population.
 
-## Application
+## Discard
 
-target: src/mishe_tauftauf/discovery.py
-
-**Change 1 — the reading publishes the population it was computed over, and
-its reconciliation against the store.**
-
-In `_ledger_evidence_binding`, publish beside the verdict:
-
-- `population_source` — `tape` — and `population_from` — the tape's first
-  entry timestamp, so a reader can see the boundary of the enumeration;
-- `population_size` — the rows the gate enumerated;
-- `store_outcomes` — the published wall-outcome records the store holds;
-- `unreconciled` — the store's records the enumeration did not reach;
-- `unreconciled_amended` — of those, the ones whose bound evidence no longer
-  matches the attested digest (the contrary instances, counted so the loss
-  is attributed rather than only counted);
-- `reconciled_at` — when the reconciliation was measured.
-
-The reconciliation must be *carried* from a periodic check, not recomputed by
-the producer: enumerating the store costs a directory scan of 61 699 files
-and 7 599 record reads (measured 8–15 s on this home with a warm cache),
-which does not belong in a 60 s producer cycle. The plant's `checks/` caches
-already exist for exactly this shape of cost.
-
-**Change 2 — the verdict's positive claims require a whole population.**
-
-`verified` (`:5490`) and `settled` (`:5498`) are universal claims about the
-post-clause population; `drift` is a lower-bound claim ("at least one row is
-owed") and survives a truncated population. So while `unreconciled > 0`,
-`verified` and `settled` must not be published: the verdict reads `unknown`
-with the reason named — the plant's existing word for "could not be
-determined", not a new word — and the reason states the unreconciled count
-and the age of the reconciliation. A missing or stale reconciliation also
-reads `unknown`, never `verified`: that is the plant's existing rule for a
-reading it cannot trust, and it applies here unchanged.
-
-**Change 3 — a standing detector for the class.**
-
-`checks/outcome-population-reconciliation.py`: enumerate the store's
-wall-outcome inventory, enumerate the digests the tape references, print the
-difference (and, for each row in it, whether the bound evidence still
-matches), exit 2 when the difference is non-empty and exit 3 when the store
-or the tape is unreadable — the convention
-`checks/evidence-binding-verdict-consistency.py` already uses. The check
-writes its result where the sense can carry it, so the producer cycle does
-not pay for it. This is the plant's own countermeasure for its retired lane's
-failure: the class stays observable after the turn that found it.
-
-**Change 4 — the writer names the orphan (owner: genome).**
-
-`src/mishe_tauftauf/feed.py:709-718`: when the record has been persisted and
-the readable reference has not been published, the writer should record the
-persisted-but-unpublished record's digest in an audit line under `logs/`
-(the plant already has `logs/outcome-refusal-audit.jsonl` and
-`logs/binding-refusal-audit.jsonl`), so the class is attributable and a
-retry can publish the reference. The store is append-only and
-content-addressed, so the fix is to *name* the orphan, never to delete or
-rewrite the record.
-
-**Acceptance, all decidable by the plant's own tools.**
-
-- `python3 checks/outcome-population-reconciliation.py --home SITE` exits 2 on
-  today's live site and prints the 13 rows and the 4 whose evidence no longer
-  matches — a controlled RED that names the class rather than a count;
-- with the difference non-empty, the sense's published reading cannot carry
-  `state: verified` or `state: settled`; with the difference empty (a fixture
-  home), both are reachable again;
-- the reading carries `population_size`, `store_outcomes`, `unreconciled`,
-  `unreconciled_amended` and `reconciled_at`; a missing or stale
-  reconciliation reads `unknown`;
-- the four amended rows are attributed: they appear in the reconciliation's
-  output with their roles and evidence paths, so a resolver can be addressed.
-
-**What this proposal does not do.** It does not change the class taxonomy
-(A/B/C/D), the bands, the remedy vocabulary or the four requirements: those
-belong to the sense's owner and the operator's clause, and the reading
-proposes a published fact rather than a new vocabulary. It does not recover
-the 1983 rows whose history the current tape no longer carries — no
-instrument can — it makes that boundary explicit so the verdict's claim is
-stated over a population the plant can name. It does not touch the record
-store's contents, the writer's binding rules, or the detector that already
-refuses a verdict certifying a damaged ledger.
-
-**Owner:** senses (the reading and the detector). Writer-side counterpart:
-genome (the orphan record).
+Discarded: this proposal requires changing Senses-owned `discovery.py` and adding a detector; field-review's charter is read-only outside review files, and the owning role has not integrated the named identifiers.
