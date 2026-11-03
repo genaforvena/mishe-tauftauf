@@ -32,7 +32,16 @@ CHANGE_NOTICE_SECONDS = 900
 # after it has held this long. Flips shorter than this are observed in the snapshot, which
 # stays UNKNOWN, but send no DM; their recovery is silent too while unannounced.
 LIVENESS_DEBOUNCE_SECONDS = 300
-LIVENESS_PROBLEM_PREFIXES = ("runtime: live service process not running: ", "runtime: renderer not running: ")
+# Every wording that names a process observed absent, in one family. A unit the
+# host-capacity controller stopped while LIMITED is absent by the same observation,
+# only deliberately so, and it used to sit outside this family: the shed wording
+# was not a liveness prefix, so a shed unit that restarted flipped the problem set,
+# changed the identity, and re-announced the same outage every sample (genome wake
+# 242845: 1225 substrate-watch tape entries, three DMs per 30 s sample). A deliberate
+# stop is still UNKNOWN; it is only a liveness outage in how it is announced.
+LIVENESS_PROBLEM_PREFIXES = ("runtime: live service process not running: ",
+                              "runtime: renderer not running: ",
+                              "runtime: controller-shed (host-capacity LIMITED, managed; not a crash): ")
 
 
 class ObservationError(ValueError):

@@ -983,3 +983,60 @@ def test_non_liveness_unknown_stays_immediate(site, monkeypatch):
     unknown = watch.check(home, now=NOW + timedelta(seconds=30))
     assert unknown["status"] == "UNKNOWN" and unknown["announced"] is True
     assert messages(home, "health")
+
+
+def test_controller_shed_outage_is_liveness_family_and_does_not_reannounce_per_sample(site, monkeypatch):
+    # Genome wake 242845: substrate-watch sent three DMs per 30 s sample for hours.
+    # The host-capacity controller stopped coordination/initiative/observer-checks while
+    # LIMITED, and each of those units coming back flipped the problem set, which changed
+    # the observation identity and re-announced the same outage to genome/witness/health.
+    # A deliberately stopped unit is still UNKNOWN, but it is absent by the same
+    # observation, so it belongs to the liveness family and coalesces like one.
+    _, home = site
+    base = watch.check(home, now=NOW)["runtime"]
+    shed = "controller-shed (host-capacity LIMITED, managed; not a crash): unit-a"
+    debounce = timedelta(seconds=watch.LIVENESS_DEBOUNCE_SECONDS)
+    start = NOW + timedelta(seconds=30)
+    _runtime_with_problems(monkeypatch, base, [shed])
+    held = watch.check(home, now=start)
+    assert held["status"] == "UNKNOWN" and held["announced"] is False
+    assert held["problems"] == ["runtime: " + shed]
+    # The outage persists past the debounce and is announced once.
+    announced = watch.check(home, now=start + debounce)
+    assert announced["status"] == "UNKNOWN" and announced["announced"] is True
+    assert _liveness_messages(home) == [1, 1, 1]
+    # A shed unit that restarts (and is shed again) moves the problem set. That must not
+    # re-announce the outage: this is the sample that used to produce a fresh DM triple.
+    for step in range(1, 5):
+        _runtime_with_problems(monkeypatch, base, [shed, "renderer not running: unit-b"])
+        row = watch.check(home, now=start + debounce + timedelta(seconds=30 * step))
+        assert row["status"] == "UNKNOWN"
+        assert row["event_id"] == announced["event_id"]
+        assert _liveness_messages(home) == [1, 1, 1]
+    # And the same holds with the shed unit gone and only a crash-shaped absence left.
+    _runtime_with_problems(monkeypatch, base, ["live service process not running: unit-c"])
+    row = watch.check(home, now=start + debounce + timedelta(seconds=30 * 5))
+    assert row["status"] == "UNKNOWN" and row["event_id"] == announced["event_id"]
+    assert _liveness_messages(home) == [1, 1, 1]
+
+
+def test_controller_shed_unit_stays_unknown_and_is_never_reported_healthy(site, monkeypatch):
+    # The coalescing above must not turn a shed unit into a healthy one: the snapshot
+    # still says UNKNOWN and still names the unit, so the outage stays observable.
+    root, home = site
+    units = ["mishe-x-shed.service"]
+    (home / "health/services.json").write_text(json.dumps(units))
+    (home / "health/windows.json").write_text(json.dumps([]))
+    monkeypatch.setattr(watch.wall_view, "_service_block",
+                        lambda home: ([], {unit: ["/selected"] for unit in units}, "RED"))
+    monkeypatch.setattr(watch, "_service_pids", lambda units: dict.fromkeys(units))
+    monkeypatch.setattr("mishe_tauftauf.seed.recorded_session", lambda home: "session")
+    monkeypatch.setattr(watch.wall_view, "_renderer_pids", lambda session: {})
+    capacity = home / "recovery/host-capacity.json"
+    capacity.parent.mkdir(parents=True, exist_ok=True)
+    capacity.write_text(json.dumps({"limited": True, "managed_units": ["mishe-x-shed.service"]}))
+    row = watch.check(home, now=NOW)
+    assert row["status"] == "UNKNOWN"
+    assert row["runtime"]["service_states"]["mishe-x-shed.service"] == "UNKNOWN"
+    assert row["runtime"]["services_state"] == "UNKNOWN"
+    assert "runtime: controller-shed (host-capacity LIMITED, managed; not a crash): mishe-x-shed.service" in row["problems"]
