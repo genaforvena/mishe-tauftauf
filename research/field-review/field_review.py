@@ -36,11 +36,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import re
 import subprocess
 import sys
 import time
+import tokenize
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -51,6 +53,8 @@ REQUIRED_SECTIONS = ("## What we read", "## What this plant already does",
                      "## What is new here")
 READING_HEADING = "## What we read"
 APPLICATION_HEADING = "## Application"
+APPLY_CUTOVER = "2026-11-03"
+APPLY_ROOTS = ("src/", "tests/", "checks/", "tools/")
 DISCARD_HEADING = "## Discard"
 ROLES = ("genome", "health", "witness", "discover", "senses", "docs",
          "research-methods", "pub", "body-research", "inference-research",
@@ -399,6 +403,12 @@ def validate_review_text(name: str, text: str, repo: Path, *,
                 exists = target_exists(target)
             if not exists:
                 problems.append(f"the application target is not an existing file: {target}")
+            # From the 2026-11-03 cutover a review must apply to the plant's internals: code or tests,
+            # not a markdown file. Earlier reviews keep their contract so the historical check stays green.
+            stamp = re.search(r"(\d{4}-\d{2}-\d{2})\.md$", name)
+            if stamp and stamp.group(1) >= APPLY_CUTOVER and not (
+                    target.startswith(APPLY_ROOTS) and target.endswith((".py", ".sh", ".json"))):
+                problems.append(f"the application must change the plant's internals (src/, tests/, checks/, tools/ code): {target}")
     if has_discard:
         body = [line for line in section_body(text, DISCARD_HEADING).splitlines()
                 if line.strip() and not line.startswith("#")]
@@ -620,6 +630,95 @@ def applied_target_states(repo: Path) -> list[dict[str, str]]:
     return rows
 
 
+CODE_SUFFIXES = (".py", ".sh", ".json")
+
+
+def code_names(path: str, text: str) -> set[str]:
+    """Identifiers the target's code uses, with comments and strings left out.
+
+    A name in a comment, a docstring or a string literal is prose about the
+    code, not the code. Python is read by its tokenizer; shell drops lines that
+    begin with a comment marker; JSON has no comments.
+    """
+    if path.endswith(".py"):
+        names: set[str] = set()
+        try:
+            for token in tokenize.generate_tokens(io.StringIO(text).readline):
+                if token.type == tokenize.NAME:
+                    names.add(token.string)
+        except (tokenize.TokenError, SyntaxError):
+            return set()
+        return names
+    if path.endswith(".sh"):
+        text = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    return set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", text))
+
+
+def open_applications(repo: Path) -> list[dict[str, str]]:
+    """Landed applied reviews whose change is not yet in the plant's code.
+
+    An application is integrated when its target is a code file under
+    APPLY_ROOTS, its Application section names identifiers in backticks, every
+    one of those identifiers is a code name (not a comment or string) in the
+    target at HEAD, and the target has a commit on or after the review date.
+    Any other applied review stays open until its change lands in code or the
+    review is discarded. A discarded review is closed; so is an integrated one.
+    Oldest first, so the queue drains in the order it was opened.
+    """
+    rows: list[dict[str, str]] = []
+    for name in landed_review_names(repo):
+        blob = head_bytes(repo, name)
+        if blob is None:
+            continue
+        text = blob.decode("utf-8", "replace")
+        matter = front_matter(text)
+        if matter.get("status") != "applied":
+            continue
+        application = section_body(text, APPLICATION_HEADING)
+        target = ""
+        for line in application.splitlines():
+            if line.startswith("target:"):
+                target = line.split(":", 1)[1].strip()
+                break
+        date = matter.get("date", "")
+        gap: list[str] = []
+        if not (target.startswith(APPLY_ROOTS) and target.endswith(CODE_SUFFIXES)):
+            gap.append("the target is not code under src/, tests/, checks/ or tools/")
+        else:
+            symbols = proposed_symbols(application)
+            if not symbols:
+                gap.append("the Application section names no identifier in backticks")
+            body = head_bytes(repo, target)
+            names = code_names(target, body.decode("utf-8", "replace")) if body is not None else set()
+            missing = [s for s in symbols if s not in names]
+            if missing:
+                gap.append("not in the target's code: " + " ".join(missing))
+            if not realized_commits(repo, target, date):
+                gap.append("no commit to the target on or after the review date")
+        if gap:
+            rows.append({"review": name, "date": date, "owner": matter.get("owner", ""),
+                         "target": target, "gap": "; ".join(gap)})
+    return sorted(rows, key=lambda row: (row["date"], row["review"]))
+
+
+def render_gate(item: dict[str, str], count: int) -> str:
+    """The brief that replaces a new cell while the integration queue is open."""
+    return "\n".join([
+        f"GATE CLOSED — {count} landed application(s) are not yet integrated into the plant's"
+        " code or discarded. No new cell is selected until this queue is empty.",
+        f"OLDEST OPEN: {item['review']}",
+        f"  owner: {item['owner'] or '-'}   target: {item['target'] or '-'}",
+        f"  gap: {item['gap']}",
+        "DO ONE OF:",
+        "  1. make the change in the target: a .py, .sh or .json under src/, tests/, checks/"
+        " or tools/ that defines the identifiers the Application section names, with a test"
+        " that fails before and passes after. Commit it on main, then rerun this command.",
+        "  2. discard it: set status: discarded in the front matter, replace the Application"
+        " section with one '## Discard' line saying why, commit, then rerun this command.",
+        "A comment, a docstring or a document does not integrate a review.",
+    ])
+
+
 def render_brief(cell: Cell, hits: list[Hit]) -> str:
     """The prompt material for one cell: question, sweep, and the contract."""
     grouped = hits_by_keyword(hits, cell.keywords)
@@ -687,6 +786,9 @@ def main(argv=None) -> int:
             print(f"unlanded: {len(waiting)} review(s) in the working tree")
             for name, age in waiting:
                 print(f"  waiting {age:.0f}s: {name}")
+        backlog = open_applications(repo)
+        print(f"integration backlog: {len(backlog)} applied review(s) not yet in the plant's code"
+              " and not discarded; new cells wait until it is empty")
         return 0
     if command == "applied":
         rows = applied_target_states(repo)
@@ -736,6 +838,13 @@ def main(argv=None) -> int:
                 print(f"  waiting {age:.0f}s: {name}")
         for name in edited:
             print(f"  landed review edited after landing: {name}")
+        backlog = open_applications(repo)
+        if backlog:
+            print(f"  integration backlog: {len(backlog)} applied review(s) open; next: {backlog[0]['review']}")
+        return 0
+    backlog = open_applications(repo)
+    if backlog:
+        print(render_gate(backlog[0], len(backlog)))
         return 0
     cell = next_cell(cells, covered)
     if cell is None:

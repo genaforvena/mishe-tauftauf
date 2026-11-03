@@ -695,5 +695,82 @@ class ScheduledCheckTest(unittest.TestCase):
         self.assertEqual(counts, {"applied": 1, "discarded": 2})
 
 
+def _applied_review(target: str, symbols: str, *, date: str = "2000-01-01") -> str:
+    """An applied review whose application names one identifier in backticks."""
+    return (f"---\nfield: alpha\nangle: misread\ndate: {date}\nstatus: applied\nowner: senses\n---\n\n"
+            "## What we read\n\nhttps://example.org/paper\n\n"
+            "## What this plant already does\n\nnothing.\n\n"
+            "## What is new here\n\nsomething.\n\n"
+            f"## Application\n\ntarget: {target}\n\nAdds `{symbols}`.\n")
+
+
+def _commit_file(repo: Path, path: str, text: str) -> None:
+    (repo / path).parent.mkdir(parents=True, exist_ok=True)
+    (repo / path).write_text(text, encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@example.org",
+                    "-c", "user.name=test", "commit", "-qm", "change"], check=True)
+
+
+class GateTest(unittest.TestCase):
+    """A landed application stays open until its change is in code or it is discarded."""
+
+    REVIEW = "research/field-review/reviews/alpha--misread--2000-01-01.md"
+
+    def test_code_names_ignores_comments_and_strings(self):
+        self.assertEqual(field_review.code_names("a.py", "# x_y\nz = 'w_v'\nq_r = 1\n"), {"z", "q_r"})
+        self.assertEqual(field_review.code_names("a.sh", "# foo_bar\nbaz_qux\n"), {"baz_qux"})
+
+    def test_an_application_in_code_is_integrated_and_leaves_the_queue(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--misread--2000-01-01.md": _applied_review("src/mod.py", "helper_name")})
+            _commit_file(repo, "src/mod.py", "def helper_name():\n    return 1\n")
+            self.assertEqual(field_review.open_applications(repo), [])
+
+    def test_a_name_only_in_a_comment_does_not_integrate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--misread--2000-01-01.md": _applied_review("src/mod.py", "helper_name")})
+            _commit_file(repo, "src/mod.py", "# helper_name is planned\ndef other():\n    return 1\n")
+            rows = field_review.open_applications(repo)
+            self.assertEqual([r["review"] for r in rows], [self.REVIEW])
+            self.assertIn("helper_name", rows[0]["gap"])
+
+    def test_a_name_only_in_a_string_does_not_integrate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--misread--2000-01-01.md": _applied_review("src/mod.py", "helper_name")})
+            _commit_file(repo, "src/mod.py", "NOTE = 'helper_name'\n")
+            self.assertEqual(len(field_review.open_applications(repo)), 1)
+
+    def test_a_documentation_target_stays_open(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--misread--2000-01-01.md": _applied_review("docs/note.md", "helper_name")})
+            rows = field_review.open_applications(repo)
+            self.assertEqual(len(rows), 1)
+            self.assertIn("not code", rows[0]["gap"])
+
+    def test_a_discarded_review_is_closed(self):
+        discard = _applied_review("docs/note.md", "helper_name").replace(
+            "status: applied", "status: discarded").split("## Application")[0] + "## Discard\n\nno code path.\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--misread--2000-01-01.md": discard})
+            self.assertEqual(field_review.open_applications(repo), [])
+
+    def test_next_is_gated_until_the_queue_is_empty(self):
+        import contextlib
+        import io as stdio
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--misread--2000-01-01.md": _applied_review("src/mod.py", "helper_name")})
+            out = stdio.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(field_review.main(["--repo", str(repo), "next"]), 0)
+            self.assertIn("GATE CLOSED", out.getvalue())
+            self.assertNotIn("CELL ", out.getvalue())
+            _commit_file(repo, "src/mod.py", "def helper_name():\n    return 1\n")
+            out = stdio.StringIO()
+            with contextlib.redirect_stdout(out):
+                field_review.main(["--repo", str(repo), "next"])
+            self.assertIn("CELL ", out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
