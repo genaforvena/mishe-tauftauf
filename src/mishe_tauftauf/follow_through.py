@@ -7,11 +7,14 @@ The guard checks producer freshness, not whether the reported work is healthy.
 Lawrence 2005 politics-of-4I (AMR 30:1, DOI 10.5465/amr.2005.15281431) —
 Crossan et al. 1999 4I: intuiting → interpreting → integrating → institutionalizing;
 Lawrence maps discipline→intuiting, influence→interpreting, force→integrating,
-domination→institutionalizing (Fig.1/Table1 pp.182-183); modes episodic (influence,
-force) vs systemic (domination, discipline). ROUTING_POWER below is a plant analogy,
-not a Lawrence mapping: the 2024 6I paper (BMJ Open 14(5) e083830) restates only the
-process→form mapping and classifies no routing stage. Vocabulary is a detector, not a
-causal claim; any form may appear in any process (p.184).
+domination→institutionalizing (Fig.1/Table1 pp.182-183; Table1 p.185 in this
+rendition); modes episodic (influence, force) vs systemic (domination,
+discipline). ROUTING_POWER below is a plant analogy, not a Lawrence mapping:
+the 2024 6I paper (BMJ Open 14(5) e083830) restates only the process→form mapping
+and classifies no routing stage. Vocabulary is a detector, not a causal claim;
+any form may appear in any process (p.184). Props. 1-4 are "will be best
+facilitated by" hypotheses (pp.186-189) — helpers below are heuristic detectors,
+not a classifier.
 
 Jurado-Zambrano et al. 2024 (SIGNOS 16(2):182-203, DOI 10.15332/24631140.10083)
 §§ Procesos de conocimiento / Relaciones / Conclusiones pairs Crossan 4I with the KM
@@ -72,14 +75,17 @@ ROUTING_POWER: Final[dict[str, str]] = {
     "initial": "influence",
     "changed": "influence",
     "escalation": "force",
-    "reminder": "discipline",
+    "reminder": "influence",
 }
 """Plant analogy (not a Lawrence or 6I mapping): routing stage→power form; None for unknown.
 
-A reminder re-presents a finding and restricts no response option, so it is typed
-discipline, not domination. The 2024 source defines domination by restricted response
-options; its domination case is the outcome-writer refusal, which is not typed here yet.
-No caller reads this mapping yet (see follow_through_power_form).
+A reminder re-presents a finding and restricts no response option, so under Lawrence it
+is influence (episodic, affecting costs/benefits, p.185: moral suasion/persuasion), not
+discipline (systemic, ongoing identity-forming via socialization/training/teamwork, p.188)
+and not domination (restricting available actions via material/IS/physical layout, p.188;
+domination can be enabling/productive, not merely repressive, p.188 — the domination case
+here would be the outcome-writer refusal, not a reminder). No caller reads this mapping
+yet (see follow_through_power_form).
 """
 
 
@@ -92,10 +98,11 @@ def follow_through_power_form(
     """Type the power form for a routing stage or learning process.
 
     Pure, deterministic, no I/O. Returns the form for a routing stage
-    (initial/changed→influence, escalation→force, reminder→discipline; plant analogy) or
+    (initial/changed→influence, escalation→force, reminder→influence; plant analogy) or
     for a learning process (via PROCESS_POWER_MAP), else None for incomplete
-    or unknown inputs. The mapping is the detector (Lawrence p.184 fluidity
-    caveat kept as None), not a causal assignment.
+    or unknown inputs. Lawrence Props. 1-4 are "will be best facilitated by" hypotheses
+    (pp.186-189) and any form may appear in any process (p.184) — these helpers are
+    heuristic detectors, not a classifier.
     """
     if stage is not None:
         return ROUTING_POWER.get(stage)
@@ -113,6 +120,7 @@ def follow_through_mode_for_form(form: str | None) -> str | None:
 
     Pure, deterministic, no I/O. influence/force→episodic, domination/
     discipline→systemic, else None. Mirrors Lawrence p.182-183.
+    Lawrence modes are tied to Props. 1-4 as "most effective" (p.184), not exclusive.
     """
     if form in ("influence", "force"):
         return "episodic"
