@@ -1227,6 +1227,74 @@ DENSE_TAIL_BYTES = 262144
 DENSE_WINDOW_ROWS = 2000
 #: Freshness gate for the dense-baseline verdict; matches ``FRESH_SECONDS``.
 DENSE_FRESH_SECONDS = 30.0
+#: Tail at Scale — Dean & Barroso, "The Tail at Scale," CACM 56(2):74–80
+#: (Feb 2013) DOI 10.1145/2408776.2408794 via
+#: https://www.barroso.org/publications/TheTailAtScale.pdf
+#: (also https://research.google/pubs/the-tail-at-scale/)
+#: (2026-11-03 critique REVISIT for body-perception-spool-readings-and-gaps,
+#: complements Lamport 1978 partial-vs-total ordering + Li 2504.19507
+#: AoI effectiveness + Schafer & Graham MAR complete-case critiques).
+#: Tail amplification Fig. p.76 (combinatorial, not BigTable-specific):
+#: 1-in-100 p99 1 s over 100 leaves → 63% of service requests >1 s;
+#: 1-in-10,000 over 2,000 leaves → 18%; Table 1 p.76 single leaf p99
+#: 10 ms vs all-leaves p99 140 ms (14×), 95% leaves p99 70 ms — slowest
+#: 5% is half of p99. Dense window's "fan-out" is 2000 rows in time;
+#: reporting one break_seconds / one RFC 3550 J hides the 95%-vs-100%
+#: decomposition as single-leaf p99 hides Table 1's 95%/100% split.
+#: Measured instance on frozen window (mechanism 2026-11-01): 512/2000
+#: rows (25.6%) behind high-water, max lag 100 s; max |D| 1335.4 s
+#: dominating smoothed J 83.0 s — all-leaves/max dominates as in Table 1.
+#: Why variability taxonomy p.74–75: shared resources (CPU/cache/bandwidth
+#: contention within and across apps), daemons (multi-ms hiccups when
+#: scheduled), global resource sharing, maintenance activities (data
+#: reconstruction, log compaction, GC ×100), queueing (multi-layer
+#: amplification in servers/switches); plus power limits, GC, energy
+#: management. Paper's concession p.74–75: "Eliminating all sources of
+#: latency variability in large-scale systems is impractical, especially in
+#: shared environments." This module's honest UNKNOWN / gap-stays-gap shape
+#: (_gap_records returns None on any malformed line, read_redmi10 never
+#: infers human movement) is consistent with that concession; variability is
+#: not hidden.
+#: Hedged/tied mechanics p.77–78 and three load invariants for "predictable
+#: whole out of less-predictable parts" p.75: hedged = send to primary then
+#: secondary after brief delay, cancel remainder on first result; tied =
+#: enqueue copies simultaneously with cross-server cancellation within ~1 ms
+#: network-delay window and 2× stagger to avoid both executing; invariants:
+#: (1) defer secondary to ~95th-percentile expected latency — caps extra
+#: load ~5% but "limits the benefits to only a small fraction of requests"
+#: p.77; without cap naive hedging is "unacceptable additional load"; (2)
+#: require faster / cross-server cancellation — Table 2 <1% disk overhead
+#: only via cancellation; probe-then-submit "less effective than submitting
+#: work to two queues simultaneously for three main reasons" p.78; (3)
+#: "effective only when the phenomena that causes variability does not tend
+#: to simultaneously affect multiple request replicas" p.77 — spool
+#: duplication over same tailnet/FS/synchronised-window path would correlate
+#: per shared-resources / maintenance taxonomy above and contend for exactly
+#: the resources amplification feeds on. No hedged/tied duplicate path is
+#: typed here (single DENSE_TAIL_BYTES tail, single FRESH_SECONDS gate,
+#: single STALL_SECONDS 300.0 cursor check).
+#: Two-timescale decomposition p.78–79: within-request tens of ms (hedged/
+#: tied) vs cross-request tens of s/min (micro-partitions 20–1,000 tablets
+#: per machine shedding ~5% increments on average via moves, selective
+#: replication of hot micro-partitions/small keys, latency-induced probation
+#: with shadow requests before reincorporation); plus "Good enough" IR
+#: principle p.79: speed as quality (sub-best quickly can beat waiting for
+#: slowest leaves). Plant has only 30.0 s binary gate + 24 h halt window +
+#: 2.8 h dense window; no probation/shadow, no micro-partition/selective-
+#: replication, no synchronised background-activity window; DENSE_TAIL_BYTES
+#: is fixed window not threshold policy; dense summary waits for 100% of
+#: DENSE_WINDOW_ROWS vs Table 1's 95% vs 100% choice — consider reporting a
+#: 95%-completion percentile alongside 100% since slowest 5% may dominate p99
+#: and state the choice made here; caching alone does not fix tails unless
+#: entire working set guaranteed cached p.77, so enlarging DENSE_TAIL_BYTES
+#: is not a tail fix. Any future duplicate-poll/hedge/probation added to
+#: reduce gaps must name the 95th-percentile defer threshold, the
+#: cancellation mechanism and window, and the uncorrelated-path assumption,
+#: or it reproduces the load-amplification failure the paper warns. Distinct
+#: from Schafer & Graham 2026-11-01 denominator/MAR critique (rate/missingness
+#: inside window), Lamport 1978 misread (partial vs total clock ordering),
+#: and Li 2504.19507 recent (freshness ≠ effectiveness); complements them.
+#: Revertible by git revert; no verdict/behaviour change.
 #: --- Pufferfish correlated-record limit (Kifer & Machanavajjhala, TODS 39(1) 2014) ---
 #: §1 p.A2 "GPS traces ... correlated records": record-level definitions
 #: (k-anonymity, ℓ-diversity, ε-DP under independent-record D) do not bound
