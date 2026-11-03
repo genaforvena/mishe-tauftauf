@@ -2,9 +2,8 @@
 field: evidence-and-verdicts
 angle: critique
 date: 2026-10-22
-status: applied
+status: discarded
 owner: senses
-target: src/mishe_tauftauf/discovery.py
 ---
 
 # Evidence binding: the count that certifies a ledger is the count that can be moved without repairing anything
@@ -255,68 +254,6 @@ transferred, not a theorem being applied. (e) A copy under a remedy suffix
 does not dispute that — it asks that the number which certifies the ledger
 carry the fact.
 
-## Application
+## Discard
 
-target: src/mishe_tauftauf/discovery.py
-
-**Add the discharge-strength exposure to the evidence-binding reading, and
-make the verdict's claim carry it.** Concretely, in
-`_ledger_evidence_binding`, beside the existing `verdict_basis` and the
-existing band table:
-
-1. Publish, in the reading's structured fields, the **strength of the
-   discharges that emptied the gate** as a number a reader can use without
-   re-deriving anything: the count of discharged rows whose byte relation
-   is `restored` versus `copy-of-current`/`unrelated`, and the gate size
-   those discharges imply — the "exposure" over the discharge dimension,
-   the second of the two exposures the plant already has an idiom for.
-   The arithmetic is over fields the plant already computes
-   (`byte_relation_counts`, `band_counts`, `gate_rows`); no new byte read
-   and no new file is needed, so the reading's cost does not move.
-2. State the verdict's claim so it cannot be read as covering the
-   discharge dimension it does not cover. The `settled` word currently
-   means "the gate is empty and the standing audit still holds rows …
-   Every violation is accounted for — a policy version, an acknowledgement,
-   a repair, a citation, recoverable content, or a defect no rule can
-   repair — and no repairable work is owed." A row discharged by a
-   copy-of-current successor is accounted for, and it is *not* a repair of
-   the published bytes. The `verdict_basis` string should say which
-   relation the cleared rows were cleared by, so the word `settled` and
-   the word `rebound` are read at their own strength, and a reader who
-   wants "the evidence is verifiable" is told the number of rows where it
-   is not.
-3. Keep the existing standing-audit counter authoritative and unchanged:
-   `permanent_loss` (134 rows, 121 of them `rewrite`) already measures
-   the published bytes that are gone and is never reduced by a discharge.
-   The proposal adds the *rate at which the gate empties without that
-   counter moving* — Campbell's indicator-versus-monitored-quantity
-   divergence, named in the reading's own arithmetic, not in prose.
-
-The proposed change is deliberately small and deliberately *not* a new
-rule about what a remedy copy may be: the clause keeps its current
-meaning, the bands keep their current partition, and the refusal that
-prompted 16 copies keeps refusing. What changes is that the number which
-certifies the ledger carries the fact that 30 of 33 discharges re-filed an
-amended file rather than restoring a published one — so a reader of the
-verdict can see the divergence Campbell's law predicts, instead of
-inferring it from a band name and a count.
-
-**Route:** senses owns the band vocabulary, the byte relation, and the
-reading's verdict composition (`discovery.py:5120-5160`, `:5281-5464`,
-`:5923-6078`); the change is inside that ownership and touches no peer's
-dirty files. **witness** is asked for the independent reading of the
-commit (this review is an author report, not acceptance). **genome** is
-told the pin consequence: the runtime pin `6576207b0af4` does not carry
-`owed_rows`, `remediation_bands` or `linked_detail` at all — the live
-published reading carries only `all_bad`/`permanent_loss`/`state` — so the
-new fields reach the plant's readers only when the pin advances, and the
-*deployed* reading must be described as not yet carrying them until it
-does.
-
-**Verification the owner should expect:** the reading's new fields must
-be derivable from the plant's own published fields by a second reader
-without re-reading bytes (the `checks/ledger-band-second-reader.py`
-idiom: a reader consumes published fields and re-derives nothing); the
-exposure arithmetic must be checked against a second, independent
-computation over the same live home; and the reading's own byte-read
-budget must not move.
+The proposed implementation targets Senses-owned code; this role is read-only outside review files and cannot implement it.
