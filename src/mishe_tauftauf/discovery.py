@@ -7148,6 +7148,8 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     #   audit does not run cannot produce a violating row, so a clean result
     #   says nothing about it. Unseen evidence paths are covered separately by
     #   the binding gaps above (``unknown``); unseen violation classes are not.
+    # Fixation vs Real (Peirce 1877/1878): settlement of opinion is the sole end of inquiry, but settlement can occur by tenacity, authority, the a priori, or science — all settle doubt, only the last is hypothesized to converge on the Real independently of what anybody thinks. ``verified``/``settled``/``drift``/``unknown`` name settlements by this audit's method now, not convergence in the long run. By Peirce's maxim — "Consider what effects, that might conceivably have practical bearings, we conceive the object of our conception to have. Then, our conception of these effects is the whole of our conception of the object" (Ideas Clear, Jan 1878, https://courses.media.mit.edu/2004spring/mas966/Peirce%201878%20Make%20Ideas%20Clear.pdf) — their meaning is the habits they license: ``drift`` licenses repair, ``settled`` licenses no repairable debt though history remains not clean, ``verified`` licenses nothing owed and nothing hidden. Predecessor: Altman & Bland 1995 misread (discovery.py:7146 "clean only against the violation rules this audit runs") handles coverage; this note handles method — Altman says what the null is clean against, Peirce says what kind of settlement a clean null is.
+    # Sources: Peirce, Fixation (Popular Science Monthly 12, Nov 1877) https://www.peirce.org/writings/p107.html (irritation of doubt / settlement of opinion / four methods / Real hypothesis) and Ideas Clear (Popular Science Monthly 12, Jan 1878).
     if gate_rows:
         state = "drift"
     elif binding:
@@ -7183,6 +7185,7 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     # still owed. The discharge strength beside it says how strong those
     # repairs were: the word ``settled`` is not read at the strength of a
     # discharge that returned the published bytes unless the numbers say so.
+    # Fixation vs Real — see verdict words above (Peirce 1877 https://www.peirce.org/writings/p107.html): settlement of opinion is the sole end of inquiry — this basis is the habit's strength (bands + discharge) for the settlement named there; it does not promote a method-local settlement to convergence on the Real.
     verdict_basis = (
         f"owed={len(gate_rows)}: violating rows whose work was lost and that no "
         f"later intact outcome re-evidenced (all_bad={len(violations)}; "
