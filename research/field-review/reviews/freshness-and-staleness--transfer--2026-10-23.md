@@ -2,7 +2,7 @@
 field: freshness-and-staleness
 angle: transfer
 date: 2026-10-23
-status: applied
+status: discarded
 owner: senses
 target: src/mishe_tauftauf/feed.py
 ---
@@ -248,122 +248,9 @@ from `SITE/discovery/scan-*.json`.
    the Application is written to that constraint; the per-sense shape is
    rejected on measured grounds, not on taste.
 
-## Application
+## Discard
 
-target: src/mishe_tauftauf/feed.py
-
-**Publish each sense's detection history from the corpus the plant already
-keeps, and make the reader that reads it able to read every sense — in one
-corpus pass, not 73.**
-
-1. **Fix the reader's numeric filter first — it is a small defect with a
-   65-sense blast radius.** `feed.py:871-897` currently returns
-   `(datetime, int)` tuples and skips any observation whose sample does not
-   parse as an integer. The corpus's `sample` field is a *human-readable
-   string* for 70 of the 73 senses it holds. Split the function into two, with
-   one shared parse boundary:
-
-   - `read_scan_series(home, sense_id)` keeps its current contract exactly —
-     `(datetime, int)` for numeric samples — because `sense.disk.trend`
-     (`discovery.py:3476`) depends on the integer and must not change
-     behaviour.
-   - a new sibling returns the raw sample for the same corpus, so a caller that
-     wants the *record* rather than the number is not forced to re-implement
-     the glob, the `created` parse and the `state == "verified"` filter.
-
-   Both must share one parse site: `feed.py` is a named boundary file in
-   `parsing-policy.json`, so the scan JSON is parsed in exactly one place and
-   `python tools/check_parsing.py` must add no new debt. **The boundary
-   function's docstring must say what it drops and why** — the current one
-   ("Read a sense's verified samples from the retained discovery scan corpus")
-   does not mention that 70 of 73 senses yield nothing.
-
-2. **Read the corpus once and serve every sense from that one pass.** The
-   measurement in "What is new here" item 7 is the constraint, not a footnote:
-   a per-sense reader costs ≈380 s per scan against 5.20 s today. The shape is
-   a single traversal of `scan-*.json` that builds a per-sense detection
-   summary, computed **once** per call site and shared by every sense. It must
-   not be a cache keyed on something that goes stale silently; the corpus is
-   append-only, so a summary built from the receipts present at a stated instant
-   is reproducible, and the reader should publish how many receipts it read and
-   how many it could not read.
-
-   The producer is `discovery.py`'s `scan()`; the receipt is
-   `SITE/discovery/latest.json` and the per-scan artifact. The addition is
-   additive and costs no extra byte read: the producer already holds the
-   previous scan's observations (`previous = latest(home)`, `discovery.py:7672`).
-
-   For each sense, publish over the retained corpus:
-
-       "detection": {"occasions": <scans in which the sense was probed>,
-                     "detected": <scans in which it read verified>,
-                     "last_detected": <ISO instant of the most recent verified read>,
-                     "last_state": <the state of the most recent read>,
-                     "consecutive_unread": <length of the current run of non-verified reads>,
-                     "basis": "retained scan corpus, verified reads only"}
-
-   The naming matters: `detection` names a *rate over occasions*, and
-   `basis` names the population it is computed over, because — as the
-   already-landed `evidence-and-verdicts--metric` review said of its own
-   numbers — a coverage figure without its selection rule is unreadable.
-
-3. **The consumer rule: a non-detection after a detection is UNKNOWN, and a
-   non-detection with no detection history is also UNKNOWN, but they are
-   different words.** The paper's asymmetry (p. 2249) says a failed probe
-   never establishes absence. So the pane must not print a bare `unknown` for
-   a sense that the corpus says is usually detected. Two additions to
-   `seed_culture_views.py`'s `_observation_reading` (`:151-211`), which is
-   where a sense's state is turned into a pane line:
-
-   - when the newest read is `unknown` and the corpus says the sense was
-     detected at least once, the line names the rate and the last detection:
-     "source_state=unknown detection=126/1688 last_detected=2026-10-20T…";
-   - when the newest read is `unknown` and the corpus says the sense was
-     **never** detected, the line says so, and says that the sense's presence
-     is *unestablished* rather than *absent* — which is what the paper's
-     mixture `c·Π(1−p) + (1−c)` (p. 2250) says a zero-history site is.
-
-   **Neither changes the state's meaning.** The sense stays `unknown`. What
-   changes is that the reader can tell *which kind* of unknown it is, and can
-   see that an `unknown` after 343 detections is a failed probe rather than a
-   disappearance.
-
-4. **One bounded detector, in the plant's existing check style, so the
-   recurrence is observable.** A new check under `checks/` that reads the
-   published receipts and reports the senses whose newest read is `unknown`
-   while their detection rate is non-zero — i.e. the false-absence class,
-   named and counted. It must exit non-zero only when it can decide, and
-   report UNKNOWN when the corpus is absent or unreadable; a missing, stale
-   or broken monitor stays UNKNOWN or RED, never clean. It must read
-   published artifacts only and re-derive nothing, the way
-   `checks/coverage-window-expiry.py` and `checks/ledger-band-second-reader.py`
-   do — and it must import nothing from the package, so the plant's second
-   reader cannot inherit the publisher's mistake.
-
-5. **The acceptance criteria are the paper's limits, not decoration.**
-   (i) The rate is a **rate over occasions**, published with the occasions
-   count and the selection rule, and never as a probability of presence.
-   (ii) The occupancy quantity `c` is **not** estimated: the sites are not
-   closed (25 boot ids in the corpus), detections are not independent across
-   senses, and the paper's own simulation says the estimator is not
-   trustworthy below detection probability 0.3 with T ≥ 5 (p. 2251), which this
-   review has not established for any sense. If a future reader wants `c`, that
-   is a separate cell with its own assumptions.
-   (iii) The reading **never converts a failed probe into an absence claim** —
-   that is the source's central sentence, and it is the plant's own doctrine
-   ("absence is not calm").
-   (iv) The rate is computed from the **retained corpus**, and the corpus's
-   own gaps are named: the reader must publish how many scan receipts it
-   could not read, because the paper's "Missing observations" paragraph
-   (p. 2250) is explicit that an occasion that did not happen "contributes no
-   information to the model likelihood for that site" and must be accounted
-   for, not silently skipped.
-   (v) The **regression** is the reader fix itself: after it, `read_scan_series`
-   and its new sibling must return rows for senses whose sample is not an
-   integer, and `sense.disk.trend` must be unchanged.
-   (vi) The **cost** is bounded: the corpus is read **once** per scan, not once
-   per sense. A build that re-parses per sense is out of the contract even if
-   its output is correct.
+This proposal changes Senses-owned code, outside this role's read-only organ boundary.
 
 ## What this review does not claim
 
