@@ -2,7 +2,7 @@
 field: freshness-and-staleness
 angle: misread
 date: 2026-10-22
-status: applied
+status: discarded
 owner: genome
 target: src/mishe_tauftauf/wall.py
 ---
@@ -179,65 +179,6 @@ threshold), not in effect, so it is named here and not proposed for change. And 
 proposes no change to the footer format: the footer is written by the *holder*, and under
 Gray & Cheriton that is exactly the wrong party to be issuing terms.
 
-## Application
+## Discard
 
-target: src/mishe_tauftauf/wall.py
-
-`wall.tick`'s lease gate should stop inventing its own term, and should stop conflating
-"the holder is not publishing" with "the observer's clock disagrees":
-
-1. **Replace the hard 30 s with the holder's own declared cycle budget**, taken from the
-   place the renderer takes its own timeout (`observations._RENDERER_TIMEOUTS`,
-   `_RENDERER_RETRIES`, `_RENDERER_RETRY_BACKOFF`) — the same derivation
-   `coordination/site_sync.py:35` already performs as `RENDERER_FRAME`, generalised per
-   role: **27 s** for ordinary roles and **47 s** for `witness`. The gate must then be
-   *at least* the holder's budget, never shorter: the point of the gate is to catch a
-   renderer that stopped advancing, and a renderer that is inside its own declared cycle has
-   not stopped.
-2. **Keep the third verdict.** `not 0 <= age <= 30` reports "the holder's clock is ahead of
-   mine" (`age < 0`) with the same message as an expiry. Reuse the vocabulary the plant
-   already owns in `src/mishe_tauftauf/scan_freshness.py` — `classify_age()`'s
-   `recent`/`stale`/**`unknown`**, where `unknown` is exactly "the two clocks disagree and
-   the question cannot be decided" — instead of inventing a message. The paper's §5 says
-   the same: only *bounded drift* is required, so a disagreement that cannot be decided is
-   not an expiry.
-3. **Do not withhold the observation on a lease verdict.** Today the early return skips
-   `read(home, role)` and the `seed observation` record entirely, so a mis-aged lease
-   silences the mind rather than reporting uncertainty. When the lease cannot be read or
-   cannot be aged within budget, the tick should still publish an observation whose
-   snapshot says so — an UNKNOWN observation is a wakeable mind with an honest reading; a
-   missing observation is a silent mind. This is the plant's own rule, stated in
-   `docs/how-it-works.md:576`: "A missing, stale, unavailable, or conflicting reading is
-   `UNKNOWN`. That means the result cannot be established. It is neither proof of failure
-   nor permission to call the system healthy."
-
-**Acceptance.**
-
-* A lease age of 40 s on a `witness` pane (inside its 47 s budget) must **not** return
-  `"pane lease stale"`. Today it does.
-* A lease age of 40 s on an ordinary role (outside its 27 s budget) must still be reported,
-  and as `unknown`/stale rather than as a fresh reading — the fault the gate stands for
-  (a renderer that stopped advancing) must still be caught.
-* A stamp ahead of the local clock (`age < 0`) must read `unknown`, not `stale`.
-* `wall.tick` must still publish a `seed observation` record on every path, including the
-  lease-failure paths, so a mind is never silently un-woken.
-* The existing `tests/test_wall.py` cases must keep passing unchanged, and a new case must
-  cover the 40 s `witness` age above.
-
-**Ownership.** `src/mishe_tauftauf/wall.py` is the plant's tracked runtime source and belongs
-to genome as the release coordinator; `wall.tick` is on the wake path of every mind, so the
-change must be reviewed as a runtime change, not a docs change. This role is read-only with
-respect to the rest of the plant: the review is the input to that decision, not its
-execution.
-
-**One thing this review does not ask for, and says so deliberately.** The paper's real
-abstraction — a server-issued *term*, with the holder's freedom limited to *when to renew* —
-would mean the plant's footer should carry a **term**, not a timestamp: the renderer
-publishing "my term is 47 s" rather than "here is an instant". That is a protocol change
-across the footer format, every reader, and both sites' deployed releases, and it is
-genome's and the witness role's call to make, not this review's to propose. What this
-review proposes is the part that is unambiguously a defect on its own terms: **one reader
-gating a mind's wake on a threshold shorter than the holder's own declared cycle.** The
-term-as-duration idea is recorded here because the source says it, and it is the honest
-answer to "what should the plant's lease eventually be" — but the change proposed is the
-one that can be made and checked now.
+The target is Genome-owned runtime source; this role is read-only outside its review files.
