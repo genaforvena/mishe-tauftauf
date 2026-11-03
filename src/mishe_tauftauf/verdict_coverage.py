@@ -16,7 +16,8 @@ answers.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from typing import Final
 
 #: The rule that picks the rows the live window speaks for.
 EVIDENCE_SELECTION_RULE = "latest-outcome-row-per-role"
@@ -92,6 +93,166 @@ EVIDENCE_BOUND_STATE_UNKNOWN = "unknown"
 
 #: The confidences every published bound is quoted at.
 EVIDENCE_BOUND_DELTAS = (EVIDENCE_BOUND_DELTA, EVIDENCE_BOUND_DELTA_TIGHT)
+
+
+# --- Calibration (Guo et al. ICML 2017 §2–3, ECE/MCE) ---
+# Guo, Pleiss, Sun, Weinberger, On Calibration of Modern Neural Networks,
+# ICML 2017, https://arxiv.org/pdf/1706.04599.pdf — eq.1 perfect calibration
+# P(Ŷ=Y|P̂=p)=p, reliability Δ via acc(B_m)/conf(B_m) bins, eq.3
+# ECE=Σ|B_m|/n|acc−conf|, eq.5 MCE=max|acc−conf|, reliability diagram
+# diagonal falsifier (any deviation from diagonal is miscalibration).
+# Mapping to verdict coverage: coverage φ (Geifman) is judged/population
+# mass; ECE/MCE (Guo) is confidence-vs-accuracy deviation per bin —
+# orthogonal, both publishable. acc(B_m) is empirical non-violation rate in
+# bin m; conf(B_m) is mean stated confidence in that bin. At p̂≈1.0 implied
+# by latest_bad=0 the standing audit acc≈0.94 (or abstained acc≈0.78 at
+# bound) is the measured gap. Binning: M equally-spaced intervals
+# ((m-1)/M, m/M] (paper default) or named quantile; M published beside
+# ECE/MCE so variance is auditable. Limits: finite-sample estimate with
+# binning variance (perfect calibration unattainable with finite n, p.2);
+# i.i.d. within stratum required — across EVIDENCE_POLICY_AMENDMENT_TIME
+# (2026-10-16) report unknown per stratum rule; calibration ≠ truth
+# (SCITT/VC wording at EVIDENCE_BOUND_STATE_VERIFIED stays receipt-only).
+EVIDENCE_CALIBRATION_METHOD: Final[str] = "ece-mce-reliability"
+EVIDENCE_CALIBRATION_BINS_DEFAULT: Final[int] = 10
+EVIDENCE_CALIBRATION_DEFINITION: Final[str] = (
+    "ECE = Σ |B_m|/n |acc(B_m)-conf(B_m)| (eq.3), "
+    "MCE = max |acc-conf| (eq.5); reliability diagram acc vs conf "
+    "should be diagonal")
+
+
+def _calibration_bins(
+    *,
+    confidences,
+    correct,
+    bins: int,
+) -> list[dict]:
+    """Bin confidences into M equally-spaced intervals ((m-1)/M, m/M]."""
+    if bins < 1:
+        raise ValueError("bins must be >= 1")
+    if len(confidences) != len(correct):
+        raise ValueError("confidences and correct must have the same length")
+    n = len(confidences)
+    if n == 0:
+        return []
+    for pp in confidences:
+        if not isinstance(pp, (int, float)) or not 0.0 <= float(pp) <= 1.0:
+            raise ValueError("each confidence p̂ must lie in [0, 1]")
+    for c in correct:
+        if c not in (0, 1, True, False):
+            raise ValueError("each correct must be 0 or 1")
+    bin_counts: list[int] = [0] * bins
+    bin_conf_sum: list[float] = [0.0] * bins
+    bin_correct_sum: list[int] = [0] * bins
+    for pp, c in zip(confidences, correct):
+        pf = float(pp)
+        ci = int(c)
+        m = __import__("math").ceil(pf * bins)
+        if m <= 0:
+            m = 1
+        if m > bins:
+            m = bins
+        idx = m - 1
+        bin_counts[idx] += 1
+        bin_conf_sum[idx] += pf
+        bin_correct_sum[idx] += ci
+    out: list[dict] = []
+    for idx in range(bins):
+        cnt = bin_counts[idx]
+        if cnt == 0:
+            continue
+        acc = bin_correct_sum[idx] / cnt
+        conf = bin_conf_sum[idx] / cnt
+        low = idx / bins
+        high = (idx + 1) / bins
+        out.append(
+            {
+                "bin": idx + 1,
+                "interval": (low, high),
+                "count": cnt,
+                "acc": acc,
+                "conf": conf,
+                "gap": abs(acc - conf),
+            }
+        )
+    return out
+
+
+def expected_calibration_error(
+    *,
+    confidences,
+    correct,
+    bins: int = EVIDENCE_CALIBRATION_BINS_DEFAULT,
+) -> float:
+    """Expected Calibration Error \u2014 Guo et al. 2017 eq.3.
+
+    ECE = Σ_m |B_m|/n |acc(B_m) - conf(B_m)|, the weighted mean of per-bin
+    gaps between empirical accuracy acc(B_m)=mean(correct in bin m) and
+    stated confidence conf(B_m)=mean(confidences in bin m). Bins are
+    M=bins equally-spaced intervals ((m-1)/M, m/M] (paper default); M is
+    published beside ECE so variance is auditable.
+    Perfect calibration (eq.1) P(Ŷ=Y|P̂=p)=p would give ECE=0; any
+    deviation from the reliability-diagram diagonal is miscalibration.
+    Source: https://arxiv.org/pdf/1706.04599.pdf eq.1/eq.3 § 2–3.
+    Returns 0.0 on empty input; validates 0<=p̂<=1, correct∈{0,1},
+    len match, bins>=1.
+    """
+    if len(confidences) == 0 and len(correct) == 0:
+        if bins < 1:
+            raise ValueError("bins must be >= 1")
+        return 0.0
+    import math
+    table = _calibration_bins(confidences=confidences, correct=correct, bins=bins)
+    if not table:
+        return 0.0
+    n = len(confidences)
+    return math.fsum(row["count"] / n * row["gap"] for row in table)
+
+
+def maximum_calibration_error(
+    *,
+    confidences,
+    correct,
+    bins: int = EVIDENCE_CALIBRATION_BINS_DEFAULT,
+) -> float:
+    """Maximum Calibration Error \u2014 Guo et al. 2017 eq.5.
+
+    MCE = max_m |acc(B_m) - conf(B_m)|, the worst per-bin gap. High-risk
+    companion to ECE: ECE weights by |B_m|/n, MCE takes the largest deviation.
+    Same binning/validation as expected_calibration_error.
+    Source: https://arxiv.org/pdf/1706.04599.pdf eq.5 § 2–3.
+    Returns 0.0 on empty input.
+    """
+    if len(confidences) == 0 and len(correct) == 0:
+        if bins < 1:
+            raise ValueError("bins must be >= 1")
+        return 0.0
+    table = _calibration_bins(confidences=confidences, correct=correct, bins=bins)
+    if not table:
+        return 0.0
+    return max(row["gap"] for row in table)
+
+
+def reliability_diagram(
+    *,
+    confidences,
+    correct,
+    bins: int = EVIDENCE_CALIBRATION_BINS_DEFAULT,
+) -> list[dict]:
+    """Per-bin reliability table \u2014 Guo et al. 2017 reliability diagrams § 2.
+
+    Returns ordered list of {bin, interval, count, acc, conf, gap} per
+    non-empty bin, where interval=(low, high) with (low,high]=((m-1)/M,m/M],
+    acc=mean(correct), conf=mean(confidences), gap=|acc-conf|. Skips empty
+    bins so a second reader can reproduce Fig.1 bottom without an image.
+    Source: https://arxiv.org/pdf/1706.04599.pdf eq.1/eq.3/eq.5.
+    """
+    if len(confidences) == 0 and len(correct) == 0:
+        if bins < 1:
+            raise ValueError("bins must be >= 1")
+        return []
+    return _calibration_bins(confidences=confidences, correct=correct, bins=bins)
+
 
 
 def clopper_pearson_upper(errors: int, rows: int, delta: float) -> float:
