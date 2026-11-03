@@ -112,7 +112,45 @@ FRESH_SECONDS = 30.0
 MAX_REGISTRY_BYTES = 65536
 MAX_STATE_BYTES = 1048576
 MAX_SEQUENCE = 9007199254740991
-
+#: Freshness vs effectiveness — Li, Wu, Lee, Sun,
+#: "From Freshness to Effectiveness: Goal-Oriented Sampling for Remote Decision
+#: Making," arXiv:2504.19507v3 [cs.IT] via https://arxiv.org/abs/2504.19507
+#: (2026-11-03 recent REVISIT for body-perception-spool-readings-and-gaps,
+#: complements sequence-accounting and class-C halt notes). §§I–II
+#: taxonomy per Abstract/Table I/Fig.2/eqs.(1)-(2): AoI Δ(t)=t-S_i for
+#: D_i ≤ t < D_{i+1} with endogenous reset Δ(t+1)=Δ(t)+1 if no delivery
+#: else Y_i (random transmission delay, Fig.2 "S_i generated, D_i delivered,
+#: control held until next delivery"), vs DDMDP fixed d (O(t)=X_{t-d}) /
+#: SDMDP i.i.d. D (O(t)=X_{t-D}) exogenous delay; AR-MDP O(t)=X_{t-Δ(t)}
+#: where Δ(t) is sampling-dependent (through S_i) and coupled with Y_i so
+#: lag is policy-dependent, not exogenous. Freshness alone ≠ effectiveness
+#: (Abstract p.1, §I p.2): AoS/AoII/AoCI/UoI H(X_t|I_t) variants,
+#: nonlinear penalties, non-monotonic inference loss when source is
+#: non-Markovian, and selection-from-buffer [77][78] where stale can beat
+#: fresh; novelty §II-C "information as a means to action … beyond which
+#: additional sampling does not yield further gains."
+#: This module currently reports freshness as a binary gate
+#: (FRESH_SECONDS/DENSE_FRESH_SECONDS 30.0, _row_status
+#: fresh-clock-conditional) and gaps as a 24 h halt count + worst batch
+#: delay + sequence loss counters (GAP_WINDOW_SECONDS 86400.0, _gap_records,
+#: _dense_sequence_accounting expected/received/lost/dup/unparsed/steps_back);
+#: no S_i/D_i/Y_i/Δ(t) process is accumulated and no sampling-frequency
+#: coupling is modelled — delivery halts are observed exogenously in
+#: class-c-delivery-gap-detectors.jsonl, not as Δ(t) shaped by a sampling
+#: policy, and DENSE_TAIL_BYTES=262144 (~2500 rows, ~3.5 h at 5 s) /
+#: DENSE_WINDOW_ROWS=2000 (~2.8 h) are fixed windows, not threshold policies.
+#: AR-MDP threshold result (optimal sampling waits until AoI/error exceeds a
+#: threshold under max-rate constraint and random delay, §II-A Sun et al.
+#: [68]; sensitivity threshold beyond which sampling yields no decision gain,
+#: §II-C) has no analogue here: no document states the frequency at which
+#: denser polling stops improving the dense-baseline verdict vs queueing/
+#: congestion or the tailnet's random delay, and zero-wait polling is not
+#: shown optimal or wasteful. Staleness handling remains pointwise and
+#: atemporal as of 2026-11-03; if a Δ(t) accumulator or a threshold/wait
+#: policy is ever wired, name the threshold, caller, and S_i/Y_i distribution
+#: here and re-check this note. Complements (not edits) the existing
+#: sequence-accounting note and the 2026-11-01 imputation discard ("gap stays
+#: gap"). Revertible by git revert; no verdict/behaviour change.
 #: Contextual-integrity vocabulary — Nissenbaum 2004 §§III–III.B (Walzer
 #: Spheres of Justice) + Barth et al. 2006 §2; hardened per Diamantis BEQ
 #: 2025 §§3.2–3.6 ("The Danger of Contextual Integrity"). Five parameters:
