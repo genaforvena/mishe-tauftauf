@@ -1336,6 +1336,47 @@ DENSE_FRESH_SECONDS = 30.0
 #: caller here (read_redmi10_dense_baseline/_dense_sequence_accounting/
 #: read_redmi10_delivery_gaps) and re-check this note. Revertible by
 #: git revert; no verdict/behaviour change.
+#: --- Spanner TrueTime interval and commit-wait/tsafe discipline (Corbett et al., OSDI 2012) ---
+#: Corbett et al., "Spanner: Google's Globally-Distributed Database," OSDI 2012 via
+#: https://static.googleusercontent.com/media/research.google.com/en//archive/spanner-osdi2012.pdf
+#: (also https://research.google/pubs/pub27811/) Table 1 / §3 / §4.1.2 / §4.1.3 / §5
+#: (2026-11-03 mechanism REVISIT, complements Akidau watermark + Lamport C1/C2 +
+#: RFC 3550 J + RFC 9002 dual-threshold/PTO + Tail at Scale + Li AoI + Pufferfish
+#: correlated-record notes). TrueTime exposes wall time as interval
+#: TTinterval [earliest, latest] with epsilon=(latest-earliest)/2 (§3),
+#: TT.now()->interval, TT.after(t) true iff t<earliest, TT.before(t) iff t>latest
+#: (Table 1); implementation keeps epsilon 1–7 ms (epsilon-bar 4 ms) via GPS +
+#: atomic masters, Marzullo liar rejection, 200 µs/s drift, 30 s poll, eviction on
+#: frequency excursion, with still-possible spikes on master unavailability/overload.
+#: Commit wait (§4.1.2) assigns s>=TT.now().latest then waits until TT.after(s) so
+#: s < t_abs(commit); proof s1 < t_abs(e_commit_1) < t_abs(e_start_2) <= s2;
+#: expected wait >=2*epsilon-bar overlapped with Paxos; tsafe = min(tPaxos_safe,
+#: tTM_safe) gates reads at t (∞ if no prepared, else min(s_prepare)-1, §4.1.3)
+#: with MinNextTS 8 s idle advancements (§4.2.4); "If the uncertainty is large,
+#: Spanner slows down to wait out that uncertainty" (§1/§3).
+#: No TTinterval/TT.now/TT.after/TT.before/epsilon/commit-wait/tsafe/MinNextTS/smax
+#: mechanism exists here: break_seconds = now - last_epoch and window_seconds =
+#: last_epoch - first_epoch are point comparisons, not interval comparisons; the
+#: 30 s FRESH_SECONDS/DENSE_FRESH_SECONDS gate lies inside the wall-plus-phone
+#: clock divergence bounded below by the already-typed 100 s Lamport lag and
+#: 25.6% behind-high-water count, and by an unmeasured host-clock epsilon (this
+#: module has no reference clocks, no poll, no drift bound, no eviction; Spanner
+#: achieves 1–7 ms sawtooth / 4 ms average via GPS+atomic / Marzullo / 200 µs/s /
+#: 30 s poll with spikes and eviction). A point difference taken as fact does
+#: not satisfy TT.after/TT.before (t has definitely passed / definitely not arrived).
+#: If a time comparison is ever wired as a gate (freshness, delivery-gap onset,
+#: peer delivery), name the epsilon source and value, the interval [earliest,
+#: latest] construction, the caller (read_redmi10_dense_baseline /
+#: _dense_sequence_accounting / read_redmi10_delivery_gaps), and the wait /
+#: UNKNOWN-while-inside-interval semantics here; otherwise point-minus-point
+#: remains inside uncertainty and gap-stays-gap / TT.before/TT.after discipline
+#: is the honest shape (cf. Akidau Fn 6 heuristic watermark, Tail at Scale §1
+#: variability concession, RFC 9002 §4.6 ack-delay correction / §5 RTT vs
+#: wall-minus-epoch). Complements Akidau watermark event-time completeness,
+#: Lamport partial-vs-total ordering, RFC 3550 span, RFC 9002 dual thresholds and
+#: PTO, Tail 95%-vs-100%, Li AoI Δ(t), Schafer & Graham, Pufferfish/Wasserstein/MQM,
+#: Narayanan sparsity, El Emam k-map, RAPPOR. Revertible by git revert; no
+#: verdict/behaviour change.
 #: --- Pufferfish correlated-record limit (Kifer & Machanavajjhala, TODS 39(1) 2014) ---
 #: §1 p.A2 "GPS traces ... correlated records": record-level definitions
 #: (k-anonymity, ℓ-diversity, ε-DP under independent-record D) do not bound
