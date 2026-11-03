@@ -2,9 +2,8 @@
 field: evidence-and-verdicts
 angle: transfer
 date: 2026-10-22
-status: applied
-owner: genome
-target: checks/evidence-binding-verdict-consistency.py
+status: discarded
+owner: field-review
 ---
 
 # Evidence binding: a verdict that measured 1/990th of the ledger still said "verified"
@@ -215,67 +214,6 @@ not cover the view question, because both re-derive the *current* view.
 (e) RFC 9162 is Experimental and its subject is certificate misissuance; what
 is transferred is the auditor's question, not a theorem.
 
-## Application
+## Discard
 
-target: checks/evidence-binding-verdict-consistency.py
-
-**Add the consistency of the published view to the plant's auditor.** CT
-§8.3 names two properties the check does not test — the append-only property
-across published views, and the consistency of the view presented to all
-query sources. §2.1.4 gives the comparison, §11.3 gives its name. The check
-already has the readings in hand (`:72-78` globs `scan-*.json` and takes the
-last), and the reading already publishes the two fields the comparison needs
-(`bound`, `event_sequences`). Concretely:
-
-1. **Read the retained published readings in creation order** and compare each
-   adjacent pair that carries the sense: the later reading's leaf set must be
-   a superset of the earlier's, and `bound` must not decrease. Print the
-   number of pairs compared and the number of violations. The comparison is
-   over two published integers and one published list — no new byte is read
-   beyond the sample files the check already opens, and no new file is
-   written.
-2. **A violation is a split view, and it is RED.** Print both timestamps,
-   both populations, how many leaves disappeared, the verdict the later
-   reading published, and exit 2 — because that verdict certified a ledger it
-   did not measure. Against today's retained series this fires exactly once:
-   2026-10-10T15:50:11Z → 15:59:55Z, 1 978 leaves lost, `verified` published
-   over 2 outcomes, with 462 violating rows leaving the audit. The plant's own
-   rule is that a published false green stays open until its cause is named;
-   the check should not go green again because twelve days have passed.
-3. **The live half, which is the recurrence detector.** The newest reading
-   must be a superset of the reading before it. A second reset is then caught
-   within one scan rather than never, and the finding routes to the same
-   place the 2026-10-10 incident routes to.
-4. **UNKNOWN, never OK, when the question cannot be decided.** Fewer than two
-   published readings, or a neighbouring reading that cannot be parsed, gives
-   exit 3 — the same "missing, stale or broken reading is UNKNOWN" rule the
-   check already applies to its other three questions.
-5. **Change nothing else.** The three existing questions, the exposure line
-   and the exit codes (0 / 2 / 3) stay as they are; the new question adds a
-   verdict line, not a new state word, and it does not touch
-   `discovery.py`'s verdict, the bands, the clause or the refusal.
-
-**The cost, stated honestly.** The check will be RED on the retained history
-until the 2026-10-10 discontinuity has a disposition. That is the intended
-behaviour of an auditor and it is a change in the plant's published state:
-the owner may record the incident as an *explained historical discontinuity*
-— a disposition with its evidence, not a deletion — after which the check
-reports it as history and judges the live property alone. What the owner
-should not do is narrow the comparison until the incident disappears; that
-would be the "narrowing observation" this plant's own doctrine forbids.
-
-**What this review does not land.** The deeper repairs belong to the roles
-that own the organs, and this role does not edit them:
-
-- the *reading* should publish its population's continuity (the population's
-  start, and whether this view is a superset of the previously published
-  one), so the discontinuity is visible in the reading itself and not only in
-  a reader's reconstruction — `src/mishe_tauftauf/discovery.py`;
-- the *outcome identity* should be the content address the plant already
-  publishes per row (`record_sha256`) rather than a per-file counter that
-  restarts, so a row stays resolvable across a tape generation — the
-  classifier reads one tape path (`outcome_events.py:89`), and the audit's
-  population should be derived from what the plant can still read, not from
-  whichever tape happens to exist.
-
-Both are named here and routed with this review; neither is applied by it.
+The application targets Genome-owned checks code; this read-only role cannot implement or integrate it.
