@@ -221,6 +221,18 @@ _CI_FLOWS: Final[dict[tuple[str, str], frozenset[str]]] = {
 #: denied. Homomorphic encryption, web/SMS interface, LIMS not transferred —
 #: only typed receipts that travel as metadata beside the reading.
 #: Pure data, no I/O, no SENSE_ID/verdict, no mandate file change.
+#: Consent-model taxonomy — Gilbert et al., "Enabling secure and self
+#: determined health data sharing and consent management," npj Digital Medicine
+#: 8:560 (2025) Table 1 p.2: this module's per-type dated receipts are dynamic
+#: consent (ongoing, case-by-case, high control/high flexibility per Kaye Boxes
+#: 1-3 as cited above), not broad (one-time/upfront up to 5y, limited
+#: control/low flexibility), not meta (user-defined broad-or-dynamic choice),
+#: not Standard Health Consent (SHC; platform-based standardized). Dynamic's
+#: stated challenge per Table 1 Challenges and §2 p.2 Refs 16–19 is consent
+#: fatigue and tech requirements; per-type narrowness mitigates broad
+#: overbreadth without mitigating fatigue; no revocation evaluation or SHC
+#: infrastructure is added (personal_consent_allows ignores date per 2026-11-01
+#: misread); fatigue/SHC handling would need a separate review.
 CONSENT_RECEIPT_VERSION: Final[str] = "1"
 #: Per-type dated consent receipts — the sticky policy that travels with the
 #: reading (Kaye EJHG p.143). Each BODY_INFORMATION_TYPES member maps to
