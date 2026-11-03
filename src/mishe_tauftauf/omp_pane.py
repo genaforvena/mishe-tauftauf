@@ -654,3 +654,26 @@ def ci_run_state(raw: str) -> dict | None:
         return None
     return {"status": status, "conclusion": payload.get("conclusion"),
             "updated_at": payload.get("updatedAt")}
+
+
+_BUSY_SPINNER_RE = re.compile(r"[⠀-⣿]\s+\d+[smh]")
+_INTERRUPT_HINT = "esc to interrupt"
+
+
+def capture_tail(stdout: str, count: int) -> list[str]:
+    """The last ``count`` non-blank lines of a ``tmux capture-pane -p`` dump."""
+    return [line for line in stdout.splitlines() if line.strip()][-count:]
+
+
+def pane_is_busy(lines: list[str]) -> bool:
+    """True when a captured resident pane shows active work.
+
+    Two spellings mean work in progress: a braille spinner with a timer, or the
+    "esc to interrupt" hint that Claude's TUI prints while a turn runs.
+    """
+    return any(_INTERRUPT_HINT in line or _BUSY_SPINNER_RE.search(line) for line in lines)
+
+
+def pane_plan_blocked(lines: list[str]) -> bool:
+    """True when a plan line in the captured pane is marked ``(blocked)``."""
+    return any("(blocked)" in line for line in lines)

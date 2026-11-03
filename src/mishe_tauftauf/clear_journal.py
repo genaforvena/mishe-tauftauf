@@ -39,3 +39,19 @@ def role_from_filename(name: str) -> str | None:
         return None
     role = rest.rsplit("-", 1)[0]
     return role if role else None
+
+
+def journal_lines(stdout: str) -> list[str]:
+    """Split a ``journalctl`` dump of a seed unit into its event lines."""
+    return stdout.splitlines()
+
+
+def wake_held(lines: list[str]) -> bool:
+    """True when the latest seed wake event is held (retry exhausted or unsettled) with no later clear."""
+    held = False
+    for line in lines:
+        if "held seed" in line and ("retry exhausted" in line or "unsettled" in line):
+            held = True
+        elif "clear seed" in line or "settled" in line:
+            held = False
+    return held
