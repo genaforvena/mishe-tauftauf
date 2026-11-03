@@ -16,6 +16,15 @@ any form may appear in any process (p.184). Props. 1-4 are "will be best
 facilitated by" hypotheses (pp.186-189) — helpers below are heuristic detectors,
 not a classifier.
 
+Clegg 2006 (JMI 15(4):426-430, DOI 10.1177/1056492606294640) — total institutions as
+concentrated systemic power (Goffman/Bauman/Foucault pp.427-429; checklist p.429:
+strip identity, routinize/dehumanize, division of labour, technicalization, enclosure,
+misrepresentation) — warns systemic forms (domination, discipline) are not
+normatively neutral infrastructure: when they totalize they enclose learning and
+eliminate equivocality (pp.427,429). Lawrence p.188 notes domination can be
+enabling/productive; this vocabulary keeps that qualifier but does not present
+systemic power as value-free (see ROUTING_POWER note).
+
 Jurado-Zambrano et al. 2024 (SIGNOS 16(2):182-203, DOI 10.15332/24631140.10083)
 §§ Procesos de conocimiento / Relaciones / Conclusiones pairs Crossan 4I with the KM
 cycle (Alavi & Leidner 2001; Wilson & Campbell 2016; Lin & Lee 2006 variant
@@ -84,8 +93,13 @@ is influence (episodic, affecting costs/benefits, p.185: moral suasion/persuasio
 discipline (systemic, ongoing identity-forming via socialization/training/teamwork, p.188)
 and not domination (restricting available actions via material/IS/physical layout, p.188;
 domination can be enabling/productive, not merely repressive, p.188 — the domination case
-here would be the outcome-writer refusal, not a reminder). No caller reads this mapping
-yet (see follow_through_power_form).
+here would be the outcome-writer refusal, not a reminder). That refusal is correctly typed
+as domination but must not be read as benign: per Clegg JMI 15(4) p.429 (routinization,
+division of labour, technicalization, misrepresentation) a domination guard that silently
+blocks other roles' evidence paths would reproduce the concentrated-power failure mode
+rather than surface it — so this projection's audit (REFUSAL_AUDIT_MAX_BYTES, last-24h
+projection, health guard) exists to keep a denial visible, not to normalize the guard.
+No caller reads this mapping yet (see follow_through_power_form).
 """
 
 
