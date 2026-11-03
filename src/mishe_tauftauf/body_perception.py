@@ -1377,6 +1377,52 @@ DENSE_FRESH_SECONDS = 30.0
 #: PTO, Tail 95%-vs-100%, Li AoI Δ(t), Schafer & Graham, Pufferfish/Wasserstein/MQM,
 #: Narayanan sparsity, El Emam k-map, RAPPOR. Revertible by git revert; no
 #: verdict/behaviour change.
+#: --- SRE SLO/SLI windowed availability ratio and error-budget discipline (Beyer et al., SRE Ch.4) ---
+#: Beyer, Jones, Petoff, Murphy (eds.), *Site Reliability Engineering: How Google Runs
+#: Production Systems*, Chapter 4 "Service Level Objectives,"
+#: https://sre.google/sre-book/service-level-objectives/ §§ Service Level Terminology /
+#: Indicators / Objectives / Agreements / Indicators in Practice (Aggregation) (2026-11-03
+#: metric REVISIT for body-perception-spool-readings-and-gaps, complements RFC 3550 jitter
+#: §A.3 / Spanner TrueTime Table 1/§3/§4.1.2/§4.1.3 / Lamport C1/C2 / Tail at Scale
+#: Fig p.76/Table 1 / Li AoI Δ(t) / Akidau watermark and Pufferfish / Narayanan sparsity
+#: notes). Verbatim: SLI "a carefully defined quantitative measure of some aspect of the
+#: level of service that is provided" — common SLIs "request latency … the error rate,
+#: often expressed as a fraction of all requests received, and system throughput … The
+#: measurements are often aggregated: i.e., raw data is collected over a measurement window
+#: and then turned into a rate, average, or percentile"; availability "often defined in
+#: terms of the fraction of well-formed requests that succeed, sometimes called yield";
+#: SLO "a target value or range of values for a service level that is measured by an SLI
+#: … SLI ≤ target, or lower bound ≤ SLI ≤ upper bound"; error budget "it is better to
+#: allow an error budget—a rate at which the SLOs can be missed—and track that on a
+#: daily or weekly basis" and "The SLO violation rate can be compared against the error
+#: budget … with the gap used as an input to the process that decides when to roll out
+#: new releases"; SLI selection "You shouldn't use every metric you can track … a handful
+#: of representative indicators are enough"; aggregation caution "Consider a system that
+#: serves 200 requests/s in even-numbered seconds, and 0 in the others. It has the same
+#: average load as one that serves a constant 100 requests/s, but has an instantaneous load
+#: that is twice as large as the average one."
+#: No SLI ratio / SLO target / error budget is typed here: break_seconds < 30.0
+#: (FRESH_SECONDS/DENSE_FRESH_SECONDS) is a point gate, gaps_24h (GAP_WINDOW_SECONDS
+#: 86400.0) is a count over a day, max_receipt_lag_s is a worst span, and
+#: _dense_sequence_accounting expected/received/lost/dup/steps_back counts rows not
+#: time-weighted availability; no good/total over an explicit measurement window is
+#: published and no SLO target fraction (e.g. SLI ≥ 0.99 over 28 days) or error-budget
+#: accounting gates a release or polling change. The burst-average warning maps to the
+#: already-typed frozen RFC 3550 window (median |D| 1.1 s, max |D| 1335.4 s dominating
+#: J 83.0 s over 244 batches, 243 pairs) — a point or mean hides burst shape as the
+#: averaged request rate hides the 2× instantaneous load. This complements (does not
+#: replace) the RFC 3550 D/J jitter metric (per-batch spacing unevenness) with a
+#: windowed availability ratio (fraction-of-window success) and a percentile (e.g. p99
+#: break) alongside it; the SRE handful-of-SLIs discipline would keep at most one or
+#: two windowed ratios (e.g. freshness availability over GAP_WINDOW_SECONDS and
+#: optionally row-delivery ratio over DENSE_WINDOW_ROWS) with remaining counts as
+#: diagnostics, not a new SLI per diagnostic. If a windowed SLI is ever wired, name
+#: the numerator/denominator, the measurement window (GAP_WINDOW_SECONDS vs e.g.
+#: 28-day SLO window), the target threshold and error-budget accounting caller, and
+#: the aggregation choice (mean vs p99 vs time-weighted) here; until then the 30.0 s
+#: gate remains a point target, not an SLO in this chapter's sense. Phone/host
+#: clock-divergence (Lamport 100 s / 25.6% note) conditions any time-weighted ratio.
+#: Revertible by git revert; no verdict/behaviour change.
 #: --- Pufferfish correlated-record limit (Kifer & Machanavajjhala, TODS 39(1) 2014) ---
 #: §1 p.A2 "GPS traces ... correlated records": record-level definitions
 #: (k-anonymity, ℓ-diversity, ε-DP under independent-record D) do not bound
