@@ -117,6 +117,18 @@ def test_corrupt_store_falls_back_to_full_verification(tmp_path):
     assert len(got) == 3 and len(sink) == 3
 
 
+@pytest.mark.parametrize("column,value", [("verified_at", "bad"), ("verified_at", None),
+                                           ("payload", "bad"), ("payload", b"bad")])
+def test_malformed_cache_row_reverifies_canonical_record(tmp_path, column, value):
+    entries = _seed(tmp_path, 1).entries()
+    store = records.verified_store(tmp_path)
+    with store._connection:
+        store._connection.execute(f"UPDATE verified SET {column}=?", (value,))
+    sink = {}
+    Feed._verify_records(entries, sink)
+    assert sink[entries[0].sequence]["i"] == 0
+
+
 def test_stale_entry_past_max_age_is_reverified(tmp_path, monkeypatch):
     entries = _seed(tmp_path).entries()
     Feed(tmp_path).entries(payloads={})

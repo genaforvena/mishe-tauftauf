@@ -257,7 +257,9 @@ class VerifiedStore:
             except sqlite3.Error:
                 self._broken = True
                 return None
-        if row is None or not (0 <= now - row[4] < VERIFIED_MAX_AGE):
+        if (row is None or type(row[4]) not in (int, float)
+                or not isinstance(row[5], bytes)
+                or not (0 <= now - row[4] < VERIFIED_MAX_AGE)):
             return None
         try:
             current = self._identity(directory, digest + ".json")
