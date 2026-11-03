@@ -12,6 +12,20 @@ force) vs systemic (domination, discipline). ROUTING_POWER below is a plant anal
 not a Lawrence mapping: the 2024 6I paper (BMJ Open 14(5) e083830) restates only the
 process→form mapping and classifies no routing stage. Vocabulary is a detector, not a
 causal claim; any form may appear in any process (p.184).
+
+Jurado-Zambrano et al. 2024 (SIGNOS 16(2):182-203, DOI 10.15332/24631140.10083)
+§§ Procesos de conocimiento / Relaciones / Conclusiones pairs Crossan 4I with the KM
+cycle (Alavi & Leidner 2001; Wilson & Campbell 2016; Lin & Lee 2006 variant
+acquisition/conversion/application/protection) enumerating creation, transfer,
+acquisition, storage, retrieval, application (pp.189-190, via Gold et al. 2001).
+Three enablers bridge both cycles — people as axis, process focus, organizational
+culture as common facilitator (pp.185,209-211); ISO 9001:2015 §7.1.6 (p.9 quoted
+p.188) frames the knowledge requirement. This module models 4I+Lawrence and currently
+implements KM storage (refusal audit with REFUSAL_AUDIT_MAX_BYTES) and application
+(routing/health); it has no named acquisition/transfer/retrieval/protection or
+culture/people measure. Any future wiring of those processes would need per-role
+attribution and a culture guard. Qualitative descriptive synthesis only (46 sources
+via Google Scholar relevance); no measured effect; categories emergent not exclusive.
 """
 from __future__ import annotations
 
