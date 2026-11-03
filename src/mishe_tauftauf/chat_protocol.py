@@ -1,6 +1,18 @@
 """Boundary adapters for lifecycle and linked-site completion records.
 
 Machine control records are decoded here; explanatory prose remains opaque.
+
+AutoGen conversation-programming vocabulary (Wu et al. arXiv:2308.08155v2
+§2.1 conversable agents / §2.2 conversation programming / Fig.2 unified
+interfaces send/receive/generate_reply & auto-reply without control plane /
+§3 A3 grounding agent / A4 Commander-Writer-Safeguard / A5 GroupChatManager
+/ A6 board agent) — additive header, no new runtime. Predicate literal
+``TERMINATE`` at §2.2 (natural-language termination) and role-play speaker
+selection at §3 A5 are UNACTIVATED: no LLM call, no tool execution, no
+emitted bytes until a future publisher populates them. Limits: benchmark
+numbers and prompt text not transferred; code-execution safety caveat
+retained; ``TERMINATE`` is content convention until a decoder treats it as
+control.
 """
 from __future__ import annotations
 
@@ -8,6 +20,7 @@ import json
 import re
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import Final
 
 from .feed import FeedEntry, FeedError
 
@@ -27,6 +40,37 @@ _MARKET_LEGACY = {
 }
 _GROUNDING_ACK_RE = re.compile(r"grounded:(?P<digest>[0-9a-f]{7,40})\b")
 
+# AutoGen conversation-programming vocabulary — additive, no emitted bytes
+# Wu et al. arXiv:2308.08155v2 §2.1 conversable agents / §2.2 conversation
+# programming / Fig.2 unified interfaces & auto-reply / §3 A3-A6 patterns
+# UNACTIVATED: no new runtime, no LLM call, no tool execution.
+CONVERSATION_PATTERNS: Final[tuple[str, ...]] = ("static", "dynamic", "hierarchical", "group-chat")
+"""Conversation patterns per AutoGen §2.2/Fig.3 — static (predefined order,
+e.g. A1/A4) vs dynamic (content-driven via GroupChatManager, A5) vs
+hierarchical (Commander/Writer/Safeguard, A4) vs group-chat (shared context
++ speaker selection, A5/A6)."""
+
+AGENT_CAPABILITIES: Final[tuple[str, ...]] = ("llm", "human", "tool", "llm+tool", "human+tool", "llm+human+tool")
+"""Agent capability mix per AutoGen §2.1 — LLM-backed / human-backed /
+tool-backed and combinations; UserProxyAgent = human+tool, AssistantAgent =
+llm."""
+
+CHAT_TERMINATION_TOKENS: Final[tuple[str, ...]] = ("TERMINATE",)
+"""Natural-language termination signal per AutoGen §2.2 — AssistantAgent
+default system message instructs reply with TERMINATE when task completed;
+mirrors Turn settled (...) at conversation scope."""
+
+CONVERSABLE_ROLES: Final[tuple[str, ...]] = ("assistant", "user-proxy", "group-manager", "grounding", "safeguard", "commander")
+"""Conversable role vocabulary per AutoGen Fig.2/§3 — AssistantAgent /
+UserProxyAgent / GroupChatManager / grounding agent (A3) /
+Safeguard+Writer+Commander (A4) / board agent (A6). Plant roles
+(genome/health/witness/...) map to these, not replaced by them."""
+
+AUTO_REPLY_LIMIT_DEFAULT: Final[int] = 10
+"""Programming-language control counterpart per AutoGen §2.2 — max number of
+auto replies before termination; same kind as human_input_mode NEVER/ALWAYS
+but numeric."""
+
 
 def grounding_ack(entry: FeedEntry) -> str | None:
     """Digest referenced as positive evidence, or None.
@@ -41,6 +85,39 @@ def grounding_ack(entry: FeedEntry) -> str | None:
     m = _GROUNDING_ACK_RE.search(entry.body)
     return m.group("digest") if m else None
 
+
+def conversation_pattern_is_valid(value: object) -> bool:
+    """Whether *value* names a known conversation pattern (AutoGen §2.2)."""
+    return isinstance(value, str) and value in CONVERSATION_PATTERNS
+
+
+def agent_capability_is_valid(value: object) -> bool:
+    """Whether *value* names a known agent capability mix (AutoGen §2.1)."""
+    return isinstance(value, str) and value in AGENT_CAPABILITIES
+
+
+def conversable_role_is_valid(value: object) -> bool:
+    """Whether *value* names a known conversable role (AutoGen Fig.2/§3)."""
+    return isinstance(value, str) and value in CONVERSABLE_ROLES
+
+
+def is_termination_token(text: str) -> bool:
+    """Whether *text* is the natural-language terminator (AutoGen §2.2)."""
+    return isinstance(text, str) and text.strip() == "TERMINATE"
+
+
+def auto_reply_limit_is_valid(value: object) -> bool:
+    """Whether *value* is a valid auto-reply limit (AutoGen §2.2, 1..100)."""
+    return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 100
+
+
+def next_speaker_is_valid(value: object, participants: list[str]) -> bool:
+    """GroupChatManager contract stub — speaker must be in participants.
+
+    Documents the AutoGen §3 A5 invariant (shared-context speaker selection)
+    without implementing selection logic. Pure predicate, no I/O.
+    """
+    return isinstance(value, str) and value in participants
 
 
 class ProtocolError(FeedError):
