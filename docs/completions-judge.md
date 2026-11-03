@@ -40,6 +40,8 @@ is swayed by fluent, long or confident text that asserts the desired state
 without evidence: a judge that rewards prose over substance passes all twelve
 calls and is still unsafe for `desired-state-met`. Exit 0 says nothing about
 that failure mode.
+A single `desired-state-met` verdict conflates dimensions that the source separates as Accuracy, Helpfulness and Language (Wu & Aji arXiv:2307.03025v3, PDF 972455 B sha256 b748c8f345ef06e63c147710c4bbd6ca71dad1cf9930d2efd705ce5314c21c, pp.1-5 Table 1/3/4, 15 pp.): Table 1 shows GPT-4 ranking Several Minor Factual Errors (1206) above Correct+Short (1096) and crowd clustering factual-error Elos near Correct (1025-1074 vs 1091); Table 3 \u03BA shows only LLM-LLM moderate agreement (0.51) with human-LLM 0.08-0.14; MERS (Table 4) restores factual discrimination for GPT-4 when scored on Accuracy separately (Several Major 794 vs Language 995) but not for crowd (1030 vs 1023). For this adapter that is the analogue of asking one categorical `desired-state-met` question: a judge can rank fluent confident prose above terse correct evidence, so treat a single `yes` as dimensionally conflated. Limits: Elo K=32 10k shuffles over 40 Vicuna-subset questions \u00D7 12 GPT-4-generated settings with manual post-edit, crowd 377 MTurk US / expert 20 on 200 games / LLM gpt-4-0613+Claude-1.3 with Dettmers prompt; MERS gain reported for GPT-4 Accuracy, not crowd; ordering transfers, not scale, to this plant\u2019s categorical 1/0 (`unknown` on missing/stale/contradictory).
+
 
 The smoke controls are also fixed synthetic pairs. They cannot detect a judge
 that is generous to its own family: self-preference bias is reported for LLM
@@ -171,6 +173,8 @@ recognised by the hash of the document you wrote, and only if you kept that
 exact `question_text` string. Keep the trait text with the cases file you
 generated, and record the trait and its hash together in your artifact; a row
 you cannot map to a trait is a row you cannot attribute.
+Foundational biases measured pairwise do not transfer verbatim to this pointwise judge. Zheng et al. arXiv:2306.05685v4 (PDF 1.6 MB sha256 157498..., pp.4-7) report pairwise position consistency 23.8%/46.2%/65.0% default (GPT-4 65%->77.5% few-shot at 4x cost) with conservative swap-twice-then-tie mitigation, verbosity failure 91.3%/91.3%/8.7% on 23-answer repetitive-list (vs identical ties), math 14/20->3/20 with reference-guided, and S2 85% pairwise GPT-4/human agreement varying 70%->100% with win-rate disparity (Fig.2). All are pairwise two-answer comparisons; this adapter is pointwise categorical, so position-swap and reference-generation mitigations have no literal analogue here except the inside-state-block TOP PAIN<->EVIDENCE permutation check described above. Limits: pp.1-7 verbatim; Appendix D-F not re-measured; no re-run on this judge.
+
 
 ### Comparing two judges on one question set
 
@@ -207,6 +211,8 @@ a prompt template may share the very variance you are trying to measure, so a
 high agreement between them is not by itself validity. And a single adapter
 against the twelve controls cannot show discrimination at all, because there is
 nothing to compare it with.
+
+Why pointwise. Tripathi et al. COLM 2025 arXiv:2504.14716v2 (PDF 484742 B sha256 125715..., 19 pp., pp.1/3-5) defines distracted evaluation as R(y|x,p)!=R(y_f|x,p) where p(y)=p(y_f) and measures pairwise flips in ~35% of cases vs ~9% for absolute scoring across IFEval-TweakSet and MT-Bench (Fig.1, S4). The three distractor types (assertiveness, prolixity, sycophancy) correspond to this book's confident-claim, length-padding and fluency checks; the residual 9% and the absolute limits (lack of comparative context, calibration inconsistency, S2.2) mean those checks remain necessary even after choosing pointwise. Limits: 1..7 Likert weighted scoring vs tie-inclusive pairwise on those datasets; this plant's yes/no/unknown is coarser and `not calibrated probabilities`, so 35%/9% ordering transfers but not scale; a single adapter on fixed pairs cannot show discrimination without cross-adapter comparison (Campbell & Fiske 1959).
 
 The adapter maps yes/no to `probability 1` / `probability 0` solely for the
 existing executable protocol. Those endpoints are **categorical conventions,
