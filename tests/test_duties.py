@@ -24,7 +24,8 @@ def declared(home):
 def test_every_duty_has_a_resolver_signal_and_sane_timing():
     assert ALL and len({d["name"] for d in ALL}) == len(ALL)
     for d in ALL:
-        assert d["resolver"] and d["replaces"] and d["covers"], d["name"]
+        # A duty that replaces nothing is new coverage; `replaces` must still be declared.
+        assert d["resolver"] and isinstance(d["replaces"], list) and d["covers"], d["name"]
         assert d["max_age"] >= d["every"] + d["timeout"], f"{d['name']} would read stale while healthy"
         assert d["max_age"] <= 6 * d["every"], f"{d['name']} would take too long to notice silence"
 

@@ -213,6 +213,23 @@
         "dashboard-discovery-renewal"
       ],
       "covers": "bounded acquisition of the retained Senses inventory; source-specific unknowns stay visible, failed/missing/stale scans remain UNKNOWN"
+    },
+    {
+      "name": "view-readability",
+      "command": [
+        "{python}",
+        "{repo}/checks/view-readability.py",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}"
+      ],
+      "every": 600,
+      "timeout": 120,
+      "max_age": 900,
+      "resolver": "genome",
+      "replaces": [],
+      "covers": "every role's top and bottom pane renders as human-readable text: no JSON, dict reprs, escaped newlines, raw epoch numbers or private paths; unrenderable or missing views stay UNKNOWN"
     }
   ],
   "retired": [

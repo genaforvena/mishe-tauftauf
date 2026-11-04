@@ -70,9 +70,15 @@ relationships under its existing grant; Field Review owns external ideas and
 useful experiments; Steward owns cross-area priorities and budget allocation.
 Each carries initiatives through checks, delivery and observation. Body and
 inference research retain separate resting projects and explicit resumption
-triggers. A window is a view of an area; opening it calls no model. Its bottom pane
-shows retained assistant text and tool activity as the mind works, alongside
-explicit unknown or failed output; the original event files remain on disk.
+triggers. A window is a view of an area; opening it calls no model, and both panes are plain
+text for people, with no JSON or raw timestamps. The top pane shows the area's wake
+state, what the last wake changed in git, the wall's opening lines, signals, the next
+due item and unread mail. The bottom pane opens with the model that ran, then the wake's
+turns, duration, cost and git change in lines, followed by the mind's final text and the
+files it changed. A model that differs from the configured one is stated, and output that
+cannot be read is labelled UNKNOWN with its raw tail, never hidden. Walls and site notes
+are outside git and are not counted. The original event files remain on disk, and
+`view-readability` watches that the panes stay human-readable.
 Senses' readings renew independently every ten minutes. `mishe discover show`
 shows the acquisition freshness and each source's state; a new host scan cannot
 make an old phone sample current.
