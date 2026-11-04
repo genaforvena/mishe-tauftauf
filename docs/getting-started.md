@@ -167,4 +167,4 @@ implementation, checks, delivery and observation. Stop at a meaningful work or
 execution boundary and leave concrete continuation. Critical verification belongs
 inside the initiative; use peer messages for action, transfer, material impact or
 unresolved disagreement. The separate fresh patch reviewer and deterministic
-recovery checks remain required. See [Wall coordination](wall-coordination.md).
+recovery checks remain required. See the wall coordination notes in the plant's local operating book.
