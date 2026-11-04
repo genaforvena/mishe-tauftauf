@@ -54,12 +54,16 @@ def default_mail_reader(home, role: str, after: int) -> list:
 
 
 def next_role(home, roles, *, now: float, exclude: str | None = None) -> str | None:
-    """Open dispatches first (reconcile before new work), then owed roles."""
+    """Reconcile open effects first; rotate owed work after the last settled role."""
     store = DispatchStore(Path(home) / "dispatch")
     for record in store.open_records():
         if record.role != exclude:
             return record.role
-    for role in roles:
+    ordered = list(roles)
+    if exclude in ordered:
+        offset = ordered.index(exclude) + 1
+        ordered = ordered[offset:] + ordered[:offset]
+    for role in ordered:
         if role != exclude and owed.check(home, role, now=now).reasons:
             return role
     return None

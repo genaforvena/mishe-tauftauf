@@ -132,3 +132,28 @@ def test_oversized_stream_window_marks_loss_without_raw_flood(tmp_path):
     text = output_text(out)
     assert "UNKNOWN leading stream event truncated" in text and "LATEST" in text
     assert len(text)<1000
+
+
+def test_not_yet_dispatched_role_has_explanatory_unknown_read_only_view(tmp_path):
+    (tmp_path / 'dispatch').mkdir()
+    before = bytes_(tmp_path)
+    text = view.render(tmp_path, 'steward', now=100, output=True)
+    assert 'no dispatch recorded' in text and 'UNKNOWN' in text
+    assert 'No such file' not in text
+    assert bytes_(tmp_path) == before
+
+
+def test_missing_record_with_retained_output_does_not_infer_first_wake(tmp_path):
+    (tmp_path / 'dispatch').mkdir()
+    (tmp_path / 'wakes').mkdir()
+    (tmp_path / 'wakes/wake-steward-1.prompt.out.json').write_text('{"result":"prior effect"}')
+    text = view.render(tmp_path, 'steward', now=100, output=True)
+    assert 'UNKNOWN' in text and 'prior effect' in text
+    assert 'never ran' not in text
+
+
+def test_corrupt_dispatch_remains_unknown(tmp_path):
+    (tmp_path / 'dispatch').mkdir()
+    (tmp_path / 'dispatch/steward.json').write_text('{broken')
+    text = view.render(tmp_path, 'steward', now=100, output=True)
+    assert 'UNKNOWN' in text and 'not JSON' in text

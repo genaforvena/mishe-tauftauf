@@ -41,7 +41,9 @@ def render(home, role: str, *, now: float, output=False) -> str:
     out = [f'{role} — read-only view — sampled {now:.0f}',
            'HELD — autonomous work stopped' if (home / 'hold').exists() else 'hold absent (not proof of work)']
     try:
-        record = read_record_fields(home / 'dispatch' / f'{role}.json')
+        record_path = home / 'dispatch' / f'{role}.json'
+        record_path.stat()  # distinguish absence from malformed retained protocol bytes
+        record = read_record_fields(record_path)
         if record['role'] != role or Path(record['key']).name != record['key'] or record['key'] in ('.', '..'):
             raise ValueError('dispatch identity does not match this view')
         out += [f'Dispatch {record["state"].upper()} {record["key"]}', safe(record['detail'])]
@@ -52,6 +54,9 @@ def render(home, role: str, *, now: float, output=False) -> str:
             out.append(f'YIELDED {safe(receipt)} — transport receipt, not acceptance')
         elif receipt is not None:
             out.append('Yield UNKNOWN: malformed or mismatched receipt; original bytes retained')
+    except FileNotFoundError:
+        out.append('Dispatch UNKNOWN: no dispatch recorded; awaiting a wake or historical reconciliation. '
+                   'Absence does not establish that earlier work had no effect.')
     except (OSError, ValueError) as exc:
         out.append(f'Dispatch UNKNOWN: {safe(exc)}')
     if output:

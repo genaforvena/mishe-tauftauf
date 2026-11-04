@@ -239,3 +239,24 @@ def test_multiple_unknown_dispatches_reconcile_in_one_shared_order(home):
         assert result.outcome == "reconciled"
     assert len(engine.calls) == 3
     assert all("RECONCILE FIRST" in prompt for _, prompt in engine.calls)
+
+
+def test_continuously_owed_early_roles_do_not_starve_steward(home):
+    roles = ["docs", "genome", "health", "steward"]
+    for role in roles:
+        owed.touch_inbox(home, role)
+    selected = []
+    previous = "docs"
+    for _ in range(len(roles)):
+        previous = wake.next_role(home, roles, now=NOW, exclude=previous)
+        selected.append(previous)
+    assert selected == ["genome", "health", "steward", "docs"]
+
+
+def test_rotation_still_prioritizes_unknown_effects(home):
+    from mishe_tauftauf.core.state import DispatchRecord
+    from mishe_tauftauf.core.interfaces import UNKNOWN
+    for role in ["docs", "genome", "health", "steward"]:
+        owed.touch_inbox(home, role)
+    DispatchStore(home / "dispatch").write(DispatchRecord(role="docs", key="old", state=UNKNOWN))
+    assert wake.next_role(home, ["docs", "genome", "health", "steward"], now=NOW, exclude="health") == "docs"
