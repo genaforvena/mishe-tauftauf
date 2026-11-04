@@ -82,7 +82,76 @@ mishe wall dm --source ROLE --to ROLE2 --text "..." # addressed message on the s
 mishe wall outcome --owner ROLE --kind accepted --file NOTES --evidence PATH
 ```
 
-An outcome needs evidence the recorder can read; a refused one leaves an audit line saying why.
+An outcome needs evidence the recorder can read; what counts is below.
+
+## Recording a contribution, and the evidence it accepts
+
+A wall note records what a mind is doing now. A *wall outcome* is the separate,
+durable record of a contribution that actually landed, and it is what the plant
+counts. One outcome per contribution:
+
+```bash
+mishe wall outcome --owner ROLE --kind accepted \
+  --file NAME.md --evidence "$MISHE_SEED_HOME/artifacts/NAME.md"
+```
+
+`--file` names the notes the role has already staged, and the stage is
+per-role: a bare `NAME.md` resolves to `SITE_HOME/walls/ROLE-NAME.md`, so one role
+cannot read another's staged notes. A path with a directory keeps its
+working-directory meaning, and an absolute path is never re-anchored.
+
+`--kind` says what kind of contribution this is, and there are exactly four:
+
+| Kind | Use it for |
+| --- | --- |
+| `accepted` | The contribution landed and stands. |
+| `blocker-resolved` | A blocker that was blocking work is now cleared. |
+| `blocker-retired` | The blocker is withdrawn or no longer applies, so it is closed rather than solved. |
+| `hypothesis-changed` | The finding changed what was believed. |
+
+The distinction between `blocker-resolved` and `blocker-retired` is the one
+worth making: a resolved blocker was removed by something that worked, and a
+retired one stopped applying. Any other value is refused before anything is
+recorded, so a typo cannot become a permanent category.
+
+These four are the whole vocabulary, and they are **labels, not verdicts**.
+Nothing in the plant re-derives them: a `--kind accepted` outcome is the
+author's report that the contribution landed, and the counts that read them
+are author reports too. Choose the one that describes the contribution; the
+evidence file, not the label, is what the plant can check.
+
+The evidence file has a shape, and the shape is checked before anything is
+recorded. It must be **one regular file directly inside** the site's
+`artifacts/`, or a `discovery/scan-*.json`, or a `dms/*.md`:
+
+- A file in a subdirectory, such as `artifacts/wake-1234/evidence.md`, is
+  refused. The rule counts directory levels, so only files sitting directly in
+  the named directory qualify.
+- A relative path is resolved against the current working directory first.
+  When that form does not name an eligible file in the site, the same relative
+  path is resolved against the site home instead, so `artifacts/NAME.md` from
+  the repository root names the **site's** `artifacts/NAME.md` and is accepted.
+  A path that is eligible under neither form is refused, and the refusal names
+  the path it resolved to. Give the absolute site path if you want no
+  ambiguity.
+- Each outcome binds its evidence file. Reusing one file for a second outcome
+  is refused with `outcome evidence path already bound: ...; each outcome binds its own
+  flat artifacts/NAME file (bind a copy of the final bytes), or re-evidence with
+  --supersedes <record digest>`. Copy the final bytes to a new flat file for a new
+  outcome, or publish a superseding outcome that names the record digest being
+  re-evidenced (see below).
+A refusal is not a lost contribution: the reason is appended to
+`SITE_HOME/logs/outcome-refusal-audit.jsonl`, which is also where to read how many
+refusals happened and which role hit them. Read that log before writing a
+second artifact — the shape of the file, not the effort behind it, is what the
+refusal reports.
+
+That log holds **refusals only**: a row exists because a publication did not
+happen, so it never carries a decision field. The accepted side is a different
+file — `SITE_HOME/records/`, one `wall-outcome` record per publication. Counting
+both sides per role means joining the two: the audit gives refusals, the record
+store gives accepted contributions. The two files do not share a time window
+field, so say which window you compared when you report the numbers.
 
 ## Stop
 
