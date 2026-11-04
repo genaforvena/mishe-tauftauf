@@ -1,0 +1,54 @@
+"""Run an engine command to completion within a wall-clock bound.
+
+The engine gets its own process group; on timeout the whole group is killed, so
+no descendant outlives the wake. A command that cannot be executed never
+started and has no effect; a timeout leaves the effect unknown.
+"""
+from __future__ import annotations
+
+import os
+import signal
+import subprocess
+from pathlib import Path
+
+from .wake import EngineNotStarted, EngineTimeout
+
+
+def _kill_group(process: subprocess.Popen) -> None:
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(process.pid, sig)
+        except ProcessLookupError:
+            return
+        try:
+            process.wait(timeout=2 if sig == signal.SIGTERM else 5)
+            if sig == signal.SIGTERM:
+                continue        # leader exited; still sweep stragglers with KILL
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def run_bounded(command: list[str], *, env: dict, cwd: Path, timeout: float,
+                stdin_from: Path | None = None, stdout_to: Path | None = None, on_start=None) -> int:
+    stdin = open(stdin_from, "rb") if stdin_from else subprocess.DEVNULL
+    stdout = open(stdout_to, "wb") if stdout_to else subprocess.DEVNULL
+    try:
+        try:
+            process = subprocess.Popen(command, env=env, cwd=cwd, stdin=stdin, stdout=stdout,
+                                       stderr=subprocess.STDOUT, start_new_session=True)
+        except OSError as exc:
+            raise EngineNotStarted(f"{command[0]}: {exc}") from exc
+        if on_start is not None:
+            on_start(process.pid)
+        try:
+            return process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            _kill_group(process)
+            raise EngineTimeout(f"exceeded {timeout:g}s") from exc
+        finally:
+            _kill_group(process) if process.poll() is None else None
+    finally:
+        for handle in (stdin, stdout):
+            if hasattr(handle, "close"):
+                handle.close()

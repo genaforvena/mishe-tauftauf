@@ -17,7 +17,7 @@ class FakeEngine:
     def __init__(self, script):
         self.script, self.calls = script, []
 
-    def run(self, prompt_file, *, env, cwd, timeout):
+    def run(self, prompt_file, *, env, cwd, timeout, on_start=None):
         prompt = Path(prompt_file).read_text()
         self.calls.append((env["MISHE_ROLE"], prompt))
         return self.script(prompt, env)
@@ -173,3 +173,27 @@ def test_due_expires_signals_then_rearms(home):
     seen = []
     changed = arm.due(home, now=1100.0, scheduler=seen.append)
     assert changed == ["ci"] and seen == [None]
+
+
+def test_engine_pid_is_published_to_the_open_record_while_it_runs(home):
+    owed.touch_inbox(home, "genome")
+    seen = []
+    class PidEngine:
+        def run(self, prompt_file, *, env, cwd, timeout, on_start=None):
+            on_start(4242)
+            seen.append(DispatchStore(home / "dispatch").read("genome").pid)
+            return do_yield("", env)
+    go(home, "genome", PidEngine())
+    assert seen == [4242]
+
+
+def test_live_worker_blocks_reconcile(home):
+    owed.touch_inbox(home, "genome")
+    go(home, "genome", FakeEngine(lambda p, e: 0))                      # unknown
+    store_ = DispatchStore(home / "dispatch")
+    rec = store_.read("genome")
+    from mishe_tauftauf.core.state import DispatchRecord
+    store_.write(DispatchRecord(role="genome", key=rec.key, state=rec.state, detail=rec.detail,
+                                pid=os.getpid(), attempt=rec.attempt))   # a live pid
+    engine = FakeEngine(do_yield)
+    assert go(home, "genome", engine).outcome == "blocked" and engine.calls == []

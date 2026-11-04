@@ -63,7 +63,7 @@ def next_role(home, roles, *, now: float, exclude: str | None = None) -> str | N
     return None
 
 
-def _execute(home, role, key, *, engine, now, snap, mail, reconcile_of, repo, timeout):
+def _execute(home, role, key, *, engine, now, snap, mail, reconcile_of, repo, timeout, on_start=None):
     """Write the wake's files, run the engine, report whether it yielded."""
     snap.tape_seq = max([owed.tape_cursor(home, role)] + [seq for seq, _ in mail])
     yielding.wakes_dir(home).mkdir(parents=True, exist_ok=True)
@@ -73,7 +73,7 @@ def _execute(home, role, key, *, engine, now, snap, mail, reconcile_of, repo, ti
                                     reconcile_of=reconcile_of, repo=repo), encoding="utf-8")
     env = dict(os.environ, MISHE_SEED_HOME=str(home), MISHE_ROLE=role, MISHE_WAKE_KEY=key)
     try:
-        code = engine.run(prompt, env=env, cwd=repo or Path(home), timeout=timeout)
+        code = engine.run(prompt, env=env, cwd=repo or Path(home), timeout=timeout, on_start=on_start)
     except EngineNotStarted as exc:
         return "failed", f"engine did not start: {exc}"
     except EngineTimeout as exc:
@@ -95,7 +95,8 @@ class _Worker:
             return WorkerResult("skipped", "nothing owed")
         mail = self.mail_reader(self.home, role, owed.tape_cursor(self.home, role))
         state, detail = _execute(self.home, role, key, engine=self.engine, now=self.now, snap=snap,
-                                 mail=mail, reconcile_of=None, repo=self.repo, timeout=self.timeout)
+                                 mail=mail, reconcile_of=None, repo=self.repo, timeout=self.timeout,
+                                 on_start=dispatch.payload.get("publish_pid"))
         return WorkerResult({"yielded": "completed"}.get(state, state), detail)
 
 
@@ -145,7 +146,10 @@ def _reconcile(home, role, record, supervisor, engine, now, mail_reader, repo, t
         mail = mail_reader(home, role, owed.tape_cursor(home, role))
         key = _key(role, int(now * 1e9) + os.getpid())
         state, detail = _execute(home, role, key, engine=engine, now=now, snap=snap, mail=mail,
-                                 reconcile_of=record, repo=repo, timeout=timeout)
+                                 reconcile_of=record, repo=repo, timeout=timeout,
+                                 on_start=lambda pid: store.write(DispatchRecord(
+                                     role=role, key=record.key, state=record.state,
+                                     detail=record.detail, pid=pid, attempt=record.attempt)))
         if state == "yielded":
             store.write(DispatchRecord(role=role, key=record.key, state=RECONCILED,
                                        detail=f"reconciled by {key}", pid=record.pid, attempt=record.attempt + 1))

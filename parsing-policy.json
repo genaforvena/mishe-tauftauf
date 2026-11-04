@@ -47,6 +47,7 @@
     "src/mishe_tauftauf/release_retention.py",
     "src/mishe_tauftauf/render_admission.py",
     "src/mishe_tauftauf/rollout_boundary.py",
+    "src/mishe_tauftauf/runtime_cli.py",
     "src/mishe_tauftauf/session_restarts.py",
     "src/mishe_tauftauf/session_runner.py",
     "src/mishe_tauftauf/session_watch.py",
