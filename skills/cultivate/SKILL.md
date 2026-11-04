@@ -1,6 +1,6 @@
 ---
 name: cultivate-mishe-tauftauf
-description: Use in a clone of mishe-tauftauf when someone names real work they want a durable observation → disposable Mind → checked result loop to do. Cultivate only the needed workspace and windows; do not plant the separate mortal baby-mesh demo.
+description: Use in a clone of mishe-tauftauf when someone names real work they want a durable observation → woken Mind → checked result loop to do. Cultivate only the needed workspace, signal and role; do not plant the separate mortal baby-mesh demo.
 ---
 
 # Cultivate one responsibility
@@ -22,45 +22,45 @@ Compare three options before building: a deterministic script with no Mind, a bo
 
 ## 2. Plant just this observation
 
-Use the cloned core's stdlib entry point; no `mesh-*`, LTE card, Ollama, credential path, cron, or package-manager action is required. Let `CORE` be this clone and `WORKSPACE` the named, preferably isolated repository. A site under the workspace makes the core's launcher-supplied `MISHE_TAUFTAUF_WORKSPACE` equal that workspace; keep it out of commits. Choose a new slug from the real responsibility (lowercase letters, digits, hyphens), not a global fixed roster.
+The runtime has no third-party dependencies and needs no install: `./bin/mishe` runs from the clone. Let `CORE` be this clone and `WORKSPACE` the named, preferably isolated repository; a site under the workspace stays out of commits. Choose a new slug from the real responsibility.
 
 ```sh
 CORE="$(pwd)"                         # run in the mishe-tauftauf clone
 WORKSPACE=/absolute/path/to/authorized/workspace
 SITE="$WORKSPACE/.mishe-tauftauf"
-PYTHONPATH="$CORE/src" python3 -m mishe_tauftauf --home "$SITE" init
+export MISHE_SEED_HOME="$SITE"
+"$CORE/bin/mishe" init
+"$CORE/bin/mishe" hold on --reason "cultivating"
 ```
 
-Create **one** executable `$SITE/top-pains/<slug>` that reads the *actual* source and reports the desired state, evidence identity/freshness and a specific RED or UNKNOWN. No hard-coded success or default 0 on failed reads. Create `$SITE/projectors/<slug>` only after inspecting the pane's private fields: its output is bounded, redacted public feed text; the full live pane can still reach the selected judge transiently. If no safe projection exists, do not connect a hosted judge. An optional filter may quiet identical observations but may never hide RED/UNKNOWN. Test both a real failure and a real success on the same check; a `--test` of the hook alone is not a real-world artifact.
+The observation is a **producer**: a command that reads the *actual* source and exits 0 for the desired state, 2 for a specific RED, and anything else when it cannot tell (a crash or timeout leaves the signal to age to UNKNOWN; there is no hard-coded success). Declare it in `$SITE/producers.json` with its `every`, `max_age` and the one role that resolves it, then register the role by writing `$SITE/charters/<slug>.md` (the real responsibility, its limits and the frozen contract's path).
 
 Record the failing-before state **before** asking a Mind to act:
 
 ```sh
-PYTHONPATH="$CORE/src" python3 -m mishe_tauftauf --home "$SITE" check <slug> -- <real-check-command> [args...]
-PYTHONPATH="$CORE/src" python3 -m mishe_tauftauf --home "$SITE" pain render <slug>
+"$CORE/bin/mishe" signal run <slug> --timeout 60 -- <real-check-command> [args...]
+"$CORE/bin/mishe" signal show <slug>
 ```
 
-
-Select an explicit judged route before live dispatch: use a probed `--judge /absolute/path/to/executable` or a working local Laya installation, exercise positive and negative startup controls, and inspect their receipts. With neither available the core returns UNKNOWN judgments; that is not a calibrated eligibility decision. A deterministic judge is appropriate only where its predicates actually decide the named state; otherwise supply a real semantic adapter with an approved data boundary. Use the same judge on subsequent runs; changing the adapter changes the decision contract.
-
-`check` returns the observation path, not the probed command's status; inspect that file's `exit`, stdout and stderr. If the real state is already satisfied, do not fabricate a repair. If no tmux exists, use headless mode; do not install tmux silently. When visual windows are wanted, `tmux start --session <unique-owned-name>` creates only windows for installed Top Pains plus the core's observability pane and refuses an unowned session. Never attach to or kill a pre-existing shared tmux session.
+If the real state is already satisfied, do not fabricate a repair. The engine is per role in `$SITE/engines/<slug>.json` (`claude` or `omp`); probe the harness CLI you will use and bound its tools in that file. An engine with a shell can write outside the workspace.
 
 ## 3. One Mind, one result
-Create executable `$SITE/minds/<slug>` for the **probed** harness CLI. It consumes invocation context on stdin, operates only under the frozen contract, and exits. `env PYTHONPATH=src python3 -m mishe_tauftauf.omp_mind` is a starting adapter for an installed OMP, not a sandbox; invoke it from the executable mind wrapper, probe `omp --help` and bound its tools/cwd/time for this deployment. Other engines need their own checked one-shot invocation rather than guessed flags. The Mind must read its current Top Pain and mission, write a checked artifact, and before exit call `mishe-tauftauf handoff <slug> <result-file>` with the launcher-provided invocation environment. A process exit, diff, or feed receipt does not satisfy the request.
 
-First run once, not as a daemon:
+Run once by hand, not as a daemon, with the hold released only for this role:
 
 ```sh
-PYTHONPATH="$CORE/src" python3 -m mishe_tauftauf --home "$SITE" run --once --slug <slug> --launcher headless --judge <checked-judge-path>
-PYTHONPATH="$CORE/src" python3 -m mishe_tauftauf --home "$SITE" pain render <slug>
-PYTHONPATH="$CORE/src" python3 -m mishe_tauftauf --home "$SITE" doctor
+"$CORE/bin/mishe" inbox touch <slug>
+"$CORE/bin/mishe" hold off
+"$CORE/bin/mishe" wake <slug> --repo "$WORKSPACE"
+"$CORE/bin/mishe" signal show <slug>
 ```
 
-Re-run the *same consumer check* against the actual output, inspect the artifact and its exact source identity, then compare it with the user's acceptance. If no useful result, say what failed rather than enlarging authority. A local patch is not a landed or published change: the domain's single writer reviews and lands it, and must reconcile commit/effect and canonical task state before retry after a crash. A protected external effect requires point-of-risk confirmation from the human even when a model requested it. Never let the Mind complete somebody else's task or publish on its own.
+A wake that ends without `mishe yield` is an unknown effect; read `$SITE/wakes/` and `$SITE/dispatch/<slug>.json` before another attempt. Re-run the *same consumer check* against the actual output, inspect the artifact and its exact source identity, then compare it with the user's acceptance. If there is no useful result, say what failed rather than enlarging authority. A local patch is not a landed or published change: the domain's single writer reviews and lands it, and reconciles commit and effect before any retry after a crash.
 
-Cold-start another coordinator process from the same site and handoff. Check unchanged input produces no redundant Mind/effect, changed input gets its own identity, and missing/torn evidence remains UNKNOWN. Test a crash between the effect and its receipt *in the relevant domain sink* before claiming exactly-once effects. A completed Mind with a future prediction must not self-wake just because it wrote a handoff; an overdue unresolved prediction must still wake. Count model invocations, elapsed time, missed work and duplicate effects, not only green tests.
+Check that unchanged input wakes nothing (a refreshed `.seen` is not an edge), that changed input gets its own wake, and that a missing or torn reading stays UNKNOWN. Test a crash between the effect and its receipt *in the relevant domain sink* before claiming exactly-once effects.
 
 ## 4. Keep, grow, or stop
-Show the real result where the person looks, with a live Top Pain. Ask whether it was useful or wrong; record their response verbatim, or honestly say feedback is pending. Only after a successful bounded loop and a decision to keep it, use a supervised `run --follow` at a cadence justified by the observation's age and one owner per effect. Prove the supervisor really runs and the pane ages into UNKNOWN when its source stops. No blind cron line. To add another named repository, freeze a new scope, slug, observation, owner and authorization; do not silently broaden the first Mind's filesystem or turn the public core into LTE's task ledger.
 
-To stop, turn off **only** this site's owned coordinator and, if used, `tmux stop --session <unique-owned-name>`; that command refuses an unowned session. Preserve source code and evidence. Removing the site or undoing a landed effect is a separate, scoped action with its own custody/rollback check; there is deliberately no `mishe burn` promise here. Report the checked artifact, observed pane, model calls/cost, unresolved obligations and the exact next check. The first useful artifact is the work itself, never this skill or a setup receipt.
+Show the real result where the person looks and ask whether it was useful or wrong; record their response verbatim, or say feedback is pending. Only after a successful bounded loop and a decision to keep it, `mishe sync --repo "$WORKSPACE" --pythonpath "$CORE/src"` installs the path and timer units, at a cadence justified by the observation's age and with one owner per effect. Prove they really run: stop the producer and watch the signal age to UNKNOWN and wake its resolver.
+
+To stop, `mishe hold on` and, if installed, `mishe sync --uninstall`; the latter removes only generated units. Preserve source code and evidence. Removing the site or undoing a landed effect is a separate, scoped action with its own custody and rollback check. Report the checked artifact, the signal states, the model and engine used, the cost recorded in `$SITE/wakes/`, and anything unverified.
