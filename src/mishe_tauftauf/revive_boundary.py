@@ -98,9 +98,11 @@ def pinned_path(unit_text):
 
 
 def unit_kind(name: str, description: str = '') -> str:
-    """Which part of the plant a systemd unit is: wake-path, timer, service, plant-scope or other."""
+    """Which part of the plant a systemd unit is: wake-path, wake-service, timer, service, plant-scope or other."""
     if name.startswith('mishe-wake-') and name.endswith('.path'):
         return 'wake-path'
+    if name.startswith('mishe-wake@') and name.endswith('.service'):
+        return 'wake-service'
     if name.startswith('mishe-') and name.endswith('.timer'):
         return 'timer'
     if name.startswith('mishe-') and name.endswith('.service'):

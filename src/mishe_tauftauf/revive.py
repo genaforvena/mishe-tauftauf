@@ -35,6 +35,10 @@ COOLING_SECONDS = 600
 SAME_REASON_SECONDS = 3 * 3600
 DAY = 24 * 3600
 MAX_RESTORES_PER_DAY = 24
+# Failed units revive may reset: those that stop the plant running at all. A producer or detector that fails on
+# purpose (its RED exit code is a systemd failure) is evidence and is throttled by the host start limit; resetting
+# it would erase that evidence every few minutes and its rate counter with it.
+RESETTABLE = ('wake-path', 'wake-service', 'timer', 'plant-scope')
 HEALTHY_STATES = ('NORMAL', 'READY')   # READY is the armed state of a guard configured without life support
 
 
@@ -138,7 +142,7 @@ def probe(h: Host) -> Probe:
         kind = b.unit_kind(name, description)
         if kind in ('wake-path', 'timer') and active != 'active':
             p.needs_start.append(name)
-        if active == 'failed' and kind != 'other':
+        if active == 'failed' and kind in RESETTABLE:
             p.failed.append((name, kind))
     _, sessions, _ = h.run(['tmux', '-S', h.inner_socket, 'list-sessions', '-F', '#{session_name}'])
     p.views = bool(b.session_names(sessions))

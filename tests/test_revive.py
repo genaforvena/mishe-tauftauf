@@ -12,6 +12,7 @@ READY = {'stability_satisfied': True, 'continuous_healthy_seconds': 500.0, 'deta
 UNITS = ('mishe-wake-health.path loaded inactive dead Mishe wake triggers\n'
          'mishe-wake-genome.path loaded active waiting Mishe wake triggers\n'
          'mishe-producer-dispatch.service loaded failed failed Mishe producer dispatch\n'
+         'mishe-wake@genome.service loaded failed failed Mishe wake genome\n'
          'run-r1.scope loaded failed failed /x/python -m mishe_tauftauf.plant_boot inner\n')
 
 
@@ -81,13 +82,14 @@ def test_a_trip_is_restored_then_the_plant_is_revived(tmp_path):
     assert r.code == 0 and 'latch cleared' in ' '.join(r.lines)
     assert h.verb == 'rearm' and not any('--evidence' in c for c in h.calls)   # no life support configured
     assert ['systemctl', '--user', 'start', 'mishe-wake-health.path'] in h.calls
-    assert ['systemctl', '--user', 'reset-failed', 'mishe-producer-dispatch.service'] in h.calls
+    assert ['systemctl', '--user', 'reset-failed', 'mishe-wake@genome.service'] in h.calls
+    assert ['systemctl', '--user', 'reset-failed', 'mishe-producer-dispatch.service'] not in h.calls   # detector failures stay
     assert ['systemctl', '--user', 'restart', 'plant-mishe-ui.service'] in h.calls
     evidence = next(v for k, v in h.files.items() if k.endswith('-revive.json'))
     doc = json.loads(evidence)
     assert doc['clears'] == {'tripped': LATCH} and doc['verification'] and 'tmux scrollback' in evidence
     log = h.files[str(h.home / 'operator/guard-actions.jsonl')]
-    assert 'revive-rearm' in log and 'revive-units' in log and 'mishe-producer-dispatch.service' in log
+    assert 'revive-rearm' in log and 'revive-units' in log and 'mishe-wake@genome.service' in log
 
 
 @pytest.mark.parametrize('kw, why', [
@@ -166,4 +168,5 @@ def test_boundary_decoders_never_trust_malformed_input():
     assert b.restore_archive('tripped-1500000000000000000.json', '{"reason": "x"}') == (1.5e9, 'x')
     assert b.restore_archive('tripped-latest.json', '{"reason": "x"}') is None
     assert b.unit_kind('mishe-wake-docs.path') == 'wake-path' and b.unit_kind('run-x.scope') == 'other'
+    assert b.unit_kind('mishe-wake@docs.service') == 'wake-service' and b.unit_kind('mishe-producer-x.service') == 'service'
     assert b.unit_rows('a.service loaded failed failed Some thing\nshort\n') == [('a.service', 'failed', 'failed', 'Some thing')]
