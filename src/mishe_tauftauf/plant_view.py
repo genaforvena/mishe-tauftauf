@@ -45,10 +45,11 @@ def _finite(value) -> bool:
     return type(value) in (int, float) and math.isfinite(value)
 
 
-def _span(seconds: float) -> str:
+def _span(seconds: float, *, coarse: bool = False) -> str:
+    """A duration. `coarse` is for ages shown on a refreshing pane: under a minute it is constant text."""
     s = int(abs(seconds))
     if s < 60:
-        return f'{s} s'
+        return 'under a minute' if coarse else f'{s} s'
     if s < 3600:
         return f'{s // 60} min'
     if s < 86400:
@@ -63,9 +64,7 @@ def _stamp(epoch, now: float) -> str:
     day = time.gmtime(epoch)[:3] != time.gmtime(now)[:3]
     clock = time.strftime('%Y-%m-%d %H:%MZ' if day else '%H:%MZ', time.gmtime(epoch))
     delta = epoch - now
-    if abs(delta) < 5:
-        return f'{clock} (now)'
-    return f'{clock} (in {_span(delta)})' if delta > 0 else f'{clock} ({_span(delta)} ago)'
+    return f'{clock} (in {_span(delta, coarse=True)})' if delta > 0 else f'{clock} ({_span(delta, coarse=True)} ago)'
 
 
 def _clock(epoch) -> str:
@@ -212,7 +211,7 @@ def _signal_lines(home, role, now) -> list[str]:
             continue
         sig = signal_store.read(home, name, now=now)
         state = str(sig.value) if sig.state == 'OK' else str(sig.state)
-        age = f' ({_span(now - sig.observed_at)} ago)' if _finite(sig.observed_at) and state != 'GREEN' else ''
+        age = f' ({_span(now - sig.observed_at, coarse=True)} ago)' if _finite(sig.observed_at) and state != 'GREEN' else ''
         groups.setdefault(safe(state), []).append(safe(name) + age)
     if not groups:
         return ['Signals: none subscribed']
@@ -254,7 +253,7 @@ def _mail_lines(home, role, cursor_start):
 
 def _header(home, role, now, configured, facts=None):
     held = (home / 'hold').exists()
-    title = f'{role} — {_model_text(facts, configured)} — view at {_clock(now)}'
+    title = f'{role} — {_model_text(facts, configured)} — view at {_clock(now)[:5]}Z'
     state = ('HELD — autonomous work stopped' if held
              else 'Not held (a hold stops new wakes; its absence does not show work is running)')
     return [title, state]
@@ -399,7 +398,9 @@ def main():
         except (OSError, ValueError, TypeError, KeyError) as exc:
             text = f'View UNKNOWN: {safe(exc)}'
         if text != previous:
-            print(('\033[H\033[2J' if args.follow else '') + text, flush=True)
+            # \033[3J also drops tmux scrollback: without it every redraw adds a frame to history
+            # and the pane's tmux server grows until its cgroup kills it (OOM at 19:09Z 2026-11-04).
+            print(('\033[H\033[2J\033[3J' if args.follow else '') + text, flush=True)
             previous = text
         if not args.follow:
             break

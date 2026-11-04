@@ -321,3 +321,25 @@ def test_stream_tool_arguments_read_as_words_not_json(tmp_path):
     out.write_text(json.dumps({'type': 'tool_execution_start', 'toolName': 'read', 'args': {'path': '/a/b.md', 'limit': 5}}) + '\n')
     text = output_text(out)
     assert '[tool read] path: /a/b.md; limit: 5' in text and '{' not in text
+
+
+def test_unchanged_panes_print_identical_text_between_refreshes(tmp_path):
+    # An identical text is not redrawn; a text that changed every 5 s once filled tmux scrollback until OOM.
+    settled_wake(tmp_path)
+    signal_store.register(tmp_path, 'failed-a', max_age=900, subscribers=['genome'])
+    signal_store.observe(tmp_path, 'failed-a', 'RED', now=T0 + 18, source='fixture')
+    for output in (False, True):
+        first = view.render(tmp_path, 'genome', now=T0 + 40, output=output)
+        assert view.render(tmp_path, 'genome', now=T0 + 45, output=output) == first
+        assert view.render(tmp_path, 'genome', now=T0 + 59, output=output) == first
+
+
+def test_every_redraw_clears_tmux_scrollback(capsys, tmp_path, monkeypatch):
+    import sys
+    monkeypatch.setattr(sys, 'argv', ['plant_view', '--home', str(tmp_path), '--role', 'genome', '--follow'])
+    def stop(_):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(view.time, 'sleep', stop)
+    with pytest.raises(KeyboardInterrupt):
+        view.main()
+    assert capsys.readouterr().out.startswith('\033[H\033[2J\033[3J')
