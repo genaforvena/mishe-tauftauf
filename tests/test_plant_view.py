@@ -580,8 +580,10 @@ def test_a_mind_quoting_json_in_its_answer_is_prose_but_the_chrome_stays_strict(
     assert len(flagged) == 1 and 'line 4' in flagged[0]                      # the same snippet outside the answer
     structure = '══ model x ══\nline one\n{\n  "a": 1\n}\n'
     assert len(machine_syntax(structure)) >= 2                                # structure lines are never prose
-    log = '══ model x ══\nprose with epoch 1793818396 inside\nMade no commits\n'
-    assert len(machine_syntax(log)) == 1
+    prose = '══ model x ══\nrun .venv/bin/python at 1793818396 with {"k": 1} inline\nMade no commits\n'
+    assert machine_syntax(prose) == []                                   # a mind may cite commands, times, snippets
+    chrome_epoch = '══ model x ══\nanswer\nMade no commits\nsampled 1793818396 via .venv/bin/python\n'
+    assert len(machine_syntax(chrome_epoch)) == 1                         # the renderer's own lines may not
 
 
 def test_file_stem_is_the_dispatch_key_produced_by_the_real_generator(tmp_path):
@@ -605,3 +607,20 @@ def test_file_stem_is_the_dispatch_key_produced_by_the_real_generator(tmp_path):
     write_json(yielding.receipt_path(tmp_path, key), {'role': 'genome', 'key': key, 'result': 'changed', 'continue': False, 'settled_at': T0 + 30})
     dispatch_state(tmp_path, key, 'completed')
     assert 'the settled answer' in '\n'.join(view.log_step(tmp_path, 'genome', T0 + 40))
+
+
+def test_wall_excerpt_and_mail_are_the_minds_prose_but_signal_lines_are_chrome():
+    # Found live: the Docs wall cites `.venv/bin/python` in a command; that is prose, not a rendering defect.
+    top = '\n'.join([
+        'docs — model claude-haiku-5-5 (configured) — view at 22:46Z',
+        'Wall (first 5 of 12 lines; the full wall is canonical):',
+        '- run `.venv/bin/python -m x` at 1793818396 and read {"a": 1}',
+        'Signals RED (1): failed-x (3 min ago)',
+        'Next due: 23:00Z (in 14 min) — note',
+        'Unread mail for docs: 1',
+        '#296500 see .venv/bin/python and 1793818396'])
+    assert machine_syntax(top) == []
+    leaked = top.replace('Signals RED (1): failed-x (3 min ago)', 'Signals RED (1): source=run:/x/.venv/bin/python observed=1793818396')
+    assert len(machine_syntax(leaked)) == 1                               # chrome between the prose blocks is still strict
+    dump = top.replace('- run `.venv/bin/python -m x`', '{\n  "a": 1\n}')
+    assert len(machine_syntax(dump)) >= 1                                 # a dumped record is flagged even inside the wall
