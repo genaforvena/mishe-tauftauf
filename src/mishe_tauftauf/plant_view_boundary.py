@@ -20,6 +20,71 @@ def brief(text: object, limit: int = 300) -> str:
     return value[:limit] + (' … [excerpt]' if len(value) > limit else '')
 
 
+def _content_text(value) -> str:
+    if not isinstance(value, dict) or not isinstance(value.get('content'), list):
+        return ''
+    return '\n'.join(part['text'] for part in value['content']
+                     if isinstance(part, dict) and part.get('type') == 'text'
+                     and isinstance(part.get('text'), str))
+
+
+def stream_text(text: str) -> str:
+    """Decode OMP JSON-lines at the literal output boundary, never as actions."""
+    out, pending = [], ''
+    lifecycle = {'session', 'agent_start', 'agent_end', 'turn_start', 'turn_end',
+                 'message_start', 'tool_stream_update'}
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+            if not isinstance(event, dict) or not isinstance(event.get('type'), str):
+                raise ValueError('event envelope missing')
+            kind = event['type']
+            if kind == 'message_update':
+                delta = event.get('assistantMessageEvent')
+                if not isinstance(delta, dict):
+                    raise ValueError('assistant event missing')
+                if delta.get('type') == 'text_delta':
+                    if not isinstance(delta.get('delta'), str):
+                        raise ValueError('text delta missing')
+                    pending += delta['delta']
+                elif delta.get('type') == 'error':
+                    out.append('[assistant error] ' + str(delta.get('reason', 'unknown')))
+                # Thinking and incomplete tool arguments are not display text.
+                continue
+            if kind == 'message_end':
+                message = event.get('message')
+                if not isinstance(message, dict):
+                    raise ValueError('message missing')
+                if message.get('role') == 'assistant':
+                    completed = _content_text(message)
+                    if completed or pending:
+                        out.append('[assistant] ' + (completed or pending))
+                    pending = ''
+                continue
+            if pending:
+                out.append('[assistant] ' + pending)
+                pending = ''
+            if kind == 'tool_execution_start':
+                out.append('[tool ' + str(event.get('toolName', '?')) + '] '
+                           + json.dumps(event.get('args'), ensure_ascii=False))
+            elif kind in {'tool_execution_update', 'tool_execution_end'}:
+                key = 'partialResult' if kind == 'tool_execution_update' else 'result'
+                content = _content_text(event.get(key))
+                label = 'tool error' if event.get('isError') is True else 'tool output'
+                out.append('[' + label + '] ' + (content or '[non-text result; see raw record]'))
+            elif kind in lifecycle:
+                out.append('[' + kind + ']')
+            else:
+                out.append('UNKNOWN event ' + kind + '; raw: ' + line)
+        except (ValueError, TypeError) as exc:
+            out.append('UNKNOWN stream record: ' + str(exc) + '; raw: ' + line)
+    if pending:
+        out.append('[assistant] ' + pending)
+    return '\n'.join(out) or '[waiting for stream events]'
+
+
 def output_text(path: Path, limit: int = 16000) -> str:
     with path.open('rb') as handle:
         size = path.stat().st_size
@@ -27,7 +92,9 @@ def output_text(path: Path, limit: int = 16000) -> str:
         data = handle.read(limit)
     text = data.decode('utf-8', 'replace')
     prefix = f'[retained tail; {size} bytes total]\n' if size > limit else ''
-    if path.suffix == '.json':
+    if path.suffix == '.jsonl':
+        text = stream_text(text)
+    elif path.suffix == '.json':
         try:
             value = json.loads(text)
             if not isinstance(value, (dict, list)):

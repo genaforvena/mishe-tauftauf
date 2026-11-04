@@ -8,7 +8,7 @@ from . import engine_process
 
 def command(model: str | None, cwd: Path, prompt_file: Path) -> list[str]:
     cmd = ["omp", "--print", "--no-session", "--no-extensions", "--approval-mode", "yolo",
-           "--cwd", str(cwd)]
+           "--mode", "json", "--cwd", str(cwd)]
     if model:
         cmd += ["--model", model]
     return cmd + [f"@{prompt_file}"]
@@ -24,4 +24,4 @@ class OmpEngine:
         prompt_file = Path(prompt_file)
         return engine_process.run_bounded(
             command(self.model, Path(cwd), prompt_file), env=dict(env, **self.extra_env),
-            cwd=Path(cwd), timeout=timeout, stdout_to=prompt_file.with_suffix(".out.txt"), on_start=on_start)
+            cwd=Path(cwd), timeout=timeout, stdout_to=prompt_file.with_suffix(".out.jsonl"), on_start=on_start)

@@ -78,3 +78,39 @@ def test_malformed_yield_receipt_is_unknown_not_settled(tmp_path):
     write_json(tmp_path / 'wakes/wake-genome-1.yield.json', 'not a receipt')
     text = view.render(tmp_path, 'genome', now=100, output=True)
     assert 'YIELDED' not in text and 'Yield UNKNOWN' in text
+
+
+def test_bottom_streams_assistant_and_tools_before_engine_exits(tmp_path):
+    from mishe_tauftauf.plant_view_boundary import output_text
+    out = tmp_path / "wake.prompt.out.jsonl"
+    events = [
+        {"type": "message_update", "assistantMessageEvent": {"type": "thinking_delta", "delta": "private scratch"}},
+        {"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "delta": "Checking readings"}},
+        {"type": "tool_execution_start", "toolName": "bash", "args": {"command": "mishe signal show ci"}},
+        {"type": "tool_execution_update", "toolName": "bash", "partialResult": {"content": [{"type": "text", "text": "GREEN"}]}},
+    ]
+    out.write_text('\n'.join(json.dumps(e) for e in events)+'\n')
+    text = output_text(out)
+    assert "Checking readings" in text and "mishe signal show ci" in text and "GREEN" in text
+    assert "private scratch" not in text
+    assert "assistantMessageEvent" not in text
+    with out.open('a') as handle:
+        handle.write('{incomplete')
+    assert "UNKNOWN" in output_text(out) and '{incomplete' in output_text(out)
+
+
+def test_stream_finished_message_and_unknown_event_are_visible(tmp_path):
+    from mishe_tauftauf.plant_view_boundary import output_text
+    out = tmp_path / "out.jsonl"
+    out.write_text(json.dumps({"type":"message_end", "message":{"role":"assistant", "content":[{"type":"text","text":"Done"}]}})+'\n'+json.dumps({"type":"future_event"})+'\n')
+    text = output_text(out)
+    assert "Done" in text and "UNKNOWN" in text and "future_event" in text
+
+
+def test_stream_tail_keeps_new_events_after_large_output(tmp_path):
+    from mishe_tauftauf.plant_view_boundary import output_text
+    out = tmp_path / "out.jsonl"
+    out.write_text(json.dumps({"type":"tool_execution_end", "result":{"content":[{"type":"text","text":"EARLIEST"+'x'*20000}]}})+'\n'+json.dumps({"type":"message_update", "assistantMessageEvent":{"type":"text_delta","delta":"LATEST LIVE OUTPUT"}})+'\n')
+    text = output_text(out)
+    assert "LATEST LIVE OUTPUT" in text and "EARLIEST" not in text
+    assert "retained tail" in text and "UNKNOWN" in text

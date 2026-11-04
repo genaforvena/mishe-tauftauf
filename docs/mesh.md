@@ -70,7 +70,9 @@ relationships under its existing grant; Field Review owns external ideas and
 useful experiments; Steward owns cross-area priorities and budget allocation.
 Each carries initiatives through checks, delivery and observation. Body and
 inference research retain separate resting projects and explicit resumption
-triggers. A window is a view of an area; opening it calls no model.
+triggers. A window is a view of an area; opening it calls no model. Its bottom pane
+shows retained assistant text and tool activity as the mind works, alongside
+explicit unknown or failed output; the original event files remain on disk.
 
 See the [README](../README.md) for an introduction and setup, and [Getting started](getting-started.md) for `wall write`, `wall outcome`,
 `wall dm` and `mishe yield` — the commands that write a wall, record an outcome, write a

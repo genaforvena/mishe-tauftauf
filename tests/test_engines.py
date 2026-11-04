@@ -66,3 +66,15 @@ def test_claude_tools_can_be_narrowed_per_role(tmp_path):
     (tmp_path / "engines").mkdir()
     (tmp_path / "engines" / "p.json").write_text('{"engine":"claude","tools":["Read"]}')
     assert engines.for_role(tmp_path, "p").tools == ("Read",)
+
+
+def test_omp_streams_events_before_completion(tmp_path, monkeypatch):
+    seen = {}
+    def run(command, **kw):
+        seen.update(command=command, **kw)
+        return 0
+    monkeypatch.setattr(proc, "run_bounded", run)
+    prompt = tmp_path / "wake.prompt.md"
+    assert engine_omp.OmpEngine("m").run(prompt, env={}, cwd=tmp_path, timeout=10) == 0
+    assert seen["command"][seen["command"].index("--mode") + 1] == "json"
+    assert seen["stdout_to"] == tmp_path / "wake.prompt.out.jsonl"
