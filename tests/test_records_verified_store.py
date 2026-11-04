@@ -128,6 +128,26 @@ def test_malformed_cache_row_reverifies_canonical_record(tmp_path, column, value
     Feed._verify_records(entries, sink)
     assert sink[entries[0].sequence]["i"] == 0
 
+def test_non_integer_sqlite_identity_is_reverified(tmp_path, monkeypatch):
+    entries = _seed(tmp_path, 1).entries()
+    store = records.verified_store(tmp_path)
+    connection = store._connection
+    connection.execute("ALTER TABLE verified RENAME TO verified_old")
+    connection.execute(
+        "CREATE TABLE verified (digest, ino, size, ctime_ns, mtime_ns, "
+        "verified_at, payload)")
+    connection.execute(
+        "INSERT INTO verified SELECT digest, CAST(ino AS REAL), size, ctime_ns, "
+        "mtime_ns, verified_at, payload FROM verified_old")
+    connection.execute("DROP TABLE verified_old")
+
+    verified = []
+    original = records.envelope
+    monkeypatch.setattr(records, "envelope",
+                        lambda entry: verified.append(entry) or original(entry))
+    Feed._verify_records(entries)
+
+    assert verified == entries
 
 def test_stale_entry_past_max_age_is_reverified(tmp_path, monkeypatch):
     entries = _seed(tmp_path).entries()
