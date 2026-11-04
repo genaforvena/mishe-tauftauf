@@ -128,6 +128,34 @@ def test_one_wake_at_a_time_and_next_owed_role_starts_on_exit(home):
     assert result.outcome == "completed" and started == ["docs"]
 
 
+def test_wake_waits_for_a_live_wake_to_release_the_lock(home):
+    # A path trigger that lands during another wake must wait its turn, not exit 0 as busy.
+    import fcntl, threading, time
+    owed.touch_inbox(home, "genome")
+    path = DispatchStore(home / "dispatch").lock_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    held, release = threading.Event(), threading.Event()
+    def holder():
+        with path.open("a+") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            held.set()
+            release.wait(5)
+    thread = threading.Thread(target=holder)
+    thread.start()
+    held.wait(5)
+    threading.Timer(0.3, release.set).start()
+    started = time.monotonic()
+    result = go(home, "genome", FakeEngine(do_yield), lock_wait=5.0)
+    thread.join(5)
+    assert result.outcome == "completed"
+    assert time.monotonic() - started >= 0.2
+    # The default (no wait) still refuses at once while the lock is held.
+    held.clear(); release.clear()
+    thread = threading.Thread(target=holder); thread.start(); held.wait(5)
+    assert go(home, "genome", FakeEngine(do_yield)).outcome == "busy"
+    release.set(); thread.join(5)
+
+
 def test_hold_file_stops_every_wake(home):
     owed.touch_inbox(home, "genome")
     (home / "hold").write_text("held by owner")

@@ -177,7 +177,7 @@ def run(args) -> int:
         return run_units(args, home, now)
     role = args.role                                   # wake
     result = wake.run_wake(home, role, roles=declared_roles(home), engine=engines.for_role(home, role),
-                           now=now, timeout=args.timeout, repo=args.repo)
+                           now=now, timeout=args.timeout, repo=args.repo, lock_wait=args.timeout)
     print(f"wake {role}: {result.outcome}" + (f" ({result.detail})" if result.detail else ""))
     return EXIT.get(result.outcome, 0)
 

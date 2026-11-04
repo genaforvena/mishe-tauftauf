@@ -107,14 +107,21 @@ class _Worker:
 
 
 def run_wake(home, role: str, *, roles, engine, now: float, mail_reader=default_mail_reader,
-             starter=systemd_starter, repo: Path | None = None, timeout: float = DEFAULT_TIMEOUT) -> WakeResult:
+             starter=systemd_starter, repo: Path | None = None, timeout: float = DEFAULT_TIMEOUT,
+             lock_wait: float = 0.0) -> WakeResult:
+    """``lock_wait`` bounds how long this wake waits for a live wake to release the lock.
+
+    The default refuses at once (``busy``). The units pass the wake timeout so a path
+    trigger that lands during another wake waits for it and then gets its own turn,
+    instead of exiting 0 with the owed wake dropped.
+    """
     home = Path(home)
     if (home / "hold").exists():
         return WakeResult("held", "hold file present")
     store = DispatchStore(home / "dispatch")
     supervisor = Supervisor(store=store, registry=StaticRoleRegistry(roles),
                             worker=_Worker(home, engine, now, mail_reader, repo, timeout),
-                            lock_timeout=0.0)
+                            lock_timeout=lock_wait)
     try:
         with supervisor.exclusive():      # a live wake holds this; its open record is not stale
             pass
