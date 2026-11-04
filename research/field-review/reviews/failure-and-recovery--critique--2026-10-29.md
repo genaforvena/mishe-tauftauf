@@ -2,7 +2,7 @@
 field: failure-and-recovery
 angle: critique
 date: 2026-10-29
-status: applied
+status: discarded
 owner: health
 target: src/mishe_tauftauf/engine_rotation.py
 ---
@@ -57,29 +57,6 @@ Three ideas transfer directly, each with a line number in this repository where 
 
 **Limits the proposal keeps from the source.** The paper's failures are long-running distributed systems; this plant's wake is single-node with cross-site docs publishing and host cgroups — over-catch here is less likely to bring down a cluster but more likely to silently stall a rotation (`is_idle=False` then `queued`, :282, hides the probe's exception kind). The study's sampling over-represents mishandled errors by design; most handlers in the tree are correct, and the 9-system yield (121 bugs / 36k blocks = 0.3%) cautions against reading an empty-handler count as a failure count. The 100%-statement-coverage detector for the 23% system-specific slice requires a test harness, not just a linter — this review proposes only the shallow lint the paper's Table 9 shows already pays for itself, plus naming the exclusion set so the remaining handlers are reviewable.
 
-## Application
+## Discard
 
-target: src/mishe_tauftauf/engine_rotation.py
-
-**Harden the launcher rotation's error handlers and ship the 3-rule handler check that lets the failure-and-recovery field observe itself — additive, no new branch, checked by `python tools/check_parsing.py` (engine_rotation is not a parsing-boundary file).**
-
-1. **Replace the 10 empty handlers in `engine_rotation.py` with the plant's own evidence-preserving idiom.** Each site keeps its control flow but stops swallowing the signal:
-   - `finally: except Exception: pass` on `fcntl.flock UN` / `handle.close` (:90, :94) narrows to `except OSError: pass` (the only expected exception from `flock`/`close`), or logs at `debug` if wider.
-   - `except Exception: return None` in `_store_for_alias` (:151) becomes `except (OSError, ValueError, UnicodeError) as exc: return None` *plus* a `debug` log carrying `exc` — or, where the caller can carry it, return `(None, f'reason: {exc}')` so `observe()` can surface UNKNOWN rather than empty.
-   - Probe `except Exception: is_idle=False` (:282) and `except Exception: pass` (:287) narrow to the probe's documented exceptions (`(OSError, ValueError, TypeError, ...)` as `observations.py` does) and publish the reason on the queued/unknown path.
-   - Journal capture (:393, :395), hint decode (:450), launcher mode (:516) similarly narrow and preserve `exc` in a `reason` string or structured field, so `read_blocked_state`-style `(value, reason)` propagation applies.
-   No launcher semantics change on the happy path; on the error path the published state moves from "default value" to "named failure reason".
-
-2. **Add the Aspirator-like check beside `tools/check_parsing.py` (or as `checks/error-handling-hygiene.py`) — reuse the plant's own `ast` walk.** Flags: (a) `ExceptHandler` whose body is only `Pass` / `Expr(Str/log)` / `TODO`/`FIXME` comment; (b) `except BaseException` / `except Exception` (over-general) at non-`finally`-cleanup sites; (c) `TODO`/`FIXME` string in handler body. Default exclusions: `FileNotFound`, `NoSuchField`-like reflection, shutdown/close/cleanup paths, and `finally:` unlock/close — carried as a commented exclusion list so a future handler added with an empty body fails the check rather than silently joining the 0.3%. The check prints `path:line: rule — handler for X ignores explicit error` — the same evidence vocabulary `check_parsing.py` and `field_review.py check` use, so it is routable without a new verdict word.
-
-3. **Keep Cassandra's propagation as the counter-example in the same commit message.** Note that `observations.py:61` + `initiative_watch.py:565` already propagates the message ("the published reading names what is wrong with the evidence"), so the rotation fix is converging the two best handlers onto one idiom, not inventing one.
-
-**Acceptance (deterministic, runnable from this repository):**
-
-- `python -m py_compile src/mishe_tauftauf/engine_rotation.py` and `python tools/check_parsing.py` still exit 0 — the change touches only handler bodies, adds no new parsing site, and carries no new `parsing-policy.json` debt.
-- `python -m ast` scan of `engine_rotation.py` reports zero `except: pass`-only handlers outside the `finally: unlock/close` exclusions; the new `checks/error-handling-hygiene.py` run over `src/mishe_tauftauf/` flags the 3 excluded `finally:` sites as excluded (not as violations) and flags a synthetic `except Exception: pass` fixture as a violation.
-- Existing `tests/test_engine_rotation.py` (if present) + `tests/test_native_recovery.py`-equivalent still pass — the probe still queues when not idle and still abandons only on `fresh_start`; the only observable difference is that a permission-denied `rotation.json` read raises `ValueError: rotation state unreadable: ...` with the cause chained, rather than being classified as valid state.
-
-**Ownership.** `src/mishe_tauftauf/engine_rotation.py` is the durable launcher/controller that `health` and `genome` both depend on for model-store rotation and that owns the file lock / generation CAS the mis-handled probe can silently stall. The field `failure-and-recovery`'s `plant_part` is `native recovery, health, supervisors, watchdogs` — `health` is the resolver for substrate `UNKNOWN` delivery gaps that an ignored probe error creates. The check lives beside `checks/native-recovery-optin.py`, which already gates a recovery wake.
-
-**One thing this review does not ask for.** It does not propose statement-coverage enforcement for the 23% system-specific bugs, symbolic-execution test synthesis, or inter-procedural analysis — the paper's three-pronged remedy, prongs 2–3. This review only lands prong 1: the shallow lint that found 121 bugs under FindBugs, and the 10-site handler hygiene fix the lint would have prevented.
+Discarded: the target `src/mishe_tauftauf/engine_rotation.py` was deleted on purpose in commit 1a7e8ccd ("pane-era, unreferenced", no importers), so the handler-hardening application has no file to land in; the synthetic-fixture check is a separate idea that would need its own review.
