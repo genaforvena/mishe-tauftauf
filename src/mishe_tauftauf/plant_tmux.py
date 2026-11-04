@@ -13,6 +13,27 @@ from pathlib import Path
 
 from .core.dispatch_record import valid_role
 
+# Format for `tmux list-windows -a` probes: session, window name, pane count.
+WINDOW_FORMAT = "#{session_name}\t#{window_name}\t#{window_panes}"
+
+
+def parse_list_windows(text: str) -> list[dict[str, object]] | None:
+    """Parse ``tmux list-windows -a -F WINDOW_FORMAT`` output.
+
+    Returns None when any line is malformed: a line that does not split into
+    exactly three fields, or a non-integer pane count, is evidence of a broken
+    probe, not a window to count.
+    """
+    windows: list[dict[str, object]] = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        fields = line.split("\t")
+        if len(fields) != 3 or not fields[2].isdigit():
+            return None
+        windows.append({"session": fields[0], "window": fields[1], "panes": int(fields[2])})
+    return windows
+
 
 def setup(socket: str, session: str, home: Path, roles, *, command=None, view_command=None):
     if not roles or any(not valid_role(r) or r == 'chat' for r in roles) or len(set(roles)) != len(roles):
