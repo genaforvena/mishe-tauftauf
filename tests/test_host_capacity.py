@@ -163,6 +163,21 @@ def test_guard_update_during_resource_sample_is_not_future(tmp_path, monkeypatch
     assert row["state"] == "NORMAL" and row["guard_fresh"]
 
 
+def test_guard_from_previous_sixty_second_tick_is_fresh(tmp_path, monkeypatch):
+    # The producer ticks every 60s; the guard it wrote last tick must count as fresh.
+    monkeypatch.setattr(host, "observe", lambda _: sample())
+    recovery.save(tmp_path / "host-capacity-guard.json", {"checked_at": 40, "state": "FRESH", "capacity": "NORMAL", "scope": "capacity producer freshness; not restoration"})
+    row = host.tick(tmp_path, {"slice_path": "unused", "optional_units": []}, now=100)
+    assert row["guard_fresh"] and row["state"] == "NORMAL"
+
+
+def test_guard_older_than_window_is_stale(tmp_path, monkeypatch):
+    monkeypatch.setattr(host, "observe", lambda _: sample())
+    recovery.save(tmp_path / "host-capacity-guard.json", {"checked_at": 100 - host.GUARD_MAX_AGE - 1, "state": "FRESH", "capacity": "NORMAL", "scope": "capacity producer freshness; not restoration"})
+    row = host.tick(tmp_path, {"slice_path": "unused", "optional_units": []}, now=100)
+    assert not row["guard_fresh"] and row["state"] == "UNKNOWN"
+
+
 def test_reconciliation_drops_managed_units_without_mutating_the_set_it_walks(tmp_path, monkeypatch):
     """The controller must survive a tick where the units it manages came back.
 

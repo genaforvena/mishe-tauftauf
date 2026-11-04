@@ -15,6 +15,12 @@ import time
 from . import recovery_io as recovery
 
 
+# The producer runs every 60s (OnUnitActiveSec=60) and writes the guard row at the end of
+# each tick, so the previous tick's guard is read ~60s old at the start of the next one.
+# A 20s window could never be satisfied; 90s tolerates one slightly late tick and no more.
+GUARD_MAX_AGE = 90
+
+
 def decide(previous, observation, *, now, stable_seconds=120):
     old = previous or {}
     row = {"version": 1, "checked_at": now, "max_age": 20,
@@ -242,7 +248,7 @@ def tick(root, config, *, now=None):
                                and guard_row.get("capacity") in {"NORMAL", "LIMITED", "CRITICAL", "UNKNOWN"}
                                and guard_row.get("scope") == "capacity producer freshness; not restoration"
                                and type(guard_row.get("checked_at")) in (int, float)
-                               and 0 <= observed_at - guard_row["checked_at"] <= 20)
+                               and 0 <= observed_at - guard_row["checked_at"] <= GUARD_MAX_AGE)
             except (ValueError, TypeError, KeyError):
                 guard_fresh = False
             row["guard_fresh"] = guard_fresh
