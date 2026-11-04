@@ -102,6 +102,10 @@ class Supervisor:
             finally:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
+    def exclusive(self):
+        """Hold the dispatch lock for a caller that runs its own reconcile wake."""
+        return self._claim()
+
     def dispatch(self, role: str, key: str, payload: dict | None = None, *,
                  discard_skipped_poll: bool = False) -> DispatchRecord:
         """Run one dispatch for ``role``.

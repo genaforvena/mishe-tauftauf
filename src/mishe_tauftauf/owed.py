@@ -26,16 +26,19 @@ class Snapshot:
     inbox_ns: int = 0
     signal_revs: dict = field(default_factory=dict)
     consumed: list = field(default_factory=list)
+    tape_seq: int = 0
 
     def to_json(self) -> dict:
         return {"reasons": self.reasons, "held": self.held, "inbox_ns": self.inbox_ns,
-                "signal_revs": self.signal_revs, "consumed": self.consumed}
+                "signal_revs": self.signal_revs, "consumed": self.consumed,
+                "tape_seq": self.tape_seq}
 
     @classmethod
     def from_json(cls, data: dict) -> "Snapshot":
         return cls(list(data.get("reasons", [])), list(data.get("held", [])),
                    int(data.get("inbox_ns", 0)), dict(data.get("signal_revs", {})),
-                   list(data.get("consumed", [])))
+                   list(data.get("consumed", [])),
+                   int(data.get("tape_seq", 0)))
 
 
 def inbox_path(home, role: str) -> Path:
@@ -69,6 +72,12 @@ def _cursor(home, role: str):
     if data is None:
         return {"inbox_ns": 0, "signals": {}}
     return data if isinstance(data, dict) else None
+
+
+def tape_cursor(home, role: str) -> int:
+    cursor = _cursor(home, role) or {}
+    value = cursor.get("tape_seq", 0)
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
 def _budget_green(home, now: float) -> bool:
@@ -113,6 +122,7 @@ def check(home, role: str, *, now: float) -> Snapshot:
 
 def advance(home, role: str, snap: Snapshot) -> None:
     """Move the cursor to what the wake saw and drop the intentions it consumed."""
-    write_json(cursor_path(home, role), {"inbox_ns": snap.inbox_ns, "signals": snap.signal_revs})
+    write_json(cursor_path(home, role), {"inbox_ns": snap.inbox_ns, "signals": snap.signal_revs,
+                                         "tape_seq": snap.tape_seq})
     for id in snap.consumed:
         intentions.remove(home, role, id)
