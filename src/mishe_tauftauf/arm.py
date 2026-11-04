@@ -17,6 +17,10 @@ TIMER_UNIT = "mishe-next-due"
 # Each arm gets its own transient unit name. The due handler is itself a running
 # unit; re-arming under the same name collides with it (systemd-run rc=1).
 TIMER_GLOB = f"{TIMER_UNIT}-*.timer"
+# An already-overdue target (after an outage, or while wakes are blocked) is retried on a backoff. Re-arming it
+# for now+1 s made the due handler fire every second and ask for a wake each time; the host start limit
+# (3 per 300 s) then refused them, left the wake units failed and the owed minds unwakeable.
+OVERDUE_RETRY_SECONDS = 120.0
 
 
 def target(home) -> float | None:
@@ -36,7 +40,10 @@ def systemd_scheduler(epoch: float | None, *, command: list[str]) -> None:
                        check=False, capture_output=True)
     if epoch is None:
         return
-    moment = datetime.fromtimestamp(max(epoch, time.time() + 1), timezone.utc)
+    now = time.time()
+    # A genuinely upcoming time keeps its precision (at least a second out); one that is already overdue backs off.
+    when = max(epoch, now + 1) if epoch > now else now + OVERDUE_RETRY_SECONDS
+    moment = datetime.fromtimestamp(when, timezone.utc)
     unit = f"{TIMER_UNIT}-{uuid.uuid4().hex[:12]}"
     subprocess.run(["systemd-run", "--user", f"--unit={unit}",
                     f"--on-calendar={moment:%Y-%m-%d %H:%M:%S} UTC",

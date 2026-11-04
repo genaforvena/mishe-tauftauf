@@ -55,3 +55,45 @@ def test_none_only_removes_pending_timers(monkeypatch):
     arm.systemd_scheduler(None, command=["python", "due"])
     assert not any(c[0] == "systemd-run" for c in fake.calls)
     assert ["systemctl", "--user", "stop", "mishe-next-due-aaaa1111.timer"] in fake.calls
+
+
+def calendar_of(fake):
+    call = next(c for c in fake.calls if c[0] == "systemd-run")
+    return next(a[len("--on-calendar="):] for a in call if a.startswith("--on-calendar="))
+
+
+def test_an_overdue_target_retries_on_a_backoff_not_every_second(monkeypatch):
+    # After a long outage every intention is overdue; re-arming for now+1 s spun the plant at several
+    # refused wake requests per second (2026-11-05 22:33-22:42Z: 3-5 per second, 3700 start-limit refusals/hour).
+    import time
+    from datetime import datetime, timezone
+    fake = FakeRun()
+    monkeypatch.setattr(arm.subprocess, "run", fake)
+    now = time.time()
+    arm.systemd_scheduler(now - 20000, command=["python", "due"])
+    moment = datetime.strptime(calendar_of(fake), "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=timezone.utc)
+    wait = moment.timestamp() - now
+    assert arm.OVERDUE_RETRY_SECONDS - 3 <= wait <= arm.OVERDUE_RETRY_SECONDS + 3
+    assert arm.OVERDUE_RETRY_SECONDS >= 60
+
+
+def test_a_near_future_target_keeps_its_precision(monkeypatch):
+    import time
+    from datetime import datetime, timezone
+    fake = FakeRun()
+    monkeypatch.setattr(arm.subprocess, "run", fake)
+    now = time.time()
+    arm.systemd_scheduler(now + 30, command=["python", "due"])
+    moment = datetime.strptime(calendar_of(fake), "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=timezone.utc)
+    assert 27 <= moment.timestamp() - now <= 33
+
+
+def test_an_imminent_target_is_not_pushed_out_by_the_backoff(monkeypatch):
+    import time
+    from datetime import datetime, timezone
+    fake = FakeRun()
+    monkeypatch.setattr(arm.subprocess, "run", fake)
+    now = time.time()
+    arm.systemd_scheduler(now + 0.4, command=["python", "due"])
+    moment = datetime.strptime(calendar_of(fake), "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=timezone.utc)
+    assert 0 <= moment.timestamp() - now <= 3
