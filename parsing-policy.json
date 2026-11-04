@@ -48,7 +48,6 @@
     "tools/guard-activation/check-activation.py",
     "tools/inference_budget_aggregate.py",
     "tools/recovery-control.py",
-    "tools/refresh-observer-bundle.py",
     "tools/unit_psi_attribution.py"
   ],
   "legacy": {
