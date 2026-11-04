@@ -32,7 +32,7 @@ Configure the site with absolute executable and worker paths:
 Use `env PYTHONPATH=src python3 -m mishe_tauftauf.witness_analysis --home SITE --wake NUMBER` on an
 actual canonical witness wake. Repeated calls return that wake's original advice;
 configuration changes take effect on the next wake. This deliberately keeps
-model loading off the supervisor and refreshing top pane. Optional site wrappers
+model loading off the supervisor and refreshing the evidence view. Optional site wrappers
 `SITE/bin/witness-analysis` and `SITE/bin/handoff-check` can call the corresponding
 modules or source-bound script copies with the site's installed runtime imports.
 Record hashes and versions when installing such copies.
@@ -87,7 +87,7 @@ env PYTHONPATH=src python3 -m mishe_tauftauf.witness_analysis --home SITE --wake
 Outcomes are `useful`, `routine`, or `inconclusive`; these are mind-reported claims,
 not independently verified quality labels. Feedback preserves the original advice
 hash and cannot overwrite a previous conflicting outcome. `--status` renders the
-latest advice on the existing top pane without model work; keep the base renderer's
+latest advice in the existing evidence view without model work; keep the base renderer's
 exit/check result. The `ANALYSIS ADVISOR:` line is informational and excluded from
 the witness observation digest, preventing changing advisor status from causing
 feedback wakes.
@@ -107,7 +107,7 @@ source sequences and hashes. This is exact text matching, not semantic duplicate
 detection or proof that the work is done. Reconcile earlier effects and the blocker disposition, then write a changed next step or a concrete waiting/retry condition.
 A repeat can be legitimate; do not rephrase unchanged work merely to pass.
 The command stores its last result in `SITE/handoff-check.json`; `--status`
-shows it on the pane and returns UNKNOWN when the handoff bytes change.
+shows it in the view and returns UNKNOWN when the handoff bytes change.
 The repeat result explicitly asks the mind to revise Next before yielding.
 
 ## Improvement on wakes

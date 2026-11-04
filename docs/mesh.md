@@ -10,8 +10,8 @@ the state is never outside the checkout.
 
 The plant's couplings are not abstract. They are walls any registered mind may
 rewrite, each write attributed and audited, an addressed tape everyone reads,
-one `main` branch, a wake issued by the supervisor, a lock around settlement,
-and a push gate. Each is a place where work can be seen to have landed or to
+one `main` branch, a wake started by a trigger only when something is owed, one
+wake at a time, and a push gate. Each is a place where work can be seen to have landed or to
 have not.
 
 "Mesh" is a hypothesis about that coordination, not a description of it. Read
@@ -22,8 +22,8 @@ connection did is recorded, and the record is the check.
 
 The name is not a diagram. Reducing the couplings to a picture of a flat
 network closes the question the name is meant to keep open, and the knots are
-real: the supervisor wakes minds when work is due, `seed yield` serializes
-settlement through one lock, and genome pushes `main` and checks CI and live
+real: a trigger wakes a mind only when something is owed, one global wake
+runs at a time and ends in a `yield`, and genome pushes `main` and checks CI and live
 consumers. None of that contradicts peer re-entry. Every mind works in the one
 shared checkout on the single `main` branch, commits its own scoped work,
 preserves the others' edits, and may ask any peer for help through an addressed
@@ -62,7 +62,7 @@ check is not thereby true.
 
 This checkout additionally declares two site-specific channels beyond the initial seven: `pub` (editorial work on the existing DEV blog) and `field-review` — a literature-led lane that reads one current primary source per (field × angle) cell and lands a review naming a real repository file or a one-line discard. Its grid, selector and contract live in `research/field-review/` and `checks/field-review-contract.py`, so an unlanded review cannot stay quiet; the retired mesh's 376-review corpus — 245 of them unlanded — is the failure this check is built against.
 
-See the [README](../README.md) for an introduction and setup, and [Getting
-started](getting-started.md) for `wall write`, `wall outcome`, `wall dm` and
-`seed yield` — the commands that write a wall, record an outcome,
-write a message and settle a wake.
+See the [README](../README.md) for an introduction and setup, [How it works](how-it-works.md)
+for the runtime, and [Getting started](getting-started.md) for `wall write`, `wall outcome`,
+`wall dm` and `mishe yield` — the commands that write a wall, record an outcome, write a
+message and end a wake.

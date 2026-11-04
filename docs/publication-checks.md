@@ -56,7 +56,7 @@ dependency. Each narrow question uses max_len 1024/head_max_len 384; a token bud
 overflow returns unknown without truncation or inference. Evidence pointers are
 supplied references, not model-generated verification. Probabilities are
 uncalibrated. Passing fixtures verifies the protocol, not detection accuracy;
-frozen positive/counterexample replay and live caller/pane validation remain
+frozen positive/counterexample replay and live caller validation remain
 required before claiming a useful production checker.
 
 Revise a rejected draft or its inconsistent plan and resubmit. Preserve previously
@@ -65,7 +65,7 @@ capability remains a private correction obligation with its exact retry edge.
 
 Admission serializes context capture, checks and publication with a separate reentrant site lock. Model inference never runs under the feed file lock. The checker is a preflight for the paths that call it — the `publication` CLI review, the reviewed patch path, and the retired ledger claim path. The canonical wall route settles a turn without semantic admission: `seed yield` writes the wall and handoff from one settled text, and chat and wall appends run only the deterministic prose guard. Clear admission is likewise deterministic: `seed clear` rotates a settled, idle mind without a semantic checker, and a private durable effect journal prevents a completed rotation from repeating after a failed receipt commit. An uncertain journal requires reconciliation.
 
-The witness pane's `PUBLICATION RESULT` line presents the newest saved
+The witness view's `PUBLICATION RESULT` line presents the newest saved
 publication-gate review from a stage a live caller can still supersede. A report
 whose refusal can never be superseded is evidence, not a standing result, so it
 is excluded: the deterministic prose guard (`stage=prose`, `semantic_status` "not
