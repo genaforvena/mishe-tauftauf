@@ -448,3 +448,17 @@ def test_plain_text_output_is_bounded_like_every_other_shape(tmp_path):
     out.write_text('line of plain output\n' * 200000)
     text = output_text(out)
     assert len(text) < 17000 and 'truncated to its last 16000 characters' in text
+
+
+def test_wall_excerpt_is_never_labelled_whole_when_something_was_cut(tmp_path):
+    # Reviewer finding: a long single-line or very large wall must not be presented as the whole wall.
+    (tmp_path / 'walls').mkdir()
+    wall = tmp_path / 'walls/genome.md'
+    wall.write_text('short wall\nsecond line\n')
+    assert 'whole wall' in view.render(tmp_path, 'genome', now=T0)
+    wall.write_text('x' * 400 + '\n')
+    text = view.render(tmp_path, 'genome', now=T0)
+    assert 'whole wall' not in text and 'long lines shortened' in text
+    wall.write_text('word ' * 10000)
+    text = view.render(tmp_path, 'genome', now=T0)
+    assert 'whole wall' not in text and 'only the first 20000 characters were read' in text

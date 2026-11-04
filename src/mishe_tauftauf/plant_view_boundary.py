@@ -103,6 +103,11 @@ def cut(text: object, limit: int = 150) -> str:
     return value if len(value) <= limit else value[:limit - 1] + '…'
 
 
+def would_cut(text: object, limit: int = 150) -> bool:
+    """Whether `cut` would shorten this text."""
+    return len(safe(text).strip()) > limit
+
+
 def wall_lines(text: str) -> list[str]:
     """Non-blank lines of a wall, kept as written (markdown is prose, not interpreted)."""
     return [ln for ln in (safe(x).rstrip() for x in text.splitlines()) if ln.strip()]

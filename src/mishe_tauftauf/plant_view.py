@@ -17,7 +17,7 @@ from .core.dispatch_record import read_record_fields, valid_role
 from .engines import DEFAULT_CLAUDE_MODEL
 from .feed import Feed
 from .plant_view_boundary import (arguments, brief, cut, last_lines, output_view, safe, uncommitted, wake_commits,
-                                  wake_key, wall_lines)
+                                  wake_key, wall_lines, would_cut)
 from .state_files import read_json, write_json
 from .wall import addressed
 
@@ -25,6 +25,7 @@ _MAIL_CACHE = {}
 _CHANGES_CACHE = {}
 LINE = 150          # characters per displayed line; panes are ~170 columns wide
 WALL_LINES = 5
+WALL_READ_CHARS = 20000
 LOG_REPLAY_LINES = 400      # what a restarted pane shows again from its log
 LOG_RECENT_WAKES = 3        # what a pane shows the first time, before it has a log
 LOG_MAX_BYTES = 5_000_000   # a log rotates to ROLE.log.1 beyond this; the wake files stay on disk anyway
@@ -201,9 +202,20 @@ def _uncommitted_line(home) -> str | None:
 def _wall_block(home, role) -> list[str]:
     path = home / 'walls' / f'{role}.md'
     with path.open(encoding='utf-8') as handle:
-        lines = wall_lines(handle.read(20000))
+        raw = handle.read(WALL_READ_CHARS + 1)
+    unread = len(raw) > WALL_READ_CHARS
+    lines = wall_lines(raw[:WALL_READ_CHARS])
     shown = [cut(ln) for ln in lines[:WALL_LINES]]
-    note = f'first {len(shown)} of {len(lines)} lines' if len(lines) > len(shown) else 'whole wall'
+    shortened = any(would_cut(ln, LINE) for ln in lines[:WALL_LINES])
+    if len(lines) <= WALL_LINES and not shortened and not unread:
+        note = 'whole wall'
+    else:
+        why = [f'first {len(shown)} of {len(lines)}{"+" if unread else ""} lines']
+        if shortened:
+            why.append('long lines shortened')
+        if unread:
+            why.append(f'only the first {WALL_READ_CHARS} characters were read')
+        note = '; '.join(why)
     return [f'Wall ({note}; the full wall is canonical):'] + shown
 
 
