@@ -158,7 +158,11 @@ def machine_syntax(text: str) -> list[str]:
 def _number(value) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    return float(value) if value == value and abs(value) != float('inf') else None
+    try:
+        number = float(value)
+    except OverflowError:           # an integer too large for a float is unreadable, not a crash
+        return None
+    return number if number == number and abs(number) != float('inf') else None
 
 
 def envelope_facts(value: object) -> dict | None:
@@ -228,7 +232,7 @@ def output_view(path: Path, limit: int = 16000) -> tuple[dict | None, str]:
                     text = text[:limit] + f'\n[final text truncated; {len(text)} characters in the file]'
             else:
                 text = f'UNKNOWN: the engine JSON has an unrecognised shape; original kept in {path.name}'
-        except ValueError:
+        except (ValueError, RecursionError):      # deeply nested JSON raises RecursionError, which is not a ValueError
             prefix += 'UNKNOWN: partial, malformed, mixed stderr or truncated JSON; raw tail follows\n'
             text = RAW_OPEN + '\n' + text[-3000:] + '\n' + RAW_CLOSE
     if path.suffix not in ('.json', '.jsonl') and len(text) > limit:   # JSON shapes bound themselves above

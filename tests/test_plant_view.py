@@ -502,4 +502,30 @@ def test_failures_in_the_log_follower_are_reported_once_not_every_poll(tmp_path,
     monkeypatch.setattr(view.time, 'sleep', tick)
     with pytest.raises(KeyboardInterrupt):
         view.main()
-    assert capsys.readouterr().out.count('View UNKNOWN: same fault') == 1
+    assert capsys.readouterr().out.count('View UNKNOWN: ValueError: same fault') == 1
+
+
+def test_hostile_envelopes_degrade_to_unknown_and_never_kill_the_follower(tmp_path, capsys, monkeypatch):
+    # Reviewer finding: an integer too large for a float (and deeply nested JSON) raised out of the pane process.
+    from mishe_tauftauf.plant_view_boundary import output_text
+    settled_wake(tmp_path, body={'result': 'still shown', 'duration_ms': 10 ** 400, 'total_cost_usd': 10 ** 400,
+                                 'num_turns': -10 ** 400, 'usage': {'output_tokens': 10 ** 400}})
+    text = view.render(tmp_path, 'genome', now=T0 + 60, output=True)
+    assert 'still shown' in text and machine_syntax(text) == []
+    deep = tmp_path / 'wakes/wake-genome-2.prompt.out.json'
+    deep.write_text('[' * 200000 + ']' * 200000)
+    assert 'UNKNOWN' in output_text(deep)
+    import sys
+    monkeypatch.setattr(sys, 'argv', ['plant_view', '--home', str(tmp_path), '--role', 'genome', '--log', '--follow'])
+    def explode(*a, **k):
+        raise RecursionError('maximum recursion depth exceeded')
+    monkeypatch.setattr(view, 'log_step', explode)
+    ticks = []
+    def tick(_):
+        ticks.append(1)
+        if len(ticks) >= 3:
+            raise KeyboardInterrupt
+    monkeypatch.setattr(view.time, 'sleep', tick)
+    with pytest.raises(KeyboardInterrupt):
+        view.main()
+    assert capsys.readouterr().out.count('RecursionError') == 1          # reported, once; the loop kept running

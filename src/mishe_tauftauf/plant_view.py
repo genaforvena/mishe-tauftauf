@@ -510,8 +510,8 @@ def main():
             try:
                 chunks = log_step(args.home, args.role, time.time(), replay=first)
                 first, last_failure = False, None
-            except (OSError, ValueError, TypeError, KeyError) as exc:
-                failure = f'View UNKNOWN: {safe(exc)}'
+            except Exception as exc:     # the follower must outlive any input: a dead pane shows nothing at all
+                failure = f'View UNKNOWN: {type(exc).__name__}: {safe(exc)}'
                 chunks = [failure] if failure != last_failure else []     # one line per distinct fault, not per poll
                 last_failure = failure
             for chunk in chunks:
