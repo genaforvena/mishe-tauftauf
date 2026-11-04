@@ -11,27 +11,34 @@ delimited raw block are deliberate failure evidence and are exempt.
 Exit status:
   0  every role's top and bottom pane is human-readable
   2  at least one pane contains machine syntax (the lines are listed)
-  3  undecidable: no roles found, or a pane could not be rendered
+  3  undecidable: presentation.json is missing or names no roles, or a pane could not be rendered
 """
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
 
 
 def roles(home: Path, valid_role) -> list[str]:
-    walls = home / "walls"
-    if not walls.is_dir():
+    """The views the plant presents: presentation.json's active and resting areas.
+
+    walls/ also holds dozens of staging notes whose names look like roles, so it is not a role list.
+    """
+    try:
+        config = json.loads((home / "presentation.json").read_text(encoding="utf-8"))
+        names = [*config["active"], *config["resting"]]
+    except (OSError, ValueError, KeyError, TypeError):
         return []
-    return sorted(p.stem for p in walls.glob("*.md") if valid_role(p.stem) and p.stem != "chat")
+    return sorted(n for n in names if isinstance(n, str) and valid_role(n) and n != "chat")
 
 
 def evaluate(home: Path, now: float, render, machine_syntax, valid_role) -> tuple[int, list[str]]:
     found = roles(home, valid_role)
     if not found:
-        return 3, [f"no role walls under {home}/walls to render"]
+        return 3, [f"no roles in {home}/presentation.json to render"]
     bad, broken = [], []
     for role in found:
         for pane, output in (("top", False), ("bottom", True)):

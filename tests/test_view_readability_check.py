@@ -1,5 +1,6 @@
 """checks/view-readability.py: RED on machine syntax in a pane, UNKNOWN when it cannot judge."""
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -15,9 +16,10 @@ spec.loader.exec_module(check)
 
 
 def home_with_walls(tmp_path, *roles):
-    (tmp_path / 'walls').mkdir()
+    (tmp_path / 'walls').mkdir(exist_ok=True)
     for role in roles:
         (tmp_path / 'walls' / f'{role}.md').write_text(f'# {role}\nplain prose\n')
+    (tmp_path / 'presentation.json').write_text(json.dumps({'active': list(roles), 'resting': []}))
     return tmp_path
 
 
@@ -60,3 +62,15 @@ def test_cli_exit_codes(tmp_path):
     empty = subprocess.run([sys.executable, str(REPO / 'checks/view-readability.py'), '--home', str(tmp_path / 'none'),
                             '--repo', str(REPO)], capture_output=True, text=True)
     assert empty.returncode == 3
+
+
+def test_stale_staging_notes_in_walls_are_not_roles(tmp_path):
+    # Found on the live site: walls/ holds notes like 117736-health-notes.md whose old prose has epochs and paths.
+    home = home_with_walls(tmp_path, 'genome')
+    (home / 'walls' / '117736-health-notes.md').write_text('- Guard: latch 1793304344 preserved\n')
+    seen = []
+    def render(h, role, *, now, output):
+        seen.append(role)
+        return 'fine'
+    code, _ = run(home, render)
+    assert code == 0 and set(seen) == {'genome'}
