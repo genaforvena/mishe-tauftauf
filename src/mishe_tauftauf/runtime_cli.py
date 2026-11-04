@@ -192,7 +192,7 @@ def run_units(args, home: Path, now: float) -> int:
                                  capture_output=True, text=True)
         if tracked.returncode or tracked.stdout.strip():
             report.state = "RED"
-            report.problems.append("local-plant-in-git: remove staged or tracked site files from the index")
+            report.problems.append("HOLD local-plant-in-git: remove staged or tracked site files from the index")
         else:
             print("PASS local plant out of Git")
     if (home / "chat.log").exists():                   # the tape is the record; unreadable means not GREEN
