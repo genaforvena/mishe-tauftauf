@@ -132,6 +132,9 @@ def run(args) -> int:
             path.write_text(args.reason + "\n")
         elif args.state == "off":
             path.unlink(missing_ok=True)
+            following = wake.next_role(home, declared_roles(home), now=now)
+            if following:                    # wakes that arrived while held would not otherwise return
+                wake.systemd_starter(following)
         print("held" if path.exists() else "running")
         return 0
     if args.command == "arm":

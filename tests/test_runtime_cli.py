@@ -131,3 +131,13 @@ def test_sync_installs_declared_producers_and_doctor_agrees(site, tmp_path):
     assert "signal run egress" in (d / "mishe-producer-egress.service").read_text()
     assert "signals/egress.json" in (d / "mishe-wake-genome.path").read_text()
     assert cli("doctor", "--unit-dir", str(d)) == 0
+
+
+def test_releasing_the_hold_offers_the_owed_role(site, monkeypatch):
+    from mishe_tauftauf import wake
+    started = []
+    monkeypatch.setattr(wake, "systemd_starter", started.append)
+    owed.touch_inbox(site, "genome")
+    cli("hold", "on")
+    cli("hold", "off")
+    assert started == ["genome"]

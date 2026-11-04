@@ -197,3 +197,11 @@ def test_live_worker_blocks_reconcile(home):
                                 pid=os.getpid(), attempt=rec.attempt))   # a live pid
     engine = FakeEngine(do_yield)
     assert go(home, "genome", engine).outcome == "blocked" and engine.calls == []
+
+
+def test_due_offers_the_first_owed_role_only(home):
+    owed.touch_inbox(home, "health")
+    owed.touch_inbox(home, "docs")
+    started = []
+    arm.due(home, now=NOW, scheduler=lambda t: None, roles=ROLES, starter=started.append)
+    assert started == ["health"]          # roles are checked in the order given; the wake chain does the rest
