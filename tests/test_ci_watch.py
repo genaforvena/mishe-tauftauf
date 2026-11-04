@@ -52,6 +52,13 @@ def test_queries_runs_for_exact_origin_commit_and_preserves_unavailable_state(tm
     assert unavailable["state"] == "unknown"
     assert unavailable["detail"] == "GitHub unavailable"
 
+    with patch.object(ci_watch, "_command", side_effect=[
+            json.dumps({"nameWithOwner": "o/r", "defaultBranchRef": {"name": "main"}}),
+            sha, json.dumps([])]):
+        not_started = ci_watch.read(tmp_path / "site")
+    assert not_started["state"] == "pending"
+    assert "no Actions run registered yet" in not_started["detail"]
+
 
 def test_latest_run_per_workflow_supersedes_failed_attempt(tmp_path):
     sha = "a" * 40

@@ -383,8 +383,9 @@ def read(home: Path, *, workspace: Path | None = None, sha: str | None = None,
         matches = [row for row in rows if row.get("headSha") == sha and
                    (not branch or (row.get("event") == "push" and row.get("headBranch") == branch))]
         if not matches:
-            return {"state": "unknown", "sha": sha, "run": "none", "url": "none",
-                    "detail": f"no Actions run for exact commit {sha}"}
+            # A just-pushed commit has no Actions run for a short while: CI has not started, which is pending, not failed.
+            return {"state": "pending", "sha": sha, "run": "none", "url": "none",
+                    "detail": f"no Actions run registered yet for exact commit {sha}"}
         current: dict[str, dict] = {}
         for row in matches:
             workflow = str(row.get("workflowName") or row["databaseId"])
@@ -425,7 +426,7 @@ def tick(home: Path, *, check_deliveries: bool = True) -> dict[str, str]:
     if previous is None or any(previous.get(key) != result[key] for key in identity):
         meaning = {"pass": "All observed Actions runs for this remote commit succeeded.",
                    "fail": "At least one Actions run failed; the source author owns repair, with genome as the unassigned-incident fallback.",
-                   "pending": "An Actions run is still in progress; its result is not known yet.",
+                   "pending": "An Actions run is still in progress or not yet registered; its result is not known yet.",
                    "unknown": "The watcher cannot establish a result for the current remote commit."}[result["state"]]
         Feed(home).append("ci", "[ci] state={state} sha={sha} run={run} url={url} detail={detail}\n"
                           "{meaning}".format(**result, meaning=meaning))
