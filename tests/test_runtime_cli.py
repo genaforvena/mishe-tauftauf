@@ -77,3 +77,35 @@ def test_hold_blocks_wake(site):
 
 def test_yield_outside_a_wake_is_refused(site):
     assert cli("yield", "--result", "changed") == 2
+
+
+def test_sync_then_doctor_green_and_meta_signal_fresh(site, tmp_path):
+    units_dir = tmp_path / "units"
+    assert cli("sync", "--unit-dir", str(units_dir), "--no-systemctl") == 0
+    assert (units_dir / "mishe-wake-genome.path").exists()
+    assert cli("doctor", "--unit-dir", str(units_dir)) == 0
+    sig = store.read(site, "doctor", now=__import__("time").time())
+    assert (sig.state, sig.value) == ("OK", "GREEN")
+
+
+def test_doctor_red_on_drift_exits_nonzero_and_records_red(site, tmp_path):
+    units_dir = tmp_path / "units"
+    cli("sync", "--unit-dir", str(units_dir), "--no-systemctl")
+    (units_dir / "mishe-wake-genome.path").write_text("# mishe-generated: observation runtime (edit nothing here; run `mishe sync`)\nx\n")
+    assert cli("doctor", "--unit-dir", str(units_dir)) == 1
+    assert store.read(site, "doctor", now=__import__("time").time()).value == "RED"
+
+
+def test_a_silent_doctor_reads_unknown(site, tmp_path):
+    cli("sync", "--unit-dir", str(tmp_path / "u"), "--no-systemctl")
+    cli("doctor", "--unit-dir", str(tmp_path / "u"))
+    later = __import__("time").time() + 3600
+    assert store.read(site, "doctor", now=later).state == "UNKNOWN"
+
+
+def test_failed_command_reports_to_resolver(site, monkeypatch):
+    sent = []
+    from mishe_tauftauf import failure
+    monkeypatch.setattr(failure, "default_notify", lambda home, role, text: sent.append(role))
+    assert cli("failed", "mishe-wake@docs.service") == 0
+    assert sent == ["health"]

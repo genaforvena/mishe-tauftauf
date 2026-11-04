@@ -201,9 +201,12 @@ def test_init_still_plants_a_site_directly_inside_a_worktree(tmp_path: Path) -> 
     planted = cli(site, "seed", "init", "--slug", "genome")
     assert planted.returncode == 0, planted.stderr
     assert ".mishe-tauftauf/chat.log" in tree(repository)
-    healthy = cli(site, "doctor")
-    assert healthy.returncode == 0, healthy.stderr
+    healthy = cli(site, "doctor", "--unit-dir", str(tmp_path / "no-units"))
+    # doctor now also compares installed units with the generated ones; a freshly
+    # planted site has none installed, so it is RED for that reason alone.
     assert "PASS local plant out of Git" in healthy.stdout
+    assert "mishe-wake@.service: missing" in healthy.stdout
+    assert "chat.log: feed-corrupt" not in healthy.stdout
 
     # A nested plant-home-shaped subtree is not a site the kernel will plant.
     nested = repository / ".mishe-tauftauf-example" / ".mishe-tauftauf"

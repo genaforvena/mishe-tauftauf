@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import intentions, owed
+from . import intentions, owed, signal_store
 from .state_files import read_json, write_json
 
 IDLE_ID = "idle-initiative"
@@ -56,6 +56,12 @@ def settle(home, role: str, key: str, *, text: str, result: str, now: float,
         intentions.add(home, role, "again", note="scheduled return", due=now + again)
     if when is not None:
         intentions.add(home, role, f"when-{when['signal']}", note="signal condition you asked to be woken on", when=when)
+    for name, entry in sorted(signal_store.registry(home).items()):
+        if role in entry.get("subscribers", []) and "reoffer" in entry:
+            sig = signal_store.read(home, name, now=now)
+            if sig.state != "OK" or sig.value == "RED":       # level: a standing fault returns
+                intentions.add(home, role, f"reoffer-{name}", due=now + entry["reoffer"],
+                               note=f"signal {name} is still not clear; investigate or disposition it")
     intentions.add(home, role, IDLE_ID, note="idle initiative: look for useful work",
                    due=now + idle_seconds, spontaneous=True)
     write_json(receipt_path(home, key), {"role": role, "key": key, "result": result,

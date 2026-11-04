@@ -44,12 +44,14 @@ def registry(home) -> dict:
     return data
 
 
-def register(home, name: str, *, max_age: float, subscribers=()) -> None:
+def register(home, name: str, *, max_age: float, subscribers=(), reoffer: float | None = None) -> None:
     _check_name(name)
     if not max_age > 0:
         raise ValueError("max_age must be positive")
     data = registry(home)
     data[name] = {"max_age": float(max_age), "subscribers": sorted(set(subscribers))}
+    if reoffer is not None:
+        data[name]["reoffer"] = float(reoffer)
     write_json(_dir(home) / "registry.json", data)
 
 

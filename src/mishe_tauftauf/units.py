@@ -1,0 +1,194 @@
+"""Generated systemd units: the only triggers the runtime has.
+
+``render`` is pure and deterministic. ``sync`` writes exactly what render says
+and removes only stale files it generated (each carries MARKER), so units that
+belong to anything else are never touched. ``doctor`` compares expected and
+installed files and never reports GREEN on missing or unreadable evidence.
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from . import signal_store
+
+MARKER = "# mishe-generated: observation runtime (edit nothing here; run `mishe sync`)"
+WAKE_TIMEOUT = 1800
+SLACK = 300
+
+
+@dataclass
+class Config:
+    home: Path
+    repo: Path
+    python: str
+    pythonpath: str
+    unit_dir: Path
+    prefix: str = "mishe"
+    lifeline_roles: tuple = ("genome", "health")
+    plants_slice: str | None = "mishe-plants.slice"
+    lifeline_slice: str | None = "mishe-lifeline.slice"
+    doctor_every: int = 300
+
+
+@dataclass
+class Producer:
+    name: str
+    command: list
+    every_seconds: int
+    timeout: int = 120
+
+
+@dataclass
+class SyncReport:
+    written: list = field(default_factory=list)
+    removed: list = field(default_factory=list)
+
+
+@dataclass
+class DoctorReport:
+    state: str
+    problems: list = field(default_factory=list)
+
+
+def _env(cfg: Config) -> str:
+    return (f"Environment=PYTHONPATH={cfg.pythonpath}\n"
+            f"Environment=MISHE_SEED_HOME={cfg.home}\n"
+            f"Environment=MISHE_REPO={cfg.repo}\n"
+            "Environment=PATH=/home/mesh-home/.local/bin:/usr/local/bin:/usr/bin:/bin\n")
+
+
+def _cmd(cfg: Config, *words: str) -> str:
+    return " ".join([cfg.python, "-m", "mishe_tauftauf", "--home", str(cfg.home), *words])
+
+
+def _self_args(cfg: Config) -> list:
+    """The settings a doctor run needs to rebuild exactly what sync generated."""
+    args = ["--unit-dir", str(cfg.unit_dir), "--prefix", cfg.prefix, "--repo", str(cfg.repo),
+            "--pythonpath", cfg.pythonpath]
+    if cfg.plants_slice is None and cfg.lifeline_slice is None:
+        args.append("--no-slices")
+    return args
+
+
+def _file(*sections: str) -> str:
+    return MARKER + "\n" + "\n".join(sections) + "\n"
+
+
+def render(cfg: Config, roles, *, producers=()) -> dict:
+    p = cfg.prefix
+    failed = f"OnFailure={p}-failed@%n.service"
+    files = {}
+    files[f"{p}-wake@.service"] = _file(
+        f"[Unit]\nDescription=Mishe wake %i\n{failed}",
+        "[Service]\nType=oneshot\nUMask=0077\n" + f"WorkingDirectory={cfg.repo}\n" + _env(cfg)
+        + f"ExecStart={_cmd(cfg, 'wake', '%i', '--repo', str(cfg.repo), '--timeout', str(WAKE_TIMEOUT))}\n"
+        f"RuntimeMaxSec={WAKE_TIMEOUT + SLACK}\nTimeoutStopSec=20\nKillMode=control-group\n"
+        "MemoryAccounting=yes\nMemoryMax=2G\nTasksMax=256\nCPUWeight=50\nIOWeight=50\n")
+    registry = signal_store.registry(cfg.home)
+    for role in sorted(roles):
+        slice_name = cfg.lifeline_slice if role in cfg.lifeline_roles else cfg.plants_slice
+        if slice_name:
+            files[f"{p}-wake@{role}.service.d/10-slice.conf"] = _file(f"[Service]\nSlice={slice_name}")
+        watched = [f"PathChanged={cfg.home}/inbox/{role}"]
+        watched += [f"PathChanged={cfg.home}/signals/{name}.json"
+                    for name, entry in sorted(registry.items()) if role in entry.get("subscribers", [])]
+        files[f"{p}-wake-{role}.path"] = _file(
+            f"[Unit]\nDescription=Mishe wake triggers for {role}",
+            "[Path]\n" + "\n".join(watched) + f"\nUnit={p}-wake@{role}.service",
+            "[Install]\nWantedBy=paths.target")
+    files[f"{p}-failed@.service"] = _file(
+        "[Unit]\nDescription=Mishe failure report for %i",
+        "[Service]\nType=oneshot\n" + _env(cfg) + f"ExecStart={_cmd(cfg, 'failed', '%i')}\nTimeoutStartSec=60\n")
+    files[f"{p}-arm.service"] = _file(
+        "[Unit]\nDescription=Re-arm the next-due timer",
+        "[Service]\nType=oneshot\n" + _env(cfg) + f"ExecStart={_cmd(cfg, 'arm')}\n",
+        "[Install]\nWantedBy=default.target")
+    files[f"{p}-doctor.service"] = _file(
+        f"[Unit]\nDescription=Mishe doctor\n{failed}",
+        "[Service]\nType=oneshot\n" + _env(cfg) + f"ExecStart={_cmd(cfg, 'doctor', *_self_args(cfg))}\nTimeoutStartSec=120\n")
+    files[f"{p}-doctor.timer"] = _file(
+        "[Unit]\nDescription=Run the Mishe doctor",
+        f"[Timer]\nOnBootSec=60\nOnUnitActiveSec={cfg.doctor_every}\nAccuracySec=10s\nUnit={p}-doctor.service",
+        "[Install]\nWantedBy=timers.target")
+    for prod in producers:
+        files[f"{p}-producer-{prod.name}.service"] = _file(
+            f"[Unit]\nDescription=Mishe producer {prod.name}\n{failed}",
+            "[Service]\nType=oneshot\nUMask=0077\n" + _env(cfg)
+            + f"ExecStart={' '.join(prod.command)}\nTimeoutStartSec={prod.timeout}\n"
+            + f"Slice={cfg.plants_slice}\n" * bool(cfg.plants_slice))
+        files[f"{p}-producer-{prod.name}.timer"] = _file(
+            f"[Unit]\nDescription=Run producer {prod.name}",
+            f"[Timer]\nOnBootSec=30\nOnUnitActiveSec={prod.every_seconds}\nAccuracySec=5s\nUnit={p}-producer-{prod.name}.service",
+            "[Install]\nWantedBy=timers.target")
+    return files
+
+
+def signal_name(unit: str) -> str:
+    """The signal that records a failure of ``unit`` (unit names carry @ and .)."""
+    return "failed-" + re.sub(r"[^a-z0-9_-]+", "-", unit.lower()).strip("-")
+
+
+def is_health_wake(unit: str, prefix: str = "mishe") -> bool:
+    return unit == f"{prefix}-wake@health.service"
+
+
+def _installed(cfg: Config) -> dict:
+    found = {}
+    if not cfg.unit_dir.is_dir():
+        return found
+    for path in sorted(cfg.unit_dir.rglob("*")):
+        if path.is_file() and not path.is_symlink() and not any(part.endswith(".wants") for part in path.parts):
+            rel = str(path.relative_to(cfg.unit_dir))
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeError:
+                continue
+            if text.startswith(MARKER):
+                found[rel] = text
+    return found
+
+
+def sync(cfg: Config, roles, *, producers=(), runner=None) -> SyncReport:
+    """Write generated units, remove stale generated ones, reload systemd."""
+    if "doctor" not in signal_store.registry(cfg.home):
+        signal_store.register(cfg.home, "doctor", max_age=3 * cfg.doctor_every, subscribers=["health"])
+    for name in ("inbox", "signals"):       # watched parents must exist; the watched files must not
+        (cfg.home / name).mkdir(parents=True, exist_ok=True)
+    expected = render(cfg, roles, producers=producers)
+    report = SyncReport()
+    for rel, text in expected.items():
+        path = cfg.unit_dir / rel
+        if not path.exists() or path.read_text(encoding="utf-8") != text:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+            report.written.append(rel)
+    for rel in _installed(cfg):
+        if rel not in expected:
+            (cfg.unit_dir / rel).unlink()
+            report.removed.append(rel)
+    if runner is not None and (report.written or report.removed):
+        runner(["systemctl", "--user", "daemon-reload"])
+        for rel in report.written:
+            if rel.endswith((".path", ".timer")):
+                runner(["systemctl", "--user", "enable", "--now", rel])
+    return report
+
+
+def doctor(cfg: Config, roles, *, producers=()) -> DoctorReport:
+    try:
+        expected = render(cfg, roles, producers=producers)
+        installed = _installed(cfg)
+    except OSError as exc:
+        return DoctorReport("UNKNOWN", [f"cannot read installed units: {exc}"])
+    problems = []
+    for rel, text in expected.items():
+        if rel not in installed:
+            problems.append(f"{rel}: missing")
+        elif installed[rel] != text:
+            problems.append(f"{rel}: drift from generated content")
+    for rel in installed:
+        if rel not in expected:
+            problems.append(f"{rel}: stale generated unit")
+    return DoctorReport("RED" if problems else "GREEN", problems)

@@ -77,6 +77,16 @@ def parser() -> argparse.ArgumentParser:
     hold = sub.add_parser("hold"); hold.add_argument("state", choices=("on", "off", "status"))
     hold.add_argument("--reason", default="held")
     sub.add_parser("arm"); sub.add_parser("due")
+    p = sub.add_parser("failed"); p.add_argument("unit")
+    for name in ("sync", "doctor"):
+        p = sub.add_parser(name)
+        p.add_argument("--unit-dir", type=Path, default=Path.home() / ".config" / "systemd" / "user")
+        p.add_argument("--prefix", default="mishe")
+        p.add_argument("--no-slices", action="store_true", help="scratch namespaces: no host slices")
+        p.add_argument("--pythonpath", default=str(Path(__file__).resolve().parents[1]))
+        p.add_argument("--repo", type=Path, default=os.environ.get("MISHE_REPO") or Path.cwd())
+        if name == "sync":
+            p.add_argument("--no-systemctl", action="store_true")
     return root
 
 
@@ -125,6 +135,12 @@ def run(args) -> int:
         armmod.arm(home, scheduler=scheduler(home))
         print(message)
         return 0
+    if args.command == "failed":
+        from . import failure
+        print(failure.report(home, args.unit, now=now))
+        return 0
+    if args.command in ("sync", "doctor"):
+        return run_units(args, home, now)
     role = args.role                                   # wake
     result = wake.run_wake(home, role, roles=declared_roles(home), engine=engines.for_role(home, role),
                            now=now, timeout=args.timeout, repo=args.repo)
@@ -132,7 +148,55 @@ def run(args) -> int:
     return EXIT.get(result.outcome, 0)
 
 
-RUNTIME_COMMANDS = {"wake", "yield", "signal", "inbox", "hold", "arm", "due"}
+def run_units(args, home: Path, now: float) -> int:
+    import subprocess
+    from . import signal_store, units
+    cfg = units.Config(home=home, repo=Path(args.repo).resolve(), python=sys.executable,
+                       pythonpath=args.pythonpath, unit_dir=args.unit_dir, prefix=args.prefix,
+                       **({"plants_slice": None, "lifeline_slice": None} if args.no_slices else {}))
+    roles = declared_roles(home)
+    if args.command == "sync":
+        runner = None if args.no_systemctl else (lambda c: subprocess.run(c, check=True))
+        report = units.sync(cfg, roles, runner=runner)
+        print(f"written {len(report.written)}, removed {len(report.removed)}")
+        return 0
+    if not home.is_dir():
+        raise ValueError(f"site home does not exist: {home}")
+    report = units.doctor(cfg, roles)
+    top = subprocess.run(["git", "-C", str(home.parent), "rev-parse", "--show-toplevel"],
+                         capture_output=True, text=True)
+    if top.returncode == 0 and Path(top.stdout.strip()).resolve() == home.parent:
+        tracked = subprocess.run(["git", "-C", str(home.parent), "ls-files", "--", home.name],
+                                 capture_output=True, text=True)
+        if tracked.returncode or tracked.stdout.strip():
+            report.state = "RED"
+            report.problems.append("local-plant-in-git: remove staged or tracked site files from the index")
+        else:
+            print("PASS local plant out of Git")
+    if (home / "chat.log").exists():                   # the tape is the record; unreadable means not GREEN
+        from .feed import Feed, FeedError
+        try:
+            Feed(home).entries()
+        except FeedError as exc:
+            report.state = "RED"
+            report.problems.append(f"chat.log: feed-corrupt: {exc}")
+    if "doctor" in signal_store.registry(home):
+        # The meta-signal: a doctor that stops running ages out to UNKNOWN on schedule.
+        signal_store.observe(home, "doctor", "GREEN" if report.state == "GREEN" else "RED",
+                             now=now, source="doctor")
+        armmod_arm(home)
+    print(report.state)
+    for problem in report.problems:
+        print(f"  {problem}")
+    return {"GREEN": 0, "RED": 1}.get(report.state, 3)
+
+
+def armmod_arm(home: Path) -> None:
+    from . import arm as armmod
+    armmod.arm(home, scheduler=scheduler(home))
+
+
+RUNTIME_COMMANDS = {"wake", "yield", "signal", "inbox", "hold", "arm", "due", "failed", "sync", "doctor"}
 
 
 def main(argv=None) -> int:
