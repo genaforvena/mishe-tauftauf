@@ -8,11 +8,15 @@ from __future__ import annotations
 
 import subprocess
 import time
+import uuid
 from datetime import datetime, timezone
 
 from . import intentions, signal_store
 
 TIMER_UNIT = "mishe-next-due"
+# Each arm gets its own transient unit name. The due handler is itself a running
+# unit; re-arming under the same name collides with it (systemd-run rc=1).
+TIMER_GLOB = f"{TIMER_UNIT}-*.timer"
 
 
 def target(home) -> float | None:
@@ -20,14 +24,26 @@ def target(home) -> float | None:
     return min(times) if times else None
 
 
+def _pending_timers() -> list[str]:
+    """Names of earlier next-due timers (stopping a timer leaves a running service alone)."""
+    listed = subprocess.run(
+        ["systemctl", "--user", "list-units", "--type=timer", "--all", "--plain",
+         "--no-legend", TIMER_GLOB],
+        check=False, capture_output=True, text=True).stdout
+    names = [line.split()[0] for line in listed.splitlines() if line.strip()]
+    return sorted(set(names + [f"{TIMER_UNIT}.timer"]))
+
+
 def systemd_scheduler(epoch: float | None, *, command: list[str]) -> None:
     """Replace the transient next-due timer. ``None`` just removes it."""
-    subprocess.run(["systemctl", "--user", "stop", f"{TIMER_UNIT}.timer"],
-                   check=False, capture_output=True)
+    for timer in _pending_timers():
+        subprocess.run(["systemctl", "--user", "stop", timer],
+                       check=False, capture_output=True)
     if epoch is None:
         return
     moment = datetime.fromtimestamp(max(epoch, time.time() + 1), timezone.utc)
-    subprocess.run(["systemd-run", "--user", f"--unit={TIMER_UNIT}",
+    unit = f"{TIMER_UNIT}-{uuid.uuid4().hex[:12]}"
+    subprocess.run(["systemd-run", "--user", f"--unit={unit}",
                     f"--on-calendar={moment:%Y-%m-%d %H:%M:%S} UTC",
                     "--timer-property=AccuracySec=1s", "--collect", *command],
                    check=True, capture_output=True)
