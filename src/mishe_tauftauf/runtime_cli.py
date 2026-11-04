@@ -74,6 +74,7 @@ def parser() -> argparse.ArgumentParser:
     p = sig.add_parser("show"); p.add_argument("name")
     p = sig.add_parser("run", help="observe NAME by running CMD: exit 0 GREEN, non-zero RED, cannot-run leaves it to expire")
     p.add_argument("name"); p.add_argument("--timeout", type=float, default=120)
+    p.add_argument("--red-codes", default="2", help="exit codes that mean RED (default 2)")
     p.set_defaults(cmd=[])
     p = sub.add_parser("produce"); p.add_argument("name")
     inbox = sub.add_parser("inbox").add_subparsers(dest="inbox_command", required=True)
@@ -112,7 +113,8 @@ def run(args) -> int:
             command = args.cmd
             if not command:
                 raise ValueError("signal run needs a command after --")
-            code = producers.run(home, args.name, command, now=now, timeout=args.timeout)
+            code = producers.run(home, args.name, command, now=now, timeout=args.timeout,
+                                red_codes=tuple(int(c) for c in args.red_codes.split(",")))
             armmod.arm(home, scheduler=scheduler(home))
             return code
         else:

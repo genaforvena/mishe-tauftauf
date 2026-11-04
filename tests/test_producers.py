@@ -17,7 +17,7 @@ def home(tmp_path):
 def test_exit_zero_is_green_and_nonzero_is_red_with_detail(home):
     assert producers.run(home, "devto", [PY, "-c", "print('fine')"], now=NOW, timeout=10) == 0
     assert store.read(home, "devto", now=NOW).value == "GREEN"
-    assert producers.run(home, "devto", [PY, "-c", "import sys; print('stale feed'); sys.exit(1)"], now=NOW + 1, timeout=10) == 0
+    assert producers.run(home, "devto", [PY, "-c", "import sys; print('stale feed'); sys.exit(2)"], now=NOW + 1, timeout=10) == 0
     sig = store.read(home, "devto", now=NOW + 1)
     assert sig.value == "RED"
     assert "stale feed" in (home / "signals" / "devto.detail").read_text()
@@ -63,4 +63,19 @@ def test_declared_command_runs_through_the_signal_run_adapter(home):
     (home / "producers.json").write_text(
         '[{"name":"egress","command":["/bin/true"],"every":300,"timeout":50,"signal":{"max_age":900,"subscribers":[]}}]')
     cmd = producers.load(home, python=PY)[0].command
-    assert cmd[5:9] == ["signal", "run", "egress", "--timeout"] and cmd[-2:] == ["--", "/bin/true"]
+    assert cmd[5:9] == ["signal", "run", "egress", "--timeout"] and "--red-codes" in cmd and cmd[-2:] == ["--", "/bin/true"]
+
+
+def test_a_crash_or_unknown_exit_is_a_failed_observation_not_red(home):
+    producers.run(home, "devto", [PY, "-c", "pass"], now=NOW, timeout=10)
+    for code in (1, 3, 127):
+        assert producers.run(home, "devto", [PY, "-c", f"import sys; sys.exit({code})"],
+                             now=NOW + 5, timeout=10) == 2
+        assert store.read(home, "devto", now=NOW + 5).value == "GREEN"      # untouched, will age
+    assert store.read(home, "devto", now=NOW + 5000).state == "UNKNOWN"
+
+
+def test_red_codes_are_declared_per_producer(home):
+    assert producers.run(home, "devto", [PY, "-c", "import sys; sys.exit(7)"], now=NOW, timeout=10,
+                         red_codes=(7,)) == 0
+    assert store.read(home, "devto", now=NOW).value == "RED"

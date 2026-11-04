@@ -47,3 +47,22 @@ def verdict(pane_tail: list[str] | str, journal_lines: list[str], wall_age_s: fl
     if wake_held(journal_lines) or plan_blocked(pane_tail):
         return "IDLE_MID_TURN"
     return "IDLE"
+
+
+def bounded_action(pane_tail: list[str] | str, journal_lines: list[str], wall_age_s: float) -> str:
+    """The one action a stalled mind needs, so a declared block is never left as an idle end state.
+
+    NONE: the mind is busy or has nothing held or blocked.
+    RESEND_WAKE: idle with a held wake whose wall is not newer than the wake; re-deliver it once.
+    ESCALATE_STEWARD: idle and blocked (a plan item says so), or still idle after a re-delivery
+    attempt; the steward must route the resolver.
+    """
+    if is_busy(pane_tail):
+        return "NONE"
+    held = wake_held(journal_lines)
+    blocked = plan_blocked(pane_tail)
+    if held and not blocked:
+        return "RESEND_WAKE"
+    if blocked:
+        return "ESCALATE_STEWARD"
+    return "NONE"

@@ -42,3 +42,23 @@ def test_busy_with_stale_wall_is_busy_stale():
 def test_idle_with_nothing_pending_is_idle():
     assert verdict(["> INSERT"], [], 9999) == "IDLE"
     assert verdict(["> INSERT"], CLEARED, 9999) == "IDLE"
+
+
+from mishe_tauftauf.mind_liveness import bounded_action
+
+
+def test_busy_mind_needs_no_action():
+    assert bounded_action(CODEX_BUSY, HELD, 60) == "NONE"
+
+
+def test_idle_with_held_wake_resends_wake():
+    assert bounded_action(["> INSERT"], HELD, 60) == "RESEND_WAKE"
+
+
+def test_declared_block_escalates_to_steward():
+    assert bounded_action(IDLE_BLOCKED, HELD, 60) == "ESCALATE_STEWARD"
+    assert bounded_action(["☐ waiting (blocked)", "> INSERT"], [], 60) == "ESCALATE_STEWARD"
+
+
+def test_idle_with_nothing_pending_needs_no_action():
+    assert bounded_action(["> INSERT"], CLEARED, 60) == "NONE"
