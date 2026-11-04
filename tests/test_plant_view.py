@@ -582,3 +582,26 @@ def test_a_mind_quoting_json_in_its_answer_is_prose_but_the_chrome_stays_strict(
     assert len(machine_syntax(structure)) >= 2                                # structure lines are never prose
     log = '══ model x ══\nprose with epoch 1793818396 inside\nMade no commits\n'
     assert len(machine_syntax(log)) == 1
+
+
+def test_file_stem_is_the_dispatch_key_produced_by_the_real_generator(tmp_path):
+    # Reviewer concern: file names and dispatch keys might not be the same string. Tie them to wake._key itself.
+    from mishe_tauftauf import wake
+    from mishe_tauftauf.plant_view_boundary import wake_key
+    key = wake._key('genome', 1793818293409683255)
+    assert key == 'wake-genome-1793818293409683255'
+    assert wake_key(tmp_path / f'{key}.prompt.out.json') == key == wake_key(tmp_path / f'{key}.prompt.out.jsonl')
+    assert yielding.snapshot_path(tmp_path, key).name == f'{key}.snapshot.json'
+    assert yielding.receipt_path(tmp_path, key).name == f'{key}.yield.json'
+    # end to end: the wake the dispatch record says is running is held back, then printed once it settles
+    write_json(yielding.snapshot_path(tmp_path, key), {'role': 'genome', 'snapshot': {}})
+    os.utime(yielding.snapshot_path(tmp_path, key), (T0, T0))
+    out = tmp_path / f'wakes/{key}.prompt.out.json'
+    out.write_text('{"half": "writ')
+    dispatch_state(tmp_path, key, 'started')
+    held = '\n'.join(view.log_step(tmp_path, 'genome', T0 + 10))
+    assert 'writ' not in held and 'wake started' in held
+    out.write_text(json.dumps(envelope(result='the settled answer')))
+    write_json(yielding.receipt_path(tmp_path, key), {'role': 'genome', 'key': key, 'result': 'changed', 'continue': False, 'settled_at': T0 + 30})
+    dispatch_state(tmp_path, key, 'completed')
+    assert 'the settled answer' in '\n'.join(view.log_step(tmp_path, 'genome', T0 + 40))

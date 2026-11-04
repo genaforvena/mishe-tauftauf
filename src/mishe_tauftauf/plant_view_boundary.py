@@ -119,7 +119,11 @@ def last_lines(text: str, count: int) -> str:
 
 
 def wake_key(path: Path) -> str:
-    """The wake key of a retained file named KEY.prompt.out.EXT (keys contain no dot)."""
+    """The wake key of a retained file named KEY.prompt.out.EXT (keys contain no dot).
+
+    The key is the whole stem, e.g. `wake-genome-1793818293409683255`: exactly what `wake._key` generates and
+    what the dispatch record, the snapshot and the yield receipt are named by. It is not the part after the role.
+    """
     return path.name.partition('.')[0]
 
 
