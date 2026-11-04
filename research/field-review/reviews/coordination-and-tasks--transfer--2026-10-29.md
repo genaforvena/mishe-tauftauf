@@ -2,7 +2,7 @@
 field: coordination-and-tasks
 angle: transfer
 date: 2026-10-29
-status: applied
+status: discarded
 owner: genome
 target: src/mishe_tauftauf/task_state.py
 ---
@@ -65,25 +65,6 @@ Three ideas transfer directly, each with a line number in this repository where 
 
 **Limits the proposal keeps from the source.** Table 1 is suggestive, not exhaustive — the `other` value preserves that boundary (§2.2.5). No mechanism is ranked universally; the proposal only makes comparison *possible* by typing, it does not mandate market vs hierarchy for any dependency. The paper's quantitative Appendices are not imported — analysis remains local to the plant's own `checks/` and `TaskState` payload. No new lock, max, or wire format is implied beyond the additive payload field.
 
-## Application
+## Discard
 
-target: src/mishe_tauftauf/task_state.py
-
-**Add typed dependencies beside `TaskState.parent`/:31 and `registry()`/:140 — naming the Malone dependency so each gets the Table 1 process that fits it, additive behind no new lock and expressed in the plant's existing `[task-*]` payload vocabulary.**
-
-1. **Add `dependency` and `depends_on` to `TaskState` beside `parent`/`managed`/:31 and carry them in the payload.** Extend the frozen dataclass with `dependency: str = "other"` (validated against `DEPENDENCIES = {"shared-resource","prerequisite","transfer","usability","simultaneity","task-subtask","other"}`) and `depends_on: str|None = None` (when set, must name an existing `identity` that is not self). In `registry()`'s payload branch (:183–236), keep `known = {field.name for field in fields(TaskState)}` so the two new fields round-trip through `record_payload` without a migration — old entries decode with defaults. Validate `depends_on` existence and that `dependency=="prerequisite"` or `"transfer"` when `depends_on` is set; otherwise raise `ValueError("prerequisite/transfer requires depends_on")` alongside the existing `:195` identity/status checks. `add_task()`/:693 and `set_step()`/:552 accept the two new kwargs and include them in the `_append` payload; `reopen()`/:713 resets `managed` correctly for `task-subtask` parents.
-
-2. **Make `eligible()` prerequisite-aware and `candidates()` dependency-filterable without changing `publication_lock` or `sequence` order.** Change `eligible(state, entries, now=None)`/:255 to return `False` when `state.dependency in {"prerequisite","transfer"}` and `state.depends_on` names a task whose `registry()[depends_on].status not in {"done","dropped"}` — the prerequisite constraint (§2.2.2 (1)), checked purely from the feed, no new I/O. Add `candidates(entries, now=None, *, dependency=None)` / `select_task(..., dependency=None)` / `lines(..., dependency=None)` optional filter that restricts the advisory set before sorting by `sequence` — so a prerequisite work-picker and a shared-resource allocator can each see only their dependency class while the tape's total order stays `sequence` arrival order under `feed.py:42` lock.
-
-3. **Type the existing decomposition and reuse the existing evidence vocabulary.** Keep `TaskState.parent` for `task-subtask` goal decomposition (§2.2.4) but require `dependency=="task-subtask"` when `parent` is set, and validate in `registry()` that `finish(..., status=done)` for a `managed` parent checks children are terminal (mirrors `site_sync`'s `_close_stale_sync_tasks` invariant, now enforced structurally rather than by string prefix). The `reason`/`next_step` strings remain human prose; the typed `dependency` is the only new user-visible surface and follows `wall.py:956` / `task_state.py:537` validation idiom. Metrics are the registry itself — per-dependency counts of `ready/waiting` vs `done` that `board()` can render without a new store, so `evaluate`/`check`/`guard` can log transitions per dependency and answer §3.1.1 baseline ("what if this prerequisite had no notification?").
-
-**Acceptance (deterministic, runnable from this repository):**
-
-- `python -m py_compile src/mishe_tauftauf/task_state.py` and `python tools/check_parsing.py` still exit 0 — `task_state.py` is not a `parsing-policy.json` boundary file and the new fields are additive with no change to `HEADER_RE`, `publication_lock`, or `WALL_MAX_*`; old feeds decode (missing fields default to `other`/`None`) and validate.
-- Synthetic prerequisite fixture: `add_task(home, "produce-X", owner="genome", ..., dependency="other")` then `add_task(home, "consume-X", owner="genome", ..., dependency="prerequisite", depends_on="produce-X")` — `eligible(consume, entries)` is `False` while `produce-X` is `ready/waiting` and becomes `True` after `finish(produce-X, done)`; `candidates(entries, dependency="prerequisite")` excludes `produce-X` and includes only `consume-X` when unblocked, while `candidates(entries, dependency="shared-resource")` is unaffected.
-- Task/subtask fixture: `add_task(home, "parent", owner="genome", ..., dependency="task-subtask", managed=False)` then `add_task(home, "child", owner="genome", ..., parent="parent", dependency="task-subtask")` — `registry()["parent"].managed is True`; finishing `parent` with `done` while `child` is still `ready` raises `ValueError` in `registry` replay (goal-decomposition invariant); finishing `child` first then `parent` succeeds.
-- Existing `tests/test_task*`-equivalent and `tests/test_feed.py` still pass — the only observable difference is the advisory `candidates` filter and the `eligible` prerequisite gate versus the previous "all tasks homogeneous" ordering; no new lock or wall max is added, and `site_sync` `kernel-sync-*` parent/child pattern is preserved via `parent` + `task-subtask` typing.
-
-**Ownership.** `src/mishe_tauftauf/task_state.py` is the task lifecycle boundary (`registry`/`states`/`eligible`/`candidates`/`claim`/`_append`) for the "coordination: addressed messages, walls and settlement" plant part this field names — the place Table 1's dependency → process mapping must be recorded. `genome` is the resolver for coordination walls and settlement (`AGENTS.md` wall-coordination trial, `docs/mesh.md`), and the target file is the one other fields' coordination reviews already treat as wall/tape truth (`coordination-and-tasks--recent` → `wall.py`, `coordination-and-tasks--misread` → `feed.py`). The change is typing and advisory filtering only, not a lock or threshold change.
-
-**One thing this review does not ask for.** It does not replace `sequence` or `timestamp`, change `publication_lock` fairness, implement a market/bidding allocator, or add a new wall lock or wire format — only the two additive fields and the two pure advisory checks that make Malone's "name the dependency, then pick the process" operational and let §3.1.1 parametric comparison be asked per dependency.
+The proposed typed dependency fields, dependency validation, prerequisite gating, dependency filtering, parent tracking, and child-completion guard already exist in `task_state.py`; adding `publication_lock`, `site_sync`, `_close_stale_sync_tasks`, or `HEADER_RE` there would couple unrelated boundaries and would not implement the review's stated change. The remaining difference is a broader replay invariant not justified by this stale application, so this application is discarded rather than claiming integration.
